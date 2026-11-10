@@ -99,7 +99,9 @@ jobs:
       mac: ${{ steps.mac.outputs.mac }}
       # whether `warm` runs, and on which OSes: a push to main runs it for real on both; a pull request that changes the
       # job (or the setup action it runs) runs it as a dry run on Linux only (#2769, knowledge/ci-hosted.md)
-      warm: ${{ steps.warm.outputs.warm }}
+      warm: ${{ steps.scope.outputs.docs_push == 'true' && 'false' || steps.warm.outputs.warm }}
+      # a docs-only diff (#3044): what `docs-linux` also runs
+      docs_tests: ${{ steps.scope.outputs.docs_tests }}
       warm_os: ${{ steps.warm.outputs.os }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
@@ -168,17 +170,31 @@ jobs:
         env:
           BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
           UNCACHED_INPUT: ${{ inputs.uncached }}
+          BEFORE: ${{ github.event.before }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
           # Other workflows (llvm.yml) change nothing this one runs; ci.yml itself and the actions it uses do.
           documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
           workflows='^[.]github/workflows/'
-          gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
+          # the one list of documentation paths (#3044): a diff of only these builds nothing on any platform. Markdown
+          # elsewhere (templates/new, plugin/knowledge, tests/docs/fixtures) is read by tests, so it stays code.
+          gated='^([^/]+[.]md|knowledge/.*|[.]agents/.*|[.]claude/skills/.*)$'
+          docs_push=false
           scope=full
           changed=
           # a push to main is a commit the merge queue already checked: it only publishes the release
-          if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            scope=release; BASE=
+            # a push of only documentation (#3044): the compiler did not change, so there is no release and no warm
+            # build; the scope is none. A push whose range cannot be read stays release.
+            if [ -n "$BEFORE" ] && ! printf '%s' "$BEFORE" | grep -qE '^0+$' && pushed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" 2>/dev/null) && [ -n "$pushed" ]; then
+              if [ -z "$(printf '%s\n' "$pushed" | grep -vE "$documents|$gated|$workflows" || true)" ] \
+                && [ -z "$(printf '%s\n' "$pushed" | grep -E '^([.]github/workflows/ci[.]yml|[.]github/actions/.*)$' || true)" ]; then
+                scope=none; docs_push=true
+              fi
+            fi
+          fi
           # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
           # everything not yet on main. Scoped by its own diff, a docs-only entry behind a code change ran no tests,
           # passed, and carried the failing code onto main (#1539 behind #1541, 2026-11-02)
@@ -196,6 +212,14 @@ jobs:
           # in the queue. A docs scope keeps the whole job (it is where the docs check runs); the queue runs it always.
           mac_run=true
           mac_tests=true
+          # docs-only (#3044): no macOS job at all, in a PR check and in a queue run; the checks that read documents run
+          # on Linux in `docs-linux` with the published release. `docs_tests`: the diff reaches what readme_test and
+          # skills_test read (README.md, the skills): they build a test runner (about 2 minutes cold), `smith docs` does not.
+          docs_tests=false
+          if [ "$scope" = docs ]; then
+            mac_run=false
+            if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then docs_tests=true; fi
+          fi
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
             mac_tests=false
             if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_tests=true; fi
@@ -218,6 +242,8 @@ jobs:
           fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
+          echo "docs_tests=$docs_tests" >>"$GITHUB_OUTPUT"
+          echo "docs_push=$docs_push" >>"$GITHUB_OUTPUT"
           echo "mac_tests=$mac_tests" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
           echo "uncached=$uncached" >>"$GITHUB_OUTPUT"
@@ -969,10 +995,32 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  docs-linux:
+    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
+    # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
+    # One small Linux job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+      DOCS_TESTS: ${{ needs.changes.outputs.docs_tests }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/fetch-smith
+      - name: Documentation checks
+        run: |
+          smith docs
+          if [ "$DOCS_TESTS" = true ]; then smith test --test readme_test,skills_test; fi
+
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
+    needs: [changes, pack, macos, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -993,6 +1041,7 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
+          DOCS_LINUX: ${{ needs.docs-linux.result }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
           TEST_LINUX: ${{ needs.build-linux.outputs.tests || needs.test-linux.result }}
@@ -1030,12 +1079,12 @@ jobs:
             exit 1
           fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes macos, `release` (a push to main,
+          # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes docs-linux (#3044), `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
           full) owed="MACOS TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
-          docs) owed="MACOS" ;;
+          docs) owed="DOCS_LINUX" ;;
           release) owed="" ;;
           *) owed="" ;;
           esac
