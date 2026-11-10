@@ -490,8 +490,8 @@ void prune_old() {
         "--jq",
         ".[]|select((.tagName|startswith(\"stage0-\")) and (.isDraft|not))|.tagName+\" \"+.createdAt"};
     process::Output listed = exec(list[0:9]);
-    if (listed.exit.status != 0) return; // a failed prune leaves old releases, never a failed release
-    delete_old(prune_tags(trimmed(listed.output), keep_count()));
+    // a failed list leaves old releases, never a failed release, and the drafts are pruned all the same
+    if (listed.exit.status == 0) delete_old(prune_tags(trimmed(listed.output), keep_count()));
     delete_stale_drafts();
 }
 
