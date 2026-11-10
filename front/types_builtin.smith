@@ -757,6 +757,13 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
     return c->table.invalid;
 }
 
+// Whether `text` is Str and `other` a read-only slice of char: one type to `typeof(x) == T` (#2853). A string piece of
+// std.format is `const char[:]` in today's syntax and `[]char` once fixed, and a `str` argument meets that rule.
+static Bool text_and_chars(const types::Checked *c, types::TypeRef text, types::TypeRef other) {
+    if (text->kind != .text || other->kind != .slice) return false;
+    return other->kind.slice.pointee_const && other->kind.slice.element == named(c, "Char");
+}
+
 // `typeof(x) == f32` (or `!=`): two types written as values are the same type or they are not. False when it is no
 // such comparison, or a side is not a type, or a type is not known yet.
 static Bool same_type_value(types::Checked *c, const ast::Expr *e, Bool *value) {
@@ -773,7 +780,8 @@ static Bool same_type_value(types::Checked *c, const ast::Expr *e, Bool *value) 
     if (l == nullptr || r == nullptr || l == c->table.invalid || r == c->table.invalid || is_open(l) || is_open(r)) {
         return false;
     }
-    *value = (l == r) == (op == .equal);
+    Bool same = l == r || text_and_chars(c, l, r) || text_and_chars(c, r, l);
+    *value = same == (op == .equal);
     return true;
 }
 

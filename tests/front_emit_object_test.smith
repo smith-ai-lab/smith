@@ -218,8 +218,8 @@ export void test_front_emit_object_optimization_runs_passes_only_above_zero() {
     emit_jit::stop(&host);
 }
 
-// The signed add of `add` can overflow: after the optimizer it still calls smith_contract_fail_overflow, and called with
-// i32 max the program, linked as a user's is, stops with std.contract's report.
+// The signed add of `add` can overflow: after the optimizer it still calls smith_contract_fail_overflow, and called
+// with i32 max the program, linked as a user's is, stops with std.contract's report.
 export void test_front_emit_object_optimization_keeps_the_overflow_check() {
     emit_jit::JitResult started = emit_jit::start();
     test::check_equal(started == .ok, true);

@@ -313,8 +313,8 @@ constexpr size_t smith_front_std_max = 48;
 static_assert(smith_front_std_max >= sizeof smith_libraries / sizeof smith_libraries[0]);
 static const SmithLibrary *smith_front_std[smith_front_std_max];
 static size_t smith_front_std_count;
-static char smith_front_std_folder[PATH_MAX];                                // the cache's folder, once made
-static char smith_front_std_objects[smith_front_std_max][PATH_MAX];         // the objects a link adds
+static char smith_front_std_folder[PATH_MAX];                       // the cache's folder, once made
+static char smith_front_std_objects[smith_front_std_max][PATH_MAX]; // the objects a link adds
 static size_t smith_front_std_object_count;
 
 static void smith_front_std_want(const char *name, size_t length) {
@@ -408,8 +408,9 @@ static bool smith_front_write_file(const char *path, const void *bytes, size_t s
 }
 
 // Runs `argv` (smith itself) in `folder` and waits: whether it exited 0. $SMITH_FRONT_CIMPORT_FLAGS is the caller's,
-// with paths of the caller's folder, so the child goes without it and works out its own.
-static bool smith_front_run_in(const char *folder, char *const *argv) {
+// with paths of the caller's folder, so the child goes without it and works out its own. With `log`, the child's
+// standard error goes to that file (in `folder`) instead of the caller's.
+static bool smith_front_run_in(const char *folder, char *const *argv, const char *log) {
     const char *flags = getenv("SMITH_FRONT_CIMPORT_FLAGS");
     static char saved[1U << 16];
     bool had = flags != nullptr && strlen(flags) < sizeof saved;
@@ -418,7 +419,9 @@ static bool smith_front_run_in(const char *folder, char *const *argv) {
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_addchdir_np(&actions, folder);
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0); // `N fixes applied`: errors stay
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0); // `N fixes applied`
+    if (log != nullptr)
+        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     pid_t pid = 0;
     int started = posix_spawn(&pid, argv[0], &actions, nullptr, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -480,7 +483,18 @@ static void smith_front_std_headers(const char *self) {
     close(here);
 }
 
-// Fixes, in one `smith lint --fix`, each wanted module of today's syntax that is not fixed yet, then marks it.
+// Says once, on standard error, that this compile prepares std, so that the wait of a cold cache is not silent.
+static void smith_front_std_notice(void) {
+    static bool said = false;
+    if (said) return;
+    said = true;
+    fprintf(stderr, "smith: preparing its std library for the new front end, once for this smith (%s)\n",
+            smith_front_std_folder);
+}
+
+// Fixes, in one `smith lint --fix`, each wanted module of today's syntax that is not fixed yet, then marks it. The
+// fixer's warnings (the `++` of today's std) go to `fix.log` in the cache, not to the user. This step goes at the
+// switch-over (#1631): std is then in smith's own syntax, and only the object cache below stays.
 static void smith_front_std_fix(const char *self) {
     static char paths[smith_front_std_max][PATH_MAX];
     char *argv[smith_front_std_max + 4] = {(char *)self, "lint", "--fix"};
@@ -498,10 +512,14 @@ static void smith_front_std_fix(const char *self) {
     }
     if (used == 3) return;
     argv[used] = nullptr;
-    if (!smith_front_run_in(smith_front_std_folder, argv))
-        smith_die(smith_exit_usage, "cannot fix smith's std for the new front end in", smith_front_std_folder);
+    smith_front_std_notice();
+    char log[PATH_MAX];
+    smith_front_std_path(log, "%s", "fix.log");
+    if (!smith_front_run_in(smith_front_std_folder, argv, log))
+        smith_die(smith_exit_usage, "cannot fix smith's std for the new front end; the fixer's output is in", log);
     for (size_t i = 3; i < used; i++) { // bounded by used
-        int written = snprintf(marker, sizeof marker, "%.*s.fixed", (int)(strlen(paths[i]) - strlen(".smith")), paths[i]);
+        int written =
+            snprintf(marker, sizeof marker, "%.*s.fixed", (int)(strlen(paths[i]) - strlen(".smith")), paths[i]);
         SMITH_ASSERT(written > 0 && (size_t)written < sizeof marker);
         if (!smith_front_write_file(marker, "", 0)) smith_die(smith_exit_missing, "cannot write", marker);
     }
@@ -549,7 +567,8 @@ static void smith_front_std_object(const char *self, const SmithLibrary *library
     char target[PATH_MAX];
     // Relative to the cache's folder, where the child runs: `lib/std/math.smith` under the root `lib` names the module
     // `std::math`, and so its symbols (`std::math::wrap_angle`, not a bare `wrap_angle` that std.math_trig has too).
-    int written = snprintf(source, sizeof source, library->lang ? "lib/std/%s.smith" : ".smith/lib/%s.c", library->name);
+    int written =
+        snprintf(source, sizeof source, library->lang ? "lib/std/%s.smith" : ".smith/lib/%s.c", library->name);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof source);
     written = snprintf(partial, sizeof partial, "%s.tmp-%d", object, (int)getpid());
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof partial);
@@ -571,7 +590,8 @@ static void smith_front_std_object(const char *self, const SmithLibrary *library
     if (debug) argv[used++] = "-g";
     if (triple != nullptr) argv[used++] = target;
     argv[used] = nullptr;
-    bool made = smith_front_run_in(smith_front_std_folder, argv) && rename(partial, object) == 0;
+    smith_front_std_notice();
+    bool made = smith_front_run_in(smith_front_std_folder, argv, nullptr) && rename(partial, object) == 0;
     char list[PATH_MAX];
     written = snprintf(list, sizeof list, "%s.std", partial);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof list);

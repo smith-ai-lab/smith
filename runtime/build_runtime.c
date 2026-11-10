@@ -2730,9 +2730,9 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         front_end = front_end || smith_ends_with(rows[i]->source, ".smith");
     front_end = front_end && smith_find_given("SMITH_FRONT_END") != nullptr;
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), smith_when(b, front_end, smith_one("--front-end=new")),
-                             identity, copy.flags, (const char *const *)outputs,
-                             copy.libraries, math, handlers, tail, nullptr),
+        .command =
+            smith_cat(b, smith_one(copy.linker), smith_when(b, front_end, smith_one("--front-end=new")), identity,
+                      copy.flags, (const char *const *)outputs, copy.libraries, math, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),

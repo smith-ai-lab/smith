@@ -889,11 +889,36 @@ static Bool decided_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **
     return false;
 }
 
+// Whether the condition of the `if` `s` is known at compile time, and which branch is taken: a boolean literal (the
+// checker rewrites `target.address_sanitizer` into one, #2461), the name of a constant whose initializer is one
+// (`if sanitized:` in std.mem), or `not` of either. Only the taken branch is emitted, as a compile-time `if` is
+// (#2853): the other may call what this build does not link (`__asan_poison_memory_region` without ASan).
+static Bool constant_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **live) {
+    if (s->kind != .if_stmt || e->options.checked == nullptr) return false;
+    const ast::Expr *x = s->kind.if_stmt.condition;
+    Bool flip = false;
+    for (Usize budget = 0; x != nullptr && budget < 16; budget++) {
+        if (x->kind == .unary && x->kind.unary.op == .logical_not) {
+            flip = !flip;
+            x = x->kind.unary.operand;
+            continue;
+        }
+        if (x->kind == .boolean) {
+            *live = x->kind.boolean.value != flip ? s->kind.if_stmt.then_branch : s->kind.if_stmt.else_branch;
+            return true;
+        }
+        ast::Path path = {};
+        if (!types::name_path(x, &path)) return false;
+        x = types::constant_initializer(types::type_through_modules(e->options.checked, path));
+    }
+    return false;
+}
+
 static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     start_block_if_ended(e);
     try debug::stmt_location(e, s);
     const ast::Stmt *live = nullptr;
-    if (decided_if(e, s, &live)) {
+    if (decided_if(e, s, &live) || constant_if(e, s, &live)) {
         if (live != nullptr) state::push_statement(e, live);
         return state::success();
     }

@@ -1,6 +1,6 @@
 // What a user sees (#2853, was #2047): a project made by `smith new` in a folder outside the repository, with no lib/,
-// no src/ and no repository files around it, runs a new-syntax program with `smith run --front-end=new`. The smith under
-// test links the embedded std itself (std.contract, and what the program imports), so the commands run with no
+// no src/ and no repository files around it, runs a new-syntax program with `smith run --front-end=new`. The smith
+// under test links the embedded std itself (std.contract, and what the program imports), so the commands run with no
 // SMITH_REPO and no SMITH_HEADERS_FROM: nothing in the repository is read.
 // smith-covers: runtime/front_flag.c runtime/build_runtime.c front/format.smith
 module hello_world_test;
@@ -14,7 +14,7 @@ import scratch;
 // Makes `hi` with `smith new`, puts `program` in its main.smith and runs `then` in it, with nothing of the repository.
 static scratch::Run in_new_project(const scratch::Project *p, const char *program, const char *then) {
     const char *command =
-        format::push("unset SMITH_REPO SMITH_HEADERS_FROM; export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && "
+        format::push("unset SMITH_REPO SMITH_HEADERS_FROM SMITH_OUTPUT; smith new hi >/dev/null 2>&1 && cd hi && "
                      "rm -f primes.smith primes_test.smith && printf '%s' '",
                      program, "' > main.smith && ", then)
             .data;

@@ -106,8 +106,8 @@ static I32 link_and_run(Str folder, Str name, Str main_c) {
     const char *repo = c::getenv("SMITH_REPO");
     Str runtime = repo != nullptr ? as_str(format::push(repo, "/lib/handlers.c -I ", repo, "/include"))
                                   : as_str(format::push(""));
-    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -std=gnu23 ", folder, "/main.c ", folder, "/", name,
-                                               ".o ", runtime, " -o ", folder, "/prog")));
+    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -std=gnu23 ", folder, "/main.c ",
+                                               folder, "/", name, ".o ", runtime, " -o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked != 0) return -1;
     return sh_status(as_str(format::push(folder, "/prog 2>", folder, "/stderr")));
@@ -126,7 +126,8 @@ static Str case_failure(Str name, Str folder, compile::Report report, Str errors
         return as_str(format::push(name, ": wrong error, got:\n", got, "\nwant (", name, ".error):\n", want));
     }
     if (!report.ok) return as_str(format::push(name, ": ", report.text));
-    Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", "int main(void) { return check(); }\n"));
+    Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
+                                     "int main(void) { return check(); }\n"));
     I32 status = link_and_run(folder, name, main_c);
     if (status != 0) return as_str(format::push(name, ": exit ", (I64)status));
     return "";
@@ -176,9 +177,8 @@ export void test_front_e2e_a_narrowing_cast_calls_the_check() {
         compile_module(folder, "casts", "module casts;\n\nexport I32 narrow(I64 x) {\n    return (I32)x;\n}\n");
     test::check_equal(report.ok, true);
     if (report.ok) {
-        Str main_c =
-            as_str(format::push("int narrow(long) __asm__(\"", prefix(), "casts::narrow\");\n",
-                                "int main(void) { return narrow(1L << 40) == 0 ? 0 : 1; }\n"));
+        Str main_c = as_str(format::push("int narrow(long) __asm__(\"", prefix(), "casts::narrow\");\n",
+                                         "int main(void) { return narrow(1L << 40) == 0 ? 0 : 1; }\n"));
         test::check_equal(link_and_run(folder, "casts", main_c) != 0, true);
         test::check_equal(has(text_of(as_str(format::push(folder, "/stderr"))), "cast of 1099511627776 does not fit"),
                           true);
@@ -194,9 +194,9 @@ export void test_front_e2e_a_variadic_definition_is_called_from_c() {
     compile::Report report = compile_module(folder, "variadics", source);
     test::check_equal(report.ok, true);
     if (report.ok) {
-        Str main_c = as_str(format::push(
-            "int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n",
-            "int main(void) { return total(2, 7, 9) == 3 && total(2, 100, 20) == 6 ? 0 : 1; }\n"));
+        Str main_c =
+            as_str(format::push("int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n",
+                                "int main(void) { return total(2, 7, 9) == 3 && total(2, 100, 20) == 6 ? 0 : 1; }\n"));
         test::check_equal(link_and_run(folder, "variadics", main_c), 0);
     }
     remove_all(folder);
@@ -256,7 +256,8 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
         test::check_equal(sh_status(as_str(format::push("nm ", folder, "/mathlib.o | grep -q ' T .*mathlib::scale'"))),
                           0);
         write_text(as_str(format::push(folder, "/main.c")),
-                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n", "int main(void) { return check(); }\n")));
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       "int main(void) { return check(); }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/mathlib.o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
@@ -286,7 +287,8 @@ export void test_front_e2e_a_call_to_a_function_without_a_result_links_and_runs(
     test::check_equal(report.ok, true);
     if (report.ok && imported.ok) {
         write_text(as_str(format::push(folder, "/main.c")),
-                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n", "int main(void) { return check(); }\n")));
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       "int main(void) { return check(); }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/barrier.o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
@@ -521,6 +523,49 @@ export void test_front_e2e_a_local_header_next_to_the_source_is_found() {
     compile::Report report = compile_module(folder, "local", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// An `if` on a constant emits only the branch it takes (#2853): std.mem's `if sanitized:` calls ASan's functions, which
+// a program built without ASan does not link. Here the other branch calls `absent`, which no object defines, through a
+// constant, its negation and a literal; the object must not name it.
+export void test_front_e2e_an_if_on_a_constant_emits_only_its_branch() {
+    use_header_flags();
+    Str folder = folder_for("constant_if");
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/absent.h")), "int absent(void);\n");
+    Str source = "import c \"absent.h\"\n\nconst linked: bool = false\n\n"
+                 "pub fn check() -> i32:\n    mut n := 0\n    if linked:\n        n = absent.absent()\n"
+                 "    if not linked:\n        n += 1\n    else:\n        n = absent.absent()\n"
+                 "    if false:\n        n = absent.absent()\n    n - 1\n";
+    compile::Report report = compile_module(folder, "constant_if", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str object = as_str(format::push(folder, "/constant_if.o"));
+        test::check_equal(sh_status(as_str(format::push("nm ", object, " | grep -q absent"))), 1);
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), "constant_if::check\");\n",
+                                         "int main(void) { return check(); }\n"));
+        test::check_equal(link_and_run(folder, "constant_if", main_c), 0);
+    }
+    remove_all(folder);
+}
+
+// A `str` is the read-only `[]char` of `typeof(x) == []char` (#2853): std.format's rule for a string piece, written
+// `const char[:]` in today's syntax and `[]char` once fixed, takes `console.print("hello world\n")`.
+export void test_front_e2e_a_str_is_the_char_slice_of_a_type_test() {
+    Str folder = folder_for("str_type");
+    Str source = "fn kind(args...) -> i32:\n    mut found := 0\n    for arg in args:\n"
+                 "        if typeof(arg) == []char:\n            found += 1\n    found\n\n"
+                 "pub fn check() -> i32:\n    s: str = \"hi\"\n    if kind(s, 1) != 1:\n        return 1\n    0\n";
+    compile::Report report = compile_module(folder, "str_type", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), "str_type::check\");\n",
+                                         "int main(void) { return check(); }\n"));
+        test::check_equal(link_and_run(folder, "str_type", main_c), 0);
+    }
     remove_all(folder);
 }
 

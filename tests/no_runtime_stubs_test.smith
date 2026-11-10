@@ -5,7 +5,7 @@
 // their headers (`.smith/include/smith/*.h`, `$SMITH_HEADERS_FROM`). A definition is a name, its parameters and a `{`
 // (also when it is C inside a string, broken across lines). The expected lowerings of the language's corpus
 // (tests/smith-lang/cases/*/expect/) are the compiler's output for a library's own source, not stand-ins, and are not
-// read. The rule is in the skill smith-dev-tests.
+// read, nor is this file, whose fixture writes stubs on purpose. The rule is in the skill smith-dev-tests.
 // smith-reads-tree
 // smith-covers: tests/
 module no_runtime_stubs_test;
@@ -110,13 +110,15 @@ static const char *declared_names(const scratch::Project *p, const char *folder)
 
 static Bool scanned(const char *name) {
     if (!starts_with(name, "tests/") || c::strstr(name, "/expect/") != nullptr) return false;
+    if (c::strcmp(name, "tests/no_runtime_stubs_test.smith") == 0) return false; // its fixture writes stubs on purpose
     return ends_with(name, ".smith") || ends_with(name, ".c") || ends_with(name, ".h") || ends_with(name, ".cpp") ||
            ends_with(name, ".m");
 }
 
 // The definitions of smith runtime functions in the tracked files under tests/ of the repository at `root`.
 static const char *offenders(const scratch::Project *p, const char *root, const char *headers) {
-    const char *command = format::push("cd '", root, "' && git -c core.quotepath=off ls-files tests | LC_ALL=C sort").data;
+    const char *command =
+        format::push("cd '", root, "' && git -c core.quotepath=off ls-files tests | LC_ALL=C sort").data;
     const char *listing = scratch::capture(p, command);
     const char *declared = declared_names(p, headers);
     const char *found = "";
@@ -164,17 +166,18 @@ export void test_a_stub_in_a_test_fails() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run made = scratch::sh(
-        &p, "git init -q . && mkdir -p tests/smith-lang/cases/a/expect include && "
-            "printf 'void smith_trace_write(int fd);\\nint smith_other(void);\\n' > include/trace.h && "
-            "printf 'static const char *const c = \"void smith_contract_fail_overflow(const char *a, \"\\n"
-            "    \"long b) { __builtin_trap(); }\\\\n\";\\n' > tests/a_test.smith && "
-            "printf 'void smith_trace_write(int fd) {}\\nvoid smith_mine(void) {}\\n' > tests/b.c && "
-            "printf 'if (smith_trace_write(1)) {}\\nsmith_trace_write(2);\\n' > tests/c.c && "
-            "printf 'void smith_trace_write(int fd) {}\\n' > tests/smith-lang/cases/a/expect/x.c && "
-            "printf 'void smith_trace_write(int fd) {}\\n' > src.c && git add -f -A");
+    scratch::Run made =
+        scratch::sh(&p, "git init -q . && mkdir -p tests/smith-lang/cases/a/expect include && "
+                        "printf 'void smith_trace_write(int fd);\\nint smith_other(void);\\n' > include/trace.h && "
+                        "printf 'static const char *const c = \"void smith_contract_fail_overflow(const char *a, \"\\n"
+                        "    \"long b) { __builtin_trap(); }\\\\n\";\\n' > tests/a_test.smith && "
+                        "printf 'void smith_trace_write(int fd) {}\\nvoid smith_mine(void) {}\\n' > tests/b.c && "
+                        "printf 'if (smith_trace_write(1)) {}\\nsmith_trace_write(2);\\n' > tests/c.c && "
+                        "printf 'void smith_trace_write(int fd) {}\\n' > tests/smith-lang/cases/a/expect/x.c && "
+                        "printf 'void smith_trace_write(int fd) {}\\n' > src.c && git add -f -A");
     scratch::expect_status("the repository is made", 0, &made);
     const char *include = format::push(p.dir, "/include").data;
-    scratch::expect_text("the stubs", "tests/a_test.smith: smith_contract_fail_overflow\ntests/b.c: smith_trace_write\n",
+    scratch::expect_text("the stubs",
+                         "tests/a_test.smith: smith_contract_fail_overflow\ntests/b.c: smith_trace_write\n",
                          offenders(&p, p.dir, include));
 }

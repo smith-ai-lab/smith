@@ -203,8 +203,8 @@ export void test_front_header_c_program_links_and_runs() {
                             "    geometry_shapes_bump(&n);\n"
                             "    return geometry_shapes_dot(&a, &b) == 23 && n == 42 && shapes_count() == 3 ? 0 : 1;\n"
                             "}\n")));
-    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -I ", folder, "/include ", folder, "/main.c ", object,
-                                               " -o ", folder, "/prog")));
+    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -I ", folder, "/include ", folder,
+                                               "/main.c ", object, " -o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     remove_all(folder);
