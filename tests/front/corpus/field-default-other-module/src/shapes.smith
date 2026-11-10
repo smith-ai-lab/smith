@@ -1,0 +1,7 @@
+pub struct Span:
+    pub start: u32
+    pub end: u32
+
+pub struct Named:
+    pub text: i32
+    pub span: Span = Span()

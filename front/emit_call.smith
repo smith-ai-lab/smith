@@ -740,6 +740,31 @@ static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
     return member_record(e, callee, at);
 }
 
+// The record whose type is `ty`.
+static Bool record_of_type(state::Emitter *e, state::Ty ty, Usize *at) {
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (e->records[i].ty.llvm == ty.llvm && state::same_type(e->records[i].ty, ty)) {
+            *at = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+// A construction by the bare name of the record the value is expected to be: `Span()`, the default of a field
+// `span: Span = Span()` of a record of another module, read where the construction leaves the field out, where `Span`
+// is not a name (#3036).
+static Bool expected_record(state::Emitter *e, const ast::Expr *callee, state::Hint hint, Usize *at) {
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return false;
+    if (!hint.present || hint.ty.kind != .record || !record_of_type(e, hint.ty, at)) return false;
+    Str want = callee->kind.name.path.segments[0].text;
+    Str name = e->records[*at].name;
+    if (countof(name) < countof(want)) return false;
+    Usize start = countof(name) - countof(want);
+    if (start > 0 && name[start - 1] != ':' && name[start - 1] != '.') return false;
+    return state::same_text(name[start:countof(name)], want);
+}
+
 // The field values are on the value stack, the first deepest: start from zero and insert each.
 static state::Status construct_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *x = w->expr;
@@ -753,7 +778,7 @@ static state::Status construct_finish(state::Emitter *e, const state::ThenGenera
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
     Usize at = 0;
-    if (!callee_record(e, callee, &at)) return state::fail("unknown record", w->span);
+    if (!callee_record(e, callee, &at) && !record_of_type(e, w->ty, &at)) return state::fail("unknown record", w->span);
     state::RecordType record = e->records[at];
     ast::ExprRef args[:] = filled_fields(record, written);
     c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
@@ -804,7 +829,7 @@ static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) 
         seen[field] = true;
     }
     state::push_then_general(
-        e, (state::ThenGeneral){.run = construct_finish, .expr = x, .number = count, .span = x->span});
+        e, (state::ThenGeneral){.run = construct_finish, .expr = x, .ty = record.ty, .number = count, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         Usize field = 0;
         field_for(record, args, i - 1, &field);
@@ -979,7 +1004,7 @@ export Bool module_function_value(state::Emitter *e, const ast::Expr *x, state::
     return true;
 }
 
-export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint _) {
+export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint hint) {
     if (written->kind != .call) {
         return state::fail("not a call", written->span);
     }
@@ -994,6 +1019,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     Bool is_imported = false;
     Usize record = 0;
     if (callee_record(e, callee, &record) && !function_twin(e, callee, written_args)) return construct(e, x, record);
+    if (expected_record(e, callee, hint, &record)) return construct(e, x, record);
     if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
     if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
     if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)
