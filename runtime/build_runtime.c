@@ -2511,12 +2511,14 @@ static size_t smith_handlers_made_count;
 // AddressSanitizer checks at start-up that dlsym("puts") lands in its own runtime ("interceptors not installed"), which
 // the runtime's puts tuple makes false; the check is `verify_interceptors`, off by default here through a weak
 // __asan_default_options in an object of the program (the program's own, strong, wins). The runtime ahead of ASan keeps
-// its puts, so a console handler also catches puts and the printf of a literal the optimizer turned into one.
+// its puts, so a console handler also catches puts and the printf of a literal the optimizer turned into one. `used`
+// makes clang emit .no_dead_strip: nothing references the function (ASan finds it with dlsym), so the `-dead_strip` of
+// a new-front-end link (smith_front_std_link) removed it and the check was on again (#3020).
 static void smith_handlers_asan_options(SmithBuild *b, const SmithProgram *program, const char *folder) {
     const char *object = smith_text("%s/smith_asan_options.o", folder);
     const char *script =
         "printf '%s\\n' 'const char *__asan_default_options(void);' "
-        "'__attribute__((weak)) const char *__asan_default_options(void) { return \"verify_interceptors=0\"; }' "
+        "'__attribute__((weak, used)) const char *__asan_default_options(void) { return \"verify_interceptors=0\"; }' "
         "| \"$0\" -x c - -c -o \"$1\"";
     SmithStep step = {
         .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
