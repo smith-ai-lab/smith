@@ -39,7 +39,6 @@ import front::fix_guard;
 import front::fix_place;
 import front::fix_alloc;
 import front::fix_build;
-import front::fix_shadow;
 import front::fix_typeof;
 import front::fix_variants;
 import front::lex;
@@ -1009,7 +1008,8 @@ static Str keyword_clash(Str source) {
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
     // A local named like an imported module is renamed first, while `::` still tells the module from the local (#3027).
-    Str renamed = rename_in_names(rename_type_names(rename_target_systems(fix_shadow::rename(fix_build::mend(file, source)))));
+    Str renamed = rename_in_names(
+        rename_type_names(rename_target_systems(fix_variants::rename_shadows(fix_build::mend(file, source)))));
     renamed = with_foreign_fixes(file, source, renamed);
     Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
