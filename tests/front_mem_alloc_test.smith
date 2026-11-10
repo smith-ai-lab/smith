@@ -52,13 +52,16 @@ static Str prefix() {
 
 // Writes the module `name` with `body` in a bare folder (`src/<name>.smith`, no `lib/`) and runs `smith cc
 // --front-end=new` there, as a user would: the real std.mem and std.arena come from the std smith embeds, and a link
-// gets their objects. `then` is the rest of the command line; the compiler's errors are in `<folder>/errors`.
+// gets their objects. `then` is the rest of the command line; the compiler's errors are in `<folder>/errors`. A user's
+// environment has none of what other tests on this worker set and leave: their cimport flags (paths of their own
+// folders, without smith's headers) or a cache folder they removed.
 static I32 smith_cc(Str folder, Str name, Str body, Str then) {
     c::mkdir(folder.data, 0o700);
     c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
     write_text(as_str(format::push(folder, "/src/", name, ".smith")), body);
-    return sh_status(as_str(format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new src/", name,
-                                         ".smith ", then, " 2>errors")));
+    return sh_status(
+        as_str(format::push("cd ", folder, " && env -u SMITH_FRONT_CIMPORT_FLAGS -u XDG_CACHE_HOME ", smith_path(),
+                            " cc --front-end=new src/", name, ".smith ", then, " 2>errors")));
 }
 
 static Str folder_for(Str name) {

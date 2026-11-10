@@ -1172,7 +1172,8 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind == .function && d->kind.function.variadic) variadic = 1;
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, parameter_types, (U32)count, variadic);
     Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
-    Bool plain_main = state::same_text(name, "main") && count == 0 && c::LLVMGetTypeKind(result.llvm) == c::LLVMVoidTypeKind;
+    Bool plain_main =
+        state::same_text(name, "main") && count == 0 && c::LLVMGetTypeKind(result.llvm) == c::LLVMVoidTypeKind;
     Str symbol = function_symbol(e->tree, d, name);
     if (takes_args) symbol = state::msg(format::push("main.args"));
     if (plain_main) symbol = state::msg(format::push("main.body"));
