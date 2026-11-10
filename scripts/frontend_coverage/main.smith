@@ -2021,6 +2021,9 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
         if (all && is_smith(tree[i])) owned[i] = true;
     }
     (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
+    // A file whose check errors are all inside function bodies goes on to the emit stage with those bodies left out,
+    // so its table row lists the emit stage's causes too, behind the first error (#2984). It still fails.
+    (void)c::setenv("SMITH_FRONT_KEEP_GOING", "1", 1);
     char imports[path_size * 2];
     (void)format::write(imports, sizeof imports, scratch, "/../imports");
     empty_folder(view_of(imports));

@@ -94,6 +94,7 @@ import front::emit_lambda as lambdas;
 import front::emit_match as matching;
 import front::emit_memory;
 import front::emit_option as optional;
+import front::emit_record as records;
 import front::emit_state as state;
 import front::emit_stream as streams;
 import front::emit_tuple as tupled;
@@ -171,7 +172,15 @@ static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) 
     if (init != nullptr && (init->kind == .member || init->kind == .name))
         return type_of_checked(e, s->type, s->decl->span);
     if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
-    return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
+    // `Edits := []mut Edit` of front::parse, used from another module: `Edit` is read in front::parse's scope, as an
+    // imported record's fields are (#2984; read in the user's scope it was unknown, and before that a loop).
+    Str prefix = emit_memory::record_module_prefix(s->name);
+    if (countof(prefix) == 0) return state::type_of(e, init->kind.type_value.type);
+    Str outer = e->import_scope;
+    e->import_scope = prefix;
+    state::TyResult made = state::type_of(e, init->kind.type_value.type); // the hook: no recursion here
+    e->import_scope = outer;
+    return made;
 }
 
 // An enumeration of an imported module (`ast.ExprKind`, or `ExprKind` inside a record of front::ast), declared when the
@@ -310,6 +319,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind == .block_type) return emit_memory::type_block(e, t);
     if (t->kind == .option) return optional::type_option(e, t);
     if (t->kind == .tuple) return tupled::type_tuple(e, t);
+    if (t->kind == .record) return records::type_record(e, t);
     if (t->kind == .function) return lambdas::type_function(e, t);
     if (t->kind == .pointer) {
         // `*Word` with `let Word = c.uint32_t`: the checker's alias, emitted as the type it names
@@ -572,9 +582,51 @@ static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x,
     return state::success();
 }
 
+// `Kind(pair = (a = 1, b = 2))`: a payload enumeration named as the callee with one argument `variant = payload`, which
+// the checker typed as `.pair((a = 1, b = 2))` of that enumeration (`enum_variant_call` in front/types_expr.smith). The
+// callee is a type, so it has no type of its own. Null when the call is no such form.
+static const ast::Expr *named_variant(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr || x->kind != .call || countof(x->kind.call.args) != 1) return nullptr;
+    const ast::Expr *arg = x->kind.call.args[0];
+    const ast::Expr *callee = x->kind.call.callee;
+    if (!(arg->kind == .named_arg)) return nullptr;
+    types::TypeRef t = types::type_of(e->options.checked, x);
+    if (t == nullptr || !types::is_payload_enum(t)) return nullptr;
+    if (types::type_of(e->options.checked, callee) != nullptr) return nullptr; // a function's call
+    ast::Expr *variant = mem::alloc(ast::Expr);
+    variant->span = x->span;
+    variant->kind = {.variant = {.name = arg->kind.named_arg.name, .payload = arg->kind.named_arg.value}};
+    return variant;
+}
+
+// A call: a vector built by its type, a payload enumeration built by its name, or a call of a function.
+static state::Status dispatch_call(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .call) return state::fail("not a call", x->span);
+    if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
+    const ast::Expr *variant = named_variant(e, x);
+    if (variant != nullptr) {
+        state::TyResult made = state::type_of_node(e, x); // the enumeration, which the new node has no record of
+        if (made == .error) return {.error = made.error};
+        return dispatch_variant(e, variant, state::hint_of(made.ok));
+    }
+    return call::call(e, x, hint);
+}
+
+// The expression the checker read in the place of another, emitted in its place.
+static state::Status dispatch_twin(state::Emitter *e, const ast::Expr *twin, state::Hint hint) {
+    state::push_eval(e, twin, hint);
+    return state::success();
+}
+
+// Where the walk is, for the driver's crash handler (runtime/front_flag.c, #2984): the declaration whose body is being
+// emitted and the kind of the last expression dispatched, in a fixed buffer and a literal, read without allocating.
+static char walk_declaration[256];
+static const char *walk_kind = "";
+
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    walk_kind = state::expr_kind_name(x).data;
     try debug::expr_location(e, x);
     if (hint.present && (hint.ty.kind == .slice || hint.ty.kind == .block) && is_array_place(e, x))
         return emit_memory::array_as_slice(e, x, hint);
@@ -604,10 +656,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .assign) return arith::assign_op(e, x, hint);
     if (x->kind == .boolean) return control::boolean(e, x, hint);
     if (x->kind == .conditional) return control::conditional(e, x, hint);
-    if (x->kind == .call) {
-        if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
-        return call::call(e, x, hint);
-    }
+    if (x->kind == .call) return dispatch_call(e, x, hint);
     if (x->kind == .array_lit) {
         if (hint.present && hint.ty.kind == .vector) return vectors::list(e, x, hint);
         return emit_memory::array_literal(e, x, hint);
@@ -636,9 +685,11 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .slice_of) return emit_memory::slice_of(e, x, hint);
     if (x->kind == .type_value && e->options.checked != nullptr) {
         const ast::Expr *made = types::method_of(e->options.checked, x); // `Point(a, b)`: a construction (#1813)
-        if (made != nullptr) return call::call(e, made, hint);
+        if (made != nullptr && made->kind == .call) return call::call(e, made, hint);
+        if (made != nullptr) return dispatch_twin(e, made, hint); // `High`, `c.EOF`: the name the checker read (#2984)
     }
-    return state::not_emitted("this kind of expression", x->span);
+    // The kind is named outside backticks, so the count's table keeps the kinds apart (#2984).
+    return state::failf(x->span, "not emitted yet: this kind of expression (", state::expr_kind_name(x), ")");
 }
 
 // The handler that pushes the address of an lvalue.
@@ -1400,8 +1451,10 @@ static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
 }
 
 // A block whose last line is an expression or a `match` has a value; one that ends in `return`, a loop or nothing
-// does not (an old-syntax `if (c) { return a; } else { return b; }` stays a statement).
+// does not (an old-syntax `if (c) { return a; } else { return b; }` stays a statement). The branch of a one-line `if b:
+// 1 else: 0` is the expression itself (#2984: as a body's last line it fell off the end, an `unreachable`).
 static Bool block_gives_value(const ast::Stmt *s) {
+    if (s->kind == .expression) return true;
     if (s->kind == .block) {
         ast::StmtRef items[:] = s->kind.block.items;
         if (countof(items) == 0) {
@@ -1743,6 +1796,17 @@ static void ensure_enum(state::Emitter *e, types::TypeRef t) {
 
 // The checker's type `t` as a `Ty`, with `span` for an error. A chain of pointers and arrays is walked with a loop,
 // then built from inside. `Void` (a function's result, what a pointer points at) is an LLVM `void`.
+// `Result(T, E)` as the checker typed it: the two payloads, each with its enumeration declared first.
+static state::TyResult result_from_checked(state::Emitter *e, types::TypeRef base) {
+    ensure_enum(e, types::element_of(base));
+    ensure_enum(e, types::error_of(base));
+    state::TyResult ok = optional::payload_of_checked(e, types::element_of(base));
+    if (ok == .error) return {.error = ok.error};
+    state::TyResult bad = optional::payload_of_checked(e, types::error_of(base));
+    if (bad == .error) return {.error = bad.error};
+    return optional::build_result(e, ok.ok, bad.ok);
+}
+
 static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
     types::TypeRef chain[16];
     Usize depth = 0;
@@ -1756,6 +1820,12 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     }
     state::Ty ty = {};
     Bool known = scalar_of_checked(e, base, &ty);
+    if (!known && records::is_anonymous(base)) { // `struct { a: i32 }` as the checker names it: front::emit_record
+        state::TyResult anonymous = records::from_checked(e, base, span);
+        if (anonymous == .error) return anonymous;
+        ty = anonymous.ok;
+        known = true;
+    }
     known = known || (base->kind == .record && find_record_by_name(e, types::name_of(base), &ty));
     known = known || (base->kind == .enumeration && matching::type_enum(e, types::name_of(base), &ty));
     known = known ||
@@ -1778,15 +1848,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
             ensure_enum(e, types::element_of(base));
             return optional::from_checked(e, base);
         }
-        if (base->kind == .result_type) {
-            ensure_enum(e, types::element_of(base));
-            ensure_enum(e, types::error_of(base));
-            state::TyResult ok = optional::payload_of_checked(e, types::element_of(base));
-            if (ok == .error) return {.error = ok.error};
-            state::TyResult bad = optional::payload_of_checked(e, types::error_of(base));
-            if (bad == .error) return {.error = bad.error};
-            return optional::build_result(e, ok.ok, bad.ok);
-        }
+        if (base->kind == .result_type) return result_from_checked(e, base);
         if (base->kind == .tuple) return tupled::from_checked(e, base);
         if (base->kind == .fn_value) return lambdas::from_checked(e, base);
         if (base->kind == .function) return lambdas::pointer_from_checked(e, base); // a C function pointer
@@ -2250,13 +2312,31 @@ static void recover(state::Emitter *e) {
     e->instance = nullptr;
 }
 
+static void note_declaration(Str name) {
+    Usize n = countof(name) < sizeof walk_declaration - 1 ? countof(name) : sizeof walk_declaration - 1;
+    for (Usize i = 0; i < n; i++)
+        walk_declaration[i] = name[i];
+    walk_declaration[n] = 0;
+    walk_kind = "";
+}
+
+[[std::c_name("front_emit_crash_declaration")]] export const char *crash_declaration_name() {
+    return walk_declaration;
+}
+
+[[std::c_name("front_emit_crash_kind")]] export const char *crash_kind_name() {
+    return walk_kind;
+}
+
 static state::Status emit_all(state::Emitter *e) {
+    note_declaration("");
     try debug::begin_module(e);
     declare_all(e);
     Usize next = 0;
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && d->kind.function.body != nullptr && !is_template(d)) {
+            if (d->kind == .function) note_declaration(d->kind.function.name);
             if (state::is_skipped(e, i)) continue;
             if (state::collect(e, emit_function(e, d, e->functions[next], nullptr))) recover(e);
             next += 1;
@@ -2266,6 +2346,8 @@ static state::Status emit_all(state::Emitter *e) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
             if (state::is_skipped(e, countof(e->tree->decls) + i)) continue;
             e->instance_scope = e->options.checked->instances[i].prefix;
+            const ast::Decl *generic = e->options.checked->instances[i].decl;
+            if (generic->kind == .function) note_declaration(generic->kind.function.name);
             state::Status emitted = emit_function(e, e->options.checked->instances[i].decl, e->functions[next],
                                                   &e->options.checked->instances[i]);
             e->instance_scope = "";

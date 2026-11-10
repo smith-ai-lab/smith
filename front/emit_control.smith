@@ -505,8 +505,9 @@ static state::Status compare_middle(state::Emitter *e, const state::ThenExpr *w)
     return state::success();
 }
 
-// `x == .none`, `x != .some` and the like over a `?T` (#2481): the side that is not written with a leading dot, or null
-// when this is no such test. `wants_some` says whether the dotted side is `.some`.
+// `x == .none`, `x != .some` and the like over a `?T` (#2481), and `written == .ok` or `r != .error` over a Result
+// (#2984): the side that is not written with a leading dot, or null when this is no such test. `wants_some` says
+// whether the dotted side is `.some` (or `.ok`).
 static const ast::Expr *option_operand(state::Emitter *e, const ast::Expr *x, Bool *wants_some) {
     if (!(x->kind == .binary) || e->options.checked == nullptr) return nullptr;
     ast::BinaryOp op = x->kind.binary.op;
@@ -519,11 +520,15 @@ static const ast::Expr *option_operand(state::Emitter *e, const ast::Expr *x, Bo
     Str name = dotted->kind.variant.name;
     Bool some = countof(name) == 4 && name[0] == 's' && name[1] == 'o' && name[2] == 'm' && name[3] == 'e';
     Bool none = countof(name) == 4 && name[0] == 'n' && name[1] == 'o' && name[2] == 'n' && name[3] == 'e';
-    if (!some && !none) return nullptr;
+    Bool ok = state::same_text(name, "ok");
+    Bool error = state::same_text(name, "error");
+    if (!some && !none && !ok && !error) return nullptr;
     const ast::Expr *operand = dotted == right ? left : right;
     types::TypeRef t = types::type_of(e->options.checked, operand);
-    if (t == nullptr || t->kind != .option) return nullptr;
-    *wants_some = some;
+    if (t == nullptr) return nullptr;
+    if ((some || none) && t->kind != .option) return nullptr;
+    if ((ok || error) && t->kind != .result_type) return nullptr;
+    *wants_some = some || ok;
     return operand;
 }
 
@@ -538,8 +543,47 @@ static state::Status option_test_finish(state::Emitter *e, const state::ThenExpr
     c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMTypeOf(tag));
     Bool same = w->expr->kind == .binary &&
                 (w->expr->kind.binary.op == .equal) == wants_some; // `== .some` and `!= .none` ask for a payload
+    if (o.ty.kind == .result) same = !same; // a Result's tag is 0 for `.ok`, where an option's is 1 for `.some`
     c::LLVMIntPredicate predicate = same ? c::LLVMIntNE : c::LLVMIntEQ;
     c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, predicate, tag, zero, "");
+    state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});
+    return state::success();
+}
+
+// `kind == .pointer`, `k != .pair` over an enumeration whose enumerators carry values (#2984): the side that is not
+// written with a leading dot, or null when this is no such test. `position` is the enumerator's place, its tag.
+static const ast::Expr *payload_operand(state::Emitter *e, const ast::Expr *x, Usize *position) {
+    if (!(x->kind == .binary) || e->options.checked == nullptr) return nullptr;
+    ast::BinaryOp op = x->kind.binary.op;
+    if (op != .equal && op != .not_equal) return nullptr;
+    const ast::Expr *left = x->kind.binary.left;
+    const ast::Expr *right = x->kind.binary.right;
+    const ast::Expr *dotted = right->kind == .variant && left->kind != .variant ? right : nullptr;
+    if (dotted == nullptr && left->kind == .variant && right->kind != .variant) dotted = left;
+    if (dotted == nullptr || !(dotted->kind == .variant) || dotted->kind.variant.payload != nullptr) return nullptr;
+    Str name = dotted->kind.variant.name;
+    const ast::Expr *operand = dotted == right ? left : right;
+    types::TypeRef t = types::type_of(e->options.checked, operand);
+    if (t == nullptr || !types::is_payload_enum(t)) return nullptr;
+    types::Slot items[:] = types::slots_of(t).items;
+    for (Usize i = 0; i < countof(items); i++) {
+        if (!state::same_text(items[i].name, name)) continue;
+        *position = i;
+        return operand;
+    }
+    return nullptr;
+}
+
+// The enumeration is on the stack: its tag (field 0, an `i32`) against the enumerator's place.
+static state::Status payload_test_finish(state::Emitter *e, const state::ThenExpr *w) {
+    Usize position = 0;
+    payload_operand(e, w->expr, &position);
+    state::Value v = state::pop_value(e);
+    if (v.ty.kind != .variant_enum) return state::failf(w->span, "comparison of ", v.ty.name);
+    c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, v.llvm, 0, "tag");
+    c::LLVMValueRef want = c::LLVMConstInt(c::LLVMTypeOf(tag), position, 0);
+    Bool equal = w->expr->kind == .binary && w->expr->kind.binary.op == .equal;
+    c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, equal ? c::LLVMIntEQ : c::LLVMIntNE, tag, want, "");
     state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});
     return state::success();
 }
@@ -553,6 +597,13 @@ export state::Status comparison(state::Emitter *e, const ast::Expr *x, state::Hi
     const ast::Expr *left = x->kind.binary.left;
     const ast::Expr *right = x->kind.binary.right;
     Bool wants_some = false;
+    Usize position = 0;
+    const ast::Expr *tagged = payload_operand(e, x, &position);
+    if (tagged != nullptr) {
+        state::push_then_expr(e, (state::ThenExpr){.run = payload_test_finish, .expr = x, .span = x->span});
+        state::push_eval(e, tagged, state::no_hint());
+        return state::success();
+    }
     const ast::Expr *operand = option_operand(e, x, &wants_some);
     if (operand != nullptr) {
         state::push_then_expr(e, (state::ThenExpr){.run = option_test_finish, .expr = x, .span = x->span});

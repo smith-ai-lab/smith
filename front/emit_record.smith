@@ -1,0 +1,285 @@
+// front::emit_record: anonymous structs and unions used as types (#2984 of #1631): `struct { I32 a; } one;`, the inline
+// payload of an enumeration's variant, or a field `point: struct { x: f64; y: f64 }`.
+//
+// Layout. An anonymous struct is a record of the table (`Emitter.records`) like a named one, so field access,
+// construction, copies and passing by value take the named-struct paths unchanged: an LLVM named struct of its fields
+// in order, with the data layout's padding (the layout of a literal struct of the same fields). An anonymous union is
+// laid out as a C union of the module is (`make_c_union`): one array of integers as wide as its strictest member's
+// alignment, as big as its biggest member rounded up to that alignment, every member read in place at offset 0
+// (`RecordType.overlay`); with no data layout (no target) it stays `not emitted yet: an anonymous union`.
+//
+// Identity. The checker makes a nominal record per place an anonymous struct is written (`types::build_record`), and it
+// alone decides which values may meet. The emitter cannot tell those places apart from the checker's types, so it names
+// a record by what it holds: the kind, then each field's name and type (integers by signedness and width, other types
+// by their LLVM type), `struct { a: i32; b: ptr; }`. That name is the record's key both from a written type and from
+// the checker's (`from_checked`), so the two meet; two places with the same fields share one LLVM type, which no
+// program can observe, since the checker keeps their values apart. The name is also what messages show.
+//
+// Nesting. A field that is itself an anonymous record is walked with an explicit stack (no recursion), at most 8 deep:
+// deeper is `not emitted yet: an anonymous struct nested more than 8 deep`. A record has at most 64 fields.
+module front::emit_record;
+
+import front::ast;
+import front::emit_memory;
+import front::emit_state as state;
+import front::types;
+import std::arena;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+import <llvm-c/Target.h>;
+
+// The most fields one anonymous record has: the arrays below are on the stack.
+constexpr Usize max_fields = 64;
+
+// The deepest nest of anonymous records walked.
+constexpr Usize max_depth = 8;
+
+// The checker's name of an anonymous record (`types::build_record`).
+export Bool is_anonymous(types::TypeRef t) {
+    if (t == nullptr || t->kind != .record) return false;
+    Str name = types::name_of(t);
+    return state::same_text(name, "(anonymous struct)") || state::same_text(name, "(anonymous union)");
+}
+
+// The spelling of one field's type in a record's key: an integer by signedness and width (`i32` and `u32` are both
+// LLVM's `i32`), `bool`, anything else by its LLVM type (`ptr`, `{ ptr, i64 }`, `%front::ast::Span`).
+static Str spelled(state::Ty ty) {
+    if (ty.kind == .integer) {
+        Str sign = ty.kind.integer.is_signed ? "i" : "u";
+        return state::msg(format::push(sign, ty.kind.integer.bits));
+    }
+    if (ty.kind == .boolean) return state::msg(format::push("bool"));
+    char *printed = c::LLVMPrintTypeToString(ty.llvm);
+    Str text = state::msg(format::push((const char *)printed));
+    c::LLVMDisposeMessage(printed);
+    return text;
+}
+
+// `struct { a: i32; b: ptr; }` (or `union { ... }`): the record's key and name.
+static Str key_of(const Str *names, const state::Ty fields[:], Bool is_union) {
+    Str key = state::msg(format::push(is_union ? "union {" : "struct {"));
+    for (Usize i = 0; i < countof(fields); i++) {
+        Str type = spelled(fields[i]);
+        Str longer = state::msg(format::push(key, " ", names[i], ": ", type, ";"));
+        state::free_text(type);
+        state::free_text(key);
+        key = longer;
+    }
+    Str closed = state::msg(format::push(key, " }"));
+    state::free_text(key);
+    return closed;
+}
+
+static Bool find_keyed(state::Emitter *e, Str key, Usize *found) {
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (state::same_text(e->records[i].name, key)) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The body of an anonymous union: an array of integers as wide as the strictest alignment (at most 8 bytes), as big
+// as the biggest member rounded up to it. False without a data layout.
+static Bool union_body(state::Emitter *e, c::LLVMTypeRef named, const state::Ty fields[:]) {
+    if (e->target_data == nullptr) return false;
+    U64 size = 0;
+    U64 align = 1;
+    for (Usize i = 0; i < countof(fields); i++) {
+        U64 own = c::LLVMABISizeOfType(e->target_data, fields[i].llvm);
+        U64 own_align = (U64)c::LLVMABIAlignmentOfType(e->target_data, fields[i].llvm);
+        if (own > size) size = own;
+        if (own_align > align) align = own_align;
+    }
+    U64 unit = align > 8 ? 8 : align;
+    U64 rounded = (size + align - 1) / align * align;
+    c::LLVMTypeRef lanes[1] = {nullptr};
+    lanes[0] = c::LLVMArrayType2(c::LLVMIntTypeInContext(e->context, (U32)(unit * 8)), rounded / unit);
+    c::LLVMStructSetBody(named, lanes, 1, 0);
+    return true;
+}
+
+// The record of `fields` named `names`: the one already in the table under its key, else a new one.
+static state::TyResult made(state::Emitter *e, const Str *names, const state::Ty fields[:], Bool is_union,
+                            ast::Span span) {
+    Str key = key_of(names, fields, is_union);
+    Usize at = 0;
+    if (find_keyed(e, key, &at)) {
+        state::free_text(key);
+        state::Ty known = e->records[at].ty;
+        return known;
+    }
+    char *label = state::cstr(key);
+    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
+    mem::free(label);
+    if (is_union) {
+        if (!union_body(e, named, fields)) {
+            state::free_text(key);
+            return state::ty_fail("not emitted yet: an anonymous union (no data layout to size it)", span);
+        }
+    } else {
+        c::LLVMTypeRef parts[max_fields];
+        for (Usize i = 0; i < countof(fields); i++)
+            parts[i] = fields[i].llvm;
+        c::LLVMStructSetBody(named, parts, (U32)countof(fields), 0);
+    }
+    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, countof(fields) + 1);
+    for (Usize i = 0; i < countof(fields); i++)
+        infos[i] = (state::FieldInfo){.name = names[i], .ty = fields[i]};
+    state::Ty ty = {.kind = .record, .llvm = named, .name = key};
+    emit_memory::add_record(
+        e, (state::RecordType){
+               .name = key, .ty = ty, .fields = infos[0:countof(fields)], .overlay = is_union, .owned_name = true});
+    return ty;
+}
+
+static state::TyResult too_deep(ast::Span span) {
+    return state::ty_fail("not emitted yet: an anonymous struct nested more than 8 deep", span);
+}
+
+static state::TyResult too_many(ast::Span span) {
+    return state::ty_fail("not emitted yet: an anonymous struct of more than 64 fields", span);
+}
+
+// One written record being walked: the node, the next field to type and the types made so far.
+struct Written {
+    const ast::TypeExpr *node;
+    Usize next;
+    Str names[max_fields];
+    state::Ty fields[max_fields];
+};
+
+typedef Written WrittenList[:];
+
+// The type of a written anonymous struct or union (`TypeExprKind.record`), its fields through `state::type_of`.
+export state::TyResult type_record(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .record) return state::ty_fail("not an anonymous struct", t->span);
+    WrittenList frames = {};
+    frames = mem::realloc(frames, max_depth);
+    frames[0].node = t;
+    frames[0].next = 0;
+    Usize depth = 1;
+    state::TyResult result = state::ty_fail("not an anonymous struct", t->span);
+    while (depth > 0) {
+        Written *f = &frames[depth - 1];
+        if (f->node->kind != .record) break;
+        ast::FieldDecl members[:] = f->node->kind.record.fields;
+        Usize count = countof(members);
+        if (count > max_fields) {
+            result = too_many(f->node->span);
+            break;
+        }
+        if (f->next < count) {
+            ast::FieldDecl field = members[f->next];
+            if (field.bit_width != nullptr) {
+                result = state::ty_fail("not emitted yet: bit-field", field.span);
+                break;
+            }
+            if (field.type->kind == .record) {
+                if (depth == max_depth) {
+                    result = too_deep(field.span);
+                    break;
+                }
+                frames[depth].node = field.type;
+                frames[depth].next = 0;
+                depth += 1;
+                continue;
+            }
+            state::TyResult leaf = state::type_of(e, field.type);
+            if (leaf == .error) {
+                result = leaf;
+                break;
+            }
+            f->names[f->next] = field.name;
+            f->fields[f->next] = leaf.ok;
+            f->next += 1;
+            continue;
+        }
+        state::TyResult built = made(e, &f->names[0], f->fields[0:count], f->node->kind.record.is_union, f->node->span);
+        depth -= 1;
+        if (built == .error) {
+            result = built;
+            break;
+        }
+        if (depth == 0) {
+            result = built;
+            break;
+        }
+        Written *outer = &frames[depth - 1];
+        if (outer->node->kind != .record) break;
+        outer->names[outer->next] = outer->node->kind.record.fields[outer->next].name;
+        outer->fields[outer->next] = built.ok;
+        outer->next += 1;
+    }
+    mem::free(frames.data);
+    return result;
+}
+
+// One checked record being walked.
+struct Checked {
+    types::TypeRef node;
+    Usize next;
+    Str names[max_fields];
+    state::Ty fields[max_fields];
+};
+
+typedef Checked CheckedList[:];
+
+// The checker's anonymous record `t` as a `Ty`: the same record a written type of the same fields makes.
+export state::TyResult from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
+    if (!is_anonymous(t)) return state::ty_fail("not an anonymous struct", span);
+    CheckedList frames = {};
+    frames = mem::realloc(frames, max_depth);
+    frames[0].node = t;
+    frames[0].next = 0;
+    Usize depth = 1;
+    state::TyResult result = state::ty_fail("not an anonymous struct", span);
+    while (depth > 0) {
+        Checked *f = &frames[depth - 1];
+        Usize count = countof(types::slots_of(f->node).items);
+        if (count > max_fields) {
+            result = too_many(span);
+            break;
+        }
+        if (f->next < count) {
+            types::Slot slot = types::slots_of(f->node).items[f->next];
+            if (is_anonymous(slot.type)) {
+                if (depth == max_depth) {
+                    result = too_deep(span);
+                    break;
+                }
+                frames[depth].node = slot.type;
+                frames[depth].next = 0;
+                depth += 1;
+                continue;
+            }
+            state::TyResult leaf = state::type_of_checked(e, slot.type, span);
+            if (leaf == .error) {
+                result = leaf;
+                break;
+            }
+            f->names[f->next] = slot.name;
+            f->fields[f->next] = leaf.ok;
+            f->next += 1;
+            continue;
+        }
+        state::TyResult built = made(e, &f->names[0], f->fields[0:count], types::is_union_record(f->node), span);
+        depth -= 1;
+        if (built == .error) {
+            result = built;
+            break;
+        }
+        if (depth == 0) {
+            result = built;
+            break;
+        }
+        Checked *outer = &frames[depth - 1];
+        outer->names[outer->next] = types::slots_of(outer->node).items[outer->next].name;
+        outer->fields[outer->next] = built.ok;
+        outer->next += 1;
+    }
+    mem::free(frames.data);
+    return result;
+}

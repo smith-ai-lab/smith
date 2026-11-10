@@ -289,6 +289,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .tuple)
         return state::type_of(e, base); // `*mut (f64, f32)`: front::emit's type_of builds the tuple
     if (base->kind == .type_of) return state::type_of(e, base); // `typeof(v)`: front::emit's type_of asks the checker
+    if (base->kind == .record) return state::type_of(e, base);  // `*struct { ... }`: front::emit_record
     if (base->kind != .named)
         return state::ty_fail_with(base->span, "not emitted yet: a type of kind `", state::type_kind_name(base), "`");
     ast::Path path = base->kind.named.path;
@@ -323,8 +324,16 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     }
     types::TypeRef bound = nullptr;
     if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
-    if (countof(e->import_scope) > 0) return state::type_of(e, base);       // a record of the imported module (`*Tap`)
-    if (countof(e->instance_scope) > 0 && e->options.checked != nullptr) {  // `Written` in a generic's instance
+    if (countof(e->import_scope) > 0 && e->scoped_leaf != base) {           // a record of the imported module (`*Tap`)
+        // `type_of` sends a name it does not find back here: the second visit of the same name ends as an unknown
+        // type instead of a loop that overflows the stack (#2984).
+        const ast::TypeExpr *outer = e->scoped_leaf;
+        e->scoped_leaf = base;
+        state::TyResult found = state::type_of(e, base);
+        e->scoped_leaf = outer;
+        return found;
+    }
+    if (countof(e->instance_scope) > 0 && e->options.checked != nullptr) { // `Written` in a generic's instance
         const types::Symbol *own =
             types::lookup(&e->options.checked->scopes, state::msg(format::push(e->instance_scope, name)));
         if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
@@ -1114,6 +1123,14 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
             if (ty->kind != .pointer || ty->kind.pointer.element == nullptr)
                 return state::failf(node->span, "`->` on ", ty->name);
             record = *ty->kind.pointer.element;
+        }
+        if (record.kind == .slice && state::same_text(name, "data")) { // `sizeof(xs.data.*)` (std.mem's realloc)
+            *ty = pointer_to(e, *record.kind.slice.element, 0);
+            return state::success();
+        }
+        if (record.kind == .slice && state::same_text(name, "count")) {
+            state::scalar_type(e, "usize", ty);
+            return state::success();
         }
         Usize field = 0;
         Usize at = 0;
@@ -2067,7 +2084,9 @@ export void release(state::Emitter *e) {
         mem::free(e->owned);
         e->owned = next;
     }
-    for (Usize i = 0; i < e->record_count; i++)
+    for (Usize i = 0; i < e->record_count; i++) {
         mem::free(e->records[i].fields.data);
+        if (e->records[i].owned_name) state::free_text(e->records[i].name);
+    }
     mem::free(e->records.data);
 }
