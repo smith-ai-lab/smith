@@ -48,3 +48,7 @@ it. `.content_hash` is declared but not implemented. The
 ## Decisions
 
 - `smith build` runs build.c, then its own executor, with no ninja (`SMITH_NINJA` is the way out).
+
+## build.c's arena is fixed and never freed
+
+Every string, list and file `smith_lines` reads stays in build.c's 64 MB arena until the process ends. So build.c reads a file once per run and keeps the answer (`build_marked` in build.c answers each mark once), and never allocates in proportion to something that grows without bound (files in a folder it walks, entries of a cache). On 2026-11-10 `build_marked` read all of lib/std 19 times, 47 of the 64 MB on Linux, and the macOS job died with "too many strings and lists" (#3032). An overflow now says how much was used and the last file read, and a build above three quarters of the arena prints a warning (`smith: warning: build.c used N of M bytes`) that CI shows.

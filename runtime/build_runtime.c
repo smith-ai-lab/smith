@@ -93,7 +93,8 @@ typedef struct {
 
 static alignas(16) char smith_arena[smith_arena_size];
 static size_t smith_arena_used;
-static const char *smith_arena_last_file; // the file smith_read_file read last: the likeliest thing that filled the arena
+static const char
+    *smith_arena_last_file; // the file smith_read_file read last: the likeliest thing that filled the arena
 static SmithEntry smith_entries[smith_entries_max];
 static size_t smith_entry_count;
 static SmithPool smith_pools[smith_pools_max];
@@ -217,10 +218,11 @@ static void *smith_alloc(size_t size) {
     if (aligned > smith_arena_size - smith_arena_used) {
         // name what filled it (#3032): "build.c: too many strings and lists" alone cost a day of guessing
         smith_context = nullptr;
-        smith_fail("too many strings and lists (bytes) (limit %zu); %zu used, a request for %zu more; the last file read "
-                   "was %s",
-                   smith_arena_size, smith_arena_used, aligned,
-                   smith_arena_last_file != nullptr ? smith_arena_last_file : "(none)");
+        smith_fail(
+            "too many strings and lists (bytes) (limit %zu); %zu used, a request for %zu more; the last file read "
+            "was %s",
+            smith_arena_size, smith_arena_used, aligned,
+            smith_arena_last_file != nullptr ? smith_arena_last_file : "(none)");
     }
     void *result = smith_arena + smith_arena_used;
     smith_arena_used += aligned;

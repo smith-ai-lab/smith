@@ -168,6 +168,7 @@ export void test_build_errors_an_overflowed_arena_names_the_last_file_read() {
     defer scratch::clean(&p);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("arena: a build.c that fills its arena fails", 2, &run);
-    scratch::expect_contains("arena: the message names the limit", run.err, "too many strings and lists (bytes) (limit 67108864)");
+    scratch::expect_contains("arena: the message names the limit", run.err,
+                             "too many strings and lists (bytes) (limit 67108864)");
     scratch::expect_contains("arena: and the last file read", run.err, "the last file read was big.txt");
 }
