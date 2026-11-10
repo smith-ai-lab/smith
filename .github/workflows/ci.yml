@@ -28,6 +28,10 @@ on:
         description: "Only by hand, for a check that must finish while the queue is never idle: skip yield-to-queue's self-cancel"
         type: boolean
         default: false
+      uncached:
+        description: "Only by hand (#2955): run the count as the nightly does, with no cache, and compare it row by row with the cached count of the same commit"
+        type: boolean
+        default: false
   merge_group:
   push:
     branches: [main]
@@ -71,6 +75,8 @@ jobs:
       # whether the front-end count runs (#2914): every queue entry and nightly run, and a PR check whose diff touches
       # what can change the count
       count: ${{ steps.scope.outputs.count }}
+      # the count is run with no cache and compared with the cached one (#2955): the nightly run, or a dispatch by hand
+      uncached: ${{ steps.scope.outputs.uncached }}
       # the base a PR check is compared against (the count's gate reads main's last count from it)
       base: ${{ steps.pr.outputs.base }}
       # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
@@ -152,6 +158,7 @@ jobs:
         id: scope
         env:
           BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
+          UNCACHED_INPUT: ${{ inputs.uncached }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
@@ -191,10 +198,18 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
             if printf '%s\n' "$changed" | grep -E '^(front/|lib/std/|shim/cimport|runtime/front|runtime/lang|build[.]c$)' >/dev/null; then count=true; fi
           fi
+          # The nightly run (#2955), or a dispatch by hand that asks for it, counts with no cache and compares the table
+          # with the cached count of the same commit: the soundness check every count cache names. It needs the count.
+          uncached=false
+          if [ "$GITHUB_EVENT_NAME" = schedule ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$UNCACHED_INPUT" = true ]; }; then
+            uncached=true
+            [ "$scope" = full ] && count=true
+          fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope (macos: $mac_run, count: $count)" >>"$GITHUB_STEP_SUMMARY"
+          echo "uncached=$uncached" >>"$GITHUB_OUTPUT"
+          echo "scope: $scope (macos: $mac_run, count: $count, uncached: $uncached)" >>"$GITHUB_STEP_SUMMARY"
 
       - name: The pull requests this queue entry tests
         id: prs
@@ -977,7 +992,8 @@ jobs:
           # a PR check lints in `check-fmt-prove`, so it owes no `check-lint` (#2856)
           if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to
-          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed FRONTEND_COVERAGE"; fi
+          # so does the nightly run (#2955), whose count is compared with the cached one
+          if [ "$SCOPE" = full ] && { [ "$EVENT" = merge_group ] || [ "$EVENT" = schedule ]; }; then owed="$owed FRONTEND_COVERAGE"; fi
           # a PR check owes it when its diff reaches what the count reads (#2914)
           if [ "$SCOPE" = full ] && [ "$EVENT" = workflow_dispatch ] && [ "$COUNT" = true ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
@@ -1353,7 +1369,7 @@ jobs:
     # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
     # count of a queue run is this job, the merge and the gate (3 jobs); a cold one packs the build for the shards.
     needs: [changes, pack]
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.count == 'true' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.outputs.count == 'true' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
     # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
@@ -1397,6 +1413,7 @@ jobs:
         # count's jobs publish; its own set (#2939)
         with:
           tests: "false"
+          fresh: ${{ needs.changes.outputs.uncached }}
           imports-from: count
       - name: API budget (after test-cache)
         uses: ./.github/actions/api-budget
@@ -1428,7 +1445,8 @@ jobs:
           [ "$status" = 0 ] && echo "$(echo $excluded | wc -w) objects left out of the key, no caller outside the verbs' own code"
           exit $status
       - name: Restore main's fixed files
-        # a failure only leaves the fix cold
+        # a failure only leaves the fix cold. The nightly count (#2955) restores nothing: its rows are measured fresh
+        if: ${{ needs.changes.outputs.uncached != 'true' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -1480,8 +1498,9 @@ jobs:
           # A PR check (#2914) runs the first two parts of a count that has more: about a quarter of the rows, spread over
           # the tree as the parts split it. All eight would cost the 65 runner-minutes of a cold queue run out of the
           # 20 shared jobs, for a count the queue repeats on the very commit anyway.
+          # The nightly count (#2955) is never sampled: all the parts, measured with no cache.
           run=$n; sampled=false
-          if [ "${{ github.event_name }}" = workflow_dispatch ] && [ "$n" -gt 2 ]; then run=2; sampled=true; fi
+          if [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ needs.changes.outputs.uncached }}" != true ] && [ "$n" -gt 2 ]; then run=2; sampled=true; fi
           echo "count=$n" >>"$GITHUB_OUTPUT"
           echo "sampled=$sampled" >>"$GITHUB_OUTPUT"
           echo "missed=${missing:-0}" >>"$GITHUB_OUTPUT"
@@ -1576,7 +1595,7 @@ jobs:
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
     # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
     needs: [changes, frontend-coverage-fix]
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.count == 'true' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.count == 'true' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -1614,6 +1633,7 @@ jobs:
         # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
         with:
           tests: "false"
+          fresh: ${{ needs.changes.outputs.uncached }}
           imports-from: count count-${{ matrix.shard }}
       - name: API budget (after test-cache)
         uses: ./.github/actions/api-budget
@@ -1684,7 +1704,7 @@ jobs:
     # next group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count took 9 to 19 minutes on 4 cores on 2026-11-06,
     # so 30 keeps a slow count from failing its group now that it gates (10 groups hit the old 20 that morning).
     needs: [changes, build-linux, frontend-coverage-fix, frontend-coverage-shard]
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.count == 'true' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.outputs.count == 'true' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1808,7 +1828,8 @@ jobs:
         if: always()
         shell: bash
         env:
-          BASE: ${{ github.event.merge_group.base_sha || needs.changes.outputs.base }}
+          BASE: ${{ (needs.changes.outputs.uncached == 'true' && github.sha) || github.event.merge_group.base_sha || needs.changes.outputs.base }}
+          UNCACHED: ${{ needs.changes.outputs.uncached }}
           HEAD_REF: ${{ github.event.merge_group.head_ref }}
           SAMPLED: ${{ needs.frontend-coverage-fix.outputs.sampled }}
           PR_NUMBER: ${{ inputs.pr }}
@@ -1838,9 +1859,42 @@ jobs:
             before=$(sed -n "$pass" "$dir/output.txt" 2>/dev/null | tail -n 1)
             [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
           done
+          if [ -z "$before" ] && [ "$UNCACHED" = true ]; then
+            echo "::error::no cached count on the last 20 commits to compare the uncached count with"
+            echo "nightly count: $now files pass (cached: none found)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           if [ -z "$before" ]; then
             echo "no count on main's last 20 commits: nothing to compare with"
             echo "count: no main results to compare (no passing count on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$UNCACHED" = true ]; then
+            # The nightly count (#2955) has no cache: it must equal the cached count of the same commit, row by row. The
+            # table holds, per file, its rows (a line starting at the path, then the indented lines of its imports); a
+            # file whose rows differ, or that only one table has, is a cache that served a stale result.
+            [ -f "$dir/results.tsv" ] || { echo "::error::the cached count of ${sha:0:7} has no results.tsv to compare with"; exit 1; }
+            diffs=$(awk -F'\t' '
+              FNR == 1 { f++; cur = "" }
+              /^[ \t]/ { if (cur != "") blk[f, cur] = blk[f, cur] "\037" $0; next }
+              { cur = $1; all[cur] = 1; if ((f, cur) in blk) blk[f, cur] = blk[f, cur] "\037" $0; else blk[f, cur] = $0 }
+              END {
+                for (p in all) {
+                  a = ((1, p) in blk) ? blk[1, p] : "(no rows)"; b = ((2, p) in blk) ? blk[2, p] : "(no rows)"
+                  if (a == b) continue
+                  nx = split(a, x, "\037"); ny = split(b, y, "\037")
+                  for (i = 1; i <= nx && i <= ny && x[i] == y[i]; i++) ;
+                  printf "nightly count: differs %s: cached [%s] uncached [%s]\n", p, x[i], y[i]
+                }
+              }' "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | LC_ALL=C sort)
+            nd=$(printf '%s' "$diffs" | grep -c . || true)
+            echo "nightly count: $now files pass (cached: $before, count of ${sha:0:7}, this run ${GITHUB_SHA:0:7})" | tee -a "$GITHUB_STEP_SUMMARY"
+            [ "$nd" -gt 0 ] && printf '%s\n' "$diffs" | head -n 200 | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$nd" -gt 0 ] || [ "$now" != "$before" ]; then
+              echo "::error::the uncached count differs from the cached one of ${sha:0:7}: $nd files with other rows, $now against $before files pass. A cache served a stale row: each file named above is a ticket"
+              exit 1
+            fi
+            echo "nightly count: no row differs from the cached count"
             exit 0
           fi
           # the files that went from pass to fail or back against main's last passing count (#2879), in the log and the summary
