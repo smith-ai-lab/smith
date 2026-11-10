@@ -253,8 +253,9 @@ export void test_front_types_module_parameter_loop_or_local_named_like_its_last_
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    types::Checked r = check_text("import lib.math\n\nstruct Ty:\n    kind: i32\n\nfn run(t: Ty) -> i32:\n    math: Ty = "
-                                  "t\n    return math.kind\n");
+    types::Checked r =
+        check_text("import lib.math\n\nstruct Ty:\n    kind: i32\n\nfn run(t: Ty) -> i32:\n    math: Ty = "
+                   "t\n    return math.kind\n");
     test::check_condition(has(errors_of(&r), "hides the module `lib.math`"));
     test::check_condition(!has(errors_of(&r), "has no public"));
 }

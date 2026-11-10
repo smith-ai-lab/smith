@@ -4595,7 +4595,8 @@ export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *f
 // front of it: empty when no header does. `smith lint --fix` writes the binding at `span` (#2287).
 export Str c_binding_of(const Checked *r, Str name) {
     for (Usize i = 0; i < r->binding_count; i++)
-        if (binding_visible(&r->bindings[i], r->prefix) && header_has(r->bindings[i].header, name)) return r->bindings[i].name;
+        if (binding_visible(&r->bindings[i], r->prefix) && header_has(r->bindings[i].header, name))
+            return r->bindings[i].name;
     return "";
 }
 
