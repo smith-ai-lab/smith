@@ -93,6 +93,11 @@ typedef struct {
 
 static alignas(16) char smith_arena[smith_arena_size];
 static size_t smith_arena_used;
+// bytes per allocating function (#3034): the 75% warning names the top five, so the next growth is found in one log
+constexpr size_t smith_arena_callers_max = 96;
+static const char *smith_arena_caller_name[smith_arena_callers_max];
+static size_t smith_arena_caller_bytes[smith_arena_callers_max];
+static size_t smith_arena_caller_count;
 static const char
     *smith_arena_last_file; // the file smith_read_file read last: the likeliest thing that filled the arena
 static SmithEntry smith_entries[smith_entries_max];
@@ -212,7 +217,19 @@ static void smith_report_problems(void) {
     smith_fail("too many %s (limit %zu)", things, limit);
 }
 
-static void *smith_alloc(size_t size) {
+static void smith_arena_charge(const char *caller, size_t bytes) {
+    for (size_t i = 0; i < smith_arena_caller_count; i++) { // bounded
+        if (strcmp(smith_arena_caller_name[i], caller) == 0) {
+            smith_arena_caller_bytes[i] += bytes;
+            return;
+        }
+    }
+    if (smith_arena_caller_count == smith_arena_callers_max) return; // the rest stay uncounted
+    smith_arena_caller_name[smith_arena_caller_count] = caller;
+    smith_arena_caller_bytes[smith_arena_caller_count++] = bytes;
+}
+
+static void *smith_alloc_from(size_t size, const char *caller) {
     SMITH_ASSERT(size < smith_arena_size);
     size_t aligned = (size + 15U) & ~(size_t)15U;
     if (aligned > smith_arena_size - smith_arena_used) {
@@ -226,16 +243,36 @@ static void *smith_alloc(size_t size) {
     }
     void *result = smith_arena + smith_arena_used;
     smith_arena_used += aligned;
+    smith_arena_charge(caller, aligned);
     return result;
 }
 
-static const char *smith_copy_string(const char *text) {
+#define smith_alloc(size) smith_alloc_from((size), __func__)
+
+// The top five allocating functions by bytes, on stderr (#3034).
+static void smith_arena_print_top(void) {
+    bool shown[smith_arena_callers_max] = {};
+    for (size_t round = 0; round < 5 && round < smith_arena_caller_count; round++) { // bounded
+        size_t best = smith_arena_callers_max;
+        for (size_t i = 0; i < smith_arena_caller_count; i++) { // bounded
+            if (!shown[i] &&
+                (best == smith_arena_callers_max || smith_arena_caller_bytes[i] > smith_arena_caller_bytes[best]))
+                best = i;
+        }
+        shown[best] = true;
+        fprintf(stderr, "smith:   %zu bytes by %s\n", smith_arena_caller_bytes[best], smith_arena_caller_name[best]);
+    }
+}
+
+static const char *smith_copy_string_from(const char *text, const char *caller) {
     SMITH_ASSERT(text != nullptr);
     size_t length = strlen(text);
-    char *copy = smith_alloc(length + 1);
+    char *copy = smith_alloc_from(length + 1, caller);
     memcpy(copy, text, length + 1);
     return copy;
 }
+
+#define smith_copy_string(text) smith_copy_string_from((text), __func__)
 
 static size_t smith_count(const char *const *list) {
     if (list == nullptr) return 0;
@@ -246,11 +283,13 @@ static size_t smith_count(const char *const *list) {
     return 0;
 }
 
-static const char **smith_new_list(size_t count) {
-    const char **list = (const char **)smith_alloc((count + 1) * sizeof *list);
+static const char **smith_new_list_from(size_t count, const char *caller) {
+    const char **list = (const char **)smith_alloc_from((count + 1) * sizeof *list, caller);
     list[count] = nullptr;
     return list;
 }
+
+#define smith_new_list(count) smith_new_list_from((count), __func__)
 
 // A nullptr list reads as empty, so an optional field left unset needs no care.
 static const char *const *smith_copy_list(const char *const *list) {
@@ -5617,6 +5656,7 @@ int main(int argc, char **argv) {
     if (smith_arena_used > smith_arena_size / 4 * 3)
         fprintf(stderr, "smith: warning: build.c used %zu of %zu bytes of its arena (%zu%%)\n", smith_arena_used,
                 smith_arena_size, smith_arena_used / (smith_arena_size / 100));
+    if (smith_arena_used > smith_arena_size / 4 * 3) smith_arena_print_top();
     return 0;
 }
 #endif
