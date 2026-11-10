@@ -154,6 +154,26 @@ export void test_lint_a_second_time_runs_clang_tidy_on_no_file() {
     scratch::expect_contains("... and runs it on none", second.out, "0 run, 4 cached");
 }
 
+// The reason a file runs says which file and what its first key was made of, and the last line splits the setup
+// (#2995).
+export void test_lint_says_why_a_file_runs_and_where_the_setup_went() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, "SMITH_LINT_CACHE=why SMITH_OUTPUT=full smith lint 2>&1");
+    scratch::expect_status("the first lint passes", 0, &first);
+    scratch::expect_contains("the reason names a file", first.out, ": runs: no manifest of an earlier run");
+    scratch::expect_contains("... and the inputs of its key", first.out, "key inputs: smith+env ");
+    scratch::expect_contains("... by name", first.out, ", .clang-tidy ");
+    scratch::expect_contains("the last line splits the setup", first.out, "setup ");
+    scratch::expect_contains("... into the build info", first.out, ": build info ");
+    scratch::expect_contains("... what the compiles wait for", first.out, ", needs ");
+    scratch::expect_contains("... and the keys", first.out, ", plan and hash ");
+}
+
 export void test_lint_with_one_file_changed_runs_only_it() {
     scratch::Project p = prepared();
     defer scratch::clean(&p);

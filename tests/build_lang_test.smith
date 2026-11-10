@@ -290,7 +290,7 @@ export void test_build_lang_headers_are_generated_without_the_folder() {
 
 // Headers belong to the smith that wrote them (#2594): a build by another smith writes them again, with no error and no
 // hand `rm`, and the stamp names the smith that finished. Two copies of smith stand in for a release and a build from
-// main; the copy has a mtime of its own, so its identity differs.
+// main; the copy has one byte more, so its identity differs (a copy of the same bytes is the same smith, #2995).
 export void test_build_lang_headers_follow_the_smith_that_builds() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -299,13 +299,33 @@ export void test_build_lang_headers_follow_the_smith_that_builds() {
     scratch::Project p = lang_project("module-three");
     defer scratch::clean(&p);
     scratch::Run run = scratch::sh(
-        &p, "unset SMITH_HEADERS_FROM; real=$(command -v smith); cp \"$real\" ./smith-b && touch ./smith-b && "
+        &p, "unset SMITH_HEADERS_FROM; real=$(command -v smith); cp \"$real\" ./smith-b && printf x >> ./smith-b && "
             "smith build >/dev/null 2>&1; a=$?; one=$(cat .smith/include/smith/.written-by); "
             "PATH=$PWD:$PATH; ./smith-b build >/dev/null 2>&1; b=$?; two=$(cat .smith/include/smith/.written-by); "
             "smith build >/dev/null 2>&1; c=$?; three=$(cat .smith/include/smith/.written-by); "
             "echo \"$a $b $c $([ \"$one\" != \"$two\" ] && echo moved) $([ \"$one\" = \"$three\" ] && echo back)\"");
     scratch::expect_text("headers: three builds by two smiths pass, and the stamp follows", "0 0 0 moved back",
                          run.out);
+}
+
+// A copy of the same bytes, with a modification time of its own, is the same smith: its build leaves the stamp and the
+// headers alone, so a link or the restore of a build does not make every header step dirty again (#2995).
+export void test_build_lang_headers_stay_for_a_copy_of_the_same_smith() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p,
+        "unset SMITH_HEADERS_FROM; real=$(command -v smith); cp \"$real\" ./smith-b && "
+        "smith build >/dev/null 2>&1; a=$?; one=$(cat .smith/include/smith/.written-by); "
+        "touch -t 200001010000 .smith/include/smith/arena.h; touch ./smith-b; "
+        "PATH=$PWD:$PATH; ./smith-b build >/dev/null 2>&1; b=$?; two=$(cat .smith/include/smith/.written-by); "
+        "echo \"$a $b $([ \"$one\" = \"$two\" ] && echo same) "
+        "$(date -r .smith/include/smith/arena.h +%Y 2>/dev/null || stat -f %Sm -t %Y .smith/include/smith/arena.h)\"");
+    scratch::expect_text("headers: a copy of the same smith leaves them as they are", "0 0 same 2000", run.out);
 }
 
 // The helpers are under the compiler; the top level is only verbs.

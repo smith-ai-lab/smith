@@ -367,8 +367,11 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
         const char *source = smith_fmt(b, "%s/%s.smith", build_library_folder, name);
         const char *depfile = smith_fmt(b, "%s.d", header);
         SmithStep step = {
-            .command =
-                smith_list(b, config->cc, "--smith-header", source, "-o", header, "-MD", "-MF", depfile, nullptr),
+            // With the flags smith.c writes smith's own headers with (smith_header_job_start): a header made without
+            // them differs in its includes, the two writers then took turns rewriting it, and every build relinked
+            // smith (#2994).
+            .command = smith_cat(b, smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
+                                 build_smith_flags(b, config), smith_list(b, "-MD", "-MF", depfile, nullptr), nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs =
                 smith_cat(b, smith_list(b, compiler, nullptr), build_header_imports(b, source, name), nullptr),

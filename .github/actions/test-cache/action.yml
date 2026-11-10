@@ -42,58 +42,66 @@ runs:
       if: inputs.fresh != 'true'
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
         OS: ${{ inputs.os }}
         TESTS: ${{ inputs.tests }}
         FROM: ${{ inputs.imports-from }}
+        REPO: ${{ github.repository }}
       run: |
         # The sets of the newest commit that published them (#2938): the commit under test, then its first parents,
-        # newest first, at most 20, each by its tags (`test-cache-<sha7>-<job>`, or `test-cache-<sha7>` before #2870),
-        # so no page of releases is read (the repository has hundreds; the newest commit's fell past the first page,
-        # #2891). In a merge queue a group's first parent is the group ahead of it, so a run reads the sets of the groups
+        # newest first, at most 20, each by its tags (`test-cache-<sha7>-<job>`, or `test-cache-<sha7>` before #2870).
+        # In a merge queue a group's first parent is the group ahead of it, so a run reads the sets of the groups
         # before it, then main's; in a pull request it is main. The test store and the import cache may come from two
-        # commits, and the import cache only from the jobs `imports-from` names. A tag whose release was pruned answers
-        # 404 and gh prints its body: only URLs are kept. Writes
-        # <kind>-urls (one URL a line) and <kind>-from (which commit, for the summary) to RUNNER_TEMP.
+        # commits, and the import cache only from the jobs `imports-from` names, the newest of each pattern (#2978).
+        # No REST call (#2978; the walk made about 18 a commit, and the workflow token's pool ran out): the parents come
+        # from git (`rev-list`, after a fetch when the checkout is shallow), the tags of every commit from one
+        # `git ls-remote --tags`, and an asset by its download URL (`releases/download/<tag>/<file>`, the repository is
+        # public; the name is known from the OS and the kind), probed with a HEAD request, which neither needs a token nor
+        # counts against the pool. A tag without the asset answers 404 and is skipped. A macOS job looks only at the
+        # `-macos` tag of a commit (its sets are the only ones it can use), not at every Linux job's. Writes
+        # <kind>-urls (tests: one URL a line; imports: `<job> <URL>`) and <kind>-from to RUNNER_TEMP.
         t="$RUNNER_TEMP"; : >"$t/tests-urls"; : >"$t/imports-urls"
         echo "none in the commits tried" >"$t/tests-from"; echo "none in the commits tried" >"$t/imports-from"
         want_tests=$TESTS; want_imports=true
-        sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .sha 2>/dev/null || true)
+        git rev-parse --verify -q "$GITHUB_SHA^{commit}" >/dev/null 2>&1 || git fetch -q --no-tags --depth=25 origin "$GITHUB_SHA" 2>/dev/null || true
+        git rev-list --first-parent -n 20 "$GITHUB_SHA" >"$t/commits" 2>/dev/null ||
+          git rev-list --first-parent -n 20 FETCH_HEAD >"$t/commits" 2>/dev/null || : >"$t/commits"
+        tags=$(git ls-remote --tags origin 'refs/tags/test-cache-*' 2>/dev/null | sed 's#.*refs/tags/##' || true)
         back=0
-        while [ -n "$sha" ] && [ "$back" -lt 20 ] && { [ "$want_tests" = true ] || [ "$want_imports" = true ]; }; do
-          assets=$(for tag in $(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/test-cache-${sha:0:7}" --jq '.[].ref|sub("refs/tags/";"")' 2>/dev/null); do
-              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq ".assets[]|\"${tag#test-cache-*-} \\(.name) \\(.url)\"" 2>/dev/null || true
-            done | grep ' https://' || true)
+        while read -r sha; do
+          { [ "$want_tests" = true ] || [ "$want_imports" = true ]; } || break
+          mine=$(printf '%s\n' "$tags" | grep "^test-cache-${sha:0:7}" || true)
           for kind in tests imports; do
             want=want_$kind
             [ "${!want}" = true ] || continue
-            urls=$(served=""; printf '%s\n' "$assets" | while read -r job name url; do
-                [ "$name" = "smith-$kind-$OS.tar.gz" ] || continue
-                ok=true
-                if [ "$kind" = imports ] && [ -n "$FROM" ]; then
-                  # one set a pattern (#2978): a set holds what its job restored plus what it stored, so the sets that a
-                  # pattern like `linux-*` names hold the same entries over and over (six sets of 613 MB, 5.3 minutes);
-                  # the first (any one) is enough. A pattern's later sets are left out.
-                  ok=false; set -f # the patterns are words, not files of the working folder
-                  for pattern in $FROM; do
-                    if [[ $job == $pattern && " $served " != *" $pattern "* ]]; then ok=true; served="$served $pattern"; break; fi # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
-                  done
-                fi
-                [ "$ok" = true ] && { [ "$kind" = imports ] && echo "$job $url" || echo "$url"; }
-              done || true)
+            urls=""
+            served=""
+            for tag in $mine; do
+              job=${tag#test-cache-*-}; [ "$job" = "$tag" ] && job=""
+              if [ "$OS" = macos ] && [ "$job" != macos ]; then continue; fi
+              if [ "$OS" != macos ] && [ "$job" = macos ]; then continue; fi
+              if [ "$kind" = imports ] && [ -n "$FROM" ]; then
+                ok=false; set -f # the patterns are words, not files of the working folder
+                for pattern in $FROM; do
+                  if [[ $job == $pattern && " $served " != *" $pattern "* ]]; then ok=true; served="$served $pattern"; break; fi # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
+                done
+                [ "$ok" = true ] || continue
+              fi
+              url="https://github.com/$REPO/releases/download/$tag/smith-$kind-$OS.tar.gz"
+              code=$(curl -sIL -o /dev/null -w '%{http_code}' --retry 2 "$url" 2>/dev/null || true)
+              [ "$code" = 200 ] || continue
+              if [ "$kind" = imports ]; then urls="$urls$job $url"$'\n'; else urls="$urls$url"$'\n'; fi
+            done
             [ -n "$urls" ] || continue
-            printf '%s\n' "$urls" >"$t/$kind-urls"
+            printf '%s' "$urls" >"$t/$kind-urls"
             echo "commit ${sha:0:7}, $back first parents back" >"$t/$kind-from"
             printf -v "$want" false
           done
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.parents[0].sha // empty' 2>/dev/null || true)
           back=$((back + 1))
-        done
+        done <"$t/commits"
     - name: Restore the test-result store
       if: inputs.tests == 'true'
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
         OS: ${{ inputs.os }}
         FRESH: ${{ inputs.fresh }}
       run: |
@@ -101,11 +109,11 @@ runs:
         if [ "$FRESH" = true ]; then echo "test store: fresh run, nothing restored" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         # every store of the commit the step above found: one per job that ran tests (a part's store holds what it
         # restored plus what it added, so a set with a part missing is still a whole store). REST, plain HTTPS download
-        # (retried: release downloads return 504 now and then, #2792)
+        # (retried: release downloads return 504 now and then, #2792; a plain download URL, no token and no API call, #2978)
         urls=$(cat "$RUNNER_TEMP/tests-urls"); from=$(cat "$RUNNER_TEMP/tests-from")
         got=0
         for url in $urls; do
-          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
+          curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
             tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$dir" && got=$((got + 1))
         done
         if [ "$got" -gt 0 ]; then
@@ -116,7 +124,6 @@ runs:
     - name: Restore the import cache
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
         OS: ${{ inputs.os }}
         FRESH: ${{ inputs.fresh }}
       run: |
@@ -132,7 +139,7 @@ runs:
         while read -r set_name url; do
           [ -n "$url" ] || continue
           start=$SECONDS; err="$RUNNER_TEMP/imports.err"
-          if ! gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>"$err"; then
+          if ! curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>"$err"; then
             echo "import cache: set $set_name: FAILED at download: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"; continue
           fi
           mb=$(( $(wc -c <"$RUNNER_TEMP/imports.tar.gz") / 1048576 ))

@@ -1260,18 +1260,22 @@ jobs:
           # Looked up by tag, never by listing: the repository has hundreds of releases and the list is in no order of
           # date, so its first 30 held none of these (#2974). Newest first along the first parents of HEAD, count-fixed
           # before step-cache, 20 commits back at most.
-          d=$(mktemp -d); tag=; asset=; back=0
+          d=$(mktemp -d); tag=; asset=; id=; back=0
           for prefix in count-fixed step-cache; do
             k=0
             for sha in $(git rev-list --first-parent -n 21 HEAD); do
               t="$prefix-${sha:0:7}"
-              a=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$t" --jq '[.assets[].name]|map(select(.=="count-fixed.tar.zst" or .=="count-fixed.tar.gz"))|sort|reverse|.[0] // empty' 2>/dev/null || true)
-              if [ -n "$a" ]; then tag=$t; asset=$a; back=$k; break 2; fi
+              # a 404 makes gh exit non-zero but still print the error body to stdout: `|| a=` drops it (#2974)
+              a=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$t" --jq '[.assets[]|select(.name=="count-fixed.tar.zst" or .name=="count-fixed.tar.gz")]|sort_by(.name)|reverse|.[0]|select(.)|"\(.id) \(.name)"' 2>/dev/null) || a=
+              if [ -n "$a" ]; then tag=$t; id=${a% *}; asset=${a#* }; back=$k; break 2; fi
               k=$((k + 1))
             done
           done
           if [ -z "$tag" ]; then echo "fixed files: none in the last 20 commits"; exit 0; fi
-          gh release download "$tag" -D "$d" -p "$asset"
+          # by the asset's id from the lookup above: `gh release download` looked the tag up again and failed with
+          # "release not found" on the queue run of #2975 (the step then counted cold)
+          echo "fixed files: found $asset in $tag ($back commits back)"
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$d/$asset"
           case "$asset" in
             *.zst) tar -x --zstd -C .smith/frontend-coverage -f "$d/$asset" ;;
             *) tar -xz -C .smith/frontend-coverage -f "$d/$asset" ;;
