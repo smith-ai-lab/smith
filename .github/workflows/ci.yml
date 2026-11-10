@@ -1968,6 +1968,9 @@ jobs:
           # the total errors (#2731): frontend-errors: <sha> <errors> <files failing>
           errs=$(grep '^frontend-errors: ' "$out" 2>/dev/null | tail -n 1 || true)
           if [ -n "$errs" ]; then echo "frontend-errors: $GITHUB_SHA ${errs#frontend-errors: }"; fi
+          # the files the count leaves out of its total (#3037): frontend-excluded: <sha> <n>, so the old total is the sum
+          left=$(grep '^frontend-excluded: ' "$out" 2>/dev/null | tail -n 1 || true)
+          if [ -n "$left" ]; then echo "frontend-excluded: $GITHUB_SHA ${left#frontend-excluded: }"; fi
           # the top 20 causes, one fixed line each (#2247, #2731): frontend-cause: <alone> <first> <files> <count> <cause>
           grep '^frontend-cause: ' "$out" 2>/dev/null || true
           # the top 10 pairs of causes that are a file's only two (#2731): frontend-pair: <files> <cause a> | <cause b>

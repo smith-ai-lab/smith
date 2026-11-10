@@ -613,11 +613,127 @@ static void print_name_lines() {
     }
 }
 
+// ------------------------------------------------------------------------------------------------ excluded files
+
+// The files that leave the denominator (#3037): `scripts/frontend_coverage/excluded.txt` (SMITH_COVERAGE_EXCLUDED
+// names another list), read from the repository the count runs in. A line is `path TAB reason`; the reason is
+// `error-fixture` or `old-form: <form>`; blank lines and lines starting with `#` are skipped.
+constexpr const char *excluded_default = "scripts/frontend_coverage/excluded.txt";
+constexpr Usize excluded_max = 1024;
+constexpr Usize reason_size = 96;
+static char excluded_path[excluded_max][path_size];
+static char excluded_reason[excluded_max][reason_size];
+static Bool excluded_seen[excluded_max];
+static Usize excluded_count = 0;
+
+static Bool starts_with(const char text[:], const char prefix[:]) {
+    return countof(text) >= countof(prefix) && same(text[0:countof(prefix)], prefix);
+}
+
+// Whether `reason` is one of the fixed set: `error-fixture`, or `old-form: ` and a form.
+static Bool valid_reason(const char reason[:]) {
+    if (same(reason, "error-fixture")) return true;
+    return starts_with(reason, "old-form: ") && countof(reason) > 10;
+}
+
+static Bool excluded_line(const char line[:]) {
+    Usize tab = find(line, '\t', 0);
+    if (tab == 0 || tab >= countof(line) || tab >= path_size || countof(line) - tab - 1 >= reason_size ||
+        !valid_reason(line[tab + 1:countof(line)])) {
+        console::print_error("frontend_coverage: error: the excluded list has a bad line: ", line,
+                             "\n  (write `path TAB error-fixture` or `path TAB old-form: <form>`)\n");
+        return false;
+    }
+    if (excluded_count == excluded_max) {
+        console::print_error("frontend_coverage: error: the excluded list is longer than ", excluded_max, " files\n");
+        return false;
+    }
+    for (Usize k = 0; k < excluded_count; k++) {
+        if (same(text_of(excluded_path[k][0:path_size]), line[0:tab])) {
+            console::print_error("frontend_coverage: error: ", line[0:tab], " is in the excluded list twice\n");
+            return false;
+        }
+    }
+    copy_text(excluded_path[excluded_count][0:path_size], line[0:tab]);
+    copy_text(excluded_reason[excluded_count][0:reason_size], line[tab + 1:countof(line)]);
+    excluded_count += 1;
+    return true;
+}
+
+// Reads the list; a missing file is an empty list. Returns false on a bad line.
+static Bool read_excluded() {
+    const char *named = c::getenv("SMITH_COVERAGE_EXCLUDED");
+    files::BytesResult loaded = files::read_file(view_of(named != nullptr ? named : excluded_default));
+    if (loaded == .error) return true;
+    defer mem::free(loaded.ok.data);
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        typeof(const char[:]) line = text[at:end];
+        at = end + 1;
+        if (countof(line) == 0 || line[0] == '#') continue;
+        if (!excluded_line(line)) return false;
+    }
+    return true;
+}
+
+static Usize excluded_find(const char path[:]) {
+    for (Usize k = 0; k < excluded_count; k++) {
+        if (same(text_of(excluded_path[k][0:path_size]), path)) return k;
+    }
+    return excluded_count;
+}
+
+// Takes the rows of the listed files out of the table, so the totals and the causes do not see them. A listed file
+// that passes is an error (the list may not hide progress or rot), and so is an error fixture whose compile ended
+// without a diagnostic, killed or crashed. Returns how many listed files the table had, or `excluded_count + 1`.
+static Usize apply_exclusions() {
+    Usize kept = 0;
+    Usize found = 0;
+    for (Usize i = 0; i < entry_count; i++) {
+        Usize k = excluded_find(text_of(entries[i].path[0:path_size]));
+        if (k == excluded_count) {
+            if (kept != i) entries[kept] = entries[i];
+            kept += 1;
+            continue;
+        }
+        if (is_pass(&entries[i])) {
+            console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
+                                 " compiles, but the excluded list has it (", (const char *)excluded_reason[k],
+                                 "): take it out of ", excluded_default, "\n");
+            return excluded_count + 1;
+        }
+        if (same(text_of(excluded_reason[k][0:reason_size]), "error-fixture") &&
+            starts_with(text_of(entries[i].message[0:message_size]), "compile ended with status ")) {
+            console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
+                                 " is an error fixture but its compile ended without a diagnostic: ",
+                                 (const char *)entries[i].message, "\n");
+            return excluded_count + 1;
+        }
+        if (!excluded_seen[k]) found += 1;
+        excluded_seen[k] = true;
+    }
+    entry_count = kept;
+    return found;
+}
+
+static void print_excluded() {
+    for (Usize k = 0; k < excluded_count; k++) {
+        if (excluded_seen[k])
+            console::print("excluded  ", (const char *)excluded_path[k], " [", (const char *)excluded_reason[k], "]\n");
+    }
+}
+
 static I32 summarize(const char file[:], const char *smith) {
     if (!read_table(file)) {
         console::print_error("frontend_coverage: cannot read ", file, "\n");
         return 1;
     }
+    if (!read_excluded()) return 1;
+    Usize excluded = apply_exclusions();
+    if (excluded > excluded_count) return 1;
+    print_excluded();
     Usize passed = 0;
     Usize started = 0;
     for (Usize i = 0; i < entry_count; i++) {
@@ -643,6 +759,7 @@ static I32 summarize(const char file[:], const char *smith) {
     console::print("\n");
     if (smith != nullptr) print_measured(smith);
     console::print("frontend-coverage: ", passed, " of ", started, " files pass\n");
+    console::print("frontend-excluded: ", excluded, "\n");
     print_stages();
     print_causes();
     print_names();
