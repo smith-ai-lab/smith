@@ -285,8 +285,9 @@ static Bool type_of_typeof(state::Emitter *e, const ast::TypeExpr *t, state::TyR
 }
 
 // An applied type other than an option or a result: `Lambda(bool (i32))` and `Fn(...)` are the fn value of their
-// function type, as the checker types them (#3036); the rest is `vec(T, N)`.
+// function type, as the checker types them (#3036); `vec(T, N)` is a vector.
 static state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .applied) return state::ty_fail("not an applied type", t->span);
     ast::Path applied = t->kind.applied.name;
     ast::TypeArg args[:] = t->kind.applied.args;
     Bool lambda = countof(applied.segments) == 1 && (state::same_text(applied.segments[0].text, "Lambda") ||
@@ -295,6 +296,9 @@ static state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
         const ast::TypeArg *only = &args[0];
         if (*only == .type && only->type.type->kind == .function) return lambdas::type_function(e, only->type.type);
     }
+    if (countof(applied.segments) != 1 || !state::same_text(applied.segments[0].text, "vec"))
+        return state::ty_fail_with(t->span, "not emitted yet: the applied type `",
+                                   applied.segments[countof(applied.segments) - 1].text, "`");
     return vectors::type_vector(e, t);
 }
 
