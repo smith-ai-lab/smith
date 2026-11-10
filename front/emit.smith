@@ -582,6 +582,23 @@ static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x,
     return state::success();
 }
 
+// `Kind(pair = (a = 1, b = 2))`: a payload enumeration named as the callee with one argument `variant = payload`, which
+// the checker typed as `.pair((a = 1, b = 2))` of that enumeration (`enum_variant_call` in front/types_expr.smith). The
+// callee is a type, so it has no type of its own. Null when the call is no such form.
+static const ast::Expr *named_variant(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr || x->kind != .call || countof(x->kind.call.args) != 1) return nullptr;
+    const ast::Expr *arg = x->kind.call.args[0];
+    const ast::Expr *callee = x->kind.call.callee;
+    if (!(arg->kind == .named_arg)) return nullptr;
+    types::TypeRef t = types::type_of(e->options.checked, x);
+    if (t == nullptr || !types::is_payload_enum(t)) return nullptr;
+    if (types::type_of(e->options.checked, callee) != nullptr) return nullptr; // a function's call
+    ast::Expr *variant = mem::alloc(ast::Expr);
+    variant->span = x->span;
+    variant->kind = {.variant = {.name = arg->kind.named_arg.name, .payload = arg->kind.named_arg.value}};
+    return variant;
+}
+
 // Where the walk is, for the driver's crash handler (runtime/front_flag.c, #2984): the declaration whose body is being
 // emitted and the kind of the last expression dispatched, in a fixed buffer and a literal, read without allocating.
 static char walk_declaration[256];
@@ -622,6 +639,12 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .conditional) return control::conditional(e, x, hint);
     if (x->kind == .call) {
         if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
+        const ast::Expr *variant = named_variant(e, x);
+        if (variant != nullptr) {
+            state::TyResult made = state::type_of_node(e, x); // the enumeration, which the new node has no record of
+            if (made == .error) return {.error = made.error};
+            return dispatch_variant(e, variant, state::hint_of(made.ok));
+        }
         return call::call(e, x, hint);
     }
     if (x->kind == .array_lit) {
@@ -1421,8 +1444,10 @@ static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
 }
 
 // A block whose last line is an expression or a `match` has a value; one that ends in `return`, a loop or nothing
-// does not (an old-syntax `if (c) { return a; } else { return b; }` stays a statement).
+// does not (an old-syntax `if (c) { return a; } else { return b; }` stays a statement). The branch of a one-line `if b:
+// 1 else: 0` is the expression itself (#2984: as a body's last line it fell off the end, an `unreachable`).
 static Bool block_gives_value(const ast::Stmt *s) {
+    if (s->kind == .expression) return true;
     if (s->kind == .block) {
         ast::StmtRef items[:] = s->kind.block.items;
         if (countof(items) == 0) {

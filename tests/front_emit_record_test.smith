@@ -37,7 +37,8 @@ static void begin(Scenario *s, Str source) {
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     test::check_equal(s->checked.error_count, (Usize)0);
-    if (s->checked.error_count > 0) test::check_equal(s->checked.errors[0].message, "no error");
+    Str none = "no error";
+    if (s->checked.error_count > 0) test::check_equal(s->checked.errors[0].message, none);
     mem::set_allocator(outside);
 }
 
@@ -74,7 +75,8 @@ static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
         emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
         test::check_equal(added == .ok, true);
     } else {
-        test::check_equal(emitted.error.message, "no error");
+        Str none = "no error";
+        test::check_equal(emitted.error.message, none);
         emit::free_error(emitted.error);
     }
     return text;
@@ -82,8 +84,8 @@ static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
 
 typedef I64 (*Read)(I32);
 
-// The inline payloads of front/ast.smith: a variant whose payload is `struct { ... }`, built by name and read back by
-// `match` and by a field of the variant.
+// The inline payloads of front/ast.smith: a variant whose payload is `struct { ... }`, built by name (`Kind(pair =
+// ...)`), read back by `match` and by `if .pair(p) := k`, and compared with a bare variant by its tag.
 export void test_front_emit_record_an_inline_payload_is_built_matched_and_read() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
@@ -111,12 +113,17 @@ export void test_front_emit_record_an_inline_payload_is_built_matched_and_read()
                      "        .empty: -1\n"
                      "pub fn field(n: i32) -> i64:\n"
                      "    k := make(n)\n"
-                     "    if k != .pair:\n"
-                     "        return 0\n"
-                     "    k.pair.b - k.pair.a.to(i64)\n",
+                     "    if .pair(p) := k:\n"
+                     "        return p.b - p.a.to(i64)\n"
+                     "    0\n"
+                     "pub fn is_pair(n: i32) -> i64:\n"
+                     "    if make(n) == .pair and make(n) != .empty: 1 else: 0\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "struct { a: i32; b: i64; }"), true);
+    Read is_pair = (Read)symbol_of(&host, "is_pair");
+    test::check_equal(is_pair(4), (I64)1);
+    test::check_equal(is_pair(0), (I64)0);
     Read read = (Read)symbol_of(&host, "read");
     Read field = (Read)symbol_of(&host, "field");
     test::check_equal(read(5), (I64)105);
@@ -131,14 +138,15 @@ export void test_front_emit_record_an_inline_payload_is_built_matched_and_read()
 export void test_front_emit_record_a_field_of_anonymous_struct_type_is_copied_and_passed_by_value() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("struct Box:\n"
-                     "    inner: struct {\n"
+    char *ir = ir_of("typedef struct {\n"
+                     "    struct {\n"
                      "        i32 x;\n"
                      "        struct {\n"
                      "            i64 deep;\n"
                      "        } more;\n"
-                     "    }\n"
-                     "    tag: i32\n"
+                     "    } inner;\n"
+                     "    i32 tag;\n"
+                     "} Box;\n"
                      "fn sum(b: Box) -> i64:\n"
                      "    b.inner.x.to(i64) + b.inner.more.deep + b.tag.to(i64)\n"
                      "pub fn run(n: i32) -> i64:\n"
@@ -160,11 +168,12 @@ export void test_front_emit_record_a_field_of_anonymous_struct_type_is_copied_an
 export void test_front_emit_record_an_anonymous_union_shares_its_storage() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("struct Word:\n"
-                     "    bits: union {\n"
+    char *ir = ir_of("typedef struct {\n"
+                     "    union {\n"
                      "        u64 whole;\n"
                      "        u8 low;\n"
-                     "    }\n"
+                     "    } bits;\n"
+                     "} Word;\n"
                      "pub fn low(n: i32) -> i64:\n"
                      "    mut w: Word = undefined\n"
                      "    w.bits.whole = n.to(u64) + 256\n"
