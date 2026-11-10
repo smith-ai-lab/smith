@@ -476,3 +476,14 @@ export void test_front_fix_zero_a_test_on_another_struct_does_not_make_a_field_o
         "fn f(o: *Other) -> i32:\n    a := Node(value = 1)\n    if o.next == nullptr:\n        return 0\n"
         "    return a.value\n");
 }
+
+// A struct of another module inside the zero value is named as the file reaches it, through its import
+// (`format.Writer`, not `std.format.Writer`), or through the outer type's module when that exports an alias
+// (`emit.Target`; #3027).
+export void test_front_fix_zero_names_a_nested_struct_through_the_import() {
+    expect_fixed(
+        "module m;\nimport std::format;\nstruct S {\n    format::Writer w;\n};\nvoid f(void) {\n    S s = {};\n"
+        "    g(&s);\n}\n",
+        "import std.format\nstruct S:\n    w: format.Writer\nfn f():\n"
+        "    mut s: S = S(w = format.Writer(out = nullptr, capacity = 0, length = 0))\n    g(&s)\n");
+}
