@@ -848,11 +848,15 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (is_new) {
         r->new_body = true;
     }
-    if (is_new && !is_mut && init != nullptr && init->kind == .type_value && holds_type(written)) {
-        // `const Element = typeof(xs[0])`: a constant that holds a type is a name of that type (#3039), as at module
-        // level; nothing is stored for it.
+    Bool is_type = is_new && !is_mut && init != nullptr && holds_type(written) && eval::is_type(r, init);
+    if (is_type && init->kind == .type_value) {
+        // `Element := typeof(xs[0])`: a constant that holds a type is a name of that type (#3039), as at module
+        // level; nothing is stored for it, and the mark on its value tells the emitter. `p := Pair(n, n)` reads as
+        // a type too, and is not one.
+        const ast::TypeExpr *holds = init->kind.type_value.type;
+        types::set_value(r, init, 1);
         r->new_syntax = true;
-        types::TypeRef held = types::resolve(r, init->kind.type_value.type);
+        types::TypeRef held = types::resolve(r, holds);
         r->new_syntax = false;
         types::Symbol alias = {.name = name, .kind = .type_name, .type = held, .decl = d};
         (void)types::declare(&r->scopes, alias);
@@ -2380,6 +2384,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     Str name = d->kind.variable.name;
     Bool constant = d->kind.variable.is_constexpr;
+    Bool computed = d->kind.variable.is_new && !d->kind.variable.is_mut;
     const ast::Expr *init = d->kind.variable.init;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || !types::declared_by(symbol, d)) {
@@ -2392,6 +2397,11 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     types::TypeRef type = symbol->type;
     if (constant) {
         require_constant(r, name, init);
+    } else if (computed) {
+        // a module-level `x := v` is always computed by the compiler (D23): an error of the computation is reported;
+        // a value that is not known yet (a call, until step 2 of #3039) is left to the emitter
+        eval::Outcome found = eval::value(r, init);
+        if (found.failed) eval::report(r, found, init, "this constant");
     }
     if (is_auto(type)) {
         (void)types_expr::infer(r, init);

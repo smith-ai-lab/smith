@@ -1,9 +1,9 @@
-const top: i32 = 2147483647
-const over: i32 = top + 1
-const none: i32 = 0
-const split: i32 = top / none
-const far: i32 = top << 40
-const tiny: u8 = (top - 2147483347).to(u8)
+top: i32 = 2147483647
+over: i32 = top + 1
+none: i32 = 0
+split: i32 = top / none
+far: i32 = top << 40
+tiny: u8 = (top - 2147483347).to(u8)
 
 pub fn check() -> i32:
     0

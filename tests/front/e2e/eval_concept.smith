@@ -10,7 +10,7 @@ fn tiny(T: type) -> bool:
 static_assert(small(u32) and not small(u64));
 static_assert(tiny(u8) and not tiny(u16), "u8 is tiny and u16 is not");
 
-const fits = small(i16) or tiny(i64)
+fits := small(i16) or tiny(i64)
 
 fn width[T](x: T) -> i32:
     if tiny(T):

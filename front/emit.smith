@@ -886,10 +886,13 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
 }
 
 // Whether a local declaration is a constant that holds a type: `const T = typeof(x)`, or one written `: type`.
-static Bool holds_type(const ast::Decl *d) {
-    if (d->kind != .variable) return false;
+static Bool holds_type(const state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .variable || e->options.checked == nullptr) return false;
     const ast::TypeExpr *type = d->kind.variable.type;
-    return state::is_local_type(d) && (type->kind == .auto_type || names_type_type(type));
+    const ast::Expr *init = d->kind.variable.init;
+    if (!state::is_local_type(d) || (type->kind != .auto_type && !names_type_type(type))) return false;
+    U64 marked = 0; // the checker marks the value of one it made a name of a type
+    return types::value_in(e->options.checked, init, instance_index(e), &marked);
 }
 
 static state::Status declaration_statement(state::Emitter *e, const ast::Stmt *s) {
@@ -897,7 +900,7 @@ static state::Status declaration_statement(state::Emitter *e, const ast::Stmt *s
         return state::fail("not a declaration", s->span);
     }
     const ast::Decl *d = s->kind.declaration.decl;
-    if (holds_type(d)) {
+    if (holds_type(e, d)) {
         // a constant that holds a type: a name of the type from here on, with nothing stored (#3039)
         if (e->local_type_count == countof(e->local_types))
             return state::fail("more than 16 constants that hold a type in one function", s->span);

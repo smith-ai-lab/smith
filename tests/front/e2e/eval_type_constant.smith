@@ -1,12 +1,12 @@
 # A constant may hold a type (#3039): it is read wherever a type is, at module level and inside a function.
 
-const big = u32
+big := u32
 static_assert(sizeof(big) == 4);
 static_assert(big != u64 and alignof(big) == 4);
 
 pub fn check() -> i32:
     plain: i16 = 7
-    const plain_type = typeof(plain)
+    plain_type := typeof(plain)
     static_assert(sizeof(plain_type) == 2)
     wide: big = 5
     copy: plain_type = plain

@@ -1067,8 +1067,8 @@ static void call_step(Run *run, Step s) {
         Str shown = "this";
         if (countof(name) > 0) shown = name;
         unknown(run, e->span,
-                msg(format::push("`", shown, "(...)` is a call, and a function is not run at compile time; write the ",
-                                 "value, or drop `const`")));
+                msg(format::push("`", shown, "(...)` is a call, and a function is not run at compile time yet; write ",
+                                 "the value")));
         return;
     }
     push_step(run, later(s, 1));
@@ -1274,6 +1274,14 @@ export Outcome value(types::Checked *r, const ast::Expr *e) {
         types::pop_scope(&r->scopes);
     if (run.stopped) return run.out;
     return (Outcome){.known = true, .value = run.values[0], .failed = false, .at = e->span, .why = ""};
+}
+
+// Whether `e` is a type known at compile time (`typeof(xs[0])`, `u32`, `Pair(i32)`), and not a value that only
+// reads like one (`Pair(n, n)`).
+export Bool is_type(types::Checked *r, const ast::Expr *e) {
+    Outcome found = value(r, e);
+    Value v = found.value;
+    return found.known && v == .type_value;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

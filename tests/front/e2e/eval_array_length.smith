@@ -6,8 +6,8 @@ struct Address:
     port: u16
     family: u16
 
-const slots = 4
-const wide = slots * 2 + 1
+slots := 4
+wide := slots * 2 + 1
 
 pub fn check() -> i32:
     mut raw: [sizeof(Address)]u8 = undefined
