@@ -613,7 +613,7 @@ export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
 static Bool filled_dimension(types::Checked *c, const ast::Expr *node, U64 *count) {
     U64 folded = *count;
     folded = 0;
-    if (types::fold_length(c, node, &folded)) {
+    if (c->options.length != nullptr && c->options.length(c, node, "", &folded)) {
         *count = folded;
         return true;
     }

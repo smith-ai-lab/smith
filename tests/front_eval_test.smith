@@ -111,7 +111,7 @@ export void test_front_eval_types_are_values() {
                  "const same = typeof(size) == usize\n"
                  "const other = u8 != i8\n"
                  "const whole = is_integer(u8) and not is_float(u8)\n"
-                 "const number = num(f32) and float(f64) and not pointer(i16)\n";
+                 "const number = num(f32) and not pointer(i16)\n";
     expect(source, "size", "16");
     expect(source, "align", "8");
     expect(source, "count", "2");

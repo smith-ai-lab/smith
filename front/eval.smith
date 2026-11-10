@@ -475,7 +475,7 @@ static void symbol_step(Run *run, Step s, const types::Symbol *symbol) {
     }
     const ast::Expr *init = types::constant_initializer(symbol);
     if (init == nullptr) {
-        Str what = "not a constant";
+        Str what = "not known until the program runs";
         if (symbol->kind == .function_symbol) what = "a function";
         if (symbol->kind == .variable && !symbol->is_const) what = "a variable that can change";
         unknown(run, e->span, msg(format::push("`", symbol->name, "` is ", what)));
@@ -490,6 +490,7 @@ static void symbol_step(Run *run, Step s, const types::Symbol *symbol) {
     settle.type = symbol->type;
     push_step(run, settle);
     Step read = expr_step(init, s);
+    if (init->kind == .variant) read.type = symbol->type;
     read.prefix = module_of(symbol->name, s.prefix);
     push_step(run, read);
 }
@@ -595,10 +596,12 @@ static void member_step(Run *run, Step s) {
 }
 
 // `.green` where the checker has given it its enumeration.
-static void variant_step(Run *run, const ast::Expr *e) {
+static void variant_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
     types::TypeRef t = types::type_of(run->r, e);
+    if (t == nullptr) t = s.type; // the initializer of `const c: Color = .green`: the constant's type
     Usize index = 0;
-    if (e->kind != .variant || e->kind.variant.payload != nullptr || types::is_payload_enum(t) ||
+    if (t == nullptr || e->kind != .variant || e->kind.variant.payload != nullptr || types::is_payload_enum(t) ||
         !enumerator_index(t, e->kind.variant.name, &index)) {
         unknown(run, e->span, "this variant is not known at compile time");
         return;
@@ -1187,6 +1190,13 @@ static void resume(Run *run, Step s) {
     }
 }
 
+// Whether `e`, written like a type, names a variable: its path is in `path`.
+static Bool names_variable(Run *run, const ast::Expr *e, ast::Path *path) {
+    if (!types::names_a_constant(e, path)) return false;
+    const types::Symbol *symbol = types::type_through_modules(run->r, *path);
+    return symbol != nullptr && symbol->kind == .variable;
+}
+
 static void enter(Run *run, Step s) {
     const ast::Expr *e = s.expr;
     ast::Path path = {};
@@ -1197,7 +1207,9 @@ static void enter(Run *run, Step s) {
     } else if (e->kind == .member) {
         member_step(run, s);
     } else if (e->kind == .variant) {
-        variant_step(run, e);
+        variant_step(run, s);
+    } else if (e->kind == .type_value && names_variable(run, e, &path)) {
+        name_step(run, s, path); // `N` of `[N]u8`: the parser reads a capitalized name as a type
     } else if (e->kind == .type_value) {
         types::TypeRef t = resolve_quiet(run, e->kind.type_value.type);
         if (is_open(run, t)) {
@@ -1304,4 +1316,58 @@ export Bool condition(types::Checked *r, const ast::Expr *e, Bool *out) {
     if (!found.known || found.value != .boolean) return false;
     *out = found.value.boolean.value;
     return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reporting
+
+// Where to report `found` for the expression `e` that needed a value: the part of `e` that stopped it, or `e` itself
+// when the reason is somewhere else (the initializer of a constant it names).
+static ast::Span place(Outcome found, const ast::Expr *e) {
+    if (found.at.start >= e->span.start && found.at.end <= e->span.end) return found.at;
+    return e->span;
+}
+
+// Reports why `e` is not a value `what` can use ("an array length"): the error of the evaluation, or what is not
+// known at compile time.
+export void report(types::Checked *r, Outcome found, const ast::Expr *e, Str what) {
+    if (found.failed) {
+        types::failf(r, place(found, e), found.why);
+    } else if (!found.known) {
+        types::failf(r, place(found, e), what, " must be known at compile time: ", found.why);
+    } else {
+        types::failf(r, e->span, what, " cannot be `", show(found.value), "`");
+    }
+}
+
+// `types::Options.length`: the value of `e` as an array length or a count. With a `what`, a value that is not one is
+// reported.
+export Bool length_for(types::Checked *r, const ast::Expr *e, Str what, U64 *out) {
+    Outcome found = value(r, e);
+    if (found.known && found.value == .integer && !found.value.integer.negative) {
+        *out = found.value.integer.magnitude;
+        return true;
+    }
+    if (countof(what) > 0) report(r, found, e, what);
+    return false;
+}
+
+// `types::Options.constant`: the type of a constant written without one, from the value computed for its
+// initializer. An integer no operand gave a type is an `i32`, or an `i64` when it does not fit; a float is an `f64`.
+// Null when no value is computed, or it is a type or a fact, which are not stored.
+export types::TypeRef type_for(types::Checked *r, const ast::Expr *init) {
+    Outcome found = value(r, init);
+    if (!found.known) return nullptr;
+    Value v = found.value;
+    if (v == .boolean) return r->table.bool_type;
+    if (v == .enumerator) return v.enumerator.type;
+    if (v == .floating) {
+        if (v.floating.type != nullptr) return v.floating.type;
+        return types::builtin(&r->table, "F64");
+    }
+    if (v != .integer) return nullptr;
+    if (v.integer.type != nullptr) return v.integer.type;
+    types::TypeRef narrow = types::builtin(&r->table, "I32");
+    if (fits(narrow, whole(v.integer.magnitude, v.integer.negative))) return narrow;
+    return types::builtin(&r->table, "I64");
 }

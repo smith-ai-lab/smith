@@ -85,6 +85,7 @@
 module front::emit;
 
 import front::ast;
+import front::eval;
 import front::emit_arith as arith;
 import front::emit_call as call;
 import front::emit_control as control;
@@ -299,6 +300,9 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         types::TypeRef bound = nullptr;
         if (countof(path.segments) == 1 && state::bound_type(e, path.segments[0].text, &bound))
             return type_of_checked(e, bound, t->span);
+        const ast::TypeExpr *held = nullptr;
+        if (countof(path.segments) == 1) held = state::local_type(e, path.segments[0].text);
+        if (held != nullptr) return state::type_of(e, held); // `x: Element` after `const Element = typeof(xs[0])`
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
@@ -625,11 +629,27 @@ static const char *walk_kind = "";
 
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
+// The checker's number of the instance being emitted (`types::max_instances` outside one): what it recorded for a
+// node of a generic's body is kept per instance.
+static Usize instance_index(const state::Emitter *e) {
+    Usize index = types::max_instances;
+    if (e->options.checked == nullptr) return index;
+    for (Usize i = 0; e->instance != nullptr && i < e->options.checked->instance_count; i++) {
+        if (&e->options.checked->instances[i] == e->instance) index = i;
+    }
+    return index;
+}
+
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     walk_kind = state::expr_kind_name(x).data;
     try debug::expr_location(e, x);
     if (hint.present && (hint.ty.kind == .slice || hint.ty.kind == .block) && is_array_place(e, x))
         return emit_memory::array_as_slice(e, x, hint);
+    U64 computed = 0;
+    if ((x->kind == .binary || x->kind == .call) && e->options.checked != nullptr &&
+        types::value_in(e->options.checked, x, instance_index(e), &computed)) {
+        return control::computed_boolean(e, computed); // the checker computed it: it has no run-time form (#3039)
+    }
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
     const ast::Decl *imported = nullptr;
@@ -801,6 +821,12 @@ static Bool is_undefined(const ast::Expr *init) {
     return countof(path.segments) == 1 && state::same_text(path.segments[0].text, "undefined");
 }
 
+// Whether a written type is `type` itself: the type of a constant that holds a type.
+static Bool names_type_type(const ast::TypeExpr *t) {
+    if (t->kind != .named || countof(t->kind.named.path.segments) != 1) return false;
+    return state::same_text(t->kind.named.path.segments[0].text, "type");
+}
+
 static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::Span span) {
     if (d->kind != .variable) {
         return state::fail("not a variable", span);
@@ -859,11 +885,26 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     return state::success();
 }
 
+// Whether a local declaration is a constant that holds a type: `const T = typeof(x)`, or one written `: type`.
+static Bool holds_type(const ast::Decl *d) {
+    if (d->kind != .variable) return false;
+    const ast::TypeExpr *type = d->kind.variable.type;
+    return state::is_local_type(d) && (type->kind == .auto_type || names_type_type(type));
+}
+
 static state::Status declaration_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .declaration) {
         return state::fail("not a declaration", s->span);
     }
     const ast::Decl *d = s->kind.declaration.decl;
+    if (holds_type(d)) {
+        // a constant that holds a type: a name of the type from here on, with nothing stored (#3039)
+        if (e->local_type_count == countof(e->local_types))
+            return state::fail("more than 16 constants that hold a type in one function", s->span);
+        e->local_types[e->local_type_count] = d;
+        e->local_type_count += 1;
+        return state::success();
+    }
     if (d->kind == .variable) return local_variable(e, d, s->span);
     if (d->kind == .record) return emit_memory::record_decl(e, d);
     return state::not_emitted("this kind of declaration in a block", s->span);
@@ -910,33 +951,10 @@ static state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
     return state::success();
 }
 
-// `static_assert(c, "m")` in a body: the condition is built and must fold to a constant; false stops the compile with
-// the message.
-static state::Status static_assert_finish(state::Emitter *e, const state::ThenGeneral *w) {
-    state::Value condition = state::pop_value(e);
-    Str message = "";
-    if (w->stmt == nullptr && w->decl->kind == .static_assert_decl)
-        message = w->decl->kind.static_assert_decl.message;
-    else if (w->stmt != nullptr && w->stmt->kind == .static_assert_stmt)
-        message = w->stmt->kind.static_assert_stmt.message;
-    else
-        return state::fail("not a static_assert", w->span);
-    if (condition.ty.kind != .boolean) return state::fail("a condition is a Bool; write `x != 0`", w->span);
-    if (c::LLVMIsAConstantInt(condition.llvm) == nullptr)
-        return state::fail("static_assert needs a condition known at compile time", w->span);
-    if (c::LLVMConstIntGetZExtValue(condition.llvm) == 0) {
-        if (countof(message) == 0) return state::fail("static_assert failed", w->span);
-        return state::fail(message, w->span);
-    }
-    return state::success();
-}
-
-static state::Status static_assert_statement(state::Emitter *e, const ast::Stmt *s) {
-    if (s->kind != .static_assert_stmt) {
-        return state::fail("not a static_assert", s->span);
-    }
-    state::push_then_general(e, (state::ThenGeneral){.run = static_assert_finish, .stmt = s, .span = s->span});
-    state::push_eval(e, s->kind.static_assert_stmt.condition, state::no_hint());
+// `static_assert(c, "m")`: the checker computed the condition and reported a false or unknown one (#3039), so nothing
+// is emitted for it.
+static state::Status static_assert_statement(const ast::Stmt *s) {
+    if (s->kind != .static_assert_stmt) return state::fail("not a static_assert", s->span);
     return state::success();
 }
 
@@ -952,10 +970,7 @@ static void start_block_if_ended(state::Emitter *e) {
 // and which branch it kept; the other branch was never checked, so it is not emitted (#2981).
 static Bool decided_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **live) {
     if (s->kind == .if_stmt && e->options.checked != nullptr) {
-        Usize index = types::max_instances;
-        for (Usize i = 0; e->instance != nullptr && i < e->options.checked->instance_count; i++) {
-            if (&e->options.checked->instances[i] == e->instance) index = i;
-        }
+        Usize index = instance_index(e);
         Bool keeps_then = false;
         if (types::decided_in(e->options.checked, s->kind.if_stmt.condition, index, &keeps_then)) {
             *live = keeps_then ? s->kind.if_stmt.then_branch : s->kind.if_stmt.else_branch;
@@ -965,36 +980,11 @@ static Bool decided_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **
     return false;
 }
 
-// Whether the condition of the `if` `s` is known at compile time, and which branch is taken: a boolean literal (the
-// checker rewrites `target.address_sanitizer` into one, #2461), the name of a constant whose initializer is one
-// (`if sanitized:` in std.mem), or `not` of either. Only the taken branch is emitted, as a compile-time `if` is
-// (#2853): the other may call what this build does not link (`__asan_poison_memory_region` without ASan).
-static Bool constant_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **live) {
-    if (s->kind != .if_stmt || e->options.checked == nullptr) return false;
-    const ast::Expr *x = s->kind.if_stmt.condition;
-    Bool flip = false;
-    for (Usize budget = 0; x != nullptr && budget < 16; budget++) {
-        if (x->kind == .unary && x->kind.unary.op == .logical_not) {
-            flip = !flip;
-            x = x->kind.unary.operand;
-            continue;
-        }
-        if (x->kind == .boolean) {
-            *live = x->kind.boolean.value != flip ? s->kind.if_stmt.then_branch : s->kind.if_stmt.else_branch;
-            return true;
-        }
-        ast::Path path = {};
-        if (!types::name_path(x, &path)) return false;
-        x = types::constant_initializer(types::type_through_modules(e->options.checked, path));
-    }
-    return false;
-}
-
 static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     start_block_if_ended(e);
     try debug::stmt_location(e, s);
     const ast::Stmt *live = nullptr;
-    if (decided_if(e, s, &live) || constant_if(e, s, &live)) {
+    if (decided_if(e, s, &live)) {
         if (live != nullptr) state::push_statement(e, live);
         return state::success();
     }
@@ -1019,7 +1009,7 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .if_let) return matching::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
     if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
-    if (s->kind == .static_assert_stmt) return static_assert_statement(e, s);
+    if (s->kind == .static_assert_stmt) return static_assert_statement(s);
     return state::not_emitted("this kind of statement", s->span);
 }
 
@@ -1350,6 +1340,7 @@ static void start_function(state::Emitter *e, state::FunctionInfo info) {
     e->trap_block = nullptr;
     e->local_count = 0;
     e->scope_count = 0;
+    e->local_type_count = 0;
     e->work_count = 0;
     e->value_count = 0;
     c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, info.llvm, "entry");
@@ -2240,7 +2231,26 @@ static void declare_all(state::Emitter *e) {
 }
 
 // `x` built in a function nothing keeps and folded to the constant of type `to` (a global's initializer, #2510).
+// The constant `front::eval` computes for `x` (#3039), as a number or a Bool of type `to`; false when it computes none
+// of these, and the value is built and folded as before (a struct, a string: step 3).
+static Bool computed_constant(state::Emitter *e, const ast::Expr *x, state::Ty to, c::LLVMValueRef *out) {
+    if (e->options.checked == nullptr || e->instance != nullptr) return false;
+    types::Checked *checked = (types::Checked *)(Usize)e->options.checked; // the evaluator reads names in its scopes
+    eval::Outcome found = eval::value(checked, x);
+    if (!found.known) return false;
+    U64 bits = 0;
+    if (found.value == .floating && to.kind == .floating) {
+        *out = c::LLVMConstReal(to.llvm, found.value.floating.value);
+        return true;
+    }
+    if ((to.kind != .integer && to.kind != .boolean) || !eval::bits(checked, x, &bits)) return false;
+    if (found.value == .enumerator) return false;
+    *out = c::LLVMConstInt(to.llvm, bits, 0);
+    return true;
+}
+
 static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state::Ty to, c::LLVMValueRef *out) {
+    if (computed_constant(e, x, to, out)) return state::success();
     c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), nullptr, 0, 0);
     c::LLVMValueRef scratch = c::LLVMAddFunction(e->module, ".fold", type);
     state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
@@ -2267,28 +2277,6 @@ static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state:
     state::end_scope(e);
     c::LLVMDeleteFunction(scratch);
     return result;
-}
-
-// A module-level `static_assert(c, "m")` (#2510): the condition is built in a function nothing keeps, and must fold to
-// a constant; false stops the compile with the message.
-static void check_static_asserts(state::Emitter *e) {
-    for (Usize i = 0; i < countof(e->tree->decls); i++) {
-        const ast::Decl *d = e->tree->decls[i];
-        if (d->kind != .static_assert_decl) continue;
-        c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), nullptr, 0, 0);
-        c::LLVMValueRef scratch = c::LLVMAddFunction(e->module, ".static_assert", type);
-        state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
-        start_function(e, (state::FunctionInfo){.llvm = scratch, .llvm_type = type, .result = none});
-        state::begin_scope(e);
-        state::push_then_general(e, (state::ThenGeneral){.run = static_assert_finish, .decl = d, .span = d->span});
-        state::push_eval(e, d->kind.static_assert_decl.condition, state::no_hint());
-        e->folding = true;
-        state::Status ran = run(e);
-        e->folding = false;
-        state::end_scope(e);
-        c::LLVMDeleteFunction(scratch);
-        state::collect(e, ran);
-    }
 }
 
 // The `asm` literals of the module (D7, #2636), in order: LLVM module asm, which the object file's assembler reads.
@@ -2356,7 +2344,6 @@ static state::Status emit_all(state::Emitter *e) {
             next += 1;
         }
     }
-    check_static_asserts(e);
     if (e->error_count > 0) return state::success(); // the module is not used: nothing more to build or verify
     append_module_asm(e);
     try debug::finish(e);

@@ -23,6 +23,7 @@ fn page_size() -> usize:
 
 - `constexpr`, `if constexpr` and `for constexpr` are removed. A declaration whose value is known at compile time is a compile-time constant on its own; `const` demands it, on a declaration or a parameter.
 - An `if` whose condition is known at compile time keeps one branch. `target.os` is the fact every declaration needs today; the others (`target.arch`, sanitizers) are not settled. `target.fast_math` is a `bool`: true when the compile has `-ffast-math` or `-ffinite-math-only` (D14); clang's `__FINITE_MATH_ONLY__` is written so.
+- Built so far (#3039, step 1 of 3): one evaluator computes arithmetic, comparisons and `and`/`or`/`not` on constants, `x.to(T)`, `sizeof`/`alignof`/`countof`, types as values (`u8 != T`), concepts and `target`'s facts. It is asked for an array length (`[sizeof(Entry) * 8]u8`), an `if` condition in any body (`if sizeof(T) == 4:` keeps one branch per instance), `static_assert` (at module level and in a body), a `match` pattern and a `const`. Overflow, a division by zero and a value that does not fit are compile errors ("this overflows `I32` at compile time: 2147483647 + 1"); a value that is not known says why ("`n` is a variable that can change"). A `const` that holds a type is a name of it (`const Element = typeof(xs[0])`). A call of a function is not run yet (step 2), and structs, arrays and strings are not values yet (step 3).
 
 ## Reflection
 

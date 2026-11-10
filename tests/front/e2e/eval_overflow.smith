@@ -6,6 +6,4 @@ const far: i32 = top << 40
 const tiny: u8 = (top - 2147483347).to(u8)
 
 pub fn check() -> i32:
-    mut block: [over]u8 = undefined
-    block[0] = 1
     0

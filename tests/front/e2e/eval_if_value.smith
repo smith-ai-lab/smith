@@ -1,7 +1,7 @@
 # Constants computed from other constants (#3039): arithmetic, comparisons, conversions and an `if` used as a value,
 # each read where a constant is needed.
 
-const page = if target.f32_mantissa_bits == 24: 4096 else: 16384
+const page: usize = if target.f32_mantissa_bits == 24: 4096 else: 16384
 const words = page / sizeof(usize)
 const mask: u8 = (words - 1).wrap(u8)
 const exact = words.to(u16)
