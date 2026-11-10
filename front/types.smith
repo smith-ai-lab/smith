@@ -2823,8 +2823,9 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     return r->table.invalid;
 }
 
-// The path a value argument spells when it is a chain of names (`c.FILE`, `state.Error`), else an empty path.
-static ast::Path member_path(const ast::Expr *e) {
+// The path a value argument spells when it is a chain of names (`c.FILE`, `state.Error`), else an empty path. The
+// emitter reads an applied type's value arguments the same way (#3036).
+export ast::Path member_path(const ast::Expr *e) {
     ast::Path none = {};
     Usize depth = 0;
     const ast::Expr *at = e;
