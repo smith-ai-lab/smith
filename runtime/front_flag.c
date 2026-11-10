@@ -409,8 +409,15 @@ static bool smith_front_write_file(const char *path, const void *bytes, size_t s
 
 // Runs `argv` (smith itself) in `folder` and waits: whether it exited 0. $SMITH_FRONT_CIMPORT_FLAGS is the caller's,
 // with paths of the caller's folder, so the child goes without it and works out its own. With `log`, the child's
-// standard error goes to that file (in `folder`) instead of the caller's.
+// standard error goes to that file (in `folder`) instead of the caller's. The child starts in `folder` because this
+// process enters it around the spawn (posix_spawn_file_actions_addchdir is new in macOS 26 and the _np spelling is
+// deprecated there).
 static bool smith_front_run_in(const char *folder, char *const *argv, const char *log) {
+    int home = open(".", O_RDONLY | O_DIRECTORY);
+    if (home < 0 || chdir(folder) != 0) {
+        if (home >= 0) close(home);
+        return false;
+    }
     const char *flags = getenv("SMITH_FRONT_CIMPORT_FLAGS");
     static char saved[1U << 16];
     bool had = flags != nullptr && strlen(flags) < sizeof saved;
@@ -418,7 +425,6 @@ static bool smith_front_run_in(const char *folder, char *const *argv, const char
     unsetenv("SMITH_FRONT_CIMPORT_FLAGS");
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addchdir_np(&actions, folder);
     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0); // `N fixes applied`
     if (log != nullptr)
         posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -426,6 +432,9 @@ static bool smith_front_run_in(const char *folder, char *const *argv, const char
     int started = posix_spawn(&pid, argv[0], &actions, nullptr, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
     if (had) setenv("SMITH_FRONT_CIMPORT_FLAGS", saved, 1);
+    bool back = fchdir(home) == 0;
+    close(home);
+    if (!back) smith_die(smith_exit_missing, "cannot go back to the folder of the compile", nullptr);
     int status = 0;
     if (started != 0 || waitpid(pid, &status, 0) != pid) return false;
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
