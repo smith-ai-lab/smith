@@ -1124,6 +1124,14 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
                 return state::failf(node->span, "`->` on ", ty->name);
             record = *ty->kind.pointer.element;
         }
+        if (record.kind == .slice && state::same_text(name, "data")) { // `sizeof(xs.data.*)` (std.mem's realloc)
+            *ty = pointer_to(e, *record.kind.slice.element, 0);
+            return state::success();
+        }
+        if (record.kind == .slice && state::same_text(name, "count")) {
+            state::scalar_type(e, "usize", ty);
+            return state::success();
+        }
         Usize field = 0;
         Usize at = 0;
         try field_index(e, record, name, node->span, &field);
