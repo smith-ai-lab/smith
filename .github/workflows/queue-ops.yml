@@ -63,6 +63,13 @@ jobs:
       BASE_TOKEN: ${{ github.token }}
       OWNER_TOKEN: ${{ secrets.QUEUE_OPS_TOKEN }}
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run the op
         shell: bash
         run: |
@@ -245,3 +252,11 @@ jobs:
           done <<< "$lines"
           echo "queue-ops: $total op(s), $failed failed" | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$failed" = 0 ]
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"

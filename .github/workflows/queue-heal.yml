@@ -45,6 +45,13 @@ jobs:
       # only a workflow_dispatch has the input; schedule and workflow_run never dry-run (#2934)
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Re-queue the PRs the queue lost
         shell: bash
         run: |
@@ -268,3 +275,11 @@ jobs:
             log "queue-heal: #$front dequeue failed (run $1, job $job)"
           fi
           exit 0
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
