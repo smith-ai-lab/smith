@@ -36,6 +36,279 @@ static Bool is_chain(Str text) {
     return true;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A generic function's body (#2648). The checker reads it only through an instance, and a fix found in an instance
+// of another module is kept for that module's fixer, which may run first (or alone): `std.test`'s `check_part` and
+// `std.format`'s `pad` kept `__builtin_snprintf(position, ...)` and `make(padded.characters, ..)` in 80 files. So the
+// text of a generic function's body is read here: an array local (`mut position: [24]char`), or the array field of a
+// record local (`padded.characters`), written whole as the argument of a pointer parameter of this module's functions
+// (or the pointer arguments of `__builtin_snprintf`), is written `&position[0]`.
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+static Bool is_generic(const ast::Decl *d) {
+    if (d->kind == .function) {
+        ast::Param params[:] = d->kind.function.params;
+        for (Usize i = 0; i < countof(params); i++) {
+            if (params[i].is_const || params[i].is_constexpr || params[i].is_pack || params[i].is_rest) return true;
+            const ast::TypeExpr *type = params[i].type;
+            if (type != nullptr) {
+                if (type->kind == .auto_type) return true;
+            }
+        }
+    }
+    return false;
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static const ast::Decl *find_decl(const ast::Module *module, Str name) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .function && same(d->kind.function.name, name)) return d;
+    }
+    return nullptr;
+}
+
+// Whether the field `field` of the record `record` of this module is an array.
+static Bool array_field(const ast::Module *module, Str record, Str field) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .record || !same(d->kind.record.name, record)) continue;
+        for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
+            const ast::FieldDecl *f = &d->kind.record.fields[k];
+            if (same(f->name, field) && f->type != nullptr && f->type->kind == .array) return true;
+        }
+    }
+    return false;
+}
+
+// The end of the word at `at`.
+static Usize word_stop(Str s, Usize at, Usize end) {
+    while (at < end && word_char(s[at]))
+        at += 1;
+    return at;
+}
+
+static Bool text_at(Str s, Usize at, Str pattern) {
+    if (at + countof(pattern) > countof(s)) return false;
+    return same(s[at:at + countof(pattern)], pattern);
+}
+
+// The local declared at the start of the line text at `at` (`mut name: [24]char`, `name: Padded = ..`): its name, and
+// whether the type is an array; `record` is the name of a plain named type.
+static Bool local_at(Str s, Usize at, Usize end, Str *name, Bool *is_array, Str *record) {
+    if (text_at(s, at, "mut ")) at += 4;
+    Usize stop = word_stop(s, at, end);
+    if (stop == at || !text_at(s, stop, ": ")) return false;
+    *name = s[at:stop];
+    at = stop + 2;
+    *is_array = false;
+    Str empty = "";
+    *record = empty;
+    if (at < end && s[at] == '[') {
+        Usize close = at;
+        while (close < end && s[close] != ']' && s[close] != '\n')
+            close += 1;
+        *is_array = close < end && s[close] == ']' && close > at + 1;
+        return *is_array;
+    }
+    Usize type_stop = word_stop(s, at, end);
+    *record = s[at:type_stop];
+    return type_stop > at;
+}
+
+constexpr Usize locals_max = 24;
+struct Locals {
+    Str names[locals_max];
+    Str records[locals_max]; // "" for an array local, else the record type's name
+    Usize count;
+};
+
+static Locals locals_of(Str s, Usize start, Usize end) {
+    Locals out = {};
+    Usize line = start;
+    while (line < end && out.count < locals_max) {
+        Usize at = line;
+        while (at < end && s[at] == ' ')
+            at += 1;
+        Str name = "";
+        Bool is_array = false;
+        Str record = "";
+        if (local_at(s, at, end, &name, &is_array, &record)) {
+            out.names[out.count] = name;
+            out.records[out.count] = record;
+            out.count += 1;
+        }
+        while (line < end && s[line] != '\n')
+            line += 1;
+        line += 1;
+    }
+    return out;
+}
+
+// Whether the argument text names an array: a local array, or a field of a record local that is one.
+static Bool names_array(const ast::Module *module, const Locals *locals, Str arg) {
+    for (Usize i = 0; i < locals->count; i++) {
+        if (countof(locals->records[i]) == 0 && same(locals->names[i], arg)) return true;
+        Str base = locals->names[i];
+        if (countof(locals->records[i]) == 0 || countof(arg) <= countof(base) + 1) continue;
+        if (!text_at(arg, 0, base) || arg[countof(base)] != '.') continue;
+        Str field = arg[countof(base) + 1:countof(arg)];
+        for (Usize k = 0; k < countof(field); k++) {
+            if (!word_char(field[k])) return false;
+        }
+        if (array_field(module, locals->records[i], field)) return true;
+    }
+    return false;
+}
+
+// Whether parameter `k` of the call to `callee` is a pointer.
+static Bool wants_pointer(const ast::Module *module, Str callee, Usize k) {
+    if (same(callee, "__builtin_snprintf")) return k == 0 || k == 2;
+    const ast::Decl *d = find_decl(module, callee);
+    if (d == nullptr) return false;
+    if (d->kind == .function) {
+        if (k >= countof(d->kind.function.params)) return false;
+        const ast::Param *p = &d->kind.function.params[k];
+        return !p->is_pack && !p->is_rest && p->type != nullptr && p->type->kind == .pointer;
+    }
+    return false;
+}
+
+static core::ParseError address_fix(Usize from, Usize to) {
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 2);
+    fix[0] = (core::Edit){};
+    fix[0].span.start = (U32)from;
+    fix[0].span.end = (U32)from;
+    fix[0].text = "&";
+    fix[1] = (core::Edit){};
+    fix[1].span.start = (U32)to;
+    fix[1].span.end = (U32)to;
+    fix[1].text = "[0]";
+    core::ParseError made = {};
+    made.span.start = (U32)from;
+    made.span.end = (U32)to;
+    made.message = "write the address of the first element";
+    made.fix = fix;
+    return made;
+}
+
+// The arguments of the call whose `(` is at `open` (`close` its `)`), as their [from, to) ranges in `s`.
+static core::Errors call_fixes(const ast::Module *module, const Locals *locals, Str s, Str callee, Usize open,
+                               Usize close, core::Errors out) {
+    Usize from = open + 1;
+    Usize depth = 0;
+    Usize k = 0;
+    for (Usize i = open + 1; i <= close; i++) {
+        char ch = s[i];
+        if (ch == '(' || ch == '[') depth += 1;
+        if ((ch == ')' || ch == ']') && depth > 0) depth -= 1;
+        if (!(i == close || (ch == ',' && depth == 0))) continue;
+        Usize a = from;
+        Usize b = i;
+        while (a < b && s[a] == ' ')
+            a += 1;
+        while (b > a && s[b - 1] == ' ')
+            b -= 1;
+        if (b > a && names_array(module, locals, s[a:b]) && wants_pointer(module, callee, k)) {
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = address_fix(a, b);
+        }
+        from = i + 1;
+        k += 1;
+    }
+    return out;
+}
+
+static Usize close_of(Str s, Usize open, Usize end) {
+    Usize depth = 0;
+    for (Usize i = open; i < end; i++) {
+        if (s[i] == '"') {
+            i += 1;
+            while (i < end && s[i] != '"' && s[i] != '\n')
+                i += s[i] == '\\' ? 2 : 1;
+        }
+        if (s[i] == '(') depth += 1;
+        if (s[i] == ')') {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return end;
+}
+
+static Str last_name(const ast::TypeExpr *type) {
+    Str none = "";
+    if (type->kind != .named) return none;
+    if (countof(type->kind.named.path.segments) == 0) return none;
+    return type->kind.named.path.segments[countof(type->kind.named.path.segments) - 1].text;
+}
+
+// A statement that is a call whose result C drops: `_ := ` in front (the checker's fix is lost the same way).
+static core::Errors discard_fix(const ast::Module *module, Str s, Str callee, Usize from, Usize close, Usize start,
+                                core::Errors out) {
+    if (close + 1 < countof(s) && s[close + 1] != '\n') return out;
+    Usize at = from;
+    while (at > start && s[at - 1] == ' ')
+        at -= 1;
+    if (at > start && s[at - 1] != '\n') return out;
+    Bool value = same(callee, "__builtin_snprintf");
+    const ast::Decl *d = find_decl(module, callee);
+    if (d != nullptr) {
+        if (d->kind == .function)
+            value = d->kind.function.result != nullptr && !same(last_name(d->kind.function.result), "void");
+    }
+    if (!value) return out;
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    fix[0] = (core::Edit){};
+    fix[0].span.start = (U32)from;
+    fix[0].span.end = (U32)from;
+    fix[0].text = "_ := ";
+    core::ParseError made = {};
+    made.span = fix[0].span;
+    made.message = "the result of this call is not used: discard it";
+    made.fix = fix;
+    out = mem::realloc(out, countof(out) + 1);
+    out[countof(out) - 1] = made;
+    return out;
+}
+
+export core::Errors generic_edits(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    for (Usize n = 0; n < countof(module->decls); n++) {
+        const ast::Decl *d = module->decls[n];
+        if (!is_generic(d) || d->kind != .function) continue;
+        if (d->kind.function.body == nullptr) continue;
+        Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+        Usize start = d->kind.function.body->span.start;
+        if (start >= end) continue;
+        Locals locals = locals_of(source, start, end);
+        for (Usize i = start; i < end; i++) {
+            if (source[i] != '(' || i == start || !word_char(source[i - 1])) continue;
+            Usize name_from = i;
+            while (name_from > start && word_char(source[name_from - 1]))
+                name_from -= 1;
+            if (name_from > start && source[name_from - 1] == '.') continue;
+            Usize close = close_of(source, i, end);
+            if (close >= end) continue;
+            out = call_fixes(module, &locals, source, source[name_from:i], i, close, out);
+            out = discard_fix(module, source, source[name_from:i], name_from, close, start, out);
+        }
+    }
+    return out;
+}
+
 export core::Errors edits(Str source, const types::Checked *c) {
     core::Errors out = {};
     for (Usize i = 0; i < c->error_count; i++) {
