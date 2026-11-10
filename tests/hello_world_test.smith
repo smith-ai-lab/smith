@@ -100,7 +100,9 @@ static void check_main_with_a_result_is_the_exit_status() {
 }
 
 // The same cases on macOS (#3020): a test with the word `macos` in its name runs only in CI's macOS job, and the others
-// only on Linux, so each case is a check that both call.
+// only on Linux, so each case is a check that both call. (A pull request's CI starts the Mac job only when its diff
+// has a line naming `target.os == .macos`, a shim, Objective-C or a workflow: this comment is why this file's pull
+// requests do.)
 export void test_printf_program_prints_its_sum() {
     check_printf_program_prints_its_sum();
 }
