@@ -259,6 +259,27 @@ export void test_release_upload_adds_packaged_tarballs_to_the_draft() {
                          capture(&p, "echo x >>\"../packed/$name\" && \"$script\" upload ../packed 2>&1 | tail -1"));
     scratch::expect_text("release: upload-bad-sum-adds-nothing", "1",
                          capture(&p, "grep -c 'release upload' \"$GH_LOG\""));
+    scratch::expect_text("release: upload-does-not-prune", "0",
+                         capture(&p, "grep -c 'release list' \"$GH_LOG\" || true"));
+}
+
+// prune-old (#2832): the published releases are listed without the drafts, and the stale drafts are deleted by id
+export void test_release_prune_old_deletes_stale_drafts_by_id() {
+    scratch::Project p = repository();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run pushed = scratch::sh(&p, "git push -q origin main && printf '41\\n42\\n' >../drafts");
+    scratch::expect_status("release: prune-old-pushed", 0, &pushed);
+    scratch::Run pruned = run(&p, "\"$script\" prune-old");
+    scratch::expect_status("release: prune-old", 0, &pruned);
+    scratch::expect_text("release: prune-old-lists-no-drafts", "1",
+                         capture(&p, "grep -c 'release list.*isDraft|not' \"$GH_LOG\""));
+    scratch::expect_text(
+        "release: prune-old-deletes-by-id", "41 42",
+        capture(&p, "grep 'api -X DELETE' \"$GH_LOG\" | sed 's|.*/||' | tr '\\n' ' ' | sed 's| *$||'"));
 }
 
 // CI: only the commit of a push to main
