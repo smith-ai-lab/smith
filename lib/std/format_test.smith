@@ -109,6 +109,21 @@ export void test_format_strings_and_text() {
     test::check(is(out, "[src]")); // #168: a char[:] is its characters, never {data = ..., count = [3]}
 }
 
+// A C array piece (#3026): `char name[8]` is its characters up to the first zero, or all of them with none; an array
+// of another type is its elements in brackets.
+export void test_format_arrays() {
+    char out[capacity];
+    char name[8] = "ab";
+    (void)format::write(out, sizeof out, "<", name, ">");
+    test::check(is(out, "<ab>"));
+    char full[3] = {'x', 'y', 'z'};
+    (void)format::write(out, sizeof out, "<", full, ">");
+    test::check(is(out, "<xyz>"));
+    I32 numbers[3] = {1, -2, 3};
+    (void)format::write(out, sizeof out, numbers);
+    test::check(is(out, "[1, -2, 3]"));
+}
+
 // Every width, signed and unsigned, at its ends, against snprintf.
 export void test_format_integers_at_their_limits() {
     char out[capacity];

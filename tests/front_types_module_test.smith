@@ -259,6 +259,18 @@ export void test_front_types_module_parameter_loop_or_local_named_like_its_last_
     test::check_condition(!has(errors_of(&r), "has no public"));
 }
 
+// An applied type's argument written as a module's type (`Option(m.Handle)`, read by the parser as a value) is that
+// type (#3026: `Result(c.LLVMModuleRef, state.Error)` in front/emit.smith); a path that names no type stays an error.
+export void test_front_types_module_type_argument_through_the_module() {
+    clean("import lib.math as m\n\nfn run(h: Option(m.Handle)) -> i32:\n    return 1\n");
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text("import lib.math as m\n\nfn run(h: Option(m.nothing)) -> i32:\n    return 1\n");
+    test::check_condition(r.error_count > 0);
+}
+
 export void test_front_types_module_a_name_another_import_does_not_take_is_clean() {
     clean("import lib.math as m\n\nfn run(math: i32, xs: []i32) -> i32:\n    for x in xs:\n        return x\n    "
           "maths := math\n    return maths\n");

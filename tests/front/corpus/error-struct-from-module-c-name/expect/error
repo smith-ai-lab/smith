@@ -1,0 +1,1 @@
+src/main.smith:5:24: error: `words::Pair` has no field `size`; write one of its fields, such as `key`

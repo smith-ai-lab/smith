@@ -1,0 +1,7 @@
+# A generic that calls a C header this module imports, instantiated in another module (#3026).
+import c <stdio.h>
+
+pub fn show(args...):
+    for (i, arg) in enumerate(args):
+        if is_integer(typeof(arg)):
+            _ := stdio.printf("%lld\n", arg.to(i64))

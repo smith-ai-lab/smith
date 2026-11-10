@@ -1,0 +1,5 @@
+# A record with a C name and a field default, as std.build's `AppTests` (#3026).
+@c_name("words_pair")
+pub struct Pair:
+    pub key: i32
+    pub value: i32 = 7

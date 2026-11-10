@@ -24,6 +24,8 @@ import <smith/trace.h>; // smith_failure_format: the stop of a wrong call
 //                             (0.1f is 0.1, 1e22, 5e-324); inf, -inf and nan for what has no number
 //   char *, const char *      the terminated string; a null pointer is (null)
 //   char[:], const char[:]    its count of characters, which need no terminator
+//   char name[n]              its characters up to the first zero, or all n with none (#3026)
+//   T items[n]                [1, 2, 3]: each element by the rule of its type
 //   format::Hex               lowercase hexadecimal, zero-padded to a width: format::hex(value, 16), format::hex(x, 0)
 //   format::Fixed             a fixed number of places, rounded as printf's %.Nf does: format::fixed(value, 3)
 //   format::General           printf's %.Ng: format::general(value, 6), format::Scientific is %.Ne: scientific(value,
@@ -105,10 +107,10 @@ import <smith/trace.h>; // smith_failure_format: the stop of a wrong call
     writer->length += 1;
 }
 
-// The characters of text.
-[[std::c_name("smith_format_put_bytes")]] export void put_bytes(Writer *writer, const char text[:]) {
-    for (Usize i = 0; i < countof(text); i++) {
-        put_char(writer, text[i]);
+// The characters of bytes (not `text`, the name of the module std::text this file imports, #3026).
+[[std::c_name("smith_format_put_bytes")]] export void put_bytes(Writer *writer, const char bytes[:]) {
+    for (Usize i = 0; i < countof(bytes); i++) {
+        put_char(writer, bytes[i]);
     }
 }
 

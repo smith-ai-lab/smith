@@ -1,0 +1,11 @@
+# A record from `from ... import` is the module's record: as a type and in a construction that leaves out a default.
+import c <stdio.h>
+from words import Pair
+
+fn total(p: *Pair) -> i32:
+    return p.key + p.value
+
+fn main() -> i32:
+    p := Pair(key = 2)
+    _ := stdio.printf("%d\n", total(&p))
+    return 0
