@@ -582,10 +582,15 @@ static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x,
     return state::success();
 }
 
+// Where the walk is, for the driver's crash handler (runtime/front_flag.c, #2984): the declaration whose body is being
+// emitted and the kind of the last expression dispatched, in a fixed buffer and a literal, read without allocating.
+static char walk_declaration[256];
+static const char *walk_kind = "";
+
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    crash_kind = state::expr_kind_name(x).data;
+    walk_kind = state::expr_kind_name(x).data;
     try debug::expr_location(e, x);
     if (hint.present && (hint.ty.kind == .slice || hint.ty.kind == .block) && is_array_place(e, x))
         return emit_memory::array_as_slice(e, x, hint);
@@ -2268,25 +2273,21 @@ static void recover(state::Emitter *e) {
     e->instance = nullptr;
 }
 
-// Where the walk is, for the driver's crash handler (runtime/front_flag.c, #2984): the declaration whose body is being
-// emitted and the kind of the last expression dispatched, in a fixed buffer and a literal, read without allocating.
-static char crash_declaration[256];
-static const char *crash_kind = "";
 
 static void note_declaration(Str name) {
-    Usize n = countof(name) < sizeof crash_declaration - 1 ? countof(name) : sizeof crash_declaration - 1;
+    Usize n = countof(name) < sizeof walk_declaration - 1 ? countof(name) : sizeof walk_declaration - 1;
     for (Usize i = 0; i < n; i++)
-        crash_declaration[i] = name[i];
-    crash_declaration[n] = 0;
-    crash_kind = "";
+        walk_declaration[i] = name[i];
+    walk_declaration[n] = 0;
+    walk_kind = "";
 }
 
 [[std::c_name("front_emit_crash_declaration")]] export const char *crash_declaration_name() {
-    return crash_declaration;
+    return walk_declaration;
 }
 
 [[std::c_name("front_emit_crash_kind")]] export const char *crash_kind_name() {
-    return crash_kind;
+    return walk_kind;
 }
 
 static state::Status emit_all(state::Emitter *e) {
@@ -2297,8 +2298,8 @@ static state::Status emit_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && d->kind.function.body != nullptr && !is_template(d)) {
+            if (d->kind == .function) note_declaration(d->kind.function.name);
             if (state::is_skipped(e, i)) continue;
-            note_declaration(d->kind.function.name);
             if (state::collect(e, emit_function(e, d, e->functions[next], nullptr))) recover(e);
             next += 1;
         }

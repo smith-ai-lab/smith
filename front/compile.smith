@@ -1470,7 +1470,8 @@ static const ast::Decl *body_holding(const ast::Module *m, ast::Span at) {
 // compile does, when an error is anywhere else: in a signature, a record, a global, an import or a generic's instance.
 static const ast::Module *checked_part(const types::Checked *checked, const ast::Module *m) {
     for (Usize i = 0; i < checked->error_count; i++) {
-        if (countof(checked->errors[i].module) > 0 || checked->errors[i].in_instance) return nullptr;
+        Str module = checked->errors[i].module;
+        if (countof(module) > 0 || checked->errors[i].in_instance) return nullptr;
         if (body_holding(m, checked->errors[i].span) == nullptr) return nullptr;
     }
     ast::DeclRef kept[:] = mem::alloc_slice(ast::DeclRef, countof(m->decls));
@@ -1484,7 +1485,9 @@ static const ast::Module *checked_part(const types::Checked *checked, const ast:
         if (!failed_here) continue;
         ast::Decl *prototype = mem::alloc(ast::Decl);
         *prototype = *d;
-        prototype->kind.function.body = nullptr;
+        if (prototype->kind == .function) {
+            prototype->kind.function.body = nullptr;
+        }
         kept[i] = prototype;
     }
     ast::Module *part = mem::alloc(ast::Module);
@@ -1507,23 +1510,23 @@ static Str emit_part(const types::Checked *checked, const ast::Module *part, emi
 
 // The file being compiled and its stage, for the driver's crash handler (runtime/front_flag.c): kept in a fixed
 // buffer and a literal, which the handler reads without allocating.
-static char crash_file[4096];
-static const char *crash_stage = "parse";
+static char walk_file[4096];
+static const char *walk_stage = "parse";
 
 static void note_crash_file(Str path) {
-    Usize n = countof(path) < sizeof crash_file - 1 ? countof(path) : sizeof crash_file - 1;
+    Usize n = countof(path) < sizeof walk_file - 1 ? countof(path) : sizeof walk_file - 1;
     for (Usize i = 0; i < n; i++)
-        crash_file[i] = path[i];
-    crash_file[n] = 0;
-    crash_stage = "parse";
+        walk_file[i] = path[i];
+    walk_file[n] = 0;
+    walk_stage = "parse";
 }
 
 [[std::c_name("front_compile_crash_file")]] export const char *crash_file_name() {
-    return crash_file;
+    return walk_file;
 }
 
 [[std::c_name("front_compile_crash_stage")]] export const char *crash_stage_name() {
-    return crash_stage;
+    return walk_stage;
 }
 
 // The emitter's options for one file: objects are made at optimization 0, a debug build, and `smith cc -g` sets
@@ -1602,7 +1605,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     root_path = path;
     root_source = source;
     root_tree = &parsed.module;
-    crash_stage = "check";
+    walk_stage = "check";
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
     lint_inputs_done();
@@ -1616,7 +1619,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
         if (keep_going_requested()) part = checked_part(&checked, checked_module(&checked, &parsed.module));
         if (part == nullptr) return failed(check_lines, times);
         mem::set_allocator(outside);
-        crash_stage = "check"; // the stage that stopped the file, though its clean part goes on to emit
+        walk_stage = "check"; // the stage that stopped the file, though its clean part goes on to emit
         return failed(as_str(format::push(check_lines, emit_part(&checked, part, emit_options(wanted, source, &checked)))),
                       times);
     }
@@ -1625,7 +1628,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
-    crash_stage = "emit";
+    walk_stage = "emit";
     mark = clock::monotonic();
     emit::Emitted emitted = emit::module_all(context, checked_module(&checked, &parsed.module), options);
     times.emit = clock::monotonic() - mark;
@@ -1640,7 +1643,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
 
     if (ends_with_bc(output)) return write_bitcode(ir, path, output, warned, times);
     emit_object::ObjectOptions object_options = {.target = options.target, .optimization = 0};
-    crash_stage = "write";
+    walk_stage = "write";
     mark = clock::monotonic();
     emit_object::WriteResult written = emit_object::write(ir, object_options, output);
     times.write = clock::monotonic() - mark;
