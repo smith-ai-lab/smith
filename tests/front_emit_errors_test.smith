@@ -1,0 +1,67 @@
+module front_emit_errors_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::parser;
+import front::types;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+};
+
+static void begin(Scenario *s, Str source) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_here() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    return options;
+}
+
+static emit::Emitted emit_all(Scenario *s, c::LLVMContextRef context) {
+    emit::Options options = options_here();
+    return emit::module_all(context, &s->parsed.module, options);
+}
+
+// #2982: a failed function does not stop emit; the next failed one is reported too, and the good one in between is not.
+export void test_front_emit_two_failing_functions_report_both_errors() {
+    Scenario s = {};
+    begin(&s, "fn f(a: i32, b: u32) -> i32:\n    a + b\n\nfn ok(a: i32) -> i32:\n    a\n\nfn g(a: i32, b: u32) -> "
+              "i32:\n    a + b\n");
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Emitted emitted = emit_all(&s, context);
+    test::check_equal(emitted.module == nullptr, true);
+    test::check_equal(countof(emitted.errors), (Usize)2);
+    test::check_equal(emitted.errors[0].span.start < emitted.errors[1].span.start, true);
+    mem::free(emitted.errors.data);
+    c::LLVMContextDispose(context);
+}
+
+// `module` keeps returning the first error alone.
+export void test_front_emit_module_still_gives_the_first_error() {
+    Scenario s = {};
+    begin(&s, "fn f(a: i32, b: u32) -> i32:\n    a + b\n\nfn g(a: i32, b: u32) -> i32:\n    a + b\n");
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = options_here();
+    emit::ModuleResult result = emit::module(context, &s.parsed.module, options);
+    test::check_equal(result == .error, true);
+    c::LLVMContextDispose(context);
+}
