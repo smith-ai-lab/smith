@@ -22,6 +22,7 @@ fn page_size() -> usize:
 ```
 
 - `constexpr`, `if constexpr` and `for constexpr` are removed. A declaration whose value is known at compile time is a compile-time constant on its own; `const` demands it, on a declaration or a parameter.
+- **Decided 2026-11-10 (D23, D24, D25 in `knowledge/decisions.md`): `const` is removed.** Write `N := 64` at module level (always computed by the compiler) and `fn table(n: usize) -> [n]f32` (a parameter is compile-time when a use needs it; otherwise the function works both ways). Any ordinary function runs at compile time where a constant is needed, with no mark; an expression of type `type` is allowed wherever a type is written; a compile-time value that crosses into the program is immutable there. The front end still accepts `const` until #3041 merges, and calls at compile time arrive with #3039: new tickets and examples use the decided forms.
 - An `if` whose condition is known at compile time keeps one branch. `target.os` is the fact every declaration needs today; the others (`target.arch`, sanitizers) are not settled. `target.fast_math` is a `bool`: true when the compile has `-ffast-math` or `-ffinite-math-only` (D14); clang's `__FINITE_MATH_ONLY__` is written so.
 
 ## Reflection
