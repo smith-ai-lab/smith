@@ -70,8 +70,17 @@ jobs:
       pull-requests: read
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
-      # whether `macos` runs: always, except on a pull request whose diff touches nothing only the Mac sees (#2822)
+      # whether `macos` runs: always where the scope is full or docs; a PR check builds smith on the Mac even when its diff
+      # touches nothing only the Mac sees (#2832: a macOS-only build error was first seen in the queue)
       mac_run: ${{ steps.scope.outputs.mac_run }}
+      # whether `macos` also lints and runs the `--macos-only` tests: always, except on a PR check whose diff touches
+      # nothing only the Mac sees (#2822), whose `macos` job only builds smith (#2832)
+      mac_tests: ${{ steps.scope.outputs.mac_tests }}
+      # a push to main: the run of the merge queue that tested this very commit, and whether its artifacts hold the
+      # release tarballs it built (#2832, knowledge/release.md); `publish` publishes those instead of building again
+      queue_run: ${{ steps.packed.outputs.run }}
+      linux_packed: ${{ steps.packed.outputs.linux }}
+      mac_packed: ${{ steps.packed.outputs.mac }}
       # whether the front-end count runs (#2914): every queue entry and nightly run, and a PR check whose diff touches
       # what can change the count
       count: ${{ steps.scope.outputs.count }}
@@ -181,14 +190,16 @@ jobs:
             code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
             if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
           fi
-          # A pull request runs the Mac only where the diff reaches what only the Mac sees: shim/, Objective-C, the TLS
-          # file, a `@when(target.os == .macos)` line, or the workflows and actions (#2822). A docs scope keeps it (it
-          # is where the docs check runs); the queue runs it always, so a green pull request is not a green queue.
+          # A pull request lints and tests on the Mac only where the diff reaches what only the Mac sees: shim/,
+          # Objective-C, the TLS file, a `@when(target.os == .macos)` line, or the workflows and actions (#2822); it
+          # always builds smith there (#2832): a macOS-only build error (a deprecation under -Werror, #3014) failed only
+          # in the queue. A docs scope keeps the whole job (it is where the docs check runs); the queue runs it always.
           mac_run=true
+          mac_tests=true
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
-            mac_run=false
-            if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_run=true; fi
-            if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_run=true; fi
+            mac_tests=false
+            if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_tests=true; fi
+            if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_tests=true; fi
           fi
           # The count (#2914) runs in every queue entry and nightly run. A PR check runs it only when its diff touches
           # what the count reads: the front end, std, the C import, the language runtime or the build; a docs-only or
@@ -207,9 +218,41 @@ jobs:
           fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
+          echo "mac_tests=$mac_tests" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
           echo "uncached=$uncached" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope (macos: $mac_run, count: $count, uncached: $uncached)" >>"$GITHUB_STEP_SUMMARY"
+          echo "scope: $scope (macos: $mac_run, macos tests: $mac_tests, count: $count, uncached: $uncached)" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: The tarballs the queue run of this commit built
+        # a push to main is the commit the merge queue tested: its run built the release profile on both platforms and
+        # kept the tarballs as artifacts named after the commit (`release-pack-macos`, `frontend-coverage-fix`, #2832).
+        # They count only from a merge_group run whose `ci` passed; one missing (a push that did not come through the
+        # queue, an expired artifact) is built by `release` or `release-linux` as before. The Linux artifact carries
+        # the release tool `publish` runs, so without it both are built.
+        id: packed
+        if: github.event_name == 'push'
+        run: |
+          run=; linux=false; mac=false
+          for os in linux-x86_64 darwin-arm64; do
+            ids=$(gh_retry gh api "repos/$GH_REPO/actions/artifacts?name=stage0-$GITHUB_SHA-$os" \
+              --jq '.artifacts[]|select(.expired|not)|select(.workflow_run.head_sha=="'"$GITHUB_SHA"'")|.workflow_run.id' || true)
+            for id in $ids; do
+              [ -n "$run" ] && [ "$id" != "$run" ] && continue
+              event=$(gh_retry gh api "repos/$GH_REPO/actions/runs/$id" --jq .event || true)
+              ci=$(gh_retry gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq '.jobs[]|select(.name=="ci")|.conclusion' || true)
+              if [ "$event" = merge_group ] && [ "$ci" = success ]; then
+                run=$id
+                [ "$os" = linux-x86_64 ] && linux=true || mac=true
+                break
+              fi
+            done
+          done
+          # the tool that publishes travels in the Linux artifact
+          [ "$linux" = true ] || { run=; mac=false; }
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+          echo "linux=$linux" >>"$GITHUB_OUTPUT"
+          echo "mac=$mac" >>"$GITHUB_OUTPUT"
+          echo "release: tarballs of queue run ${run:-none} (linux: $linux, macos: $mac); the others are built here" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: The pull requests this queue entry tests
         id: prs
@@ -442,6 +485,8 @@ jobs:
       SMITH_TEST_STATS: "1"
       SCOPE: ${{ needs.changes.outputs.scope }}
       MACFLAGS: ${{ fromJSON(needs.changes.outputs.matrix).include[0].flags }}
+      # false: a PR check whose diff reaches nothing only the Mac sees builds smith here and stops (#2832)
+      MAC_TESTS: ${{ needs.changes.outputs.mac_tests }}
     permissions:
       contents: write # test-cache/save: `gh release create` of this job's test store (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
@@ -454,7 +499,7 @@ jobs:
           [ -n "$line" ] || line=unknown
           echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Tools some tests need
-        if: needs.changes.outputs.scope == 'full'
+        if: needs.changes.outputs.scope == 'full' && needs.changes.outputs.mac_tests == 'true'
         timeout-minutes: 5
         # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`. It runs
         # while smith builds: the macOS test stage waits for it
@@ -473,25 +518,30 @@ jobs:
       - uses: ./.github/actions/setup-smith
         timeout-minutes: 20
         with:
-          tests: "true"
+          # a build-only PR check (#2832) builds smith alone: the build is the check
+          tests: ${{ needs.changes.outputs.mac_tests }}
           # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
           # them (#2242); a documents-only change keeps the full list
           test-flags: ${{ needs.changes.outputs.scope == 'full' && format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) || '' }}
       - name: API budget (before test-cache)
+        if: needs.changes.outputs.mac_tests == 'true'
         uses: ./.github/actions/api-budget
         with:
           label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
+        if: needs.changes.outputs.mac_tests == 'true'
         # the macOS tests the store holds as passed are left out too (#2833): the `--macos-only` tests whose inputs did
         # not change do not run; the nightly restores nothing
         with:
           os: macos
           fresh: ${{ github.event_name == 'schedule' }}
       - name: API budget (after test-cache)
+        if: needs.changes.outputs.mac_tests == 'true'
         uses: ./.github/actions/api-budget
         with:
           label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Checks
+        if: needs.changes.outputs.mac_tests == 'true'
         timeout-minutes: 30
         shell: bash
         run: |
@@ -542,7 +592,7 @@ jobs:
           exit $failed
       - name: Publish the test store
         # this job's store as its own release, `test-cache-<sha7>-macos` (#2870); queue and nightly runs only
-        if: always() && needs.changes.outputs.scope == 'full'
+        if: always() && needs.changes.outputs.scope == 'full' && needs.changes.outputs.mac_tests == 'true'
         uses: ./.github/actions/test-cache/save
         with:
           os: macos
@@ -922,12 +972,13 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage]
+    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
+      actions: write # a failed queue run deletes the release tarballs it kept (#2832)
     steps:
       - uses: actions/checkout@v4 # only the shared shell function and the budget action (git, not REST)
         with:
@@ -948,6 +999,7 @@ jobs:
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
+          RELEASE_PACK_MACOS: ${{ needs.release-pack-macos.result }}
           COUNT: ${{ needs.changes.outputs.count }}
           BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
@@ -987,13 +1039,16 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
-          # a pull request whose diff cannot reach the Mac's code did not run `macos` on purpose (#2822)
+          # `macos` is owed wherever it runs; a PR check whose diff cannot reach the Mac's code runs it as a build only
+          # (#2822, #2832), which is still owed
           if [ "$MAC_RUN" = false ]; then owed=${owed/MACOS/}; fi
           # a PR check lints in `check-fmt-prove`, so it owes no `check-lint` (#2856)
           if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to
           # so does the nightly run (#2955), whose count is compared with the cached one
           if [ "$SCOPE" = full ] && { [ "$EVENT" = merge_group ] || [ "$EVENT" = schedule ]; }; then owed="$owed FRONTEND_COVERAGE"; fi
+          # a full merge group builds the release main will publish (#2832): one that does not build fails the entry
+          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_MACOS"; fi
           # a PR check owes it when its diff reaches what the count reads (#2914)
           if [ "$SCOPE" = full ] && [ "$EVENT" = workflow_dispatch ] && [ "$COUNT" = true ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
@@ -1020,6 +1075,16 @@ jobs:
           gh_retry gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
             -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
           echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: A failed queue run keeps no release
+        # its tarballs (`stage0-<commit>-*` artifacts) are deleted, so nothing that looks like a release of a commit that
+        # failed is left; the push to main also takes them only from a run whose `ci` passed (#2832)
+        if: always() && github.event_name == 'merge_group' && steps.verdict.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh_retry gh api "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --jq '.artifacts[]|select(.name|startswith("stage0-"))|.id'); do
+            gh_retry gh api -X DELETE "repos/$GH_REPO/actions/artifacts/$id" && echo "deleted artifact $id"
+          done
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
@@ -1063,9 +1128,9 @@ jobs:
       - name: Say which job the stage0 comes from
         # on a push, a `publish` that did not succeed means no release of this commit will appear: say so at once and in one
         # line, instead of waiting 6 minutes in fetch-smith for it (#2976). The Mac's warm also needs the macOS tarball.
-        if: github.event_name == 'push' && (needs.publish.result != 'success' || (runner.os == 'macOS' && needs.release.result != 'success'))
+        if: github.event_name == 'push' && (needs.publish.result != 'success' || (runner.os == 'macOS' && needs.publish.outputs.mac != 'true'))
         run: |
-          echo "warm: stage0-$GITHUB_SHA is not published: job publish ${{ needs.publish.result }} (release ${{ needs.release.result }}, release-linux ${{ needs.release-linux.result }})" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+          echo "warm: stage0-$GITHUB_SHA is not published: job publish ${{ needs.publish.result }} (macOS tarball ${{ needs.publish.outputs.mac }}; release ${{ needs.release.result }}, release-linux ${{ needs.release-linux.result }})" | tee -a "$GITHUB_STEP_SUMMARY" >&2
           exit 1
       - uses: actions/checkout@v4
         with:
@@ -1287,12 +1352,63 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  release-pack-macos:
+    # a queue run builds the macOS release of the commit it tests (#2832, knowledge/release.md): the merge queue moves
+    # main to that very commit, so the push to main only publishes these tarballs (`publish`) instead of building smith
+    # a third time. Beside the other jobs, not after them; `ci` owes it, so a release that does not build fails the
+    # queue run. The tarball and its checksum are this run's artifact `stage0-<commit>-darwin-arm64` (3 days); a failed
+    # run deletes its artifacts (`ci`), and `changes` of the push takes them only from a run whose `ci` passed.
+    # Built as the fallback `release` below builds: setup-smith's release profile, by the newest stage0.
+    needs: [changes, pack]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
+    runs-on: macos-26
+    # the push run's `release` took 16 min (run 42857983618); the limit counts time queued for a macOS slot
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - uses: ./.github/actions/setup-smith
+        timeout-minutes: 40
+        with:
+          profile: release
+      - name: Package the release
+        run: |
+          start=$SECONDS
+          "$SMITH" version | grep -q "commit $GITHUB_SHA\$" || { echo "::error::$SMITH is not the smith of $GITHUB_SHA"; "$SMITH" version; exit 1; }
+          out="$RUNNER_TEMP/stage0"; mkdir -p "$out"
+          # the release tool (build.c's `release-tool`, compiled by the smith just built, as there)
+          "$SMITH" cc -w -I include -I .smith/include release/publish.smith lib/std/files.smith lib/std/console.smith \
+              lib/std/format.smith lib/std/mem.smith lib/std/arena.smith lib/std/contract.smith lib/std/env.smith \
+              lib/std/text.smith lib/std/process.smith lib/std/clock.smith lib/handlers.c lib/trace.c lib/optimize_asm.c \
+              -o "$out/release"
+          "$out/release" package "$SMITH" "$out"
+          rm "$out/release"
+          ls -l "$out"
+          echo "took package $((SECONDS - start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep the tarball for the push to main
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage0-${{ github.sha }}-darwin-arm64
+          path: ${{ runner.temp }}/stage0
+          compression-level: 0
+          retention-days: 3
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
-    # (knowledge/release.md), which the next jobs' setup builds from; the macOS tarball goes into its draft, and the
-    # `publish` job publishes the draft (releases are immutable once published)
+    # (knowledge/release.md), which the next jobs' setup builds from. The queue run of this commit built its tarball
+    # (`release-pack-macos`, #2832), so this job runs only when that tarball is missing (a push that did not come
+    # through the queue, an expired artifact): it builds the macOS tarball as the queue does and puts it into the draft,
+    # and the `publish` job publishes the draft (releases are immutable once published)
     needs: changes
-    if: needs.changes.outputs.scope == 'release'
+    if: needs.changes.outputs.scope == 'release' && needs.changes.outputs.mac_packed != 'true'
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
@@ -1309,12 +1425,16 @@ jobs:
       - name: API budget (first)
         uses: ./.github/actions/api-budget
       - uses: ./.github/actions/setup-smith
+        with:
+          # the release profile in the default folder, as the queue run builds it (#2832): `-DPROFILE=release release`
+          # then publishes this very binary and builds no second one
+          profile: release
       - name: Release
         # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
         run: |
           start=$SECONDS
           code=0
-          "$SMITH" build release || code=$?
+          "$SMITH" build -DPROFILE=release release || code=$?
           echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
       - name: API budget (last)
@@ -1323,9 +1443,10 @@ jobs:
 
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
-    # job's tarball when it fails, so `install` never waits for Linux.
+    # job's tarball when it fails, so `install` never waits for Linux. Only when the queue run of this commit left no
+    # Linux tarball (`frontend-coverage-fix` packs it, #2832): the fallback, built the same way.
     needs: changes
-    if: needs.changes.outputs.scope == 'release'
+    if: needs.changes.outputs.scope == 'release' && needs.changes.outputs.linux_packed != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1344,12 +1465,16 @@ jobs:
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
+        with:
+          # the release profile in the default folder, as the queue run builds it (#2832): `-DPROFILE=release release`
+          # then publishes this very binary and builds no second one
+          profile: release
       - name: Release
         # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
         run: |
           start=$SECONDS
           code=0
-          "$SMITH" build release || code=$?
+          "$SMITH" build -DPROFILE=release release || code=$?
           echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
       - name: API budget (last)
@@ -1404,6 +1529,22 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - name: Package the release of this commit, in the background
+        # a queue run's Linux release (#2832): this build is the release profile, so it is packed as the push to main
+        # would build it (`release-linux`), and `publish` publishes it with the macOS one. In the background, so the
+        # count does not wait: `smith cc` and tar, no `smith build` (two in one tree collide on .smith/build.ninja)
+        if: github.event_name == 'merge_group'
+        run: |
+          "$SMITH" version | grep -q "commit $GITHUB_SHA\$" || { echo "::error::$SMITH is not the smith of $GITHUB_SHA"; "$SMITH" version; exit 1; }
+          out="$RUNNER_TEMP/stage0"; mkdir -p "$out"
+          export out
+          nohup bash -c 'set -e; start=$SECONDS
+            # the release tool (the task `release-tool` of build.c, compiled by the smith just built, as there); it stays
+            # in the artifact: `publish` runs it to add the tarballs to the draft
+            "$SMITH" cc -w -I include -I .smith/include release/publish.smith lib/std/files.smith lib/std/console.smith lib/std/format.smith lib/std/mem.smith lib/std/arena.smith lib/std/contract.smith lib/std/env.smith lib/std/text.smith lib/std/process.smith lib/std/clock.smith lib/handlers.c lib/trace.c lib/optimize_asm.c -o "$out/release"
+            "$out/release" package "$SMITH" "$out"
+            echo "took package $((SECONDS - start))s"' >"$RUNNER_TEMP/pack.log" 2>&1 &
+          echo $! >"$RUNNER_TEMP/pack.pid"
       - name: API budget (before test-cache)
         uses: ./.github/actions/api-budget
         with:
@@ -1541,6 +1682,24 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
+      - name: Wait for the release package
+        # the background step above; a package that failed fails the job, and with it the queue run (#2832)
+        if: github.event_name == 'merge_group'
+        run: |
+          pid=$(cat "$RUNNER_TEMP/pack.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          cat "$RUNNER_TEMP/pack.log"
+          [ -s "$RUNNER_TEMP/stage0/smith-linux-x86_64.tar.xz.sha256" ] && [ -x "$RUNNER_TEMP/stage0/release" ] \
+            || { echo "::error::the Linux release of $GITHUB_SHA was not packaged"; exit 1; }
+          grep 'took package' "$RUNNER_TEMP/pack.log" >>"$GITHUB_STEP_SUMMARY" || true
+      - name: Keep the tarball for the push to main
+        if: github.event_name == 'merge_group'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage0-${{ github.sha }}-linux-x86_64
+          path: ${{ runner.temp }}/stage0
+          compression-level: 0
+          retention-days: 3
       - name: Pack the build for the shards
         if: ${{ steps.plan.outputs.count != '1' }}
         shell: bash
@@ -2023,24 +2182,62 @@ jobs:
     # either one's tarball lets the release out: a failed Linux job still lets the macOS release out, and a macOS job that
     # timed out lets the Linux one out (`warm` and every Linux job fetch the Linux tarball; 4 of the 5 failed `warm` runs of
     # 2026-11-09 waited for a release the macOS timeout kept unpublished, #2976). That commit has no macOS tarball for good.
-    needs: [release, release-linux]
-    if: always() && (needs.release.result == 'success' || needs.release-linux.result == 'success')
+    # The tarballs the queue run of this commit built (#2832) are its artifacts: this job adds them to the draft
+    # (`release upload`, the tool that travels in the Linux artifact) and publishes at once, a minute or two after the
+    # merge; `release` and `release-linux` run only for a tarball the queue run did not leave.
+    needs: [changes, release, release-linux]
+    if: always() && needs.changes.result == 'success' && (needs.release.result == 'success' || needs.release-linux.result == 'success' || needs.changes.outputs.linux_packed == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     permissions:
       contents: write
+      actions: read # the queue run's artifacts
+    outputs:
+      # whether the published release holds the macOS tarball (`install` and the Mac's `warm` need it)
+      mac: ${{ steps.published.outputs.mac }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Download the Linux tarball of the queue run
+        if: needs.changes.outputs.linux_packed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: stage0-${{ github.sha }}-linux-x86_64
+          path: ${{ runner.temp }}/stage0
+          run-id: ${{ needs.changes.outputs.queue_run }}
+          github-token: ${{ github.token }}
+      - name: Download the macOS tarball of the queue run
+        if: needs.changes.outputs.linux_packed == 'true' && needs.changes.outputs.mac_packed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: stage0-${{ github.sha }}-darwin-arm64
+          path: ${{ runner.temp }}/stage0
+          run-id: ${{ needs.changes.outputs.queue_run }}
+          github-token: ${{ github.token }}
+      - name: Add the queue run's tarballs to the draft
+        if: needs.changes.outputs.linux_packed == 'true'
+        env:
+          QUEUE_RUN: ${{ needs.changes.outputs.queue_run }}
+        run: |
+          chmod +x "$RUNNER_TEMP/stage0/release"
+          "$RUNNER_TEMP/stage0/release" upload "$RUNNER_TEMP/stage0"
+          echo "release: tarballs of queue run $QUEUE_RUN" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Publish the release
         # no smith on this runner (a hosted Ubuntu, 3 minutes): the one command of `release finish`
         # (release/publish.smith), which stays for use by hand
         run: |
           gh release edit "stage0-$GITHUB_SHA" --draft=false
           echo "release: published stage0-$GITHUB_SHA"
+      - name: What the release holds
+        id: published
+        run: |
+          assets=$(gh_retry gh api "repos/$GH_REPO/releases/tags/stage0-$GITHUB_SHA" --jq '[.assets[].name]|join(" ")')
+          case " $assets " in *" smith-darwin-arm64.tar.xz "*) mac=true ;; *) mac=false ;; esac
+          echo "mac=$mac" >>"$GITHUB_OUTPUT"
+          echo "release: stage0-$GITHUB_SHA holds $assets" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
@@ -2049,9 +2246,10 @@ jobs:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
     # checksum, no build (owner, 2026-10-29). Nothing needs this job (not `ci`, not the release): with the Mac off it
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
-    # a commit published without its macOS tarball (the macOS job failed or timed out, #2976) is skipped, not waited for
-    needs: [release, publish]
-    if: needs.release.result == 'success'
+    # a commit published without its macOS tarball (the macOS job failed or timed out, #2976) is skipped, not waited for:
+    # `publish` says whether the release holds it, from the queue run (#2832) or from `release`
+    needs: [publish]
+    if: always() && needs.publish.outputs.mac == 'true'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     concurrency:

@@ -5,6 +5,7 @@
 //
 // Usage:
 //   release publish <smith>        guard, package, add to the draft release, prune (CI, `smith build release`)
+//   release upload <dir>           guard, add the tarballs in <dir> (built by the queue run) to the draft, prune
 //   release finish <tag>           publish the draft release the jobs added to (CI's `publish` job)
 //   release package <smith> <dir>  write the tarball and its checksum into <dir>
 //   release fetch <tag> <dir>      download over plain HTTPS (curl, no gh), check the checksum, extract into <dir>
@@ -384,6 +385,18 @@ Usize keep_count() {
 
 // ---------------------------------------------------------------- the draft, finish, publish
 
+// Fails unless the `.sha256` beside the tarball names the tarball's digest; `tag` names it in the message.
+void check_sum(Text tarball, Text tag) {
+    files::BytesResult recorded = files::read_file(join(tarball, ".sha256"));
+    const char *digits_text = recorded == .ok ? (const char *)recorded.ok.data : "";
+    Usize recorded_length = recorded == .ok ? countof(recorded.ok) : 0;
+    Text words = digits_text[0:recorded_length];
+    Text first = "";
+    if (!text::take_word(&words, &first) || !mem::equal(first, checksum_of(tarball))) {
+        die("the checksum of ", join(tag, " does not match"));
+    }
+}
+
 // True when GitHub has a release (a draft included) of the tag.
 Bool release_exists(Text tag) {
     const char *const view[_] = {"gh", "release", "view", tag.data};
@@ -487,6 +500,31 @@ void publish(Text smith) {
     prune_old();
 }
 
+// The tarballs the merge queue's run of this commit built (#2832, knowledge/release.md): guard, check each one's
+// checksum, add every platform's pair found in <dir> to the draft of this commit, prune. A folder with none fails.
+void upload(Text folder) {
+    guard();
+    const char *const rev_head[_] = {"git", "rev-parse", "HEAD"};
+    Text head = output_of(rev_head[0:3]);
+    Text tag = join("stage0-", head);
+    Usize added = 0;
+    for (Usize i = 0; i < 2; i++) {
+        Text name = "smith-darwin-arm64.tar.xz";
+        if (i == 1) name = "smith-linux-x86_64.tar.xz";
+        Text tarball = join(folder, "/", name);
+        if (!files::exists(tarball)) continue;
+        check_sum(tarball, tag);
+        draft(tag, head);
+        const char *const add[_] = {
+            "gh", "release", "upload", tag.data, tarball.data, join(tarball, ".sha256").data, "--clobber"};
+        if (!passes(add[0:7])) die(join("cannot add ", name, " to "), tag);
+        console::print("release: added ", name, " to the draft ", tag, "\n");
+        added += 1;
+    }
+    if (added == 0) die("no tarball in ", folder);
+    prune_old();
+}
+
 // ---------------------------------------------------------------- fetch
 
 // Downloads the tarball of the release over plain HTTPS (no gh login), checks its checksum and extracts bin/ into dir.
@@ -503,14 +541,7 @@ void fetch(Text tag, Text folder) {
         if (!passes(download[0:7])) die("cannot download ", url);
     }
     Text tarball = join(folder, "/", name);
-    files::BytesResult recorded = files::read_file(join(tarball, ".sha256"));
-    const char *digits_text = recorded == .ok ? (const char *)recorded.ok.data : "";
-    Usize recorded_length = recorded == .ok ? countof(recorded.ok) : 0;
-    Text words = digits_text[0:recorded_length];
-    Text first = "";
-    if (!text::take_word(&words, &first) || !mem::equal(first, checksum_of(tarball))) {
-        die("the checksum of ", join(tag, " does not match"));
-    }
+    check_sum(tarball, tag);
     const char *const extract[_] = {"tar", "-C", folder.data, "-xJf", tarball.data};
     if (!passes(extract[0:5])) die("cannot extract ", tarball);
 }
@@ -529,6 +560,8 @@ I32 main(Str args[:]) {
     Text second = words[3];
     if (same(command, "publish") && argc == 3) {
         publish(first);
+    } else if (same(command, "upload") && argc == 3) {
+        upload(first);
     } else if (same(command, "finish") && argc == 3) {
         finish(first);
     } else if (same(command, "package") && argc == 4) {
@@ -540,7 +573,8 @@ I32 main(Str args[:]) {
     } else if (same(command, "guard") && argc == 2) {
         guard();
     } else {
-        die("usage: release publish <smith> | finish <tag> | package <smith> <dir> | fetch <tag> <dir> | prune | guard",
+        die("usage: release publish <smith> | upload <dir> | finish <tag> | package <smith> <dir> | "
+            "fetch <tag> <dir> | prune | guard",
             "");
     }
     return 0;
