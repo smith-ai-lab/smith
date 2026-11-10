@@ -5,6 +5,8 @@ description: Load when you are a runner: one fresh session that claims the top e
 
 # smith-dev-runner
 
+**Ordering since 2026-11-10 (this replaces every mention of lanes, #73, `p1`-`p3`, `blocked` and `later` below).** The backlog is the epic #1631 with ordered sub-issues, and at most a few tickets beside it. A runner's ticket is the one its prompt names, or the first open sub-issue that is not `claimed` and whose `Waits for #N` tickets are all closed. A ticket carries `task`, one difficulty label and `claimed`; `p0` only when main is red. A runner stays until its prediction is measured on main, reports to the lead and ends: it starts a successor only when its prompt says so. The lead writes one count ticket at a time from the count's table, with a prediction, and starts no runner the owner has not agreed to.
+
 You are one runner in the pool (#1409). You own exactly one ticket, from claim to merge and then to the measurement of its prediction. When the measurement is written into the ticket, you start your successor and end. The factory's rules are in [smith-dev-lead](../smith-dev-lead/SKILL.md) (Factory rules); the ticket format and the split rule are in [tickets](../smith-dev-tickets/SKILL.md).
 
 **`p0` first.** If main is red, the open `p0` issue comes before everything else.

@@ -231,6 +231,36 @@ export void test_release_publish_adds_a_platform_to_an_existing_release() {
                          capture(&p, "grep -c 'release create' \"$GH_LOG\" || true"));
 }
 
+// upload (#2832): the tarballs a queue run packaged go into the draft of this commit, checked, and it stays a draft;
+// a tarball whose checksum does not match, or a folder with none, adds nothing
+export void test_release_upload_adds_packaged_tarballs_to_the_draft() {
+    scratch::Project p = repository();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run pushed = scratch::sh(&p, "git push -q origin main && mkdir ../empty");
+    scratch::expect_status("release: upload-pushed", 0, &pushed);
+    scratch::Run packaged = run(&p, "\"$script\" package ../fake-smith ../packed");
+    scratch::expect_status("release: upload-packaged", 0, &packaged);
+    scratch::expect_text("release: upload-refuses-an-empty-folder", "release: no tarball in ../empty",
+                         capture(&p, "\"$script\" upload ../empty 2>&1 | tail -1"));
+    scratch::Run uploaded = run(&p, "\"$script\" upload ../packed >/dev/null 2>&1");
+    scratch::expect_status("release: upload", 0, &uploaded);
+    scratch::expect_text("release: upload-assets", capture(&p, "echo $name; echo $name.sha256"),
+                         capture(&p, "ls \"../gh/stage0-$head\""));
+    scratch::expect_text("release: upload-makes-a-draft", "1",
+                         capture(&p, "grep -c 'release create.*--draft' \"$GH_LOG\""));
+    scratch::expect_text("release: upload-leaves-it-a-draft", "0",
+                         capture(&p, "grep -c 'release edit' \"$GH_LOG\" || true"));
+    scratch::expect_text("release: upload-checks-the-sum",
+                         capture(&p, "echo \"release: the checksum of stage0-$head does not match\""),
+                         capture(&p, "echo x >>\"../packed/$name\" && \"$script\" upload ../packed 2>&1 | tail -1"));
+    scratch::expect_text("release: upload-bad-sum-adds-nothing", "1",
+                         capture(&p, "grep -c 'release upload' \"$GH_LOG\""));
+}
+
 // CI: only the commit of a push to main
 export void test_release_ci_releases_only_a_push_to_main() {
     scratch::Project p = repository();
