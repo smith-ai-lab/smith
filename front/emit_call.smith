@@ -238,7 +238,7 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
     } else if (callee->kind ==
                    .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
         state::Local local = {};
-        Str name = types::c_member_name(e->options.checked, callee);
+        Str name = types::c_member_name_in(e->options.checked, callee, e->instance_scope); // an instance: its module's
         if (countof(name) == 0 || state::find_local(e, types::c_member_base(callee), &local)) return false;
         full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
     } else {

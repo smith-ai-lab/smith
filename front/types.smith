@@ -1619,9 +1619,10 @@ export const Usize max_instances = 256;
 export struct HeaderBinding {
     Str name;
     const ast::Module *header;
+    Str owner; // the prefix of the imported module that wrote the import (`fmt::`), empty for the module itself
 };
 
-export const Usize max_header_bindings = 32;
+export const Usize max_header_bindings = 128;
 
 // The instance a call of a generic function was checked against (the emitter reads it).
 export struct InstanceUse {
@@ -4475,11 +4476,23 @@ export const Symbol *scoped(const Checked *r, Str name) {
     return found;
 }
 
+// Whether the code checked now sees the binding: the module's own, and an imported module's while that module's code
+// is read (its declarations, or the body of an instance of one of its generics, whose prefix is the module's), so
+// `stdio.putchar` in a generic of `fmt` reads `fmt`'s `import c <stdio.h>` wherever the instance is made.
+static Bool binding_visible(const HeaderBinding *b, Str scope) {
+    return countof(b->owner) == 0 || same_text(b->owner, scope);
+}
+
+// The binding `import c <h>` made under `name` that code of the module with the prefix `scope` sees, or null.
+export const HeaderBinding *header_binding_in(const Checked *r, Str name, Str scope) {
+    for (Usize i = 0; i < r->binding_count; i++)
+        if (binding_visible(&r->bindings[i], scope) && same_text(r->bindings[i].name, name)) return &r->bindings[i];
+    return nullptr;
+}
+
 // The binding `import c <h>` made under `name`, or null.
 export const HeaderBinding *header_binding(const Checked *r, Str name) {
-    for (Usize i = 0; i < r->binding_count; i++)
-        if (same_text(r->bindings[i].name, name)) return &r->bindings[i];
-    return nullptr;
+    return header_binding_in(r, name, r->prefix);
 }
 
 // Whether the header declares `name`: a function, variable, type or enumerator, directly or through its includes.
@@ -4500,9 +4513,11 @@ static Bool header_has(const ast::Module *header, Str name) {
 
 // Whether a header bound as `base` declares `name`. Two headers can share a binding name (`<time.h>` and
 // `<sys/time.h>` are both `time`): the name is declared when either has it (#2611).
-static Bool binding_declares(const Checked *r, Str base, Str name) {
+static Bool binding_declares(const Checked *r, Str base, Str name, Str scope) {
     for (Usize i = 0; i < r->binding_count; i++)
-        if (same_text(r->bindings[i].name, base) && header_has(r->bindings[i].header, name)) return true;
+        if (binding_visible(&r->bindings[i], scope) && same_text(r->bindings[i].name, base) &&
+            header_has(r->bindings[i].header, name))
+            return true;
     return false;
 }
 
@@ -4519,12 +4534,17 @@ export Str c_member_base(const ast::Expr *e) {
 // hides, spelled as the name `c::name` the header's declaration has. Empty when `e` is not that shape, the base is no
 // binding, or the header does not declare the name. The caller has checked that no local hides the base (the checker
 // through `scoped`, the emitter through its locals).
-export Str c_member_name(const Checked *r, const ast::Expr *e) {
+export Str c_member_name_in(const Checked *r, const ast::Expr *e, Str scope) {
     Str base = c_member_base(e);
     if (countof(base) == 0 || e->kind != .member) return "";
-    const HeaderBinding *binding = header_binding(r, base);
-    if (binding == nullptr || !binding_declares(r, base, e->kind.member.name)) return "";
+    const HeaderBinding *binding = header_binding_in(r, base, scope);
+    if (binding == nullptr || !binding_declares(r, base, e->kind.member.name, scope)) return "";
     return e->kind.member.name;
+}
+
+// The same for the code checked now: the module's own, or an imported module's while its prefix is in force.
+export Str c_member_name(const Checked *r, const ast::Expr *e) {
+    return c_member_name_in(r, e, r->prefix);
 }
 
 // The header declaration `stdio.name` stands for, or null.
@@ -4549,14 +4569,14 @@ export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *f
     Str name = e->kind.member.name;
     const HeaderBinding *binding = header_binding(r, base);
     if (binding != nullptr) {
-        if (binding_declares(r, base, name)) return "";
+        if (binding_declares(r, base, name, r->prefix)) return "";
         return msg(format::push("`", base, ".", name,
                                 "` is not declared by that header; check its spelling, or import ",
                                 "the header that declares it"));
     }
     if (!same_text(base, "c")) return "";
     for (Usize i = 0; i < r->binding_count; i++)
-        if (header_has(r->bindings[i].header, name)) {
+        if (binding_visible(&r->bindings[i], r->prefix) && header_has(r->bindings[i].header, name)) {
             *fix = mem::realloc(*fix, 1); // `smith lint --fix` writes the binding where `c` stood (#1678)
             (*fix)[0] = (syntax::Edit){.span = e->kind.member.base->span, .text = r->bindings[i].name};
             return msg(format::push("there is no global `c`: write `", r->bindings[i].name, ".", name, "`"));
@@ -4569,7 +4589,7 @@ export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *f
 // front of it: empty when no header does. `smith lint --fix` writes the binding at `span` (#2287).
 export Str c_binding_of(const Checked *r, Str name) {
     for (Usize i = 0; i < r->binding_count; i++)
-        if (header_has(r->bindings[i].header, name)) return r->bindings[i].name;
+        if (binding_visible(&r->bindings[i], r->prefix) && header_has(r->bindings[i].header, name)) return r->bindings[i].name;
     return "";
 }
 
@@ -4608,7 +4628,7 @@ export const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     }
     if (count == 2 && header_binding(r, path.segments[0].text) != nullptr &&
         scoped(r, path.segments[0].text) == nullptr) {
-        if (!binding_declares(r, path.segments[0].text, path.segments[1].text)) return nullptr;
+        if (!binding_declares(r, path.segments[0].text, path.segments[1].text, r->prefix)) return nullptr;
         return lookup_as(&r->scopes, msg(format::push("c::", path.segments[1].text)),
                          true); // `stdio.size_t` is `c::size_t`; a struct tag over a function of its name
     }
@@ -4909,10 +4929,12 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
     order_by_imports(list, count);
     for (Usize k = 0; k < count; k++) {
         const ast::Module *m = list[k].module;
-        // The headers the module imports bind their names for its own declarations only (`[k.SIDE]u8` in a field),
-        // so the bindings go once the module is declared.
+        // The headers the module imports bind their names for its own code only (`[k.SIDE]u8` in a field, and the
+        // body of an instance of its generic): each binding it adds is its own, seen while its prefix is in force.
         Usize bindings = r->binding_count;
         declare_headers(r, m);
+        for (Usize i = bindings; i < r->binding_count; i++)
+            r->bindings[i].owner = list[k].prefix;
         r->prefix = list[k].prefix;
         for (Usize i = 0; i < countof(m->decls); i++)
             declare_nominal(r, m->decls[i]);
@@ -4929,7 +4951,6 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
                 r->scopes.count = symbols;
             }
         }
-        r->binding_count = bindings;
     }
     r->prefix = "";
 }
