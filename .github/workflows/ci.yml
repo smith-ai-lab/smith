@@ -94,6 +94,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/yield-to-queue
         with:
           queue-wait: "true"
@@ -105,7 +113,7 @@ jobs:
         env:
           PR: ${{ inputs.pr }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
+          gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
           echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
           jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
           echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
@@ -255,6 +263,9 @@ jobs:
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
           echo "tests: $count Linux parts ($flags), one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
@@ -280,7 +291,22 @@ jobs:
       group: mac-probe-${{ github.run_id }}
       cancel-in-progress: true
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - run: echo "the Mac started the probe"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   watch:
     # The Mac watchdog, part 2: the one that decides where `macos` runs. Hosted was picked: hosted. The Mac was picked:
@@ -302,6 +328,13 @@ jobs:
       MAC: ${{ needs.changes.outputs.mac }}
       MAC_CORES: ${{ needs.changes.outputs.cores }}
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Did the Mac start the probe
         id: watch
         run: |
@@ -324,6 +357,14 @@ jobs:
           echo "cores=$cores" >>"$GITHUB_OUTPUT"
           echo "dead=$dead" >>"$GITHUB_OUTPUT"
           echo "macOS job runs on $runner ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   mac-probe-end:
     # The Mac watchdog, part 3: the probe of a Mac that did not answer is still queued; a job of its concurrency group
@@ -337,7 +378,22 @@ jobs:
       group: mac-probe-${{ github.run_id }}
       cancel-in-progress: true
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - run: echo "the Mac did not answer; its probe is cancelled"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   macos:
     # everything macOS does in a run, in one job (#1709): build smith and the tests, then the macOS-only tests (a
@@ -375,6 +431,13 @@ jobs:
       contents: write # test-cache/save: `gh release create` of this job's test store (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Tools some tests need
         if: needs.changes.outputs.scope == 'full'
         timeout-minutes: 5
@@ -399,12 +462,20 @@ jobs:
           # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
           # them (#2242); a documents-only change keeps the full list
           test-flags: ${{ needs.changes.outputs.scope == 'full' && format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) || '' }}
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # the macOS tests the store holds as passed are left out too (#2833): the `--macos-only` tests whose inputs did
         # not change do not run; the nightly restores nothing
         with:
           os: macos
           fresh: ${{ github.event_name == 'schedule' }}
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Checks
         timeout-minutes: 30
         shell: bash
@@ -471,6 +542,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   build-linux:
     # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
@@ -502,6 +581,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -521,11 +608,19 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         with:
           os: linux
           fresh: ${{ github.event_name == 'schedule' }}
           imports-from: linux-* # the test parts' import caches, not the count's (#2939)
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Size the test parts
         # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
         # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
@@ -619,6 +714,9 @@ jobs:
         with:
           restore: "false"
           flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   test-linux:
     # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
@@ -641,6 +739,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -651,6 +757,9 @@ jobs:
           part: ${{ matrix.shard }}
           count: ${{ matrix.count }}
           flags: ${{ matrix.flags }}
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
     # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
@@ -671,6 +780,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -701,8 +818,21 @@ jobs:
             shift
             start=$SECONDS
             code=0
-            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            SMITH_LINT_CACHE=why "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
             echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            # where a stage's time went (#2985): lint's own line (files run and cached, run and setup seconds), and
+            # prove's (build and proof seconds, groups) with the sum of its groups' `N proved, M failed, K cached`
+            case $name in
+              lint)
+                grep 'smith lint: linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+                # why each file ran (`SMITH_LINT_CACHE=why`), counted by reason
+                grep -o 'runs: .*' "$RUNNER_TEMP/lint.log" | sort | uniq -c | tee -a "$GITHUB_STEP_SUMMARY" || true ;;
+              prove)
+                grep 'smith prove: [0-9]* groups' "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+                awk '/^[0-9]+ proved, [0-9]+ failed/ { p += $1; f += $3; for (i = 1; i <= NF; i++) if ($i == "cached") c += $(i - 1) }
+                     END { printf "prove: %d functions proved (%d reused from the cache, %d failed)\n", p, c, f }' \
+                  "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            esac
             if [ "$code" != 0 ]; then
               tail -n 60 "$RUNNER_TEMP/$name.log"
               echo "FAIL $name"
@@ -713,6 +843,9 @@ jobs:
             fi
           done
           exit $failed
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   check-lint:
     # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't.
@@ -732,6 +865,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/setup-smith
         with:
@@ -759,6 +900,9 @@ jobs:
             echo "::error::smith lint failed"
           fi
           exit $code
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
@@ -770,6 +914,11 @@ jobs:
     permissions:
       statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
     steps:
+      - uses: actions/checkout@v4 # only the shared shell function and the budget action (git, not REST)
+        with:
+          sparse-checkout: .github/actions
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Verdict
         id: verdict
         env:
@@ -852,9 +1001,12 @@ jobs:
           STATE: ${{ steps.verdict.outcome }}
           URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
+          gh_retry gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
             -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
           echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
@@ -902,6 +1054,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -979,18 +1139,18 @@ jobs:
           echo "$GITHUB_SHA" >"$out/smith-steps-linux.sha"
           files=("$out"/smith-steps-linux.tar.gz.* "$out/smith-steps-linux.sha")
           # the queue run of this very commit saved the count (a documents-only merge runs none)
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=frontend-coverage-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          id=$(GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=frontend-coverage-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
           if [ -n "$id" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/c.zip"
+            GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/c.zip"
             mkdir "$out/c"; unzip -q "$out/c.zip" -d "$out/c"
             echo "$GITHUB_SHA" >"$out/c/sha"
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
           fi
           # the fixed tree the count checked (#2942), at its tree paths, for a session to read the lines its errors name
-          tid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          tid=$(GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
           if [ -n "$tid" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
+            GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
             mkdir "$out/t"; unzip -q "$out/t.zip" -d "$out/t"
             mv "$out/t/count-fixed.tar.zst" "$out/count-fixed.tar.zst"
             files+=("$out/count-fixed.tar.zst")
@@ -1002,12 +1162,12 @@ jobs:
             exit 0
           fi
           tag="step-cache-${GITHUB_SHA:0:7}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          if ! GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" "${files[@]}" --prerelease --latest=false --target "$GITHUB_SHA" \
               --title "step cache $tag" --notes "Main's step cache and the count's table at $GITHUB_SHA (#2772). Not a release of smith."
           fi
           # keep the 3 newest (the old rolling `step-cache` of #2755 goes first); a refused delete only warns
-          gh release list --limit 100 --json tagName,createdAt \
+          GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release list --limit 100 --json tagName,createdAt \
             --jq '[.[]|select(.tagName|test("^step-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
             while read -r old; do
               gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
@@ -1107,6 +1267,9 @@ jobs:
             exit 0
           fi
           gh api -X PATCH repos/${{ github.repository }}/issues/2751 -F body=@"$RUNNER_TEMP/body.md" >/dev/null
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
@@ -1127,6 +1290,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/setup-smith
       - name: Release
         # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
@@ -1136,6 +1301,9 @@ jobs:
           "$SMITH" build release || code=$?
           echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
@@ -1155,6 +1323,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1166,6 +1336,9 @@ jobs:
           "$SMITH" build release || code=$?
           echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
@@ -1202,17 +1375,33 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
         # count's jobs publish; its own set (#2939)
         with:
           tests: "false"
           imports-from: count
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1244,12 +1433,30 @@ jobs:
         shell: bash
         run: |
           mkdir -p .smith/frontend-coverage/fixed
-          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^(step-cache|count-fixed)-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
-          if [ -z "$tag" ]; then echo "fixed files: none saved yet"; exit 0; fi
-          d=$(mktemp -d)
-          gh release download "$tag" -D "$d" -p count-fixed.tar.gz
-          tar -xz -C .smith/frontend-coverage -f "$d/count-fixed.tar.gz"
-          echo "fixed files: $(ls .smith/frontend-coverage/fixed | wc -l) restored from $tag"
+          # Looked up by tag, never by listing: the repository has hundreds of releases and the list is in no order of
+          # date, so its first 30 held none of these (#2974). Newest first along the first parents of HEAD, count-fixed
+          # before step-cache, 20 commits back at most.
+          d=$(mktemp -d); tag=; asset=; id=; back=0
+          for prefix in count-fixed step-cache; do
+            k=0
+            for sha in $(git rev-list --first-parent -n 21 HEAD); do
+              t="$prefix-${sha:0:7}"
+              # a 404 makes gh exit non-zero but still print the error body to stdout: `|| a=` drops it (#2974)
+              a=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$t" --jq '[.assets[]|select(.name=="count-fixed.tar.zst" or .name=="count-fixed.tar.gz")]|sort_by(.name)|reverse|.[0]|select(.)|"\(.id) \(.name)"' 2>/dev/null) || a=
+              if [ -n "$a" ]; then tag=$t; id=${a% *}; asset=${a#* }; back=$k; break 2; fi
+              k=$((k + 1))
+            done
+          done
+          if [ -z "$tag" ]; then echo "fixed files: none in the last 20 commits"; exit 0; fi
+          # by the asset's id from the lookup above: `gh release download` looked the tag up again and failed with
+          # "release not found" on the queue run of #2975 (the step then counted cold)
+          echo "fixed files: found $asset in $tag ($back commits back)"
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$d/$asset"
+          case "$asset" in
+            *.zst) tar -x --zstd -C .smith/frontend-coverage -f "$d/$asset" ;;
+            *) tar -xz -C .smith/frontend-coverage -f "$d/$asset" ;;
+          esac
+          echo "fixed files: $(ls .smith/frontend-coverage/fixed | wc -l) restored from $tag ($back commits back)"
       - name: Fix the tree
         shell: bash
         run: |
@@ -1358,6 +1565,9 @@ jobs:
         with:
           name: count
           tests: "false"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   frontend-coverage-shard:
     # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
@@ -1383,16 +1593,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
         with:
           tests: "false"
           imports-from: count count-${{ matrix.shard }}
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
@@ -1440,6 +1666,9 @@ jobs:
         with:
           name: count-${{ matrix.shard }}
           tests: "false"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   frontend-coverage:
     # the merge of the eight shards of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files
@@ -1469,6 +1698,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1591,13 +1828,13 @@ jobs:
           before=
           for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
             id=
-            for a in $(gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
-              ok=$(gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
+            for a in $(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
+              ok=$(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
               [ "$ok" = 1 ] && { id=${a%%:*}; break; }
             done
             [ -n "$id" ] || continue
             dir="$RUNNER_TEMP/before-$sha"; mkdir -p "$dir"
-            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" >"$dir/a.zip" && unzip -o -q "$dir/a.zip" -d "$dir" || continue
+            gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts/$id/zip" >"$dir/a.zip" && unzip -o -q "$dir/a.zip" -d "$dir" || continue
             before=$(sed -n "$pass" "$dir/output.txt" 2>/dev/null | tail -n 1)
             [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
           done
@@ -1623,7 +1860,7 @@ jobs:
               "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | LC_ALL=C sort)
             [ -n "$lost" ] && printf '%s\n' "$lost" | tee -a "$GITHUB_STEP_SUMMARY"
             if [ -z "$lost" ]; then echo "count (PR check): no measured file went from pass to fail against main at ${sha:0:7}" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
-            why=$([ -n "$PR_NUMBER" ] && gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.body // ""' | grep -m1 '^Count drop: ') || true
+            why=$([ -n "$PR_NUMBER" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.body // ""' | grep -m1 '^Count drop: ') || true
             if [ -n "$why" ]; then echo "::warning::files fell against main; the PR says: ${why#Count drop: }"; exit 0; fi
             echo "::error::$(printf '%s\n' "$lost" | wc -l) of the files measured here passed in main's last count and fail now (listed above). Fix them, or add a line 'Count drop: <why>' to the PR body and ask the lead"
             exit 1
@@ -1649,10 +1886,13 @@ jobs:
           fi
           if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
-          why=$([ -n "$pr" ] && gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
+          why=$([ -n "$pr" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
           if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
           echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   count-fixed-save:
     # the queue run saves the fixed files of its own head commit (#2832). Main's `warm` publishes them with the step cache
@@ -1673,6 +1913,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/download-artifact@v4
         with:
           name: count-fixed-${{ github.sha }}
@@ -1708,6 +1955,14 @@ jobs:
               gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
             done
           echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
@@ -1724,12 +1979,17 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Publish the release
         # no smith on this runner (a hosted Ubuntu, 3 minutes): the one command of `release finish`
         # (release/publish.smith), which stays for use by hand
         run: |
           gh release edit "stage0-$GITHUB_SHA" --draft=false
           echo "release: published stage0-$GITHUB_SHA"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   install:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
@@ -1747,6 +2007,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install the release
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
@@ -1788,3 +2050,6 @@ jobs:
           done
           rm -rf "$tmp"
           "$HOME/.local/bin/smith" version
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget

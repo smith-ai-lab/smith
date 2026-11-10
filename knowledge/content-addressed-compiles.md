@@ -42,6 +42,18 @@ with a contract. The key is the IR the prover checks, plus the prover and LLVM v
 callee with `smith_ensures` is used through its contract, any other callee is inlined, so the IR the prover checks
 already holds what the proof depends on.
 
+**The group's record** (#2994). Asking for a function's key needs its IR, so a group whose proofs were all reused still
+paid for compiling every source and loading the IR (49.9 s of a warm `smith prove` of smith itself). A group that ends
+with every function reused (so from its second run) keeps `group-<hash>` in the same folder: the files its compiles read (the depfiles of
+`-MD`) with a SHA-256 of each, and the lines it printed. The name is a hash of the sources, libraries, flags, budget,
+memory and loop options, the prover and LLVM versions, and `smith_import_identity` (the front end, runtime, `lib/std`
+and the LLVM pack: the compiler, by content, so a rebuild with the same sources keeps it). The next run reads the files
+named, and when every digest holds it prints the record's lines and the summary with `(not compiled)`. A group with
+`-v`, `--function`, `--dump`, `--emit-ir`, `--no-cache` or `--front-end=new` (no depfile), one with a failure or a
+function proved afresh, and a file that names a macro for the time keep no record and run as
+before. The one input a depfile cannot name is a header that a new `-I` folder would now find first; the flags are in
+the name.
+
 **The lint cache** (`runtime/lint_cache.c`, [caches](caches.md)). Per file, keyed by the lint identity, the compile
 command and the content of the files clang-tidy read.
 

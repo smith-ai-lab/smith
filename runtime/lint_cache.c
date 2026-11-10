@@ -411,6 +411,26 @@ static void smith_lc_second_key(SmithLcJob *job, char key[smith_sha256_hex_size]
     smith_sha256_final(&sha, key);
 }
 
+// SMITH_LINT_CACHE=why: the first key by its inputs, each as the first 8 hex digits of its digest, so the key of the
+// same file in two runs (a job that saves the cache and one that restores it) can be compared (#2995).
+static void smith_lc_say_inputs(const char *file, const char *own_flags, bool has_headers) {
+    char whole[smith_sha256_hex_size];
+    char database[smith_sha256_hex_size] = "-";
+    char configs[smith_sha256_hex_size] = "-";
+    SmithSha256 copy = smith_lc.base;
+    smith_sha256_final(&copy, whole);
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    smith_lc_text_add(&sha, own_flags != nullptr ? own_flags : "");
+    smith_sha256_final(&sha, database); // own_flags is the compile of the file, or the whole compile database
+    smith_sha256_init(&sha);
+    smith_lc_add_configs(&sha, smith_lc_relative(file));
+    smith_sha256_final(&sha, configs);
+    fprintf(stderr, "smith lint: %s: key inputs: smith+env %.8s, name %.8s, %s %.8s, .clang-tidy %.8s, headers %.8s\n",
+            file, whole, smith_lc_relative(file), own_flags != smith_lc_scratch ? "flags" : "database", database,
+            configs, has_headers ? smith_lc.headers : "-");
+}
+
 // Finds the keys of a file with the flags of its compile (tab separated; nullptr: it has none of its own).
 void smith_lc_plan(size_t number, const char *file, const char *flags) {
     SMITH_ASSERT(number < smith_lc_jobs_max);
@@ -438,6 +458,9 @@ void smith_lc_plan(size_t number, const char *file, const char *flags) {
     smith_lc_read_manifest(job);
     if (job->deps == nullptr) {
         smith_lc_why(file, "runs: no manifest of an earlier run");
+        if (smith_lc.explain)
+            smith_lc_say_inputs(file, flags != nullptr && length != SIZE_MAX ? smith_lc_flags : smith_lc_scratch,
+                                name_length > 6 && strcmp(file + name_length - 6, ".smith") == 0);
         return;
     }
     smith_lc_second_key(job, job->key);
@@ -453,7 +476,10 @@ static bool smith_lc_replay_to(size_t number, int *status, FILE *out) {
     char path[PATH_MAX];
     if (!job->keyed || !smith_lc_entry_path(path, 'r', job->key, false)) return false;
     FILE *file = fopen(path, "rb");
-    if (file == nullptr) return false;
+    if (file == nullptr) {
+        smith_lc_why(job->first, "runs: no result for the content of the files it read (one of them changed)");
+        return false;
+    }
     size_t size = fread(smith_lc_entry, 1, sizeof smith_lc_entry - 1, file);
     bool whole = feof(file) != 0;
     fclose(file);

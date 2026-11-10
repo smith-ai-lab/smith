@@ -606,6 +606,10 @@ static size_t smith_lint_unbuilt(const char **files, size_t count, size_t *sourc
 // Lints the files: those the cache has a result for replay it, the others run clang-tidy side by side with the flags of
 // their compile (.smith/compile_commands.json) and are stored when it completes. The last line says how many were
 // linted and how many of those ran. Returns the exit status.
+static uint64_t smith_lint_started_ms; // when `smith lint` began: the line says how long all before the run took
+static uint64_t smith_lint_info_ms;    // when .smith/build.info was made, and when what the files wait for was built:
+static uint64_t smith_lint_needs_ms;   // the line splits the setup at these (#2995)
+
 static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
     uint64_t began = smith_account_now_ms();
     bool cache = smith_lc_open();
@@ -623,6 +627,7 @@ static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
             run->order[misses++] = i;
         }
     }
+    uint64_t planned = smith_account_now_ms();
     smith_lint_argv[0] = (char *)self;
     smith_lint_argv[1] = (char *)"lint";
     smith_lint_argv[2] = (char *)"--quiet";
@@ -640,8 +645,14 @@ static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
             fprintf(stderr, "smith lint:   and %zu more\n", failed - smith_lint_failure_count);
     }
     uint64_t took = smith_account_now_ms() - began;
-    fprintf(stderr, "smith lint: linted %zu files (%zu run, %zu cached, %.1f s)\n", count, misses, count - misses,
-            (double)took / 1000.0);
+    // setup: the build info (and the compile database), what the compiles wait for, then the keys and the cache reads
+    fprintf(stderr,
+            "smith lint: linted %zu files (%zu run, %zu cached, %.1f s, setup %.1f s: build info %.1f, needs %.1f, "
+            "plan and hash %.1f)\n",
+            count, misses, count - misses, (double)took / 1000.0, (double)(began - smith_lint_started_ms) / 1000.0,
+            (double)(smith_lint_info_ms - smith_lint_started_ms) / 1000.0,
+            (double)(smith_lint_needs_ms - smith_lint_info_ms) / 1000.0,
+            (double)(planned - smith_lint_needs_ms) / 1000.0);
     return failed > 0 ? 1 : 0;
 }
 
@@ -882,6 +893,7 @@ bool smith_lint_expand_dirs(int *argc, char ***argv) {
 int smith_lint_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("lint", count, args, self, false);
     if (quiet >= 0) return quiet;
+    smith_lint_started_ms = smith_account_now_ms();
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *changed_base = nullptr;
     bool changed = smith_lint_take_changed(split, &changed_base);
@@ -890,6 +902,7 @@ int smith_lint_project(int count, char **args, const char *self) {
     const char *const targets[] = {"smith_info", nullptr};
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
+    smith_lint_info_ms = smith_account_now_ms();
     const SmithInfo *info = smith_info_read("smith lint");
     static const char *files[smith_verbs_files_max + 1];
     static const char *flags[smith_verbs_files_max + 1]; // of each file's compile; the unbuilt ones have none
@@ -929,6 +942,7 @@ int smith_lint_project(int count, char **args, const char *self) {
     }
     status = smith_lint_prepare(self, split, info, files, flags, &files_count);
     if (status != 0) return status;
+    smith_lint_needs_ms = smith_account_now_ms();
     if (files_count == 0) {
         fprintf(stderr, "smith lint: linted 0 files\n");
         return 0;
@@ -1178,8 +1192,10 @@ int smith_prove_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     smith_prove_options = split;
     const char *const targets[] = {"smith_needs", nullptr};
+    uint64_t began = smith_account_now_ms();
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
+    uint64_t built = smith_account_now_ms();
     const SmithInfo *info = smith_info_read("smith prove");
     for (size_t i = 0; i < info->compile_count; i++) {
         if (smith_proves(info->compiles[i])) smith_prove_filter((char *)info->compile_flags[i]);
@@ -1206,6 +1222,8 @@ int smith_prove_project(int count, char **args, const char *self) {
                 "[[gnu::used]] to keep it)\n");
         return 1;
     }
+    fprintf(stderr, "smith prove: %zu groups, build %.1f s, proofs %.1f s\n", smith_prove_groups_run,
+            (double)(built - began) / 1000.0, (double)(smith_account_now_ms() - built) / 1000.0);
     if (status == 0 && smith_prove_groups_run == 0) {
         printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures, smith_invariant or "
                "smith_assert\n0 of 0 functions have contracts\n");

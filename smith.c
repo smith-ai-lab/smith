@@ -1795,9 +1795,20 @@ typedef struct {
     pid_t pid;
 } SmithHeaderJob;
 
+// Which smith this is: its build-id (the md5 the linker puts in it) and its size, so a copy of the same bytes, or a
+// link that made the same program again, is the same smith. The size and the modification time stand in for a binary
+// without a build-id. A smith named by its time was another smith after every link and after every restore of a build,
+// so each one rewrote the headers of the tree (with the bytes of its own lowering, not those of the previous release
+// that the build's header steps run), made those steps dirty, and with them the link and the tests' headers: 13 s of
+// every `smith lint` (#2995).
 static bool smith_binary_identity(const char *self, char *out, size_t capacity) {
+    char id[2 * smith_platform_id_bytes + 1];
     struct stat info = {};
     if (stat(self, &info) != 0) return false;
+    if (smith_platform_file_id(self, id)) {
+        int written = snprintf(out, capacity, "id %s %lld\n", id, (long long)info.st_size);
+        return written > 0 && (size_t)written < capacity;
+    }
     int written = snprintf(out, capacity, "%lld %lld\n", (long long)info.st_size, (long long)info.st_mtime);
     return written > 0 && (size_t)written < capacity;
 }

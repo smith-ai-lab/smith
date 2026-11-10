@@ -24,7 +24,7 @@ void smith_import_cache_store(const char *kind, const char *key, const uint8_t *
 void smith_import_cache_count(const char *kind, bool hit);
 
 // Appends this process's counts to $SMITH_IMPORT_CACHE_LOG when it is set: one line `<hits> <misses>` for headers and
-// modules, which CI adds up.
+// modules, which CI adds up, and the identity folder it used as a line of `$SMITH_IMPORT_CACHE_LOG.identity` (#2978).
 void smith_import_cache_report(void);
 
 // A module's parse tree as an image (#2891): the parser runs twice, each time with every block it asks for taken from

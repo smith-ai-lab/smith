@@ -42,6 +42,22 @@ export void test_test_cache_a_second_run_reports_the_tests_cached_and_no_cache_r
     scratch::expect_lacks("cache: SMITH_RESULT_CACHE=off is the same", off.out, " cached:");
 }
 
+export void test_test_cache_a_warm_run_does_not_hash_the_whole_smith_again() {
+    scratch::Project p = cached_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // The digest of the smith under test is kept in the store by build-id (#2997): hashed once, read after that.
+    scratch::Run first = scratch::sh(&p, "env SMITH_RESULT_CACHE=why SMITH_OUTPUT=full smith test 2>&1");
+    scratch::expect_contains("self digest: the first run hashes the smith once", first.out,
+                             "smith hashed whole 1 times");
+    scratch::Run second = scratch::sh(&p, "env SMITH_RESULT_CACHE=why SMITH_OUTPUT=full smith test 2>&1");
+    scratch::expect_contains("self digest: ... the second reads it from the store", second.out,
+                             "smith hashed whole 0 times");
+}
+
 export void test_test_cache_editing_a_test_or_a_file_it_reads_runs_only_what_depends_on_it() {
     scratch::Project p = cached_project();
     defer scratch::clean(&p);
