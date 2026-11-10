@@ -1459,7 +1459,7 @@ export ast::TypeExpr *type(parse::Parser *p) {
 export ast::TypeExpr *declared(parse::Parser *p) {
     Bool in_result = p->in_result;
     p->in_result = true;
-    ast::TypeExpr *type = read(p);
+    ast::TypeExpr *type = parse::type(p);
     p->in_result = in_result;
     return type;
 }

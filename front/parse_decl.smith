@@ -2318,7 +2318,7 @@ static ast::FieldDecl parse_new_field(parse::Parser *p) {
     if (parse::accept(p, lex::kw_pub)) field.is_pub = true;
     field.name = parse::text(p, parse::advance(p));
     parse::advance(p);
-    field.type = parse::type(p);
+    field.type = parse_type::declared(p);
     if (field.type == nullptr) {
         recover_line(p);
         return field;
@@ -3542,7 +3542,7 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
         param->is_pack = true;
         pack_fix(p, param->name, name.span, dots);
     } else {
-        param->type = parse::type(p);
+        param->type = parse_type::declared(p);
         if (param->type == nullptr) return false;
         if (parse::accept(p, lex::ellipsis)) {
             param->is_pack = true; // `nums: i32...`, `nums: int...`
