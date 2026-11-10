@@ -652,7 +652,11 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .slice_of) return emit_memory::slice_of(e, x, hint);
     if (x->kind == .type_value && e->options.checked != nullptr) {
         const ast::Expr *made = types::method_of(e->options.checked, x); // `Point(a, b)`: a construction (#1813)
-        if (made != nullptr) return call::call(e, made, hint);
+        if (made != nullptr && made->kind == .call) return call::call(e, made, hint);
+        if (made != nullptr) { // `High`, `c.EOF`: the name the checker read it as (#2984)
+            state::push_eval(e, made, hint);
+            return state::success();
+        }
     }
     // The kind is named outside backticks, so the count's table keeps the kinds apart (#2984).
     return state::failf(x->span, "not emitted yet: this kind of expression (", state::expr_kind_name(x), ")");

@@ -5459,16 +5459,34 @@ static const ast::Expr *type_value_call(types::Checked *c, const ast::Expr *e) {
     return call;
 }
 
+// `High`, `area.Square`, `c.EOF`: a capitalized path the parser read as a type that names no type, so it is a name
+// used as a value (#2984). Its twin is that name, checked as any name is: an enumerator or a C constant takes its
+// type, anything else is the name's own error (`write .High`, `unknown name`). Null when the path names a type.
+static const ast::Expr *type_value_name(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .type_value) return nullptr;
+    const ast::TypeExpr *t = e->kind.type_value.type;
+    if (t == nullptr || t->kind != .named) return nullptr;
+    const types::Symbol *named = types::type_through_modules(c, t->kind.named.path);
+    if (named == nullptr && countof(t->kind.named.path.segments) == 1)
+        named = types::lookup_path(&c->scopes, t->kind.named.path); // a builtin type, a type parameter
+    if (named != nullptr && named->kind != .variable) return nullptr;
+    ast::Expr *name = mem::alloc(ast::Expr);
+    name->span = e->span;
+    name->kind = {.name = {.path = t->kind.named.path}};
+    return name;
+}
+
 // The call is checked in the place of the type; the type takes its type afterwards (stage 1).
 static void type_value_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *call = type_value_call(c, f.node);
+    if (call == nullptr) call = type_value_name(c, f.node);
     if (call == nullptr) {
         // A type passed to a `Type` parameter (`choose(U8)`, `Pair(T)`): a compile-time value whose type the instance
         // decides, so it is `Auto` here, as the parameter that takes it is (#1916).
         types::set_type(c, f.node, c->table.automatic);
         return;
     }
-    types::set_method(c, f.node, call); // the emitter builds the construction from it
+    types::set_method(c, f.node, call); // the emitter builds the construction (or reads the name) from it
     push_frame(w, make_frame(f.node, f.expected, 1, nullptr, 0, "", call));
     push(w, call, f.expected, 0);
 }
@@ -6714,6 +6732,10 @@ static void before(types::Checked *c, Work *w, Frame f) {
         tuple_before(w, f);
     } else if (e->kind == .named_arg) {
         named_argument_alone(c, e);
+    } else if (e->kind == .generic_select) {
+        types::failf(c, e->span, "`_Generic` is not part of smith: test the type with a compile-time `if`, or write a ",
+                     "generic function");
+        poison(c, e);
     } else {
         compound_expr(c, w, f);
     }
