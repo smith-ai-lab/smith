@@ -2831,13 +2831,14 @@ static ast::Path member_path(const ast::Expr *e) {
         depth += 1;
         at = at->kind.member.base;
     }
-    if (depth == 0 || at == nullptr || at->kind != .name) return none;
+    if (at == nullptr || at->kind != .name) return none;
+    if (depth == 0) return countof(at->kind.name.path.segments) > 1 ? at->kind.name.path : none; // `c.FILE` read whole
     ast::Path root = at->kind.name.path;
     ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, countof(root.segments) + depth);
     for (Usize i = 0; i < countof(root.segments); i++)
         segments[i] = root.segments[i];
     at = e;
-    for (Usize k = countof(segments); k > countof(root.segments); k--) {
+    for (Usize k = countof(segments); k > countof(root.segments) && at->kind == .member; k--) {
         segments[k - 1] = (ast::Identifier){.text = at->kind.member.name, .span = at->span};
         at = at->kind.member.base;
     }
@@ -2866,12 +2867,15 @@ static const ast::TypeExpr *typed_arguments(const Checked *r, const ast::TypeExp
         }
         ast::TypeExpr *named = ast::make_type({.named = {.path = path}});
         named->span = value->span;
-        made[i] = (ast::TypeArg){.type = {.type = named}};
+        ast::TypeArg as_type = {.type = {.type = named}};
+        made[i] = as_type;
     }
     if (countof(made) == 0) return node;
-    ast::TypeExpr copy = *node;
-    copy.kind = (ast::TypeKind){.applied = {.name = node->kind.applied.name, .args = made}};
-    return ast::new_type(copy);
+    ast::TypeKind kind = {.applied = {.name = node->kind.applied.name, .args = made}};
+    ast::TypeExpr *copy = ast::make_type(kind);
+    copy->span = node->span;
+    copy->qualifiers = node->qualifiers;
+    return copy;
 }
 
 // A type expression as a type. Unknown names and constructs not typed yet are reported in `r` and give the invalid

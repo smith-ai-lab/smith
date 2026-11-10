@@ -546,6 +546,21 @@ void put(Writer *writer, auto piece, Usize count) {
         put_f64(writer, (F64)piece);
     } else if constexpr (typeof(piece) == char * || typeof(piece) == const char *) {
         put_c_string(writer, piece, count);
+    } else if constexpr (is_array(typeof(piece))) {
+        // `char name[64]`: C passes the array as a `char *`, which the rule above writes up to its terminator; a
+        // front end that passes the array whole writes it by the same rule, never past its end
+        if constexpr (typeof(piece[0]) == char) {
+            put_c_string(writer, &piece[0], countof(piece));
+        } else {
+            put_char(writer, '['); // an array field of a record, as the pointer rule below writes it in C
+            for (Usize j = 0; j < countof(piece); j++) {
+                if (j > 0) {
+                    put_string(writer, ", ");
+                }
+                put(writer, piece[j], 0);
+            }
+            put_char(writer, ']');
+        }
     } else if constexpr (typeof(piece) == struct smith_array_char_n ||
                          typeof(piece) == struct smith_array_const_char_n) {
         put_bytes(writer, piece);
@@ -711,6 +726,12 @@ export Written write(char *buffer, Usize capacity, auto... args) {
                              typeof(args[i]) == struct smith_array_char_n ||
                              typeof(args[i]) == struct smith_array_const_char_n) {
             put(&writer, args[i], 0);
+        } else if constexpr (is_array(typeof(args[i]))) {
+            if constexpr (typeof(args[i][0]) == char) {
+                put(&writer, args[i], 0); // `char name[64]`, which C passes as a `char *`
+            } else {
+                no_rule(char[i + 1]); // C passes any other array as a pointer, which has no rule as a piece
+            }
         } else if constexpr (typeof(args[i]) == Hex || typeof(args[i]) == Fixed || typeof(args[i]) == General) {
             put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == Scientific || typeof(args[i]) == Padded) {
