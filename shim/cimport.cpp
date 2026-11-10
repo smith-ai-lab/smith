@@ -11,7 +11,7 @@
 //                 is the empty string)
 //   words[4..5]   types: first word, count      (5 words each: kind, flags, a, b, c)
 //   words[6..7]   functions: first word, count  (5 words each: name, return type, first parameter, parameter count,
-//                 flags: bit 0 variadic, bit 1 nodiscard)
+//                 flags)
 //   words[8..9]   structs: first word, count    (4 words each: name, first field, field count, flags: bit 0 opaque,
 //                 bit 1 union)
 //   words[10..11] fields: first word, count     (2 words each: name, type)
@@ -410,13 +410,11 @@ void Reader::function(const clang::FunctionDecl *decl) {
     uint32_t first = static_cast<uint32_t>(parameters.size());
     for (auto &p : params)
         parameters.push_back(p);
-    // Flags: bit 0 variadic, bit 1 the result must be used (`[[nodiscard]]`, `__attribute__((warn_unused_result))`).
-    bool nodiscard = decl->hasAttr<clang::WarnUnusedResultAttr>();
-    functions.push_back({text(name), result, first, static_cast<uint32_t>(params.size()),
-                         (proto->isVariadic() ? 1U : 0U) | (nodiscard ? 2U : 0U)});
+    functions.push_back(
+        {text(name), result, first, static_cast<uint32_t>(params.size()), proto->isVariadic() ? 1U : 0U});
     place(0, static_cast<uint32_t>(functions.size() - 1), decl);
     for (const clang::Attr *a : decl->attrs())
-        if (!a->isImplicit() && !llvm::isa<clang::WarnUnusedResultAttr>(a)) skip(1, name, a->getSpelling());
+        if (!a->isImplicit()) skip(1, name, a->getSpelling());
 }
 
 std::array<uint32_t, 3> Reader::split(const llvm::APInt &magnitude, bool negative) {

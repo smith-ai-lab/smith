@@ -1997,38 +1997,7 @@ static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value) {
     return false;
 }
 
-// The C function a call names (`stdio.printf(...)`, `c::printf(...)`), or null when it names none.
-static const types::Symbol *c_callee(const types::Checked *r, const ast::Expr *value) {
-    if (value->kind != .call) {
-        return nullptr;
-    }
-    const ast::Expr *callee = value->kind.call.callee;
-    const types::Symbol *s = nullptr;
-    if (callee->kind == .member) {
-        s = types::c_member(r, callee);
-        if (s == nullptr || s->kind != .function_symbol) s = types::c_member_function(r, callee);
-    } else if (callee->kind == .name) {
-        s = types::lookup_path(&r->scopes, callee->kind.name.path);
-    }
-    if (s == nullptr || s->kind != .function_symbol || s->decl == nullptr || !s->decl->from_c) return nullptr;
-    return s;
-}
-
-// Whether a call's result may be dropped because C lets it: the function comes from a C header and its declaration
-// has no `[[nodiscard]]` or `__attribute__((warn_unused_result))` (#2853). A function written in smith keeps the rule.
-static Bool c_result_droppable(const types::Checked *r, const ast::Expr *value) {
-    const types::Symbol *s = c_callee(r, value);
-    if (s == nullptr) return false;
-    for (Usize i = 0; i < countof(s->decl->attributes); i++) {
-        ast::Identifier segments[:] = s->decl->attributes[i].name.segments;
-        Usize n = countof(segments);
-        if (n > 0 && types::same_text(segments[n - 1].text, "nodiscard")) return false;
-    }
-    return true;
-}
-
-// An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded, unless
-// it is a C function's that C lets the caller drop.
+// An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded.
 static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind != .expression) {
         return;
@@ -2048,9 +2017,6 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     if (type == r->table.void_type || type == r->table.invalid || type == r->table.automatic) {
-        return;
-    }
-    if (c_result_droppable(r, value)) {
         return;
     }
     // `smith lint --fix` writes the discard: `_ := ` before the call (#2311). The error itself stays for new code.

@@ -60,7 +60,6 @@ struct Function {
     U32 result; // an index in Header.types
     Parameter parameters[:];
     Bool variadic;
-    Bool nodiscard; // `[[nodiscard]]` or `__attribute__((warn_unused_result))`: its result must be used
 };
 
 struct Field {
@@ -263,8 +262,7 @@ static Table read_table(arena::Arena *a, const char *name, Bool quoted, const ch
     header.functions = arena::push_slice(a, Function, w[7]);
     for (U32 i = 0; i < w[7]; i++) {
         Usize at = w[6] + 5 * (Usize)i;
-        Function f = {.name = text(pool, w[at]), .result = w[at + 1], .variadic = (w[at + 4] & 1) != 0,
-                      .nodiscard = (w[at + 4] & 2) != 0};
+        Function f = {.name = text(pool, w[at]), .result = w[at + 1], .variadic = (w[at + 4] & 1) != 0};
         f.parameters = arena::push_slice(a, Parameter, w[at + 3]);
         for (U32 j = 0; j < w[at + 3]; j++) {
             f.parameters[j] = parameter_at(w, pool, w[12], w[at + 2] + j);
@@ -461,18 +459,7 @@ static ast::Decl *function_decl(const Table *t, U32 index, TypeList types) {
     }
     ast::DeclKind kind = {
         .function = {.name = f->name, .params = params, .result = types[f->result], .variadic = f->variadic}};
-    ast::Decl *d = from_c(ast::decl((ast::Decl){}, kind));
-    if (f->nodiscard) {
-        // The checker reads it by name: an unused result of a C function is an error only with it.
-        ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 1);
-        Str word = "nodiscard";
-        segments[0] = (ast::Identifier){.text = word};
-        ast::Attribute attributes[:] = mem::alloc_slice(ast::Attribute, 1);
-        attributes[0] = (ast::Attribute){};
-        attributes[0].name.segments = segments;
-        d->attributes = attributes;
-    }
-    return placed(d, place_of(t, place_function, index));
+    return placed(from_c(ast::decl((ast::Decl){}, kind)), place_of(t, place_function, index));
 }
 
 // A value as an expression: an integer literal, a floating literal or a string, negated when it is below zero.

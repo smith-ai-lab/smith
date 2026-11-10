@@ -194,14 +194,6 @@ static void check_headers(Str dir, Str folder, Str modules) {
     }
 }
 
-static void write_text(Str path, Str text) {
-    c::FILE *file = c::fopen(path.data, "w");
-    test::check_equal(file != nullptr, true);
-    if (file == nullptr) return;
-    c::fwrite(text.data, 1, countof(text), file);
-    c::fclose(file);
-}
-
 // Links the objects as a user's program is linked (`smith cc --front-end=new` adds the real std.contract) and runs the
 // program: its standard output and status as the old corpus records them (`(exit N)`
 // after the output for a status other than 0).
