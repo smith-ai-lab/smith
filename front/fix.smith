@@ -1567,7 +1567,16 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
         import_problems = "";
         status = 1;
     }
-    fix_variants::Words renamed = fix_variants::rename_all(texts);
+    // The modules the checker read for these files, as their files have them: their variants are renamed in the uses
+    // here too (#3027: a file fixed alone, as the count fixes each, kept `.Closed` for `console::Closed`).
+    fix_variants::Words imported = mem::alloc_slice(fix_variants::Word, loaded_count);
+    for (Usize i = 0; i < loaded_count; i++) {
+        files::BytesResult read = files::read_file(loaded_paths[i]);
+        if (read == .error) continue;
+        format::Chars text = mem::view(read.ok, char);
+        imported[i].text = text;
+    }
+    fix_variants::Words renamed = fix_variants::rename_all_with(texts, imported);
     for (Usize i = 0; i < count; i++) {
         Str path = as_str(format::push((const char *)paths[i]));
         I64 n = applied[i];

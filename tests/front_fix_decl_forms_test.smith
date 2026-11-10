@@ -163,6 +163,18 @@ export void test_front_fix_old_result_declaration_is_a_try() {
                  "    after: usize = ok\n    return .ok(after + 1)\n");
 }
 
+// #3027: a read `e.ok` inside `countof(...)` is `ok` inside the parentheses: the parentheses are the query's, and the
+// operand's span covered them (`countofok`).
+export void test_front_fix_try_read_in_countof_keeps_the_parentheses() {
+    expect_fixed("module m;\nstatic Result(Str, Usize) f(Usize a) {\n    return {.error = a};\n}\n"
+                 "static Result(Str, Usize) g(Usize a) {\n    Result(Str, Usize) e = f(a);\n"
+                 "    if (e == .error) return {.error = e.error};\n    Usize n = countof(e.ok);\n"
+                 "    return {.ok = e.ok[0:n]};\n}\n",
+                 "fn f(a: usize) -> Result(str, usize):\n    return .error(a)\n"
+                 "fn g(a: usize) -> Result(str, usize):\n    ok := try f(a)\n"
+                 "    n: usize = countof(ok)\n    return .ok(ok[0:n])\n");
+}
+
 // #2648: holding the `try` guard back in the first pass must not hold back the other guards: a file with old forms
 // still gets `.v(v) := k else:` for a test that leaves (front/fix_opaque.smith, fix_typeof.smith).
 export void test_front_fix_leaving_variant_test_is_a_binding_in_a_file_with_old_forms() {
