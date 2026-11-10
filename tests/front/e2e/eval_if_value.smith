@@ -8,7 +8,7 @@ exact := words.to(u16)
 static_assert(words == 512 and mask == 255);
 static_assert(typeof(exact) == u16);
 
-fn buffer(n: usize) -> usize:
+fn buffer(const n: usize) -> usize:
     mut data: [n * 2]u8 = undefined
     data[0] = 1
     countof(data)
