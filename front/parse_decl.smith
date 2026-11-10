@@ -3338,7 +3338,7 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str lead, Boo
     }
     Bool typed = false;
     if (parse::accept(p, lex::colon)) {
-        *type = parse::type(p);
+        *type = parse_type::declared(p);
         if (*type == nullptr) return false;
         typed = true;
     }
@@ -3630,7 +3630,7 @@ static ParamList parse_generics(parse::Parser *p) {
         param.name = parse::text(p, parse::advance(p));
         param.is_new = true;
         if (parse::accept(p, lex::colon)) {
-            param.type = parse::type(p);
+            param.type = parse_type::declared(p);
             if (param.type == nullptr) return list;
         }
         param.span = parse::span_from(p, start);
