@@ -288,6 +288,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .block_type) return type_block(e, base);
     if (base->kind == .tuple)
         return state::type_of(e, base); // `*mut (f64, f32)`: front::emit's type_of builds the tuple
+    if (base->kind == .type_of) return state::type_of(e, base); // `typeof(v)`: front::emit's type_of asks the checker
     if (base->kind != .named)
         return state::ty_fail_with(base->span, "not emitted yet: a type of kind `", state::type_kind_name(base), "`");
     ast::Path path = base->kind.named.path;

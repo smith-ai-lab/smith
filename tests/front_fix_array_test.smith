@@ -89,3 +89,29 @@ export void test_front_fix_array_a_lone_zero_for_a_struct_is_the_empty_list() {
     expect("struct Counts { I32 a; I32 b; };\nvoid f(void) {\n    Counts c = {0};\n}\n",
            "struct Counts:\n    a: i32\n    b: i32\nfn f():\n    c: Counts = Counts(a = 0, b = 0)\n");
 }
+
+// An array passed whole where a function of the module wants a pointer, inside a generic body that no instance of this
+// module reaches (#2648): `std.test`'s `check_part` and `std.format`'s `pad`.
+export void test_front_fix_array_a_local_array_and_a_record_field_in_a_generic_body_are_addressed() {
+    expect("typedef struct { char characters[8]; } Padded;\n"
+           "I32 put(const char *out, const char *text) { return out[0] + text[0]; }\n"
+           "I32 make(const char *out) { return out[0]; }\n"
+           "void f(auto x) {\n    char position[24];\n    Padded padded = {};\n"
+           "    __builtin_snprintf(position, sizeof position, \"[%d]\", 1);\n"
+           "    put(position, \"a\");\n    make(padded.characters);\n}\n",
+           "struct Padded:\n    characters: [8]char\n"
+           "fn put(out: *char, text: *char) -> i32:\n    return out[0] + text[0]\n"
+           "fn make(out: *char) -> i32:\n    return out[0]\n"
+           "fn f(x: auto):\n    mut position: [24]char = undefined\n"
+           "    mut padded: Padded = Padded(characters = [0, 0, 0, 0, 0, 0, 0, 0])\n"
+           "    _ := __builtin_snprintf(&position[0], sizeof position, \"[%d]\", 1)\n"
+           "    _ := put(&position[0], \"a\")\n    _ := make(&padded.characters[0])\n");
+}
+
+// A call whose result C drops, in a generic body, is discarded with `_ :=` (the checker's fix is lost with the
+// instance).
+export void test_front_fix_array_a_dropped_result_in_a_generic_body_is_discarded() {
+    expect("void f(auto x) {\n    char text[8];\n    __builtin_snprintf(text, sizeof text, \"x\");\n}\n",
+           "fn f(x: auto):\n    mut text: [8]char = undefined\n    _ := __builtin_snprintf(&text[0], sizeof text, "
+           "\"x\")\n");
+}

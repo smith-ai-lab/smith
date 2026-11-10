@@ -105,3 +105,14 @@ export void test_front_emit_generic_a_decided_compile_time_if_emits_only_its_liv
                  "    kind(5) + kind(7)\n";
     test::check_equal(run(source, "front::test::run"), (I32)2);
 }
+
+// `typeof(v)` of a parameter, as a type in the instance's body (#2648): `sizeof(typeof(v))` is the size of the
+// argument.
+export void test_front_emit_generic_typeof_a_parameter_is_the_type_of_the_argument() {
+    Str source = "fn width(v: auto) -> i32:\n"
+                 "    sizeof(typeof(v)).to(i32)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    width(5.to(i64)) + width(1.to(i16))\n";
+    test::check_equal(run(source, "front::test::run"), (I32)10);
+}

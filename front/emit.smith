@@ -252,6 +252,29 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     return true;
 }
 
+static state::TyResult ok_ty(state::Ty ty) {
+    return ty;
+}
+
+// `typeof(v)`: the type of the local `v`, else the type the checker gave the operand (in a generic body, of the
+// instance being emitted) (#2648). False when `t` is no `typeof` or nothing types it.
+static Bool type_of_typeof(state::Emitter *e, const ast::TypeExpr *t, state::TyResult *made) {
+    if (t->kind != .type_of) return false;
+    const ast::Expr *operand = t->kind.type_of.operand;
+    state::Local local = {};
+    if (operand->kind == .name && countof(operand->kind.name.path.segments) == 1 &&
+        state::find_local(e, operand->kind.name.path.segments[0].text, &local)) {
+        state::TyResult found = ok_ty(local.ty);
+        *made = found;
+        return true;
+    }
+    if (e->options.checked == nullptr) return false;
+    types::TypeRef typed = types::type_of(e->options.checked, operand);
+    if (typed == nullptr || typed == e->options.checked->table.invalid) return false;
+    *made = type_of_checked(e, typed, t->span);
+    return true;
+}
+
 // The LLVM type of a type expression.
 export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     // Chains of `if`, not a `switch`: a `case` label that spells the name of one of front::ast's functions (`named`,
@@ -318,6 +341,8 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     if (optional::is_applied(t)) return optional::type_applied(e, t);
     if (t->kind == .applied) return vectors::type_vector(e, t);
     if (t->kind == .auto_type) return state::ty_fail("`auto` where a type is needed", t->span);
+    state::TyResult typed = {};
+    if (type_of_typeof(e, t, &typed)) return typed;
     return state::ty_fail_with(t->span, "not emitted yet: a type of kind `", state::type_kind_name(t), "`");
 }
 
