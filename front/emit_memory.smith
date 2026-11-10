@@ -975,7 +975,8 @@ export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _
 // null and casts
 
 export state::Status null_pointer(state::Emitter *e, const ast::Expr *_, state::Hint hint) {
-    if (hint.present && hint.ty.kind == .pointer) {
+    // `fix.set_loader(nullptr)`: a function pointer or a `fn` value with no function is null too (#3036).
+    if (hint.present && (hint.ty.kind == .pointer || hint.ty.kind == .fn_pointer || hint.ty.kind == .fn_value)) {
         state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(hint.ty.llvm), .ty = hint.ty});
         return state::success();
     }
@@ -2005,6 +2006,10 @@ static state::Status compound_constant(state::Emitter *e, state::Ty ty, const as
         return state::success();
     }
     if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, out);
+    if (builtin::is_zeroed(e, x)) {
+        *out = c::LLVMConstNull(ty.llvm); // `static mut memory: arena.Arena = mem.zeroed(arena.Arena)` (#3036)
+        return state::success();
+    }
     if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
     if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, out);
 

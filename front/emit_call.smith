@@ -956,6 +956,29 @@ static state::Status unsupported_callee(const ast::Expr *x, const ast::Expr *cal
 }
 
 // `Expr.call`.
+// `parse_expr.expression` read as a value, not called (#3036): a function of an imported module (or of a C header) is
+// its address, which a `fn` value or a function pointer takes, as a function of this module's own name is. False when
+// `x` names no such function.
+export Bool module_function_value(state::Emitter *e, const ast::Expr *x, state::Status *status) {
+    if (x->kind != .member) return false;
+    const ast::Expr *base = x->kind.member.base;
+    if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
+    state::Local local = {};
+    if (state::find_local(e, base->kind.name.path.segments[0].text, &local)) return false;
+    const ast::Decl *imported = nullptr;
+    Str key = "";
+    if (!imported_callee(e, x, &imported, &key) || imported == nullptr || imported->kind != .function) return false;
+    SignatureResult made = find(e, key, x->span, imported);
+    if (made == .error) {
+        *status = (state::Status){.error = made.error};
+        return true;
+    }
+    state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
+    state::push_value(e, (state::Value){.llvm = made.ok.function, .ty = pointer});
+    *status = state::success();
+    return true;
+}
+
 export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint _) {
     if (written->kind != .call) {
         return state::fail("not a call", written->span);

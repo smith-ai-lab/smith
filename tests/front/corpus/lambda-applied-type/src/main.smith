@@ -1,0 +1,13 @@
+# `Lambda(bool (i32))` as a parameter's type is the `fn` value of that function type (#3036).
+import c <stdio.h>
+
+fn count_if(pred: Lambda(bool (i32)), n: i32) -> i32:
+    mut count := 0
+    for i in range(n):
+        if pred(i):
+            count += 1
+    return count
+
+fn main() -> i32:
+    _ := stdio.printf("%d\n", count_if(fn(x: i32) -> bool: x > 2, 5))
+    return 0
