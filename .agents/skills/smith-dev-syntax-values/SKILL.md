@@ -58,7 +58,7 @@ bytes := q.cast(*mut u8)        # reinterpret a pointer: rare and unsafe
 
 ## Strings
 
-- **Strings (D22, built by #2727 after the switch-over; until then a string has escapes but no holes):** `"..."` is the only string literal, with the usual escapes and holes: `console.println("x=${x}")`, `"addr=${format.hex(p)}"`. Only `${` opens a hole (`\${` writes it; a lone `$` is text). A string with holes is typed pieces, not a `str`: `format.string("id=${id}")` makes one, from the current allocator. `"""` writes a string over several lines, dropping the newline after it and the lines' common indentation.
+- **Strings (D22, built by #2727 after the switch-over; until then a string has escapes but no holes):** `"..."` is the only string literal, with the usual escapes and holes: `console.println("x={x}")`, `"addr={format.hex(p)}"`. `{` opens a hole (`\{` writes a literal `{`; a `}` outside a hole is text, and `$` is not special). A string with holes is typed pieces, not a `str`: `format.string("id={id}")` makes one, from the current allocator. `"""` writes a string over several lines, dropping the newline after it and the lines' common indentation.
 
 ## Not settled yet
 `[_]` lengths.
