@@ -156,3 +156,19 @@ export void test_build_twice_an_alias_with_other_targets_is_an_error() {
     scratch::expect_contains("twice: the alias error", run.err,
                              "alias group: the alias is already declared and its targets differ");
 }
+
+// build.c's arena is fixed (64 MB). When a build.c fills it, the message says how much was used, how much was asked for
+// and the last file read, not only "too many strings and lists" (#3032, where a CI job died with no hint of the cause).
+export void test_build_errors_an_overflowed_arena_names_the_last_file_read() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "errors_arena_full");
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("arena: a build.c that fills its arena fails", 2, &run);
+    scratch::expect_contains("arena: the message names the limit", run.err,
+                             "too many strings and lists (bytes) (limit 67108864)");
+    scratch::expect_contains("arena: and the last file read", run.err, "the last file read was big.txt");
+}

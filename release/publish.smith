@@ -399,6 +399,7 @@ void check_sum(Text tarball, Text tag) {
 }
 
 // True when GitHub has a release (a draft included) of the tag.
+// `tag` must be its own text, ended by a terminator (`join(line)` of a slice of a longer text), never such a slice.
 Bool release_exists(Text tag) {
     const char *const view[_] = {"gh", "release", "view", tag.data};
     return succeeds(view[0:4]);
@@ -447,38 +448,53 @@ void finish(Text tag) {
     console::print("release: published ", tag, "\n");
 }
 
-// Deletes the releases the prune names. Another platform's job prunes the same tags: one already deleted is no failure.
-void delete_old(Text tags) {
+// Deletes the releases the prune names and returns how many it could not. Another platform's job prunes the same tags:
+// one already deleted is no failure. A line of `tags` is a slice of the text with no terminator at its end, so `gh`
+// gets a copy of it (`join`): its `.data` would be every line after it as one tag (#3029: 371 releases, no deletion).
+Usize delete_old(Text tags) {
+    Usize failed = 0;
     Text rest = tags;
     Text old = "";
     while (take_line(&rest, &old)) {
-        const char *const remove[_] = {"gh", "release", "delete", old.data, "--cleanup-tag", "--yes"};
-        if (!passes(remove[0:6]) && release_exists(old)) {
-            console::print_error("release: could not delete ", old, "\n");
+        Text tag = join(old);
+        const char *const remove[_] = {"gh", "release", "delete", tag.data, "--cleanup-tag", "--yes"};
+        if (!passes(remove[0:6]) && release_exists(tag)) {
+            console::print_error("release: could not delete ", tag, "\n");
+            failed += 1;
         }
     }
+    return failed;
 }
 
 // A draft has no tag, so `gh release delete <tag>` cannot find one: the published releases are pruned by tag and the
 // drafts by id (a prune that tried 449 drafts by tag took 5 minutes, run 42877475136, #2832). A draft less than a day
-// old may be one a push run is still adding to, so it stays.
-void delete_stale_drafts() {
+// old may be one a push run is still adding to, so it stays. Returns how many problems it met.
+Usize delete_stale_drafts() {
+    Usize failed = 0;
     Text query = join(".[]|select(.draft and (.tag_name|startswith(\"stage0-\")) and ",
                       "(.created_at|fromdateiso8601) < now - 86400)|.id");
     const char *const list[_] = {"gh", "api", "repos/{owner}/{repo}/releases", "--paginate", "--jq", query.data};
     process::Output listed = exec(list[0:6]);
-    if (listed.exit.status != 0) return;
+    if (listed.exit.status != 0) {
+        console::print_error("release: could not list the drafts\n");
+        return 1;
+    }
     Text rest = trimmed(listed.output);
     Text line = "";
     while (take_line(&rest, &line)) {
         U64 id = 0;
         if (!text::parse_u64(line, &id)) continue;
         const char *const remove[_] = {"gh", "api", "-X", "DELETE", join("repos/{owner}/{repo}/releases/", line).data};
-        if (!succeeds(remove[0:5])) console::print_error("release: could not delete the draft ", line, "\n");
+        if (!succeeds(remove[0:5])) {
+            console::print_error("release: could not delete the draft ", line, "\n");
+            failed += 1;
+        }
     }
+    return failed;
 }
 
-void prune_old() {
+// The published `stage0-*` releases as "tag date" lines, in `lines`; false when `gh` could not list them.
+Bool list_published(Text *lines) {
     const char *const list[_] = {
         "gh",
         "release",
@@ -490,9 +506,44 @@ void prune_old() {
         "--jq",
         ".[]|select((.tagName|startswith(\"stage0-\")) and (.isDraft|not))|.tagName+\" \"+.createdAt"};
     process::Output listed = exec(list[0:9]);
-    // a failed list leaves old releases, never a failed release, and the drafts are pruned all the same
-    if (listed.exit.status == 0) delete_old(prune_tags(trimmed(listed.output), keep_count()));
-    delete_stale_drafts();
+    if (listed.exit.status != 0) return false;
+    *lines = trimmed(listed.output);
+    return true;
+}
+
+Usize count_lines(Text lines) {
+    Usize count = 0;
+    Text rest = lines;
+    Text line = "";
+    while (take_line(&rest, &line)) {
+        if (countof(line) > 0) count += 1;
+    }
+    return count;
+}
+
+// Deletes the old published releases and the stale drafts, then lists the published releases again and counts those
+// the policy would still delete: the outcome is checked, not the commands (#3029). Returns the number of problems (a
+// failed list, a failed delete, a release left beyond the policy) and says each on stderr; 0 is a clean prune.
+Usize prune_old() {
+    Usize problems = 0;
+    Usize keep = keep_count();
+    Text lines = "";
+    if (list_published(&lines)) {
+        problems += delete_old(prune_tags(lines, keep));
+    } else {
+        console::print_error("release: could not list the releases\n");
+        problems += 1;
+    }
+    problems += delete_stale_drafts();
+    if (list_published(&lines)) {
+        Usize left = count_lines(prune_tags(lines, keep));
+        if (left > 0) console::print_error("release: ", left, " published releases remain beyond the policy\n");
+        problems += left;
+    } else {
+        console::print_error("release: could not list the releases again\n");
+        problems += 1;
+    }
+    return problems;
 }
 
 // Guard, package the smith, add the tarball and checksum to the draft of this commit, prune.
@@ -519,7 +570,8 @@ void publish(Text smith) {
     console::print("release: added ", name, " to the draft ", tag, "\n");
     const char *const clean[_] = {"rm", "-rf", out.data};
     _ = passes(clean[0:3]);
-    prune_old();
+    // a failed prune leaves old releases, never a failed release; `prune-old` (CI's `prune` job) is where it is red
+    if (prune_old() > 0) console::print_error("release: the prune left problems; CI's prune job reports them\n");
 }
 
 // The tarballs the merge queue's run of this commit built (#2832, knowledge/release.md): guard, check each one's
@@ -594,7 +646,8 @@ I32 main(Str args[:]) {
         console::print(prune_tags(read_input(), keep_count()));
     } else if (same(command, "prune-old") && argc == 2) {
         guard();
-        prune_old();
+        Usize problems = prune_old();
+        if (problems > 0) die("the prune failed: ", join(problems, " problems"));
     } else if (same(command, "guard") && argc == 2) {
         guard();
     } else {
