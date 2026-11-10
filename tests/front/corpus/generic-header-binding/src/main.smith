@@ -1,0 +1,5 @@
+import fmt
+
+fn main() -> i32:
+    fmt.show(1, 2)
+    return 0

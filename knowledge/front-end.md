@@ -243,6 +243,10 @@ The types of the front end and the checker's entry point; the API is the top com
 - Not yet typed: a bit-field, an `if constexpr` whose condition is not about the target, a compile-time or rest parameter. An array length is typed when it is an integer literal, a constant (`const`, or a `let` that is not `mut`) whose initializer is one, or `+ - * / % << >>` of these (#1918); so is `k.SIDE` of a C header (`import c "k.h"`, also in a module another imports). The checker records the folded value (`types::length_of`) and the emitter and the header writer (`[SIDE * SIDE]`, with the `#include`) use it; the header writer spells one operand or two joined by `+ - * /`.
 - No recursion: `resolve`, `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
 
+- An applied type's argument written as a value path that names a type (`Result(c.LLVMModuleRef, state.Error)`: the parser reads a lower-case argument as a value) is read as that type (`types::typed_arguments`, #3026); this was the `not yet typed: the applied type` of `front/emit.smith`'s `ModuleResult` that about 74 front files import.
+- A C header an imported module binds (`import c <stdio.h>` in `fmt`, read as `stdio.printf`) is seen by that module's generics wherever they are instantiated, and only by them: each `HeaderBinding` keeps the prefix of the module that wrote it (`owner`), and `header_binding_in`, `c_member_name_in` and `binding_declares` look up a name in a scope (the checker's `r->prefix`, the emitter's `instance_scope`) (#3026).
+- `format.write` and `format.put` take a C array piece (`char name[64]` is written up to its first zero; another element type as `[a, b]`), #3026.
+
 ### front::types_expr (`front/types_expr.smith`, #1220 J1b)
 
 `types_expr::infer(c, e)` types from the expression alone; `types_expr::check(c, e, expected)` where a type is expected. Both record every sub-expression's type with `types::set_type`.
@@ -292,6 +296,7 @@ Declarations, statements and bodies, joining J1a to J1c. `types_decl::check_modu
 - Spelling (K5, #1347): `Char` is a builtin 8-bit unsigned type of its own; `char` and `bool` in a type position are errors in today's syntax. A character literal has type `Char`.
 - `const` and `constexpr` bindings are known at compile time (#1510, C1): `const a = n` with `n` not constant is an error naming `const a` (`require_constant`).
 - In smith's own syntax (`is_new`): a name that hides an enclosing one is an error naming the earlier declaration by byte offset; `let _ = f()` declares nothing.
+- A local, a parameter, a loop name or a binding that is the name of a module the file imports (the last part of its path or its `as` name) is the shadowing error too, naming the import (`hides_module`, #3026); the name is still declared, so its uses read the local and report nothing more. Tests: `tests/front_types_module_test.smith`.
 - A call whose result is not `Void` and is unused is an error (`write let _ = ...`), judged once the function has a parameter or an earlier local in that syntax.
 - `let (q, r) = f()` and `let (q, mut r) = f()` (#1558, `destructure_statement`) split a tuple: `_` discards one, a count that differs from the tuple's is an error naming both.
 - `undefined` (K3b, #1334) is taken only as a local's whole initializer with the declared type (`types_expr::is_undefined`, `local_variable`).
@@ -416,6 +421,8 @@ std spells a few operations the way clang does, and the checker knows them as in
 - `smith cc --front-end=new -g` sets `SMITH_FRONT_DEBUG=1` (`runtime/front_flag.c`), which `front::compile` reads into `Options.debug_info`; without `-g` an object has none. `smith dbg` then shows `area(w=3, h=4) at hello.smith:2:5` and the locals (#1979). A lambda or generator with `-g` is still `not emitted` (`emit_lambda`, `emit_stream`). `start_function` clears the builder's location so one function's entry branch never carries the previous function's scope.
 - A name or literal keeps the location of the statement or operator around it; a continuation gets the location of the node that pushed it (`debug::then_location`).
 - The line table is `Emitter.line_starts`; there is no file-level state, so two emits can run at once. `debug::release` runs on every exit. Test: `tests/front_emit_debug_test.smith`.
+
+- A record imported with `from std.build import Build` is the imported module's record in the emitter too (`emit_memory::is_imported_record`, `imported_record`), as a type and in a construction, and a field whose default is `= undefined` is left unwritten by a construction rather than read as a name (`emit_call::fills`) (#3026: the `unknown type Build` of the build files).
 
 ## Objects and the driver
 

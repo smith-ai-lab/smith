@@ -1,0 +1,7 @@
+# The header `fmt` imports is fmt's own: the importer does not see it by that name.
+import fmt
+
+fn main() -> i32:
+    fmt.show(1)
+    _ := stdio.printf("x\n")
+    return 0

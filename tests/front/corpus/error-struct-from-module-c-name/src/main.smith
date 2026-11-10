@@ -1,0 +1,6 @@
+# A construction of a record from `from ... import` names only its fields.
+from words import Pair
+
+fn main() -> i32:
+    p := Pair(key = 2, size = 3)
+    return p.key

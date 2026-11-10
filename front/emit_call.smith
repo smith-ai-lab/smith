@@ -238,7 +238,7 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
     } else if (callee->kind ==
                    .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
         state::Local local = {};
-        Str name = types::c_member_name(e->options.checked, callee);
+        Str name = types::c_member_name_in(e->options.checked, callee, e->instance_scope); // an instance: its module's
         if (countof(name) == 0 || state::find_local(e, types::c_member_base(callee), &local)) return false;
         full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
     } else {
@@ -587,6 +587,14 @@ static Bool find_record(state::Emitter *e, Str name, Usize *found) {
 // The record a checker symbol names, made when first named.
 static Bool record_of_symbol(state::Emitter *e, const types::Symbol *symbol, Usize *at) {
     if (symbol == nullptr || symbol->kind != .type_name || symbol->type->kind != .record) return false;
+    if (emit_memory::is_imported_record(e, symbol)) { // `AppTests(...)` after `from std.build import AppTests`
+        state::TyResult made = emit_memory::imported_record(e, symbol->decl, types::name_of(symbol->type));
+        if (made == .error) {
+            state::free_text(made.error.message);
+            return false;
+        }
+        return find_record(e, types::name_of(symbol->type), at);
+    }
     ast::Span nowhere = {};
     state::TyResult ty = state::type_of_checked(e, symbol->type, nowhere);
     if (ty == .error) {
@@ -632,6 +640,14 @@ static Bool field_for(state::RecordType record, ast::ExprRef args[:], Usize i, U
     return find_field(record, given_name(args[i]), found);
 }
 
+// Whether a field's default gives it a value: `step: Step = undefined` gives none, and the field left out stays as the
+// construction starts it (zero).
+static Bool fills(const ast::Expr *value) {
+    if (value == nullptr) return false;
+    if (value->kind != .name || countof(value->kind.name.path.segments) != 1) return true;
+    return !state::same_text(value->kind.name.path.segments[0].text, "undefined");
+}
+
 // The arguments of a construction with every field they leave out and that has a default given as a named argument
 // (the checker already refused a field left out that has none). A new slice.
 static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]) {
@@ -644,7 +660,7 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
     }
     Usize extra = 0;
     for (Usize k = 0; k < countof(record.fields) && k < 64; k++) {
-        if (!given[k] && record.fields[k].default_value != nullptr) extra += 1;
+        if (!given[k] && fills(record.fields[k].default_value)) extra += 1;
     }
     ArgumentList filled = {};
     filled = mem::realloc(filled, countof(args) + extra);
@@ -652,7 +668,7 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
         filled[i] = args[i];
     Usize at = countof(args);
     for (Usize k = 0; k < countof(record.fields) && k < 64; k++) {
-        if (!given[k] && record.fields[k].default_value != nullptr) {
+        if (!given[k] && fills(record.fields[k].default_value)) {
             filled[at] = ast::named_arg(record.fields[k].name, record.fields[k].default_value);
             at += 1;
         }
@@ -1092,7 +1108,7 @@ struct CallGraph {
     CallNode functions[:];
     Usize slots[:]; // a table of function indexes plus one, keyed by the function's address (0 is empty)
     Usize first[:];
-    Usize to[:];
+    Usize callees[:]; // the function each edge reaches (`to` is the built-in conversion `x.to(T)`, #2526)
     Bool tail[:];
     CallNode sites[:]; // the call instruction of each call
     Bool addressed[:]; // whether the function's address is used other than to call it: a call through a function
@@ -1163,7 +1179,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
                 Usize callee = rec_callee_of(g, x);
                 if (callee != ~(Usize)0) {
                     if (fill) {
-                        g->to[next] = callee;
+                        g->callees[next] = callee;
                         g->tail[next] = musttail;
                         g->sites[next].value = x;
                     }
@@ -1181,7 +1197,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
                     if (!g->addressed[target] || c::LLVMGlobalGetValueType(g->functions[target].value) != wanted)
                         continue;
                     if (fill) {
-                        g->to[next] = target;
+                        g->callees[next] = target;
                         g->tail[next] = musttail;
                         g->sites[next].value = x;
                     }
@@ -1194,7 +1210,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
     if (!fill) {
         Usize functions = countof(g->functions) + 1;
         g->first = mem::alloc_slice(Usize, functions);
-        g->to = mem::alloc_slice(Usize, next);
+        g->callees = mem::alloc_slice(Usize, next);
         g->tail = mem::alloc_slice(Bool, next);
         g->sites = mem::alloc_slice(CallNode, next);
     }
@@ -1226,7 +1242,7 @@ static void rec_components(const CallGraph *g, Usize component[:]) {
         while (depth > 0) {
             Usize u = frame_node[depth - 1];
             if (frame_edge[depth - 1] < g->first[u + 1]) {
-                Usize v = g->to[frame_edge[depth - 1]++];
+                Usize v = g->callees[frame_edge[depth - 1]++];
                 if (order[v] == 0) {
                     order[v] = low[v] = ++visits;
                     pending[kept++] = v;
@@ -1278,7 +1294,7 @@ static Str rec_way_round(const CallGraph *g, Usize caller, Usize callee) {
     while (head < last && !seen[caller]) {
         Usize u = queue[head++];
         for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
-            Usize v = g->to[k];
+            Usize v = g->callees[k];
             if (seen[v]) {
                 continue;
             }
@@ -1348,7 +1364,7 @@ static state::Status rec_check_exits(const CallGraph *g, const Usize component[:
             exits[id] = true;
         }
         for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
-            if (component[g->to[k]] == id) {
+            if (component[g->callees[k]] == id) {
                 looped[id] = true;
             }
         }
@@ -1359,11 +1375,11 @@ static state::Status rec_check_exits(const CallGraph *g, const Usize component[:
             continue;
         }
         for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
-            if (component[g->to[k]] != component[u]) {
+            if (component[g->callees[k]] != component[u]) {
                 continue;
             }
             ast::Span nowhere = {};
-            Str way = rec_way_round(g, u, g->to[k]);
+            Str way = rec_way_round(g, u, g->callees[k]);
             result = state::failf(nowhere, "this recursion never ends: no path returns without the call: ", way);
             break;
         }
@@ -1410,7 +1426,7 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
     c::LLVMValueRef lowered = nullptr; // a call through a function value has an edge for each target: lowered once
     for (Usize u = 0; u < n && result == .ok; u++) {
         for (Usize k = g.first[u]; k < g.first[u + 1]; k++) {
-            if (g.tail[k] || component[g.to[k]] != component[u] || g.sites[k].value == lowered) {
+            if (g.tail[k] || component[g.callees[k]] != component[u] || g.sites[k].value == lowered) {
                 continue;
             }
             lowered = g.sites[k].value;
@@ -1421,7 +1437,7 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
     mem::free(g.functions.data);
     mem::free(g.slots.data);
     mem::free(g.first.data);
-    mem::free(g.to.data);
+    mem::free(g.callees.data);
     mem::free(g.tail.data);
     mem::free(g.sites.data);
     mem::free(g.addressed.data);
