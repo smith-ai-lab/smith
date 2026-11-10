@@ -5467,8 +5467,10 @@ static const ast::Expr *type_value_name(types::Checked *c, const ast::Expr *e) {
     const ast::TypeExpr *t = e->kind.type_value.type;
     if (t == nullptr || t->kind != .named) return nullptr;
     const types::Symbol *named = types::type_through_modules(c, t->kind.named.path);
-    if (named == nullptr && countof(t->kind.named.path.segments) == 1)
-        named = types::lookup_path(&c->scopes, t->kind.named.path); // a builtin type, a type parameter
+    if (named == nullptr && countof(t->kind.named.path.segments) == 1) {
+        if (types::builtin(&c->table, t->kind.named.path.segments[0].text) != nullptr) return nullptr; // `U8`
+        named = types::lookup_path(&c->scopes, t->kind.named.path); // a type parameter
+    }
     if (named != nullptr && named->kind != .variable) return nullptr;
     ast::Expr *name = mem::alloc(ast::Expr);
     name->span = e->span;
