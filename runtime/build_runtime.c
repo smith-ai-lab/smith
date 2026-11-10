@@ -1238,7 +1238,7 @@ const char *const *smith_cat(SmithBuild *b, const char *const *first, ...) {
     size_t used = 0;
     for (size_t i = 0; i < lists_count; i++) {
         for (size_t j = 0; lists[i][j] != nullptr; j++)
-            joined[used++] = SMITH_COPY_STRING(lists[i][j]);
+            joined[used++] = lists[i][j]; // an arena string never changes: share it (#3034)
     }
     SMITH_ASSERT(used == total);
     return joined;
