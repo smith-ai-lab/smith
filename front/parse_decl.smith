@@ -1716,6 +1716,42 @@ static U32 item_lists(const parse::Parser *p, U32 from, U32 to, Str type, parse:
     return count;
 }
 
+// The items of the braces at `from` (up to `to`) of an array of tuples, each a braced list `{1, 2.0f}`, written as the
+// tuples `(1, 2.0f)` (#3027): their number, and their edits in `edits`; 0 when an item is not a braced list. The
+// array fix of each item's own list is dropped, as `tuple_list` drops it.
+static U32 tuple_items(parse::Parser *p, U32 from, U32 to, parse::Edits *edits) {
+    Usize at = 0;
+    while (at < countof(p->tokens) && p->tokens[at].span.start < from)
+        at += 1;
+    if (at >= countof(p->tokens) || p->tokens[at].kind != lex::left_brace) return 0;
+    U32 count = 0;
+    parse::Edits found = {};
+    at += 1;
+    while (at < countof(p->tokens) && p->tokens[at].span.start < to) {
+        if (p->tokens[at].kind != lex::left_brace) return 0;
+        Usize open = at;
+        Usize depth = 0;
+        for (; at < countof(p->tokens) && p->tokens[at].span.start < to; at += 1) {
+            lex::TokenKind kind = p->tokens[at].kind;
+            if (kind == lex::left_brace || kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+            if (kind == lex::right_brace || kind == lex::right_paren || kind == lex::right_bracket) depth -= 1;
+            if (depth == 0) break;
+        }
+        if (at >= countof(p->tokens) || p->tokens[at].kind != lex::right_brace) return 0;
+        found = with_edit(found, edit(p->tokens[open].span.start, p->tokens[open].span.end, "("));
+        found = with_edit(found, edit(p->tokens[at].span.start, p->tokens[at].span.end, ")"));
+        count += 1;
+        at += 1;
+        if (at < countof(p->tokens) && p->tokens[at].kind == lex::comma) at += 1;
+        if (at < countof(p->tokens) && p->tokens[at].kind == lex::right_brace) break;
+    }
+    for (Usize i = 0; i + 1 < countof(found); i += 2)
+        drop_array_fix(p, found[i].span.start);
+    for (Usize i = 0; i < countof(found); i += 1)
+        *edits = with_edit(*edits, found[i]);
+    return count;
+}
+
 // Whether the dimensions text is one pair of brackets (`[5]`), not `[2][3]`.
 static Bool single_dimension(Str text) {
     Usize brackets = 0;
@@ -1901,6 +1937,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
         // checker's error, not a silent zero fill.
         U32 count = braced_count(p, equal_end, last.span.start, written, dims.text, &item_edits, &zero_later);
+        if (count == 0 && type->kind == .tuple) count = tuple_items(p, equal_end, last.span.start, &item_edits);
         if (count == 0 || (!same_text(dims.text, "[_]") && !single_dimension(dims.text))) fixable = false;
         if (same_text(dims.text, "[_]")) dims.text = as_str(format::push("[", count, "]"));
     }
@@ -1915,7 +1952,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     written = with_dims(dims.text, written);
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
-    parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
+    // An array of tuples (`(i32, f32) xs[2]`) is no tuple: its list is the array's, and its items are the tuples.
+    parse::Edits list_edits = suffixed ? item_edits : tuple_list(p, type, equal_end, last.span.start, item_edits);
     if (!lone_zero_list(p, type, equal_end, last.span.start, value, item_edits, &list_edits) &&
         named_list_here(p, type, equal_end, last.span.start, dims.text)) {
         text = as_str(format::push(lead, name, untyped_of(lead)));
