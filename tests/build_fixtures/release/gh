@@ -38,7 +38,7 @@ case "$1 $2" in
     ;;
 "api "*)
     # the stale drafts `release prune-old` asks for (#2832): the ids in $GH_DIR/../drafts, one a line
-    case "$*" in *fromdateiso8601*) [ -f "$GH_DIR/../drafts" ] && cat "$GH_DIR/../drafts" ;; esac
+    case "$*" in *fromdateiso8601*) if [ -f "$GH_DIR/../drafts" ]; then cat "$GH_DIR/../drafts"; fi ;; esac
     ;;
 "release delete")
     # as gh: a tag that is no release is "release not found"; $GH_DIR/../fail_delete lists tags whose delete fails

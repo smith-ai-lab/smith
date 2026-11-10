@@ -275,18 +275,18 @@ export void test_release_prune_old_deletes_stale_drafts_by_id() {
     scratch::expect_status("release: prune-old-pushed", 0, &pushed);
     scratch::Run pruned = run(&p, "\"$script\" prune-old");
     scratch::expect_status("release: prune-old", 0, &pruned);
-    scratch::expect_text("release: prune-old-lists-no-drafts", "1",
+    // once to decide, once to check the outcome (#3029)
+    scratch::expect_text("release: prune-old-lists-no-drafts", "2",
                          capture(&p, "grep -c 'release list.*isDraft|not' \"$GH_LOG\""));
     scratch::expect_text(
         "release: prune-old-deletes-by-id", "41 42",
         capture(&p, "grep 'api -X DELETE' \"$GH_LOG\" | sed 's|.*/||' | tr '\\n' ' ' | sed 's| *$||'"));
 }
 
-// prune-old (#3029): 6 releases of 6 days, keep 3 and the newest of each ISO week; `gh release list` answers with several
-// lines, so each tag must reach `gh release delete` alone (it once got all the lines after it as one tag)
-static const char *const six_releases =
-    "git push -q origin main && for n in 1 2 3 4 5 6; do mkdir ../gh/stage0-r$n; "
-    "echo 2026-09-0${n}T00:00:00Z >../gh/stage0-r$n/.date; done; ";
+// prune-old (#3029): 6 releases of 6 days, keep 3 and the newest of each ISO week; `gh release list` answers with
+// several lines, so each tag must reach `gh release delete` alone (it once got all the lines after it as one tag)
+static const char *const six_releases = "git push -q origin main && for n in 1 2 3 4 5 6; do mkdir ../gh/stage0-r$n; "
+                                        "echo 2026-09-0${n}T00:00:00Z >../gh/stage0-r$n/.date; done; ";
 
 export void test_release_prune_old_deletes_each_tag_on_its_own() {
     scratch::Project p = repository();
@@ -301,8 +301,9 @@ export void test_release_prune_old_deletes_each_tag_on_its_own() {
     // newest, and with RELEASE_KEEP=3 the newest 3 (r6, r5, r4) stay
     scratch::Run pruned = run(&p, "RELEASE_KEEP=3 \"$script\" prune-old");
     scratch::expect_status("release: prune-tags", 0, &pruned);
-    scratch::expect_text("release: prune-tags-delete-calls", "stage0-r3 stage0-r2 stage0-r1",
-                         capture(&p, "grep '^gh release delete' \"$GH_LOG\" | cut -d' ' -f4 | tr '\\n' ' ' | sed 's| *$||'"));
+    scratch::expect_text(
+        "release: prune-tags-delete-calls", "stage0-r3 stage0-r2 stage0-r1",
+        capture(&p, "grep '^gh release delete' \"$GH_LOG\" | cut -d' ' -f4 | tr '\\n' ' ' | sed 's| *$||'"));
     scratch::expect_text("release: prune-tags-left", "stage0-r4 stage0-r5 stage0-r6",
                          capture(&p, "ls ../gh | tr '\\n' ' ' | sed 's| *$||'"));
 }
