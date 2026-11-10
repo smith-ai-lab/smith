@@ -2822,6 +2822,58 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     return r->table.invalid;
 }
 
+// The path a value argument spells when it is a chain of names (`c.FILE`, `state.Error`), else an empty path.
+static ast::Path member_path(const ast::Expr *e) {
+    ast::Path none = {};
+    Usize depth = 0;
+    const ast::Expr *at = e;
+    while (at != nullptr && at->kind == .member && !at->kind.member.arrow) {
+        depth += 1;
+        at = at->kind.member.base;
+    }
+    if (depth == 0 || at == nullptr || at->kind != .name) return none;
+    ast::Path root = at->kind.name.path;
+    ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, countof(root.segments) + depth);
+    for (Usize i = 0; i < countof(root.segments); i++)
+        segments[i] = root.segments[i];
+    at = e;
+    for (Usize k = countof(segments); k > countof(root.segments); k--) {
+        segments[k - 1] = (ast::Identifier){.text = at->kind.member.name, .span = at->span};
+        at = at->kind.member.base;
+    }
+    ast::Path made = {.segments = segments, .span = e->span};
+    return made;
+}
+
+// An applied type whose value arguments that name a type (`Result(c.LLVMModuleRef, state.Error)`: the parser reads a
+// lower-case first name as a value) are its type arguments: a copy where each is the named type. `node` itself when
+// none is.
+static const ast::TypeExpr *typed_arguments(const Checked *r, const ast::TypeExpr *node) {
+    if (node->kind != .applied) return node;
+    ast::TypeArg args[:] = node->kind.applied.args;
+    ast::TypeArg made[:] = {};
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *value = value_argument(&args[i]);
+        if (value == nullptr) continue;
+        ast::Path path = member_path(value);
+        if (countof(path.segments) == 0) continue;
+        const Symbol *found = type_through_modules(r, path);
+        if (found == nullptr || found->kind != .type_name) continue;
+        if (countof(made) == 0) {
+            made = mem::alloc_slice(ast::TypeArg, countof(args));
+            for (Usize k = 0; k < countof(args); k++)
+                made[k] = args[k];
+        }
+        ast::TypeExpr *named = ast::make_type({.named = {.path = path}});
+        named->span = value->span;
+        made[i] = (ast::TypeArg){.type = {.type = named}};
+    }
+    if (countof(made) == 0) return node;
+    ast::TypeExpr copy = *node;
+    copy.kind = (ast::TypeKind){.applied = {.name = node->kind.applied.name, .args = made}};
+    return ast::new_type(copy);
+}
+
 // A type expression as a type. Unknown names and constructs not typed yet are reported in `r` and give the invalid
 // type, so a second report is not made for the same mistake. A walk with an explicit stack, never recursion.
 export TypeRef resolve(Checked *r, const ast::TypeExpr *t) {
@@ -2834,6 +2886,7 @@ export TypeRef resolve(Checked *r, const ast::TypeExpr *t) {
         if (!is_composite(node)) {
             push_made(&w, leaf_type(r, node));
         } else if (!step.built) {
+            node = typed_arguments(r, node);
             push_step(&w, node, true);
             Usize n = child_count(node);
             for (Usize i = n; i > 0; i--)
