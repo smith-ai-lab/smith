@@ -2668,6 +2668,14 @@ static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgr
     return handlers;
 }
 
+// Whether a step declares `path` among its outputs.
+static bool smith_step_outputs_have(const SmithStep *step, const char *path) {
+    for (size_t i = 0; step->outputs != nullptr && step->outputs[i] != nullptr; i++) { // bounded by the outputs
+        if (strcmp(step->outputs[i], path) == 0) return true;
+    }
+    return false;
+}
+
 void smith_program(SmithBuild *b, SmithProgram *program) {
     SMITH_ASSERT(b != nullptr && program != nullptr);
     smith_require_program("smith_program", "linker", program->linker);
@@ -2704,18 +2712,26 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     // and one that does not loses nothing by it.
     const char *const *math = smith_when(b, strcmp(b->os, "Linux") == 0, smith_list(b, "-lm", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
-    // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
+    // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved). A
+    // compile that declares none (the new front end writes none, #2853) gives the link none to wait for.
     const char **summaries = smith_new_list(count);
     size_t summarized = 0;
     for (size_t i = 0; i < count; i++) {
         const char *summary = smith_effects_summary(rows[i]->compiler, rows[i]->source, outputs[i]);
-        if (summary != nullptr) summaries[summarized++] = summary;
+        if (summary != nullptr && smith_step_outputs_have(&rows[i]->step, summary)) summaries[summarized++] = summary;
     }
     summaries[summarized] = nullptr;
     const char *const *handlers_files = nullptr;
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
+    // `smith build --front-end=new`: the link is the new front end's too, so it links the std the objects need (the
+    // `.std` list beside each, #2853), as `smith cc --front-end=new` does.
+    bool front_end = false;
+    for (size_t i = 0; i < count; i++)
+        front_end = front_end || smith_ends_with(rows[i]->source, ".smith");
+    front_end = front_end && smith_find_given("SMITH_FRONT_END") != nullptr;
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
+        .command = smith_cat(b, smith_one(copy.linker), smith_when(b, front_end, smith_one("--front-end=new")),
+                             identity, copy.flags, (const char *const *)outputs,
                              copy.libraries, math, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),

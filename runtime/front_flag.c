@@ -55,7 +55,7 @@ static void smith_front_std_sources(void) {
 constexpr size_t smith_front_sources_max = 64;
 constexpr size_t smith_front_name_max = 4096;
 
-char *smith_front_arguments[smith_front_args_max + 8];
+char *smith_front_arguments[smith_front_args_max + 64]; // the command line, then the std objects a link adds
 static const char *smith_front_sources[smith_front_sources_max];
 static const char *smith_front_objects[smith_front_sources_max];
 static char smith_front_names[smith_front_sources_max][smith_front_name_max];
@@ -212,6 +212,9 @@ static void smith_front_cimport_flags(const char *self, int count, char **args, 
         if (access(".smith/include/smith", F_OK) != 0) smith_write_embedded_headers(self);
         written += snprintf(flags + written, sizeof flags - (size_t)written, "-I\n.smith/include\n");
         SMITH_ASSERT((size_t)written < sizeof flags);
+    } else if (access(".smith/include/smith", F_OK) == 0) { // `smith lint --fix` where smith's headers are written
+        written += snprintf(flags + written, sizeof flags - (size_t)written, "-I\n.smith/include\n");
+        SMITH_ASSERT((size_t)written < sizeof flags);
     }
     smith_front_command_flags(flags, sizeof flags, (size_t)written, count, args);
     if (source != nullptr) { // the build's own flags for the file, where a compile_commands.json has them (#2313)
@@ -298,6 +301,374 @@ static void smith_front_depfile(const char *depfile, const char *output, const c
     fclose(file);
 }
 
+// The std a program links (#2853). `smith cc --front-end=new` links what a program needs, as a C compile links libc:
+// std.contract (the emitter's checks call it with no import), every std module the program imports, directly or
+// through other imports, and the C libraries of smith's those modules include (`<smith/trace.h>`). The std embedded
+// in smith is in today's syntax, which the new front end reads only fixed: the first compile that needs a module
+// writes the embedded libraries to `<cache>/front-std/<smith's digest>/`, fixes the module there with `smith lint
+// --fix` and compiles it to `obj/<target>-<g|o>/<name>.o`; later compiles find both. A lock file keeps two compiles
+// from doing it at once. Where the current folder has no `lib/std` (a user's project), the program's own compile
+// reads the fixed texts too; in smith's repository `lib/std` on disk wins, as it always did.
+constexpr size_t smith_front_std_max = 48;
+static_assert(smith_front_std_max >= sizeof smith_libraries / sizeof smith_libraries[0]);
+static const SmithLibrary *smith_front_std[smith_front_std_max];
+static size_t smith_front_std_count;
+static char smith_front_std_folder[PATH_MAX];                                // the cache's folder, once made
+static char smith_front_std_objects[smith_front_std_max][PATH_MAX];         // the objects a link adds
+static size_t smith_front_std_object_count;
+
+static void smith_front_std_want(const char *name, size_t length) {
+    for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) { // bounded by the table
+        const SmithLibrary *library = &smith_libraries[i];
+        if (strlen(library->name) != length || strncmp(library->name, name, length) != 0) continue;
+        for (size_t k = 0; k < smith_front_std_count; k++) // bounded by the wanted
+            if (smith_front_std[k] == library) return;
+        SMITH_ASSERT(smith_front_std_count < smith_front_std_max);
+        smith_front_std[smith_front_std_count++] = library;
+        return;
+    }
+}
+
+static size_t smith_front_word(const char *text, size_t size) {
+    size_t n = 0;
+    while (n < size && (isalnum((unsigned char)text[n]) || text[n] == '_'))
+        n++;
+    return n;
+}
+
+static bool smith_front_starts(const char *text, size_t size, const char *prefix) {
+    size_t n = strlen(prefix);
+    return size >= n && memcmp(text, prefix, n) == 0;
+}
+
+// The library one line names: `import std.x`, `import std::x`, `from std.x import ...` (`pub` before any), or a header
+// of smith's, `<smith/x.h>`, in `import <...>`, `import c <...>` or `#include <...>`.
+static void smith_front_std_line(const char *line, size_t size) {
+    while (size > 0 && (*line == ' ' || *line == '\t')) {
+        line++;
+        size--;
+    }
+    if (smith_front_starts(line, size, "pub ")) {
+        line += 4;
+        size -= 4;
+    }
+    bool import = smith_front_starts(line, size, "import ") || smith_front_starts(line, size, "from ");
+    if (!import && !smith_front_starts(line, size, "#include")) return;
+    for (size_t i = 0; i + 7 < size; i++) { // bounded by the line
+        if (memcmp(line + i, "<smith/", 7) != 0) continue;
+        smith_front_std_want(line + i + 7, smith_front_word(line + i + 7, size - i - 7));
+        return;
+    }
+    if (!import) return;
+    size_t at = (size_t)(memchr(line, ' ', size) == nullptr ? size : (const char *)memchr(line, ' ', size) - line);
+    while (at < size && line[at] == ' ')
+        at++;
+    const char *rest = line + at;
+    size_t left = size - at;
+    if (smith_front_starts(rest, left, "std.")) smith_front_std_want(rest + 4, smith_front_word(rest + 4, left - 4));
+    if (smith_front_starts(rest, left, "std::")) smith_front_std_want(rest + 5, smith_front_word(rest + 5, left - 5));
+}
+
+static void smith_front_std_scan(const char *text, size_t size) {
+    size_t at = 0;
+    for (size_t guard = 0; guard <= size && at < size; guard++) { // each pass reads one line
+        const char *end = memchr(text + at, '\n', size - at);
+        size_t length = end == nullptr ? size - at : (size_t)(end - (text + at));
+        smith_front_std_line(text + at, length);
+        at += length + 1;
+    }
+}
+
+// Adds what the wanted libraries need, until nothing new turns up: each is read once, and the table is finite.
+static void smith_front_std_close(void) {
+    for (size_t i = 0; i < smith_front_std_count; i++) // bounded by smith_front_std_max
+        smith_front_std_scan((const char *)smith_front_std[i]->source, smith_front_std[i]->source_size);
+}
+
+// The wanted libraries of a source file, read from disk; a file that cannot be read adds none.
+static void smith_front_std_of_file(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return;
+    struct stat info;
+    if (fstat(fd, &info) == 0 && info.st_size > 0) {
+        void *text = mmap(nullptr, (size_t)info.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (text != MAP_FAILED) {
+            smith_front_std_scan(text, (size_t)info.st_size);
+            munmap(text, (size_t)info.st_size);
+        }
+    }
+    close(fd);
+}
+
+static bool smith_front_write_file(const char *path, const void *bytes, size_t size) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return false;
+    bool good = write(fd, bytes, size) == (ssize_t)size;
+    return close(fd) == 0 && good;
+}
+
+// Runs `argv` (smith itself) in `folder` and waits: whether it exited 0. $SMITH_FRONT_CIMPORT_FLAGS is the caller's,
+// with paths of the caller's folder, so the child goes without it and works out its own.
+static bool smith_front_run_in(const char *folder, char *const *argv) {
+    const char *flags = getenv("SMITH_FRONT_CIMPORT_FLAGS");
+    static char saved[1U << 16];
+    bool had = flags != nullptr && strlen(flags) < sizeof saved;
+    if (had) snprintf(saved, sizeof saved, "%s", flags);
+    unsetenv("SMITH_FRONT_CIMPORT_FLAGS");
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addchdir_np(&actions, folder);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0); // `N fixes applied`: errors stay
+    pid_t pid = 0;
+    int started = posix_spawn(&pid, argv[0], &actions, nullptr, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (had) setenv("SMITH_FRONT_CIMPORT_FLAGS", saved, 1);
+    int status = 0;
+    if (started != 0 || waitpid(pid, &status, 0) != pid) return false;
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+#ifdef SMITH_IMPORT_IDENTITY_LINKED
+extern const char smith_import_identity[]; // runtime/import_identity.c
+#endif
+
+// What names this smith's std: the import identity `smith build` compiled in (every file under front/ and lib/std/,
+// the runtime, build.c, the LLVM pack, the flags: what a std object depends on), else the digest of the binary, which
+// hashes all of it and is slower.
+static bool smith_front_std_identity(const char *self, char digest[smith_sha256_hex_size]) {
+#ifdef SMITH_IMPORT_IDENTITY_LINKED
+    if (strlen(smith_import_identity) >= 16) {
+        int written = snprintf(digest, smith_sha256_hex_size, "%.16s", smith_import_identity);
+        return written == 16;
+    }
+#endif
+    return self != nullptr && smith_self_digest(self, digest);
+}
+
+// The cache's folder for this smith (`<cache>/front-std/<identity>`), made once. False when there is none.
+static bool smith_front_std_root(const char *self) {
+    if (smith_front_std_folder[0] != '\0') return true;
+    char digest[smith_sha256_hex_size];
+    char base[PATH_MAX];
+    SmithPackageFault fault;
+    if (!smith_front_std_identity(self, digest) || !smith_cache_base(base, &fault)) return false;
+    char folder[PATH_MAX];
+    int written = snprintf(folder, sizeof folder, "%s/front-std/%.16s/lib/std", base, digest);
+    if (written <= 0 || (size_t)written >= sizeof folder || !smith_package_make_folders(folder)) return false;
+    written = snprintf(smith_front_std_folder, sizeof smith_front_std_folder, "%s/front-std/%.16s", base, digest);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof smith_front_std_folder);
+    return true;
+}
+
+static void smith_front_std_path(char *out, const char *format, const char *name) {
+    char tail[PATH_MAX];
+    int written = snprintf(tail, sizeof tail, format, name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof tail);
+    written = snprintf(out, PATH_MAX, "%s/%s", smith_front_std_folder, tail);
+    if (written <= 0 || written >= PATH_MAX) smith_die(smith_exit_usage, "the cache path is too long", tail);
+}
+
+// smith's headers (`.smith/include/smith/`, `.smith/lib/`) in the cache's folder, written there as a project's are.
+static void smith_front_std_headers(const char *self) {
+    char path[PATH_MAX];
+    smith_front_std_path(path, "%s", ".smith/include/smith/trace.h");
+    if (access(path, F_OK) == 0) return;
+    int here = open(".", O_RDONLY | O_DIRECTORY);
+    if (here < 0 || chdir(smith_front_std_folder) != 0) smith_die(smith_exit_missing, "cannot enter", path);
+    smith_write_embedded_headers(self);
+    if (fchdir(here) != 0) smith_die(smith_exit_missing, "cannot go back to the folder of the compile", nullptr);
+    close(here);
+}
+
+// Fixes, in one `smith lint --fix`, each wanted module of today's syntax that is not fixed yet, then marks it.
+static void smith_front_std_fix(const char *self) {
+    static char paths[smith_front_std_max][PATH_MAX];
+    char *argv[smith_front_std_max + 4] = {(char *)self, "lint", "--fix"};
+    size_t used = 3;
+    char marker[PATH_MAX];
+    for (size_t i = 0; i < smith_front_std_count; i++) { // bounded by smith_front_std_max
+        const SmithLibrary *library = smith_front_std[i];
+        smith_front_std_path(marker, "lib/std/%s.fixed", library->name);
+        if (!library->lang || access(marker, F_OK) == 0) continue;
+        smith_front_std_path(paths[used], "lib/std/%s.smith", library->name);
+        if (!smith_front_write_file(paths[used], library->source, library->source_size))
+            smith_die(smith_exit_missing, "cannot write", paths[used]);
+        argv[used] = paths[used];
+        used++;
+    }
+    if (used == 3) return;
+    argv[used] = nullptr;
+    if (!smith_front_run_in(smith_front_std_folder, argv))
+        smith_die(smith_exit_usage, "cannot fix smith's std for the new front end in", smith_front_std_folder);
+    for (size_t i = 3; i < used; i++) { // bounded by used
+        int written = snprintf(marker, sizeof marker, "%.*s.fixed", (int)(strlen(paths[i]) - strlen(".smith")), paths[i]);
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof marker);
+        if (!smith_front_write_file(marker, "", 0)) smith_die(smith_exit_missing, "cannot write", marker);
+    }
+}
+
+// The front end reads each wanted module's fixed text in place of the embedded one (kept mapped for the process).
+static void smith_front_std_register(void) {
+    char path[PATH_MAX];
+    for (size_t i = 0; i < smith_front_std_count; i++) { // bounded by smith_front_std_max
+        if (!smith_front_std[i]->lang) continue;
+        smith_front_std_path(path, "lib/std/%s.smith", smith_front_std[i]->name);
+        int fd = open(path, O_RDONLY);
+        struct stat info;
+        if (fd < 0 || fstat(fd, &info) != 0 || info.st_size <= 0) smith_die(smith_exit_missing, "cannot read", path);
+        void *text = mmap(nullptr, (size_t)info.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        close(fd);
+        if (text == MAP_FAILED) smith_die(smith_exit_missing, "cannot read", path);
+        smith_std_source_add(smith_front_std[i]->name, text, (size_t)info.st_size);
+    }
+}
+
+// Whether the command line has the library already: its source (`lib/std/contract.smith`, `lib/handlers.c`), or
+// the object a build made of it (`smith_handlers.o`, `-lsmith_handlers` on macOS). Then its object is the program's.
+static bool smith_front_std_given(const char *name, int count, char **args) {
+    char forms[4][PATH_MAX];
+    const char *patterns[4] = {"std/%s.smith", "lib/%s.c", "smith_%s.o", "-lsmith_%s"};
+    for (size_t k = 0; k < 4; k++) { // bounded by the forms
+        int written = snprintf(forms[k], sizeof forms[k], patterns[k], name);
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof forms[k]);
+    }
+    for (int i = 0; i < count; i++) { // bounded by count
+        for (size_t k = 0; k < 3; k++)
+            if (smith_ends_with(args[i], forms[k])) return true;
+        if (strcmp(args[i], forms[3]) == 0) return true;
+    }
+    return false;
+}
+
+// One object of the cache: a module through the new front end, a C library through clang, written beside and renamed
+// so that a killed compile leaves none.
+static void smith_front_std_object(const char *self, const SmithLibrary *library, const char *object,
+                                   const char *triple, bool debug) {
+    char source[PATH_MAX];
+    char partial[PATH_MAX];
+    char target[PATH_MAX];
+    // Relative to the cache's folder, where the child runs: `lib/std/math.smith` under the root `lib` names the module
+    // `std::math`, and so its symbols (`std::math::wrap_angle`, not a bare `wrap_angle` that std.math_trig has too).
+    int written = snprintf(source, sizeof source, library->lang ? "lib/std/%s.smith" : ".smith/lib/%s.c", library->name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof source);
+    written = snprintf(partial, sizeof partial, "%s.tmp-%d", object, (int)getpid());
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof partial);
+    written = snprintf(target, sizeof target, "--target=%s", triple != nullptr ? triple : "");
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof target);
+    char *argv[16] = {(char *)self, "cc"};
+    size_t used = 2;
+    if (library->lang) {
+        argv[used++] = "--front-end=new";
+    } else {
+        argv[used++] = "-std=gnu23";
+        argv[used++] = "-I";
+        argv[used++] = ".smith/include";
+    }
+    argv[used++] = "-c";
+    argv[used++] = source;
+    argv[used++] = "-o";
+    argv[used++] = partial;
+    if (debug) argv[used++] = "-g";
+    if (triple != nullptr) argv[used++] = target;
+    argv[used] = nullptr;
+    bool made = smith_front_run_in(smith_front_std_folder, argv) && rename(partial, object) == 0;
+    char list[PATH_MAX];
+    written = snprintf(list, sizeof list, "%s.std", partial);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof list);
+    unlink(list); // the child's list of what its object needs: the link reads the closure itself
+    if (!made) {
+        unlink(partial);
+        smith_die(smith_exit_usage, "cannot compile smith's std library for the link", source);
+    }
+}
+
+// The objects of the wanted libraries for this target and debug setting, in `obj/<target>-<g|o>/`, compiled when
+// missing; the command line's own copy of a library is left to it.
+static void smith_front_std_compile(const char *self, const char *triple, bool debug, int count, char **args) {
+    char kind[PATH_MAX];
+    int written = snprintf(kind, sizeof kind, "obj/%s-%s", triple != nullptr ? triple : "host", debug ? "g" : "o");
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof kind);
+    char folder[PATH_MAX];
+    smith_front_std_path(folder, "%s", kind);
+    if (!smith_package_make_folders(folder)) smith_die(smith_exit_missing, "cannot make", folder);
+    smith_front_std_object_count = 0;
+    for (size_t i = 0; i < smith_front_std_count; i++) { // bounded by smith_front_std_max
+        const SmithLibrary *library = smith_front_std[i];
+        if (smith_front_std_given(library->name, count, args)) continue;
+        char *object = smith_front_std_objects[smith_front_std_object_count++];
+        written = snprintf(object, PATH_MAX, "%s/%s.o", folder, library->name);
+        SMITH_ASSERT(written > 0 && written < PATH_MAX);
+        if (access(object, F_OK) != 0) smith_front_std_object(self, library, object, triple, debug);
+    }
+}
+
+// Makes the wanted libraries ready: fixed in the cache, read by this compile where the folder has no `lib/std` of its
+// own, and compiled to objects when the command links. Under the cache's lock; false when there is no cache folder.
+static bool smith_front_std_prepare(const char *self, bool linking, const char *triple, bool debug, int count,
+                                    char **args) {
+    bool own = access("lib/std", F_OK) == 0; // smith's repository, or a project with its own library
+    if (smith_front_std_count == 0 || (own && !linking) || !smith_front_std_root(self)) return false;
+    char lock[PATH_MAX];
+    smith_front_std_path(lock, "%s", "lock");
+    int fd = open(lock, O_RDWR | O_CREAT, 0644);
+    if (fd < 0 || flock(fd, LOCK_EX) != 0) smith_die(smith_exit_missing, "cannot lock", lock);
+    smith_front_std_headers(self);
+    smith_front_std_fix(self);
+    if (!own) smith_front_std_register();
+    if (linking) smith_front_std_compile(self, triple, debug, count, args);
+    close(fd); // the lock goes with it
+    return true;
+}
+
+// What the command's `.smith` files import, with what those need; when it links, also what the `.std` lists beside its
+// objects name, and std.contract, which every program's checks call.
+static void smith_front_std_gather(int count, char **args, size_t sources, bool linking) {
+    smith_front_std_count = 0;
+    for (size_t i = 0; i < sources; i++) // bounded by the sources
+        smith_front_std_of_file(smith_front_sources[i]);
+    if (linking) {
+        char list[PATH_MAX];
+        for (int i = 0; i < count; i++) { // bounded by count
+            if (!smith_ends_with(args[i], ".o") || (i > 0 && strcmp(args[i - 1], "-o") == 0)) continue;
+            int written = snprintf(list, sizeof list, "%s.std", args[i]);
+            if (written > 0 && (size_t)written < sizeof list) smith_front_std_of_file(list);
+        }
+        smith_front_std_want("contract", strlen("contract"));
+    }
+    smith_front_std_close();
+}
+
+// Beside each object a compile wrote (`-c`), `<object>.std`: the std modules its source needs, as import lines, so the
+// link of the objects (`smith build`) links them too. None, and an old list removed, when it needs none.
+static void smith_front_std_lists(size_t sources) {
+    static char text[smith_front_std_max * 64];
+    size_t used = 0;
+    for (size_t i = 0; i < smith_front_std_count; i++) { // bounded by smith_front_std_max
+        int more = snprintf(text + used, sizeof text - used, "import std.%s\n", smith_front_std[i]->name);
+        SMITH_ASSERT(more > 0 && (size_t)more < sizeof text - used);
+        used += (size_t)more;
+    }
+    char path[PATH_MAX];
+    for (size_t i = 0; i < sources; i++) { // bounded by the sources
+        int written = snprintf(path, sizeof path, "%s.std", smith_front_objects[i]);
+        if (written <= 0 || (size_t)written >= sizeof path) continue;
+        if (used == 0)
+            unlink(path);
+        else if (!smith_front_write_file(path, text, used))
+            smith_die(smith_exit_missing, "cannot write", path);
+    }
+}
+
+// The std objects after the command's own arguments, with libm on Linux (std.math calls it; macOS has it in libSystem).
+static int smith_front_std_link(int used) {
+    for (size_t i = 0; i < smith_front_std_object_count; i++) // bounded by smith_front_std_max
+        smith_front_arguments[used++] = smith_front_std_objects[i];
+#ifndef __APPLE__
+    if (smith_front_std_object_count > 0) smith_front_arguments[used++] = "-lm";
+#endif
+    return used;
+}
+
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
@@ -335,10 +706,13 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
     smith_front_count = count;
     smith_front_args = args;
     front_compile_before_file(sources > 1 ? smith_front_flags_of_file : nullptr);
-    if (sources > 0) smith_front_debug_flag(count, args);
+    smith_front_debug_flag(count, args);
+    smith_front_std_gather(count, args, sources, !compile_only);
+    (void)smith_front_std_prepare(self, !compile_only, triple, getenv("SMITH_FRONT_DEBUG") != nullptr, count, args);
     int compiled = sources > 0 ? front_compile_run(smith_front_sources, smith_front_objects, sources, triple) : 0;
     smith_import_cache_report();
     if (compiled != 0) return -1;
+    if (compile_only) smith_front_std_lists(sources);
     int used = first;
     size_t seen = 0;
     for (int i = 0; i < count; i++) { // bounded by count
@@ -354,6 +728,7 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
         }
         smith_front_arguments[used++] = args[i];
     }
+    if (!compile_only) used = smith_front_std_link(used);
     bool only_options = true;            // nothing but options left: clang has no input to compile
     for (int i = first; i < used; i++) { // bounded by used
         if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)

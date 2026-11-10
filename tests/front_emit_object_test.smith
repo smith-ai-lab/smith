@@ -79,8 +79,8 @@ static I32 run_status(const char *const argv[:]) {
 
 // The object defines `front::test::add`; main.c declares it with an `__asm__` label (macOS prepends `_` to the symbol,
 // as the generated headers write) and checks `add(2, 3) == 5`. smith cc links the two; the program exits 0. The signed
-// add has a check that calls std::contract's fail_overflow (#1542); main.c stands it in, since this program links no
-// library.
+// add has a check that calls std::contract's fail_overflow (#1542); `smith cc --front-end=new` links the real one, as
+// it does for a user's program.
 export void test_front_emit_object_links_with_a_c_file_and_runs() {
     emit_jit::Jit host = {};
     emit_jit::JitResult started = emit_jit::start();
@@ -103,15 +103,14 @@ export void test_front_emit_object_links_with_a_c_file_and_runs() {
     Bool apple = contains(host.target.triple.data, "apple");
     write_text(format::push(folder, "/main.c").data,
                format::push("int add(int, int) __asm__(\"", apple ? "_" : "", "front::test::add\");\n",
-                            "void smith_contract_fail_overflow(const char *, long, long, const char *, const char *) ",
-                            "{ __builtin_trap(); }\n", "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
+                            "int main(void) { return add(2, 3) == 5 ? 0 : 1; }\n")
                    .data);
     const char *self = c::getenv("SMITH_SELF");
     const char *smith = self != nullptr ? self : "smith";
     const char *main_c = format::push(folder, "/main.c").data;
     const char *prog = format::push(folder, "/prog").data;
-    const char *const link[6] = {smith, "cc", main_c, object.data, "-o", prog};
-    test::check_equal(run_status(link[0:6]), 0);
+    const char *const link[7] = {smith, "cc", "--front-end=new", main_c, object.data, "-o", prog};
+    test::check_equal(run_status(link[0:7]), 0);
     const char *const program[1] = {prog};
     test::check_equal(run_status(program[0:1]), 0);
     c::remove(prog);
@@ -219,8 +218,8 @@ export void test_front_emit_object_optimization_runs_passes_only_above_zero() {
     emit_jit::stop(&host);
 }
 
-// The signed add of `add` can overflow: after the optimizer it still calls smith_contract_fail_overflow, and the
-// stand-in main exits 3 from it when called with i32 max.
+// The signed add of `add` can overflow: after the optimizer it still calls smith_contract_fail_overflow, and called with
+// i32 max the program, linked as a user's is, stops with std.contract's report.
 export void test_front_emit_object_optimization_keeps_the_overflow_check() {
     emit_jit::JitResult started = emit_jit::start();
     test::check_equal(started == .ok, true);
@@ -242,18 +241,24 @@ export void test_front_emit_object_optimization_keeps_the_overflow_check() {
     c::LLVMContextDispose(context);
     Bool apple = contains(host.target.triple.data, "apple");
     const char *main_c = format::push(folder, "/main.c").data;
-    write_text(main_c, format::push("void _Exit(int);\nint add(int, int) __asm__(\"", apple ? "_" : "",
-                                    "front::test::add\");\n",
-                                    "void smith_contract_fail_overflow(const char *, long, long, const char *, ",
-                                    "const char *) { _Exit(3); }\n", "int main(void) { return add(2147483647, 1); }\n")
+    write_text(main_c, format::push("int add(int, int) __asm__(\"", apple ? "_" : "", "front::test::add\");\n",
+                                    "int main(void) { return add(2147483647, 1); }\n")
                            .data);
     const char *self = c::getenv("SMITH_SELF");
     const char *smith = self != nullptr ? self : "smith";
     const char *prog = format::push(folder, "/prog").data;
-    const char *const link[6] = {smith, "cc", main_c, object.data, "-o", prog};
-    test::check_equal(run_status(link[0:6]), 0);
+    const char *const link[7] = {smith, "cc", "--front-end=new", main_c, object.data, "-o", prog};
+    test::check_equal(run_status(link[0:7]), 0);
     const char *const program[1] = {prog};
-    test::check_equal(run_status(program[0:1]), 3);
+    process::OutputResult done = process::run(program[0:1]);
+    test::check_equal(done == .ok, true);
+    if (done == .ok) {
+        test::check_equal(done.ok.exit.status != 0 || done.ok.exit.signal != 0, true);
+        format::Chars errors = mem::view(done.ok.errors, char);
+        test::check_equal(contains(format::push(errors).data, "2147483647 + 1 overflows"), true);
+        if (done.ok.output.data != nullptr) mem::free(done.ok.output.data);
+        if (done.ok.errors.data != nullptr) mem::free(done.ok.errors.data);
+    }
     c::remove(prog);
     c::remove(main_c);
     c::remove(object.data);

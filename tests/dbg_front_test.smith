@@ -26,14 +26,9 @@ static const char *const geometry = "pub fn area(w: i32, h: i32) -> i32:\n"
                                     "    let q = area(p, 2)\n"
                                     "    q / (p - p)\n";
 
-// The stand-ins of the checks the new emitter calls, so the program links without smith's runtime.
+// The C main of the program; `smith cc --front-end=new` links the real std.contract the checks call, as a user's
+// program gets it.
 static const char *const main_c = "int check(void);\n"
-                                  "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
-                                  "const char *d, const char *e) { __builtin_trap(); }\n"
-                                  "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
-                                  "{ __builtin_trap(); }\n"
-                                  "void smith_contract_fail_divide(const char *a, unsigned long b, unsigned long c, "
-                                  "const char *d, const char *e) { __builtin_trap(); }\n"
                                   "int boom(int);\n"
                                   "int main(int argc, char **argv) { return argc > 1 ? boom(argc) : check(); }\n";
 
@@ -111,12 +106,6 @@ export void test_dbg_front_a_crash_in_a_new_syntax_function_shows_its_source_lin
 // A main that prints its arguments, since the shared main calls `boom` as soon as it has one.
 static const char *const args_c = "#include <stdio.h>\n"
                                   "int check(void);\n"
-                                  "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
-                                  "const char *d, const char *e) { __builtin_trap(); }\n"
-                                  "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
-                                  "{ __builtin_trap(); }\n"
-                                  "void smith_contract_fail_divide(const char *a, unsigned long b, unsigned long c, "
-                                  "const char *d, const char *e) { __builtin_trap(); }\n"
                                   "int main(int count, char **arguments) {\n"
                                   "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
                                   "    return check();\n"

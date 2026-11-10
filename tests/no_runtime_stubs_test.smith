@@ -1,0 +1,180 @@
+// The guard of "no runtime stubs in the tests" (#2853; owner, 2026-11-10: "How do we make sure our tests don't do this
+// sort of sneaky behavior where it masks what happens in real world."). A test program is compiled and linked the way
+// smith links a user's program, so it gets the real std.contract and the real modules it imports: no file under
+// tests/ defines a function whose name starts with `smith_contract_fail_`, or one that smith's libraries declare in
+// their headers (`.smith/include/smith/*.h`, `$SMITH_HEADERS_FROM`). A definition is a name, its parameters and a `{`
+// (also when it is C inside a string, broken across lines). The expected lowerings of the language's corpus
+// (tests/smith-lang/cases/*/expect/) are the compiler's output for a library's own source, not stand-ins, and are not
+// read. The rule is in the skill smith-dev-tests.
+// smith-reads-tree
+// smith-covers: tests/
+module no_runtime_stubs_test;
+
+import std::arena;
+import std::env;
+import std::files;
+import std::format;
+import std::mem;
+import std::test;
+import <string.h>;
+import scratch;
+
+static Bool starts_with(const char *text, const char *prefix) {
+    return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
+}
+
+static Bool ends_with(const char *text, const char *suffix) {
+    Usize length = c::strlen(text);
+    Usize n = c::strlen(suffix);
+    return length >= n && c::strcmp(text + length - n, suffix) == 0;
+}
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// The whole file at `path` as a terminated text in the current allocator; "" when it cannot be read.
+static const char *text_of(const char *path) {
+    files::BytesResult loaded = files::read_file(path[0:c::strlen(path)]);
+    if (loaded != .ok) return "";
+    char *text = mem::alloc_slice(char, countof(loaded.ok) + 1).data;
+    for (Usize i = 0; i < countof(loaded.ok); i++) {
+        text[i] = loaded.ok[i] == 0 ? ' ' : (char)loaded.ok[i];
+    }
+    text[countof(loaded.ok)] = '\0';
+    return text;
+}
+
+// After the `)` at `at`: blanks, the quotes and `\n` escapes of a C text broken over lines, then whether a `{` follows.
+static Bool body_follows(const char *text, Usize at) {
+    for (Usize guard = 0; guard < 256 && text[at] != '\0'; guard++) {
+        char ch = text[at];
+        if (ch == '{') return true;
+        if (ch == '\\' && text[at + 1] == 'n') {
+            at += 2;
+            continue;
+        }
+        if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '"') return false;
+        at += 1;
+    }
+    return false;
+}
+
+// The `)` that closes the `(` at `at`, or 0 when the line ends first.
+static Usize closing(const char *text, Usize at) {
+    Usize depth = 0;
+    for (Usize i = at; text[i] != '\0'; i++) {
+        if (text[i] == '(') depth += 1;
+        if (text[i] == ')') depth -= 1;
+        if (depth == 0) return i;
+        if (text[i] == '{' || text[i] == ';') return 0;
+    }
+    return 0;
+}
+
+// Whether `name` is a smith runtime function: a contract check's, or one that the `smith_` names of `declared` (the
+// libraries' headers, one name a line, each line ending in `\n`) hold.
+static Bool runtime_name(const char *name, const char *declared) {
+    if (starts_with(name, "smith_contract_fail_")) return true;
+    const char *line = format::push("\n", name, "\n").data;
+    return c::strstr(declared, line) != nullptr;
+}
+
+// The smith runtime functions that `text` (the file `name`) defines, as `name: function` lines.
+static const char *definitions(const char *name, const char *text, const char *declared) {
+    const char *found = "";
+    for (Usize i = 0; text[i] != '\0'; i++) {
+        if (!starts_with(text + i, "smith_") || (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '@'))) continue;
+        Usize end = i;
+        while (word_char(text[end]))
+            end += 1;
+        if (text[end] != '(') continue;
+        Usize close = closing(text, end);
+        if (close == 0 || !body_follows(text, close + 1)) continue;
+        const char *function = format::push(text[i:end]).data;
+        if (runtime_name(function, declared)) found = format::push(found, name, ": ", function, "\n").data;
+        i = end;
+    }
+    return found;
+}
+
+// The `smith_` names the headers in `folder` declare, each between newlines: the set runtime_name reads.
+static const char *declared_names(const scratch::Project *p, const char *folder) {
+    const char *command =
+        format::push("cat '", folder, "'/*.h 2>/dev/null | grep -o 'smith_[a-z0-9_]*' | LC_ALL=C sort -u").data;
+    const char *listing = scratch::capture(p, command);
+    const char *names = format::push("\n", listing, "\n").data;
+    scratch::release(listing);
+    return names;
+}
+
+static Bool scanned(const char *name) {
+    if (!starts_with(name, "tests/") || c::strstr(name, "/expect/") != nullptr) return false;
+    return ends_with(name, ".smith") || ends_with(name, ".c") || ends_with(name, ".h") || ends_with(name, ".cpp") ||
+           ends_with(name, ".m");
+}
+
+// The definitions of smith runtime functions in the tracked files under tests/ of the repository at `root`.
+static const char *offenders(const scratch::Project *p, const char *root, const char *headers) {
+    const char *command = format::push("cd '", root, "' && git -c core.quotepath=off ls-files tests | LC_ALL=C sort").data;
+    const char *listing = scratch::capture(p, command);
+    const char *declared = declared_names(p, headers);
+    const char *found = "";
+    Usize start = 0;
+    Usize length = c::strlen(listing);
+    while (start < length) {
+        Usize end = start;
+        while (end < length && listing[end] != '\n')
+            end += 1;
+        const char *name = format::push(listing[start:end]).data;
+        start = end + 1;
+        if (!scanned(name)) continue;
+        found = format::push(found, definitions(name, text_of(format::push(root, "/", name).data), declared)).data;
+    }
+    scratch::release(listing);
+    return found;
+}
+
+static const char *repo() {
+    env::Value named = env::get("SMITH_REPO");
+    return named == .some ? named.some.data : ".";
+}
+
+static const char *headers() {
+    env::Value named = env::get("SMITH_HEADERS_FROM");
+    return named == .some ? named.some.data : format::push(repo(), "/.smith/include/smith").data;
+}
+
+export void test_no_test_defines_a_smith_runtime_function() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text("a test defines a smith runtime function; link the program the way smith links a user's "
+                         "program (`smith cc --front-end=new` links std.contract and the modules it imports)",
+                         "", offenders(&p, repo(), headers()));
+}
+
+export void test_a_stub_in_a_test_fails() {
+    scratch::Project p = scratch::make("repository", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run made = scratch::sh(
+        &p, "git init -q . && mkdir -p tests/smith-lang/cases/a/expect include && "
+            "printf 'void smith_trace_write(int fd);\\nint smith_other(void);\\n' > include/trace.h && "
+            "printf 'static const char *const c = \"void smith_contract_fail_overflow(const char *a, \"\\n"
+            "    \"long b) { __builtin_trap(); }\\\\n\";\\n' > tests/a_test.smith && "
+            "printf 'void smith_trace_write(int fd) {}\\nvoid smith_mine(void) {}\\n' > tests/b.c && "
+            "printf 'if (smith_trace_write(1)) {}\\nsmith_trace_write(2);\\n' > tests/c.c && "
+            "printf 'void smith_trace_write(int fd) {}\\n' > tests/smith-lang/cases/a/expect/x.c && "
+            "printf 'void smith_trace_write(int fd) {}\\n' > src.c && git add -f -A");
+    scratch::expect_status("the repository is made", 0, &made);
+    const char *include = format::push(p.dir, "/include").data;
+    scratch::expect_text("the stubs", "tests/a_test.smith: smith_contract_fail_overflow\ntests/b.c: smith_trace_write\n",
+                         offenders(&p, p.dir, include));
+}

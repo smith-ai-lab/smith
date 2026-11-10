@@ -86,20 +86,6 @@ static Str prefix() {
     return c::access("/System/Library/CoreServices", 0) == 0 ? "_" : "";
 }
 
-// The stand-ins of the six `smith_contract_fail_*` checks, as tests/front_emit_object_test.smith has them; `cast_body`
-// is what `smith_contract_fail_cast` does.
-static Str stand_ins(Str cast_body) {
-    return as_str(format::push(
-        "void _exit(int);\n", "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { ", cast_body,
-        " }\n", "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, ",
-        "const char *e) { __builtin_trap(); }\n",
-        "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); }\n",
-        "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, ",
-        "const char *f, const char *g) { __builtin_trap(); }\n"));
-}
-
 // Compiles `source` as module `name` under <folder>/src into <folder>/<name>.o.
 static compile::Report compile_module(Str folder, Str name, Str source) {
     Str src = as_str(format::push(folder, "/src"));
@@ -112,18 +98,19 @@ static compile::Report compile_module(Str folder, Str name, Str source) {
     return compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
 }
 
-// Links <folder>/<name>.o with <folder>/main.c and runs the program: its exit status, -1 when the link failed.
+// Links <folder>/<name>.o with <folder>/main.c as a user's program is linked (`smith cc --front-end=new` adds the real
+// std.contract) and runs the program, its errors in <folder>/stderr: its exit status, -1 when the link failed.
 static I32 link_and_run(Str folder, Str name, Str main_c) {
     write_text(as_str(format::push(folder, "/main.c")), main_c);
     // The runtime a recursive case needs, smith_recurse_call, is in lib/handlers.c (#2710).
     const char *repo = c::getenv("SMITH_REPO");
     Str runtime = repo != nullptr ? as_str(format::push(repo, "/lib/handlers.c -I ", repo, "/include"))
                                   : as_str(format::push(""));
-    I32 linked = sh_status(as_str(format::push(smith_path(), " cc -std=gnu23 ", folder, "/main.c ", folder, "/", name,
+    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -std=gnu23 ", folder, "/main.c ", folder, "/", name,
                                                ".o ", runtime, " -o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked != 0) return -1;
-    return sh_status(as_str(format::push(folder, "/prog")));
+    return sh_status(as_str(format::push(folder, "/prog 2>", folder, "/stderr")));
 }
 
 // One case of the corpus. A failure is one check with the text "<name>: <what went wrong>" printed under it ("" is a
@@ -139,8 +126,7 @@ static Str case_failure(Str name, Str folder, compile::Report report, Str errors
         return as_str(format::push(name, ": wrong error, got:\n", got, "\nwant (", name, ".error):\n", want));
     }
     if (!report.ok) return as_str(format::push(name, ": ", report.text));
-    Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
-                                     stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n"));
+    Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", "int main(void) { return check(); }\n"));
     I32 status = link_and_run(folder, name, main_c);
     if (status != 0) return as_str(format::push(name, ": exit ", (I64)status));
     return "";
@@ -183,7 +169,7 @@ export void test_front_e2e_every_case_of_the_corpus() {
 }
 
 // A cast to a narrower type is checked on the driver path (today's syntax, which has a `module` line): the object
-// calls `smith_contract_fail_cast`, whose stand-in exits 3.
+// calls std.contract's `smith_contract_fail_cast`, which stops the program with smith's report.
 export void test_front_e2e_a_narrowing_cast_calls_the_check() {
     Str folder = folder_for("cast");
     compile::Report report =
@@ -191,9 +177,11 @@ export void test_front_e2e_a_narrowing_cast_calls_the_check() {
     test::check_equal(report.ok, true);
     if (report.ok) {
         Str main_c =
-            as_str(format::push("int narrow(long) __asm__(\"", prefix(), "casts::narrow\");\n", stand_ins("_exit(3);"),
+            as_str(format::push("int narrow(long) __asm__(\"", prefix(), "casts::narrow\");\n",
                                 "int main(void) { return narrow(1L << 40) == 0 ? 0 : 1; }\n"));
-        test::check_equal(link_and_run(folder, "casts", main_c), 3);
+        test::check_equal(link_and_run(folder, "casts", main_c) != 0, true);
+        test::check_equal(has(text_of(as_str(format::push(folder, "/stderr"))), "cast of 1099511627776 does not fit"),
+                          true);
     }
     remove_all(folder);
 }
@@ -207,7 +195,7 @@ export void test_front_e2e_a_variadic_definition_is_called_from_c() {
     test::check_equal(report.ok, true);
     if (report.ok) {
         Str main_c = as_str(format::push(
-            "int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n", stand_ins("__builtin_trap();"),
+            "int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n",
             "int main(void) { return total(2, 7, 9) == 3 && total(2, 100, 20) == 6 ? 0 : 1; }\n"));
         test::check_equal(link_and_run(folder, "variadics", main_c), 0);
     }
@@ -228,7 +216,6 @@ export void test_front_e2e_the_run_path_links_and_runs() {
     test::check_equal(report.ok, true);
     if (report.ok) {
         Str main_c = as_str(format::push("_Bool digit(char) __asm__(\"", prefix(), "std::ascii::digit\");\n",
-                                         stand_ins("__builtin_trap();"),
                                          "int main(void) { return digit('7') && !digit('x') ? 0 : 1; }\n"));
         test::check_equal(link_and_run(folder, "ascii", main_c), 0);
     }
@@ -269,8 +256,7 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
         test::check_equal(sh_status(as_str(format::push("nm ", folder, "/mathlib.o | grep -q ' T .*mathlib::scale'"))),
                           0);
         write_text(as_str(format::push(folder, "/main.c")),
-                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
-                                       stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n")));
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n", "int main(void) { return check(); }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/mathlib.o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
@@ -300,8 +286,7 @@ export void test_front_e2e_a_call_to_a_function_without_a_result_links_and_runs(
     test::check_equal(report.ok, true);
     if (report.ok && imported.ok) {
         write_text(as_str(format::push(folder, "/main.c")),
-                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
-                                       stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n")));
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n", "int main(void) { return check(); }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/barrier.o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
@@ -333,7 +318,7 @@ export void test_front_e2e_a_qualified_type_names_the_record_of_an_imported_modu
         write_text(
             as_str(format::push(folder, "/main.c")),
             as_str(format::push("struct V { double x; double y; };\n", "double norm(struct V) __asm__(\"", prefix(),
-                                "app::norm\");\n", stand_ins("__builtin_trap();"),
+                                "app::norm\");\n",
                                 "int main(void) { struct V v = {3.0, 4.0}; return norm(v) == 25.0 ? 0 : 1; }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/vecs.o -o ", folder, "/prog")));
@@ -388,7 +373,7 @@ static I32 run_with_header(Str name, Str body) {
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     if (report.ok) {
         Str main_c = as_str(
-            format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", stand_ins("__builtin_trap();"),
+            format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
                          "struct point { int x; int y; };\n"
                          "int sum(struct point *p) { return p->x + p->y; }\n"
                          "unsigned __int128 wide_add(unsigned __int128 a, unsigned __int128 b) { return a + b; }\n"
