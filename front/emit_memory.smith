@@ -276,6 +276,23 @@ export state::TyResult imported_record(state::Emitter *e, const ast::Decl *decl,
     return ty;
 }
 
+// The record another module declares that `name` names here (`Build` after `from std.build import Build`): the
+// checker bound the bare name to that module's record, declared under its path (`std::build::Build`). Null for any
+// other name, and for a record of this module's own.
+export Bool is_imported_record(const state::Emitter *e, const types::Symbol *s) {
+    if (s == nullptr || s->kind != .type_name || s->decl == nullptr || s->decl->kind != .record) return false;
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        if (e->tree->decls[i] == s->decl) return false;
+    }
+    return countof(record_module_prefix(types::name_of(s->type))) > 0;
+}
+
+static const types::Symbol *imported_by_name(const state::Emitter *e, Str name) {
+    if (e->options.checked == nullptr) return nullptr;
+    const types::Symbol *s = types::lookup(&e->options.checked->scopes, name);
+    return is_imported_record(e, s) ? s : nullptr;
+}
+
 // The type at the bottom of a chain of pointers and arrays: a scalar, an enumeration, a record, `str` or a slice.
 static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .slice) {
@@ -338,6 +355,8 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
             types::lookup(&e->options.checked->scopes, state::msg(format::push(e->instance_scope, name)));
         if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
     }
+    const types::Symbol *named = imported_by_name(e, name);
+    if (named != nullptr) return imported_record(e, named->decl, types::name_of(named->type));
     return ty_failf(base->span, "unknown type ", name);
 }
 

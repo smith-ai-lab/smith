@@ -2242,6 +2242,41 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  prune:
+    # deletes the old releases once this one is out (`release prune-old`: the published ones past the 20 newest and a week
+    # each, and the drafts older than a day, by id), so the prune never delays the release, `install` or `warm`. In
+    # `publish` it took 5 of the 6.4 minutes from merge to release (run 42877475136, #2832). The tool travels in the queue
+    # run's Linux artifact; a commit released by the fallback is pruned by `release publish` in its release jobs.
+    needs: [changes, publish]
+    if: always() && needs.publish.result == 'success' && needs.changes.outputs.linux_packed == 'true'
+    runs-on: ubuntu-latest
+    # the first run deletes 422 releases at about 0.7 s each (about 5 minutes); 30 leaves room for a slow API (#3029)
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read # the queue run's artifacts
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Download the release tool of the queue run
+        uses: actions/download-artifact@v4
+        with:
+          name: stage0-${{ github.sha }}-linux-x86_64
+          path: ${{ runner.temp }}/stage0
+          run-id: ${{ needs.changes.outputs.queue_run }}
+          github-token: ${{ github.token }}
+      - name: Prune the old releases
+        run: |
+          chmod +x "$RUNNER_TEMP/stage0/release"
+          # exits 1 when a delete failed or more releases remain than the policy allows (#3029)
+          "$RUNNER_TEMP/stage0/release" prune-old
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
   install:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
     # checksum, no build (owner, 2026-10-29). Nothing needs this job (not `ci`, not the release): with the Mac off it

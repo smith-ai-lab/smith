@@ -237,8 +237,44 @@ export void test_front_types_module_is_not_a_run_time_value() {
 }
 
 export void test_front_types_module_local_cannot_shadow_it() {
-    fails("import lib.math as m\n\nfn run() -> i32:\n    let m = 1\n    return 1\n", "hides the module `m`",
-          "shadowing is an error");
+    fails("import lib.math as m\n\nfn run() -> i32:\n    let m = 1\n    return 1\n",
+          "`m` hides the module `lib.math` that this file imports", "shadowing is an error: choose another name");
+}
+
+// The owner, 2026-11-10 (#3026): "yeah it should be a shadowing error please". A local, a parameter or a loop name
+// that is the last part of an imported module's path is the error too, and the one error: the uses of the name read
+// the local, not the module.
+export void test_front_types_module_parameter_loop_or_local_named_like_its_last_part_is_an_error() {
+    fails("import lib.math\n\nfn run(math: i32) -> i32:\n    return math\n",
+          "`math` hides the module `lib.math` that this file imports", "choose another name");
+    fails("import lib.math\n\nfn run(xs: []i32) -> i32:\n    for math in xs:\n        return math\n    return 0\n",
+          "`math` hides the module `lib.math` that this file imports", "choose another name");
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r =
+        check_text("import lib.math\n\nstruct Ty:\n    kind: i32\n\nfn run(t: Ty) -> i32:\n    math: Ty = "
+                   "t\n    return math.kind\n");
+    test::check_condition(has(errors_of(&r), "hides the module `lib.math`"));
+    test::check_condition(!has(errors_of(&r), "has no public"));
+}
+
+// An applied type's argument written as a module's type (`Option(m.Handle)`, read by the parser as a value) is that
+// type (#3026: `Result(c.LLVMModuleRef, state.Error)` in front/emit.smith); a path that names no type stays an error.
+export void test_front_types_module_type_argument_through_the_module() {
+    clean("import lib.math as m\n\nfn run(h: Option(m.Handle)) -> i32:\n    return 1\n");
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text("import lib.math as m\n\nfn run(h: Option(m.nothing)) -> i32:\n    return 1\n");
+    test::check_condition(r.error_count > 0);
+}
+
+export void test_front_types_module_a_name_another_import_does_not_take_is_clean() {
+    clean("import lib.math as m\n\nfn run(math: i32, xs: []i32) -> i32:\n    for x in xs:\n        return x\n    "
+          "maths := math\n    return maths\n");
 }
 
 export void test_front_types_module_pub_field_is_visible_outside() {

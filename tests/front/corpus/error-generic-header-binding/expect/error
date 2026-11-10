@@ -1,0 +1,1 @@
+src/main.smith:6:10: error: unknown name `stdio`; declare it before it is used, for example `I32 stdio = 0;`, or import the module that has it
