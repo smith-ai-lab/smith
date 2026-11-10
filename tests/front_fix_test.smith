@@ -783,6 +783,25 @@ export void test_a_for_over_a_pointer_with_an_unbraced_body_becomes_while() {
     check_count(countof(fixed.text) > 0 ? 1 : 0, 1);
 }
 
+// A C `for` over `struct c::dirent *` in a file the checker does not read: once the comments are `#`, the next pass
+// reads `*c::dirent entry = v` with smith's own parser, which takes it for a declaration, not the dereference
+// `c.dirent.*` (#3027).
+export void test_a_for_over_a_qualified_c_pointer_is_no_dereference() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "Usize f(c::DIR *folder) {\n    Usize count = 0;\n"
+                                                "    for (struct c::dirent *entry = c::readdir(folder); entry != "
+                                                "nullptr; entry = c::readdir(folder)) {\n        count += 1;\n    }\n"
+                                                "    return count;\n}\n\nUsize g() {\n"
+                                                "    return (Usize)c::sysconf(unknown); // not known\n}\n");
+    check_text(fixed.text, "fn f(folder: *c.DIR) -> usize:\n    mut count: usize = 0\n"
+                           "    mut entry: *c.dirent = c.readdir(folder)\n    while entry != nullptr:\n"
+                           "        count += 1\n        entry = c.readdir(folder)\n    return count\n\n"
+                           "fn g() -> usize:\n    return c.sysconf(unknown).to(usize) # not known\n");
+}
+
 // `struct tag name = v` of a C tag is mended with the rest of the function, not by an error that stops it (#2224).
 export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
     arena::Arena memory = test::memory(1U << 22);
