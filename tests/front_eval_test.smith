@@ -1,0 +1,190 @@
+// Tests of front::eval (#3039, step 1): the value of an expression known at compile time. Each scenario checks a module
+// in smith's own syntax, read by front::parser in an arena set as the current allocator, and asks for the value of the
+// initializer of one of its globals.
+module front_eval_test;
+
+import front::ast;
+import front::eval;
+import front::parser;
+import front::types;
+import front::types_decl;
+import front::when;
+import std::arena;
+import std::console;
+import std::format;
+import std::mem;
+import std::test;
+
+static Str text(char chars[:]) {
+    return chars;
+}
+
+static Bool same(Str a, Str b) {
+    return types::same_text(a, b);
+}
+
+// The initializer of the global `name` of the module, or null.
+static const ast::Expr *initializer(const ast::Module *m, Str name) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind == .variable && same(d->kind.variable.name, name)) return d->kind.variable.init;
+    }
+    return nullptr;
+}
+
+// What `name`'s initializer is at compile time: the value as a message shows it, `unknown: <why>` or `failed: <why>`.
+static Str valued(Str source, Str name) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    const ast::Expr *init = initializer(&p.module, name);
+    test::check_condition(init != nullptr);
+    eval::Outcome found = eval::value(&r, init);
+    if (found.known) return eval::show(found.value);
+    if (found.failed) return text(format::push("failed: ", found.why));
+    return text(format::push("unknown: ", found.why));
+}
+
+// Checks that `name` of `source` is `want`.
+static void expect(Str source, Str name, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = valued(source, name);
+    if (!same(got, want)) console::print_error("GOT: ", got, "\n");
+    test::check_equal(got, want);
+}
+
+export void test_front_eval_arithmetic_on_constants() {
+    Str source = "const page = 4096\n"
+                 "const slots = page / 8\n"
+                 "const mixed = (slots + 1) * 2 - 6 % 4\n"
+                 "const shifted = 1 << 10 >> 2\n"
+                 "const bits = (0xF0 | 0x0F) & ~0x18 ^ 1\n"
+                 "const small: i8 = -128\n"
+                 "const less = slots < page and not (page == 0)\n"
+                 "const either = false or slots >= 512\n";
+    expect(source, "slots", "512");
+    expect(source, "mixed", "1024");
+    expect(source, "shifted", "256");
+    expect(source, "bits", "230");
+    expect(source, "small", "-128");
+    expect(source, "less", "true");
+    expect(source, "either", "true");
+}
+
+export void test_front_eval_and_or_read_the_right_side_only_when_needed() {
+    Str source = "mut n: i32 = 0\n"
+                 "const a = false and n > 0\n"
+                 "const b = true or n > 0\n"
+                 "const c = true and n > 0\n";
+    expect(source, "a", "false");
+    expect(source, "b", "true");
+    expect(source, "c", "unknown: `n` is a variable that can change");
+}
+
+export void test_front_eval_overflow_and_division_by_zero_are_errors() {
+    Str source = "const top: i32 = 2147483647\n"
+                 "const over: i32 = top + 1\n"
+                 "const zero: i32 = 0\n"
+                 "const split: i32 = top / zero\n"
+                 "const far: i32 = top << 40\n"
+                 "const tiny: u8 = 300\n"
+                 "const use = tiny\n"
+                 "const down: i32 = -top - 1\n";
+    expect(source, "over", "failed: this overflows `I32` at compile time: 2147483647 + 1");
+    expect(source, "split", "failed: this divides by zero at compile time");
+    expect(source, "far", "failed: this shifts by 40 at compile time, which is not below the 32 bits of the value");
+    expect(source, "use", "failed: `300` does not fit `U8` at compile time");
+    expect(source, "down", "-2147483648");
+}
+
+export void test_front_eval_types_are_values() {
+    Str source = "struct Entry:\n"
+                 "    key: u64\n"
+                 "    used: bool\n"
+                 "const size = sizeof(Entry)\n"
+                 "const align = alignof(Entry)\n"
+                 "const count = countof(fields(Entry))\n"
+                 "const word = sizeof(usize) * 8\n"
+                 "const same = typeof(size) == usize\n"
+                 "const other = u8 != i8\n"
+                 "const whole = is_integer(u8) and not is_float(u8)\n"
+                 "const number = num(f32) and float(f64) and not pointer(i16)\n";
+    expect(source, "size", "16");
+    expect(source, "align", "8");
+    expect(source, "count", "2");
+    expect(source, "word", "64");
+    expect(source, "other", "true");
+    expect(source, "whole", "true");
+    expect(source, "number", "true");
+}
+
+export void test_front_eval_a_concept_function_is_answered_by_its_body() {
+    Str source = "fn small(T: type) -> bool:\n"
+                 "    sizeof(T) <= 4\n"
+                 "fn tiny(T: type) -> bool:\n"
+                 "    small(T) and sizeof(T) == 1\n"
+                 "fn sq(x: i32) -> i32:\n"
+                 "    x * x\n"
+                 "const a = small(u32)\n"
+                 "const b = small(u64)\n"
+                 "const c = tiny(u8) and not tiny(u16)\n"
+                 "const d = sq(3)\n";
+    expect(source, "a", "true");
+    expect(source, "b", "false");
+    expect(source, "c", "true");
+    expect(source, "d",
+           "unknown: `sq(...)` is a call, and a function is not run at compile time; write the value, or drop `const`");
+}
+
+export void test_front_eval_target_facts() {
+    Str os = when::host() == when::os_macos ? "true" : "false";
+    Str source = "const mantissa = target.f32_mantissa_bits\n"
+                 "const wide = target.f64_mantissa_bits == 53 and target.float_radix == 2\n"
+                 "const mac = target.os == .macos\n"
+                 "const other = .linux != target.os\n"
+                 "const known = target.os == .linux or target.os == .macos\n"
+                 "const arch = target.arch == .aarch64 or target.arch == .x86_64\n"
+                 "const analyzer = target.static_analyzer\n"
+                 "const wrong = target.os == .windows\n"
+                 "const none = target.colour\n";
+    expect(source, "mantissa", "24");
+    expect(source, "wide", "true");
+    expect(source, "mac", os);
+    expect(source, "other", os);
+    expect(source, "known", "true");
+    expect(source, "arch", "true");
+    expect(source, "analyzer", "false");
+    expect(source, "wrong", "unknown: `.windows` is not a name of `target.os`; write `.macos` or `.linux`");
+    expect(source, "none", "unknown: `target` has no fact `colour`");
+}
+
+export void test_front_eval_conversions() {
+    Str source = "const n: i32 = 300\n"
+                 "const wide = n.to(i64) * 1000000000\n"
+                 "const low = n.wrap(u8)\n"
+                 "const narrow = n.to(u8)\n"
+                 "const real = n.to(f64) / 8.0\n"
+                 "const back = real.to(i32)\n";
+    expect(source, "wide", "300000000000");
+    expect(source, "low", "44");
+    expect(source, "narrow", "failed: `300` does not fit `U8` at compile time");
+    expect(source, "back", "37");
+}
+
+export void test_front_eval_if_as_a_value_and_enumerators() {
+    Str source = "enum Color:\n"
+                 "    red\n"
+                 "    green\n"
+                 "const pick: Color = .green\n"
+                 "const is_green = pick == .green\n"
+                 "const page = if target.f32_mantissa_bits == 24: 4096 else: 16384\n"
+                 "const loop_a = loop_b\n"
+                 "const loop_b = loop_a\n";
+    expect(source, "pick", ".green");
+    expect(source, "is_green", "true");
+    expect(source, "page", "4096");
+    expect(source, "loop_a", "unknown: `loop_b` is defined by itself");
+}

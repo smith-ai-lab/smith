@@ -1,0 +1,25 @@
+# Constants computed from other constants (#3039): arithmetic, comparisons, conversions and an `if` used as a value,
+# each read where a constant is needed.
+
+const page = if target.f32_mantissa_bits == 24: 4096 else: 16384
+const words = page / sizeof(usize)
+const mask: u8 = (words - 1).wrap(u8)
+const exact = words.to(u16)
+static_assert(words == 512 and mask == 255);
+static_assert(typeof(exact) == u16);
+
+fn buffer(const n: usize) -> usize:
+    mut data: [n * 2]u8 = undefined
+    data[0] = 1
+    countof(data)
+
+pub fn check() -> i32:
+    mut block: [words / 64]u8 = undefined
+    block[0] = 1
+    if countof(block) != 8:
+        return 1
+    if buffer(3) != 6:
+        return 2
+    if exact != 512:
+        return 3
+    0
