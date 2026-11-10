@@ -1,11 +1,11 @@
 ---
 name: smith-dev-syntax-asm
-description: "New syntax: strings with holes `\"x=${x}\"` and `\"\"\"` (D22, built by #2727), and today's tagged backtick literal (D7, #2636), `asm` followed by backticks at module level (assembly for the object, chosen by `@when`), raw text over several lines, `${` reserved, other tags (#2633), the old `__asm__(\"...\");` fix. Load when writing or porting module-level assembly, or a tagged literal, in the new syntax."
+description: "New syntax: strings with holes `\"x={x}\"` and `\"\"\"` (D22, built by #2727), and today's tagged backtick literal (D7, #2636), `asm` followed by backticks at module level (assembly for the object, chosen by `@when`), raw text over several lines, `${` reserved, other tags (#2633), the old `__asm__(\"...\");` fix. Load when writing or porting module-level assembly, or a tagged literal, in the new syntax."
 ---
 
 # Tagged literals and module assembly
 
-**Decided, not yet built (D22, #2727):** backticks leave the language. A tag is a name before a string, and assembly is written `asm"""` ... `"""`, with escapes like any string. Until #2727 merges, the parser reads only the backtick form below; write that in tests today.
+**Decided, not yet built (D22, #2727):** backticks leave the language. A tag is a name before a string, and assembly is written `asm"""` ... `"""`, with escapes like any string (so a literal `{` in assembly is written `\{`). Until #2727 merges, the parser reads only the backtick form below; write that in tests today.
 
 
 ```smith
