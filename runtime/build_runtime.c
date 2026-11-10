@@ -3592,6 +3592,15 @@ static void smith_shard_keep(const SmithTestShard *shard, const SmithTestFound *
         keep[chosen[i]] = owner[i] == shard->index - 1;
 }
 
+// The declaration of one test's function, for the generated header.
+static const char *smith_test_prototype(const SmithTestFound *test) {
+    const char *argument = test->kind == SmithTestKind_Property  ? "SmithKey key"
+                           : test->kind == SmithTestKind_Failing ? "SmithKey key, struct SmithFailing *failing"
+                                                                 : "void";
+    const char *label = test->label != nullptr ? smith_text(" __asm__(\"_%s\")", test->label) : "";
+    return smith_text("void %s(%s)%s;\n", test->symbol, argument, label);
+}
+
 // Whether the options choose some of the tests, by a part or by a selection (--test, --macos-only, --skip-macos): the
 // runner is then built from the files of those tests (#1200, #2998).
 static bool smith_shard_selected(const SmithTestShard *shard) {
@@ -3611,25 +3620,24 @@ static int smith_tests_scan(SmithRun *run) {
     smith_shard_parse(shard, found, count, run->args);
     bool *keep = smith_alloc(count + 1);
     smith_shard_keep(shard, found, count, keep);
+    // A prototype for every test found: a file kept for one chosen test defines its others too, and
+    // -Werror=missing-prototypes wants each declared (#2998). The table lists only the chosen ones.
+    const char **prototypes = smith_new_list(count);
+    for (size_t i = 0; i < count; i++)
+        prototypes[i] = smith_test_prototype(&found[i]);
     size_t kept = 0;
     bool selected = smith_shard_selected(shard);
     for (size_t i = 0; selected && i < count; i++) // the part's or the selection's tests, in order
         if (keep[i]) found[kept++] = found[i];
     if (selected) count = kept;
-    const char **prototypes = smith_new_list(count);
     const char **rows = smith_new_list(count);
     const char **thunks = smith_new_list(count);
     size_t thunk_count = 0;
     for (size_t i = 0; i < count; i++) {
-        const char *argument = found[i].kind == SmithTestKind_Property  ? "SmithKey key"
-                               : found[i].kind == SmithTestKind_Failing ? "SmithKey key, struct SmithFailing *failing"
-                                                                        : "void";
         if (found[i].kind == SmithTestKind_Failing)
             thunks[thunk_count++] = smith_text("static void thunk_%s(SmithKey key, void *failing) {\n"
                                                "    %s(key, (struct SmithFailing *)failing);\n}\n\n",
                                                found[i].symbol, found[i].symbol);
-        const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
-        prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
         const char *slot_names[] = {"nullptr", "nullptr", "nullptr"};
         slot_names[found[i].kind] = found[i].symbol;
         if (found[i].kind == SmithTestKind_Failing) // the table's slot takes the allocator as a void * (test.smith)
