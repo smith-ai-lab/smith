@@ -914,11 +914,36 @@ static Bool decided_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **
     return false;
 }
 
+// Whether the condition of the `if` `s` is known at compile time, and which branch is taken: a boolean literal (the
+// checker rewrites `target.address_sanitizer` into one, #2461), the name of a constant whose initializer is one
+// (`if sanitized:` in std.mem), or `not` of either. Only the taken branch is emitted, as a compile-time `if` is
+// (#2853): the other may call what this build does not link (`__asan_poison_memory_region` without ASan).
+static Bool constant_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **live) {
+    if (s->kind != .if_stmt || e->options.checked == nullptr) return false;
+    const ast::Expr *x = s->kind.if_stmt.condition;
+    Bool flip = false;
+    for (Usize budget = 0; x != nullptr && budget < 16; budget++) {
+        if (x->kind == .unary && x->kind.unary.op == .logical_not) {
+            flip = !flip;
+            x = x->kind.unary.operand;
+            continue;
+        }
+        if (x->kind == .boolean) {
+            *live = x->kind.boolean.value != flip ? s->kind.if_stmt.then_branch : s->kind.if_stmt.else_branch;
+            return true;
+        }
+        ast::Path path = {};
+        if (!types::name_path(x, &path)) return false;
+        x = types::constant_initializer(types::type_through_modules(e->options.checked, path));
+    }
+    return false;
+}
+
 static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     start_block_if_ended(e);
     try debug::stmt_location(e, s);
     const ast::Stmt *live = nullptr;
-    if (decided_if(e, s, &live)) {
+    if (decided_if(e, s, &live) || constant_if(e, s, &live)) {
         if (live != nullptr) state::push_statement(e, live);
         return state::success();
     }
@@ -1065,6 +1090,17 @@ static Bool is_slice(state::Ty ty) {
     return ty.kind == .slice;
 }
 
+// The end of a C `main` around smith's: the body's result, or 0 for a `main` with none (C's own `main` returns 0 at
+// its end; without it the exit status was whatever the last call left in the register, #2853).
+static void finish_entry(state::Emitter *e, c::LLVMBuilderRef b, c::LLVMTypeRef body_type, c::LLVMValueRef called) {
+    c::LLVMTypeRef result = c::LLVMGetReturnType(body_type);
+    if (c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind)
+        c::LLVMBuildRet(b, c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), 0, 0));
+    else
+        c::LLVMBuildRet(b, called);
+    c::LLVMDisposeBuilder(b);
+}
+
 // `main(args: []str)` is C's `int main(int argc, char **argv)`: it builds argc slices on the stack, each pointing into
 // argv's own characters (not copied), and calls the body, which was declared as the internal `main.args`.
 static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, c::LLVMTypeRef args,
@@ -1111,8 +1147,18 @@ static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeR
     c::LLVMValueRef slice = c::LLVMGetUndef(args);
     slice = c::LLVMBuildInsertValue(b, slice, cells, 0, "data");
     slice = c::LLVMBuildInsertValue(b, slice, count, 1, "count");
-    c::LLVMBuildRet(b, c::LLVMBuildCall2(b, body_type, body, &slice, 1, "result"));
-    c::LLVMDisposeBuilder(b);
+    finish_entry(e, b, body_type, c::LLVMBuildCall2(b, body_type, body, &slice, 1, ""));
+}
+
+// `fn main():` with no result is C's `int main(void)` returning 0 around the body, declared as the internal
+// `main.body`.
+static void add_plain_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type) {
+    c::LLVMTypeRef int32 = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMValueRef main_function = c::LLVMAddFunction(e->module, "main", c::LLVMFunctionType(int32, nullptr, 0, 0));
+    c::LLVMSetLinkage(main_function, c::LLVMExternalLinkage);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, main_function, "entry"));
+    finish_entry(e, b, body_type, c::LLVMBuildCall2(b, body_type, body, nullptr, 0, ""));
 }
 
 // Pass 2: the function's symbol, type and linkage.
@@ -1151,18 +1197,27 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind == .function && d->kind.function.variadic) variadic = 1;
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, parameter_types, (U32)count, variadic);
     Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
+    Bool plain_main =
+        state::same_text(name, "main") && count == 0 && c::LLVMGetTypeKind(result.llvm) == c::LLVMVoidTypeKind;
     Str symbol = function_symbol(e->tree, d, name);
     if (takes_args) symbol = state::msg(format::push("main.args"));
+    if (plain_main) symbol = state::msg(format::push("main.body"));
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
     add_function_attributes(e, d, function);
     Bool external = d->exported || d->is_pub || countof(state::c_name_of(d)) > 0 || state::same_text(name, "main");
-    if (takes_args) external = false;
-    if (external)
+    if (takes_args || plain_main) external = false;
+    // A private function of a module is external but hidden (#2853): a generic instance of the module that another
+    // object emits (`console.print` in the program's object) calls it from there. Its symbol is the module's
+    // (`std::console::emit_long`), so no other object has it; `static`, and the wrapper of a `main` with arguments,
+    // stay internal.
+    Bool hidden = !external && !takes_args && !plain_main && !d->is_static;
+    if (external || hidden)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
         c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
+    if (hidden) c::LLVMSetVisibility(function, c::LLVMHiddenVisibility);
     add_function(e, (state::FunctionInfo){.name = name,
                                           .symbol = symbol,
                                           .llvm = function,
@@ -1174,6 +1229,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         state::Ty args = params[0];
         if (args.kind == .slice) add_args_entry(e, function, type, args.llvm, args.kind.slice.element->llvm);
     }
+    if (plain_main) add_plain_entry(e, function, type);
 
     return state::success();
 }

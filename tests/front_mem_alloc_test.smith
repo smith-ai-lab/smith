@@ -1,12 +1,12 @@
 // Tests of `mem.alloc(T, n)` and `mem.alloc(T, [a, b])` in the new front end (#2527): the call is known to the
-// checker and the emitter (front::types_builtin's `alloc`, front::emit_builtin's `shaped_alloc`) while
-// lib/std/mem.smith is in today's syntax (#2539). A module in smith's own syntax imports a stand-in std.mem (the
-// library folder of the test), is compiled by the driver, linked with a `main` whose `smith_mem_alloc_array` is
-// calloc's, and run; `check()` returns 0 when every step worked. The last tests are the checker's errors.
+// checker and the emitter (front::types_builtin's `alloc`, front::emit_builtin's `shaped_alloc`). Each module is
+// compiled in a bare folder by `smith cc --front-end=new`, as a user's is, so it imports the real std.mem and
+// std.arena; a C `main` calls its `check()`, which returns 0 when every step worked (#2853: no stand-ins). The last
+// tests are the checker's errors.
 module front_mem_alloc_test;
 
-import front::compile;
 import front::roots;
+import std::console;
 import std::format;
 import std::process;
 import std::test;
@@ -50,39 +50,18 @@ static Str prefix() {
     return c::access("/System/Library/CoreServices", 0) == 0 ? "_" : "";
 }
 
-// The C side of the program: the checks a module's arithmetic and indexing can call, and the allocator std.mem's
-// `smith_mem_alloc_array` is (zeroed memory of count items of size bytes).
-static Str c_side() {
-    return "#include <stdlib.h>\n"
-           "void *smith_mem_alloc_array(unsigned long size, unsigned long count, unsigned long align) {\n"
-           "    (void)align;\n    return calloc(count, size);\n}\n"
-           "void *smith_arena_push_array(void *arena, unsigned long size, unsigned long count, unsigned long align) {\n"
-           "    *(int *)arena += 1;\n    (void)align;\n    return calloc(count, size);\n}\n"
-           "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { __builtin_trap(); }\n"
-           "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n"
-           "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, "
-           "const char *e) { __builtin_trap(); }\n"
-           "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n"
-           "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); "
-           "}\n"
-           "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, "
-           "const char *f, const char *g) { __builtin_trap(); }\n";
-}
-
-// The module `name` with `body`, a std.mem with the one-argument `alloc` (a generic nothing here instantiates) and a
-// std.arena whose `Arena` counts the pushes of the C side.
-static compile::Report compile_body(Str folder, Str name, Str body) {
-    Str src = as_str(format::push(folder, "/src"));
+// Writes the module `name` with `body` in a bare folder (`src/<name>.smith`, no `lib/`) and runs `smith cc
+// --front-end=new` there, as a user would: the real std.mem and std.arena come from the std smith embeds, and a link
+// gets their objects. `then` is the rest of the command line; the compiler's errors are in `<folder>/errors`. A user's
+// environment has none of what other tests on this worker set and leave: their cimport flags (paths of their own
+// folders, without smith's headers) or a cache folder they removed.
+static I32 smith_cc(Str folder, Str name, Str body, Str then) {
     c::mkdir(folder.data, 0o700);
-    c::mkdir(src.data, 0o700);
-    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
-    c::mkdir(as_str(format::push(folder, "/lib/std")).data, 0o700);
-    write_text(as_str(format::push(folder, "/lib/std/mem.smith")), "pub fn alloc(T: type) -> *mut T:\n    nullptr\n");
-    write_text(as_str(format::push(folder, "/lib/std/arena.smith")), "pub struct Arena:\n    pub pushes: i32\n");
-    Str path = as_str(format::push(src, "/", name, ".smith"));
-    write_text(path, body);
-    roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};
-    return compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/", name, ".smith")), body);
+    return sh_status(
+        as_str(format::push("cd ", folder, " && env -u SMITH_FRONT_CIMPORT_FLAGS -u XDG_CACHE_HOME ", smith_path(),
+                            " cc --front-end=new src/", name, ".smith ", then, " 2>errors")));
 }
 
 static Str folder_for(Str name) {
@@ -95,29 +74,34 @@ static void clean(Str folder) {
     test::check_equal(done == .ok, true);
 }
 
-// `body` is a module whose `pub fn check() -> i32` returns 0 when the allocation did what it should.
+static Str text_of(Str path) {
+    const char *const argv[3] = {"cat", path.data, nullptr};
+    process::OutputResult done = process::run(argv[0:2]);
+    if (done != .ok) return "";
+    return as_str(format::push(format::bytes((const char *)done.ok.output.data, countof(done.ok.output))));
+}
+
+// `body` is a module whose `pub fn check() -> i32` returns 0 when the allocation did what it should; a C `main`
+// calls it, linked as a user's program is.
 static void passes(Str name, Str body) {
     Str folder = folder_for(name);
-    compile::Report report = compile_body(folder, name, body);
-    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
-    if (report.ok) {
-        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", c_side(),
-                                         "int main(void) { return check(); }\n"));
-        write_text(as_str(format::push(folder, "/main.c")), main_c);
-        I32 linked = sh_status(as_str(
-            format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/", name, ".o -o ", folder, "/prog")));
-        test::check_equal(linked, 0);
-        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
-    }
+    c::mkdir(folder.data, 0o700);
+    Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
+                                     "int main(void) { return check(); }\n"));
+    write_text(as_str(format::push(folder, "/main.c")), main_c);
+    I32 linked = smith_cc(folder, name, body, "main.c -o prog");
+    if (linked != 0) (void)console::print_error(text_of(as_str(format::push(folder, "/errors"))));
+    test::check_equal(linked, 0);
+    if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     clean(folder);
 }
 
 // `body` fails to compile with a message that has `needle`.
 static void refused(Str name, Str body, Str needle) {
     Str folder = folder_for(name);
-    compile::Report report = compile_body(folder, name, body);
-    test::check_equal(report.ok, false);
-    if (!has(report.text, needle)) test::check_equal(report.text, needle);
+    test::check_equal(smith_cc(folder, name, body, as_str(format::push("-c -o ", name, ".o"))) != 0, true);
+    Str errors = text_of(as_str(format::push(folder, "/errors")));
+    if (!has(errors, needle)) test::check_equal(errors, needle);
     clean(folder);
 }
 
@@ -200,13 +184,12 @@ export void test_front_mem_alloc_the_first_argument_is_a_type() {
 export void test_front_mem_alloc_arena_push_slice_takes_the_shape() {
     passes("arena", "import std.arena\n\n"
                     "pub fn check() -> i32:\n"
-                    "    mut a: arena.Arena = undefined\n"
-                    "    a.pushes = 0\n"
+                    "    mut a := arena.growing(4096, nullptr)\n"
                     "    row := arena.push_slice(&a, u32, 3)\n"
                     "    if countof(row) != 3 or row[2] != 0:\n        return 1\n"
                     "    grid := arena.push_slice(&a, f32, [2, 4])\n"
                     "    grid[1, 3] = 2.0\n"
                     "    if grid[1, 3] != 2.0 or grid[0, 0] != 0.0:\n        return 2\n"
-                    "    if a.pushes != 2:\n        return 3\n"
+                    "    if row[0] != 0 or row[2] != 0:\n        return 3\n"
                     "    0\n");
 }

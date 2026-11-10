@@ -86,20 +86,6 @@ static Str prefix() {
     return c::access("/System/Library/CoreServices", 0) == 0 ? "_" : "";
 }
 
-// The stand-ins of the six `smith_contract_fail_*` checks, as tests/front_emit_object_test.smith has them; `cast_body`
-// is what `smith_contract_fail_cast` does.
-static Str stand_ins(Str cast_body) {
-    return as_str(format::push(
-        "void _exit(int);\n", "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { ", cast_body,
-        " }\n", "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, ",
-        "const char *e) { __builtin_trap(); }\n",
-        "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); }\n",
-        "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, ",
-        "const char *f, const char *g) { __builtin_trap(); }\n"));
-}
-
 // Compiles `source` as module `name` under <folder>/src into <folder>/<name>.o.
 static compile::Report compile_module(Str folder, Str name, Str source) {
     Str src = as_str(format::push(folder, "/src"));
@@ -112,18 +98,19 @@ static compile::Report compile_module(Str folder, Str name, Str source) {
     return compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
 }
 
-// Links <folder>/<name>.o with <folder>/main.c and runs the program: its exit status, -1 when the link failed.
+// Links <folder>/<name>.o with <folder>/main.c as a user's program is linked (`smith cc --front-end=new` adds the real
+// std.contract) and runs the program, its errors in <folder>/stderr: its exit status, -1 when the link failed.
 static I32 link_and_run(Str folder, Str name, Str main_c) {
     write_text(as_str(format::push(folder, "/main.c")), main_c);
     // The runtime a recursive case needs, smith_recurse_call, is in lib/handlers.c (#2710).
     const char *repo = c::getenv("SMITH_REPO");
     Str runtime = repo != nullptr ? as_str(format::push(repo, "/lib/handlers.c -I ", repo, "/include"))
                                   : as_str(format::push(""));
-    I32 linked = sh_status(as_str(format::push(smith_path(), " cc -std=gnu23 ", folder, "/main.c ", folder, "/", name,
-                                               ".o ", runtime, " -o ", folder, "/prog")));
+    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -std=gnu23 ", folder, "/main.c ",
+                                               folder, "/", name, ".o ", runtime, " -o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked != 0) return -1;
-    return sh_status(as_str(format::push(folder, "/prog")));
+    return sh_status(as_str(format::push(folder, "/prog 2>", folder, "/stderr")));
 }
 
 // One case of the corpus. A failure is one check with the text "<name>: <what went wrong>" printed under it ("" is a
@@ -140,7 +127,7 @@ static Str case_failure(Str name, Str folder, compile::Report report, Str errors
     }
     if (!report.ok) return as_str(format::push(name, ": ", report.text));
     Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
-                                     stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n"));
+                                     "int main(void) { return check(); }\n"));
     I32 status = link_and_run(folder, name, main_c);
     if (status != 0) return as_str(format::push(name, ": exit ", (I64)status));
     return "";
@@ -183,17 +170,18 @@ export void test_front_e2e_every_case_of_the_corpus() {
 }
 
 // A cast to a narrower type is checked on the driver path (today's syntax, which has a `module` line): the object
-// calls `smith_contract_fail_cast`, whose stand-in exits 3.
+// calls std.contract's `smith_contract_fail_cast`, which stops the program with smith's report.
 export void test_front_e2e_a_narrowing_cast_calls_the_check() {
     Str folder = folder_for("cast");
     compile::Report report =
         compile_module(folder, "casts", "module casts;\n\nexport I32 narrow(I64 x) {\n    return (I32)x;\n}\n");
     test::check_equal(report.ok, true);
     if (report.ok) {
-        Str main_c =
-            as_str(format::push("int narrow(long) __asm__(\"", prefix(), "casts::narrow\");\n", stand_ins("_exit(3);"),
-                                "int main(void) { return narrow(1L << 40) == 0 ? 0 : 1; }\n"));
-        test::check_equal(link_and_run(folder, "casts", main_c), 3);
+        Str main_c = as_str(format::push("int narrow(long) __asm__(\"", prefix(), "casts::narrow\");\n",
+                                         "int main(void) { return narrow(1L << 40) == 0 ? 0 : 1; }\n"));
+        test::check_equal(link_and_run(folder, "casts", main_c) != 0, true);
+        test::check_equal(has(text_of(as_str(format::push(folder, "/stderr"))), "cast of 1099511627776 does not fit"),
+                          true);
     }
     remove_all(folder);
 }
@@ -206,9 +194,9 @@ export void test_front_e2e_a_variadic_definition_is_called_from_c() {
     compile::Report report = compile_module(folder, "variadics", source);
     test::check_equal(report.ok, true);
     if (report.ok) {
-        Str main_c = as_str(format::push(
-            "int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n", stand_ins("__builtin_trap();"),
-            "int main(void) { return total(2, 7, 9) == 3 && total(2, 100, 20) == 6 ? 0 : 1; }\n"));
+        Str main_c =
+            as_str(format::push("int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n",
+                                "int main(void) { return total(2, 7, 9) == 3 && total(2, 100, 20) == 6 ? 0 : 1; }\n"));
         test::check_equal(link_and_run(folder, "variadics", main_c), 0);
     }
     remove_all(folder);
@@ -228,7 +216,6 @@ export void test_front_e2e_the_run_path_links_and_runs() {
     test::check_equal(report.ok, true);
     if (report.ok) {
         Str main_c = as_str(format::push("_Bool digit(char) __asm__(\"", prefix(), "std::ascii::digit\");\n",
-                                         stand_ins("__builtin_trap();"),
                                          "int main(void) { return digit('7') && !digit('x') ? 0 : 1; }\n"));
         test::check_equal(link_and_run(folder, "ascii", main_c), 0);
     }
@@ -270,7 +257,7 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
                           0);
         write_text(as_str(format::push(folder, "/main.c")),
                    as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
-                                       stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n")));
+                                       "int main(void) { return check(); }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/mathlib.o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
@@ -301,9 +288,42 @@ export void test_front_e2e_a_call_to_a_function_without_a_result_links_and_runs(
     if (report.ok && imported.ok) {
         write_text(as_str(format::push(folder, "/main.c")),
                    as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
-                                       stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n")));
+                                       "int main(void) { return check(); }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/barrier.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}
+
+// A generic function's instance is emitted in the object of the module that uses it, and calls a private function of
+// its own module (#2853: `console.print`, instantiated in the program, calls console's `emit_long`): the private
+// function is external and hidden in its module's object, so the link finds it.
+export void test_front_e2e_an_instance_calls_a_private_function_of_its_module() {
+    Str folder = folder_for("private_call");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/sizes.smith"));
+    write_text(library,
+               "fn inc(n: i32) -> i32:\n    n + 1\n\npub fn sized(T: type) -> i32:\n    inc(sizeof(T).to(i32))\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "import sizes\n\npub fn check() -> i32:\n    if sizes.sized(i32) != 5:\n        return 1\n    0\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/sizes.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        test::check_equal(sh_status(as_str(format::push("nm ", folder, "/sizes.o | grep -q ' T sizes::inc$'"))), 0);
+        write_text(as_str(format::push(folder, "/main.c")),
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       "int main(void) { return check(); }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new ", folder, "/main.c ", folder,
+                                                   "/app.o ", folder, "/sizes.o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
         if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     }
@@ -333,7 +353,7 @@ export void test_front_e2e_a_qualified_type_names_the_record_of_an_imported_modu
         write_text(
             as_str(format::push(folder, "/main.c")),
             as_str(format::push("struct V { double x; double y; };\n", "double norm(struct V) __asm__(\"", prefix(),
-                                "app::norm\");\n", stand_ins("__builtin_trap();"),
+                                "app::norm\");\n",
                                 "int main(void) { struct V v = {3.0, 4.0}; return norm(v) == 25.0 ? 0 : 1; }\n")));
         I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
                                                    "/vecs.o -o ", folder, "/prog")));
@@ -388,7 +408,7 @@ static I32 run_with_header(Str name, Str body) {
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     if (report.ok) {
         Str main_c = as_str(
-            format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", stand_ins("__builtin_trap();"),
+            format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
                          "struct point { int x; int y; };\n"
                          "int sum(struct point *p) { return p->x + p->y; }\n"
                          "unsigned __int128 wide_add(unsigned __int128 a, unsigned __int128 b) { return a + b; }\n"
@@ -536,6 +556,49 @@ export void test_front_e2e_a_local_header_next_to_the_source_is_found() {
     compile::Report report = compile_module(folder, "local", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// An `if` on a constant emits only the branch it takes (#2853): std.mem's `if sanitized:` calls ASan's functions, which
+// a program built without ASan does not link. Here the other branch calls `absent`, which no object defines, through a
+// constant, its negation and a literal; the object must not name it.
+export void test_front_e2e_an_if_on_a_constant_emits_only_its_branch() {
+    use_header_flags();
+    Str folder = folder_for("constant_if");
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/absent.h")), "int absent(void);\n");
+    Str source = "import c \"absent.h\"\n\nconst linked: bool = false\n\n"
+                 "pub fn check() -> i32:\n    mut n := 0\n    if linked:\n        n = absent.absent()\n"
+                 "    if not linked:\n        n += 1\n    else:\n        n = absent.absent()\n"
+                 "    if false:\n        n = absent.absent()\n    n - 1\n";
+    compile::Report report = compile_module(folder, "constant_if", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str object = as_str(format::push(folder, "/constant_if.o"));
+        test::check_equal(sh_status(as_str(format::push("nm ", object, " | grep -q absent"))), 1);
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), "constant_if::check\");\n",
+                                         "int main(void) { return check(); }\n"));
+        test::check_equal(link_and_run(folder, "constant_if", main_c), 0);
+    }
+    remove_all(folder);
+}
+
+// A `str` is the read-only `[]char` of `typeof(x) == []char` (#2853): std.format's rule for a string piece, written
+// `const char[:]` in today's syntax and `[]char` once fixed, takes `console.print("hello world\n")`.
+export void test_front_e2e_a_str_is_the_char_slice_of_a_type_test() {
+    Str folder = folder_for("str_type");
+    Str source = "fn kind(args...) -> i32:\n    mut found := 0\n    for arg in args:\n"
+                 "        if typeof(arg) == []char:\n            found += 1\n    found\n\n"
+                 "pub fn check() -> i32:\n    s: str = \"hi\"\n    if kind(s, 1) != 1:\n        return 1\n    0\n";
+    compile::Report report = compile_module(folder, "str_type", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), "str_type::check\");\n",
+                                         "int main(void) { return check(); }\n"));
+        test::check_equal(link_and_run(folder, "str_type", main_c), 0);
+    }
     remove_all(folder);
 }
 

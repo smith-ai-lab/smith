@@ -72,20 +72,6 @@ static void remove_all(Str folder) {
     test::check_equal(done == .ok, true);
 }
 
-// The stand-ins of the `smith_contract_fail_*` checks the object calls (as tests/front_emit_object_test.smith has
-// them).
-static Str stand_ins() {
-    return as_str(format::push(
-        "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, ",
-        "const char *e) { __builtin_trap(); }\n",
-        "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n",
-        "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); }\n",
-        "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, ",
-        "const char *f, const char *g) { __builtin_trap(); }\n"));
-}
-
 static Str shapes_source() {
     return "pub struct Point:\n    x: f64\n    y: f64\n\n"
            "pub fn dot(a: *Point, b: *Point) -> f64:\n    a.x * b.x + a.y * b.y\n\n"
@@ -209,8 +195,7 @@ export void test_front_header_c_program_links_and_runs() {
     test::check_equal(built.ok, true);
     write_text(
         as_str(format::push(folder, "/main.c")),
-        as_str(format::push(stand_ins(),
-                            "#include \"geometry/shapes.h\"\n"
+        as_str(format::push("#include \"geometry/shapes.h\"\n"
                             "int main(void) {\n"
                             "    geometry_shapes_Point a = {2, 3};\n"
                             "    geometry_shapes_Point b = {4, 5};\n"
@@ -218,8 +203,8 @@ export void test_front_header_c_program_links_and_runs() {
                             "    geometry_shapes_bump(&n);\n"
                             "    return geometry_shapes_dot(&a, &b) == 23 && n == 42 && shapes_count() == 3 ? 0 : 1;\n"
                             "}\n")));
-    I32 linked = sh_status(as_str(format::push(smith_path(), " cc -I ", folder, "/include ", folder, "/main.c ", object,
-                                               " -o ", folder, "/prog")));
+    I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new -I ", folder, "/include ", folder,
+                                               "/main.c ", object, " -o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     remove_all(folder);

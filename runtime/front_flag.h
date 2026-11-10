@@ -8,7 +8,7 @@ constexpr size_t smith_front_args_max = 1024;
 #endif
 
 #if !defined(SMITH_CORE)
-extern char *smith_front_arguments[smith_front_args_max + 8];
+extern char *smith_front_arguments[smith_front_args_max + 64];
 #endif
 
 #if !defined(SMITH_CORE)

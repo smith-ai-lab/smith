@@ -49,20 +49,6 @@ static Bool has(Str text, Str needle) {
     return false;
 }
 
-// The stand-ins of the six `smith_contract_fail_*` checks a module's arithmetic can call, as
-// tests/front_e2e_test.smith.
-static Str stand_ins() {
-    return "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { __builtin_trap(); }\n"
-           "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n"
-           "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, "
-           "const char *e) { __builtin_trap(); }\n"
-           "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n"
-           "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); "
-           "}\n"
-           "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, "
-           "const char *f, const char *g) { __builtin_trap(); }\n";
-}
-
 // `body` as the module `name`, beside the modules `inner` and `outer` (written when `outer` is not empty).
 static compile::Report compile_files(Str folder, Str name, Str body, Str inner, Str outer) {
     Str src = as_str(format::push(folder, "/src"));
@@ -98,11 +84,11 @@ static void passes_beside(Str name, Str body, Str inner, Str outer) {
     compile::Report report = compile_files(folder, name, body, inner, outer);
     test::check_equal(report.ok, true);
     if (report.ok) {
-        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", stand_ins(),
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
                                          "int main(void) { return check(); }\n"));
         write_text(as_str(format::push(folder, "/main.c")), main_c);
-        I32 linked = sh_status(as_str(
-            format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/", name, ".o -lm -o ", folder, "/prog")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc --front-end=new ", folder, "/main.c ", folder,
+                                                   "/", name, ".o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
         if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     } else {

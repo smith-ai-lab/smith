@@ -133,9 +133,10 @@ static Bool f_with(Str attribute, Bool is_pub, Str needle) {
     return ir_contains(&m, needle);
 }
 
-export void test_front_emit_fn_pub_is_external_and_plain_is_internal() {
+// A private function is external but hidden: an instance another object emits can call it (#2853).
+export void test_front_emit_fn_pub_is_external_and_plain_is_hidden() {
     test::check_equal(f_with("", true, "define i32 @\"t::f\"("), true);
-    test::check_equal(f_with("", false, "define internal i32 @\"t::f\"("), true);
+    test::check_equal(f_with("", false, "define hidden i32 @\"t::f\"("), true);
 }
 
 export void test_front_emit_fn_attributes_without_a_namespace() {

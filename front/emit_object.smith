@@ -80,6 +80,28 @@ static char *machine_layout(c::LLVMTargetMachineRef machine) {
     return text;
 }
 
+// On ELF each function with a body gets a section of its own, `.text.<symbol>` (clang's -ffunction-sections), so the
+// link's --gc-sections drops what nothing calls, with what it calls (#2853: std.mem's `poison_freed` calls ASan's
+// functions, which a program built without ASan does not link). Mach-O's atoms do the same for -dead_strip already.
+// `on` false takes the sections off again after the write: the caller's module is as it was (no pass runs at 0).
+static void own_sections(c::LLVMModuleRef module, const char *triple, Bool on) {
+    if (c::strstr(triple, "apple") != nullptr || c::strstr(triple, "darwin") != nullptr ||
+        c::strstr(triple, "windows") != nullptr) {
+        return;
+    }
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        if (c::LLVMIsDeclaration(f) != 0) continue;
+        const char *section = c::LLVMGetSection(f);
+        Usize length = 0;
+        const char *name = c::LLVMGetValueName2(f, &length);
+        char *label = state::cstr(state::msg(format::push(".text.", format::bytes(name, length))));
+        Bool none = section == nullptr || section[0] == '\0';
+        if (on && none) c::LLVMSetSection(f, label);
+        if (!on && !none && c::strcmp(section, label) == 0) c::LLVMSetSection(f, "");
+        mem::free(label);
+    }
+}
+
 // Write `module` to the object file `path` for `options`, and give `path` back. An Error (message in the allocator in
 // force) when the triple has no target, the module was emitted for another data layout, or LLVM refuses to write.
 export WriteResult write(c::LLVMModuleRef module, ObjectOptions options, Str path) {
@@ -112,8 +134,9 @@ export WriteResult write(c::LLVMModuleRef module, ObjectOptions options, Str pat
         PassResult optimized = optimize(module, machine, options.optimization);
         if (optimized == .error) return {.error = optimized.error};
     }
-    if (c::LLVMTargetMachineEmitToFile(machine, module, file, c::LLVMObjectFile, &text) != 0) {
-        return {.error = llvm_error("cannot write the object", text)};
-    }
+    own_sections(module, triple, true);
+    Bool failed = c::LLVMTargetMachineEmitToFile(machine, module, file, c::LLVMObjectFile, &text) != 0;
+    own_sections(module, triple, false);
+    if (failed) return {.error = llvm_error("cannot write the object", text)};
     return path;
 }

@@ -1,0 +1,100 @@
+// What a user sees (#2853, was #2047): a project made by `smith new` in a folder outside the repository, with no lib/,
+// no src/ and no repository files around it, runs a new-syntax program with `smith run --front-end=new`. The smith
+// under test links the embedded std itself (std.contract, and what the program imports), so the commands run with no
+// SMITH_REPO and no SMITH_HEADERS_FROM: nothing in the repository is read.
+// smith-covers: runtime/front_flag.c runtime/build_runtime.c front/format.smith
+module hello_world_test;
+
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import scratch;
+
+// Makes `hi` with `smith new`, puts `program` in its main.smith and runs `then` in it, with nothing of the repository.
+static scratch::Run in_new_project(const scratch::Project *p, const char *program, const char *then) {
+    const char *command =
+        format::push("unset SMITH_REPO SMITH_HEADERS_FROM SMITH_OUTPUT; smith new hi >/dev/null 2>&1 && cd hi && "
+                     "rm -f primes.smith primes_test.smith && printf '%s' '",
+                     program, "' > main.smith && ", then)
+            .data;
+    return scratch::sh(p, command);
+}
+
+// `smith run` prints the build's own lines first (`[1/3] check the imports ...`, `smith: preparing ...`): what is left
+// is the program's output, compared exactly.
+static const char *const program_output =
+    "smith run --front-end=new >out; status=$?; sed '/^\\[[0-9]*\\/[0-9]*\\] /d; /^smith: /d' out; exit $status";
+
+static const char *const sum = "import c <stdio.h>\n\nfn main():\n    x := 5\n    y := 10\n    z := x + y\n"
+                               "    _ := stdio.printf(\"z = %i\\n\", z)\n";
+static const char *const console_two = "import std.console\n\nfn main():\n  console.print(\"hello world\\n\")\n";
+static const char *const console_four = "import std.console\n\nfn main():\n    console.print(\"hello world\\n\")\n";
+
+export void test_printf_program_prints_its_sum() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, sum, program_output);
+    scratch::expect_text(run.err, "z = 15\n", run.out);
+    scratch::expect_status("smith run --front-end=new", 0, &run);
+}
+
+export void test_console_program_indented_two_spaces_prints_hello_world() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, console_two, program_output);
+    scratch::expect_text(run.err, "hello world\n", run.out);
+    scratch::expect_status("smith run --front-end=new", 0, &run);
+}
+
+// A .clang-format that clang-format refuses: had the file gone to clang-format, `smith fmt` would fail.
+export void test_fmt_gives_the_four_space_file_without_clang_format() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, console_two,
+                                      "printf 'NotAnOption: [\\n' > .clang-format && smith fmt -i main.smith && "
+                                      "smith fmt --dry-run --Werror main.smith && cat main.smith");
+    scratch::expect_text(run.err, console_four, run.out);
+    scratch::expect_status("smith fmt", 0, &run);
+}
+
+// The console program links with a plain `smith cc --front-end=new` (no ASan: std.mem's poisoning functions are
+// dropped by the link's --gc-sections) and in the release profile.
+export void test_console_program_links_with_cc_and_in_release() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, console_four,
+                                      "smith cc --front-end=new main.smith -o main && ./main && "
+                                      "smith build release --front-end=new >/dev/null && ./build/release/hi");
+    scratch::expect_text(run.err, "hello world\nhello world\n", run.out);
+    scratch::expect_status("smith cc and smith build release", 0, &run);
+}
+
+// A `main` with a result is the program's exit status; one with none exits 0 (the cases above).
+export void test_main_with_a_result_is_the_exit_status() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, "fn main() -> i32:\n    3\n", program_output);
+    scratch::expect_text(run.err, "", run.out);
+    scratch::expect_status("smith run --front-end=new", 3, &run);
+}
