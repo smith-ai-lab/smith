@@ -93,6 +93,8 @@ typedef struct {
 
 static alignas(16) char smith_arena[smith_arena_size];
 static size_t smith_arena_used;
+static const char
+    *smith_arena_last_file; // the file smith_read_file read last: the likeliest thing that filled the arena
 static SmithEntry smith_entries[smith_entries_max];
 static size_t smith_entry_count;
 static SmithPool smith_pools[smith_pools_max];
@@ -213,7 +215,15 @@ static void smith_report_problems(void) {
 static void *smith_alloc(size_t size) {
     SMITH_ASSERT(size < smith_arena_size);
     size_t aligned = (size + 15U) & ~(size_t)15U;
-    if (aligned > smith_arena_size - smith_arena_used) smith_too_many("strings and lists (bytes)", smith_arena_size);
+    if (aligned > smith_arena_size - smith_arena_used) {
+        // name what filled it (#3032): "build.c: too many strings and lists" alone cost a day of guessing
+        smith_context = nullptr;
+        smith_fail(
+            "too many strings and lists (bytes) (limit %zu); %zu used, a request for %zu more; the last file read "
+            "was %s",
+            smith_arena_size, smith_arena_used, aligned,
+            smith_arena_last_file != nullptr ? smith_arena_last_file : "(none)");
+    }
     void *result = smith_arena + smith_arena_used;
     smith_arena_used += aligned;
     return result;
@@ -4883,6 +4893,7 @@ static size_t smith_read_file(const char *path, char **text) {
         smith_fail("%s is larger than %zu MiB", path, smith_lines_file_max >> 20);
     }
     size_t size = (size_t)info.st_size;
+    smith_arena_last_file = path;
     *text = smith_alloc(size + 1);
     size_t got = fread(*text, 1, size, file);
     fclose(file);
@@ -5602,6 +5613,10 @@ int main(int argc, char **argv) {
     smith_write_compiler_files();
     smith_write_manifest(argv[first], &b);
     smith_write_build_info(&b);
+    // seen coming (#3032): above three quarters of the arena the log of the CI job says so, long before the overflow
+    if (smith_arena_used > smith_arena_size / 4 * 3)
+        fprintf(stderr, "smith: warning: build.c used %zu of %zu bytes of its arena (%zu%%)\n", smith_arena_used,
+                smith_arena_size, smith_arena_used / (smith_arena_size / 100));
     return 0;
 }
 #endif

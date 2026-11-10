@@ -293,7 +293,7 @@ static const char *const *build_library_sources(SmithBuild *b) {
 }
 
 // The names (arena, text) of the libraries whose file has the mark on a line of its own.
-static const char *const *build_marked(SmithBuild *b, const char *mark) {
+static const char *const *build_marked_read(SmithBuild *b, const char *mark) {
     const char *const *sources = build_library_sources(b);
     const char *const *names = smith_list(b, nullptr);
     for (size_t i = 0; sources[i] != nullptr; i++) {                                           // bounded by the tree
@@ -305,6 +305,23 @@ static const char *const *build_marked(SmithBuild *b, const char *mark) {
             break;
         }
     }
+    return names;
+}
+
+static const char *const *build_marked(SmithBuild *b, const char *mark) {
+    // Asked again with the same mark, the answer is the same: reading every library into the arena again cost about
+    // 0.8 MB of the 64 MB each time and nothing frees it (#3032). The marks are string literals, compared by text.
+    static struct {
+        const char *mark;
+        const char *const *names;
+    } known[8];
+    size_t free_slot = 0;
+    for (size_t i = 0; i < sizeof known / sizeof known[0]; i++) { // bounded by the table
+        if (known[i].mark != nullptr && strcmp(known[i].mark, mark) == 0) return known[i].names;
+        if (known[i].mark != nullptr) free_slot = i + 1;
+    }
+    const char *const *names = build_marked_read(b, mark);
+    if (free_slot < sizeof known / sizeof known[0]) known[free_slot] = (typeof(known[0])){mark, names};
     return names;
 }
 
