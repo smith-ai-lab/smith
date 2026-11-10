@@ -24,7 +24,7 @@ import <smith/trace.h>; // smith_failure_format: the stop of a wrong call
 //                             (0.1f is 0.1, 1e22, 5e-324); inf, -inf and nan for what has no number
 //   char *, const char *      the terminated string; a null pointer is (null)
 //   char[:], const char[:]    its count of characters, which need no terminator
-//   char name[n]              its characters up to the first zero, or all n with none (#3026)
+//   char name[n]              its characters up to the first zero (#3026; the new front end stops at n too)
 //   format::Hex               lowercase hexadecimal, zero-padded to a width: format::hex(value, 16), format::hex(x, 0)
 //   format::Fixed             a fixed number of places, rounded as printf's %.Nf does: format::fixed(value, 3)
 //   format::General           printf's %.Ng: format::general(value, 6), format::Scientific is %.Ne: scientific(value,
