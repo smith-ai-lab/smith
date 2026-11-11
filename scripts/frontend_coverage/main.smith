@@ -846,7 +846,7 @@ static typeof(const char[:]) located_at(const char line[:], Usize error, const c
 
 // Every error of a compile's output, as an entry each: `a.smith:3:7: error: message` is `message` at `3:7`. Output
 // with no `error:` line (a crash, a missing tool) is one entry with the text as it stands. Returns how many.
-// SIGXCPU, the signal `ulimit -t` stops a job with (the same number on Linux and macOS).
+// SIGXCPU, the signal the soft `ulimit -t` stops a job with (the same number on Linux and macOS).
 constexpr I32 cpu_signal = 24;
 
 static Usize record_errors(const char *path, const char output[:], const char stage[:], I32 status) {
@@ -1003,7 +1003,11 @@ static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const c
     argv[0] = "/bin/sh";
     argv[1] = "-c";
     argv[2] =
-        "ulimit -v \"$1\"; ulimit -t \"$2\"; o=$3; e=$4; cd \"$5\" || exit 127; shift 5; exec \"$@\" >\"$o\" 2>\"$e\"";
+        // the soft CPU limit stops the job with SIGXCPU (status 152, `cpu_signal`); the hard one, 10 s later, with
+        // SIGKILL. Equal limits would SIGKILL at once (137, the same as the memory killer), so the soft one is set
+        // first.
+        "ulimit -v \"$1\"; ulimit -S -t \"$2\"; ulimit -H -t $(($2 + 10)); o=$3; e=$4; cd \"$5\" || exit 127; shift 5; "
+        "exec \"$@\" >\"$o\" 2>\"$e\"";
     argv[3] = "sh";
     argv[4] = limit;
     argv[5] = is_fix ? "300" : "120";
