@@ -1,0 +1,38 @@
+import std.arena
+import std.array
+import std.mem
+
+struct Pair:
+    a: i32
+    b: f64
+
+# std's generics instantiated from another module, each with two types (#3078): mem.try_alloc and arena.try_push
+# return `.some(p)`, arena.push hands its `*mut Arena` on, and mem.view makes a typed slice of bytes.
+pub fn check() -> i32:
+    if p := mem.try_alloc(Pair):
+        if p.a != 0 or p.b != 0.0:
+            return 1
+    else:
+        return 2
+    if q := mem.try_alloc(u64):
+        if q.* != 0:
+            return 3
+    else:
+        return 4
+    mut memory: [64]u8 = array.filled(u8, 64, 0)
+    mut a := arena.fixed(&memory[0], 64)
+    if r := arena.try_push(&a, Pair):
+        if r.a != 0:
+            return 5
+    else:
+        return 6
+    s := arena.push(&a, u16)
+    t := arena.push(&a, Pair)
+    if s.* != 0 or t.a != 0:
+        return 7
+    mut raw: [8]u8 = array.filled(u8, 8, 1)
+    words := mem.view(raw[:], u32)
+    halves := mem.view(raw[:], u16)
+    if countof(words) != 2 or countof(halves) != 4 or halves[3] != 257:
+        return 8
+    0

@@ -1,0 +1,9 @@
+import std.array
+import std.mem
+
+# mem.view's slice is read-only (`[]T`): a write through it is refused (#3078).
+pub fn check() -> i32:
+    mut raw: [8]u8 = array.filled(u8, 8, 0)
+    words := mem.view(raw[:], u32)
+    words[0] = 1
+    0
