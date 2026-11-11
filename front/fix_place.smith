@@ -143,7 +143,10 @@ static core::Errors discard_edits(Str source, core::Errors out) {
         if (starts_with(source[head:end], "_ = ")) {
             core::Edits fix = {};
             fix = mem::realloc(fix, 1);
-            fix[0] = (core::Edit){.span = {.start = (U32)(head + 2), .end = (U32)(head + 2)}, .text = ":"};
+            fix[0] = (core::Edit){};
+            fix[0].span.start = (U32)(head + 2);
+            fix[0].span.end = (U32)(head + 2);
+            fix[0].text = ":";
             core::ParseError made = {};
             made.span = (ast::Span){.start = (U32)head, .end = (U32)(head + 3)};
             made.message = "`_` is no name to assign to: a discarded value is `_ := x`";
@@ -157,7 +160,8 @@ static core::Errors discard_edits(Str source, core::Errors out) {
 }
 
 export core::Errors edits(Str source) {
-    core::Errors out = discard_edits(source, {});
+    core::Errors none = {};
+    core::Errors out = discard_edits(source, none);
     Usize last_function = countof(source);
     Usize at = 0;
     while (at < countof(source)) {

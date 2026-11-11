@@ -62,7 +62,7 @@ export void test_front_fix_shadow_fields_and_globals_stay() {
     Str global = "module m;\nimport std::arena;\nstatic Usize arena = 0;\nUsize f() {\n    return arena;\n}\n";
     expect_renamed(global, global);
     expect_renamed("module m;\nimport std::format as fmt;\nvoid f(Str fmt) {\n    fmt::push(fmt);\n}\n",
-                   "module m;\nimport std::format as fmt;\nvoid f(Str fmt_) {\n    fmt::push(fmt_);\n}\n");
+                   "module m;\nimport std::format as fmt;\nvoid f(Str fmt_value) {\n    fmt::push(fmt_value);\n}\n");
 }
 
 // The whole fixer: `(const U8 *)text` with `import std::text` was `text.cast(u8.*)` (count A's reading of #3027).

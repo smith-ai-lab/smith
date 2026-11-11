@@ -408,7 +408,8 @@ export Str rename_shadows(Str source) {
     for (Usize m = 0; m < countof(modules); m++) {
         Str next = as_str(format::push(modules[m].text, "_value"));
         // `<name>_value` is already in the file: the module's locals stay (spelled "" is never matched below).
-        spelled[m].text = in_file(source, tokens, next) ? "" : next;
+        Str none = "";
+        spelled[m].text = in_file(source, tokens, next) ? none : next;
     }
     Str out = "";
     Usize at = 0;
@@ -418,7 +419,8 @@ export Str rename_shadows(Str source) {
         if (listed(kept, text)) continue;
         for (Usize m = 0; m < countof(modules); m++) {
             if (!mem::equal(modules[m].text, text)) continue;
-            if (countof(spelled[m].text) == 0) break;
+            Str chosen = spelled[m].text;
+            if (countof(chosen) == 0) break;
             out = as_str(format::push(out, source[at:tokens[i].span.start], spelled[m].text));
             at = tokens[i].span.end;
             break;
