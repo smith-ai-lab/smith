@@ -777,6 +777,13 @@ export state::Status conditional(state::Emitter *e, const ast::Expr *x, state::H
     return state::success();
 }
 
+// A Bool the checker computed for an expression that has no run-time form (`small(T)`, `u8 != T`, #3039).
+export state::Status computed_boolean(state::Emitter *e, U64 bits) {
+    state::Ty ty = bool_type(e);
+    state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, bits != 0 ? 1 : 0, 0), .ty = ty});
+    return state::success();
+}
+
 export state::Status boolean(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     if (x->kind != .boolean) {
         return state::fail("not a boolean", x->span);

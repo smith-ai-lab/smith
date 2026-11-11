@@ -1,0 +1,20 @@
+name: fail-fast
+description: >
+  Cancels the run when a job of a merge-queue run has failed (#3051). Not for a PR check: a cancelled job keeps the run from posting its commit status `ci`. `ci` is `if: always()`, so it still
+  runs after the cancel, sees the cancelled and skipped jobs and reports `failure` within a minute, where it used to
+  wait for every other job to end (a lint failure at minute 5 let four stacked queue runs go on for 381 minutes).
+  The job that failed ends `cancelled` too (the cancel reaches this step), its failed step keeps `failure`; the others end `cancelled`; queue-heal (second pass) dequeues the entry from
+  the `ci` failure. Call it as the job's last step with `if: failure()`; it needs `actions: write`, does nothing on
+  a push or the nightly run, and its step name carries neither of the words queue-heal reads as our own guards.
+
+runs:
+  using: composite
+  steps:
+    - name: Fail fast, cancel the run
+      if: github.event_name == 'merge_group'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "fail-fast: job $GITHUB_JOB failed, cancelling run $GITHUB_RUN_ID so ci reports at once" | tee -a "$GITHUB_STEP_SUMMARY"
+        gh run cancel "$GITHUB_RUN_ID" || echo "fail-fast: the cancel failed, the run goes on to its end" | tee -a "$GITHUB_STEP_SUMMARY"
