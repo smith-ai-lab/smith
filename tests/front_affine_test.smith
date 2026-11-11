@@ -149,8 +149,7 @@ export void test_front_affine_a_match_arm_on_a_result_tracks_its_payload() {
 }
 
 export void test_front_affine_a_generic_result_tracks_its_payload() {
-    cases("fn twice[T: type](r: Result(T, u64), f: fn(T) -> u64) -> u64:\n    .ok(ok) := r else:\n        return 0\n"
-          "    f(ok) + f(ok)\n"
-          "fn caller(r: Result(Key, u64)) -> u64:\n    twice(r, draw)\n",
-          1, "'ok' is used again");
+    cases("fn pack(T: type, x: T) -> Result(T, u64):\n    .ok(x)\n\nfn caller(key: Key) -> u64:\n"
+          "    .ok(k) := pack(Key, key) else:\n        return 0\n    a := draw(k)\n    b := draw(k)\n    a + b\n",
+          1, "'k' is used again");
 }
