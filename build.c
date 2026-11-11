@@ -3497,7 +3497,7 @@ static int build_docs_gate_test(SmithRun *run) {
 // files are those of base...HEAD. A push that changes only docs (knowledge/, .agents/, *.md) runs nothing; a push with
 // no C, C++ or smith source runs no formatter or linter. `git push --no-verify` skips it; the merge queue decides.
 
-typedef enum { PRE_PUSH_DOCS, PRE_PUSH_SOURCE, PRE_PUSH_OTHER } PrePushKind;
+typedef enum { PrePushKind_Docs, PrePushKind_Source, PrePushKind_Other } PrePushKind;
 
 static bool pre_push_ends(const char *path, const char *suffix) {
     size_t length = strlen(path);
@@ -3507,11 +3507,11 @@ static bool pre_push_ends(const char *path, const char *suffix) {
 
 static PrePushKind pre_push_kind(const char *path) {
     if (strncmp(path, "knowledge/", 10) == 0 || strncmp(path, ".agents/", 8) == 0 || pre_push_ends(path, ".md"))
-        return PRE_PUSH_DOCS;
+        return PrePushKind_Docs;
     const char *const sources[] = {".c", ".h", ".cpp", ".hpp", ".smith", ".m"};
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++)
-        if (pre_push_ends(path, sources[i]) && strncmp(path, "tree-sitter/src/", 16) != 0) return PRE_PUSH_SOURCE;
-    return PRE_PUSH_OTHER;
+        if (pre_push_ends(path, sources[i]) && strncmp(path, "tree-sitter/src/", 16) != 0) return PrePushKind_Source;
+    return PrePushKind_Other;
 }
 
 // One step of the check; on failure prints the step and the command that runs it again.
@@ -3543,8 +3543,8 @@ static int build_pre_push(SmithRun *run) {
     bool other = false;
     for (size_t i = 0; changed != nullptr && changed[i] != nullptr && count < 4000; i++) {
         PrePushKind kind = pre_push_kind(changed[i]);
-        other = other || kind != PRE_PUSH_DOCS;
-        if (kind == PRE_PUSH_SOURCE) sources[count++] = changed[i];
+        other = other || kind != PrePushKind_Docs;
+        if (kind == PrePushKind_Source) sources[count++] = changed[i];
     }
     if (!other) {
         puts("pre-push: only docs changed: nothing to run");
@@ -3567,11 +3567,12 @@ static int build_pre_push(SmithRun *run) {
 
 static int build_pre_push_test(SmithRun *run) {
     (void)run;
-    bool ok = pre_push_kind("knowledge/a.smith") == PRE_PUSH_DOCS && pre_push_kind("README.md") == PRE_PUSH_DOCS &&
-              pre_push_kind(".agents/skills/x/SKILL.md") == PRE_PUSH_DOCS &&
-              pre_push_kind("runtime/a.c") == PRE_PUSH_SOURCE && pre_push_kind("lib/a.smith") == PRE_PUSH_SOURCE &&
-              pre_push_kind("build.c") == PRE_PUSH_SOURCE && pre_push_kind(".github/ci.yml") == PRE_PUSH_OTHER &&
-              pre_push_kind("tree-sitter/src/parser.c") == PRE_PUSH_OTHER;
+    bool ok =
+        pre_push_kind("knowledge/a.smith") == PrePushKind_Docs && pre_push_kind("README.md") == PrePushKind_Docs &&
+        pre_push_kind(".agents/skills/x/SKILL.md") == PrePushKind_Docs &&
+        pre_push_kind("runtime/a.c") == PrePushKind_Source && pre_push_kind("lib/a.smith") == PrePushKind_Source &&
+        pre_push_kind("build.c") == PrePushKind_Source && pre_push_kind(".github/ci.yml") == PrePushKind_Other &&
+        pre_push_kind("tree-sitter/src/parser.c") == PrePushKind_Other;
     if (!ok) fputs("pre-push: a file is classified wrongly\n", stderr);
     return ok ? 0 : 1;
 }
