@@ -2419,14 +2419,9 @@ static Step paren(parse::Parser *p, Stack *st) {
 // built-in type or a capitalised name cannot be a dereference, which is written `p.*`. Other `*name` is read as the
 // old dereference with its fix.
 static Bool pointer_type_ahead(const parse::Parser *p) {
-    if (!p->new_syntax) return false;
-    // `?T` is a type wherever an expression is read: no expression starts with `?` (#3122).
-    if (parse::peek(p).kind == lex::question) return true;
-    if (parse::peek(p).kind != lex::star) return false;
+    if (!p->new_syntax || parse::peek(p).kind != lex::star) return false;
     lex::TokenKind next = parse::peek_at(p, 1).kind;
-    if (next == lex::kw_mut || next == lex::type_name || parse_type::is_keyword_type(next)) return true;
-    // `*u8`, `*f64`: a built-in sized type is no value, so the star is not a dereference.
-    return next == lex::name && parse_type::is_builtin_name(parse::text(p, parse::peek_at(p, 1)));
+    return next == lex::kw_mut || next == lex::type_name || parse_type::is_keyword_type(next);
 }
 
 // One operand position: a prefix operator (more to come), or a value.
