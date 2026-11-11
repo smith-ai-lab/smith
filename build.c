@@ -785,17 +785,18 @@ static const char *build_compile_identity(SmithBuild *b, const BuildConfig *conf
         "files=\"$files $(printf '%s\\n' \"$deps\" | tr -d '\\\\' | tr ' ' '\\n' | grep -v ':$' | grep .)\"; done; "
         "case $files in *shim/hook.cpp*) ;; *) exit 1 ;; esac; "
         "if [ \"$mode\" = lang ]; then files=\"$files $(find front lib/std -type f) "
-        "$(ls runtime/lang*.c runtime/lang*.h runtime/front_flag.* runtime/import_*.c runtime/import_*.h shim/cimport*) "
+        "$(ls runtime/lang*.c runtime/lang*.h runtime/front_flag.* runtime/import_*.c runtime/import_*.h "
+        "shim/cimport*) "
         "smith.c\"; fi; "
         "files=$(printf '%s\\n' $files | LC_ALL=C sort -u); "
         "{ printf 'smith-compile-identity 1 %s\\n%s\\n' \"$mode\" \"$pack\"; shasum -a 256 $files; } | "
         "shasum -a 256 | cut -c1-64";
-    return smith_capture_or(
-        b,
-        smith_cat(b,
-                  (const char *[]){"sh", "-c", script, "sh", lang ? "lang" : "c", config->llvm_id, config->cxx, nullptr},
-                  build_shim_flags(b, config), nullptr),
-        "");
+    return smith_capture_or(b,
+                            smith_cat(b,
+                                      (const char *[]){"sh", "-c", script, "sh", lang ? "lang" : "c", config->llvm_id,
+                                                       config->cxx, nullptr},
+                                      build_shim_flags(b, config), nullptr),
+                            "");
 }
 
 // runtime/lint_identity.c, the lint and fmt identities above in a translation unit of its own, as the commit's
@@ -809,16 +810,16 @@ static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *
         .compiler = config->cc,
         .source = "runtime/lint_identity.c",
         .output = smith_fmt(b, "%s/lint_identity.o", folder),
-        .flags =
-            smith_cat(b, config->cflags,
-                      smith_when(b, identity[0] != '\0',
-                                 (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
-                      smith_when(b, fmt_identity[0] != '\0',
-                                 (const char *[]){smith_fmt(b, "-DSMITH_FMT_IDENTITY=\"%s\"", fmt_identity), nullptr}),
-                      smith_when(b, compile_identity[0] != '\0' && lang_identity[0] != '\0',
-                                 (const char *[]){smith_fmt(b, "-DSMITH_COMPILE_IDENTITY=\"%s\"", compile_identity),
-                                                  smith_fmt(b, "-DSMITH_LANG_IDENTITY=\"%s\"", lang_identity), nullptr}),
-                      nullptr),
+        .flags = smith_cat(
+            b, config->cflags,
+            smith_when(b, identity[0] != '\0',
+                       (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
+            smith_when(b, fmt_identity[0] != '\0',
+                       (const char *[]){smith_fmt(b, "-DSMITH_FMT_IDENTITY=\"%s\"", fmt_identity), nullptr}),
+            smith_when(b, compile_identity[0] != '\0' && lang_identity[0] != '\0',
+                       (const char *[]){smith_fmt(b, "-DSMITH_COMPILE_IDENTITY=\"%s\"", compile_identity),
+                                        smith_fmt(b, "-DSMITH_LANG_IDENTITY=\"%s\"", lang_identity), nullptr}),
+            nullptr),
     };
     smith_object(b, &object);
     return object;

@@ -683,8 +683,9 @@ export void test_build_step_cache_a_c_compile_does_not_key_on_the_smith_binary()
                                              "\"$d/smith\" && printf x >> \"$d/smith\" && ln -s smith \"$d/smith-cc\" "
                                              "&& ln -s smith \"$d/smith-c++\"");
     scratch::expect_status("identity: a copy of smith with another byte", 0, &made_copy);
-    scratch::Run second = scratch::sh(&b, "env SMITH_STEP_CACHE=1 PATH=\"$PWD/../other-smith:$PATH\" smith build release "
-                                          "-v >log.txt 2>&1");
+    scratch::Run second =
+        scratch::sh(&b, "env SMITH_STEP_CACHE=1 PATH=\"$PWD/../other-smith:$PATH\" smith build release "
+                        "-v >log.txt 2>&1");
     scratch::expect_status("identity: the other smith builds", 0, &second);
     scratch::expect_text("identity: its three compiles are served", "3",
                          scratch::capture(&b, "grep -c '(cached)' log.txt"));

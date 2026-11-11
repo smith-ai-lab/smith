@@ -769,8 +769,7 @@ static SmithCompileKind smith_stepcache_compile_kind(const SmithStepScope *scope
     bool lang = false;
     for (size_t i = 1; i < scope->count; i++) {
         const char *word = scope->words[i];
-        if (word[0] == '@' || strncmp(word, "-x", 2) == 0 || smith_ends_with(word, ".metal"))
-            return SmithCompile_Whole;
+        if (word[0] == '@' || strncmp(word, "-x", 2) == 0 || smith_ends_with(word, ".metal")) return SmithCompile_Whole;
         lang = lang || smith_ends_with(word, ".smith") || strncmp(word, "--smith-", 8) == 0 ||
                strncmp(word, "--front-end", 11) == 0;
         source = source || smith_stepcache_source_word(word);
