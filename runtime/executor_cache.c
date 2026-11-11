@@ -152,10 +152,17 @@ static char smith_stepcache_why[1024];
 // <output>: <reason>`. A miss of a new key names the first line where the key differs from the last key stored for the
 // same output: which input changed.
 static int smith_stepcache_log_fd = -2; // -2: not opened yet; -1: no log
+// The log of smith_core_step_cache's `log`, in place of the variable: a test that set it with setenv left glibc's
+// copies in its arena (#3066).
+static const char *smith_stepcache_log_given;
+
+static const char *smith_stepcache_log_path(void) {
+    return smith_stepcache_log_given != nullptr ? smith_stepcache_log_given : getenv("SMITH_STEP_CACHE_LOG");
+}
 
 [[gnu::format(printf, 1, 2)]] static void smith_stepcache_log(const char *format, ...) {
     if (smith_stepcache_log_fd == -2) {
-        const char *path = getenv("SMITH_STEP_CACHE_LOG");
+        const char *path = smith_stepcache_log_path();
         smith_stepcache_log_fd =
             path != nullptr && *path != '\0' ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644) : -1;
     }
@@ -183,7 +190,7 @@ static int smith_stepcache_log_fd = -2; // -2: not opened yet; -1: no log
 }
 
 static bool smith_stepcache_logging(void) {
-    const char *path = getenv("SMITH_STEP_CACHE_LOG");
+    const char *path = smith_stepcache_log_path();
     return path != nullptr && *path != '\0';
 }
 
@@ -1665,6 +1672,7 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
     size_t count = smith_plan_targets(exec, targets);
     // what an earlier call in this process left (a memo that points into its arena) is dropped
     smith_stepcache = (SmithStepCache){};
+    smith_stepcache_log_given = build->log;
     bool on = build->cache == nullptr || smith_stepcache_start(exec, build->cache);
     if (build->cache == nullptr) smith_stepcache.state = SmithStepCache_Off; // the cache turned off
     size_t commands = 0;
@@ -1674,6 +1682,9 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
     else
         fputs("no work to do\n", out);
     smith_stepcache = (SmithStepCache){};
+    smith_stepcache_log_given = nullptr;
+    if (smith_stepcache_log_fd >= 0) close(smith_stepcache_log_fd);
+    smith_stepcache_log_fd = -2;
     smith_plan_core_stream = nullptr;
     fclose(out);
     smith_exec_close(exec);

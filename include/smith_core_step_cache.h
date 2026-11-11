@@ -15,6 +15,7 @@
 typedef struct {
     SmithCorePlan plan;
     const char *cache; // the folder that holds the cache (it makes `steps` in it), or nullptr for the cache turned off
+    const char *log;   // the file of SMITH_STEP_CACHE_LOG's lines, or nullptr for the variable's (#3050)
 } SmithCoreStepCache;
 
 // Plans and fake-runs the build with the cache on. `output` has the reason of each output found out of date

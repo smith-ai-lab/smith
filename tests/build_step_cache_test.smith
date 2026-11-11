@@ -59,6 +59,9 @@ static scratch::Project project(const char *name) {
     return p;
 }
 
+// The file the cache logs to (SMITH_STEP_CACHE_LOG's lines), or nullptr for none.
+static const char *step_log = nullptr;
+
 // One `smith build` of the folder with the cache in `cache` (nullptr: the cache turned off), whose commands run at
 // `time`. The depfiles name the headers `directory` + "util.h" and "other.h" (a folder's own absolute paths when it is
 // given, else relative ones).
@@ -76,7 +79,8 @@ static Build build_reading(const scratch::Project p, const char *cache, I64 time
                                            .unchanged = nullptr,
                                            .depends = depends,
                                            .time = time},
-                                  .cache = cache};
+                                  .cache = cache,
+                                  .log = step_log};
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     Usize served = 0;
@@ -557,7 +561,8 @@ static Build header_build(const scratch::Project p, const char *cache, I64 time)
                                            .unchanged = nullptr,
                                            .depends = depends,
                                            .time = time},
-                                  .cache = cache};
+                                  .cache = cache,
+                                  .log = step_log};
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     Usize served = 0;
@@ -658,8 +663,10 @@ export void test_build_step_cache_the_log_says_which_input_changed() {
     scratch::Project b = project("b");
     defer scratch::clean(&b);
     scratch::own_cache(&a);
-    c::setenv("SMITH_STEP_CACHE_LOG", format::push(a.dir, "/steps.log").data, 1);
-    defer c::unsetenv("SMITH_STEP_CACHE_LOG");
+    // given to the build, not set with setenv: glibc keeps what setenv allocates, in this test's arena, which the
+    // next test reuses, and its `smith new` then crashed in setenv (#3066)
+    step_log = format::push(a.dir, "/steps.log").data;
+    defer step_log = nullptr;
     Build first = build(a, a.cache, 1000);
     expect_counts("log: the first folder compiles all three", 3, 0, &first);
     put(b, "util.c", "#include \"util.h\"\nint util(void) { return 7; }\n", 100);
