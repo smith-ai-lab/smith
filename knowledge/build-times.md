@@ -99,3 +99,28 @@ The `warm` job of `.github/workflows/ci.yml` (a push to main, Linux only, after 
 4. **`runtime/` edit:** `/* timing */` appended to `runtime/executor.c`, built, reverted.
 
 The job summary has a table of wall seconds and the 10 slowest steps of the cold build. The body of the tracking issue #2751 ("Build times on main"; issues get no comments) is rewritten on each main commit: the latest table and the slowest steps, then the last 10 rows `<sha7> <date> cold=<s> noop=<s> front=<s> runtime=<s>`. The numbers come from hosted runners and differ run to run by about 15%; the step has `continue-on-error` and no threshold, so it never fails main's push. Container reference run (this repo's dev profile): cold 99.6 s, no-op 12 s, `front/` edit 2 s, `runtime/` edit 11 s.
+
+## The profile of 2026-11-11 (#3079)
+
+The dev profile is `-O0` now and `smith.c` is 68 objects, so the tables above (`-O1`, one translation unit) describe a build that no longer exists. Measured again on a cloud container (4 cores with SHA-NI, 15 GB), main at `7d1941a`, LLVM pack `23.1.3-r14`; the whole report with every table is in the body of #3079.
+
+| Case | Wall | Where it goes |
+|---|---|---|
+| Clean, first build after the container starts | 76.0 s | the link is 24.6 s: the first read of 1.3 GB of archives from disk |
+| Clean, archives in the page cache | 51.5 s (46.9 s with four more shims on the precompiled header) | 130 CPU s; C++ shims and their header 83.5 of 129.9 step seconds, `front/` objects 11.5, all C 9.6, link 1.8, 6.4 s after the link |
+| The build right after a clean one | 9.3 to 9.7 s | 12 steps rerun; CI records this as "no-op" |
+| Warm (step cache full, `build/` and `.smith/` removed) | 19.1 s | 320 of 343 steps served; 4.6 s of hashing at the start, 6.6 s after the link |
+| One-line edit of `runtime/executor.c`, `smith.c` or a `front/` module | 8.6 to 9.8 s | compile 0.05 to 0.75 s, link 1.7 s, 6.3 s after the link |
+| One-line edit of `shim/hook.cpp` | 13.4 s | its compile 3.4 s |
+| Nothing changed | 0.45 s | 0.43 s is running the build program |
+
+**The 6.3 s after the link** is on every line. The executor keys the steps that run the new smith (the tests' headers, the template headers) by the content of `build/<OS>-<arch>/smith-cc`, and reads all 437 MB of it twice with a portable SHA-256 at 140 MB/s (3.1 s each; `sha256sum` with SHA-NI takes 0.29 s). It hashes twice because `smith_stepcache_content` keeps no memo of a file younger than its fresh window. While it hashes it starts and reaps nothing, so `--time` shows the time on whichever step was running: `ln -sf smith smith-c++` and `headers of the tests`. The step `headers of the tests` itself is 2.6 s: one forked child of the binary per file, 365 of them, one after another.
+
+**How to run it again.**
+- Put the release first on `PATH` (`smith build stage0`), build once, then `smith build --time` for each case; the cases are the `warm` job's above, plus an edit of a shim and of `smith.c`.
+- `--time` gives the phases and the 10 slowest steps. For every step, read `.smith/.smith_log` after the build: each line is start ms, end ms, mtime, hash and one output; the steps of a case are the lines added since the case before, and one step has one line per output with the same two times. Group by the output's path (`*_shim.o`, `rt_*.o`, `front_*.o`, `.smith/include/`).
+- Wall against CPU: bash `time smith build`. The pool: `SMITH_SLOTS_LOG=1 smith build` prints the average and peak workers.
+- A step that looks slow and is not (a symlink of 3 s): `strace -tt -T -e trace=openat,read,clone3,wait4 smith build` shows what the build tool itself reads between two steps. A step that is slow: run its `cmd` from `.smith/build.ninja` by hand under `time`, and `strace -f -c` it.
+- A C++ shim: its `cmd` with `-ftime-trace=<file>` added; sum the `Total Frontend` and `Total Backend` events.
+- The link: its `cmd` with `-o` moved to a scratch file. 1.74 s here; 1.61 s with `-Wl,--strip-debug`.
+- **Two traps.** `--time` makes every `smith-cc` compile print its phases, and a step that prints is never stored in the step cache: to measure a warm build, build cold *without* `--time` first (with it, the warm build serves 24 steps of 343, not 320). And the first build after a container starts reads the LLVM archives from disk: run the clean case twice and report the second.
