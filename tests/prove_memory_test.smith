@@ -4,6 +4,8 @@
 // and grids in .smith), structs by value and through sret, a file that does not compile and a variable argument list.
 // The programs are tests/prove/*.c and tests/prove/geometry/*.smith ($c); the helpers are in tests/prove_cases.smith.
 // See tests/prove_test.smith for the proofs' cache and budget.
+// Its smith children run prove, cc and build by the token lowering: nothing under front/ (#3076).
+// smith-covers: smith.c runtime/ shim/ include/ lib/ patches/ tests/prove/ tests/build_fixtures/prove_cases/
 module prove_memory_test;
 
 import std::arena;

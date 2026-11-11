@@ -16,10 +16,11 @@
 //
 // A local handed to a `*mut` parameter or field of this module in such a body is mended the same way (#2992): a
 // pointer local `memory: *char = ..` passed whole is `*mut char`, and a value local whose address `&writer` is passed
-// is `mut writer`.
+// is `mut writer`. It also returns `fix_slice_mut`'s fixes for every function (#3073).
 module front::fix_generic_mut;
 
 import front::ast;
+import front::fix_slice_mut;
 import front::parse as core;
 import front::types;
 import std::format;
@@ -38,16 +39,6 @@ static Bool has_auto(const ast::TypeExpr *type) {
         } else {
             return false;
         }
-    }
-    return false;
-}
-
-static Bool is_generic(const ast::Decl *d) {
-    if (d->kind != .function) return false;
-    ast::Param params[:] = d->kind.function.params;
-    for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].is_const || params[i].is_constexpr || params[i].is_pack || params[i].is_rest) return true;
-        if (has_auto(params[i].type)) return true;
     }
     return false;
 }
@@ -90,6 +81,24 @@ static Bool same(Str a, Str b) {
         if (a[i] != b[i]) return false;
     }
     return true;
+}
+
+// Whether the parameter is a type written in smith's own syntax, `T: type`: today's `constexpr Type T` sets
+// `is_constexpr`, the new spelling sets nothing, and its function is as generic (#3078: `arena.push(a, T: type)`).
+static Bool is_type_param(Str source, const ast::Param *param) {
+    const ast::TypeExpr *type = param->type;
+    if (type == nullptr || type->span.end > countof(source) || type->span.start >= type->span.end) return false;
+    return same(source[type->span.start:type->span.end], "type");
+}
+
+static Bool is_generic(Str source, const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_const || params[i].is_constexpr || params[i].is_pack || params[i].is_rest) return true;
+        if (has_auto(params[i].type) || is_type_param(source, &params[i])) return true;
+    }
+    return false;
 }
 
 // Whether the text at `at` is `=` (not `==`) or an operator followed by `=`.
@@ -205,10 +214,10 @@ static Bool lit_at(Str source, Usize at, Usize end, Str text) {
     return at + countof(text) <= end && same(source[at:at + countof(text)], text);
 }
 
-// Whether the function's result type is written `Result(...)`.
-static Bool has_result_type(Str source, const ast::TypeExpr *type) {
+// Whether the function's result type is written `Result(...)` or `Option(...)`, as `head` says.
+static Bool has_result_type(Str source, const ast::TypeExpr *type, Str head) {
     if (type == nullptr || type->span.end > countof(source) || type->span.start >= type->span.end) return false;
-    return lit_at(source, type->span.start, type->span.end, "Result(");
+    return lit_at(source, type->span.start, type->span.end, head);
 }
 
 // The `}` that closes the `{` at `open`, or `end` when there is none.
@@ -234,40 +243,38 @@ static core::Edit replace_edit(Usize start, Usize stop, Str text) {
 
 // `return {.ok = v}` and `return {.error = e}` in the body of a generic function whose result is a `Result(...)` are
 // written `return .ok(v)` and `return .error(e)` (#2648): the checker reads such a body only through its instances,
-// and an instance from another module carries no fix, so the designated initializer stayed.
-static core::Errors result_literals(Str source, Usize start, Usize end, core::Errors out) {
-    Str ok = "return {.ok = ";
+// and an instance from another module carries no fix, so the designated initializer stayed. An `Option(...)` result's
+// `return {.some = v}` is `return .some(v)` the same way (#3078: `mem.try_alloc`, `arena.try_push`).
+static core::Errors result_literals(Str source, Usize start, Usize end, Bool option, core::Errors out) {
+    Str ok = option ? "return {.some = " : "return {.ok = ";
     Str bad = "return {.error = ";
     for (Usize at = start; at < end; at++) {
         if (!lit_at(source, at, end, "return {.") || !at_statement_start(source, at, start)) continue;
         Bool is_ok = lit_at(source, at, end, ok);
-        if (!is_ok && !lit_at(source, at, end, bad)) continue;
+        if (!is_ok && (option || !lit_at(source, at, end, bad))) continue;
         Usize open = at + 7;
         Usize close = closing_brace(source, open, end);
         if (close >= end) continue;
         core::Edits fix = {};
         fix = mem::realloc(fix, 2);
-        fix[0] = replace_edit(open, at + (is_ok ? countof(ok) : countof(bad)), is_ok ? ".ok(" : ".error(");
+        Str variant = ".error(";
+        if (is_ok && option) {
+            variant = ".some(";
+        } else if (is_ok) {
+            variant = ".ok(";
+        }
+        fix[0] = replace_edit(open, at + (is_ok ? countof(ok) : countof(bad)), variant);
         fix[1] = replace_edit(close, close + 1, ")");
         core::ParseError error = {};
         error.span.start = (U32)open;
         error.span.end = (U32)(close + 1);
         error.message = "a Result is written `.ok(value)`, not `{.ok = value}`";
+        if (option) error.message = "an Option is written `.some(value)`, not `{.some = value}`";
         error.fix = fix;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = error;
     }
     return out;
-}
-
-// Whether a parameter is a type (`T: type`): the function is generic over it.
-static Bool has_type_param(Str source, ast::Param params[:]) {
-    for (Usize i = 0; i < countof(params); i++) {
-        const ast::TypeExpr *type = params[i].type;
-        if (type == nullptr || type->span.end > countof(source) || type->span.start >= type->span.end) continue;
-        if (same(source[type->span.start:type->span.end], "type")) return true;
-    }
-    return false;
 }
 
 // Whether the word at `at` (length `len`) is a whole word and not a member (`x.buffer`).
@@ -636,16 +643,14 @@ export core::Errors edits(Str source, const ast::Module *module) {
         const ast::Stmt *function_body = d->kind.function.body;
         const ast::TypeExpr *function_result = d->kind.function.result;
         ast::Param params[:] = d->kind.function.params;
-        if (function_body != nullptr && !is_generic(d) && has_type_param(source, params) &&
-            has_result_type(source, function_result)) {
-            Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
-            if (function_body->span.start < end) out = result_literals(source, function_body->span.start, end, out);
-        }
-        if (function_body != nullptr && is_generic(d)) {
+        if (function_body != nullptr && is_generic(source, d)) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
             Usize body = function_body->span.start;
             if (body < end) out = scan(module, source, body, end, out);
-            if (body < end && has_result_type(source, function_result)) out = result_literals(source, body, end, out);
+            if (body < end && has_result_type(source, function_result, "Result("))
+                out = result_literals(source, body, end, false, out);
+            if (body < end && has_result_type(source, function_result, "Option("))
+                out = result_literals(source, body, end, true, out);
             if (body < end) out = assigned_params(source, params, body, end, out);
             if (body < end) out = pointer_params(module, source, params, body, end, out);
         }
@@ -654,6 +659,13 @@ export core::Errors edits(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(loops); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = loops[i];
+    }
+    // A slice local or parameter std.mem writes is `[]mut T` (#3073), in any function: the run of fixes reaches it
+    // through this pass, since front::fix's table of imported names is full.
+    core::Errors slices = fix_slice_mut::edits(source);
+    for (Usize i = 0; i < countof(slices); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = slices[i];
     }
     return out;
 }

@@ -1,0 +1,7 @@
+page := 4096
+static_assert(page % 4096 == 0)
+static_assert(sizeof(u32) == 8, "u32 is four bytes")
+static_assert(page / 512 == 9)
+
+pub fn check() -> i32:
+    0

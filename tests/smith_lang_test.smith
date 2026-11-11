@@ -31,6 +31,8 @@
 //   nostd            the case's compiles are given no -std (smith's default for a .smith file applies)
 // Everything runs in the case's own folder (a copy in the test's scratch folder), so paths in messages are relative to
 // it. The expectations are golden files: `smith test --update` writes what each case produced (read the diff).
+// Its smith children run cc, c++ and test by the token lowering: nothing under front/ (#3076).
+// smith-covers: smith.c runtime/ shim/ include/ lib/ patches/ tests/smith-lang/
 module smith_lang_test;
 
 import std::arena;

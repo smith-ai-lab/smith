@@ -1,4 +1,4 @@
-// front::fix_payload, the fix-it for a payload enumeration built with a named tuple (#2648).
+// front::fix_payload, the fix-it for a payload enumeration built with a named tuple (#2648) or a braced list (#3027).
 //
 //   Ty(kind = (vector = (element = e, count = n)))     Ty(kind = .vector((element = e, count = n)))
 //
@@ -7,7 +7,10 @@
 // the tuple has one named field and the expected type is no tuple, its head `(vector = ` is written `.vector(`; the
 // payload (a named tuple for a struct payload) and the closing `)` stay.
 //
-//   fix_payload::edits(source, checked)   one fix for each such error
+//   return {.some = v}                                 return .some(v)     (the checker types the list from the return)
+//
+//   fix_payload::edits(source, checked)        one fix for each such error
+//   fix_payload::list_edits(source, checked)   one fix for each such list
 module front::fix_payload;
 
 import front::ast;
@@ -67,6 +70,51 @@ static Bool is_variant_of(const types::Checked *c, Str message, Str name) {
         return wanted->kind == .enumeration && types::is_payload_enum(wanted) && types::member(wanted, name) != nullptr;
     }
     return false;
+}
+
+// The fix of a braced list with no type of one designated item, `{.some = v}`, whose type the checker took from where
+// it stands (a `return`, an argument) and which is a payload enumeration with that variant: `.some(v)` (#3027).
+static core::Edits variant_list_of(Str source, const types::Checked *c, const ast::Expr *e) {
+    core::Edits none = {};
+    if (e->kind != .compound || e->kind.compound.type != nullptr) return none;
+    ast::Initializer items[:] = e->kind.compound.items;
+    if (countof(items) != 1 || items[0].value == nullptr) return none;
+    ast::Designator designators[:] = items[0].designators;
+    if (countof(designators) != 1) return none;
+    ast::Designator designator = designators[0];
+    if (!(designator == .field)) return none;
+    Str name = designator.field.name;
+    types::TypeRef type = types::type_of(c, e);
+    if (type == nullptr || type->kind != .enumeration || !types::is_payload_enum(type)) return none;
+    if (types::member(type, name) == nullptr) return none;
+    ast::Span value = items[0].value->span;
+    if (e->span.end == 0 || e->span.end > countof(source) || source[e->span.end - 1] != '}') return none;
+    if (source[e->span.start] != '{' || value.start <= e->span.start || value.end >= e->span.end) return none;
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 2);
+    Str head = types::message_of(format::push(".", name, "("));
+    Str closer = ")";
+    fix[0] = (core::Edit){.span = {.start = e->span.start, .end = value.start}, .text = head};
+    fix[1] = (core::Edit){.span = {.start = value.end, .end = e->span.end}, .text = closer};
+    return fix;
+}
+
+// The fixes of the lists above in `checked` (the checker accepts them, so these run on any module).
+export core::Errors list_edits(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *e = c->nodes[i].node;
+        if (e == nullptr || e->kind != .compound) continue;
+        core::Edits fix = variant_list_of(source, c, e);
+        if (countof(fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError made = {};
+        made.span = e->span;
+        made.message = "write the payload enumeration's value as `.variant(payload)`";
+        made.fix = fix;
+        out[countof(out) - 1] = made;
+    }
+    return out;
 }
 
 export core::Errors edits(Str source, const types::Checked *c) {

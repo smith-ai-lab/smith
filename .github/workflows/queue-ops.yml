@@ -23,13 +23,14 @@ on:
           - enqueue-many
           - cancel-pr-runs
           - rerun-failed
-          - set-build-entries
+          - set-group-size
+          - delete-branch
       pr:
         description: "Pull request number (jump, dequeue, enqueue, rerun-failed); enqueue-many: numbers separated by spaces"
         required: false
         type: string
       value:
-        description: "set-build-entries: max_entries_to_build, 1 to 10"
+        description: "set-group-size: 1, 2, 4 or 8; delete-branch: the branch's name"
         required: false
         type: string
       dry_run:
@@ -39,7 +40,8 @@ on:
         default: false
 
 permissions:
-  contents: read
+  # write: delete-branch deletes a ref; every other op only reads the contents
+  contents: write
   pull-requests: write
   actions: write
 
@@ -139,8 +141,7 @@ jobs:
                 sleep 10
                 echo "queue after 10 s: $(queue_order)" ;;
               enqueue-many)
-                # a burst in one job (#2851): the queue's batching window (60 s, scripts/batch_wait.c) gathers the
-                # groups of entries enqueued a few seconds apart; one op per PR took a run of about a minute each, and
+                # a burst in one job (#2851): one op per PR took a run of about a minute each, and
                 # a pending op was dropped when a newer one arrived (2026-11-09 00:53). A PR already in the queue is
                 # skipped, so the retry with the owner's token enqueues only the ones that failed.
                 local list="$PR" n failed=0 queued=0 entry
@@ -195,23 +196,57 @@ jobs:
                 if [ -z "$run_id" ]; then echo "no-run"; return 1; fi
                 if dry; then echo "dry-run: would rerun failed jobs of run $run_id"; return 0; fi
                 gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" --silent && echo "rerun $run_id" ;;
-              set-build-entries)
-                case "$VALUE" in [1-9]|10) ;; *) echo "value must be 1 to 10"; return 2 ;; esac
+              set-group-size)
+                # the queue's group size (#3131): one build at a time, a group of N entries that merges all or none
+                case "$VALUE" in 1|2|4|8) ;; *) echo "value must be 1, 2, 4 or 8"; return 2 ;; esac
                 local id rules
                 id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') || return 1
                 [ -n "$id" ] || { echo "no ruleset main"; return 1; }
                 gh api "repos/$REPO/rulesets/$id" \
                   | jq --argjson n "$VALUE" '{name, target, enforcement, bypass_actors, conditions,
-                      rules: (.rules | map(if .type == "merge_queue" then .parameters.max_entries_to_build = $n else . end))}' \
+                      rules: (.rules | map(if .type == "merge_queue" then .parameters += {max_entries_to_build: 1,
+                        min_entries_to_merge: 1, max_entries_to_merge: $n, grouping_strategy: "ALLGREEN"} else . end))}' \
                   > /tmp/ruleset.json
-                if dry; then echo "dry-run: would set max_entries_to_build=$VALUE"; return 0; fi
-                gh api -X PUT "repos/$REPO/rulesets/$id" --input /tmp/ruleset.json --silent && echo "max_entries_to_build=$VALUE" ;;
+                if dry; then echo "dry-run: would set group size $VALUE"; return 0; fi
+                gh api -X PUT "repos/$REPO/rulesets/$id" --input /tmp/ruleset.json --silent && echo "group size=$VALUE" ;;
+              delete-branch)
+                # a stray branch (no open pull request) the lead cannot delete from a session: a session's git
+                # pushes reach only its own branch. Refused: the default branch, the queue's branches, a branch
+                # with an open pull request (close the pull request first; GitHub then offers the delete).
+                local b="$VALUE" default open
+                case "$b" in
+                  ''|*[!A-Za-z0-9._/-]*|*..*|/*|*/) echo "value must be a branch name"; return 2 ;;
+                  gh-readonly-queue/*) echo "refused: a merge queue branch"; return 2 ;;
+                esac
+                default=$(gh api "repos/$REPO" --jq .default_branch) || return 1
+                [ "$b" != "$default" ] || { echo "refused: the default branch"; return 2; }
+                open=$(gh api "repos/$REPO/pulls?head=${REPO%/*}:$b&state=open" --jq 'length') || return 1
+                [ "$open" = 0 ] || { echo "refused: $b has an open pull request"; return 2; }
+                gh api "repos/$REPO/git/ref/heads/$b" --jq '"branch \(.ref) at \(.object.sha)"' || return 1
+                if dry; then echo "dry-run: would delete branch $b"; return 0; fi
+                gh api -X DELETE "repos/$REPO/git/refs/heads/$b" --silent && echo "deleted $b" ;;
               *) echo "unknown op"; return 2 ;;
             esac
           }
 
           # GITHUB_TOKEN first; the owner's secret only when GitHub refuses. One op, with OP, PR and VALUE set.
+          # Exception (#3131, measured twice on 2026-11-11: `jump 3130` at 06:03Z and `enqueue` of 20 PRs into an empty
+          # queue at 07:27Z): a group made at the FRONT of the queue by GITHUB_TOKEN gets its branch but no `merge_group`
+          # run, because GitHub starts no workflow for an event a GITHUB_TOKEN caused, and the queue sits still. So the
+          # ops that can create the front group (jump, enqueue, enqueue-many) use the owner's secret first.
           run_one() {
+            local first=BASE_TOKEN
+            case "$OP" in jump|enqueue|enqueue-many) [ -n "$OWNER_TOKEN" ] && first=OWNER_TOKEN ;; esac
+            if [ "$first" = OWNER_TOKEN ]; then
+              export GH_TOKEN="$OWNER_TOKEN"
+              if out=$(do_op 2>&1); then
+                summary "ok ($out) token=QUEUE_OPS_TOKEN"
+                return 0
+              fi
+              echo "QUEUE_OPS_TOKEN: $out"
+              summary "failed ($(echo "$out" | tail -n 1 | cut -c1-200))"
+              return 1
+            fi
             export GH_TOKEN="$BASE_TOKEN"
             if out=$(do_op 2>&1); then
               summary "ok ($out) token=GITHUB_TOKEN"

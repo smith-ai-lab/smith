@@ -1,0 +1,2 @@
+<dir>/src/eval_static_assert_false.smith:3:1: error: u32 is four bytes
+<dir>/src/eval_static_assert_false.smith:4:1: error: static_assert failed

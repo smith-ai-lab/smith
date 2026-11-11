@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -124,7 +124,7 @@ jobs:
           done
           [ "$lost" = 0 ] && log "queue-heal: none lost ($q entries)"
 
-          # fifth pass (#2962): GitHub won't turn on auto-merge for a PR that is already clean, and a runner can't enqueue,
+          # fifth pass (#2962; a PR a failed group removed is labelled `ready` by its runner or the lead): GitHub won't turn on auto-merge for a PR that is already clean, and a runner can't enqueue,
           # so a runner labels such a PR `ready`. Each open PR with that label, not in the queue, not labelled `dequeued`,
           # mergeable, whose `ci` check on the current head is `success`, is enqueued as queue-ops' enqueue does, and loses
           # `ready`. A PR whose ci is not green yet keeps the label and is tried again on the next pass.
@@ -200,47 +200,55 @@ jobs:
           }
           conflicts
 
-          # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4, 8) by the health of the merge_group
-          # runs of ci since the ruleset's last change (its `updated_at`, which a change of B sets again). A failure halves B,
-          # three passes double it (cap 8); cancelled runs count for neither. Same PUT and token fallback as queue-ops'
-          # set-build-entries. It runs from an EXIT trap, after the second pass.
+          # third pass (#3131): the queue's group size, by the health of its runs. GitHub builds one group at a time
+          # (max_entries_to_build 1) and merges a group's entries all or none (ALLGREEN); the size of the group is
+          # max_entries_to_merge. Health is the number of the last 10 finished merge_group runs of ci.yml that merged
+          # (`success`; failure and cancelled count as not merged). Under 9 of 10: size 1. A failed or cancelled run
+          # since the last size change (the ruleset's `updated_at`, T): size 1. 9 of 10 or better and 10 finished runs
+          # since T: one step up (1, 2, 4, 8). It prints `queue-heal: health 7 of 10, group size 1` on every pass and
+          # runs from an EXIT trap, after the second pass. Same PUT and token fallback as queue-ops' set-group-size.
           tune() {
-            local id rs b t runs n m nb
-            id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ]               || { log "queue-heal: build entries unreadable (no ruleset main), kept"; return 0; }
-            rs=$(gh api "repos/$REPO/rulesets/$id") || { log "queue-heal: build entries unreadable, kept"; return 0; }
-            b=$(echo "$rs" | jq -r '[.rules[] | select(.type == "merge_queue") | .parameters.max_entries_to_build][0] // empty')
+            local id rs g t runs h total after bad nb cur
+            id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ] \
+              || { log "queue-heal: health unknown, group size unreadable (no ruleset main)"; return 0; }
+            rs=$(gh api "repos/$REPO/rulesets/$id") || { log "queue-heal: health unknown, group size unreadable"; return 0; }
+            g=$(echo "$rs" | jq -r '[.rules[] | select(.type == "merge_queue") | .parameters.max_entries_to_merge][0] // empty')
             t=$(echo "$rs" | jq -r '.updated_at // empty')
-            [ -n "$b" ] && [ -n "$t" ] || { log "queue-heal: build entries unreadable, kept"; return 0; }
+            [ -n "$g" ] && [ -n "$t" ] || { log "queue-heal: health unknown, group size unreadable"; return 0; }
             runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=completed \
-              -f per_page=100 --paginate --jq '.workflow_runs[] | "\(.created_at) \(.conclusion)"') \
-              || { log "queue-heal: build entries $b kept (merge_group runs unreadable)"; return 0; }
-            # ISO times in UTC compare as text
-            n=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "success"' | grep -c . || true)
-            m=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "failure"' | grep -c . || true)
-            nb=$b
-            if [ "$m" -gt 0 ]; then
-              nb=$((b / 2)); [ "$nb" -ge 1 ] || nb=1
-            elif [ "$n" -ge 3 ] && [ "$b" -lt 8 ]; then
-              nb=$((b * 2)); [ "$nb" -le 8 ] || nb=8
+              -f per_page=30 --jq '.workflow_runs[] | "\(.created_at) \(.conclusion)"') \
+              || { log "queue-heal: health unknown, group size $g kept (merge_group runs unreadable)"; return 0; }
+            # newest first; ISO times in UTC compare as text
+            total=$(echo "$runs" | head -n 10 | grep -c . || true)
+            h=$(echo "$runs" | head -n 10 | grep -c ' success$' || true)
+            after=$(echo "$runs" | awk -v t="$t" '$1 > t' | grep -c . || true)
+            bad=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 != "success"' | grep -c . || true)
+            nb=$g
+            if [ "$h" -lt 9 ] || { [ "$g" -gt 1 ] && [ "$bad" -gt 0 ]; }; then
+              nb=1
+            elif [ "$after" -ge 10 ] && [ "$h" -ge 9 ] && [ "$g" -lt 8 ]; then
+              nb=$((g * 2))
             fi
-            if [ "$nb" = "$b" ]; then
-              log "queue-heal: build entries $b kept ($n passed, $m failed since $t)"
+            # a ruleset still set for several builds, a wait, or HEADGREEN is brought to the one-run-at-a-time form
+            cur=$(echo "$rs" | jq -c '[.rules[] | select(.type == "merge_queue") | .parameters | [.max_entries_to_build, .min_entries_to_merge, .grouping_strategy]][0]')
+            log "queue-heal: health $h of $total, group size $nb"
+            if [ "$nb" = "$g" ] && [ "$cur" = '[1,1,"ALLGREEN"]' ]; then
               return 0
             fi
             if dry; then
-              log "queue-heal: build entries $b -> $nb ($n passed, $m failed since $t)"
-              log "dry-run: would set max_entries_to_build=$nb"
+              log "dry-run: would set group size $g -> $nb (builds 1, min entries 1, ALLGREEN)"
               return 0
             fi
             echo "$rs" | jq --argjson n "$nb" '{name, target, enforcement, bypass_actors, conditions,
-                rules: (.rules | map(if .type == "merge_queue" then .parameters.max_entries_to_build = $n else . end))}' \
+                rules: (.rules | map(if .type == "merge_queue" then .parameters += {max_entries_to_build: 1,
+                  min_entries_to_merge: 1, max_entries_to_merge: $n, grouping_strategy: "ALLGREEN"} else . end))}' \
               > "${RUNNER_TEMP:-/tmp}/ruleset.json"
             # GITHUB_TOKEN first; the owner's secret only when GitHub refuses
             if GH_TOKEN="$BASE_TOKEN" gh api -X PUT "repos/$REPO/rulesets/$id" --input "${RUNNER_TEMP:-/tmp}/ruleset.json" --silent 2>/dev/null \
               || { [ -n "$OWNER_TOKEN" ] && GH_TOKEN="$OWNER_TOKEN" gh api -X PUT "repos/$REPO/rulesets/$id" --input "${RUNNER_TEMP:-/tmp}/ruleset.json" --silent; }; then
-              log "queue-heal: build entries $b -> $nb ($n passed, $m failed since $t)"
+              log "queue-heal: group size $g -> $nb"
             else
-              log "queue-heal: build entries $b kept, change to $nb refused ($n passed, $m failed since $t)"
+              log "queue-heal: group size $g kept, change to $nb refused"
             fi
           }
 
@@ -254,6 +262,46 @@ jobs:
             --jq "[.workflow_runs[] | select(.head_branch | startswith(\"gh-readonly-queue/main/pr-$front-\"))][0] | \"\(.id) \(.status) \(.conclusion)\"") \
             || { log "queue-heal: front #$front run unreadable, left alone"; exit 0; }
           set -- $run
+          # a run that just completed can still read `null` for its conclusion: read it again, up to 6 times 10 s apart,
+          # so the eviction does not wait for the next pass (#3051)
+          for _ in 1 2 3 4 5 6; do
+            [ "${2:-}" = completed ] && [ "${3:-null}" = null ] || break
+            sleep 10
+            run=$(gh api -X GET "repos/$REPO/actions/runs/$1" --jq '"\(.id) \(.status) \(.conclusion)"') || break
+            set -- $run
+          done
+          # a job that hits its timeout ends the run `cancelled` though the `ci` check fails: GitHub kept such an entry
+          # (#3040: shard 5 hung 30 minutes, `ci` failed at 00:21:31Z, the run was `cancelled`, the entry stayed 58 minutes
+          # and the group behind it was built on it, #3051). A completed `cancelled` run whose `ci` job failed is a
+          # failed run, unless our own guard cancelled it (`queue-guard`: its group left the queue); those entries leave the queue by
+          # themselves.
+          if [ "${2:-}" = completed ] && [ "${3:-}" = cancelled ]; then
+            if gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 \
+              | jq -e '([.jobs[] | select(.name == "ci" and .conclusion == "failure")] | length > 0)
+                and ([.jobs[].steps[]? | select((.name | test("queue-guard")) and (.conclusion == "failure" or .conclusion == "cancelled"))] | length == 0)' >/dev/null; then
+              set -- "$1" "$2" failure
+            fi
+          fi
+          # a front entry with no run (#3131): a group made at the front by a GITHUB_TOKEN event gets its branch but no
+          # `merge_group` run (2026-11-11: `jump 3130` sat 56 minutes, 20 PRs enqueued into an empty queue sat 8), and the
+          # queue stands still. That is a fault, not "ok": say so, and re-queue the front PR with the owner's token (an
+          # event that token causes starts the run), once the entry is older than the grace period.
+          if [ -z "${1:-}" ] || [ "${1:-}" = null ]; then
+            at=$(gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+              query($owner: String!, $name: String!) {
+                repository(owner: $owner, name: $name) { mergeQueue(branch: "main") { entries(first: 1) { nodes { enqueuedAt } } } }
+              }' --jq '.data.repository.mergeQueue.entries.nodes[0].enqueuedAt // empty' 2>/dev/null) || at=
+            age=0; [ -n "$at" ] && age=$(( now - $(date -u -d "$at" +%s) ))
+            if [ "$age" -gt 300 ]; then
+              log "queue-heal: FAULT front #$front has no merge_group run after $((age / 60)) min (queue stands still)"
+              if requeued=$(requeue "$front"); then
+                log "queue-heal: front #$front re-queued with the owner's token at position $requeued"
+              else
+                log "queue-heal: FAULT front #$front re-queue failed"
+              fi
+              exit 0
+            fi
+          fi
           if [ "${3:-}" != failure ]; then
             log "queue-heal: front #$front ok (run ${1:-none} ${2:-none})"
             exit 0

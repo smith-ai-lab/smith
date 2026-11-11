@@ -1362,6 +1362,14 @@ static Bool glued(const parse::Parser *p, U32 end) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
 
+// Whether the old type is compared with a type, `typeof(piece) == char *` (#3078): there it names one exact type, so a
+// star whose pointee is not `const` is `*mut`, as in a cast, and `char *` and `const char *` stay two types.
+static Bool compared_type(const parse::Parser *p, const OldType *t) {
+    if (t->first == 0) return false;
+    lex::TokenKind before = p->tokens[t->first - 1].kind;
+    return before == lex::equal_equal || before == lex::bang_equal;
+}
+
 // Records the warning of an old type: the edit that writes it in smith's own syntax, or a message alone.
 static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExpr *base) {
     // `const name: T = v` is a constant already written in smith's own syntax, which an old-syntax read of a file that
@@ -1376,7 +1384,7 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
                  .dims = 0,
                  .problem = "",
                  .pointee_const = false,
-                 .casting = p->in_cast,
+                 .casting = p->in_cast || compared_type(p, t),
                  .volatile_next = false};
     for (Usize i = t->first; i < t->base; i += 1) {
         if (p->tokens[i].kind == lex::kw_const) r.pointee_const = true;
@@ -1452,4 +1460,14 @@ static ast::TypeExpr *read(parse::Parser *p) {
 // Reads a type at the position, or records an error and gives null. The hook `parse::Hooks.type`.
 export ast::TypeExpr *type(parse::Parser *p) {
     return read(p);
+}
+
+// The type after `name:` in smith's own syntax (a parameter, a binding): the position is a type, so a lowercase type
+// function applied there is one, `o: maybe(usize)`, as in a result (#3027: it was read as `maybe` and a stray `(`).
+export ast::TypeExpr *declared(parse::Parser *p) {
+    Bool in_result = p->in_result;
+    p->in_result = true;
+    ast::TypeExpr *type = parse::type(p);
+    p->in_result = in_result;
+    return type;
 }

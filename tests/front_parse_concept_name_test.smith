@@ -33,3 +33,9 @@ export void test_front_parse_concept_name_a_comparison_of_a_type_is_a_statement(
     expect_no_error("pub fn num(T: type) -> bool:\n    T == i8 or T == i16\n");
     expect_no_error("pub fn num(T: type) -> bool:\n    x := 1\n    T != i8\n");
 }
+
+// A type name before the `else` of a one-line `if` value is the arm's value, not a declaration `T else` (#3027).
+export void test_front_parse_concept_name_a_type_before_else_is_a_value() {
+    expect_no_error("fn by(T: type, k: usize) -> type:\n    return if k == 0: T else: i64\n");
+    expect_no_error("fn by(T: type, k: usize) -> type:\n    return if k == 0: T else: if k == 1: i16 else: F64\n");
+}

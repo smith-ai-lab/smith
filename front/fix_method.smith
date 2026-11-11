@@ -124,12 +124,18 @@ static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *
 }
 
 // The fix of `t[0]` over a tuple: a tuple's elements are read as `t.0`, `t.1` (an index with a literal number only).
-static core::Edits tuple_index_of(const types::Checked *c, const ast::Expr *e) {
+// The edit ends at the `]`, not at the end of `e`: an index in parentheses (`countof(n[1])`) has the span of the
+// parentheses, and the `)` must stay.
+static core::Edits tuple_index_of(Str source, const types::Checked *c, const ast::Expr *e) {
     core::Edits none = {};
     if (e->kind != .index || e->kind.index.index->kind != .integer) return none;
     types::TypeRef base = types::type_of(c, e->kind.index.base);
     if (base == nullptr || base->kind != .tuple) return none;
-    ast::Span whole = {.start = e->kind.index.base->span.end, .end = e->span.end};
+    Usize close = e->kind.index.index->span.end;
+    while (close < e->span.end && source[close] != ']')
+        close += 1;
+    if (close == e->span.end) return none;
+    ast::Span whole = {.start = e->kind.index.base->span.end, .end = (U32)(close + 1)};
     core::Edits out = {};
     out = mem::realloc(out, 1);
     Str element = types::message_of(format::push(".", e->kind.index.index->kind.integer.value));
@@ -137,14 +143,26 @@ static core::Edits tuple_index_of(const types::Checked *c, const ast::Expr *e) {
     return out;
 }
 
+// Whether entry `i` of the side table is in this module's text: not in the body of an instance of another module's
+// generic function, whose spans are offsets in that module's file. `rest[0]` in `args::locals(1, 2, 3)`, unrolled in
+// the instance, indexed `source` past its end and failed an assert (#3027).
+static Bool in_this_file(Str source, const types::Checked *c, Usize i) {
+    const ast::Expr *e = c->nodes[i].node;
+    if (e == nullptr || e->span.end > countof(source)) return false;
+    Usize instance = c->nodes[i].instance;
+    if (instance >= c->instance_count) return true;
+    Str prefix = c->instances[instance].prefix;
+    return countof(prefix) == 0;
+}
+
 // The fixes of `module`'s tuple indexes `t[0]`, as errors that carry them. The checker rejects the index, so these are
 // read from a module that has errors (`edits` below needs none).
-export core::Errors tuple_edits(const types::Checked *c) {
+export core::Errors tuple_edits(Str source, const types::Checked *c) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(c->nodes); i++) {
         const ast::Expr *e = c->nodes[i].node;
-        if (e == nullptr || e->kind != .index) continue;
-        core::Edits element = tuple_index_of(c, e);
+        if (e == nullptr || e->kind != .index || !in_this_file(source, c, i)) continue;
+        core::Edits element = tuple_index_of(source, c, e);
         if (countof(element) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         core::ParseError found = {};
@@ -161,7 +179,7 @@ export core::Errors edits(Str source, const types::Checked *c) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(c->nodes); i++) {
         const ast::Expr *e = c->nodes[i].node;
-        if (e == nullptr || e->kind != .call) continue;
+        if (e == nullptr || e->kind != .call || !in_this_file(source, c, i)) continue;
         core::Edits fix = fix_of(source, c, e);
         if (countof(fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
