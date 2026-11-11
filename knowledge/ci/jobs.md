@@ -6,7 +6,7 @@ tags: [ci, process]
 ---
 # CI jobs, scope and the split
 
-**A typical queue run (#2870)** is a change whose untested tests fit in one part (a parts PR). Its heavy jobs, at most 5 at once on Linux (the count runs nightly and by hand, not here: [count](count.md)):
+**A typical queue run (#2870)** is a change whose untested tests fit in one part (a parts PR). Its heavy jobs, at most 5 at once on Linux (the count runs after each code merge to main and by hand, in `count.yml`, not here: [count](count.md)):
 
 | job | runs | why it is its own job |
 |---|---|---|
