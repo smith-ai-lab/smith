@@ -457,10 +457,12 @@ static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *con
 }
 
 // The shims whose compile is mostly clang's and LLVM's headers (knowledge/precompiled-shim-headers.md): they are
-// compiled with the header shim/pch.h precompiled (build_shim_pch). The rest are small (`lsp` and `clangd` measured
-// slower with it: loading the header costs more than their includes).
+// compiled with the header shim/pch.h precompiled (build_shim_pch). `cimport`, `cimport_deps`, `lldb_dap` and
+// `lldb_explain` joined them in #3079 (6.7 to 2.1 s, 5.6 to 1.2, 3.7 to 1.0, 3.6 to 1.3). The rest gain nothing or
+// lose (`lsp` and `symbolize` measured slower with it: loading the header costs more than their includes).
 static bool build_shim_uses_pch(const char *name) {
-    const char *const names[] = {"hook", "tidy", "affine", "effects_infer"};
+    const char *const names[] = {"hook",    "tidy",         "affine",   "effects_infer",
+                                 "cimport", "cimport_deps", "lldb_dap", "lldb_explain"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (strcmp(name, names[i]) == 0) return true;
     }
@@ -562,6 +564,25 @@ typedef struct {
     const char *const *libraries;
 } BuildProver;
 
+// The prover's identity (#3076): what the caches of proofs key on beside the IR (prove::prover_identity). The hash is
+// of the LLVM pack (its clang's identity and the pack's name), then the name and SHA-256 of each source of the prover
+// (shim/prove*.cpp, shim/prove*.hpp, shim/proved.hpp and the platform headers prove.cpp includes;
+// tests/prove_identity_test.smith fails for a project header they include that is not in this list), then the name and
+// size of each archive of Alive2 and the solvers beside the install. A change to the compiler, the runtime or the
+// libraries leaves it, so a proof survives it; a change to the prover drops every proof. Empty when the script fails:
+// the key is then the version bumped by hand.
+static const char *build_prover_identity(SmithBuild *b, const BuildConfig *config) {
+    const char *script =
+        "set -e; pack=$1; prove=$2; name=$(cd \"$prove/..\" && basename \"$PWD\"); "
+        "files=$(ls shim/prove*.cpp shim/prove*.hpp shim/proved.hpp shim/platform*.h | sort -u); "
+        "case $files in *shim/prove.cpp*) ;; *) exit 1 ;; esac; "
+        "{ printf 'smith-prover-identity 1\\n%s\\n%s\\n' \"$pack\" \"$name\"; "
+        "shasum -a 256 $files; "
+        "for a in \"$prove\"/lib/*.a; do printf '%s %s\\n' \"${a##*/}\" \"$(wc -c < \"$a\" | tr -d ' ')\"; done; } | "
+        "shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b, (const char *[]){"sh", "-c", script, "sh", config->llvm_id, config->prove, nullptr}, "");
+}
+
 static void build_prover(SmithBuild *b, const BuildConfig *config, const char *folder, BuildProver *prover) {
     const char *const flags_head[] = {"-std=c++20",
                                       config->optimize,
@@ -583,13 +604,21 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
                              smith_fmt(b, "%s/include", config->prove), nullptr),
                   smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
                   config->platform->deployment, nullptr);
+    // prove.cpp alone is given the identity: it holds prove::prover_identity, and is compiled again when any source
+    // of the prover changed
+    const char *identity = build_prover_identity(b, config);
+    const char *const *identified =
+        smith_cat(b, flags,
+                  smith_when(b, identity[0] != '\0',
+                             (const char *[]){smith_fmt(b, "-DSMITH_PROVER_IDENTITY=\"%s\"", identity), nullptr}),
+                  nullptr);
     const char *const names[] = {"prove", "prove_ir", "prove_alive", "prove_bitwuzla"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         prover->objects[i] = (SmithObject){
             .compiler = config->cxx,
             .source = smith_fmt(b, "shim/%s.cpp", names[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, names[i]),
-            .flags = flags,
+            .flags = i == 0 ? identified : flags,
             .implicit_inputs = (const char *[]){"shim/prove.hpp", nullptr},
         };
         smith_object(b, &prover->objects[i]);
@@ -724,9 +753,26 @@ static const char *build_lint_identity(SmithBuild *b, const BuildConfig *config)
                             "");
 }
 
-// runtime/lint_identity.c, the identity above in a translation unit of its own, as the commit's (build_commit_object).
+// The fmt identity (#3081): what the cache of `smith fmt` (runtime/fmt_cache.c) keys on instead of the whole binary.
+// Inclusive, as a missing input would keep a file as formatted that the new formatter changes: the LLVM pack (its
+// clang-format and the .smith patch), smith's own formatter (front/), the runtime that picks it (smith.c, runtime/,
+// shim/format.cpp and the shim's headers) and smith's default style (templates/defaults), each file by its name and
+// SHA-256 in sorted order. Empty without an LLVM install, and the cache then keys on the binary.
+static const char *build_fmt_identity(SmithBuild *b, const BuildConfig *config) {
+    if (!config->linkable) return "";
+    const char *script = "set -e; pack=$1; "
+                         "files=$({ find front templates/defaults -type f; ls shim/format.cpp shim/*.h runtime/*.c "
+                         "runtime/*.h; echo smith.c; } | LC_ALL=C sort -u); "
+                         "{ printf 'smith-fmt-identity 1\\n%s\\n' \"$pack\"; shasum -a 256 $files; } | "
+                         "shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b, (const char *[]){"sh", "-c", script, "sh", config->llvm_id, nullptr}, "");
+}
+
+// runtime/lint_identity.c, the lint and fmt identities above in a translation unit of its own, as the commit's
+// (build_commit_object).
 static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *identity = build_lint_identity(b, config);
+    const char *fmt_identity = build_fmt_identity(b, config);
     SmithObject object = {
         .compiler = config->cc,
         .source = "runtime/lint_identity.c",
@@ -735,6 +781,8 @@ static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *
             smith_cat(b, config->cflags,
                       smith_when(b, identity[0] != '\0',
                                  (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
+                      smith_when(b, fmt_identity[0] != '\0',
+                                 (const char *[]){smith_fmt(b, "-DSMITH_FMT_IDENTITY=\"%s\"", fmt_identity), nullptr}),
                       nullptr),
     };
     smith_object(b, &object);
@@ -906,6 +954,7 @@ static const char *const build_runtime_sources[] = {
     "runtime/verbs.c",
     "runtime/world.c",
     "runtime/import_cache.c",
+    "runtime/fmt_cache.c",
     nullptr,
 };
 // The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON

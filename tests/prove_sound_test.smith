@@ -170,6 +170,12 @@ static void sound(const char *name) {
         scratch::copy_tree(&p, word(memory, prove_files, i), word(memory, prove_files, i));
         arguments = format::push(arguments, " ", word(memory, prove_files, i)).data;
     }
+    // Only the functions the harness lists are asked for (#3076): the files hold false claims too, which other tests
+    // refute (tests/prove_memory_test.smith), and a claim that fails is searched again on every run, never cached:
+    // 46 CPU s of readonly.c's 48 were two such functions whose result nothing here read.
+    for (Usize i = 0; word(memory, proves, i) != nullptr; i++) {
+        arguments = format::push(" --function=", word(memory, proves, i), arguments).data;
+    }
     scratch::Run proved = scratch::sh(
         &p, format::push("smith prove -v", arguments, " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1").data);
     for (Usize i = 0; word(memory, proves, i) != nullptr; i++) {
