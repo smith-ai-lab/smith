@@ -76,12 +76,15 @@ Verdict bitwuzla_check(const std::string &query, double seconds, double process_
     const std::string key = answer_key((std::string("bitwuzla ") + bitwuzla::version()).c_str(), query);
     std::string kept;
     if (read_store && answer_get(key, kept)) {
-        char word[8] = {};
-        double took = 0;
-        if (std::sscanf(kept.c_str(), "%7s %lf", word, &took) == 2 && (word[0] == 's' || word[0] == 'u')) {
-            if (took > seconds) return Verdict::Timeout;
-            cpu = took;
-            return word[0] == 'u' ? Verdict::Unsat : Verdict::Sat;
+        const bool unsat = kept.compare(0, 6, "unsat ") == 0;
+        if (unsat || kept.compare(0, 4, "sat ") == 0) {
+            char *end = nullptr;
+            const double took = std::strtod(kept.c_str() + (unsat ? 6 : 4), &end);
+            if (end != kept.c_str() + (unsat ? 6 : 4)) {
+                if (took > seconds) return Verdict::Timeout;
+                cpu = took;
+                return unsat ? Verdict::Unsat : Verdict::Sat;
+            }
         }
     }
     const double before = thread_cpu_seconds();
@@ -104,6 +107,7 @@ Verdict bitwuzla_check(const std::string &query, double seconds, double process_
     } catch (const std::exception &failure) {
         if (std::getenv("SMITH_PROVE_DUMP") != nullptr) std::fprintf(stderr, "bitwuzla: %s\n", failure.what());
     } catch (...) {
+        verdict = Verdict::Unknown;
     }
     if (verdict == Verdict::Unsat || verdict == Verdict::Sat) {
         char line[64];
