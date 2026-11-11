@@ -24,7 +24,8 @@ export void test_wait_a_child_that_never_ends_is_killed_after_the_grace() {
     U64 took = clock::monotonic() - began;
     test::check_equal(ended, false);
     test::check(c::WIFSIGNALED(status));
-    test::check_equal(c::WTERMSIG(status), c::SIGKILL);
+    I32 signal_number = c::WTERMSIG(status);
+    test::check_equal(signal_number, (I32)c::SIGKILL);
     test::check_less(took, 5 * clock::second);
 }
 
@@ -36,6 +37,7 @@ export void test_wait_a_child_that_ends_in_time_is_not_killed() {
     Bool ended = test::bounded_wait(child, "a child that ends", "std::test_wait_test", 30.0, &status);
     test::check_equal(ended, true);
     test::check(c::WIFEXITED(status));
-    test::check_equal(c::WEXITSTATUS(status), 7);
+    I32 code = c::WEXITSTATUS(status);
+    test::check_equal(code, 7);
 }
 // NOLINTEND(smith-effects)
