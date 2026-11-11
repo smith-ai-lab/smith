@@ -241,6 +241,7 @@ struct Run {
     Usize depth;  // the names and calls being read, one inside the other
     Usize scopes; // the scopes pushed for the parameters of the calls being read
     Bool stopped;
+    Bool typed_only; // never ask the checker to type an operand: read only the types it recorded
     Outcome out;
 };
 
@@ -342,7 +343,7 @@ static types::TypeRef operand_type(Run *run, const ast::Expr *x) {
     }
     types::TypeRef recorded = types::type_of(r, x);
     if (recorded != nullptr) return recorded;
-    if (r->options.expression == nullptr) return nullptr;
+    if (run->typed_only || r->options.expression == nullptr) return nullptr;
     Usize errors = r->error_count;
     types::TypeRef made = r->options.expression(r, x);
     r->error_count = errors;
@@ -1269,8 +1270,8 @@ static void take(Run *run, Step s) {
 }
 
 // The value of `e` at compile time, in the scopes `r` is in. See the top of the file for what is read.
-export Outcome value(types::Checked *r, const ast::Expr *e) {
-    Run run = {.r = r};
+static Outcome compute(types::Checked *r, const ast::Expr *e, Bool typed_only) {
+    Run run = {.r = r, .typed_only = typed_only};
     Str outside = r->prefix;
     if (e == nullptr) return (Outcome){.known = false, .value = boolean_value(false), .why = "there is no value here"};
     push_step(&run, (Step){.expr = e, .stmt = nullptr, .phase = 0, .prefix = outside, .type = nullptr});
@@ -1291,6 +1292,17 @@ export Outcome value(types::Checked *r, const ast::Expr *e) {
         types::pop_scope(&r->scopes);
     if (run.stopped) return run.out;
     return (Outcome){.known = true, .value = run.values[0], .failed = false, .at = e->span, .why = ""};
+}
+
+export Outcome value(types::Checked *r, const ast::Expr *e) {
+    return compute(r, e, false);
+}
+
+// As `value`, but the type of an operand of `sizeof`, `alignof` or `countof` is only the one the checker recorded: an
+// expression it has not typed yet leaves the value unknown. For a caller that types the expression itself afterwards
+// (an `if` condition, whose reads the checker's notes follow in order), and asks again.
+export Outcome typed(types::Checked *r, const ast::Expr *e) {
+    return compute(r, e, true);
 }
 
 // The type `e` is when it is one known at compile time (`typeof(xs[0])`, `u32`, `Pair(i32)`); null for a value,

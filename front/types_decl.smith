@@ -1613,7 +1613,16 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
 // it cannot compute is typed as any condition is, so an error of its own comes first; otherwise the reason it is not
 // known is the error.
 static void static_assertion(types::Checked *r, const ast::Expr *condition, Str message, ast::Span span) {
-    eval::Outcome found = eval::value(r, condition);
+    eval::Outcome found = eval::typed(r, condition);
+    Bool typed = false;
+    if (!found.known) {
+        // the checker types it, so that `sizeof(x.field)` has its type, and the evaluator is asked again
+        Usize before = r->error_count;
+        (void)types_expr::check(r, condition, r->table.bool_type);
+        if (r->error_count != before) return;
+        found = eval::typed(r, condition);
+        typed = true;
+    }
     if (found.known && found.value == .boolean) {
         if (found.value.boolean.value) return;
         if (countof(message) == 0) {
@@ -1624,7 +1633,7 @@ static void static_assertion(types::Checked *r, const ast::Expr *condition, Str 
         return;
     }
     Usize before = r->error_count;
-    (void)types_expr::check(r, condition, r->table.bool_type);
+    if (!typed) (void)types_expr::check(r, condition, r->table.bool_type);
     if (r->error_count != before) return;
     if (found.failed) {
         eval::report(r, found, condition, "this condition");
@@ -1644,7 +1653,19 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     // A condition known at compile time keeps one branch (#3039): the other is neither checked nor emitted, so it may
     // name what does not exist here. `front::eval` gives the value: facts of the target, questions about types,
     // constants, calls of concepts, and the operators that join them.
-    eval::Outcome found = eval::value(r, test);
+    // The checker's own reading of the test comes after the notes of its guards, so the evaluator is asked without
+    // typing anything first; an ordinary test it cannot answer yet is typed, and asked again (`sizeof(x) == 8`).
+    Bool always = is_constexpr || (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr);
+    eval::Outcome found = eval::typed(r, test);
+    Bool typed = false;
+    if (always && !found.known && !found.failed) {
+        found = eval::value(r, test);
+    } else if (!found.known && !found.failed) {
+        note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
+        (void)types_expr::check(r, test, r->table.bool_type);
+        found = eval::typed(r, test);
+        typed = true;
+    }
     if (found.known && found.value == .boolean) {
         Bool answer = found.value.boolean.value;
         types::set_decided(r, test, answer);
@@ -1652,17 +1673,20 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         if (live != nullptr) push(live, nullptr, enter);
         return;
     }
-    if (found.failed) { // the condition is computed, and computing it is an error (`1 / 0 == 0`)
+    if (found.failed && !typed) { // the condition is computed, and computing it is an error (`1 / 0 == 0`)
         eval::report(r, found, test, "this condition");
         return;
     }
+    if (found.failed) eval::report(r, found, test, "this condition");
     // A condition about the target is always decided at compile time; a local named `target` is not one (#2277).
-    if (is_constexpr || (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr)) {
+    if (always) {
         eval::report(r, found, test, is_constexpr ? "the condition of `if constexpr`" : "a condition on `target`");
         return;
     }
-    note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
-    (void)types_expr::check(r, test, r->table.bool_type);
+    if (!typed) {
+        note_guard(r, s);
+        (void)types_expr::check(r, test, r->table.bool_type);
+    }
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
