@@ -55,6 +55,6 @@ export void test_markdown_that_tests_read_stays_code() {
 
 export void test_a_push_of_only_documents_is_scope_none_and_a_code_push_is_a_release() {
     check("push", "EVENT=push case_ knowledge/a.md; EVENT=push case_ lib/a.c",
-          "knowledge/a.md: scope=none mac_run=true docs_tests=false\n"
+          "knowledge/a.md: scope=none mac_run=false docs_tests=false\n"
           "lib/a.c: scope=release mac_run=true docs_tests=false\n");
 }
