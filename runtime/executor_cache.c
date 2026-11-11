@@ -39,7 +39,12 @@ constexpr size_t smith_stepcache_words_max = 4096;
 constexpr size_t smith_stepcache_command_max = (size_t)1 << 16;
 constexpr size_t smith_stepcache_memo_max = (size_t)1 << 20;
 constexpr size_t smith_stepcache_ids_max = 8;
-constexpr int64_t smith_stepcache_fresh_ns = 2 * 1'000'000'000LL; // a file this new is hashed again each time
+// A file written twice inside one tick of its file system's clock can keep its size and time, so the hash of a file
+// this new is not remembered: 2 s where the times are whole seconds (FAT counts in twos), 100 ms where the file's own
+// time shows a finer clock (a kernel's tick is 10 ms at most). With 2 s for every file the smith a build had just
+// linked, 437 MB, was read again for each step that takes it (#3079).
+constexpr int64_t smith_stepcache_fresh_ns = 2 * 1'000'000'000LL;
+constexpr int64_t smith_stepcache_fresh_fine_ns = 100 * 1'000'000LL;
 constexpr int smith_stepcache_touch_seconds =
     60; // a hit touches an entry older than this: warm keeps what a build used (#2833)
 constexpr char smith_stepcache_root_token = '\x01';
@@ -416,7 +421,8 @@ static bool smith_stepcache_content(const char *path, const struct stat *info, c
         return true;
     }
     if (!smith_stepcache_hash_file(path, info, hex, time_macro)) return false;
-    bool fresh = now - mtime < smith_stepcache_fresh_ns;
+    bool fine = mtime % (int64_t)smith_exec_nanoseconds != 0;
+    bool fresh = now - mtime < (fine ? smith_stepcache_fresh_fine_ns : smith_stepcache_fresh_ns);
     if (fresh || (memo == nullptr && (cache->memo_count >= smith_stepcache_memo_max || slot >= cache->table_capacity)))
         return true;
     if (memo == nullptr) {
