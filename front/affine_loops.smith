@@ -9,8 +9,10 @@
 //   in a loop   A use inside a loop of a value declared outside it would be a use per turn: an error at the use, unless
 //               the loop assigns the value (`key = next[0]`), which makes it fresh each turn. Reading the loop once is
 //               enough: its body is straight-line code to front::affine.
-//   plain loop  `for i in range(countof(keys))`: the counter `i` is one element of `keys` per turn. `keys[i]` is the
-//               element's own place, used at most once per turn, and is not a use of a value from outside.
+//   plain loop  `for i in range(countof(keys))` (or `range(0, countof(keys))`): the counter `i` is one element of
+//               `keys` per turn. `keys[i]` is the element's own place, used at most once per turn, and is not a use of
+//               a value from outside. A constant bound (`range(3)`, `range(0, 3)`) is a plain loop over every array
+//               of that length, as the old rule's `i < 3` for a `Key keys[3]` is.
 //   element     `keys[0]` is a place of its own, for an array or a slice; `keys[j]` and `keys[i + 1]` are not (an error
 //               at the use). The loop's names are immutable in smith's syntax, so the old rule that the body must not
 //               change the counter has nothing left to check.
@@ -38,7 +40,8 @@ export struct Pending {
 
 export struct Frame {
     Str counter; // `for i in range(countof(array))`: the name of the counter, else empty
-    Str array;   // and the place of the array it counts over
+    Str array;   // and the place of the array it counts over, or empty
+    U64 bound;   // `for i in range(3)`: the constant bound, which counts over any array of that length; else 0
     Word declared[:];
     Usize declared_count;
     Word assigned[:];
@@ -103,8 +106,9 @@ static Bool has(Word list[:], Usize count, Str name) {
     return false;
 }
 
-// Starts reading a loop. `counter` and `array` say it is a plain loop over `array` (both empty when it is not).
-export void enter(Loops *l, Str counter, Str array) {
+// Starts reading a loop. `counter` and `array` say it is a plain loop over `array`, `counter` and `bound` over every
+// array of `bound` elements (the counter is empty when it is not a plain loop).
+export void enter(Loops *l, Str counter, Str array, U64 bound) {
     if (l->depth == countof(l->frames)) {
         Usize capacity = countof(l->frames) * 2;
         if (capacity < 4) {
@@ -115,6 +119,7 @@ export void enter(Loops *l, Str counter, Str array) {
     Frame f = {};
     f.counter = counter;
     f.array = array;
+    f.bound = bound;
     l->frames[l->depth] = f;
     l->depth += 1;
 }
@@ -181,11 +186,15 @@ export void used(Loops *l, Str path, ast::Span at) {
     f->pending_count += 1;
 }
 
-// Whether `name` is the counter of a loop being read that counts over the array at `array`.
-export Bool plain_counter(const Loops *l, Str name, Str array) {
+// Whether `name` is the counter of a loop being read that counts over the array at `array`, whose length is `count`
+// (0 for a slice).
+export Bool plain_counter(const Loops *l, Str name, Str array, U64 count) {
     for (Usize i = l->depth; i > 0; i--) {
         const Frame *f = &l->frames[i - 1];
-        if (countof(f->counter) > 0 && same(f->counter, name) && same(f->array, array)) {
+        if (countof(f->counter) == 0 || !same(f->counter, name)) {
+            continue;
+        }
+        if ((countof(f->array) > 0 && same(f->array, array)) || (f->bound > 0 && f->bound == count)) {
             return true;
         }
     }

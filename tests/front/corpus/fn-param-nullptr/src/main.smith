@@ -1,0 +1,17 @@
+# `nullptr` given to a `fn` parameter is no function: the zero of the parameter's type (#3036).
+import c <stdio.h>
+
+pub struct Hooks:
+    pub f: fn(i32) -> i32
+
+fn twice(x: i32) -> i32:
+    return x * 2
+
+fn keep(f: fn(i32) -> i32) -> Hooks:
+    return Hooks(f = f)
+
+fn main() -> i32:
+    _ := keep(nullptr)
+    g := keep(twice)
+    _ := stdio.printf("%d\n", g.f(4))
+    return 0

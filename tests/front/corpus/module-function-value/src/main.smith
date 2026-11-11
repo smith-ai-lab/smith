@@ -1,0 +1,13 @@
+# A function of another module used as a value (`ops.twice`), in a struct, an assignment and a declaration (#3036).
+import c <stdio.h>
+import ops
+
+pub struct Hooks:
+    pub f: fn(i32) -> i32
+
+fn main() -> i32:
+    mut h := Hooks(f = ops.twice)
+    h.f = ops.twice
+    g: fn(i32) -> i32 = ops.twice
+    _ := stdio.printf("%d %d\n", h.f(3), g(4))
+    return 0
