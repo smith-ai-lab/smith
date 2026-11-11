@@ -117,6 +117,8 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   module's pass is given `-include build/tests_list.h`, and run before the scan wrote that file it wrote another header
   and no depfile, so which of a fresh build's header steps were served (and every compile downstream of them) changed
   from build to build. A fresh test build of an unchanged tree went from 950 to 1093 of 1131 steps served.
+  The handlers object (`build/smith_handlers.o`, linked into every program) is compiled with a depfile for the same
+  reason: without one the cache never served it.
 - **The compiler's identity, when it is the smith that runs the build** (the test build: the smith under test compiles
   its own tests), is the digest of its file with the commit, the build-id and, in a Mach-O file, the code signature
   blanked (`runtime/self_digest.c`). The linker signs every arm64 binary and the signature hashes each page, those with
@@ -126,8 +128,8 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
 - **Why a step missed: `SMITH_STEP_CACHE_LOG=<file>`** (#3050). Every build that sees it, nested ones included, appends a
   line per step, after the name of its project's folder (the root shows as `@`): `hit <output>`, `miss <output>:
   <reason>`, `stored <output>` or `not stored <output>: <reason>`. A new key's miss names the first line where the key
-  differs from the last key stored for the same output (`steps/k/`, by folder name and output; pruned with the
-  manifests): `a new key: line 5 was [input c:13e8... runtime/executor_cache.c] now [input c:8ff3... ...]`, or the
+  differs from the nearest of the last 4 keys stored for the same output (`steps/k/`, by output path, so the root and a
+  nested project that write the same name with other flags both keep theirs; pruned with the manifests): `a new key: line 5 was [input c:13e8... runtime/executor_cache.c] now [input c:8ff3... ...]`, or the
   command's flag, the environment or the compiler. A known key whose variants all fail names the file: `the key is known
   but no variant holds: .smith/include/front/emit.h is c:8c84..., the variant read c:6340...`. A step not stored says
   why (it printed something, no depfile, a file it read changed after it began). Compare two runs' logs, or read one
