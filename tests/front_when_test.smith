@@ -171,3 +171,27 @@ export void test_when_a_file_scope_if_picks_its_branch_on_each_system() {
 export void test_when_a_file_scope_if_the_checker_cannot_read_is_reported() {
     says("if 1 + 2:\n    fn f() -> i32:\n        1\n", "not yet typed: if constexpr", "");
 }
+
+// Whether the parser marked `d` as a function with no `target` in its text.
+static Bool marked(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    return d->kind.function.no_target;
+}
+
+// The parser marks a function whose text has no `target`, so `when::decided` need not copy it to look for a
+// compile-time `if` (#3080); a function that says `target` anywhere is not marked and is still decided.
+export void test_when_a_function_without_target_is_marked_by_the_parser() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", "fn plain() -> i32:\n    if 1 < 2:\n        return 1\n    2\n\n"
+                                                    "fn chosen() -> i32:\n    if target.os == .macos:\n"
+                                                    "        return undeclared_function()\n    2\n");
+    test::check_equal(countof(p.module.decls), (Usize)2);
+    test::check_condition(marked(p.module.decls[0]));
+    test::check_condition(!marked(p.module.decls[1]));
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    Str none = "";
+    test::check_equal(errors_of(&r), none);
+}

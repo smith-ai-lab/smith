@@ -3,6 +3,8 @@
 // lowering of a release build and is an input of its compile; the debug build keeps every check (under a name that is
 // no failure point), and so does an edited source or a source nothing proved. The report of a compile is
 // `SMITH_PROVED_REPORT=1`.
+// Its smith children run prove, cc and build by the token lowering: nothing under front/ (#3076).
+// smith-covers: smith.c runtime/ shim/ include/ lib/ patches/ tests/prove/ tests/build_fixtures/
 module prove_checks_test;
 
 import std::arena;

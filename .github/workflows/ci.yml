@@ -348,15 +348,17 @@ jobs:
           flags="--skip-macos"
           macflags="--macos-only --shard 1/1"
           count=8
-          # A pull request runs the tests `smith test --changed` reaches, in one part (#2822, #2856: a PR check is at most
-          # 2 Linux jobs at once, this part and `check-fmt-prove`); the queue runs all of them in 8. A wide selection
-          # (smith's core, the test runner) is still wide: the queue is the gate.
+          # A pull request runs the tests `smith test --changed` reaches (#2822, #2856: a PR check is at most 2 Linux jobs
+          # at once, this part and `check-fmt-prove`), in one part; the queue runs all of them in 8. A wide selection
+          # (smith's core, the test runner, build.c: every test runs) needs about 30 minutes of one part, so three PR
+          # checks were cancelled at the 20 minute limit with the units runner still at work (#3127). So the matrix is
+          # planned in 8 parts and `build-linux` ("Size the test parts") cuts it to the one part a narrow selection needs.
           # The base is named: the PR check runs on the branch, whose upstream is the branch itself, so `--changed` with
           # no base compared HEAD with HEAD and ran 0 tests in every PR check from #2857 on (#3059). The merge-base of
           # the PR's base and the head is in the history this job fetched (fetch-depth 0); no base fails the step.
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             mb=$(git merge-base "$BASE" HEAD) || { echo "::error::no merge-base of the PR's base $BASE and HEAD"; exit 1; }
-            flags="--skip-macos --changed --base $mb"; count=1
+            flags="--skip-macos --changed --base $mb"
           fi
           linux=
           for i in $(seq 1 "$count"); do
@@ -838,23 +840,28 @@ jobs:
         shell: bash
         env:
           SMITH_OUTPUT: full
+          MATRIX: ${{ needs.changes.outputs.linux }}
         run: |
           count=8
-          # a PR check runs its tests in one part whatever they cost (#2856: at most 2 Linux jobs at once)
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            echo "count=1" >>"$GITHUB_OUTPUT"; echo "jobs=2" >>"$GITHUB_OUTPUT"
-            echo "test parts: 1 (a pull request's check)" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
-          fi
+          # a PR check runs the tests `--changed` reaches (the flags `changes` planned) in one part, at most 2 Linux jobs at
+          # once (#2856), unless they need more than 12 minutes of CPU: smith's core, the test runner or build.c reach
+          # every test, about 30 minutes in one part, which the 20 minute limit cuts off (#3127). Then it gets the
+          # queue's parts. Any failure of the sizing keeps the one part.
+          flags=--skip-macos
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then flags=$(printf '%s' "$MATRIX" | jq -r '.include[0].flags'); fi
           # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
-          "$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
+          "$SMITH" test $flags --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
           line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
           if [ -n "$line" ]; then
             secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
             count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$secs" -le 720 ]; then count=1; fi
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            count=1
           fi
           echo "count=$count" >>"$GITHUB_OUTPUT"
           # one part in a queue run is run by this job, which holds its runner already (#2870)
-          jobs=$(( count + 2 )); [ "$count" = 1 ] && [ "$GITHUB_EVENT_NAME" = merge_group ] && jobs=2
+          jobs=$(( count + 2 )); [ "$count" = 1 ] && jobs=2 # one part: this job's (queue) or `test-linux` beside `check-fmt-prove` (PR)
           echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
           echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Report the test-store hit rate (sizing)
@@ -1389,7 +1396,7 @@ jobs:
           rm -f ~/.cache/smith/steps/prune.timestamp
           saved=$(du -sm ~/.cache/smith/steps | cut -f1)
           echo "step cache saved: $saved MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
-          # one warm build leaves 650 to 670 MB (the Mac 669, Linux 650, 2026-11-11): a folder under 400 MB means a cap or
+          # one warm build leaves 670 MB on the Mac and about 1.4 GB on Linux (the release profile, #3052): a folder under 400 MB means a cap or
           # a prune emptied it, and every job after would miss all 329 steps (#3045)
           if [ "$saved" -lt 400 ]; then echo "::error::the step cache to save is $saved MB, under one warm build (650 MB): a cap emptied it"; exit 1; fi
       - name: Save the step cache
