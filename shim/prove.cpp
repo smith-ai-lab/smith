@@ -44,6 +44,10 @@ extern "C" int smith_lang_command(int argc, char **argv, int first, char **out, 
 extern "C" int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count,
                                      const char *triple);
 
+#ifndef SMITH_PROVER_IDENTITY
+#define SMITH_PROVER_IDENTITY ""
+#endif
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -381,10 +385,9 @@ std::string cache_path(const std::string &key) {
     if (directory.empty()) return "";
     llvm::SHA256 hash;
     hash.update(key);
-    // The prover's identity: LLVM's version, which decides the IR and Alive2's reading of it, and a version bumped by
-    // hand when a change here or in prove_ir.cpp can change a proof's outcome. The build time is not part of it, so a
-    // rebuild of smith with the same prover keeps every cached proof.
-    hash.update(std::string("smith-prove-cache-" SMITH_PROVER_VERSION " llvm-") + LLVM_VERSION_STRING);
+    // The build time is not part of the prover's identity, so a rebuild of smith with the same prover keeps every
+    // cached proof.
+    hash.update(prove::prover_identity());
     std::array<uint8_t, 32> digest = hash.final();
     static const char *const hex = "0123456789abcdef";
     std::string name;
@@ -1061,6 +1064,18 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 }
 
 } // namespace
+
+// SMITH_PROVER_IDENTITY, the macro, is the hash `smith build` made (build_prover_identity in build.c). The environment
+// variable of the same name replaces it, for the test that a proof follows the identity and not the binary
+// (tests/prove_misc_test.smith): it can only make a cached proof unreachable or name a cache of its own.
+std::string prove::prover_identity() {
+    const char *replaced = std::getenv("SMITH_PROVER_IDENTITY");
+    if (replaced != nullptr && *replaced != '\0') return std::string("smith-prove-cache-as ") + replaced;
+    if (SMITH_PROVER_IDENTITY[0] != '\0') return "smith-prove-cache-id " SMITH_PROVER_IDENTITY;
+    // No identity (a build without the hash): LLVM's version, which decides the IR and Alive2's reading of it, and the
+    // version bumped by hand when a change to the prover can change a proof's outcome.
+    return std::string("smith-prove-cache-" SMITH_PROVER_VERSION " llvm-") + LLVM_VERSION_STRING;
+}
 
 // Z3's static initializers, which `build_z3_defer` in build.c moved out of the section dyld runs at load (there are ten
 // thousand, and every smith process would pay for them) into __DATA,__smith_prove. `smith prove` is the one command

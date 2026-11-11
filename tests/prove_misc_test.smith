@@ -738,8 +738,8 @@ export void test_prove_coverage_smith_check_with_nothing_to_prove_says_0_of_n() 
     has("coverage: nothing to prove is a success that says 0 of N", &run, "smith check: prove ok (0 of 1 functions)");
 }
 
-// 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
-// rebuild of smith with the same prover keeps the proofs.
+// 17. The cache key is the prover's identity (prove::prover_identity, tests 18 and 19), never the build time: a rebuild
+// of smith with the same prover keeps the proofs.
 export void test_prove_cache_key_has_no_build_time_in_it() {
     scratch::Project p = fresh();
     defer scratch::clean(&p);
@@ -750,4 +750,56 @@ export void test_prove_cache_key_has_no_build_time_in_it() {
     scratch::copy_tree(&p, "shim/prove.cpp", "prove.cpp");
     scratch::expect_text("cache key: no build time in it", "0",
                          scratch::capture(&p, "grep -c '__DAT[E]__\\|__TIM[E]__' prove.cpp"));
+}
+
+// 18. A proof follows the prover's identity, not the binary (#3076): the same identity finds the proof whatever else
+// of smith was rebuilt, another identity (a change to the prover, the LLVM pack or a solver) proves again, and the
+// first one's proofs are still there on a return to it. SMITH_PROVER_IDENTITY stands in for a smith built from another
+// prover.
+export void test_prove_cache_follows_the_provers_identity() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    scratch::own_cache(&p); // before the arena: clean frees the path
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *as_built = "c=cases; smith prove -v \"$c/clamp.c\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1";
+    const char *as_other = "c=cases; SMITH_PROVER_IDENTITY=another-prover smith prove -v \"$c/clamp.c\" -- -I "
+                           "\"$SMITH_REPO/.smith/include\" 2>&1";
+    scratch::Run first = scratch::sh(&p, as_built);
+    scratch::expect_status("identity: the first run proves", 0, &first);
+    lacks("identity: ... from nothing", &first, "cached");
+    scratch::Run same = scratch::sh(&p, as_built);
+    has("identity: the same prover finds its proofs", &same, "2 proved, 0 failed, 2 cached");
+    scratch::Run other = scratch::sh(&p, as_other);
+    scratch::expect_status("identity: another prover proves", 0, &other);
+    lacks("identity: ... again, not from the first one's proofs", &other, "cached");
+    scratch::Run other_again = scratch::sh(&p, as_other);
+    has("identity: ... and then finds its own", &other_again, "2 proved, 0 failed, 2 cached");
+    scratch::Run back = scratch::sh(&p, as_built);
+    has("identity: a return to the first prover finds its proofs", &back, "2 proved, 0 failed, 2 cached");
+}
+
+// 19. The identity `smith build` makes (build_prover_identity in build.c) hashes every file of smith the prover is
+// compiled from: a file of shim/ that a source of the prover includes is one the list in build.c names. (Headers with a
+// folder in their name are LLVM's, Alive2's and the solvers', which the pack's part of the identity covers.)
+export void test_prove_identity_names_every_file_the_prover_includes() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "shim", "shim");
+    scratch::copy_tree(&p, "build.c", "build.c.txt");
+    scratch::expect_text("identity: build.c hashes these files", "1",
+                         scratch::capture(&p, "grep -c 'ls shim/prove\\*.cpp shim/prove\\*.hpp shim/proved.hpp "
+                                              "shim/platform\\*.h' build.c.txt"));
+    scratch::expect_text(
+        "identity: every file of shim/ they include is one of them", "missing:",
+        scratch::capture(&p, "cd shim && missing= && for n in $(cat prove*.cpp prove*.hpp proved.hpp platform*.h | "
+                             "sed -n 's/^ *# *include \"\\([^\"]*\\)\".*/\\1/p' | sort -u); do [ -e \"$n\" ] || "
+                             "continue; case $n in prove*.cpp|prove*.hpp|proved.hpp|platform*.h) ;; *) "
+                             "missing=\"$missing $n\" ;; esac; done; echo \"missing:$missing\""));
 }

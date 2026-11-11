@@ -1,0 +1,620 @@
+// front::emit_aggregate: big aggregates live in memory (#3058). The emitter makes a struct or an array value a
+// first-class LLVM value: `load %Big`, `store %Big`, `ret %Big`, `call @f(%Big)`. LLVM's code generator splits each of
+// those into one load or store per element, and clusters the loads in a time worse than linear in their number: a
+// struct with a `[16384]char` field returned by value took 29 s to compile, and lib/std/console_test.smith more than
+// 30 minutes. Clang never makes these: it copies with `llvm.memcpy`. This pass, run once on the finished module
+// (front::emit, before the module is verified), applies one rule:
+//
+//   An aggregate of more than `big_bytes` bytes is never a first-class value. It lives in memory (its "home": a slot
+//   of the function's entry block, a private constant, or the pointer a parameter gives), and every copy of it is a
+//   `memcpy`.
+//
+//   f(x: Big) -> Big          becomes   void f(ptr sret(Big) result, ptr x)
+//   y = load Big, p           becomes   memcpy(home(y), p)
+//   store y, q                becomes   memcpy(q, home(y))
+//   ret y                     becomes   memcpy(result, home(y)); ret void
+//   y.field (small)           becomes   load (gep home(y), field)
+//
+// The result through a hidden `sret` pointer and a parameter through memory are what every C ABI smith targets does
+// for a struct this size (x86-64 System V passes it `byval`; AArch64 and Windows pass a pointer to a copy the caller
+// made), so a C function that takes or returns one, and a `pub` function C calls, keep the C ABI; smith-to-smith calls
+// follow the same rule. 64 bytes is above every aggregate a C ABI passes in registers (an AArch64 vector HFA is at
+// most 4 x 16 bytes), so nothing smaller changes. A small aggregate keeps the emitter's first-class value.
+//
+//   lower   Rewrites every function, call and instruction of `module` that has a big aggregate.
+module front::emit_aggregate;
+
+import std::arena;
+import std::mem;
+import <llvm-c/Comdat.h>;
+import <llvm-c/Core.h>;
+import <llvm-c/Target.h>;
+
+export constexpr U64 big_bytes = 64;
+
+// One instruction or function, in a slice (a slice of `c::LLVMValueRef` itself is not accepted).
+struct Item {
+    c::LLVMValueRef value;
+};
+
+typedef typeof(Item[:]) Values;
+
+// A big value and where it lives.
+struct Home {
+    c::LLVMValueRef value;
+    c::LLVMValueRef home;
+};
+
+// A function whose signature changed: the old declaration (deleted at the end), the new one and its result pointer.
+struct Moved {
+    c::LLVMValueRef old;
+    c::LLVMValueRef made;
+    c::LLVMValueRef result; // the `sret` parameter, or null
+};
+
+struct Lowering {
+    c::LLVMModuleRef module;
+    c::LLVMContextRef context;
+    c::LLVMTargetDataRef layout;
+    c::LLVMBuilderRef b;
+    Bool byval; // x86-64 System V: a big parameter is `byval`; elsewhere a pointer to the caller's copy
+    Home homes[:];
+    Usize home_count;
+    Moved moved[:];
+    Usize moved_count;
+    Item doomed[:]; // instructions replaced, erased once the function is done
+    Usize doomed_count;
+    c::LLVMValueRef function; // the function being lowered
+    c::LLVMValueRef result;   // its `sret` parameter, or null
+};
+
+static Bool is_big(Lowering *l, c::LLVMTypeRef type) {
+    c::LLVMTypeKind kind = c::LLVMGetTypeKind(type);
+    if (kind == c::LLVMStructTypeKind) {
+        if (c::LLVMIsOpaqueStruct(type) != 0) return false;
+    } else if (kind != c::LLVMArrayTypeKind) {
+        return false;
+    }
+    return c::LLVMABISizeOfType(l->layout, type) > big_bytes;
+}
+
+static U32 kind_of(Str name) {
+    return c::LLVMGetEnumAttributeKindForName(name.data, countof(name));
+}
+
+static c::LLVMTypeRef ptr_type(Lowering *l) {
+    return c::LLVMPointerTypeInContext(l->context, 0);
+}
+
+// The function type with every big aggregate moved to memory, or null when `type` has none.
+static c::LLVMTypeRef lowered_type(Lowering *l, c::LLVMTypeRef type) {
+    U32 count = c::LLVMCountParamTypes(type);
+    if (count > 255) return nullptr;
+    c::LLVMTypeRef params[256];
+    c::LLVMGetParamTypes(type, params);
+    c::LLVMTypeRef result = c::LLVMGetReturnType(type);
+    Bool big_result = is_big(l, result);
+    Bool touched = big_result;
+    c::LLVMTypeRef made[257];
+    U32 at = 0;
+    if (big_result) {
+        made[at] = ptr_type(l);
+        at += 1;
+    }
+    for (U32 i = 0; i < count; i++) {
+        Bool big = is_big(l, params[i]);
+        touched = touched || big;
+        made[at] = big ? ptr_type(l) : params[i];
+        at += 1;
+    }
+    if (!touched) return nullptr;
+    c::LLVMTypeRef none = c::LLVMVoidTypeInContext(l->context);
+    return c::LLVMFunctionType(big_result ? none : result, made, at, c::LLVMIsFunctionVarArg(type));
+}
+
+static void remember(Lowering *l, c::LLVMValueRef value, c::LLVMValueRef home) {
+    if (l->home_count == countof(l->homes)) {
+        l->homes = mem::realloc(l->homes, countof(l->homes) * 2 + 16);
+    }
+    l->homes[l->home_count] = (Home){.value = value, .home = home};
+    l->home_count += 1;
+}
+
+static void doom(Lowering *l, c::LLVMValueRef instruction) {
+    if (l->doomed_count == countof(l->doomed)) {
+        l->doomed = mem::realloc(l->doomed, countof(l->doomed) * 2 + 16);
+    }
+    l->doomed[l->doomed_count] = (Item){.value = instruction};
+    l->doomed_count += 1;
+}
+
+// A slot of `type` at the start of the entry block of the function being lowered.
+static c::LLVMValueRef entry_slot(Lowering *l, c::LLVMTypeRef type) {
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(l->context);
+    c::LLVMBasicBlockRef entry = c::LLVMGetEntryBasicBlock(l->function);
+    c::LLVMValueRef first = c::LLVMGetFirstInstruction(entry);
+    if (first != nullptr) {
+        c::LLVMPositionBuilderBefore(b, first);
+    } else {
+        c::LLVMPositionBuilderAtEnd(b, entry);
+    }
+    c::LLVMValueRef slot = c::LLVMBuildAlloca(b, type, "agg");
+    c::LLVMSetAlignment(slot, c::LLVMABIAlignmentOfType(l->layout, type));
+    c::LLVMDisposeBuilder(b);
+    return slot;
+}
+
+// A private constant holding `value`.
+static c::LLVMValueRef constant_home(Lowering *l, c::LLVMValueRef value) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(value);
+    c::LLVMValueRef global = c::LLVMAddGlobal(l->module, type, "agg.constant");
+    c::LLVMSetInitializer(global, value);
+    c::LLVMSetGlobalConstant(global, 1);
+    c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
+    c::LLVMSetUnnamedAddress(global, c::LLVMGlobalUnnamedAddr);
+    c::LLVMSetAlignment(global, c::LLVMABIAlignmentOfType(l->layout, type));
+    return global;
+}
+
+// Where the big value `value` lives: found, or made (a slot that the instruction defining it fills, a constant, or a
+// fresh slot for undef and poison, which are not remembered since one is shared by every function).
+static c::LLVMValueRef home_of(Lowering *l, c::LLVMValueRef value) {
+    for (Usize i = 0; i < l->home_count; i++) {
+        if (l->homes[i].value == value) return l->homes[i].home;
+    }
+    if (c::LLVMIsUndef(value) != 0 || c::LLVMIsPoison(value) != 0) return entry_slot(l, c::LLVMTypeOf(value));
+    c::LLVMValueRef home = nullptr;
+    if (c::LLVMIsAConstant(value) != nullptr) {
+        home = constant_home(l, value);
+    } else {
+        home = entry_slot(l, c::LLVMTypeOf(value));
+    }
+    remember(l, value, home);
+    return home;
+}
+
+static U32 align_of(Lowering *l, c::LLVMTypeRef type) {
+    return c::LLVMABIAlignmentOfType(l->layout, type);
+}
+
+// memcpy(to, from, sizeof(type)) at the builder's place.
+static void copy(Lowering *l, c::LLVMValueRef to, U32 to_align, c::LLVMValueRef from, U32 from_align,
+                 c::LLVMTypeRef type) {
+    c::LLVMTypeRef word = c::LLVMInt64TypeInContext(l->context);
+    c::LLVMValueRef size = c::LLVMConstInt(word, c::LLVMABISizeOfType(l->layout, type), 0);
+    c::LLVMBuildMemCpy(l->b, to, to_align == 0 ? 1 : to_align, from, from_align == 0 ? 1 : from_align, size);
+}
+
+// Whether a struct on the path of `indices` into `type` is packed: its fields are then at alignment 1.
+static Bool packed_on_path(c::LLVMTypeRef type, const U32 *indices, U32 count) {
+    c::LLVMTypeRef at = type;
+    for (U32 i = 0; i < count; i++) {
+        if (c::LLVMGetTypeKind(at) == c::LLVMStructTypeKind) {
+            if (c::LLVMIsPackedStruct(at) != 0) return true;
+            at = c::LLVMStructGetTypeAtIndex(at, indices[i]);
+        } else {
+            at = c::LLVMGetElementType(at);
+        }
+    }
+    return false;
+}
+
+// The address of the part `indices` (an extractvalue's or insertvalue's) of the aggregate of `type` at `base`.
+static c::LLVMValueRef part_address(Lowering *l, c::LLVMTypeRef type, c::LLVMValueRef base, const U32 *indices,
+                                    U32 count) {
+    c::LLVMTypeRef i32 = c::LLVMInt32TypeInContext(l->context);
+    c::LLVMValueRef steps[65];
+    steps[0] = c::LLVMConstInt(i32, 0, 0);
+    for (U32 i = 0; i < count && i < 64; i++)
+        steps[i + 1] = c::LLVMConstInt(i32, indices[i], 0);
+    return c::LLVMBuildInBoundsGEP2(l->b, type, base, steps, count + 1, "part");
+}
+
+// The type of the part `indices` of `type`.
+static c::LLVMTypeRef part_type(c::LLVMTypeRef type, const U32 *indices, U32 count) {
+    c::LLVMTypeRef at = type;
+    for (U32 i = 0; i < count; i++) {
+        if (c::LLVMGetTypeKind(at) == c::LLVMStructTypeKind) {
+            at = c::LLVMStructGetTypeAtIndex(at, indices[i]);
+        } else {
+            at = c::LLVMGetElementType(at);
+        }
+    }
+    return at;
+}
+
+// Stores `value` (small or big) at `address`, whose alignment is `align`.
+static void put(Lowering *l, c::LLVMValueRef value, c::LLVMValueRef address, U32 align) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(value);
+    if (is_big(l, type)) {
+        copy(l, address, align, home_of(l, value), align_of(l, type), type);
+        return;
+    }
+    c::LLVMValueRef stored = c::LLVMBuildStore(l->b, value, address);
+    if (align != 0) c::LLVMSetAlignment(stored, align);
+}
+
+static void copy_attributes(c::LLVMValueRef from, U32 from_index, c::LLVMValueRef to, U32 to_index, Bool call) {
+    U32 count =
+        call ? c::LLVMGetCallSiteAttributeCount(from, from_index) : c::LLVMGetAttributeCountAtIndex(from, from_index);
+    if (count == 0) return;
+    c::LLVMAttributeRef list[64];
+    if (count > 64) count = 64;
+    if (call) {
+        c::LLVMGetCallSiteAttributes(from, from_index, list);
+    } else {
+        c::LLVMGetAttributesAtIndex(from, from_index, list);
+    }
+    for (U32 k = 0; k < count; k++) {
+        if (call) {
+            c::LLVMAddCallSiteAttribute(to, to_index, list[k]);
+        } else {
+            c::LLVMAddAttributeAtIndex(to, to_index, list[k]);
+        }
+    }
+}
+
+// The attributes of a big parameter at `index` (1-based) of a function or a call, and of the result pointer.
+static c::LLVMAttributeRef type_attribute(Lowering *l, Str name, c::LLVMTypeRef type) {
+    return c::LLVMCreateTypeAttribute(l->context, kind_of(name), type);
+}
+
+static void mark_memory(Lowering *l, c::LLVMValueRef to, U32 index, c::LLVMTypeRef type, Bool result, Bool call) {
+    c::LLVMAttributeRef list[3];
+    U32 count = 0;
+    if (result) {
+        list[count] = type_attribute(l, "sret", type);
+        count += 1;
+        list[count] = c::LLVMCreateEnumAttribute(l->context, kind_of("noalias"), 0);
+        count += 1;
+    } else if (l->byval) {
+        list[count] = type_attribute(l, "byval", type);
+        count += 1;
+    }
+    if (count > 0) {
+        list[count] = c::LLVMCreateEnumAttribute(l->context, kind_of("align"), align_of(l, type));
+        count += 1;
+    }
+    for (U32 k = 0; k < count; k++) {
+        if (call) {
+            c::LLVMAddCallSiteAttribute(to, index, list[k]);
+        } else {
+            c::LLVMAddAttributeAtIndex(to, index, list[k]);
+        }
+    }
+}
+
+static void copy_globals(c::LLVMValueRef old, c::LLVMValueRef made) {
+    c::LLVMSetLinkage(made, c::LLVMGetLinkage(old));
+    c::LLVMSetVisibility(made, c::LLVMGetVisibility(old));
+    c::LLVMSetDLLStorageClass(made, c::LLVMGetDLLStorageClass(old));
+    c::LLVMSetUnnamedAddress(made, c::LLVMGetUnnamedAddress(old));
+    c::LLVMSetFunctionCallConv(made, c::LLVMGetFunctionCallConv(old));
+    const char *section = c::LLVMGetSection(old);
+    if (section != nullptr && section[0] != 0) c::LLVMSetSection(made, section);
+    if (c::LLVMGetAlignment(old) != 0) c::LLVMSetAlignment(made, c::LLVMGetAlignment(old));
+    if (c::LLVMGetComdat(old) != nullptr) c::LLVMSetComdat(made, c::LLVMGetComdat(old));
+    const char *gc = c::LLVMGetGC(old);
+    if (gc != nullptr) c::LLVMSetGC(made, gc);
+    if (c::LLVMHasPersonalityFn(old) != 0) c::LLVMSetPersonalityFn(made, c::LLVMGetPersonalityFn(old));
+    Usize entries = 0;
+    c::LLVMValueMetadataEntry *metadata = c::LLVMGlobalCopyAllMetadata(old, &entries);
+    for (U32 i = 0; i < (U32)entries; i++) {
+        c::LLVMGlobalSetMetadata(made, c::LLVMValueMetadataEntriesGetKind(metadata, i),
+                                 c::LLVMValueMetadataEntriesGetMetadata(metadata, i));
+    }
+    if (metadata != nullptr) c::LLVMDisposeValueMetadataEntries(metadata);
+    c::LLVMGlobalClearMetadata(old);
+}
+
+// The parameters of `made`, the new form of `old`: a small one takes the old one's uses and attributes, a big one is
+// the home of the old one.
+static void move_params(Lowering *l, c::LLVMValueRef old, c::LLVMValueRef made, U32 shift) {
+    U32 count = c::LLVMCountParams(old);
+    for (U32 i = 0; i < count; i++) {
+        c::LLVMValueRef from = c::LLVMGetParam(old, i);
+        c::LLVMValueRef to = c::LLVMGetParam(made, i + shift);
+        Usize length = 0;
+        const char *name = c::LLVMGetValueName2(from, &length);
+        c::LLVMSetValueName2(to, name, length);
+        c::LLVMTypeRef type = c::LLVMTypeOf(from);
+        if (is_big(l, type)) {
+            mark_memory(l, made, i + shift + 1, type, false, false);
+            remember(l, from, to);
+        } else {
+            copy_attributes(old, i + 1, made, i + shift + 1, false);
+            c::LLVMReplaceAllUsesWith(from, to);
+        }
+    }
+}
+
+// Gives `old`, a function whose type has a big aggregate, its new type: a new function of the same name and
+// properties, which takes the body and every use of the old one.
+static void rewrite_function(Lowering *l, c::LLVMValueRef old) {
+    c::LLVMTypeRef old_type = c::LLVMGlobalGetValueType(old);
+    c::LLVMTypeRef new_type = lowered_type(l, old_type);
+    if (new_type == nullptr) return;
+    Usize length = 0;
+    const char *name = c::LLVMGetValueName2(old, &length);
+    U8 label[:] = mem::alloc_slice(U8, length + 1); // a copy: renaming `old` frees `name`
+    const U8 *bytes = (const U8 *)name;
+    mem::copy(label[0:length], bytes[0:length]);
+    c::LLVMSetValueName2(old, "", 0);
+    c::LLVMValueRef made = c::LLVMAddFunction(l->module, (const char *)label.data, new_type);
+    mem::free(label.data);
+    copy_globals(old, made);
+    c::LLVMTypeRef result = c::LLVMGetReturnType(old_type);
+    Bool big_result = is_big(l, result);
+    U32 shift = big_result ? 1 : 0;
+    copy_attributes(old, 0xFFFFFFFFu, made, 0xFFFFFFFFu, false);
+    c::LLVMValueRef pointer = nullptr;
+    if (big_result) {
+        pointer = c::LLVMGetParam(made, 0);
+        c::LLVMSetValueName2(pointer, "result", 6);
+        mark_memory(l, made, 1, result, true, false);
+    } else {
+        copy_attributes(old, 0, made, 0, false);
+    }
+    move_params(l, old, made, shift);
+    for (c::LLVMBasicBlockRef block = c::LLVMGetFirstBasicBlock(old); block != nullptr;
+         block = c::LLVMGetFirstBasicBlock(old)) {
+        c::LLVMRemoveBasicBlockFromParent(block);
+        c::LLVMAppendExistingBasicBlock(made, block);
+    }
+    c::LLVMReplaceAllUsesWith(old, made);
+    if (l->moved_count == countof(l->moved)) {
+        l->moved = mem::realloc(l->moved, countof(l->moved) * 2 + 16);
+    }
+    l->moved[l->moved_count] = (Moved){.old = old, .made = made, .result = pointer};
+    l->moved_count += 1;
+}
+
+// The argument of a big aggregate at a call: its home under `byval` (the call copies it), else a copy of its own.
+static c::LLVMValueRef memory_argument(Lowering *l, c::LLVMValueRef value) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(value);
+    c::LLVMValueRef home = home_of(l, value);
+    if (l->byval) return home;
+    c::LLVMValueRef copied = entry_slot(l, type);
+    copy(l, copied, align_of(l, type), home, align_of(l, type), type);
+    return copied;
+}
+
+// Replaces `call`, whose function type has a big aggregate, by a call of the lowered type.
+static void rewrite_call(Lowering *l, c::LLVMValueRef call) {
+    c::LLVMTypeRef old_type = c::LLVMGetCalledFunctionType(call);
+    c::LLVMTypeRef new_type = lowered_type(l, old_type);
+    U32 count = c::LLVMGetNumArgOperands(call);
+    if (new_type == nullptr || count > 255) return;
+    c::LLVMTypeRef result = c::LLVMGetReturnType(old_type);
+    Bool big_result = is_big(l, result);
+    U32 shift = big_result ? 1 : 0;
+    c::LLVMPositionBuilderBefore(l->b, call);
+    c::LLVMValueRef args[257];
+    if (big_result) args[0] = home_of(l, call);
+    Bool big_argument = false;
+    for (U32 i = 0; i < count; i++) {
+        c::LLVMValueRef value = c::LLVMGetArgOperand(call, i);
+        Bool big = is_big(l, c::LLVMTypeOf(value));
+        big_argument = big_argument || big;
+        args[i + shift] = big ? memory_argument(l, value) : value;
+    }
+    Bool none = big_result || c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind;
+    c::LLVMValueRef made =
+        c::LLVMBuildCall2(l->b, new_type, c::LLVMGetCalledValue(call), args, count + shift, none ? "" : "call");
+    c::LLVMSetInstructionCallConv(made, c::LLVMGetInstructionCallConv(call));
+    copy_attributes(call, 0xFFFFFFFFu, made, 0xFFFFFFFFu, true);
+    if (big_result) {
+        mark_memory(l, made, 1, result, true, true);
+    } else {
+        copy_attributes(call, 0, made, 0, true);
+    }
+    for (U32 i = 0; i < count; i++) {
+        c::LLVMTypeRef type = c::LLVMTypeOf(c::LLVMGetArgOperand(call, i));
+        if (is_big(l, type)) {
+            mark_memory(l, made, i + shift + 1, type, false, true);
+        } else {
+            copy_attributes(call, i + 1, made, i + shift + 1, true);
+        }
+    }
+    // A guaranteed tail call cannot pass a pointer into the caller's frame; the call stays an ordinary one.
+    c::LLVMTailCallKind tail = c::LLVMGetTailCallKind(call);
+    if (big_argument && tail == c::LLVMTailCallKindMustTail) tail = c::LLVMTailCallKindNone;
+    c::LLVMSetTailCallKind(made, tail);
+    if (!none) c::LLVMReplaceAllUsesWith(call, made);
+    doom(l, call);
+}
+
+// Fills the home of `phi`, a big value, at the end of each block it comes from.
+static void fill_phi(Lowering *l, c::LLVMValueRef phi, c::LLVMValueRef home) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(phi);
+    U32 count = c::LLVMCountIncoming(phi);
+    for (U32 i = 0; i < count; i++) {
+        c::LLVMBasicBlockRef from = c::LLVMGetIncomingBlock(phi, i);
+        c::LLVMPositionBuilderBefore(l->b, c::LLVMGetBasicBlockTerminator(from));
+        copy(l, home, align_of(l, type), home_of(l, c::LLVMGetIncomingValue(phi, i)), align_of(l, type), type);
+    }
+}
+
+// Fills the home of `instruction`, which makes a big value, in its place, and dooms the instruction. An instruction
+// this pass does not know keeps its first-class value, stored to its home after it.
+static void fill_home(Lowering *l, c::LLVMValueRef instruction) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(instruction);
+    c::LLVMValueRef home = home_of(l, instruction);
+    U32 align = align_of(l, type);
+    c::LLVMOpcode opcode = c::LLVMGetInstructionOpcode(instruction);
+    c::LLVMPositionBuilderBefore(l->b, instruction);
+    if (opcode == c::LLVMLoad) {
+        copy(l, home, align, c::LLVMGetOperand(instruction, 0), c::LLVMGetAlignment(instruction), type);
+    } else if (opcode == c::LLVMInsertValue) {
+        c::LLVMValueRef whole = c::LLVMGetOperand(instruction, 0);
+        if (c::LLVMIsUndef(whole) == 0 && c::LLVMIsPoison(whole) == 0)
+            copy(l, home, align, home_of(l, whole), align, type);
+        const U32 *indices = c::LLVMGetIndices(instruction);
+        U32 count = c::LLVMGetNumIndices(instruction);
+        c::LLVMValueRef at = part_address(l, type, home, indices, count);
+        put(l, c::LLVMGetOperand(instruction, 1), at, packed_on_path(type, indices, count) ? 1 : 0);
+    } else if (opcode == c::LLVMExtractValue) {
+        c::LLVMValueRef whole = c::LLVMGetOperand(instruction, 0);
+        const U32 *indices = c::LLVMGetIndices(instruction);
+        U32 count = c::LLVMGetNumIndices(instruction);
+        c::LLVMTypeRef outer = c::LLVMTypeOf(whole);
+        c::LLVMValueRef at = part_address(l, outer, home_of(l, whole), indices, count);
+        copy(l, home, align, at, packed_on_path(outer, indices, count) ? 1 : align, type);
+    } else if (opcode == c::LLVMPHI) {
+        fill_phi(l, instruction, home);
+    } else if (opcode == c::LLVMSelect) {
+        c::LLVMValueRef chosen =
+            c::LLVMBuildSelect(l->b, c::LLVMGetOperand(instruction, 0), home_of(l, c::LLVMGetOperand(instruction, 1)),
+                               home_of(l, c::LLVMGetOperand(instruction, 2)), "chosen");
+        copy(l, home, align, chosen, align, type);
+    } else if (opcode == c::LLVMFreeze) {
+        copy(l, home, align, home_of(l, c::LLVMGetOperand(instruction, 0)), align, type);
+    } else {
+        c::LLVMValueRef next = c::LLVMGetNextInstruction(instruction);
+        c::LLVMPositionBuilderBefore(l->b, next);
+        c::LLVMBuildStore(l->b, instruction, home);
+        return;
+    }
+    doom(l, instruction);
+}
+
+// A small part read out of a big value: a load from its home.
+static void lower_extract(Lowering *l, c::LLVMValueRef instruction) {
+    c::LLVMValueRef whole = c::LLVMGetOperand(instruction, 0);
+    c::LLVMTypeRef outer = c::LLVMTypeOf(whole);
+    const U32 *indices = c::LLVMGetIndices(instruction);
+    U32 count = c::LLVMGetNumIndices(instruction);
+    c::LLVMPositionBuilderBefore(l->b, instruction);
+    c::LLVMValueRef at = part_address(l, outer, home_of(l, whole), indices, count);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(l->b, part_type(outer, indices, count), at, "part");
+    if (packed_on_path(outer, indices, count)) c::LLVMSetAlignment(loaded, 1);
+    c::LLVMReplaceAllUsesWith(instruction, loaded);
+    doom(l, instruction);
+}
+
+static void lower_instruction(Lowering *l, c::LLVMValueRef instruction) {
+    c::LLVMOpcode opcode = c::LLVMGetInstructionOpcode(instruction);
+    if (opcode == c::LLVMCall) {
+        if (lowered_type(l, c::LLVMGetCalledFunctionType(instruction)) != nullptr) rewrite_call(l, instruction);
+        return;
+    }
+    if (is_big(l, c::LLVMTypeOf(instruction))) {
+        fill_home(l, instruction);
+        return;
+    }
+    if (opcode == c::LLVMStore && is_big(l, c::LLVMTypeOf(c::LLVMGetOperand(instruction, 0)))) {
+        c::LLVMValueRef value = c::LLVMGetOperand(instruction, 0);
+        c::LLVMTypeRef type = c::LLVMTypeOf(value);
+        c::LLVMPositionBuilderBefore(l->b, instruction);
+        copy(l, c::LLVMGetOperand(instruction, 1), c::LLVMGetAlignment(instruction), home_of(l, value),
+             align_of(l, type), type);
+        doom(l, instruction);
+    } else if (opcode == c::LLVMExtractValue && is_big(l, c::LLVMTypeOf(c::LLVMGetOperand(instruction, 0)))) {
+        lower_extract(l, instruction);
+    } else if (opcode == c::LLVMRet && c::LLVMGetNumOperands(instruction) == 1 && l->result != nullptr) {
+        c::LLVMValueRef value = c::LLVMGetOperand(instruction, 0);
+        c::LLVMTypeRef type = c::LLVMTypeOf(value);
+        c::LLVMPositionBuilderBefore(l->b, instruction);
+        copy(l, l->result, align_of(l, type), home_of(l, value), align_of(l, type), type);
+        c::LLVMBuildRetVoid(l->b);
+        doom(l, instruction);
+    }
+}
+
+// The instructions of `function`, in order, before any is changed.
+static Values instructions_of(c::LLVMValueRef function) {
+    Usize count = 0;
+    for (c::LLVMBasicBlockRef block = c::LLVMGetFirstBasicBlock(function); block != nullptr;
+         block = c::LLVMGetNextBasicBlock(block)) {
+        for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(block); i != nullptr; i = c::LLVMGetNextInstruction(i))
+            count += 1;
+    }
+    Item all[:] = mem::alloc_slice(Item, count + 1);
+    Usize at = 0;
+    for (c::LLVMBasicBlockRef block = c::LLVMGetFirstBasicBlock(function); block != nullptr;
+         block = c::LLVMGetNextBasicBlock(block)) {
+        for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(block); i != nullptr; i = c::LLVMGetNextInstruction(i)) {
+            all[at] = (Item){.value = i};
+            at += 1;
+        }
+    }
+    return all[0:at];
+}
+
+static void lower_function(Lowering *l, c::LLVMValueRef function) {
+    l->function = function;
+    l->result = nullptr;
+    for (Usize i = 0; i < l->moved_count; i++) {
+        if (l->moved[i].made == function) l->result = l->moved[i].result;
+    }
+    Values all = instructions_of(function);
+    for (Usize i = 0; i < countof(all); i++)
+        lower_instruction(l, all[i].value);
+    mem::free(all.data);
+    for (Usize i = 0; i < l->doomed_count; i++) {
+        c::LLVMTypeRef type = c::LLVMTypeOf(l->doomed[i].value);
+        if (c::LLVMGetTypeKind(type) != c::LLVMVoidTypeKind)
+            c::LLVMReplaceAllUsesWith(l->doomed[i].value, c::LLVMGetPoison(type));
+    }
+    for (Usize i = 0; i < l->doomed_count; i++)
+        c::LLVMInstructionEraseFromParent(l->doomed[i].value);
+    l->doomed_count = 0;
+}
+
+// Whether `module` is for x86-64 with the System V ABI, where a big parameter is `byval`.
+// Whether `word` occurs in `text` at `at` (no <string.h>: its `index` would reach every importer, #3064).
+static Bool word_at(const char *text, Usize at, Str word) {
+    for (Usize i = 0; i < countof(word); i++)
+        if (text[at + i] == 0 || text[at + i] != word.data[i]) return false;
+    return true;
+}
+
+static Bool has_word(const char *text, Str word) {
+    for (Usize at = 0; text[at] != 0; at++)
+        if (word_at(text, at, word)) return true;
+    return false;
+}
+
+static Bool byval_target(c::LLVMModuleRef module) {
+    const char *triple = c::LLVMGetTarget(module);
+    if (triple == nullptr || !word_at(triple, 0, "x86_64")) return false;
+    return !has_word(triple, "windows") && !has_word(triple, "mingw") && !has_word(triple, "win32");
+}
+
+static Values functions_of(c::LLVMModuleRef module) {
+    Usize count = 0;
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f))
+        count += 1;
+    Item all[:] = mem::alloc_slice(Item, count + 1);
+    Usize at = 0;
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        all[at] = (Item){.value = f};
+        at += 1;
+    }
+    return all[0:at];
+}
+
+// Applies the rule of this file to `module`: every function type, call and instruction with an aggregate of more
+// than `big_bytes` bytes is rewritten to keep it in memory.
+export void lower(c::LLVMModuleRef module) {
+    Lowering l = {.module = module, .context = c::LLVMGetModuleContext(module)};
+    l.layout = c::LLVMGetModuleDataLayout(module);
+    l.byval = byval_target(module);
+    l.b = c::LLVMCreateBuilderInContext(l.context);
+    Values before = functions_of(module);
+    for (Usize i = 0; i < countof(before); i++) {
+        if (c::LLVMGetIntrinsicID(before[i].value) == 0) rewrite_function(&l, before[i].value);
+    }
+    mem::free(before.data);
+    Values after = functions_of(module);
+    for (Usize i = 0; i < countof(after); i++) {
+        if (c::LLVMCountBasicBlocks(after[i].value) > 0) lower_function(&l, after[i].value);
+    }
+    mem::free(after.data);
+    for (Usize i = 0; i < l.moved_count; i++)
+        c::LLVMDeleteFunction(l.moved[i].old);
+    c::LLVMDisposeBuilder(l.b);
+    mem::free(l.homes.data);
+    mem::free(l.moved.data);
+    mem::free(l.doomed.data);
+}

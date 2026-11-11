@@ -35,10 +35,11 @@ inputs:
     description: >
       the size the step cache is kept within (SMITH_CACHE_MAX): the least recently used results go past it, with their
       manifests, at the start of a build. The one place the cap is written (#2833): `warm` saves the folder whole, so
-      it is what every job restores. One warm build leaves 650 to 670 MB (1,230 to 1,430 results, the test programs
-      included), so a cap under that prunes the whole of what `warm` saved (#3045: at 300M every build missed all 329
-      steps, 28 s became 67 to 108 s). 1G keeps the newest build and the one before; restoring it takes under 10 s
-    default: 1G
+      it is what every job restores. One warm build leaves 650 to 670 MB on the Mac and about 1.4 GB on Linux since it
+      builds the release profile too (#3052: 1,397 MB, 2,332 results), so a cap under that prunes the whole of what
+      `warm` saved (#3045: at 300M every build missed all 329 steps, 28 s became 67 to 108 s; #3052: at 1G every Linux
+      build failed on "dropped every result"). 2G keeps the newest Linux build with room for the next one's new results
+    default: 2G
 
   stage0:
     description: >
@@ -133,7 +134,7 @@ runs:
         # a cap that empties the cache is the one failure that stays silent (#3045: at 300M every build missed 329 of
         # 329 steps for hours); the prune prints `kept 0 entries` then, and the cap is below one warm build: fail loudly
         if grep -qE '^cache: kept 0 entries \(0 MB\), dropped [1-9]' "$RUNNER_TEMP/fetch.out"; then
-          echo "::error::the step cache cap (${{ inputs.step-cache-max }}) dropped every result: it must stay above one warm build (650 to 670 MB, knowledge/ci/caches.md)"
+          echo "::error::the step cache cap (${{ inputs.step-cache-max }}) dropped every result: it must stay above one warm build (about 1.4 GB on Linux, 670 MB on the Mac, knowledge/ci/caches.md)"
           exit 1
         fi
         echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
