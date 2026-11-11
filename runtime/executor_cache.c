@@ -27,6 +27,11 @@
 #include "platform_linux.h"
 #include "self_digest.h"
 
+#ifdef SMITH_COMPILE_IDENTITY_LINKED
+extern const char smith_compile_identity[]; // runtime/lint_identity.c (#3175)
+extern const char smith_lang_identity[];
+#endif
+
 constexpr size_t smith_stepcache_hex = 65;
 constexpr size_t smith_stepcache_text_max = (size_t)1 << 20;    // a manifest, the lines of a variant
 constexpr size_t smith_stepcache_output_max = (size_t)16 << 20; // a text output (.fx), read whole
@@ -38,7 +43,7 @@ constexpr size_t smith_stepcache_dirs_max = 64;
 constexpr size_t smith_stepcache_words_max = 4096;
 constexpr size_t smith_stepcache_command_max = (size_t)1 << 16;
 constexpr size_t smith_stepcache_memo_max = (size_t)1 << 20;
-constexpr size_t smith_stepcache_ids_max = 8;
+constexpr size_t smith_stepcache_ids_max = 16;
 // A file written twice inside one tick of its file system's clock can keep its size and time, so the hash of a file
 // this new is not remembered: 2 s where the times are whole seconds (FAT counts in twos), 100 ms where the file's own
 // time shows a finer clock (a kernel's tick is 10 ms at most). With 2 s for every file the smith a build had just
@@ -738,13 +743,56 @@ static bool smith_stepcache_self_digest(const char *real, const char *id, char h
     return true;
 }
 
-// What a program is: its build-id (LC_UUID on macOS) when it has one, else its real path, size and time. Kept by name.
-static const char *smith_stepcache_program(const char *name) {
-    SmithStepCache *cache = &smith_stepcache;
-    for (size_t i = 0; i < cache->id_count; i++) {
-        if (strcmp(cache->id_names[i], name) == 0) return cache->id_values[i];
+// What the running smith is to a compile (#3175). The whole binary changes with every commit, and a compile reads
+// almost none of it: a C, C++ or Objective-C source is compiled by the embedded clang, so the identity is the LLVM pack
+// and the sources that run inside that compile (`build_compile_identity` in build.c: shim/clang.cpp, hook.cpp,
+// effects_infer.cpp and affine.cpp with every project header they include). A `.smith` source also goes through the
+// front end, so its identity adds front/, lib/std, the lowering (runtime/lang*), the front-end flag and imports,
+// shim/cimport* and smith.c's routing (`build_lang_identity`). Anything else, or a smith built with no identity, is
+// keyed by the whole binary as before.
+typedef enum { SmithCompile_Whole, SmithCompile_C, SmithCompile_Lang } SmithCompileKind;
+
+static bool smith_stepcache_source_word(const char *word) {
+    static const char *const endings[] = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm", ".C"};
+    for (size_t i = 0; i < sizeof endings / sizeof endings[0]; i++) {
+        if (smith_ends_with(word, endings[i])) return true;
     }
-    if (cache->id_count >= smith_stepcache_ids_max || strlen(name) >= sizeof cache->id_names[0]) return nullptr;
+    return false;
+}
+
+// Which identity names the compiler of the command in the scope. A word that may hide an input (a response file, `-x`)
+// or a language smith does not compile in clang alone (.metal) keeps the whole binary.
+static SmithCompileKind smith_stepcache_compile_kind(const SmithStepScope *scope) {
+#ifdef SMITH_COMPILE_IDENTITY_LINKED
+    if (smith_compile_identity[0] == '\0' || smith_lang_identity[0] == '\0') return SmithCompile_Whole;
+    bool source = false;
+    bool lang = false;
+    for (size_t i = 1; i < scope->count; i++) {
+        const char *word = scope->words[i];
+        if (word[0] == '@' || strncmp(word, "-x", 2) == 0 || smith_ends_with(word, ".metal"))
+            return SmithCompile_Whole;
+        lang = lang || smith_ends_with(word, ".smith") || strncmp(word, "--smith-", 8) == 0 ||
+               strncmp(word, "--front-end", 11) == 0;
+        source = source || smith_stepcache_source_word(word);
+    }
+    if (lang) return SmithCompile_Lang;
+    return source ? SmithCompile_C : SmithCompile_Whole;
+#else
+    (void)scope;
+    return SmithCompile_Whole;
+#endif
+}
+
+// What a program is: its build-id (LC_UUID on macOS) when it has one, else its real path, size and time. Kept by name
+// and, for the running smith, by the kind of compile.
+static const char *smith_stepcache_program(const char *name, SmithCompileKind kind) {
+    SmithStepCache *cache = &smith_stepcache;
+    char key[sizeof cache->id_names[0]];
+    if (snprintf(key, sizeof key, "%d:%s", (int)kind, name) >= (int)sizeof key) return nullptr;
+    for (size_t i = 0; i < cache->id_count; i++) {
+        if (strcmp(cache->id_names[i], key) == 0) return cache->id_values[i];
+    }
+    if (cache->id_count >= smith_stepcache_ids_max) return nullptr;
     char real[PATH_MAX];
     struct stat info = {};
     if (!smith_stepcache_find_program(name, real) || stat(real, &info) != 0) return nullptr;
@@ -753,11 +801,16 @@ static const char *smith_stepcache_program(const char *name) {
     char self[smith_sha256_hex_size];
     char running[PATH_MAX];
     int written = 0;
+    bool is_self = realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0;
     // The smith that runs this build is also the compiler of its own smith-cc steps. Its build-id and the commit it
     // carries change with every commit, and a stage0 is a new smith for each commit of main, so no object of the
     // restored cache would be served (#2833): it is identified by its code, with both blanked.
-    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 &&
-        smith_platform_file_id(real, id) && smith_stepcache_self_digest(real, id, self)) {
+    if (is_self && kind != SmithCompile_Whole) {
+#ifdef SMITH_COMPILE_IDENTITY_LINKED
+        written = snprintf(value, sizeof cache->id_values[0], "%s:%s", kind == SmithCompile_C ? "clang" : "lang",
+                           kind == SmithCompile_C ? smith_compile_identity : smith_lang_identity);
+#endif
+    } else if (is_self && smith_platform_file_id(real, id) && smith_stepcache_self_digest(real, id, self)) {
         written = snprintf(value, sizeof cache->id_values[0], "self:%s", self);
     } else if (smith_platform_file_id(real, id)) {
         written = snprintf(value, sizeof cache->id_values[0], "id:%s", id);
@@ -766,7 +819,7 @@ static const char *smith_stepcache_program(const char *name) {
                            (long long)smith_stepcache_mtime_of(&info));
     }
     if (written <= 0 || (size_t)written >= sizeof cache->id_values[0]) return nullptr;
-    snprintf(cache->id_names[cache->id_count], sizeof cache->id_names[0], "%s", name);
+    snprintf(cache->id_names[cache->id_count], sizeof cache->id_names[0], "%s", key);
     cache->id_count += 1;
     return value;
 }
@@ -879,9 +932,11 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
                                 int64_t now) {
     const SmithStepScope *scope = &smith_stepcache_scope;
     bool function = edge->step_cache == 3;
-    const char *compiler = function ? "none" : smith_stepcache_program(scope->words[0]);
+    const char *compiler =
+        function ? "none" : smith_stepcache_program(scope->words[0], smith_stepcache_compile_kind(scope));
     const char *clang = getenv("SMITH_CLANG");
-    const char *external = !function && clang != nullptr && *clang != '\0' ? smith_stepcache_program(clang) : "none";
+    const char *external =
+        !function && clang != nullptr && *clang != '\0' ? smith_stepcache_program(clang, SmithCompile_Whole) : "none";
     if (compiler == nullptr || external == nullptr) return false;
     SmithSha256 sha;
     smith_sha256_init(&sha);
