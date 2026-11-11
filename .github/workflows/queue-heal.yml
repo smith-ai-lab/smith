@@ -4,11 +4,15 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
 on:
+  # every push to main is what makes a PR stale (#3200); workflow_run of ci alone also fires for merge_group runs and fires
+  # late for a push (the macos jobs), so a merge could go unseen for the length of a ci run
+  push:
+    branches: [main]
   workflow_run:
     workflows: [ci]
     types: [completed]
@@ -25,6 +29,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  checks: write
 
 concurrency:
   # a dry run writes nothing, so it has its own group: it cannot race a live run, and the live runs that
@@ -199,6 +204,52 @@ jobs:
             return 0
           }
           conflicts
+
+          # sixth pass (#3200): a PR with auto-merge on that is not in the queue and is stale. Behind main without a conflict:
+          # main is merged into its branch (the update-branch operation, a merge commit) with the owner's token, because an
+          # event caused by GITHUB_TOKEN starts no workflow and the new head would never get its `ci-pr` check; its check
+          # then runs again and auto-merge queues it with no agent. Conflicting: automation cannot resolve it, so the head
+          # gets a failing check run `conflict` (GITHUB_TOKEN with checks: write; a personal token cannot create check runs),
+          # and the red check wakes the worker that follows the PR. A push gives the PR a new head, which has no `conflict`.
+          # A PR without auto-merge is left alone. `mergeable` null (GitHub still computing) is skipped until the next pass.
+          stale_pass() {
+            local pr info mergeable state sha behind has n=0
+            for pr in $(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+                --jq '.[] | select(.auto_merge != null) | .number'); do
+              case "$queued" in *" $pr "*) continue ;; esac
+              info=$(gh api "repos/$REPO/pulls/$pr" --jq '"\(.mergeable) \(.mergeable_state) \(.head.sha)"') \
+                || { log "queue-heal: #$pr stale check unreadable, skipped"; continue; }
+              set -- $info
+              mergeable=$1; state=$2; sha=$3
+              [ "$mergeable" = null ] && continue
+              if [ "$mergeable" = false ] || [ "$state" = dirty ]; then
+                has=$(gh api -X GET "repos/$REPO/commits/$sha/check-runs" -f check_name=conflict --jq '.total_count') || has=0
+                [ "$has" = 0 ] || continue
+                n=$((n + 1))
+                if dry; then log "dry-run: would create check conflict on #$pr ($sha)"; continue; fi
+                if GH_TOKEN="$BASE_TOKEN" gh api -X POST "repos/$REPO/check-runs" -f name=conflict -f head_sha="$sha" \
+                    -f status=completed -f conclusion=failure -f "output[title]=conflict" \
+                    -f "output[summary]=This branch conflicts with main. Merge origin/main into it, resolve, push." --silent; then
+                  log "queue-heal: #$pr conflicts with main, check conflict set red on $sha"
+                else
+                  log "queue-heal: #$pr conflicts with main, check conflict refused"
+                fi
+                continue
+              fi
+              behind=$(gh api "repos/$REPO/compare/main...$sha" --jq .behind_by) || behind=0
+              [ "$behind" -gt 0 ] || continue
+              n=$((n + 1))
+              if dry; then log "dry-run: would update the branch of #$pr ($behind behind main)"; continue; fi
+              if gh api -X PUT "repos/$REPO/pulls/$pr/update-branch" -f expected_head_sha="$sha" --silent; then
+                log "queue-heal: #$pr was $behind behind main, branch updated"
+              else
+                log "queue-heal: #$pr was $behind behind main, branch update refused"
+              fi
+            done
+            [ "$n" = 0 ] && log "queue-heal: none stale"
+            return 0
+          }
+          stale_pass
 
           # third pass (#3131): the queue's group size, by the health of its runs. GitHub builds one group at a time
           # (max_entries_to_build 1) and merges a group's entries all or none (ALLGREEN); the size of the group is
