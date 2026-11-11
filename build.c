@@ -772,9 +772,10 @@ static const char *build_fmt_identity(SmithBuild *b, const BuildConfig *config) 
 // binary, which changes with every commit although a compile reads almost none of it. `c` is the identity of a C, C++
 // or Objective-C compile: the LLVM pack (clang, its token hook patch) and the sources that run inside it, which are
 // shim/clang.cpp, hook.cpp, effects_infer.cpp and affine.cpp with every project header the preprocessor reads for them
-// (`-MM`: the compiler's list, never written by hand). `lang` adds what turns a .smith source into C: front/, lib/std,
-// the lowering (runtime/lang*), the front-end flag and imports (runtime/front_flag.*, import_*), shim/cimport* and
-// smith.c, which routes the .smith inputs. Each file by name and SHA-256, sorted, after the pack. Not in either: the
+// (`-MM`: the compiler's list, never written by hand). `lang` adds what turns a .smith source into C by default (the
+// token lowering): lib/std, the lowering (runtime/lang*), shim/cimport* and smith.c, which routes the .smith inputs.
+// Not front/: only `--front-end=new` reaches it (smith.c's smith_front_requested), and a command with that flag is
+// keyed by the whole binary. Each file by name and SHA-256, sorted, after the pack. Not in either: the
 // runtime's verbs and caches, build.c, the prover, the linker shim and the tools. Empty without an LLVM install.
 static const char *build_compile_identity(SmithBuild *b, const BuildConfig *config, bool lang) {
     if (!config->linkable) return "";
@@ -784,10 +785,8 @@ static const char *build_compile_identity(SmithBuild *b, const BuildConfig *conf
         "deps=$(\"$cxx\" \"$@\" -MM $s); "
         "files=\"$files $(printf '%s\\n' \"$deps\" | tr -d '\\\\' | tr ' ' '\\n' | grep -v ':$' | grep .)\"; done; "
         "case $files in *shim/hook.cpp*) ;; *) exit 1 ;; esac; "
-        "if [ \"$mode\" = lang ]; then files=\"$files $(find front lib/std -type f) "
-        "$(ls runtime/lang*.c runtime/lang*.h runtime/front_flag.* runtime/import_*.c runtime/import_*.h "
-        "shim/cimport*) "
-        "smith.c\"; fi; "
+        "if [ \"$mode\" = lang ]; then files=\"$files $(find lib/std -type f) "
+        "$(ls runtime/lang*.c runtime/lang*.h shim/cimport*) smith.c\"; fi; "
         "files=$(printf '%s\\n' $files | LC_ALL=C sort -u); "
         "{ printf 'smith-compile-identity 1 %s\\n%s\\n' \"$mode\" \"$pack\"; shasum -a 256 $files; } | "
         "shasum -a 256 | cut -c1-64";

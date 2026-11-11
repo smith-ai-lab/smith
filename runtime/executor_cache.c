@@ -747,9 +747,9 @@ static bool smith_stepcache_self_digest(const char *real, const char *id, char h
 // almost none of it: a C, C++ or Objective-C source is compiled by the embedded clang, so the identity is the LLVM pack
 // and the sources that run inside that compile (`build_compile_identity` in build.c: shim/clang.cpp, hook.cpp,
 // effects_infer.cpp and affine.cpp with every project header they include). A `.smith` source also goes through the
-// front end, so its identity adds front/, lib/std, the lowering (runtime/lang*), the front-end flag and imports,
-// shim/cimport* and smith.c's routing (`build_lang_identity`). Anything else, or a smith built with no identity, is
-// keyed by the whole binary as before.
+// token lowering, so its identity adds lib/std, the lowering (runtime/lang*), shim/cimport* and smith.c's routing.
+// Anything else, a smith built with no identity, or a command with `--front-end` (smith's own front end, front/, which
+// no identity names), is keyed by the whole binary as before.
 typedef enum { SmithCompile_Whole, SmithCompile_C, SmithCompile_Lang } SmithCompileKind;
 
 static bool smith_stepcache_source_word(const char *word) {
@@ -769,9 +769,10 @@ static SmithCompileKind smith_stepcache_compile_kind(const SmithStepScope *scope
     bool lang = false;
     for (size_t i = 1; i < scope->count; i++) {
         const char *word = scope->words[i];
-        if (word[0] == '@' || strncmp(word, "-x", 2) == 0 || smith_ends_with(word, ".metal")) return SmithCompile_Whole;
-        lang = lang || smith_ends_with(word, ".smith") || strncmp(word, "--smith-", 8) == 0 ||
-               strncmp(word, "--front-end", 11) == 0;
+        if (word[0] == '@' || strncmp(word, "-x", 2) == 0 || smith_ends_with(word, ".metal") ||
+            strncmp(word, "--front-end", 11) == 0)
+            return SmithCompile_Whole;
+        lang = lang || smith_ends_with(word, ".smith") || strncmp(word, "--smith-", 8) == 0;
         source = source || smith_stepcache_source_word(word);
     }
     if (lang) return SmithCompile_Lang;
