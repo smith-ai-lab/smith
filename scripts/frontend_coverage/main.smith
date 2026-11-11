@@ -1449,15 +1449,15 @@ static Usize resolve_import(Usize file, const char name[:]) {
     // then the folder of the file itself and each folder above it: a file of `game/main.smith` that declares
     // `module game::main` imports `game::util` from the folder above `game` (#3037: the closure of a row must hold it)
     Usize slash = length_of(tree[file][0:path_size]);
-    while (slash > 0) {
+    for (;;) {
         while (slash > 0 && tree[file][slash - 1] != '/')
             slash -= 1;
-        if (slash == 0) break;
         char candidate[path_size * 2];
         format::Written w =
             format::write(candidate, sizeof candidate, text_of(tree[file][0:slash]), (const char *)inside, ".smith");
         Usize found = tree_find(candidate[0:w.length]);
         if (found != tree_count) return found;
+        if (slash == 0) break;
         slash -= 1;
     }
     return tree_count;
