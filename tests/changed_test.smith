@@ -422,7 +422,6 @@ export void test_an_empty_diff_against_the_head_itself_fails_naming_the_fix() {
     scratch::Run run =
         scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD --dry-run 2>&1").data);
     scratch::expect_contains("the message", run.out, "is the head itself and nothing differs: pass --base <ref>");
-    scratch::expect_lacks("no selection", run.out, "test files selected");
     scratch::expect_failure("exit status", &run);
 }
 

@@ -1319,16 +1319,18 @@ SmithChangedResult smith_changed_select(const char *base_name, const char *head,
     char base[256];
     if (!smith_changed_collect(base_name, head, false, "smith test --changed", base, sizeof base))
         return SmithChanged_Failed;
+    SmithChangedResult result = smith_changed_decide(base, head, filter, true);
     // Nothing differs and the base is the head itself: there was nothing to compare, which is not "no test is
-    // affected". Selecting nothing here let every PR check run 0 tests (#3059), so it fails and names the fix.
-    if (smith_changed_path_count == 0 && smith_changed_is_head(base, head)) {
+    // affected". Selecting nothing here let every PR check run 0 tests (#3059), so it fails and names the fix. (A first
+    // run with no records still runs every test: that is SmithChanged_Full, not None.)
+    if (result == SmithChanged_None && smith_changed_path_count == 0 && smith_changed_is_head(base, head)) {
         fprintf(smith_changed_out(),
                 "smith test --changed: the base %.12s is the head itself and nothing differs: pass --base <ref> (a "
                 "pull request's base)\n",
                 base);
         return SmithChanged_Failed;
     }
-    return smith_changed_decide(base, head, filter, true);
+    return result;
 }
 
 // ---- `smith lint --changed`
