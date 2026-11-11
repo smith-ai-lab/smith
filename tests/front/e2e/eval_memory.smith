@@ -1,0 +1,48 @@
+# Values with memory at compile time (#3039, step 3): a function that runs at compile time builds, reads and changes a
+# struct, an array and a string. What it returns to the program is a number.
+
+struct Point:
+    x: i32
+    y: i32
+
+fn corner(n: i32) -> Point:
+    Point(x = n, y = n * 2)
+
+fn squares() -> [5]i32:
+    mut out: [5]i32 = undefined
+    for i in range(0, 5):
+        out[i] = (i * i).to(i32)
+    out
+
+fn total(values: [5]i32) -> i32:
+    mut sum := 0
+    for i in range(0, 5):
+        sum += values[i]
+    sum
+
+fn length(s: str) -> usize:
+    countof(s)
+
+fn moved(p: Point) -> Point:
+    mut q := p
+    q.x += 10
+    q
+
+fn shifted_x() -> i32:
+    c := corner(3)
+    moved(c).x + c.x
+
+fn table_total() -> i32:
+    total(squares())
+
+static_assert(corner(3).y == 6)
+static_assert(squares()[3] == 9)
+static_assert(table_total() == 30)
+static_assert(length("hello") == 5)
+static_assert(shifted_x() == 16)
+
+wide := table_total() + 1
+pub fn check() -> i32:
+    if wide != 31:
+        return 1
+    0

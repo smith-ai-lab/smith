@@ -239,9 +239,7 @@ export void test_front_eval_a_run_that_stops_says_where() {
     expect(source, "d", "2");
     expect(source, "e", "failed: this divides by zero at compile time (in `divide(0)`, called from `through(2)`)");
     expect(source, "f", "unknown: `next()` cannot run at compile time: `count` is a variable that can change");
-    expect(source, "g",
-           "unknown: `third(1)` cannot run at compile time: this is a value with memory (an array, a slice, a string, "
-           "a struct or a pointer), and compile-time code holds only numbers, bools, enumerators and types");
+    expect(source, "g", "1");
     expect(source, "h", "unknown: this has no value");
 }
 
