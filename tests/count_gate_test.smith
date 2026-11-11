@@ -1,0 +1,77 @@
+// The count's gate (the step `Gate` of the job `frontend-coverage` in .github/workflows/ci.yml, #3052): it compares
+// this run's count with main's last one and fails a merge that lowers it. The test cuts the step's script out of the
+// workflow, with gh_retry out of the api-budget action as the job has it, and runs it with a fake `gh` (main's count
+// is the artifact of the second commit, or none), `git` and `unzip`. It fails when it finds no count on main to compare
+// with (it passed on nothing for a day while every download was corrupt), compares like with like when files leave the
+// total (#3037: the passes of the files both tables have), and fails a file that went from pass to fail.
+// smith-reads-tree
+// smith-covers: .github/workflows/ci.yml
+module count_gate_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+constexpr const char *fake_gh = "#!/bin/sh\n"
+                                "case \"$2\" in\n"
+                                "  *artifacts\\?name=frontend-coverage-c2*) [ -n \"${HAS:-}\" ] && echo 11:22 ;;\n"
+                                "  *artifacts\\?name=*) ;;\n"
+                                "  */runs/22/jobs*) echo 1 ;;\n"
+                                "  */artifacts/11/zip) printf 'zip\\0' ;;\n"
+                                "  *) echo \"unexpected gh $*\" >&2; exit 9 ;;\n"
+                                "esac\n";
+
+constexpr const char *script =
+    "set -u; mkdir -p bin main; mv gh bin/gh; printf '#!/bin/sh\\necho c1; echo c2; echo c3\\n' > bin/git; "
+    "printf '#!/bin/sh\\ncp main/output.txt main/results.tsv \"$5\"/\\n' > bin/unzip; chmod +x bin/*; "
+    // main's count: 3 of 4 files pass (d fails)
+    "printf 'frontend-coverage: 3 of 4 files pass\\n' > main/output.txt; "
+    "printf 'a.smith\\tpass\\nb.smith\\tpass\\n\\tb.smith\\timport\\nc.smith\\tpass\\nd.smith\\tparse\\terr\\n' "
+    "> main/results.tsv; "
+    // the function and the step, as the job runs them
+    "sed -n \"/<<'GH_RETRY'/,/^        GH_RETRY\\$/p\" action.yml | sed '1d;$d' | sed 's/^        //' > fn; "
+    "sed -n '/^      - name: Gate$/,/^      - name: /p' ci.yml | sed -n '/^        run: |$/,$p' | sed '1d;$d' | "
+    "sed 's/^          //' > gate; "
+    "export PATH=\"$PWD/bin:$PATH\" GH_REPO=r BASE=c1 UNCACHED=false HEAD_REF= SAMPLED=false PR_NUMBER= "
+    "GITHUB_STEP_SUMMARY=/dev/null; "
+    "gate() { rm -rf tmp; mkdir -p tmp/coverage; printf 'frontend-coverage: %s files pass\\n' \"$1\" > "
+    "tmp/coverage/output.txt; printf \"$2\" > tmp/coverage/results.tsv; "
+    "RUNNER_TEMP=$PWD/tmp bash -e -o pipefail -c '. ./fn; . ./gate' > out 2>&1; echo \"status $?\"; "
+    "grep -E '^(::error::|count: main|count: pass|count: fail)' out | cut -c1-80; }; "
+    "echo '-- no count on main'; gate '3 of 4' 'a.smith\\tpass\\n'; "
+    "export HAS=1; "
+    "echo '-- c and d left the total'; gate '2 of 2' 'a.smith\\tpass\\nb.smith\\tpass\\n'; "
+    "echo '-- b lost'; gate '2 of 4' 'a.smith\\tpass\\nb.smith\\tcheck\\nc.smith\\tpass\\nd.smith\\tparse\\n'; "
+    "echo '-- d gained'; gate '4 of 4' 'a.smith\\tpass\\nb.smith\\tpass\\nc.smith\\tpass\\nd.smith\\tpass\\n'";
+
+export void test_count_gate_fails_with_nothing_to_compare_and_compares_like_with_like() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, ".github/workflows/ci.yml", "ci.yml");
+    scratch::copy_tree(&p, ".github/actions/api-budget/action.yml", "action.yml");
+    scratch::write(&p, "gh", fake_gh);
+    scratch::Run run = scratch::sh(&p, script);
+    scratch::expect_status("count gate: the script ran", 0, &run);
+    scratch::expect_text("count gate: no count on main fails; a smaller total compares the files both counts have",
+                         "-- no count on main\n"
+                         "status 1\n"
+                         "::error::no count on main's last 20 commits to compare with: the gate cannot tel\n"
+                         "-- c and d left the total\n"
+                         "status 0\n"
+                         "count: main's last count 3 files pass at c2, this one 2; 2 against 2 on the 2 fi\n"
+                         "-- b lost\n"
+                         "status 1\n"
+                         "count: pass->fail b.smith\n"
+                         "count: main's last count 3 files pass at c2, this one 2; 2 against 3 on the 4 fi\n"
+                         "::error::the count fell from 3 to 2 files pass on the 4 files both measured. Fix\n"
+                         "-- d gained\n"
+                         "status 0\n"
+                         "count: fail->pass d.smith\n"
+                         "count: main's last count 3 files pass at c2, this one 4; 4 against 3 on the 4 fi",
+                         run.out);
+}
