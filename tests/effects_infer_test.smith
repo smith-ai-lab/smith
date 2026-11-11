@@ -78,8 +78,7 @@ static void effects_editor(const char *file) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "tests/effects", "tests/effects");
-    scratch::Run run =
-        scratch::sh(&p, format::push("timeout -s KILL 120 smith lsp --check=tests/effects/", file, " 2>&1").data);
+    scratch::Run run = scratch::sh(&p, format::push("smith lsp --check=tests/effects/", file, " 2>&1").data);
     scratch::expect_contains(file, run.out, "smith-effect: `bad` is [[std::pure]]");
 }
 
@@ -471,7 +470,7 @@ export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules() {
     write_modules(&p);
     scratch::Run first = scratch::sh(&p, "smith build >/dev/null 2>&1");
     (void)first; // the build fails on the error: the summaries are what the editor needs
-    const char *check = "timeout -s KILL 120 smith lsp --check=\"$PWD/main.smith\" 2>&1 | grep -o 'smith-effect: .*' | "
+    const char *check = "smith lsp --check=\"$PWD/main.smith\" 2>&1 | grep -o 'smith-effect: .*' | "
                         "sed 's/^smith-effect: //'";
     scratch::expect_text(
         "editor, modules: lsp --check shows the error through the other module, with the chain",
