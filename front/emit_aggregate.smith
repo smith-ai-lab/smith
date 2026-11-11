@@ -236,8 +236,8 @@ static void put(Lowering *l, c::LLVMValueRef value, c::LLVMValueRef address, U32
 }
 
 static void copy_attributes(c::LLVMValueRef from, U32 from_index, c::LLVMValueRef to, U32 to_index, Bool call) {
-    U32 count = call ? c::LLVMGetCallSiteAttributeCount(from, from_index)
-                     : c::LLVMGetAttributeCountAtIndex(from, from_index);
+    U32 count =
+        call ? c::LLVMGetCallSiteAttributeCount(from, from_index) : c::LLVMGetAttributeCountAtIndex(from, from_index);
     if (count == 0) return;
     c::LLVMAttributeRef list[64];
     if (count > 64) count = 64;
@@ -463,9 +463,9 @@ static void fill_home(Lowering *l, c::LLVMValueRef instruction) {
     } else if (opcode == c::LLVMPHI) {
         fill_phi(l, instruction, home);
     } else if (opcode == c::LLVMSelect) {
-        c::LLVMValueRef chosen = c::LLVMBuildSelect(l->b, c::LLVMGetOperand(instruction, 0),
-                                                    home_of(l, c::LLVMGetOperand(instruction, 1)),
-                                                    home_of(l, c::LLVMGetOperand(instruction, 2)), "chosen");
+        c::LLVMValueRef chosen =
+            c::LLVMBuildSelect(l->b, c::LLVMGetOperand(instruction, 0), home_of(l, c::LLVMGetOperand(instruction, 1)),
+                               home_of(l, c::LLVMGetOperand(instruction, 2)), "chosen");
         copy(l, home, align, chosen, align, type);
     } else if (opcode == c::LLVMFreeze) {
         copy(l, home, align, home_of(l, c::LLVMGetOperand(instruction, 0)), align, type);
