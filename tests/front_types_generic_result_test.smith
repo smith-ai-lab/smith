@@ -1,0 +1,114 @@
+// Tests of an exported generic of today's syntax whose result names its type parameter (#3101): `T *push(Pool *p,
+// constexpr Type T)` is declared for an importer like `Usize push(Pool *p, constexpr Type T)`, instead of being left
+// out with "has no public `push`". A private one stays private. The imported module is `lib.pool`, read from text.
+module front_types_generic_result_test;
+
+import front::ast;
+import front::fix;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import <string.h>;
+
+static Str pool_source() {
+    return "module lib::pool;\n\n"
+           "export struct Pool { Usize used; };\n\n"
+           "export void *push_raw(Pool *p, Usize size) { p->used += size; return nullptr; }\n\n"
+           "export T *push(Pool *p, constexpr Type T) { return (T *)push_raw(p, sizeof(T)); }\n\n"
+           "export T *take(Pool *p, constexpr Type T, constexpr Usize n) { return (T *)push_raw(p, n * sizeof(T)); }\n\n"
+           "export Usize bytes(Pool *p, constexpr Type T) { return p->used + sizeof(T); }\n\n"
+           "static T *hidden(Pool *p, constexpr Type T) { return (T *)push_raw(p, sizeof(T)); }\n";
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Bool same(Str a, Str b) {
+    return countof(a) == countof(b) && has(a, b);
+}
+
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    if (!same(path, "lib.pool")) return nullptr;
+    parser::Parsed p = parser::parse_file("lib/pool.smith", pool_source());
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+// The messages the checker gives a new-syntax file that imports `lib.pool`, one to a line.
+static Str messages_of(Str body) {
+    Str source = types::message_of(format::push("import lib.pool\n\n", body));
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module_with(&parsed.module, types::lp64(), load);
+    Str text = "";
+    for (Usize i = 0; i < checked.error_count; i++)
+        text = types::message_of(format::push(text, checked.errors[i].message, "\n"));
+    return text;
+}
+
+export void test_front_types_generic_result_a_result_that_names_the_type_parameter_is_declared() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = messages_of("fn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n");
+    test::check(!has(text, "has no public"));
+}
+
+export void test_front_types_generic_result_a_result_that_does_not_name_it_is_still_declared() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = messages_of("fn two(b: *mut pool.Pool) -> usize:\n    return pool.bytes(b, i32)\n");
+    test::check(!has(text, "has no public"));
+}
+
+export void test_front_types_generic_result_a_value_parameter_beside_the_type_parameter_is_declared() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = messages_of("fn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.take(b, i32, 4)\n    return 0\n");
+    test::check(!has(text, "has no public"));
+}
+
+export void test_front_types_generic_result_a_private_generic_stays_private() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = messages_of("fn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.hidden(b, i32)\n    return 0\n");
+    test::check(has(text, "`lib.pool` has no public `hidden`"));
+}
+
+export void test_front_types_generic_result_the_fix_makes_the_pointer_writable() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    Str before = "import lib.pool\n\nfn two(b: *pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n";
+    Str after = "import lib.pool\n\nfn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n";
+    fix::Fixed got = fix::fix_text("t.smith", before);
+    test::check_equal(got.text, after);
+}
