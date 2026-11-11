@@ -228,3 +228,29 @@ export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
     scratch::release(twice.out);
     scratch::release(twice.err);
 }
+
+// #3037: `import game.util` in `game/main.smith` is the file `game/util.smith` of the folder above, so a row of main
+// has util in its closure: its key covers util, and a run that names main alone measures util too (a row made without
+// it once failed and was reused when util was named).
+export void test_frontend_coverage_import_resolves_from_the_folder_above_the_file() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir -p repo/game");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/game/main.smith", "import game.util\n\nfn main() -> i32:\n    return util.one() - 1\n");
+    scratch::write(&p, "repo/game/util.smith", "pub fn one() -> i32:\n    return 1\n");
+    scratch::Run run =
+        scratch::sh(&p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+                        "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/some\" game/main.smith > some.tsv; "
+                        "smith run -- chain some.tsv \"$PWD/repo\" game/main.smith");
+    scratch::expect_contains("frontend_coverage: the file main imports is in its closure", run.out,
+                             " of 2 files pass (the files named and what they import)");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}

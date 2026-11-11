@@ -1435,25 +1435,30 @@ static Usize resolve_import(Usize file, const char name[:]) {
     }
     inside[n] = '\0';
     Usize project = project_of(text_of(tree[file][0:path_size]));
-    const char *const middles[_] = {"src/", "", "lib/", "lib/", ""};
-    for (Usize r = 0; r < 5; r++) {
-        // then the tree's own library, and the folder of the file itself
+    const char *const middles[_] = {"src/", "", "lib/", "lib/"};
+    for (Usize r = 0; r < 4; r++) {
+        // then the tree's own library
         const char *folder = r == 3 ? "" : (const char *)projects[project];
         if (r == 2 && folder[0] == '\0') continue;
-        char own[path_size];
-        if (r == 4) {
-            Usize slash = length_of(tree[file][0:path_size]);
-            while (slash > 0 && tree[file][slash - 1] != '/')
-                slash -= 1;
-            if (slash == 0) continue;
-            copy_text(own[0:path_size], text_of(tree[file][0:slash - 1]));
-            folder = own;
-        }
         char candidate[path_size * 2];
         format::Written w = format::write(candidate, sizeof candidate, folder, folder[0] != '\0' ? "/" : "", middles[r],
                                           (const char *)inside, ".smith");
         Usize found = tree_find(candidate[0:w.length]);
         if (found != tree_count) return found;
+    }
+    // then the folder of the file itself and each folder above it: a file of `game/main.smith` that declares
+    // `module game::main` imports `game::util` from the folder above `game` (#3037: the closure of a row must hold it)
+    Usize slash = length_of(tree[file][0:path_size]);
+    while (slash > 0) {
+        while (slash > 0 && tree[file][slash - 1] != '/')
+            slash -= 1;
+        if (slash == 0) break;
+        char candidate[path_size * 2];
+        format::Written w =
+            format::write(candidate, sizeof candidate, text_of(tree[file][0:slash]), (const char *)inside, ".smith");
+        Usize found = tree_find(candidate[0:w.length]);
+        if (found != tree_count) return found;
+        slash -= 1;
     }
     return tree_count;
 }
