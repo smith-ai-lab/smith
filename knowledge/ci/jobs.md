@@ -38,6 +38,6 @@ Measured (#818, before Linux carried CI): a full run (a workflow change) took 12
 
 **How many parts.** Linux parts each add about 1.7 min of start to their share of the tests (about 17 min of runner time in all), so the count changes the latency and hardly the load. The macOS side is one job per run (#1709), so the hosted macOS cap of 5 is five runs at once, not one.
 
-**Not covered by a hosted run:** the debugger tests need a runner that may debug (they do nothing for an account that may not, [debugger](../debugger.md)); the editor tests need `nvim`, which the macOS jobs install with Homebrew while the build downloads.
+**Not covered by a hosted run:** the debugger tests need a runner that may debug (they do nothing for an account that may not, [debugger](../debugger.md)); the editor tests need `nvim`, which only the Linux jobs have (from the repository's own tools cache); a macOS job installs nothing, so a Mac without `nvim` skips them (#3161: the queue's path reaches GitHub only).
 
 **One build is handed to the Linux shards** (#1758). The `macos` job builds and checks in its own checkout and hands nothing over (#1709); `build-linux` packs its tree (zstd) and the shards download it. Storage egress was over the limit 2026-10-30, when 10 shards each downloaded the uncompressed ~1 GB tree: watch it.
