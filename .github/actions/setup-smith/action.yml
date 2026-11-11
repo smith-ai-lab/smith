@@ -35,8 +35,10 @@ inputs:
     description: >
       the size the step cache is kept within (SMITH_CACHE_MAX): the least recently used results go past it, with their
       manifests, at the start of a build. The one place the cap is written (#2833): `warm` saves the folder whole, so
-      it is what every job restores. A build reads about 20 MB of it, so 300M keeps about 15 builds' worth
-    default: 300M
+      it is what every job restores. One warm build leaves 650 to 670 MB (1,230 to 1,430 results, the test programs
+      included), so a cap under that prunes the whole of what `warm` saved (#3045: at 300M every build missed all 329
+      steps, 28 s became 67 to 108 s). 1G keeps the newest build and the one before; restoring it takes under 10 s
+    default: 1G
 
   stage0:
     description: >
@@ -120,7 +122,7 @@ runs:
       env:
         # this is the first smith verb of the job, so it is the one that prunes the step cache (at most once an hour,
         # and it stamps the time). Without the cap here it pruned at the 10 GB default, and the builds below, with
-        # 300M, skipped their prune: the folder stayed 9.8 GB and took 2 minutes to restore (#3045)
+        # their cap, skipped their prune: the folder stayed 9.8 GB and took 2 minutes to restore (#3045)
         SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
       run: |
         start=$(date +%s)
