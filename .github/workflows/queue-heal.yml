@@ -247,10 +247,12 @@ jobs:
           }
           conflicts
 
-          # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4, 8) by the health of the merge_group
+          # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4) by the health of the merge_group
           # runs of ci since the ruleset's last change (its `updated_at`, which a change of B sets again). A failure halves B,
-          # three passes double it (cap 8); cancelled runs count for neither. At 1 a failure cannot halve, so there three
-          # passes after the newest failure double it (#3057). Same PUT and token fallback as queue-ops'
+          # three passes double it (cap 4); cancelled runs count for neither. At 1 a failure cannot halve, so there three
+          # passes after the newest failure double it (#3057). The cap is what the 20 hosted job slots carry (#3057): one
+          # full run peaks at 13 Linux jobs and each of the B - 1 waiting groups holds one, so 4 leaves the 4 slots
+          # ci-dispatch reserves for pull request checks and 8 would leave none. Same PUT and token fallback as queue-ops'
           # set-build-entries. It runs from an EXIT trap, after the second pass.
           tune() {
             local id rs b t runs n m nb last
@@ -276,8 +278,8 @@ jobs:
             nb=$b
             if [ "$m" -gt 0 ]; then
               nb=$((b / 2)); [ "$nb" -ge 1 ] || nb=1
-            elif [ "$n" -ge 3 ] && [ "$b" -lt 8 ]; then
-              nb=$((b * 2)); [ "$nb" -le 8 ] || nb=8
+            elif [ "$n" -ge 3 ] && [ "$b" -lt 4 ]; then
+              nb=$((b * 2)); [ "$nb" -le 4 ] || nb=4
             fi
             if [ "$nb" = "$b" ]; then
               log "queue-heal: build entries $b kept ($n passed, $m failed since $t)"
