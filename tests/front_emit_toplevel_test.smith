@@ -150,13 +150,16 @@ export void test_front_emit_toplevel_static_assert_folds_target_facts_and_logic(
 }
 
 export void test_front_emit_toplevel_a_false_static_assert_stops_with_its_message() {
-    Scenario s = {};
-    emit_jit::Jit host = start_jit();
-    Bool ok = emits("const n: usize = 3\n"
-                    "static_assert(n == 4, \"n is four\");\n",
-                    &host, &s, "n is four");
-    test::check_equal(ok, false);
-    emit_jit::stop(&host);
+    // the checker computes it (#3039), so nothing reaches the emitter
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse_new("t.smith", "n: usize = 3\nstatic_assert(n == 4, \"n is four\");\n");
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    test::check_equal(checked.error_count, (Usize)1);
+    test::check_equal(has(checked.errors[0].message, "n is four"), true);
 }
 
 // #2643: a function's name given to a `fn` parameter is wrapped (a `fn` value's code takes a context first), a `fn`

@@ -38,3 +38,18 @@ export void test_function_named_type() {
     Str want = "no error";
     test::check_equal(got, want);
 }
+
+// A lowercase type function applied after `name:`, in a parameter, a field and a binding, is a type as in a result
+// (#3027: `o: maybe(usize)` stopped at the `(`).
+export void test_lowercase_type_function_after_a_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "struct Box:\n    held: maybe(usize)\n"
+                 "fn unwrap(o: maybe(usize), otherwise: usize) -> usize:\n"
+                 "    at: maybe(usize) = o\n    return otherwise\n";
+    Str got = first_error(source);
+    Str want = "no error";
+    test::check_equal(got, want);
+}
