@@ -4725,7 +4725,8 @@ static Bool leaves_early(const ast::Stmt *s) {
 // with an `else` whose branches all do, or a `match` whose arms all do. Such a value has no type (#3096): the one-line
 // `return` arm is no leaf, and neither is the block arm.
 static Bool always_leaves(const ast::Stmt *root) {
-    const ast::Stmt *todo[:] = mem::alloc_slice(const ast::Stmt *, 16);
+    const ast::Stmt *todo[:] = {};
+    todo = mem::realloc(todo, 16);
     Usize count = 0;
     todo[count] = root;
     count += 1;
