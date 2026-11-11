@@ -225,130 +225,15 @@ static bool smith_sha256_has_fast(void) {
     return known == 1;
 }
 
+static bool smith_sha256_portable_only; // a test compares the two ways (smith_core_sha256)
+
 static void smith_sha256_blocks(uint32_t state[8], const uint8_t *data, size_t blocks) {
-    if (smith_sha256_has_fast()) {
+    if (!smith_sha256_portable_only && smith_sha256_has_fast()) {
         smith_sha256_blocks_fast(state, data, blocks);
         return;
     }
     for (size_t i = 0; i < blocks; i++)
         smith_sha256_block(state, data + i * 64);
-}
-
-// The processor's own SHA-256 instructions (#3076): smith hashes itself, hundreds of megabytes, for the step cache and
-// the test cache, and the portable loop above does 100 MB a second optimized and 43 unoptimized, where these do over a
-// gigabyte. `count` whole blocks at `data`. The rounds go four at a time: group i takes words 4i to 4i+3, and from
-// group 4 on a group's words come from the four groups before it, kept in w[] in a ring.
-#if defined(__x86_64__)
-// Whether this processor has the SHA extensions and the SSE levels the function below uses.
-static bool smith_sha256_has_instructions(void) {
-    unsigned a = 0, b = 0, c = 0, d = 0;
-    bool sse = __get_cpuid(1, &a, &b, &c, &d) != 0 && (c & (1U << 9)) != 0 && (c & (1U << 19)) != 0;
-    return sse && __get_cpuid_count(7, 0, &a, &b, &c, &d) != 0 && (b & (1U << 29)) != 0;
-}
-
-[[gnu::target("sha,sse4.1,ssse3")]] static void smith_sha256_blocks_fast(SmithSha256 *sha, const uint8_t *data,
-                                                                         size_t count) {
-    const __m128i bytes = _mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL);         // big-endian words
-    __m128i low = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&sha->state[0]), 0xB1);  // CDAB
-    __m128i high = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&sha->state[4]), 0x1B); // EFGH
-    __m128i abef = _mm_alignr_epi8(low, high, 8);
-    __m128i cdgh = _mm_blend_epi16(high, low, 0xF0);
-    for (size_t block = 0; block < count; block++) {
-        const __m128i abef_before = abef;
-        const __m128i cdgh_before = cdgh;
-        __m128i w[4];
-        for (size_t i = 0; i < 16; i++) {
-            if (i < 4) {
-                w[i] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(data + block * 64 + i * 16)), bytes);
-            } else {
-                __m128i next = _mm_sha256msg1_epu32(w[i & 3], w[(i + 1) & 3]);
-                next = _mm_add_epi32(next, _mm_alignr_epi8(w[(i + 3) & 3], w[(i + 2) & 3], 4));
-                w[i & 3] = _mm_sha256msg2_epu32(next, w[(i + 3) & 3]);
-            }
-            __m128i sum = _mm_add_epi32(w[i & 3], _mm_loadu_si128((const __m128i *)&smith_sha256_k[i * 4]));
-            cdgh = _mm_sha256rnds2_epu32(cdgh, abef, sum);
-            abef = _mm_sha256rnds2_epu32(abef, cdgh, _mm_shuffle_epi32(sum, 0x0E));
-        }
-        abef = _mm_add_epi32(abef, abef_before);
-        cdgh = _mm_add_epi32(cdgh, cdgh_before);
-    }
-    low = _mm_shuffle_epi32(abef, 0x1B);  // FEBA
-    high = _mm_shuffle_epi32(cdgh, 0xB1); // DCHG
-    _mm_storeu_si128((__m128i *)&sha->state[0], _mm_blend_epi16(low, high, 0xF0));
-    _mm_storeu_si128((__m128i *)&sha->state[4], _mm_alignr_epi8(high, low, 8));
-}
-#elif defined(SMITH_SHA256_NEON)
-// Every Apple arm64 processor has them.
-static bool smith_sha256_has_instructions(void) {
-    return true;
-}
-
-static void smith_sha256_blocks_fast(SmithSha256 *sha, const uint8_t *data, size_t count) {
-    uint32x4_t abcd = vld1q_u32(&sha->state[0]);
-    uint32x4_t efgh = vld1q_u32(&sha->state[4]);
-    for (size_t block = 0; block < count; block++) {
-        const uint32x4_t abcd_before = abcd;
-        const uint32x4_t efgh_before = efgh;
-        uint32x4_t w[4];
-        for (size_t i = 0; i < 16; i++) {
-            if (i < 4) {
-                w[i] = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(data + block * 64 + i * 16)));
-            } else {
-                w[i & 3] = vsha256su1q_u32(vsha256su0q_u32(w[i & 3], w[(i + 1) & 3]), w[(i + 2) & 3], w[(i + 3) & 3]);
-            }
-            uint32x4_t sum = vaddq_u32(w[i & 3], vld1q_u32(&smith_sha256_k[i * 4]));
-            uint32x4_t abcd_was = abcd;
-            abcd = vsha256hq_u32(abcd, efgh, sum);
-            efgh = vsha256h2q_u32(efgh, abcd_was, sum);
-        }
-        abcd = vaddq_u32(abcd, abcd_before);
-        efgh = vaddq_u32(efgh, efgh_before);
-    }
-    vst1q_u32(&sha->state[0], abcd);
-    vst1q_u32(&sha->state[4], efgh);
-}
-#else
-static bool smith_sha256_has_instructions(void) {
-    return false;
-}
-
-static void smith_sha256_blocks_fast(SmithSha256 *sha, const uint8_t *data, size_t count) {
-    (void)sha, (void)data, (void)count;
-    SMITH_ASSERT(false);
-}
-#endif
-
-// Whether the instructions are used: the processor has them, and on one block they give the state the portable loop
-// gives. The check runs once in a process; a processor (or an emulator) on which they differ keeps the portable loop,
-// so a digest is never wrong, only slow.
-static bool smith_sha256_fast(void) {
-    static int known; // 0 not asked, 1 yes, 2 no
-    if (known != 0) return known == 1;
-    known = 2;
-    if (!smith_sha256_has_instructions()) return false;
-    uint8_t block[64];
-    for (size_t i = 0; i < sizeof block; i++)
-        block[i] = (uint8_t)(i * 37U + 11U);
-    SmithSha256 portable;
-    SmithSha256 fast;
-    smith_sha256_init(&portable);
-    smith_sha256_init(&fast);
-    smith_sha256_block(&portable, block);
-    smith_sha256_blocks_fast(&fast, block, 1);
-    if (memcmp(portable.state, fast.state, sizeof fast.state) == 0) known = 1;
-    return known == 1;
-}
-
-static bool smith_sha256_portable_only; // a test compares the two ways (smith_core_sha256)
-
-// `count` whole blocks at `data`, by the processor's instructions where it has them.
-static void smith_sha256_blocks(SmithSha256 *sha, const uint8_t *data, size_t count) {
-    if (!smith_sha256_portable_only && smith_sha256_fast()) {
-        smith_sha256_blocks_fast(sha, data, count);
-        return;
-    }
-    for (size_t block = 0; block < count; block++) // bounded by the count
-        smith_sha256_block(sha, data + block * 64);
 }
 
 void smith_sha256_update(SmithSha256 *sha, const uint8_t *data, size_t size) {
@@ -397,7 +282,7 @@ void smith_core_sha256(const uint8_t *data, size_t size, size_t piece, bool port
     SmithSha256 sha;
     smith_sha256_init(&sha);
     smith_sha256_portable_only = portable;
-    *fast = !portable && smith_sha256_fast();
+    *fast = !portable && smith_sha256_has_fast();
     size_t step = piece == 0 ? size : piece;
     for (size_t at = 0; at < size; at += step) // bounded by the size: step is 0 only when size is
         smith_sha256_update(&sha, data + at, size - at < step ? size - at : step);

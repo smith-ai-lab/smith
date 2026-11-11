@@ -10,6 +10,7 @@ module sha256_test;
 import std::test;
 import <smith_core.h>;
 import <string.h>;
+import target;
 
 constexpr Usize hex_size = 65;
 constexpr Usize bytes_max = 4096;
@@ -61,6 +62,26 @@ export void test_sha256_the_two_ways_agree_on_every_length_around_a_block() {
         test::check_equal(fast, false);
         c::smith_core_sha256(bytes, size, 0, false, processor, &fast);
         test::check_equal(c::strcmp(portable, processor), 0);
+    }
+}
+
+// The queue's Mac job runs only the tests with `macos` in their name, and the instructions of Apple's arm64 are
+// compiled nowhere else: this is where they run before a merge. There the processor's way must be the one in use
+// (`fast`), which also says that its check against the portable loop at first use passed.
+export void test_sha256_macos_arm64_uses_the_instructions_and_agrees_with_the_portable_loop() {
+    U8 bytes[bytes_max] = {};
+    fill(bytes, bytes_max);
+    vector("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    for (Usize size = 0; size <= bytes_max; size += 61) {
+        char portable[hex_size] = {};
+        char processor[hex_size] = {};
+        Bool fast = false;
+        c::smith_core_sha256(bytes, size, 0, true, portable, &fast);
+        c::smith_core_sha256(bytes, size, 129, false, processor, &fast);
+        test::check_equal(c::strcmp(portable, processor), 0);
+        if constexpr (target::os == target::macos && target::arch == target::aarch64) {
+            test::check_equal(fast, true);
+        }
     }
 }
 
