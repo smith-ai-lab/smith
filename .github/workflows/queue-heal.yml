@@ -61,6 +61,14 @@ jobs:
           dry() { [ "$DRY_RUN" = true ]; }
           export GH_TOKEN="${OWNER_TOKEN:-$BASE_TOKEN}"
 
+          # an enqueue goes with GITHUB_TOKEN first and the owner's secret only when GitHub refuses, as queue-ops does:
+          # the secret is a personal token without the `workflow` scope, so it cannot queue a PR that changes a workflow
+          # file (#3070 sat `enqueue refused` on every pass from 02:51Z)
+          enqueue_gql() {
+            GH_TOKEN="$BASE_TOKEN" gh api graphql "$@" 2>/dev/null \
+              || { [ -n "$OWNER_TOKEN" ] && GH_TOKEN="$OWNER_TOKEN" gh api graphql "$@"; }
+          }
+
           # the queue's entries on main: "<pr>" per line, front first
           entries() {
             gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
@@ -90,7 +98,7 @@ jobs:
                 mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
                 -f id="$id" --silent || return 1
             fi
-            gh api graphql -f query='
+            enqueue_gql -f query='
               mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
               -f id="$id" --jq '.data.enqueuePullRequest.mergeQueueEntry.position'
           }
@@ -147,7 +155,7 @@ jobs:
                 log "dry-run: would unlabel #$pr ready"
                 continue
               fi
-              if pos=$(gh api graphql -f query='
+              if pos=$(enqueue_gql -f query='
                   mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
                   -f id="$id" --jq '.data.enqueuePullRequest.mergeQueueEntry.position'); then
                 gh api -X DELETE "repos/$REPO/issues/$pr/labels/ready" --silent || true
