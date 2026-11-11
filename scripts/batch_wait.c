@@ -27,13 +27,29 @@
 // cannot be read counts this group's own start as T, as before. It logs `batch: deadline <time> (batch from <ref>)`
 // once and `batch: deadline reached, building`. BATCH_WAIT_NOW (an epoch) and BATCH_WAIT_TICK (seconds per pass) fake
 // the clock in the test.
-// Prints `batch=alone` (no later group), `batch=waited` (waited, now last) or `batch=capped` (waited BATCH_WAIT_CAP
-// seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's 120-minute check
-// timeout) on stdout and exits 0. Exits 3 when its own branch is gone on two reads BATCH_WAIT_MISS_SLEEP seconds
-// apart (5; the group merged or was dropped, as a jump drops every group): the caller cancels the run. A failed read
-// builds (it costs runners, never safety). It polls every BATCH_WAIT_POLL seconds (30) and logs one line on stderr
-// per change of state. BATCH_WAIT_LS_REMOTE replaces `git ls-remote` (the test's fake queue). Exits 2 on a usage
-// error. Plain C23, libc and git through popen (build it with -std=gnu2x), no allocation.
+//
+// One full build at a time (#3057). The window alone joined only entries that arrive within a minute: measured over
+// 48 hours, 5 to 6 entries were in the queue when a passing run started and it merged 1.6, because entries arrive
+// minutes apart and each group that was last for a minute built in full beside the one ahead. So a group that is last
+// also waits while a group ahead of it has started its full build (found once by the walk back, then only looked for
+// in the branch listing, so the wait costs no API call): it logs `batch-wait: group ahead <ref> is building; waiting
+// for it`. When that branch goes (its group merged, or failed and was removed) the newest group builds after
+// BATCH_WAIT_SETTLE seconds (15; the queue is still creating the groups that the merge made room for) and its tree
+// holds every entry that queued meanwhile. The cap bounds this wait too.
+//
+// A failed full build splits (#3057). The run that failed held every entry of its batch, so the group ahead of it
+// stops waiting and builds (`batch=split`), and the workflow's step `Split: a later queue group failed` then runs in
+// its `changes` job; the group ahead of that one reads the step in the jobs of its later group's run and splits too,
+// and so on to the front: every group ahead of the failed one builds at once, the longest that passes merges, and
+// the first that fails names the bad entry. A split does not wait for a group ahead.
+//
+// Prints `batch=alone` (no later group), `batch=waited` (waited, now last), `batch=split` or `batch=capped` (waited
+// BATCH_WAIT_CAP seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's
+// 120-minute check timeout) on stdout and exits 0. Exits 3 when its own branch is gone on two reads
+// BATCH_WAIT_MISS_SLEEP seconds apart (5; the group merged or was dropped, as a jump drops every group): the caller
+// cancels the run. A failed read builds (it costs runners, never safety). It polls every BATCH_WAIT_POLL seconds (30)
+// and logs one line on stderr per change of state. BATCH_WAIT_LS_REMOTE replaces `git ls-remote` (the test's fake
+// queue). Exits 2 on a usage error. Plain C23, libc and git through popen (build it with -std=gnu2x), no allocation.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,8 +133,8 @@ static int first_line(const char *command, char out[line_size]) {
     return pclose(pipe) == 0 && out[0] != '\0';
 }
 
-// The name of a failed job in the latest merge_group run of `branch` (a ref of a later group), or "" when there is
-// none or a read failed. `repo` is owner/name.
+// The name of a failed job in the latest merge_group run of `branch` (a ref of a later group), `split` when it has
+// none but its split step ran (#3057), or "" when there is neither or a read failed. `repo` is owner/name.
 static int failed_job(const char *repo, const char *branch, char name[line_size]) {
     const char *gh = getenv("BATCH_WAIT_GH");
     const char *tool = gh != nullptr && gh[0] != '\0' ? gh : "gh";
@@ -133,12 +149,14 @@ static int failed_job(const char *repo, const char *branch, char name[line_size]
     if (n < 0 || n >= (int)sizeof command || !first_line(command, id) || strchr(id, '\'') != nullptr) return 0;
     n = snprintf(command, sizeof command,
                  "%s api 'repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100' "
-                 "--jq '[.jobs[]|select(.conclusion==\"failure\")|.name]|first // empty'",
+                 "--jq '([.jobs[]|select(.conclusion==\"failure\")|.name]|first) // ([.jobs[].steps[]?|"
+                 "select((.name|startswith(\"Split:\")) and .conclusion==\"success\")|\"split\"]|first) // empty'",
                  tool, repo, id);
     return n >= 0 && n < (int)sizeof command && first_line(command, name);
 }
 
-// Whether any group of `later` (refs separated by spaces) has a failed job; names the group and the job on stderr.
+// Whether any group of `later` (refs separated by spaces) has a failed job or is splitting; names the group and the
+// job on stderr.
 static int later_failed(const char *url, const char *later) {
     const char *repo = strstr(url, "github.com/");
     repo = repo != nullptr ? repo + strlen("github.com/") : url;
@@ -147,10 +165,12 @@ static int later_failed(const char *url, const char *later) {
     char name[line_size];
     for (char *ref = strtok(refs, " "); ref != nullptr; ref = strtok(nullptr, " ")) {
         const char *branch = strncmp(ref, "refs/heads/", 11) == 0 ? ref + 11 : ref;
-        if (failed_job(repo, branch, name)) {
+        if (!failed_job(repo, branch, name)) continue;
+        if (strcmp(name, "split") == 0)
+            fprintf(stderr, "batch-wait: later group %s is splitting (a group behind it failed), building now\n", ref);
+        else
             fprintf(stderr, "batch-wait: later group %s failed (job %s), building now\n", ref, name);
-            return 1;
-        }
+        return 1;
     }
     return 0;
 }
@@ -226,12 +246,15 @@ static const char *ref_of_sha(const char *listing, const char *sha, char ref[lin
 
 // The first group of the batch `own` is in: walk back through the groups ahead (the sha after the last `-` of a ref
 // is the head of the group ahead) while they have not started their full build. Returns the ref of the first group
-// and its run's creation time in `created`, or 0 in `created` when that is this group or a read failed.
-static void batch_first(const char *url, const char *own, const char *listing, char first[line_size], long *created) {
+// and its run's creation time in `created`, or 0 in `created` when that is this group or a read failed. `blocker` is
+// the ref of the group ahead that stopped the walk because its full build started, or "".
+static void batch_first(const char *url, const char *own, const char *listing, char first[line_size], long *created,
+                        char blocker[line_size]) {
     const char *repo = strstr(url, "github.com/");
     repo = repo != nullptr ? repo + strlen("github.com/") : url;
     snprintf(first, line_size, "%s", own);
     *created = 0;
+    blocker[0] = '\0';
     char ref[line_size];
     char ahead[line_size];
     snprintf(ref, sizeof ref, "%s", own);
@@ -241,7 +264,11 @@ static void batch_first(const char *url, const char *own, const char *listing, c
         const char *branch = strncmp(ahead, "refs/heads/", 11) == 0 ? ahead + 11 : ahead;
         long at = 0;
         int building = 0;
-        if (!group_run(repo, branch, &at, &building) || building) return;
+        if (!group_run(repo, branch, &at, &building)) return;
+        if (building) {
+            snprintf(blocker, line_size, "%s", ahead);
+            return;
+        }
         snprintf(first, line_size, "%s", ahead);
         *created = at;
         snprintf(ref, sizeof ref, "%s", ahead);
@@ -249,11 +276,12 @@ static void batch_first(const char *url, const char *own, const char *listing, c
 }
 
 // The batch's deadline (epoch), logged once: its first group's run creation plus the window, or this run's own start
-// plus the window when this group is first or a read failed.
-static long batch_deadline(const char *url, const char *own, const char *listing, long start, int window) {
+// plus the window when this group is first or a read failed. `blocker` is the group ahead that is building, or "".
+static long batch_deadline(const char *url, const char *own, const char *listing, long start, int window,
+                           char blocker[line_size]) {
     char first[line_size];
     long created = 0;
-    batch_first(url, own, listing, first, &created);
+    batch_first(url, own, listing, first, &created, blocker);
     long base = created > 0 ? created : start;
     time_t when = (time_t)(base + window);
     char text[64];
@@ -264,10 +292,53 @@ static long batch_deadline(const char *url, const char *own, const char *listing
     return base + window;
 }
 
+// Whether `ref` is a branch of `listing` ("sha ref" lines).
+static int listed(const char *listing, const char *ref) {
+    size_t length = strlen(ref);
+    for (const char *at = strstr(listing, ref); at != nullptr; at = strstr(at + 1, ref))
+        if (at > listing && at[-1] == ' ' && at[length] == '\n') return 1;
+    return 0;
+}
+
 static int finish(const char *state, const char *why) {
     fprintf(stderr, "batch-wait: %s\n", why);
     printf("batch=%s\n", state);
     return 0;
+}
+
+// What the last group knows between polls: the batch's deadline (-1 until computed), the end of the settle time, and
+// the group ahead whose full build it waits for ("" for none).
+typedef struct {
+    long start;
+    long deadline;
+    long settled;
+    int window;
+    int settle;
+    char blocker[line_size];
+} Last;
+
+// One poll as the last group: 0 to build now, 1 to wait for the full build ahead, 2 to wait for the deadline.
+static int last_waits(Last *last, const char *own, const char *url, const char *listing, long now) {
+    if (last->blocker[0] != '\0' && !listed(listing, last->blocker)) {
+        fprintf(stderr, "batch-wait: %s is gone; no group ahead is building\n", last->blocker);
+        last->blocker[0] = '\0';
+        last->deadline = -1;
+        last->settled = now + last->settle;
+    }
+    if (last->deadline < 0) {
+        // walked again after a group ahead went: another one may be building (a split builds several)
+        last->deadline = batch_deadline(url, own, listing, last->start, last->window, last->blocker);
+        if (last->deadline < last->settled) last->deadline = last->settled;
+        if (last->blocker[0] != '\0')
+            fprintf(stderr, "batch-wait: group ahead %s is building; waiting for it\n", last->blocker);
+    }
+    if (last->blocker[0] != '\0') return 1;
+    if (now >= last->deadline) {
+        if (last->window > 0) fprintf(stderr, "batch: deadline reached, building\n");
+        return 0;
+    }
+    fprintf(stderr, "batch-wait: last for now; waiting %ld s for later groups\n", last->deadline - now);
+    return 2;
 }
 
 int main(int argc, char **argv) {
@@ -286,11 +357,10 @@ int main(int argc, char **argv) {
     int polls = poll > 0 ? cap / poll : cap;
     int window = setting("BATCH_WAIT_WINDOW", window_seconds);
     int window_polls = poll > 0 ? window / poll : window;
-    long start = clock_now(0);
-    long deadline = -1;
+    Last last = {.start = clock_now(0), .deadline = -1, .window = window, .settle = setting("BATCH_WAIT_SETTLE", 15)};
     char later[later_size];
     char listing[listing_size];
-    char last[later_size] = "";
+    char logged[later_size] = "";
     int waited = 0;
     int misses = 0;
     // each pass is a poll or a miss; two misses in a row end it, so the bound is twice the polls of the cap
@@ -307,21 +377,19 @@ int main(int argc, char **argv) {
         }
         misses = 0;
         if (read == Read_Last) {
-            if (deadline < 0) deadline = batch_deadline(argv[3], argv[1], listing, start, window);
-            long now = clock_now(pass);
-            if (now >= deadline) {
-                if (window > 0) fprintf(stderr, "batch: deadline reached, building\n");
+            int wait = last_waits(&last, argv[1], argv[3], listing, clock_now(pass));
+            if (wait == 0)
                 return finish(waited ? "waited" : "alone",
                               waited ? "now last; running full checks" : "last entry; running full checks");
-            }
-            fprintf(stderr, "batch-wait: last for now; waiting %ld s for later groups\n", deadline - now);
+            if (wait == 1 && waited >= polls) return finish("capped", "capped; running full checks");
+            if (wait == 1) waited += 1;
             sleep((unsigned)poll);
             continue;
         }
         if (waited >= polls) return finish("capped", "capped; running full checks");
-        if (later_failed(argv[3], later)) return finish("waited", "a later group failed; running full checks");
-        if (strcmp(later, last) != 0) fprintf(stderr, "batch-wait: waiting on %s\n", later);
-        strcpy(last, later);
+        if (later_failed(argv[3], later)) return finish("split", "a later group failed; running full checks");
+        if (strcmp(later, logged) != 0) fprintf(stderr, "batch-wait: waiting on %s\n", later);
+        strcpy(logged, later);
         waited += 1;
         sleep((unsigned)poll);
     }

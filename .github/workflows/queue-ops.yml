@@ -24,12 +24,13 @@ on:
           - cancel-pr-runs
           - rerun-failed
           - set-build-entries
+          - delete-branch
       pr:
         description: "Pull request number (jump, dequeue, enqueue, rerun-failed); enqueue-many: numbers separated by spaces"
         required: false
         type: string
       value:
-        description: "set-build-entries: max_entries_to_build, 1 to 10"
+        description: "set-build-entries: max_entries_to_build, 1 to 10; delete-branch: the branch's name"
         required: false
         type: string
       dry_run:
@@ -39,7 +40,8 @@ on:
         default: false
 
 permissions:
-  contents: read
+  # write: delete-branch deletes a ref; every other op only reads the contents
+  contents: write
   pull-requests: write
   actions: write
 
@@ -206,6 +208,22 @@ jobs:
                   > /tmp/ruleset.json
                 if dry; then echo "dry-run: would set max_entries_to_build=$VALUE"; return 0; fi
                 gh api -X PUT "repos/$REPO/rulesets/$id" --input /tmp/ruleset.json --silent && echo "max_entries_to_build=$VALUE" ;;
+              delete-branch)
+                # a stray branch (no open pull request) the lead cannot delete from a session: a session's git
+                # pushes reach only its own branch. Refused: the default branch, the queue's branches, a branch
+                # with an open pull request (close the pull request first; GitHub then offers the delete).
+                local b="$VALUE" default open
+                case "$b" in
+                  ''|*[!A-Za-z0-9._/-]*|*..*|/*|*/) echo "value must be a branch name"; return 2 ;;
+                  gh-readonly-queue/*) echo "refused: a merge queue branch"; return 2 ;;
+                esac
+                default=$(gh api "repos/$REPO" --jq .default_branch) || return 1
+                [ "$b" != "$default" ] || { echo "refused: the default branch"; return 2; }
+                open=$(gh api "repos/$REPO/pulls?head=${REPO%/*}:$b&state=open" --jq 'length') || return 1
+                [ "$open" = 0 ] || { echo "refused: $b has an open pull request"; return 2; }
+                gh api "repos/$REPO/git/ref/heads/$b" --jq '"branch \(.ref) at \(.object.sha)"' || return 1
+                if dry; then echo "dry-run: would delete branch $b"; return 0; fi
+                gh api -X DELETE "repos/$REPO/git/refs/heads/$b" --silent && echo "deleted $b" ;;
               *) echo "unknown op"; return 2 ;;
             esac
           }

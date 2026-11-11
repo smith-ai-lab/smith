@@ -10,6 +10,7 @@
 //                                        `.` or `::` as `snake_case`, any other use as `.snake_case`
 //   fix_variants::rename_all(sources)    the same for a list of files (Words): the names of all of them, applied to
 //   each
+//   fix_variants::rename_all_with(sources, imported)  the same, with the names of the modules they import too
 //
 // A name is left alone (and so are its uses) when it is also the name of a struct, enum or union in the files, since
 // text alone cannot tell which is meant. A lowercase result that is a keyword gets a `_` at the end (`Default` is
@@ -165,10 +166,13 @@ static void read_body(Found *found, Str source, lex::Tokens tokens, Usize at) {
     }
 }
 
-// The variants the enums of `source` declare. Text that does not tokenize declares none.
+// The variants the enums of `source` declare, in smith's own syntax or today's. Text that does not tokenize declares
+// none.
 export Found collect(Str source) {
     Found found = {};
     lex::Lexed read = lex::tokenize_new(source);
+    // An imported module as its file has it, still in today's syntax (`// ...`), reads with today's lexer (#3027).
+    if (read == .error) read = lex::tokenize(source);
     if (read == .error) return found;
     lex::Tokens tokens = read.ok;
     for (Usize i = 0; i < countof(tokens); i++) {
@@ -228,17 +232,25 @@ export Str rename(Str source, Words names) {
     return as_str(format::push(out, source[copied:countof(source)]));
 }
 
-// `sources` with the variants of all of them renamed in each.
-export Words rename_all(Words sources) {
-    Words names = {};
-    Words tags = {};
-    for (Usize i = 0; i < countof(sources); i++) {
-        tags = add_tags(tags, sources[i].text);
-        Found found = collect(sources[i].text);
+// The variants the enums of `texts` declare, added to `names`, and their struct, enum and union names to `tags`.
+static Words add_variants(Words names, Words *tags, Words texts) {
+    for (Usize i = 0; i < countof(texts); i++) {
+        *tags = add_tags(*tags, texts[i].text);
+        Found found = collect(texts[i].text);
         for (Usize j = 0; j < countof(found.names); j++) {
             if (!has(names, found.names[j].text)) names = push_word(names, found.names[j].text);
         }
     }
+    return names;
+}
+
+// `sources` with the variants of all of them, and of the modules they import (`imported`, as their files have them),
+// renamed in each: a file fixed alone writes `console::Closed` as `.closed`, as `console.smith` declares it once
+// fixed (#3027).
+export Words rename_all_with(Words sources, Words imported) {
+    Words tags = {};
+    Words names = add_variants((Words){}, &tags, sources);
+    names = add_variants(names, &tags, imported);
     Words kept = {};
     for (Usize i = 0; i < countof(names); i++) {
         if (!has(tags, names[i].text)) kept = push_word(kept, names[i].text);
@@ -247,4 +259,170 @@ export Words rename_all(Words sources) {
     for (Usize i = 0; i < countof(sources); i++)
         renamed[i].text = rename(sources[i].text, kept);
     return renamed;
+}
+
+// `sources` with the variants of all of them renamed in each.
+export Words rename_all(Words sources) {
+    Words none = {};
+    return rename_all_with(sources, none);
+}
+
+// The fixer's rename of a local or parameter named like a module the file imports (#3027).
+//
+// In smith's own syntax a local, parameter or loop name that is the name of an imported module is a shadowing error
+// (owner, 2026-11-10: "yeah it should be a shadowing error please"): `arena: *Arena` with `import std.arena`. Today's
+// syntax tells the two apart by `::` (`arena::push(a, ...)` is the module, `arena->used` the local), and once fixed
+// both are `arena.`, so the rename is made on today's text, before every other pass. The name gets a trailing `_` (the
+// rule of `in` -> `in_`, #2390), and another while that name is in the file:
+//
+//   void f(arena::Arena *arena) { arena::push(arena, 1); }   void f(arena::Arena *arena_) { arena::push(arena_, 1); }
+//
+// Renamed: a name inside a function's parameters or body that has no `::` after it and no `.`, `->` or `::` before it,
+// and no `(` after it (a function of that name). A name used at the top level of the file (a global, a function) is
+// left, since its declaration is not in a function, and so are struct fields (`.arena` stays).
+//
+//   fix_variants::rename_shadows(source)   `source` with every such name renamed
+// A text in a list.
+struct ShadowName {
+    Str text;
+};
+
+typedef typeof(ShadowName[:]) Names;
+typedef typeof(U8[:]) Places;
+
+static Bool listed(Names names, Str text) {
+    for (Usize i = 0; i < countof(names); i++) {
+        if (mem::equal(names[i].text, text)) return true;
+    }
+    return false;
+}
+
+static Names with_name(Names names, Str text) {
+    if (listed(names, text)) return names;
+    names = mem::realloc(names, countof(names) + 1);
+    names[countof(names) - 1] = (ShadowName){.text = text};
+    return names;
+}
+
+// `as` of an import: a keyword of smith's own syntax, a name to today's lexer.
+static Bool is_as(Str source, lex::Token token) {
+    Str word = "as";
+    return token.kind == lex::kw_as || (token.kind == lex::name && mem::equal(lex::text(source, token), word));
+}
+
+// The names the file's module imports bind: the last part of `import a::b;`, or the name after `as`. A header
+// (`import <h>;`) binds none here.
+static Names imported(Str source, lex::Tokens tokens) {
+    Names names = {};
+    for (Usize i = 0; i + 1 < countof(tokens); i++) {
+        if (tokens[i].kind != lex::kw_import || tokens[i + 1].kind != lex::name) continue;
+        Usize j = i + 1;
+        Str last = lex::text(source, tokens[j]);
+        while (j + 2 < countof(tokens) && tokens[j + 1].kind == lex::colon_colon && tokens[j + 2].kind == lex::name) {
+            j += 2;
+            last = lex::text(source, tokens[j]);
+        }
+        if (j + 2 < countof(tokens) && is_as(source, tokens[j + 1]) && tokens[j + 2].kind == lex::name)
+            last = lex::text(source, tokens[j + 2]);
+        names = with_name(names, last);
+    }
+    return names;
+}
+
+// Where each token stands: 0 at the top level, 1 in a function's parameters or body, 2 elsewhere (a struct's body, the
+// parentheses of a declaration with no body).
+static Places places(lex::Tokens tokens) {
+    Places place = mem::alloc_slice(U8, countof(tokens));
+    Usize depth = 0;
+    Bool function = false;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        lex::TokenKind k = tokens[i].kind;
+        if (k == lex::left_brace && depth == 0) {
+            function = i > 0 && tokens[i - 1].kind == lex::right_paren;
+            if (function) {
+                // the parameters: back to the `(` that the `)` before the brace closes
+                Usize open = 0;
+                for (Usize j = i - 1; j > 0; j--) {
+                    if (tokens[j].kind == lex::right_paren) {
+                        open += 1;
+                    }
+                    if (tokens[j].kind == lex::left_paren) {
+                        open -= 1;
+                    }
+                    place[j] = 1;
+                    if (open == 0) break;
+                }
+            }
+        }
+        if (depth > 0) place[i] = function ? 1 : 2;
+        if (k == lex::left_brace) depth += 1;
+        if (k == lex::right_brace && depth > 0) {
+            depth -= 1;
+            place[i] = function ? 1 : 2;
+            if (depth == 0) function = false;
+        }
+    }
+    return place;
+}
+
+// Whether token `i` is a use of the local or parameter: no `::` after it, no `.`, `->` or `::` before it, and not a
+// call of a function of that name.
+static Bool is_local_use(lex::Tokens tokens, Usize i) {
+    if (i + 1 < countof(tokens)) {
+        lex::TokenKind next = tokens[i + 1].kind;
+        if (next == lex::colon_colon || next == lex::left_paren) return false;
+    }
+    if (i == 0) return true;
+    lex::TokenKind before = tokens[i - 1].kind;
+    return before != lex::dot && before != lex::arrow && before != lex::colon_colon;
+}
+
+static Bool in_file(Str source, lex::Tokens tokens, Str text) {
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (mem::equal(lex::text(source, tokens[i]), text)) return true;
+    }
+    return false;
+}
+
+export Str rename_shadows(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Names modules = imported(source, tokens);
+    if (countof(modules) == 0) return source;
+    Places place = places(tokens);
+    // A name used at the top level is a global or a function of the file: its declaration is not renamed here.
+    Names kept = {};
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || place[i] == 1) continue;
+        if (i > 0 && tokens[i - 1].kind == lex::kw_import) continue;
+        if (i > 0 && (tokens[i - 1].kind == lex::colon_colon || is_as(source, tokens[i - 1]))) continue;
+        if (i + 1 < countof(tokens) && tokens[i + 1].kind == lex::colon_colon) continue;
+        if (i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow)) continue;
+        Str text = lex::text(source, tokens[i]);
+        if (listed(modules, text) && place[i] == 0) kept = with_name(kept, text);
+    }
+    Names spelled = mem::alloc_slice(ShadowName, countof(modules));
+    for (Usize m = 0; m < countof(modules); m++) {
+        Str next = as_str(format::push(modules[m].text, "_"));
+        while (in_file(source, tokens, next)) {
+            next = as_str(format::push(next, "_"));
+        }
+        spelled[m].text = next;
+    }
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || place[i] != 1 || !is_local_use(tokens, i)) continue;
+        Str text = lex::text(source, tokens[i]);
+        if (listed(kept, text)) continue;
+        for (Usize m = 0; m < countof(modules); m++) {
+            if (!mem::equal(modules[m].text, text)) continue;
+            out = as_str(format::push(out, source[at:tokens[i].span.start], spelled[m].text));
+            at = tokens[i].span.end;
+            break;
+        }
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
 }

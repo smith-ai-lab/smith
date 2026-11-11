@@ -1,0 +1,60 @@
+// The `Scope` step of .github/workflows/ci.yml (#3044): a diff of only documentation gets no macOS job and no build, a
+// diff with one code file gets today's result, so the exception cannot silently widen. The step's script is cut out of
+// the workflow and run in a scratch repository with the event's variables; no network, no CI run.
+// smith-covers: .github/workflows/ci.yml
+module ci_scope_test;
+
+import std::test;
+import scratch;
+
+// Cuts the Scope step's script out of the workflow, makes a repository with one commit of a code file and a concept,
+// then for each case: commits the named file, runs the script as `workflow_dispatch` against the commit before it
+// (or as `push`) and prints the three outputs it decides on.
+static const char *const setup =
+    "awk '/^      - name: Scope$/{f=1;next} f&&/^        run: \\|/{r=1;next} r&&/^      - name:/{exit} "
+    "r&&/^          /{sub(/^          /,\"\");print}' \"$SMITH_REPO/.github/workflows/ci.yml\" >scope.sh && "
+    "git init -q -b main . && git config user.email t@t && git config user.name t && "
+    "mkdir -p knowledge lib templates/new .github/workflows && echo a >knowledge/a.md && echo c >lib/a.c && "
+    "echo t >templates/new/t.md && echo w >.github/workflows/llvm.yml && git add -A && git commit -q -m base && "
+    "case_() { echo x >>\"$1\"; git add -A; git commit -q -m c; rm -f out sum; "
+    "GITHUB_OUTPUT=$PWD/out GITHUB_STEP_SUMMARY=$PWD/sum GITHUB_EVENT_NAME=${EVENT:-workflow_dispatch} "
+    "BASE=$(git rev-parse HEAD~1) BEFORE=$(git rev-parse HEAD~1) GITHUB_SHA=$(git rev-parse HEAD) bash scope.sh; "
+    "echo \"$1: $(grep -E '^(scope|mac_run|docs_tests)=' out | paste -sd' ')\"; }; ";
+
+static void check(const char *label, const char *cases, const char *want) {
+    scratch::Project p = scratch::make("repository", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "setup.sh", setup);
+    scratch::write(&p, "cases.sh", cases);
+    scratch::Run run = scratch::sh(&p, "cat setup.sh cases.sh | bash");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_text(label, want, run.out);
+}
+
+export void test_a_knowledge_only_diff_runs_no_mac_job_and_no_document_tests() {
+    check("knowledge", "case_ knowledge/a.md", "knowledge/a.md: scope=docs mac_run=false docs_tests=false\n");
+}
+
+export void test_a_readme_or_skill_diff_also_runs_the_document_tests() {
+    check("readme", "case_ README.md", "README.md: scope=docs mac_run=false docs_tests=true\n");
+}
+
+export void test_one_code_file_gives_the_full_check_with_the_mac_job() {
+    check("code", "case_ lib/a.c", "lib/a.c: scope=full mac_run=true docs_tests=false\n");
+}
+
+export void test_a_document_next_to_a_code_file_is_not_docs_only() {
+    check("mixed", "mkdir -p knowledge; echo y >knowledge/m.md; case_ lib/a.c",
+          "lib/a.c: scope=full mac_run=true docs_tests=false\n");
+}
+
+export void test_markdown_that_tests_read_stays_code() {
+    check("template", "case_ templates/new/t.md", "templates/new/t.md: scope=full mac_run=true docs_tests=false\n");
+}
+
+export void test_a_push_of_only_documents_is_scope_none_and_a_code_push_is_a_release() {
+    check("push", "EVENT=push case_ knowledge/a.md; EVENT=push case_ lib/a.c",
+          "knowledge/a.md: scope=none mac_run=true docs_tests=false\n"
+          "lib/a.c: scope=release mac_run=true docs_tests=false\n");
+}

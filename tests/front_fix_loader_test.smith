@@ -360,3 +360,38 @@ export void test_front_fix_loader_a_fix_in_an_imported_generic_reaches_its_modul
         check_text(got, "pub fn truthy(x: auto) -> bool: x != 0\n");
     }
 }
+
+// The zero value of another module's struct names a struct nested in it as the file reaches it, through the module it
+// imports (`nest.Inner`, with `as nest`), not by the whole path the checker shows (#3027: `front.emit_state.Target`
+// in a test that imports `front::emit`).
+export void test_front_fix_loader_a_nested_struct_is_named_through_the_import() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_nest.smith";
+    Str user_path = as_str(format::push("/tmp/front_fix_loader_nest_user_", (I64)c::getpid(), ".smith"));
+    test::check_equal(fix::store(module_path, "module front_fix_loader_nest;\nexport struct Inner {\n    I32 n;\n};\n"
+                                              "export struct Outer {\n    Inner inner;\n    I32 m;\n};\n"),
+                      true);
+    test::check_equal(fix::store(user_path,
+                                 "module front_fix_loader_nest_user;\nimport front_fix_loader_nest as nest;\n"
+                                 "static void f() {\n    nest::Outer o = {};\n"
+                                 "    g(&o);\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    (void)c::unlink(user_path.data);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_loader_nest as nest\nfn f():\n    mut o: nest.Outer = "
+                        "nest.Outer(inner = nest.Inner(n = 0), m = 0)\n    g(&o)\n");
+    }
+}
