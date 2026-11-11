@@ -10,7 +10,7 @@ tags: [ci, process]
 
 | job | runs | why it is its own job |
 |---|---|---|
-| `changes` | first, light | the scope, the matrix, the macOS runner, batching |
+| `changes` | first, light | the scope, the matrix, the macOS runner |
 | `build-linux` | the dev build, the sizing, and the one test part | the tree every Linux check restores; the part runs here, on the tree just built, when the misses fit in one part |
 | `check-fmt-prove`, `check-lint` | after `build-linux` | two jobs so neither is longer than the other path (lead, 2026-11-08, #2833); their `Checks` step prints where the time went (#2985): lint's `linted N files (R run, C cached, T s, setup S s: build info, needs, plan and hash)`, prove's `G groups, build B s, proofs P s` and its count of functions reused from the cache |
 | `macos` | beside them | the macOS job (#1709): the `--macos-only` tests whose inputs changed (its own test store) |

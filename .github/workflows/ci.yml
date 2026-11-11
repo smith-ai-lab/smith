@@ -60,10 +60,9 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    # 3 minutes of work plus the 10-minute cap of a queue run's wait for the groups ahead (`yield-to-queue`, #2833)
-    # and the 60-minute cap of `batch-wait` (#2851, a queue entry)
-    timeout-minutes: 75
-    # `batch-wait` cancels the run of a group that left the queue; `yield-to-queue` force-cancels a PR check's own run
+    # 3 minutes of work: a queue run waits for nothing (one queue run at a time, #3131)
+    timeout-minutes: 10
+    # `yield-to-queue` force-cancels a PR check's own run
     permissions:
       contents: read
       actions: write
@@ -88,8 +87,7 @@ jobs:
       uncached: ${{ steps.scope.outputs.uncached }}
       # the base a PR check is compared against
       base: ${{ steps.pr.outputs.base }}
-      # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
-      batch: ${{ steps.batch.outputs.batch }}
+      # a queue entry: the PRs its tree holds that main does not
       prs: ${{ steps.prs.outputs.prs }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
@@ -120,8 +118,6 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/yield-to-queue
-        with:
-          queue-wait: "true"
       - name: The pull request
         # a PR check is a `workflow_dispatch` run (#2856): what a `pull_request` event carried (the base, the body) is
         # read from the PR the dispatcher named
@@ -134,23 +130,6 @@ jobs:
           echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
           jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
           echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
-      - name: Wait while a later queue entry is built on this one
-        # batching (#2851, knowledge/ci-hosted.md): with HEADGREEN a later group's passing run merges every entry ahead
-        # of it, so an entry with a later group built on it waits here, on this one runner, and every heavy job (they
-        # all need `changes`) waits with it; it is cancelled when its group merges. Once it is the last entry built, it
-        # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
-        # One full build at a time (#3057): the last entry also waits while a group ahead of it is in its full build,
-        # so the next full run holds every entry that queued during the one before it.
-        id: batch
-        uses: ./.github/actions/batch-wait
-      - name: "Split: a later queue group failed"
-        # #3057: the full build of a later group failed, and that run held this entry, so this group builds its own
-        # tree now, beside the other groups ahead of the failed one. `scripts/batch_wait.c` in the group ahead of this
-        # one reads this step (a name that starts with `Split:`, concluded success) in this run's jobs and splits too:
-        # do not rename it without that query.
-        if: steps.batch.outputs.batch == 'split'
-        run: |
-          echo "batch: split (a later group's full build failed; every group ahead of it builds its own tree)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
@@ -369,8 +348,7 @@ jobs:
         # the standing number of #3051 and #3057 (owner, 2026-11-11: "if the PR queue is growing over time, that's bad"):
         # the nightly run prints entries against merges and pull requests per passing queue run. The queue holds its
         # load when merged is at least entered and the depth does not grow over three days. Entered counts every
-        # `added_to_merge_queue` event of the pull requests updated in the window (a re-queue counts again); batched is
-        # a cancelled queue run whose pull request merged (a later group's run merged it, #2851). About 100 reads, with
+        # `added_to_merge_queue` event of the pull requests updated in the window (a re-queue counts again); About 100 reads, with
         # the reader's token; a failed read prints `unreadable` and fails nothing.
         if: github.event_name == 'schedule'
         run: |
@@ -378,7 +356,7 @@ jobs:
           cutoff=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ)
           api() { GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api -X GET "$@"; }
           line() {
-            local runs= prs= page p pr n entered=0 merged ok failed batched=0 total depth per
+            local runs= prs= page p pr n entered=0 merged ok failed total depth per
             for p in 1 2 3 4 5; do
               page=$(api "$r/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 -f page="$p" -f created=">=$cutoff" \
                 --jq '.workflow_runs[] | "\(.head_branch | capture("/pr-(?<n>[0-9]+)-").n) \(.conclusion // .status)"') || return 1
@@ -404,16 +382,12 @@ jobs:
             total=$(echo "$runs" | grep -c . || true)
             ok=$(echo "$runs" | grep -c ' success$' || true)
             failed=$(echo "$runs" | grep -c ' failure$' || true)
-            # batched: a cancelled run whose pull request merged (a later group's run merged it, #2851)
-            for pr in $(echo "$runs" | awk '$2 == "cancelled" { print $1 }'); do
-              echo "$prs" | grep -q "^$pr [^-]" && batched=$((batched + 1))
-            done
             depth=$(gh api graphql -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f query='
               query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
                 mergeQueue(branch: "main") { entries { totalCount } } } }' \
               --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null) || depth=unknown
             per=$(awk -v m="$merged" -v s="$ok" 'BEGIN { if (s > 0) printf "%.1f", m / s; else printf "none" }')
-            echo "queue: last 24 h entered $entered, merged $merged, depth now $depth, runs $total ($ok ok, $batched batched, $failed failed), PRs per ok run $per"
+            echo "queue: last 24 h entered $entered, merged $merged, depth now $depth, runs $total ($ok ok, $failed failed), PRs per ok run $per"
           }
           { line || echo "queue: last 24 h unreadable"; } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: API budget (last)
@@ -1180,11 +1154,10 @@ jobs:
           CHECK_LINT: ${{ needs.check-lint.result }}
           RELEASE_PACK_MACOS: ${{ needs.release-pack-macos.result }}
           RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}
-          BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$EVENT" = merge_group ]; then echo "tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
           # Fail closed (#2965): only `success` and `skipped` pass. An `abandoned` job (GitHub never created it, as in the
           # outage of 2026-11-09), `failure`, `cancelled`, an empty or any future value fails.
           for r in $RESULTS; do
