@@ -413,14 +413,19 @@ export void test_dry_run_without_changed_is_refused() {
 }
 
 // (Scratch tests: what the base is and whether anything differs is git's answer.) A base that is the head itself with
-// nothing changed compared nothing: it fails and names the fix, where it once printed `0 of 384` (#3059).
+// nothing changed compared nothing: it fails and names the fix, where it once printed `0 of 384` (#3059). A project
+// that makes its records by convention still runs every test once on its first run (record_test).
 export void test_an_empty_diff_against_the_head_itself_fails_naming_the_fix() {
     enter();
     defer leave();
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
+    // a build.c that makes its tests another way, as smith's own does, so a first run is not "every test, for records"
     scratch::Run run =
-        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD --dry-run 2>&1").data);
+        scratch::sh(&p, format::push(repository, "printf 'void build(void) {}\\n' > build.c && git add build.c && "
+                                                 "git -c user.name=t -c user.email=t@t commit -q -m build && "
+                                                 "smith test --changed --base HEAD --dry-run 2>&1")
+                            .data);
     scratch::expect_contains("the message", run.out, "is the head itself and nothing differs: pass --base <ref>");
     scratch::expect_failure("exit status", &run);
 }
