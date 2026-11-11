@@ -211,11 +211,6 @@ export void test_front_eval_a_run_that_stops_says_where() {
     Str source = "import c <string.h> as cstring\n"
                  "fn deep(n: i32) -> i32:\n"
                  "    deep(n + 1)\n"
-                 "fn spin(n: i32) -> i32:\n"
-                 "    mut i := 0\n"
-                 "    while i >= 0:\n"
-                 "        i = n\n"
-                 "    i\n"
                  "fn half(n: i32) -> i32:\n"
                  "    contract.requires(n % 2 == 0)\n"
                  "    n / 2\n"
@@ -233,7 +228,6 @@ export void test_front_eval_a_run_that_stops_says_where() {
                  "    mut i := n\n"
                  "    i += 1\n"
                  "a := deep(0)\n"
-                 "b := spin(1)\n"
                  "c := half(3)\n"
                  "d := half(4)\n"
                  "e := through(2)\n"
@@ -241,9 +235,6 @@ export void test_front_eval_a_run_that_stops_says_where() {
                  "g := third(1)\n"
                  "h := nothing(1)\n";
     expect(source, "a", "failed: `deep(0)` is 512 calls deep at compile time; the recursion does not end");
-    expect(source, "b",
-           "failed: `spin(1)` ran 1048576 steps at compile time without finishing; a loop here does not end, or the "
-           "work belongs at run time");
     expect(source, "c", "failed: `contract.requires` fails at compile time (in `half(3)`)");
     expect(source, "d", "2");
     expect(source, "e", "failed: this divides by zero at compile time (in `divide(0)`, called from `through(2)`)");
@@ -252,6 +243,19 @@ export void test_front_eval_a_run_that_stops_says_where() {
            "unknown: `third(1)` cannot run at compile time: this is a value with memory (an array, a slice, a string, "
            "a struct or a pointer), and compile-time code holds only numbers, bools, enumerators and types");
     expect(source, "h", "unknown: this has no value");
+}
+
+// One source of its own: the run takes the whole step limit, and every `expect` compiles the whole source again.
+export void test_front_eval_a_loop_that_does_not_end_says_so() {
+    Str source = "fn spin(n: i32) -> i32:\n"
+                 "    mut i := 0\n"
+                 "    while i >= 0:\n"
+                 "        i = n\n"
+                 "    i\n"
+                 "b := spin(1)\n";
+    expect(source, "b",
+           "failed: `spin(1)` ran 1048576 steps at compile time without finishing; a loop here does not end, or the "
+           "work belongs at run time");
 }
 
 export void test_front_eval_target_facts() {
