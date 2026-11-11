@@ -197,7 +197,9 @@ jobs:
                 if dry; then echo "dry-run: would rerun failed jobs of run $run_id"; return 0; fi
                 gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" --silent && echo "rerun $run_id" ;;
               set-group-size)
-                # the queue's group size (#3131): one build at a time, a group of N entries that merges all or none
+                # the queue's group size (#3131): one build at a time, a group of N entries that merges all or none.
+                # A run that has not reported in 20 minutes (a normal one takes about 9) is given up by GitHub itself:
+                # the entry leaves the queue and the next one starts (a run hung 40 minutes on 2026-11-11; the limit was 120)
                 case "$VALUE" in 1|2|4|8) ;; *) echo "value must be 1, 2, 4 or 8"; return 2 ;; esac
                 local id rules
                 id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') || return 1
@@ -205,7 +207,8 @@ jobs:
                 gh api "repos/$REPO/rulesets/$id" \
                   | jq --argjson n "$VALUE" '{name, target, enforcement, bypass_actors, conditions,
                       rules: (.rules | map(if .type == "merge_queue" then .parameters += {max_entries_to_build: 1,
-                        min_entries_to_merge: 1, max_entries_to_merge: $n, grouping_strategy: "ALLGREEN"} else . end))}' \
+                        min_entries_to_merge: 1, max_entries_to_merge: $n, grouping_strategy: "ALLGREEN",
+                        check_response_timeout_minutes: 20} else . end))}' \
                   > /tmp/ruleset.json
                 if dry; then echo "dry-run: would set group size $VALUE"; return 0; fi
                 gh api -X PUT "repos/$REPO/rulesets/$id" --input /tmp/ruleset.json --silent && echo "group size=$VALUE" ;;
