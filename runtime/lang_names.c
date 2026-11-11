@@ -97,7 +97,7 @@ void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered
 static void smith_lang_cname_add(SmithLang *lang, const char *fallback, size_t fallback_length, const char *c_name,
                                  size_t c_name_length) {
     if (lang->cnames_count >= smith_lang_cnames_max) {
-        smith_lang_limit(lang, "imported exports that have a C name", smith_lang_cnames_max);
+        smith_lang_limit(lang, "imported exports that have a C name (smith_lang_cnames_max)", smith_lang_cnames_max);
         return;
     }
     SmithLangCName *entry = &lang->cnames[lang->cnames_count++];

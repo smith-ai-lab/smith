@@ -165,6 +165,32 @@ export state::Status enum_decl(state::Emitter *e, const ast::Decl *d) {
     return state::success();
 }
 
+// The `enum:` a type function made (`maybe(usize)`), declared from the checker's type the first time it is needed.
+export state::TyResult enum_from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
+    Str name = types::name_of(t);
+    state::Ty base = {};
+    if (type_enum(e, name, &base)) return base;
+    types::Slot slots[:] = types::slots_of(t).items;
+    Usize count = countof(slots);
+    state::Enumerator items[:] = mem::alloc_slice(state::Enumerator, count + 1);
+    for (Usize i = 0; i < count; i++) {
+        items[i] = (state::Enumerator){.name = slots[i].name, .value = slots[i].value};
+        types::TypeRef carried = slots[i].type;
+        if (!types::is_payload_enum(t) || carried == nullptr || carried->kind == .void_type) continue;
+        state::TyResult payload = state::type_of_checked(e, carried, span);
+        if (payload == .error) {
+            return payload;
+        }
+        items[i].has_payload = true;
+        items[i].payload = payload.ok;
+    }
+    state::scalar_type(e, "i32", &base);
+    if (any_payload(items[0:count])) base = variant_enum_type(e, name, items[0:count]);
+    base.name = name;
+    add_enum(e, (state::EnumType){.name = name, .ty = base, .items = items[0:count]});
+    return base;
+}
+
 // The enumerator `name` of the enumeration `at`.
 static Bool find_enumerator(state::Emitter *e, Usize at, Str name, U64 *value) {
     state::Enumerator items[:] = e->enums[at].items;

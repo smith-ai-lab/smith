@@ -473,3 +473,57 @@ export Str rename_shadows(Str source) {
     if (at == 0) return source;
     return as_str(format::push(out, source[at:countof(source)]));
 }
+
+// The option's value in a function whose result is an option (#3027). `return {.some = v}` is C's list of one field;
+// the checker writes it `.some(v)` from the type it stands for (`fix_payload::list_edits`), but a generic body is
+// checked only in an importer's instance, so the function's own file never gets that fix (`view(T: type, ...)` in
+// generic-option-slice-of). Where the declared result is `?T` or `Option(...)`, the list can only be that option.
+//
+//   fix_variants::option_returns(source)   `source` with each such `return {.some = v}` written `return .some(v)`
+export Str option_returns(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Str option_word = "Option";
+    Str some_word = "some";
+    Bool option_result = false;
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::kw_fn) option_result = false;
+        if (tokens[i].kind == lex::arrow && i + 1 < countof(tokens)) {
+            lex::Token result = tokens[i + 1];
+            option_result =
+                result.kind == lex::question || ((result.kind == lex::type_name || result.kind == lex::name) &&
+                                                 mem::equal(lex::text(source, result), option_word) &&
+                                                 i + 2 < countof(tokens) && tokens[i + 2].kind == lex::left_paren);
+            continue;
+        }
+        if (!option_result || tokens[i].kind != lex::kw_return || i + 5 >= countof(tokens)) continue;
+        if (tokens[i + 1].kind != lex::left_brace || tokens[i + 2].kind != lex::dot ||
+            tokens[i + 3].kind != lex::name || !mem::equal(lex::text(source, tokens[i + 3]), some_word) ||
+            tokens[i + 4].kind != lex::equal)
+            continue;
+        // the `}` that closes the list, on the same line
+        Usize depth = 0;
+        Usize close = 0;
+        for (Usize k = i + 1; k < countof(tokens); k++) {
+            lex::TokenKind kind = tokens[k].kind;
+            if (kind == lex::left_brace || kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+            if (kind == lex::right_brace || kind == lex::right_paren || kind == lex::right_bracket) {
+                depth -= 1;
+                if (depth == 0) {
+                    close = k;
+                    break;
+                }
+            }
+            if (tokens[k].line_break) break;
+        }
+        if (close == 0 || tokens[close].kind != lex::right_brace || close == i + 5) continue;
+        out = as_str(format::push(out, source[at:tokens[i + 1].span.start], ".some(",
+                                  source[tokens[i + 5].span.start:tokens[close].span.start], ")"));
+        at = tokens[close].span.end;
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
+}

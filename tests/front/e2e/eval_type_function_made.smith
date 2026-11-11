@@ -1,0 +1,41 @@
+# A type function that ends with an unnamed `struct:` or `enum:` makes one type for one set of arguments (#3039,
+# step 2): `maybe(usize)` is the same type wherever it is written.
+
+fn maybe(T: type) -> type:
+    enum:
+        some: T
+        none
+
+fn pair(T: type) -> type:
+    struct:
+        first: T
+        second: T
+
+IntPair := pair(i32)
+
+fn find(xs: []i32, wanted: i32) -> maybe(usize):
+    for i in range(0, countof(xs)):
+        if xs[i] == wanted:
+            return .some(i)
+    .none
+
+fn swap(p: pair(i32)) -> IntPair:
+    IntPair(first = p.second, second = p.first)
+
+static_assert(maybe(usize) == maybe(usize) and maybe(usize) != maybe(u8));
+static_assert(pair(i32) == IntPair and sizeof(pair(u8)) == 2);
+
+pub fn check() -> i32:
+    numbers: [3]i32 = [4, 5, 6]
+    match find(numbers[0:3], 6):
+        .some(at):
+            if at != 2:
+                return 1
+        .none: return 2
+    match find(numbers[0:3], 9):
+        .some(at): return 3
+        .none: ()
+    p := swap(IntPair(first = 1, second = 2))
+    if p.first != 2 or p.second != 1:
+        return 4
+    0

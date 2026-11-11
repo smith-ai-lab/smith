@@ -11,6 +11,16 @@ module std::slice;
 
 import std::contract;
 
+// The slice of `count` run-time dimensions over `element`: `with_dims(F32, 1)` is `F32[:]`, `with_dims(F32, 2)` is
+// `F32[:][:]` and `with_dims(F32[2], 1)` is `F32[:][2]`. An ordinary function over types, run by the compiler wherever
+// a type is computed; `t[:]` is the slice of the type value t. std::arena's `slice_of` is the same function.
+export Type with_dims(Type element, Usize count) {
+    Type t = element;
+    for (Usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}
+
 // Whether a and b have the same count and the same elements.
 export Bool equal(const auto a[:], typeof(a) b) {
     if (countof(a) != countof(b)) return false;

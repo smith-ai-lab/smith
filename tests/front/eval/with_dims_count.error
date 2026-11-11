@@ -1,0 +1,4 @@
+<dir>/src/with_dims_count.smith:8:9: error: `slice.with_dims` makes a slice of 1 or more dimensions, not 0; write the element type itself
+<dir>/src/with_dims_count.smith:11:11: error: `slice.with_dims` makes a slice of 1 or more dimensions, not 0; write the element type itself
+<dir>/src/with_dims_count.smith:5:9: error: the count of `slice.with_dims` is not known at compile time; write a constant, for example `slice.with_dims(f32, 2)`
+  in of[I32], instantiated at <dir>/src/with_dims_count.smith:12:5

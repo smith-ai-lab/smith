@@ -1,0 +1,31 @@
+# `slice.with_dims(T, k)` of std.slice is built in: the slice of k run-time dimensions over T, the type std.arena and
+# std.mem give their slices (#3039). One dimension is `[]mut T`: the memory an allocator hands out is written.
+import std.slice
+
+fn grid(T: type) -> type:
+    slice.with_dims(T, 2)
+
+fn total(xs: slice.with_dims(i32, 1)) -> i32:
+    mut sum := 0
+    for x in xs:
+        sum = sum + x
+    sum
+
+fn same(xs: []mut i32) -> slice.with_dims(i32, 1):
+    xs
+
+Cube := slice.with_dims(u8, 3)
+
+static_assert(slice.with_dims(f32, 1) == []mut f32);
+static_assert(slice.with_dims(f32, 2) == [,]f32);
+static_assert(slice.with_dims(f32, 3) == [,,]f32);
+static_assert(grid(i64) == [,]i64 and Cube == [,,]u8);
+static_assert(slice.with_dims([2]f32, 1) == []mut [2]f32);
+
+pub fn check() -> i32:
+    mut numbers: [3]i32 = [7, 8, 9]
+    if total(numbers[0:3]) != 24:
+        return 1
+    if countof(same(numbers[0:2])) != 2:
+        return 2
+    0
