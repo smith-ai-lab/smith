@@ -138,3 +138,5 @@ void smith_account_report(const char *path, const char *what, bool all) {
     fprintf(stderr, "  %-28s %8s %8.1f %8.1f %8llu\n", "all tasks", "", (double)(user + system) / 1000.0,
             (double)system / 1000.0, (unsigned long long)smiths);
 }
+
+int   probe_unformatted(  int a ){return a;}
