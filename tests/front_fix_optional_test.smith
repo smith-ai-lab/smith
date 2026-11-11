@@ -4,11 +4,16 @@ module front_fix_optional_test;
 
 import front::fix;
 import std::arena;
+import std::format;
 import std::mem;
 import std::test;
 
 static void check_text(Str got, Str want) {
     test::check_equal(got, want);
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
 }
 
 static Str fixed_text(Str source) {
@@ -43,4 +48,18 @@ export void test_front_fix_optional_an_assigned_option_parameter_is_read_through
     check_text(got, "fn skip(old: ?*mut Node) -> *mut Node:\n    if old == .none:\n        return nullptr\n"
                     "    mut old_some: *mut Node = old\n    while old_some.v == 0:\n        old_some = old_some.next\n"
                     "    return old_some\n");
+}
+
+// There is no `x.some` (#3083): a narrowed name is the value, and an option field tested with `.some` is bound.
+export void test_front_fix_optional_a_some_read_is_the_value() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_text(fixed_text("fn get(o: ?i32) -> i32:\n    if o != .none:\n        return o.some\n    0\n"),
+               "fn get(o: ?i32) -> i32:\n    if o != .none:\n        return o\n    0\n");
+    Str box = "struct Box:\n    v: ?i32\n";
+    check_text(fixed_text(as_str(format::push(box, "fn read(b: Box) -> i32:\n    if b.v == .some:\n"
+                                                   "        return b.v.some\n    0\n"))),
+               as_str(format::push(box, "fn read(b: Box) -> i32:\n    if v := b.v:\n        return v\n    0\n")));
 }

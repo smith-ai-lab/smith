@@ -1,0 +1,52 @@
+// The guard of the declarations `smith test --changed` reads (#1392, #3076). runtime/changed.c takes a declaration only
+// from a comment line that starts with the key, so a declaration that a rewrap of the comment joined to the sentence
+// before it is no declaration: the test is again selected by every source of smith, and nothing says so. Nine test
+// files were in that state on 2026-11-11. No tracked test file may name the key in the comment before its `module` line
+// anywhere but at the start of a line; a sentence about the key writes it in backticks with its slashes.
+// smith-covers: tests/ lib/ front/ scripts/ release/ macho/ ci/
+module covers_lines_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// What `command` (`sh find.sh <repository>`) prints: the lines of the repository's tracked test files, before their
+// `module` line, that name the key without starting with it.
+static const char *joined(const scratch::Project *p, const char *command) {
+    scratch::write(
+        p, "find.sh",
+        "cd \"$1\" && git -c core.quotepath=off ls-files '*_test.smith' | LC_ALL=C sort | while read -r f; do\n"
+        "awk -v f=\"$f\" '/^module /{exit} {l=$0; gsub(/`\\/\\/ smith-covers:`/,\"\",l)}\n"
+        "l ~ /smith-covers:/ && l !~ /^[ \\t]*\\/\\/ smith-covers:/ {print f \":\" FNR}' \"$f\"\ndone\n");
+    return scratch::capture(p, command);
+}
+
+export void test_a_declaration_starts_its_line() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text("a `// smith-covers:` declaration is joined to the line before it, so `smith test --changed` "
+                         "does not read it; give it a comment line of its own",
+                         "", joined(&p, "sh find.sh \"$SMITH_REPO\""));
+}
+
+// The guard itself: a joined declaration is found, one on its own line and one in backticks are not.
+export void test_the_guard_finds_a_joined_declaration() {
+    scratch::Project p = scratch::make("repository", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(
+        &p, "good_test.smith",
+        "// About `// smith-covers:` lines.\n// smith-covers: lib/\nmodule good_test;\n// x smith-covers: y\n");
+    scratch::write(&p, "bad_test.smith", "// A sentence. smith-covers: lib/\n// more\nmodule bad_test;\n");
+    scratch::Run made = scratch::sh(&p, "git init -q . && git add .");
+    scratch::expect_status("the repository is made", 0, &made);
+    scratch::expect_text("the joined line", "bad_test.smith:1", joined(&p, "sh find.sh ."));
+}

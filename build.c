@@ -457,10 +457,12 @@ static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *con
 }
 
 // The shims whose compile is mostly clang's and LLVM's headers (knowledge/precompiled-shim-headers.md): they are
-// compiled with the header shim/pch.h precompiled (build_shim_pch). The rest are small (`lsp` and `clangd` measured
-// slower with it: loading the header costs more than their includes).
+// compiled with the header shim/pch.h precompiled (build_shim_pch). `cimport`, `cimport_deps`, `lldb_dap` and
+// `lldb_explain` joined them in #3079 (6.7 to 2.1 s, 5.6 to 1.2, 3.7 to 1.0, 3.6 to 1.3). The rest gain nothing or
+// lose (`lsp` and `symbolize` measured slower with it: loading the header costs more than their includes).
 static bool build_shim_uses_pch(const char *name) {
-    const char *const names[] = {"hook", "tidy", "affine", "effects_infer"};
+    const char *const names[] = {"hook",    "tidy",         "affine",   "effects_infer",
+                                 "cimport", "cimport_deps", "lldb_dap", "lldb_explain"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (strcmp(name, names[i]) == 0) return true;
     }
@@ -562,6 +564,25 @@ typedef struct {
     const char *const *libraries;
 } BuildProver;
 
+// The prover's identity (#3076): what the caches of proofs key on beside the IR (prove::prover_identity). The hash is
+// of the LLVM pack (its clang's identity and the pack's name), then the name and SHA-256 of each source of the prover
+// (shim/prove*.cpp, shim/prove*.hpp, shim/proved.hpp and the platform headers prove.cpp includes;
+// tests/prove_identity_test.smith fails for a project header they include that is not in this list), then the name and
+// size of each archive of Alive2 and the solvers beside the install. A change to the compiler, the runtime or the
+// libraries leaves it, so a proof survives it; a change to the prover drops every proof. Empty when the script fails:
+// the key is then the version bumped by hand.
+static const char *build_prover_identity(SmithBuild *b, const BuildConfig *config) {
+    const char *script =
+        "set -e; pack=$1; prove=$2; name=$(cd \"$prove/..\" && basename \"$PWD\"); "
+        "files=$(ls shim/prove*.cpp shim/prove*.hpp shim/proved.hpp shim/platform*.h | sort -u); "
+        "case $files in *shim/prove.cpp*) ;; *) exit 1 ;; esac; "
+        "{ printf 'smith-prover-identity 1\\n%s\\n%s\\n' \"$pack\" \"$name\"; "
+        "shasum -a 256 $files; "
+        "for a in \"$prove\"/lib/*.a; do printf '%s %s\\n' \"${a##*/}\" \"$(wc -c < \"$a\" | tr -d ' ')\"; done; } | "
+        "shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b, (const char *[]){"sh", "-c", script, "sh", config->llvm_id, config->prove, nullptr}, "");
+}
+
 static void build_prover(SmithBuild *b, const BuildConfig *config, const char *folder, BuildProver *prover) {
     const char *const flags_head[] = {"-std=c++20",
                                       config->optimize,
@@ -583,13 +604,21 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
                              smith_fmt(b, "%s/include", config->prove), nullptr),
                   smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
                   config->platform->deployment, nullptr);
+    // prove.cpp alone is given the identity: it holds prove::prover_identity, and is compiled again when any source
+    // of the prover changed
+    const char *identity = build_prover_identity(b, config);
+    const char *const *identified =
+        smith_cat(b, flags,
+                  smith_when(b, identity[0] != '\0',
+                             (const char *[]){smith_fmt(b, "-DSMITH_PROVER_IDENTITY=\"%s\"", identity), nullptr}),
+                  nullptr);
     const char *const names[] = {"prove", "prove_ir", "prove_alive", "prove_bitwuzla"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         prover->objects[i] = (SmithObject){
             .compiler = config->cxx,
             .source = smith_fmt(b, "shim/%s.cpp", names[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, names[i]),
-            .flags = flags,
+            .flags = i == 0 ? identified : flags,
             .implicit_inputs = (const char *[]){"shim/prove.hpp", nullptr},
         };
         smith_object(b, &prover->objects[i]);
@@ -724,9 +753,26 @@ static const char *build_lint_identity(SmithBuild *b, const BuildConfig *config)
                             "");
 }
 
-// runtime/lint_identity.c, the identity above in a translation unit of its own, as the commit's (build_commit_object).
+// The fmt identity (#3081): what the cache of `smith fmt` (runtime/fmt_cache.c) keys on instead of the whole binary.
+// Inclusive, as a missing input would keep a file as formatted that the new formatter changes: the LLVM pack (its
+// clang-format and the .smith patch), smith's own formatter (front/), the runtime that picks it (smith.c, runtime/,
+// shim/format.cpp and the shim's headers) and smith's default style (templates/defaults), each file by its name and
+// SHA-256 in sorted order. Empty without an LLVM install, and the cache then keys on the binary.
+static const char *build_fmt_identity(SmithBuild *b, const BuildConfig *config) {
+    if (!config->linkable) return "";
+    const char *script = "set -e; pack=$1; "
+                         "files=$({ find front templates/defaults -type f; ls shim/format.cpp shim/*.h runtime/*.c "
+                         "runtime/*.h; echo smith.c; } | LC_ALL=C sort -u); "
+                         "{ printf 'smith-fmt-identity 1\\n%s\\n' \"$pack\"; shasum -a 256 $files; } | "
+                         "shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b, (const char *[]){"sh", "-c", script, "sh", config->llvm_id, nullptr}, "");
+}
+
+// runtime/lint_identity.c, the lint and fmt identities above in a translation unit of its own, as the commit's
+// (build_commit_object).
 static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *identity = build_lint_identity(b, config);
+    const char *fmt_identity = build_fmt_identity(b, config);
     SmithObject object = {
         .compiler = config->cc,
         .source = "runtime/lint_identity.c",
@@ -735,6 +781,8 @@ static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *
             smith_cat(b, config->cflags,
                       smith_when(b, identity[0] != '\0',
                                  (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
+                      smith_when(b, fmt_identity[0] != '\0',
+                                 (const char *[]){smith_fmt(b, "-DSMITH_FMT_IDENTITY=\"%s\"", fmt_identity), nullptr}),
                       nullptr),
     };
     smith_object(b, &object);
@@ -906,6 +954,7 @@ static const char *const build_runtime_sources[] = {
     "runtime/verbs.c",
     "runtime/world.c",
     "runtime/import_cache.c",
+    "runtime/fmt_cache.c",
     nullptr,
 };
 // The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
@@ -1282,12 +1331,39 @@ static const char *build_test_header(SmithBuild *b, const char *source) {
     return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, root_less, ""));
 }
 
+// What the header pass (`smith-cc --smith-header` and `--smith-headers`) is made of: the lowering's lexer and passes
+// (runtime/lang*), the flag parsing in front of it, smith.c, which dispatches it, and the LLVM pack's identity (a C
+// header a module imports is read by clang). The steps that run the pass with the smith this build links take these as
+// inputs and that smith as order-only: they run after it is linked, and again only when the pass can have changed.
+// With the binary itself as an input every edit of any file of smith ran them again, and the executor read all of the
+// new binary to key each (437 MB, 3.1 s, twice: 6.3 s of an 8.6 s edit rebuild, #3079).
+//
+// The pass also reads the headers of the modules a source imports, so the headers this build makes of the libraries
+// and of the front end's linked modules are inputs too, with the hand-written ones of include/: the binary used to
+// stand for them (a library that changes relinks it). Their steps write a header only when its bytes change, so an
+// edit that keeps a module's interface runs nothing here.
+static const char *const *build_header_pass_inputs(SmithBuild *b, const BuildConfig *config) {
+    const char *const *front = smith_list(b, nullptr);
+    const char *const *modules = build_front_modules(b);
+    for (size_t i = 0; modules[i] != nullptr; i++) { // bounded by the tree
+        if (!build_front_linked(smith_fmt(b, "front/%s.smith", modules[i]))) continue;
+        front =
+            smith_cat(b, front, smith_list(b, smith_fmt(b, ".smith/include/front/%s.h", modules[i]), nullptr), nullptr);
+    }
+    return smith_cat(
+        b,
+        smith_glob(b, smith_list(b, "runtime/lang*.c", "runtime/lang*.h", "include/*.h", "include/smith/*.h", nullptr)),
+        smith_list(b, "smith.c", "runtime/front_flag.c", "runtime/front_flag.h", nullptr),
+        smith_when(b, config->linkable, smith_list(b, smith_fmt(b, "%s/lib/smith-clang.id", config->llvm), nullptr)),
+        config->headers, build_linked_headers(b), front, nullptr);
+}
+
 // The headers of all the tests are one step, `smith-cc --smith-headers`: each is a few ms of work but a process costs
 // about 10 ms to start, so a step per header made a build that changed the smith (all of them run again, to find
 // their bytes the same) cost 2 s of CPU (#639). It is restat: a header whose bytes did not change leaves its compile
 // alone.
-static const char *const *build_test_header_step(SmithBuild *b, const char *smith_cc, const char *const *flags,
-                                                 const char *const *tests) {
+static const char *const *build_test_header_step(SmithBuild *b, const BuildConfig *config, const char *smith_cc,
+                                                 const char *const *flags, const char *const *tests) {
     const char *const *pairs = smith_list(b, nullptr);
     const char *const *outputs = smith_list(b, nullptr);
     const char *const *headers = smith_list(b, nullptr); // one per test, in order
@@ -1302,7 +1378,8 @@ static const char *const *build_test_header_step(SmithBuild *b, const char *smit
         .command = smith_cat(b, smith_list(b, smith_cc, "--smith-headers", nullptr), flags,
                              smith_list(b, "--", nullptr), pairs, nullptr),
         .inputs = tests,
-        .implicit_inputs = smith_list(b, smith_cc, nullptr),
+        .implicit_inputs = build_header_pass_inputs(b, config),
+        .order_only_inputs = smith_list(b, smith_cc, nullptr),
         .outputs = outputs,
         .description = "headers of the tests",
         .restat = true, // written only when its bytes change
@@ -1324,7 +1401,7 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *const *tests =
         smith_glob(b, smith_list(b, "tests/*.smith", "front/*.smith", "lib/*_test.smith",
                                  smith_fmt(b, "%s/*_test.smith", build_library_folder), nullptr));
-    const char *const *headers = build_test_header_step(b, smith_cc, flags, tests);
+    const char *const *headers = build_test_header_step(b, config, smith_cc, flags, tests);
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = headers[i];
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
@@ -1367,7 +1444,8 @@ static const char *const *build_template_modules(SmithBuild *b, const BuildConfi
             .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", modules[i], "-o", header, nullptr), flags,
                                  smith_list(b, "-I", ".smith/template-new", "-MD", "-MF", depfile, nullptr), nullptr),
             .inputs = smith_list(b, modules[i], nullptr),
-            .implicit_inputs = smith_list(b, smith_cc, nullptr),
+            .implicit_inputs = build_header_pass_inputs(b, config),
+            .order_only_inputs = smith_list(b, smith_cc, nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", modules[i]),
             .depfile = depfile, // served from the step cache for the files the pass read (#2959)
@@ -1397,12 +1475,20 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
             smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr}, nullptr),
     };
     smith_object(b, &runtime);
+    // The smith this build links is left out of what the stub waits for: the headers wait for it already (order-only),
+    // and as an input here every relink compiled the stub again and had the executor hash the whole binary (#3079).
+    const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
+    const char *const *waits = smith_list(b, nullptr);
+    for (size_t i = 0; lint_needs[i] != nullptr; i++) {
+        if (strcmp(lint_needs[i], smith_cc) != 0)
+            waits = smith_cat(b, waits, smith_list(b, lint_needs[i], nullptr), nullptr);
+    }
     SmithObject stub = {
         .compiler = config->cc,
         .source = "tests/stub.c",
         .output = smith_fmt(b, "%s/stub.o", folder),
         .flags = smith_cat(b, config->cflags, (const char *[]){"-DNAME=\"stub\"", nullptr}, nullptr),
-        .implicit_inputs = lint_needs, // not read by the compile: `smith lint` builds what a source's compile waits for
+        .implicit_inputs = waits, // not read by the compile: `smith lint` builds what a source's compile waits for
     };
     smith_object(b, &stub);
     smith_default(b, smith_cat(b, runtime.step.outputs, stub.step.outputs, nullptr));
@@ -3541,22 +3627,69 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
-// `smith build stage0` (#2719): downloads the newest release into .smith/stage0/ and checks its .sha256, as the
-// README's Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C
-// and uses no `.smith` module of the tree: the tree builds only with the newest release (smith-dev-build, the lag
-// rule), so a clone with an older smith runs this first and cannot build anything else. Running it again replaces the
-// folder.
-static int build_stage0(SmithRun *run) {
-    SmithBuild *b = run->b;
-    struct utsname system = {};
-    if (uname(&system) != 0) return 1;
-    char os[sizeof system.sysname];
-    size_t length = strlen(system.sysname);
-    for (size_t i = 0; i <= length; i++)
-        os[i] = (char)tolower((unsigned char)system.sysname[i]);
-    const char *name = smith_fmt(b, "smith-%s-%s.tar.xz", os, system.machine);
-    const char *base = "https://github.com/smith-ai-lab/smith/releases/latest/download";
-    if (build_make_folder(b, ".smith") != 0) return 1;
+// The step cache of main (#3079): CI's `warm` job publishes the steps of every push to main as the prerelease
+// `step-cache-<sha7>` (smith-steps-<os>.tar.gz.NN, parts of one gzip, and smith-steps-<os>.sha), and with them the
+// first `smith build` of a clone compiles only what the branch changed. The commit of the newest one among the last 20
+// first-parent commits of HEAD, over plain HTTPS as the release is; nullptr when there is none, or no git.
+static const char *build_stage0_cache_commit(SmithBuild *b, const char *os) {
+    const char *base = "https://github.com/smith-ai-lab/smith/releases/download";
+    const char *commits =
+        smith_capture_or(b, (const char *[]){"git", "rev-list", "--first-parent", "-n", "20", "HEAD", nullptr}, "");
+    for (const char *at = commits; strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) { // one 40-digit commit a line
+        const char *url = smith_fmt(b, "%s/step-cache-%.7s/smith-steps-%s.sha", base, at, os);
+        const char *const *probe = smith_list(b, "curl", "-fsL", "-o", ".smith/step-cache.sha", url, nullptr);
+        if (build_exec(probe) == 0) return smith_fmt(b, "%.40s", at);
+    }
+    return nullptr;
+}
+
+// The release a step cache fits. Every key of the cache holds the identity of the compiler that filled it, so the
+// cache of a commit serves only the smith that built that commit in CI: a newer release, after any commit that changed
+// code linked into smith, gets no hit at all (measured: 0 of 331 steps and 52 s, against 22 s with the right one). The
+// cache names that release's commit in the asset smith-steps-<os>.stage0 when it has one; otherwise it is the release
+// of the commit before the cache's, which is what CI had when that push was built. nullptr when neither is known.
+static const char *build_stage0_cache_release(SmithBuild *b, const char *os, const char *commit) {
+    const char *url = smith_fmt(b,
+                                "https://github.com/smith-ai-lab/smith/releases/download/step-cache-%.7s/"
+                                "smith-steps-%s.stage0",
+                                commit, os);
+    const char *named = smith_capture_or(b, (const char *[]){"curl", "-fsL", url, nullptr}, "");
+    if (strlen(named) == 40 && strspn(named, "0123456789abcdef") == 40) return named;
+    const char *parent =
+        smith_capture_or(b, (const char *[]){"git", "rev-parse", smith_fmt(b, "%s^", commit), nullptr}, "");
+    return strlen(parent) == 40 ? parent : nullptr;
+}
+
+// Unpacks the step cache of `commit` into the user's. It only fills a cache: a failed download leaves the build cold
+// and says so, and never fails the task.
+static void build_stage0_steps(SmithBuild *b, const char *os, const char *commit) {
+    const char *base = "https://github.com/smith-ai-lab/smith/releases/download";
+    const char *joined = ".smith/step-cache.tar.gz";
+    const char *home = getenv("HOME");
+    const char *cache = getenv("XDG_CACHE_HOME");
+    if (home == nullptr && cache == nullptr) return;
+    const char *folder = cache != nullptr && cache[0] != '\0' ? smith_fmt(b, "%s/smith/steps", cache)
+                                                              : smith_fmt(b, "%s/.cache/smith/steps", home);
+    (void)build_remove(b, joined);
+    size_t parts = 0;
+    for (; parts < 100; parts++) { // the parts in order, until the first that is not there
+        const char *url = smith_fmt(b, "%s/step-cache-%.7s/smith-steps-%s.tar.gz.%02zu", base, commit, os, parts);
+        const char *const *fetch = smith_list(b, "curl", "-fsL", "--retry", "3", url, nullptr);
+        if (build_spawn(&(BuildSpawn){.argv = fetch, .log = joined, .append = true, .stdout_only = true}) != 0) break;
+    }
+    int status = parts == 0 ? 1 : build_make_folder(b, folder);
+    if (status == 0) status = build_exec(smith_list(b, "tar", "-C", folder, "-xzf", joined, nullptr));
+    (void)build_remove(b, joined);
+    if (status == 0) {
+        fprintf(stderr, "smith: step cache: step-cache-%.7s, unpacked into %s\n", commit, folder);
+    } else {
+        fprintf(stderr, "smith: step cache: none (step-cache-%.7s could not be downloaded and unpacked)\n", commit);
+    }
+}
+
+// Downloads the release under `base` into .smith/stage0/ and checks its .sha256. Both files are saved under their
+// published names, because the checksum tool finds the tarball only under the name its .sha256 lists (#2232).
+static int build_stage0_install(SmithBuild *b, const char *base, const char *name) {
     for (int which = 0; which < 2; which++) {
         const char *file = which == 0 ? name : smith_fmt(b, "%s.sha256", name);
         int status = build_exec(smith_list(b, "curl", "-fsSL", "--retry", "3", "-o", smith_fmt(b, ".smith/%s", file),
@@ -3575,9 +3708,48 @@ static int build_stage0(SmithRun *run) {
     if (status == 0)
         status =
             build_exec(smith_list(b, "tar", "-C", ".smith/stage0", "-xJf", smith_fmt(b, ".smith/%s", name), nullptr));
-    if (status == 0)
-        fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
     return status;
+}
+
+// `smith build stage0` (#2719): downloads a release into .smith/stage0/ and checks its .sha256, as the README's
+// Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C and uses
+// no `.smith` module of the tree: the tree builds only with a recent release (smith-dev-build, the lag rule), so a
+// clone with an older smith runs this first and cannot build anything else. Running it again replaces the folder.
+// The release is the one main's newest step cache was filled by, and that cache is unpacked with it (#3079), so the
+// first build is served from it; with no cache for HEAD's last 20 commits, no such release, or `-Dsteps=0`, it is the
+// newest release and no cache.
+static int build_stage0(SmithRun *run) {
+    SmithBuild *b = run->b;
+    struct utsname system = {};
+    if (uname(&system) != 0) return 1;
+    char os[sizeof system.sysname];
+    size_t length = strlen(system.sysname);
+    for (size_t i = 0; i <= length; i++)
+        os[i] = (char)tolower((unsigned char)system.sysname[i]);
+    const char *name = smith_fmt(b, "smith-%s-%s.tar.xz", os, system.machine);
+    const char *site = "https://github.com/smith-ai-lab/smith/releases";
+    if (build_make_folder(b, ".smith") != 0) return 1;
+    const char *cache = strcmp(run->args[0], "0") != 0 ? build_stage0_cache_commit(b, os) : nullptr;
+    const char *release = cache != nullptr ? build_stage0_cache_release(b, os, cache) : nullptr;
+    int status =
+        release != nullptr ? build_stage0_install(b, smith_fmt(b, "%s/download/stage0-%s", site, release), name) : 1;
+    if (status == 0) {
+        fprintf(stderr,
+                "smith: the release of %.7s, which filled main's step cache of %.7s, is in .smith/stage0 (`-Dsteps=0` "
+                "takes the newest release and no cache); put .smith/stage0/bin first on PATH\n",
+                release, cache);
+        build_stage0_steps(b, os, cache);
+        return 0;
+    }
+    status = build_stage0_install(b, smith_fmt(b, "%s/latest/download", site), name);
+    if (status != 0) return status;
+    fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    if (strcmp(run->args[0], "0") != 0) {
+        fprintf(stderr, "smith: step cache: none (%s)\n",
+                cache == nullptr ? "no published one for the last 20 commits of HEAD"
+                                 : "the release that filled the newest one is not published any more");
+    }
+    return 0;
 }
 
 // `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
@@ -3729,7 +3901,15 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);
-    SmithStep stage0 = {.run = build_stage0, .description = "downloading the newest release into .smith/stage0"};
+    SmithStep stage0 = {
+        .run = build_stage0,
+        .args = smith_list(b,
+                           smith_option_value(b, "steps", "1",
+                                              "stage0: 1 takes the release main's step cache fits and unpacks the "
+                                              "cache, 0 the newest release and no cache"),
+                           nullptr),
+        .description = "downloading a release into .smith/stage0",
+    };
     smith_task(b, "stage0", &stage0);
     SmithStep bench = {
         .run = build_bench,

@@ -110,7 +110,9 @@ static const char *next_line(arena::Arena *memory, const char **at) {
 // name, not under the .smith one, so it is not compared) formats the same as itself and as a .smith file: the number
 // of files compared, the first that differs noted. The files (and the .clang-format files among them, so each gets
 // its folder's style) are copied into two folders, c/ as they are and s/ named .smith, and one `smith fmt -i` per
-// folder formats them all, instead of two processes per file.
+// folder formats them all, instead of two processes per file. tree-sitter/.vendor (gitignored) is skipped: the build
+// keeps the previous grammar's 12 MB generated parser.c there, and formatting it took 13.7 GB until the kernel killed
+// smith (signal 9) in a runner's container (#3082).
 static Usize same_as_c(const char *root) {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
@@ -125,7 +127,8 @@ static Usize same_as_c(const char *root) {
                 "'; w=\"$PWD\"; mkdir c s; "
                 "find \"$R\" \\( -name '*.c' -o -name .clang-format \\) -not -path '*/.smith/*' -not -path '*/build/*' "
                 "-not -path \"$R/.claude/*\" -not -path '*/.git/*' -not -path '*/node_modules/*' "
-                "-not -path '*/tree-sitter/src/*' -not -path '*/expect/*' $(awk '!/^#/ && NF { gsub(/\\*\\*/, \"*\"); "
+                "-not -path '*/tree-sitter/src/*' -not -path '*/tree-sitter/.vendor/*' -not -path '*/expect/*' $(awk "
+                "'!/^#/ && NF { gsub(/\\*\\*/, \"*\"); "
                 "print \"-not -path \" root \"/\" $0 }' root=\"$R\" \"$R/.clang-format-ignore\" 2>/dev/null) "
                 "| LC_ALL=C sort | sed \"s,^$R/,,\" > list; "
                 "for d in c s; do (cd \"$R\" && tar cf - -T \"$w/list\") | (cd $d && tar xf -); done; "
