@@ -230,7 +230,23 @@ jobs:
           }
 
           # GITHUB_TOKEN first; the owner's secret only when GitHub refuses. One op, with OP, PR and VALUE set.
+          # Exception (#3131, measured twice on 2026-11-11: `jump 3130` at 06:03Z and `enqueue` of 20 PRs into an empty
+          # queue at 07:27Z): a group made at the FRONT of the queue by GITHUB_TOKEN gets its branch but no `merge_group`
+          # run, because GitHub starts no workflow for an event a GITHUB_TOKEN caused, and the queue sits still. So the
+          # ops that can create the front group (jump, enqueue, enqueue-many) use the owner's secret first.
           run_one() {
+            local first=BASE_TOKEN
+            case "$OP" in jump|enqueue|enqueue-many) [ -n "$OWNER_TOKEN" ] && first=OWNER_TOKEN ;; esac
+            if [ "$first" = OWNER_TOKEN ]; then
+              export GH_TOKEN="$OWNER_TOKEN"
+              if out=$(do_op 2>&1); then
+                summary "ok ($out) token=QUEUE_OPS_TOKEN"
+                return 0
+              fi
+              echo "QUEUE_OPS_TOKEN: $out"
+              summary "failed ($(echo "$out" | tail -n 1 | cut -c1-200))"
+              return 1
+            fi
             export GH_TOKEN="$BASE_TOKEN"
             if out=$(do_op 2>&1); then
               summary "ok ($out) token=GITHUB_TOKEN"

@@ -282,6 +282,26 @@ jobs:
               set -- "$1" "$2" failure
             fi
           fi
+          # a front entry with no run (#3131): a group made at the front by a GITHUB_TOKEN event gets its branch but no
+          # `merge_group` run (2026-11-11: `jump 3130` sat 56 minutes, 20 PRs enqueued into an empty queue sat 8), and the
+          # queue stands still. That is a fault, not "ok": say so, and re-queue the front PR with the owner's token (an
+          # event that token causes starts the run), once the entry is older than the grace period.
+          if [ -z "${1:-}" ] || [ "${1:-}" = null ]; then
+            at=$(gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+              query($owner: String!, $name: String!) {
+                repository(owner: $owner, name: $name) { mergeQueue(branch: "main") { entries(first: 1) { nodes { enqueuedAt } } } }
+              }' --jq '.data.repository.mergeQueue.entries.nodes[0].enqueuedAt // empty' 2>/dev/null) || at=
+            age=0; [ -n "$at" ] && age=$(( now - $(date -u -d "$at" +%s) ))
+            if [ "$age" -gt 300 ]; then
+              log "queue-heal: FAULT front #$front has no merge_group run after $((age / 60)) min (queue stands still)"
+              if requeued=$(requeue "$front"); then
+                log "queue-heal: front #$front re-queued with the owner's token at position $requeued"
+              else
+                log "queue-heal: FAULT front #$front re-queue failed"
+              fi
+              exit 0
+            fi
+          fi
           if [ "${3:-}" != failure ]; then
             log "queue-heal: front #$front ok (run ${1:-none} ${2:-none})"
             exit 0
