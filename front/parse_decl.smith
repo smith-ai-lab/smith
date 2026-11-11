@@ -2193,6 +2193,7 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
+    if (same_text(written, "constexpr Type")) written = "type";
     char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
@@ -2257,6 +2258,10 @@ static ast::FieldDecl parse_field(parse::Parser *p, Style *style, Bool top) {
         parse_alignas(p, &aligned);
     field.attributes = aligned.attributes;
     U32 start = parse::peek(p).span.start;
+    // `constexpr Type of;`, a field that holds a type, is `of: type`: the struct is then a compile-time one (#3027)
+    if (parse::at(p, lex::kw_constexpr) && parse::peek_at(p, 1).kind == lex::type_name &&
+        same_text(parse::text(p, parse::peek_at(p, 1)), "Type"))
+        parse::advance(p);
     if (take_tag_keyword(p)) field.type = parse::type(p);
     if (field.type == nullptr) {
         recover(p);
