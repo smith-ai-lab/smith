@@ -1,0 +1,1 @@
+<dir>/src/std_view_read_only.smith:11:5: error: cannot assign to this place, it is behind the read-only pointer `*U32`; take a `*mut U32` to write through it

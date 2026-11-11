@@ -1,0 +1,98 @@
+// `smith fmt` keeps the files a run found formatted (#3081, runtime/fmt_cache.c, knowledge/caches.md): a second run
+// formats no file, an edit reruns only the edited file, a style change reruns every file it reaches, a file that is
+// not formatted fails every run (a failure is never kept), and SMITH_FMT_CACHE=0 runs every file. Each case is a
+// scratch git repository of two C files in a cache of its own, run by the smith under test; SMITH_FMT_CACHE=why prints
+// the counts the cases read.
+// smith-covers: runtime/fmt_cache.c runtime/verbs.c runtime/lint_identity.c smith.c
+module fmt_cache_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// The repository, with a cache of its own; made before the test's memory, since scratch::clean frees what it holds.
+static scratch::Project prepared() {
+    scratch::Project p = scratch::make("p", nullptr);
+    scratch::own_cache(&p);
+    scratch::write(&p, ".clang-format", "BasedOnStyle: LLVM\nIndentWidth: 4\n");
+    scratch::write(&p, "a.c", "int a(void);\n");
+    scratch::write(&p, "b.c", "int b(void);\n");
+    scratch::Run git = scratch::sh(&p, "git init -q . && git add -A 2>&1");
+    scratch::expect_status("the repository is made", 0, &git);
+    scratch::release(git.out);
+    scratch::release(git.err);
+    return p;
+}
+
+// The counts line of a dry run and its status: "2 run, 0 cached" and "status 0".
+static const char *dry_run(const scratch::Project *p) {
+    return scratch::capture(p, "out=$(SMITH_FMT_CACHE=why smith fmt --dry-run --Werror 2>&1); s=$?; "
+                               "printf '%s\\n' \"$out\" | grep -o '[0-9]* run, [0-9]* cached'; echo \"status $s\"");
+}
+
+export void test_fmt_a_second_time_formats_no_file() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text("the first run formats both files", "2 run, 0 cached\nstatus 0", dry_run(&p));
+    scratch::expect_text("... and the second none", "0 run, 2 cached\nstatus 0", dry_run(&p));
+}
+
+export void test_fmt_with_one_file_edited_runs_only_it() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)dry_run(&p);
+    scratch::write(&p, "a.c", "int a(int x);\n");
+    scratch::expect_text("an edit reruns the edited file", "1 run, 1 cached\nstatus 0", dry_run(&p));
+}
+
+export void test_fmt_with_the_style_changed_runs_every_file() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)dry_run(&p);
+    scratch::write(&p, ".clang-format", "BasedOnStyle: LLVM\nIndentWidth: 4\nColumnLimit: 100\n");
+    scratch::expect_text("a style change reruns both", "2 run, 0 cached\nstatus 0", dry_run(&p));
+}
+
+// The failing batch keeps nothing, so the file fails again, and formatting it in place keeps it.
+export void test_fmt_never_keeps_a_file_that_is_not_formatted() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)dry_run(&p);
+    scratch::write(&p, "a.c", "int  a(void) ;\n");
+    scratch::expect_text("a misformatted file fails", "1 run, 1 cached\nstatus 1", dry_run(&p));
+    scratch::expect_text("... and fails again", "1 run, 1 cached\nstatus 1", dry_run(&p));
+    scratch::Run formatted = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_status("smith fmt formats it", 0, &formatted);
+    scratch::expect_text("... and then it is cached", "0 run, 2 cached\nstatus 0", dry_run(&p));
+}
+
+export void test_fmt_cache_off_runs_every_file_each_time() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, "SMITH_FMT_CACHE=0 smith fmt --dry-run --Werror 2>&1");
+    scratch::expect_status("with the cache off it passes", 0, &first);
+    scratch::expect_lacks("... prints no counts", first.out, "cached");
+    scratch::expect_text("... and keeps nothing", "no",
+                         scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/fmt\" && echo yes || echo no"));
+}

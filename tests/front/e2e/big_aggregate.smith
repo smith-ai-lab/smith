@@ -1,0 +1,70 @@
+# A struct or array of more than 64 bytes lives in memory and is copied with memcpy (#3058, front/emit_aggregate.smith):
+# returned through a hidden pointer, passed by pointer, copied on assignment, held in another struct and in a payload.
+# Each copy is a value of its own: writing the source after a copy does not change the copy.
+struct Big:
+    data: [16384]u8
+    size: usize
+
+struct Outer:
+    tag: i32
+    inner: Big
+    after: i64
+
+enum Held:
+    big: Big
+    small: i32
+
+fn filled(v: u8) -> Big:
+    mut b: Big = undefined
+    for i in range(0, 16384):
+        b.data[i] = v
+    b.size = 16384
+    b
+
+fn total(b: Big) -> usize:
+    mut sum: usize = 0
+    for x in b.data:
+        sum += x.to(usize)
+    sum + b.size
+
+fn outer_of(b: Big, tag: i32) -> Outer:
+    Outer(tag = tag, inner = b, after = -1)
+
+fn unwrap(o: Outer) -> Big:
+    o.inner
+
+fn first_of(h: Held) -> i32:
+    match h:
+        .big(b): b.data[0].to(i32)
+        .small(n): n
+
+fn rows() -> [2]Big:
+    [filled(5), filled(6)]
+
+pub fn check() -> i32:
+    mut a := filled(1)
+    if a.data[16383] != 1 or a.size != 16384:
+        return 1
+    copy := a
+    a.data[0] = 9
+    if copy.data[0] != 1 or a.data[0] != 9:
+        return 2
+    if total(copy) != 32768:
+        return 3
+    o := outer_of(a, 7)
+    a.data[1] = 8
+    if o.tag != 7 or o.after != -1 or o.inner.data[0] != 9 or o.inner.data[1] != 1:
+        return 4
+    back := unwrap(o)
+    if back.data[0] != 9 or back.size != 16384:
+        return 5
+    if first_of(.big(back)) != 9 or first_of(.small(4)) != 4:
+        return 6
+    two := rows()
+    if two[0].data[100] != 5 or two[1].data[100] != 6:
+        return 7
+    mut place: Outer = o
+    place.inner = filled(3)
+    if place.inner.data[7] != 3 or o.inner.data[7] != 1 or place.tag != 7:
+        return 8
+    0

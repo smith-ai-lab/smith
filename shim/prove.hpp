@@ -220,6 +220,15 @@ std::string program_ir_text(const Prepared &prepared);
 // the same proof.
 std::string program_proof_key(const Prepared &prepared);
 
+// ---- shim/prove.cpp ----
+
+// The prover's identity (#3076): what every cache of proofs puts in its key beside what was proved, so a proof made by
+// one prover is never the answer of another. `smith build` hashes the prover's sources, the LLVM pack and the solvers'
+// archives into it (build.c, build_prover_identity); a smith built without it falls back to the version bumped by hand.
+// It does not hold the rest of smith: a change to the compiler, the runtime or the libraries reaches a proof only
+// through the IR, which is the other half of the key.
+std::string prover_identity();
+
 // ---- shim/prove_bitwuzla.cpp ----
 
 // Timeout: the deadline passed. Unknown: the solver could not read or decide the query.
