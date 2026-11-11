@@ -95,6 +95,7 @@ typedef struct {
     size_t project_count;
     const char *system[smith_stepcache_dirs_max];
     size_t system_count;
+    bool function; // the command is a function step's: it names no folders, and every input is read by its bytes
 } SmithStepScope;
 
 static SmithStepScope smith_stepcache_scope;
@@ -147,6 +148,9 @@ static void smith_stepcache_feed(SmithSha256 *sha, const char *text) {
 static char smith_stepcache_key_storage[smith_stepcache_text_max];
 static char smith_stepcache_last_storage[smith_stepcache_text_max];
 static SmithStepText smith_stepcache_keytext;
+// How every compile key text starts (a function step's key starts "smith-step-cache function 1"); a miss finds the
+// command line by it.
+constexpr char smith_stepcache_key_start[] = "smith-step-cache 1\ncommand ";
 // Why the last key, variant or store failed, for the log.
 static char smith_stepcache_why[1024];
 
@@ -531,7 +535,8 @@ static bool smith_stepcache_spec(const char *path, char *out, size_t capacity, i
     struct stat info = {};
     if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) return false;
     *mtime = smith_stepcache_mtime_of(&info);
-    if (smith_stepcache_is_system(path)) {
+    bool function = smith_stepcache_scope.function; // no compiler reads the file: its bytes are all that count
+    if (!function && smith_stepcache_is_system(path)) {
         // smith's own copy of clang's files: its folder is named for the pack's identity, so the path and size say what
         // the file is, and its time says only when this job unpacked it (a new one in every job, so no job would hit)
         bool unpacked = strstr(path, "/smith/clang/") != nullptr;
@@ -544,7 +549,7 @@ static bool smith_stepcache_spec(const char *path, char *out, size_t capacity, i
     if (!smith_stepcache_content(path, &info, hex, &time_macro, now)) return false;
     // A precompiled header holds the names of the three macros in its tables whatever it was made from; the headers it
     // was made from were checked when it was made (it is cached under the same rule), so its bytes are no reason.
-    if (time_macro && !smith_ends_with(path, ".pch") && !smith_ends_with(path, ".gch")) return false;
+    if (time_macro && !function && !smith_ends_with(path, ".pch") && !smith_ends_with(path, ".gch")) return false;
     int written = snprintf(out, capacity, "c:%s", hex);
     return written > 0 && (size_t)written < capacity;
 }
@@ -563,6 +568,7 @@ static bool smith_stepcache_split(const char *command) {
     if (length + 1 > sizeof scope->storage) return false;
     char *out = scope->storage;
     scope->count = 0;
+    scope->function = false;
     bool in_word = false;
     for (size_t i = 0; i < length; i++) {
         char c = command[i];
@@ -727,6 +733,25 @@ static bool smith_stepcache_eligible(SmithExec *exec, SmithEdge *edge) {
     if (edge->step_cache != 1) return false;
     if (!smith_stepcache_split(edge->command)) return false;
     smith_stepcache_folders();
+    return true;
+}
+
+// Whether the edge is a function step the build file marked `.content_hash` (#3079): its outputs are a function of the
+// build program, the command (the function's offset in the program, the paths and the arguments) and the bytes of the
+// inputs it declares. The executor cannot see what a function reads, so only the build file's word makes a step one of
+// these: without the field a function step is never served. A step with a depfile, a pool or no output is not one.
+static bool smith_stepcache_function(const SmithExec *exec, SmithEdge *edge) {
+    if (smith_stepcache.state == SmithStepCache_Off || exec->options.dry_run) return false;
+    if (!edge->content_hash) return false;
+    bool shape = !edge->has_deps && edge->depfile == nullptr && !edge->phony && edge->pool == 0 &&
+                 edge->output_count >= 1 && strncmp(edge->command, ".smith/program --run ", 21) == 0;
+    edge->step_cache = shape ? 3 : 2;
+    if (!shape) return false;
+    SmithStepScope *scope = &smith_stepcache_scope;
+    scope->count = 0;
+    scope->project_count = 0;
+    scope->system_count = 0;
+    scope->function = true;
     return true;
 }
 
@@ -909,12 +934,16 @@ static bool smith_stepcache_is_compiler_input(const char *path) {
 
 // The key of a compile: its command (the root a token), the compiler, the environment and the content of the inputs the
 // manifest names. *newest is the time of the newest input. False when the compile cannot be keyed.
+//
+// A function step (edge->step_cache 3) has no compiler and reads no environment the key could name: its key is the
+// command and its inputs, of which `.smith/program`, an implicit input of every function step, is the function's code.
 static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex[smith_stepcache_hex], int64_t *newest,
                                 int64_t now) {
     const SmithStepScope *scope = &smith_stepcache_scope;
-    const char *compiler = smith_stepcache_program(scope->words[0]);
+    bool function = edge->step_cache == 3;
+    const char *compiler = function ? "none" : smith_stepcache_program(scope->words[0]);
     const char *clang = getenv("SMITH_CLANG");
-    const char *external = clang != nullptr && *clang != '\0' ? smith_stepcache_program(clang) : "none";
+    const char *external = !function && clang != nullptr && *clang != '\0' ? smith_stepcache_program(clang) : "none";
     if (compiler == nullptr || external == nullptr) {
         snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "the compiler %s has no identity", scope->words[0]);
         return false;
@@ -923,11 +952,14 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
     SmithStepText *text = &smith_stepcache_keytext;
     *text = (SmithStepText){.data = smith_stepcache_key_storage, .capacity = sizeof smith_stepcache_key_storage};
     text->data[0] = '\0';
-    smith_steptext_add(text, "smith-step-cache 1\ncommand ", 27);
+    const char *start = function ? "smith-step-cache function 1\ncommand " : smith_stepcache_key_start;
+    smith_steptext_add(text, start, strlen(start));
     if (!smith_stepcache_normalize(edge->command, strlen(edge->command), text)) return false;
     smith_steptext_add(text, "\n", 1);
-    smith_steptext_add(text, smith_stepcache.environment, strlen(smith_stepcache.environment));
-    smith_steptext_addf(text, "compiler %s\nclang %s\n", compiler, external);
+    if (!function) {
+        smith_steptext_add(text, smith_stepcache.environment, strlen(smith_stepcache.environment));
+        smith_steptext_addf(text, "compiler %s\nclang %s\n", compiler, external);
+    }
     *newest = 0;
     uint32_t inputs = edge->explicit_count + edge->implicit_count;
     for (uint32_t k = 0; k < inputs; k++) {
@@ -944,7 +976,7 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
         // blanked). A step that lists it as an input, to run after it is replaced (build.c's header steps, whose
         // `.smith/compiler/<hash>` file holds its path, size and time), would add the bytes of this job's copy of the
         // same compiler and never hit in another job (#3002).
-        if (smith_stepcache_is_compiler_input(path)) continue;
+        if (!function && smith_stepcache_is_compiler_input(path)) continue;
         smith_steptext_addf(text, "input %s ", spec);
         if (!smith_stepcache_normalize(path, strlen(path), text)) return false;
         smith_steptext_add(text, "\n", 1);
@@ -972,7 +1004,6 @@ static bool smith_stepcache_path(char *out, const char *kind, const char *hex, c
 // last (#3050). Several, since a nested project (the tests' front-project) writes the outputs of the one around it
 // under the same names with other flags: a miss is compared with the nearest.
 constexpr size_t smith_stepcache_last_max = 4;
-constexpr char smith_stepcache_key_start[] = "smith-step-cache 1\ncommand ";
 
 static bool smith_stepcache_last_path(const char *output, char path[PATH_MAX]) {
     char storage[smith_exec_name_max + 64];
@@ -1280,9 +1311,12 @@ static bool smith_stepcache_apply(SmithExec *exec, const SmithEdge *edge, const 
         if (snprintf(path, sizeof path, "%s/%s", folder, name) >= (int)sizeof path) return false;
         const char *destination = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
         // A restat step writes its output only when the bytes change, so what depends on it is left alone (a header).
-        if (edge->restat && k == 0 && smith_stepcache_same_bytes(path, destination)) continue;
-        if (!smith_stepcache_put(path, destination, k > 0)) return false;
+        // Every output of a function step is its bytes as written: an input rewritten with the same bytes changes none.
+        bool raw = k == 0 || edge->step_cache == 3;
+        if ((edge->restat || edge->step_cache == 3) && raw && smith_stepcache_same_bytes(path, destination)) continue;
+        if (!smith_stepcache_put(path, destination, !raw)) return false;
     }
+    if (edge->depfile == nullptr) return true; // a function step has none
     if (snprintf(path, sizeof path, "%s/d", folder) >= (int)sizeof path) return false;
     return smith_stepcache_put(path, edge->depfile, true);
 }
@@ -1294,7 +1328,7 @@ bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key
     key->valid = false;
     if (!smith_stepcache_open(exec)) return false;
     const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
-    if (!smith_stepcache_eligible(exec, edge)) {
+    if (!smith_stepcache_function(exec, edge) && !smith_stepcache_eligible(exec, edge)) {
         if (edge->has_deps && !exec->options.dry_run && smith_stepcache.state == SmithStepCache_On)
             smith_stepcache_log("miss %s: not a compile the cache serves (no -MD -MF, a shell feature or a flag)",
                                 output);
@@ -1327,7 +1361,8 @@ bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key
         return true;
     }
     if (smith_stepcache_logging()) {
-        if (total == 0) smith_stepcache_compare_last(output);
+        if (total == 0 && edge->step_cache != 3)
+            smith_stepcache_compare_last(output); // function steps keep no last key
         smith_stepcache_log("miss %s: %s%s", output,
                             total == 0 ? "" : "the key is known but no variant holds: ", smith_stepcache_why);
     }
@@ -1404,7 +1439,7 @@ static bool smith_stepcache_write_result(SmithExec *exec, const SmithEdge *edge,
         const char *output = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
         struct stat info = {};
         ok = stat(output, &info) == 0 && snprintf(path, sizeof path, "%s/o%u", temporary, k) < (int)sizeof path;
-        if (ok && k == 0) {
+        if (ok && (k == 0 || edge->step_cache == 3)) {
             ok = smith_stepcache_copy(output, path);
         } else if (ok) {
             size_t size = 0;
@@ -1415,13 +1450,14 @@ static bool smith_stepcache_write_result(SmithExec *exec, const SmithEdge *edge,
             ok = smith_stepcache_read(output, source, sizeof smith_stepcache_text_in / 2, &size) &&
                  smith_stepcache_normalize(source, size, &text) && smith_stepcache_write(path, text.data, text.size);
         }
-        smith_steptext_addf(&meta, "%c %lld\n", k == 0 ? 'r' : 't', (long long)info.st_size);
+        smith_steptext_addf(&meta, "%c %lld\n", k == 0 || edge->step_cache == 3 ? 'r' : 't', (long long)info.st_size);
     }
     SmithStepText depfile = {.data = smith_stepcache_text_in, .capacity = sizeof smith_stepcache_text_in};
     depfile.data[0] = '\0';
-    ok = ok && snprintf(path, sizeof path, "%s/d", temporary) < (int)sizeof path &&
-         smith_stepcache_normalize(job->depfile_text, job->depfile_size, &depfile) &&
-         smith_stepcache_write(path, depfile.data, depfile.size);
+    ok = ok && (edge->depfile == nullptr || // a function step has none
+                (snprintf(path, sizeof path, "%s/d", temporary) < (int)sizeof path &&
+                 smith_stepcache_normalize(job->depfile_text, job->depfile_size, &depfile) &&
+                 smith_stepcache_write(path, depfile.data, depfile.size)));
     ok = ok && snprintf(path, sizeof path, "%s/meta", temporary) < (int)sizeof path && !meta.full &&
          smith_stepcache_write(path, meta.data, meta.size);
     ok = ok && rename(temporary, folder) == 0;
@@ -1453,12 +1489,16 @@ static void smith_stepcache_add_variant(const char *key, const SmithStepText *va
 }
 
 // After a compile that ran and passed: stores its outputs for the inputs it read. Nothing is stored when the compile
-// printed anything (a warning is not hidden), a file it read was written after it began, or a key cannot be made.
+// printed anything (a warning is not hidden), a file it read was written after it began, or a key cannot be made. A
+// function step marked `.content_hash` is stored the same way, with no depfile and a variant of no files: what it reads
+// is what the manifest names, which the key holds.
 void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job, int64_t now) {
     const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
     const char *why = nullptr;
-    if (!job->key.valid || !smith_stepcache_eligible(exec, edge)) return;
-    if (job->step_deps == nullptr || job->depfile_text == nullptr) {
+    if (!job->key.valid) return;
+    bool function = smith_stepcache_function(exec, edge);
+    if (!function && !smith_stepcache_eligible(exec, edge)) return;
+    if (!function && (job->step_deps == nullptr || job->depfile_text == nullptr)) {
         smith_stepcache_log("not stored %s: no depfile was read", output);
         return;
     }
@@ -1495,7 +1535,7 @@ void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job
         return;
     }
     smith_stepcache_add_variant(job->key.manifest, &variant);
-    smith_stepcache_keep_last(output);
+    if (!function) smith_stepcache_keep_last(output);
     smith_stepcache_log("stored %s", output);
 }
 

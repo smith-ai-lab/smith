@@ -60,10 +60,9 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    # 3 minutes of work plus the 10-minute cap of a queue run's wait for the groups ahead (`yield-to-queue`, #2833)
-    # and the 60-minute cap of `batch-wait` (#2851, a queue entry)
-    timeout-minutes: 75
-    # `batch-wait` cancels the run of a group that left the queue; `yield-to-queue` force-cancels a PR check's own run
+    # 3 minutes of work: a queue run waits for nothing (one queue run at a time, #3131)
+    timeout-minutes: 10
+    # `yield-to-queue` force-cancels a PR check's own run
     permissions:
       contents: read
       actions: write
@@ -88,8 +87,7 @@ jobs:
       uncached: ${{ steps.scope.outputs.uncached }}
       # the base a PR check is compared against
       base: ${{ steps.pr.outputs.base }}
-      # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
-      batch: ${{ steps.batch.outputs.batch }}
+      # a queue entry: the PRs its tree holds that main does not
       prs: ${{ steps.prs.outputs.prs }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
@@ -120,8 +118,6 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/yield-to-queue
-        with:
-          queue-wait: "true"
       - name: The pull request
         # a PR check is a `workflow_dispatch` run (#2856): what a `pull_request` event carried (the base, the body) is
         # read from the PR the dispatcher named
@@ -134,23 +130,6 @@ jobs:
           echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
           jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
           echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
-      - name: Wait while a later queue entry is built on this one
-        # batching (#2851, knowledge/ci-hosted.md): with HEADGREEN a later group's passing run merges every entry ahead
-        # of it, so an entry with a later group built on it waits here, on this one runner, and every heavy job (they
-        # all need `changes`) waits with it; it is cancelled when its group merges. Once it is the last entry built, it
-        # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
-        # One full build at a time (#3057): the last entry also waits while a group ahead of it is in its full build,
-        # so the next full run holds every entry that queued during the one before it.
-        id: batch
-        uses: ./.github/actions/batch-wait
-      - name: "Split: a later queue group failed"
-        # #3057: the full build of a later group failed, and that run held this entry, so this group builds its own
-        # tree now, beside the other groups ahead of the failed one. `scripts/batch_wait.c` in the group ahead of this
-        # one reads this step (a name that starts with `Split:`, concluded success) in this run's jobs and splits too:
-        # do not rename it without that query.
-        if: steps.batch.outputs.batch == 'split'
-        run: |
-          echo "batch: split (a later group's full build failed; every group ahead of it builds its own tree)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
@@ -371,8 +350,7 @@ jobs:
         # the standing number of #3051 and #3057 (owner, 2026-11-11: "if the PR queue is growing over time, that's bad"):
         # the nightly run prints entries against merges and pull requests per passing queue run. The queue holds its
         # load when merged is at least entered and the depth does not grow over three days. Entered counts every
-        # `added_to_merge_queue` event of the pull requests updated in the window (a re-queue counts again); batched is
-        # a cancelled queue run whose pull request merged (a later group's run merged it, #2851). About 100 reads, with
+        # `added_to_merge_queue` event of the pull requests updated in the window (a re-queue counts again); About 100 reads, with
         # the reader's token; a failed read prints `unreadable` and fails nothing.
         if: github.event_name == 'schedule'
         run: |
@@ -380,7 +358,7 @@ jobs:
           cutoff=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ)
           api() { GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api -X GET "$@"; }
           line() {
-            local runs= prs= page p pr n entered=0 merged ok failed batched=0 total depth per
+            local runs= prs= page p pr n entered=0 merged ok failed total depth per
             for p in 1 2 3 4 5; do
               page=$(api "$r/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 -f page="$p" -f created=">=$cutoff" \
                 --jq '.workflow_runs[] | "\(.head_branch | capture("/pr-(?<n>[0-9]+)-").n) \(.conclusion // .status)"') || return 1
@@ -406,16 +384,12 @@ jobs:
             total=$(echo "$runs" | grep -c . || true)
             ok=$(echo "$runs" | grep -c ' success$' || true)
             failed=$(echo "$runs" | grep -c ' failure$' || true)
-            # batched: a cancelled run whose pull request merged (a later group's run merged it, #2851)
-            for pr in $(echo "$runs" | awk '$2 == "cancelled" { print $1 }'); do
-              echo "$prs" | grep -q "^$pr [^-]" && batched=$((batched + 1))
-            done
             depth=$(gh api graphql -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f query='
               query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
                 mergeQueue(branch: "main") { entries { totalCount } } } }' \
               --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null) || depth=unknown
             per=$(awk -v m="$merged" -v s="$ok" 'BEGIN { if (s > 0) printf "%.1f", m / s; else printf "none" }')
-            echo "queue: last 24 h entered $entered, merged $merged, depth now $depth, runs $total ($ok ok, $batched batched, $failed failed), PRs per ok run $per"
+            echo "queue: last 24 h entered $entered, merged $merged, depth now $depth, runs $total ($ok ok, $failed failed), PRs per ok run $per"
           }
           { line || echo "queue: last 24 h unreadable"; } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: API budget (last)
@@ -1187,11 +1161,10 @@ jobs:
           CHECK_LINT: ${{ needs.check-lint.result }}
           RELEASE_PACK_MACOS: ${{ needs.release-pack-macos.result }}
           RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}
-          BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$EVENT" = merge_group ]; then echo "tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
           # Fail closed (#2965): only `success` and `skipped` pass. An `abandoned` job (GitHub never created it, as in the
           # outage of 2026-11-09), `failure`, `cancelled`, an empty or any future value fails.
           for r in $RESULTS; do
@@ -1297,6 +1270,13 @@ jobs:
         # each OS saves the cache of what its jobs build: the Mac builds only its `--macos-only` tests
         os: ${{ fromJSON(needs.changes.outputs.warm_os) }}
     runs-on: ${{ matrix.os }}
+    # One warm per OS at a time on main (#3069): a running warm always finishes, and a warm still waiting is replaced
+    # by the one of a newer push, whose stage0 every later job fetches; the older commit's cache would be keyed by a
+    # stage0 no job uses any more. At 10 merges an hour and warms of about 14 minutes this skips about half of them;
+    # the replaced push run ends `cancelled` (no required check reads a push run). A pull request's dry run is alone.
+    concurrency:
+      group: warm-${{ github.event_name == 'push' && 'main' || github.run_id }}-${{ matrix.os }}
+      cancel-in-progress: false
     timeout-minutes: 25
     permissions:
       contents: write # the release-asset step replaces the assets of the rolling `step-cache` prerelease (#2755)
@@ -1386,6 +1366,13 @@ jobs:
         if: env.DRY_RUN != '1'
         shell: bash
         run: |
+          # the folder is pruned once more here, after the builds: the prune of a job runs at its first build, so the
+          # results the dev and release builds just made (about 1.4 GB on Linux, all new keys when the compiler
+          # changed) were saved on top of the survivors and the saved folder grew with every merge: 1,397 MB, then
+          # 2,045 MB (#3045). The cap is the one of setup-smith, read from there so that it is written once
+          cap=$(awk '/^  step-cache-max:/{f=1} f && /default:/{print $2; exit}' .github/actions/setup-smith/action.yml)
+          rm -f ~/.cache/smith/steps/prune.timestamp
+          SMITH_CACHE_MAX="$cap" "$SMITH" build 2>&1 | grep -E '^cache:|no work to do' | tee -a "$GITHUB_STEP_SUMMARY" || echo "::warning::the prune before the save did not run"
           rm -f ~/.cache/smith/steps/prune.timestamp
           saved=$(du -sm ~/.cache/smith/steps | cut -f1)
           echo "step cache saved: $saved MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1401,21 +1388,10 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
-      - name: Upload the step cache for cloud runners
-        # the Actions cache cannot be read from outside Actions, so a cloud runner (smith-dev-runner, step 3) downloads
-        # the same folder as an artifact. Only this job on main writes it; 3 days keep it inside free storage, and the
-        # folder is already pruned to SMITH_CACHE_MAX by the build above (#2690)
-        if: runner.os == 'Linux' && env.DRY_RUN != '1'
-        uses: actions/upload-artifact@v4
-        with:
-          name: smith-steps-linux-${{ github.sha }}
-          path: ~/.cache/smith/steps
-          retention-days: 3
-          compression-level: 1
-          if-no-files-found: warn
       - name: Publish the step cache as release assets
         # a cloud runner cannot download an Actions artifact (its zip is served from a host the session's proxy refuses
-        # by name), but it can download a release asset. The repository's releases are immutable (a release takes its
+        # by name, and the upload of one cost 3.35 runner-minutes a push for no reader: it is gone, #3069), but it can
+        # download a release asset. The repository's releases are immutable (a release takes its
         # assets when it is created and never again, #2772), so each push to main creates its own prerelease
         # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
         # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
