@@ -143,7 +143,7 @@ static int failed_job(const char *repo, const char *branch, char name[line_size]
     char command[command_size];
     char id[line_size];
     int n = snprintf(command, sizeof command,
-                     "%s api -X GET 'repos/%s/actions/runs' -f event=merge_group -f head_branch='%s' "
+                     "%s api -X GET 'repos/%s/actions/runs' -f event=merge_group -f branch='%s' "
                      "--jq '.workflow_runs[0].id // empty'",
                      tool, repo, branch);
     if (n < 0 || n >= (int)sizeof command || !first_line(command, id) || strchr(id, '\'') != nullptr) return 0;
@@ -210,7 +210,7 @@ static int group_run(const char *repo, const char *branch, long *created, int *b
     char command[command_size];
     char text[line_size];
     int n = snprintf(command, sizeof command,
-                     "%s api -X GET 'repos/%s/actions/runs' -f event=merge_group -f head_branch='%s' "
+                     "%s api -X GET 'repos/%s/actions/runs' -f event=merge_group -f branch='%s' "
                      "--jq '.workflow_runs[0]|select(.!=null)|\"\\(.id)\\t\\(.created_at|fromdateiso8601)\"'",
                      tool, repo, branch);
     if (n < 0 || n >= (int)sizeof command || !first_line(command, text)) return 0;

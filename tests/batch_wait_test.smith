@@ -21,6 +21,8 @@ constexpr const char *setup =
     "cat > fake_gh <<'EOF'\n"
     "a=\"$*\"\n"
     "case \"$a\" in\n"
+    // the runs API filters by `branch`; it ignores `head_branch` and would answer with the newest run of any group
+    "*head_branch=*) exit 1;;\n"
     "*rules/branches*) cat \"$G.entries\" 2>/dev/null; exit 0;;\n"
     "*created_at*) for f in \"$G\".at.*; do [ -f \"$f\" ] || continue; b=${f##*.at.}; "
     "case \"$a\" in *\"$b\"*) cat \"$f\"; exit 0;; esac; done; exit 1;;\n"
