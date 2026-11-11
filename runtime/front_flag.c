@@ -874,6 +874,7 @@ bool smith_lint_fix_requested(int count, char **args) {
 // import identity compiled in (front/, lib/std/, the runtime: the fixer's code), and the digest of the binary only in
 // a smith that has none: hashing smith's 425 MB took 3.7 s of every `smith lint --fix`, whatever the file (#3080).
 // A failure only leaves the fixer cold; a cache entry never changes the fixed file.
+#ifndef SMITH_CORE // the core smith has no front end, so no fixer and no identity
 static void smith_lint_fix_import_cache(const char *self) {
     if (getenv("SMITH_FIX_IMPORT_CACHE") != nullptr) return;
     char digest[smith_sha256_hex_size];
@@ -885,6 +886,7 @@ static void smith_lint_fix_import_cache(const char *self) {
     if (written <= 0 || (size_t)written >= sizeof folder || !smith_package_make_folders(folder)) return;
     setenv("SMITH_FIX_IMPORT_CACHE", folder, 1);
 }
+#endif
 
 int smith_lint_fix(int count, char **args, const char *self) {
 #ifdef SMITH_CORE

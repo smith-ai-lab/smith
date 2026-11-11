@@ -4092,6 +4092,29 @@ static void fix_module_line(parse::Parser *p, lex::Token module_token, lex::Toke
     warn(p, module_token.span.start, semi.span.end, message, edits);
 }
 
+// Whether `text` holds the letters `target` anywhere. A comment or a longer name counts: this only rules a text out.
+static Bool says_target(Str text) {
+    for (Usize i = 0; i + 6 <= countof(text); i++) {
+        if (text[i] == 't' && text[i + 1] == 'a' && text[i + 2] == 'r' && text[i + 3] == 'g' && text[i + 4] == 'e' &&
+            text[i + 5] == 't') {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Marks a function of the file whose text, from the token at `first` to the last one read, never says `target`
+// (`no_target`, #3080): `front::when` then knows without copying it that no `if` of its body is about the target.
+static void note_target(const parse::Parser *p, ast::Decl *item, Usize first) {
+    if (p->position <= first || p->position > countof(p->tokens)) return;
+    Usize start = p->tokens[first].span.start;
+    Usize end = p->tokens[p->position - 1].span.end;
+    if (start > end || end > countof(p->source)) return;
+    Bool none = !says_target(p->source[start:end]);
+    if (item->kind != .function) return;
+    item->kind.function.no_target = none;
+}
+
 // A whole file: an optional `module x::y;` (recorded in the module's name until the keyword is the switch), then
 // declarations to the end of the file. `file` is the file's name, kept in the module.
 export ast::Module file(parse::Parser *p, Str file) {
@@ -4107,7 +4130,10 @@ export ast::Module file(parse::Parser *p, Str file) {
         if (parse::at(p, lex::end_of_file)) break;
         Usize before = p->position;
         ast::Decl *item = parse_one(p, true);
-        if (item != nullptr) result.decls = push_decl(result.decls, item);
+        if (item != nullptr) {
+            note_target(p, item, before);
+            result.decls = push_decl(result.decls, item);
+        }
         if (p->position == before) parse::advance(p);
     }
     return result;
