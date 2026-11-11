@@ -337,8 +337,9 @@ static void rewrite_function(Lowering *l, c::LLVMValueRef old) {
     if (new_type == nullptr) return;
     Usize length = 0;
     const char *name = c::LLVMGetValueName2(old, &length);
-    U8 label[:] = mem::alloc_slice(U8, length + 1);
-    c::memcpy(label.data, name, length);
+    U8 label[:] = mem::alloc_slice(U8, length + 1); // a copy: renaming `old` frees `name`
+    const U8 *bytes = (const U8 *)name;
+    mem::copy(label[0:length], bytes[0:length]);
     c::LLVMSetValueName2(old, "", 0);
     c::LLVMValueRef made = c::LLVMAddFunction(l->module, (const char *)label.data, new_type);
     mem::free(label.data);
