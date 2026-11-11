@@ -3492,6 +3492,89 @@ static int build_docs_gate_test(SmithRun *run) {
     return failed;
 }
 
+// ---- The pre-push check (#3132): `.githooks/pre-push` runs `smith build pre-push` before a push leaves the machine,
+// so format, lint and the tests the change reaches fail on the worker's machine and not first on a CI runner. The
+// files are those of base...HEAD. A push that changes only docs (knowledge/, .agents/, *.md) runs nothing; a push with
+// no C, C++ or smith source runs no formatter or linter. `git push --no-verify` skips it; the merge queue decides.
+
+typedef enum { PRE_PUSH_DOCS, PRE_PUSH_SOURCE, PRE_PUSH_OTHER } PrePushKind;
+
+static bool pre_push_ends(const char *path, const char *suffix) {
+    size_t length = strlen(path);
+    size_t tail = strlen(suffix);
+    return length >= tail && strcmp(path + length - tail, suffix) == 0;
+}
+
+static PrePushKind pre_push_kind(const char *path) {
+    if (strncmp(path, "knowledge/", 10) == 0 || strncmp(path, ".agents/", 8) == 0 || pre_push_ends(path, ".md"))
+        return PRE_PUSH_DOCS;
+    const char *const sources[] = {".c", ".h", ".cpp", ".hpp", ".smith", ".m"};
+    for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++)
+        if (pre_push_ends(path, sources[i]) && strncmp(path, "tree-sitter/src/", 16) != 0) return PRE_PUSH_SOURCE;
+    return PRE_PUSH_OTHER;
+}
+
+// One step of the check; on failure prints the step and the command that runs it again.
+static int pre_push_step(const char *name, const char *const *argv) {
+    printf("pre-push: %s\n", name);
+    int status = build_exec(argv);
+    if (status == 0) return 0;
+    fprintf(stderr, "\npre-push: FAILED at the step \"%s\"; run it again with:\n ", name);
+    for (size_t i = 0; argv[i] != nullptr; i++)
+        fprintf(stderr, " %s", argv[i]);
+    fputs("\n(`git push --no-verify` skips the check, only on the lead's word.)\n", stderr);
+    return status;
+}
+
+// args: the smith to use (built from this tree), the base ref.
+static int build_pre_push(SmithRun *run) {
+    const char *smith = run->args[0];
+    const char *base = run->args[1];
+    const char *const *mergebase = build_gate_git(run, ".", (const char *[]){"merge-base", base, "HEAD", nullptr});
+    if (mergebase == nullptr || mergebase[0] == nullptr) {
+        printf("pre-push: %s cannot be resolved here: not checked\n", base);
+        return 0;
+    }
+    const char *const *changed = build_gate_git(
+        run, ".", (const char *[]){"diff", "--name-only", "--diff-filter=d", smith_fmt(run->b, "%s...HEAD", base), nullptr});
+    const char *sources[4096] = {};
+    size_t count = 0;
+    bool other = false;
+    for (size_t i = 0; changed != nullptr && changed[i] != nullptr && count < 4000; i++) {
+        PrePushKind kind = pre_push_kind(changed[i]);
+        other = other || kind != PRE_PUSH_DOCS;
+        if (kind == PRE_PUSH_SOURCE) sources[count++] = changed[i];
+    }
+    if (!other) {
+        puts("pre-push: only docs changed: nothing to run");
+        return 0;
+    }
+    if (count > 0) {
+        const char *fmt[4100] = {smith, "fmt", "--dry-run", "--Werror"};
+        const char *lint[4100] = {smith, "lint", "--quiet"};
+        size_t f = 4, l = 3;
+        for (size_t i = 0; i < count; i++) {
+            fmt[f++] = sources[i];
+            lint[l++] = sources[i];
+        }
+        int status = pre_push_step("format", fmt);
+        status = status != 0 ? status : pre_push_step("lint", lint);
+        if (status != 0) return status;
+    }
+    return pre_push_step("tests the change reaches", (const char *[]){smith, "test", "--changed", nullptr});
+}
+
+static int build_pre_push_test(SmithRun *run) {
+    (void)run;
+    bool ok = pre_push_kind("knowledge/a.smith") == PRE_PUSH_DOCS && pre_push_kind("README.md") == PRE_PUSH_DOCS &&
+              pre_push_kind(".agents/skills/x/SKILL.md") == PRE_PUSH_DOCS &&
+              pre_push_kind("runtime/a.c") == PRE_PUSH_SOURCE && pre_push_kind("lib/a.smith") == PRE_PUSH_SOURCE &&
+              pre_push_kind("build.c") == PRE_PUSH_SOURCE && pre_push_kind(".github/ci.yml") == PRE_PUSH_OTHER &&
+              pre_push_kind("tree-sitter/src/parser.c") == PRE_PUSH_OTHER;
+    if (!ok) fputs("pre-push: a file is classified wrongly\n", stderr);
+    return ok ? 0 : 1;
+}
+
 static const char *build_absolute(SmithBuild *b, const char *path);
 static int build_tool_make(SmithBuild *b, const char *folder, const char *source);
 
@@ -3753,6 +3836,19 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .test = true,
     };
     smith_task(b, "test-docs-gate", &gate_test);
+    SmithStep pre_push = {
+        .run = build_pre_push,
+        .args = smith_list(b, smith_option_value(b, "smith", binary, "pre-push: the smith built from this tree"),
+                           smith_option_value(b, "base", "origin/main", "pre-push: the base ref"), nullptr),
+        .description = "checking format, lint and the tests a push reaches (the pre-push hook, #3132)",
+    };
+    smith_task(b, "pre-push", &pre_push);
+    SmithStep pre_push_test = {
+        .run = build_pre_push_test,
+        .description = "testing the pre-push check's file classes",
+        .test = true,
+    };
+    smith_task(b, "test-pre-push", &pre_push_test);
 }
 
 // Whether the LLVM install has the token hook (patches/clang-token-hook.patch), which `smith build llvm` applies: an
