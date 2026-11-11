@@ -123,9 +123,9 @@ runs:
           echo "test store: none, every test runs ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
         # what this job adds is newer than this file: a part that publishes only its own entries (`delta` of
-        # ./.github/actions/test-cache/save, #3061) finds them by it. A second older, so that no entry written in the
-        # same second is missed
-        touch -d '1 second ago' "$RUNNER_TEMP/test-store.restored"
+        # ./.github/actions/test-cache/save, #3061) finds them by it. A plain `touch`: the macOS job runs this step too,
+        # and its `touch` has no `-d '1 second ago'`
+        touch "$RUNNER_TEMP/test-store.restored"
     - name: Restore the import cache
       shell: bash
       env:
