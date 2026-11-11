@@ -1,0 +1,45 @@
+fn pick(flag: bool, n: i32) -> i32:
+    v := if flag:
+        n
+    else:
+        doubled := n * 2
+        return doubled
+    v + 1
+
+fn first_positive(xs: []i32) -> i32:
+    mut total := 0
+    for x in xs:
+        step := if x > 0:
+            x
+        else:
+            continue
+        total = total + step
+    total
+
+fn within(o: ?i32) -> i32:
+    v := o else:
+        fallback := 40
+        return fallback + 2
+    v + 1
+
+fn nested(n: i32) -> i32:
+    v := match n:
+        0: 10
+        _:
+            if n > 5:
+                return 1
+            else:
+                return 2
+    v + 1
+
+pub fn check() -> i32:
+    if pick(true, 3) != 4 or pick(false, 3) != 6:
+        return 1
+    xs := [3, -1, 4]
+    if first_positive(xs[:]) != 7:
+        return 2
+    if within(.some(1)) != 2 or within(.none) != 42:
+        return 3
+    if nested(0) != 11 or nested(9) != 1 or nested(2) != 2:
+        return 4
+    0

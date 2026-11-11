@@ -16,6 +16,7 @@
 module front::fix_guard;
 
 import front::ast;
+import front::fix_optional;
 import front::parse as core;
 import front::types;
 import std::format;
@@ -23,6 +24,13 @@ import std::mem;
 
 static Bool word_char(char ch) {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+static Bool same_str(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
 }
 
 static Bool starts_with(Str text, Str prefix) {
@@ -101,7 +109,7 @@ static Usize function_end(Str source, Usize start) {
     return stop < countof(source) ? stop : countof(source);
 }
 
-static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
+static core::Errors add_why(core::Errors out, Usize start, Usize stop, Str text, Str why) {
     out = mem::realloc(out, countof(out) + 1);
     core::Edits fix = {};
     fix = mem::realloc(fix, 1);
@@ -109,11 +117,14 @@ static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
     fix[0] = (core::Edit){.span = at, .text = text};
     core::ParseError made = {};
     made.span = at;
-    Str why = "a Result read after a guard that leaves is a binding with an else";
     made.message = why;
     made.fix = fix;
     out[countof(out) - 1] = made;
     return out;
+}
+
+static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
+    return add_why(out, start, stop, text, "a Result read after a guard that leaves is a binding with an else");
 }
 
 // The name `R` of `if R == .error:` in the trimmed `line`, and where the text after the colon starts.
@@ -205,6 +216,603 @@ export core::Errors edits(Str source) {
             found = read_at(source[body_end:rest_end], from, name);
         }
         at = end + 1;
+    }
+    return out;
+}
+
+// The tests of a Result (#3083): `R == .error` is `R != .ok`, and `R != .error` is `R == .ok`.
+//
+//   if done == .error or done.ok.status != 0:      if done != .ok or done.ok.status != 0:
+//       return false                                   return false
+//
+// The checker binds a read `R.ok` after `R != .ok` (a guard that leaves, also in an `or` chain) and after `R == .ok`
+// (the `then`, or the rest of an `and` chain), but not after the same test written with `.error`. So where the checker
+// reports a read `R.ok` it could not bind, the tests of `R` with `.error` above it in the function are written with
+// `.ok`, and the next pass binds the read. A test `R == .error` whose body mentions `R` is left: `if r == .error:
+// return r` is the guard `try` takes. A name `ok` in the function leaves its tests, since the binding cannot be
+// written. Only a plain name `R` is followed, and only a test that ends with a `:` on its line (an `if`, an `else if`
+// or a `while`).
+
+// Whether `text` is a plain name: letters, digits and `_`, not empty.
+static Bool plain_name(Str text) {
+    if (countof(text) == 0) return false;
+    for (Usize i = 0; i < countof(text); i++)
+        if (!word_char(text[i])) return false;
+    return true;
+}
+
+// The place of the test `name == .error` or `name != .error` in `text` from `from`, or `countof(text)`; `equal` says
+// which.
+static Usize error_test_at(Str text, Usize from, Str name, Bool *equal) {
+    Usize found = word_at(text, from, name);
+    while (found < countof(text)) {
+        Str after = text[found + countof(name):countof(text)];
+        Bool is_equal = starts_with(after, " == .error");
+        Bool is_not = starts_with(after, " != .error");
+        Usize end = found + countof(name) + 10;
+        if ((is_equal || is_not) && (end == countof(text) || !word_char(text[end]))) {
+            *equal = is_equal;
+            return found;
+        }
+        found = word_at(text, found + 1, name);
+    }
+    return countof(text);
+}
+
+// The colon that ends the condition on the line from `at`: the first `:` outside brackets and quotes followed by a
+// blank or the end of the line, or the line's end.
+static Usize condition_end(Str source, Usize at) {
+    Usize end = line_end(source, at);
+    Usize depth = 0;
+    Bool quoted = false;
+    for (Usize i = at; i < end; i++) {
+        char ch = source[i];
+        if (quoted) {
+            if (ch == '\\')
+                i += 1;
+            else if (ch == '"')
+                quoted = false;
+        } else if (ch == '"') {
+            quoted = true;
+        } else if (ch == '(' || ch == '[') {
+            depth += 1;
+        } else if ((ch == ')' || ch == ']') && depth > 0) {
+            depth -= 1;
+        } else if (ch == ':' && depth == 0 && (i + 1 == end || source[i + 1] == ' ')) {
+            return i;
+        }
+    }
+    return end;
+}
+
+// Whether the body of the statement whose condition ends at the colon `colon` mentions `name`: the rest of the line,
+// or the lines below it deeper than `indent`.
+static Bool body_mentions(Str source, Usize colon, Usize indent, Str name) {
+    Usize end = line_end(source, colon);
+    Str inline_body = source[colon:end];
+    if (word_at(inline_body, 0, name) < countof(inline_body)) return true;
+    Usize line = end + 1;
+    while (line < countof(source) && (blank(source, line) || indent_of(source, line) > indent)) {
+        Str text = source[line:line_end(source, line)];
+        if (word_at(text, 0, name) < countof(text)) return true;
+        line = next_line(source, line);
+    }
+    return false;
+}
+
+// Whether `out` already has a fix at `at`.
+static Bool fixed_at(core::Errors out, Usize at) {
+    for (Usize i = 0; i < countof(out); i++)
+        if (out[i].span.start == at) return true;
+    return false;
+}
+
+// The fixes for the tests of `name` with `.error` in `source[start:stop]`.
+static core::Errors name_tests(core::Errors out, Str source, Usize start, Usize stop, Str name) {
+    Str region = source[start:stop];
+    Bool equal = false;
+    Usize found = error_test_at(region, 0, name, &equal);
+    while (found < countof(region)) {
+        Usize at = start + found;
+        Usize line = at;
+        while (line > 0 && source[line - 1] != '\n')
+            line -= 1;
+        Usize colon = condition_end(source, at);
+        Usize op = at + countof(name);
+        Bool tried = equal && body_mentions(source, colon + 1, indent_of(source, line), name); // `try`'s guard
+        if (colon < line_end(source, at) && !tried && !fixed_at(out, op)) {
+            Str why = "a Result's `ok` is bound after a test with `.ok`: write `== .error` as `!= .ok`";
+            out = add_why(out, op, op + 10, equal ? " != .ok" : " == .ok", why);
+        }
+        found = error_test_at(region, found + 1, name, &equal);
+    }
+    return out;
+}
+
+// The `else` of a test of a Result (#3083): the other variant is bound by its own test of the chain.
+//
+//   if .error(error) := emitted:              if .error(error) := emitted:
+//       report(error)                             report(error)
+//   else:                                     else if .ok(ok) := emitted:
+//       dispose(emitted.ok)                       dispose(ok)
+//
+// The `if` tests one variant (`.error(error) := R`, `R == .error` or `R != .ok`), and its `else:`, on a line of its
+// own, reads the other one. The binding takes the variant's name; a name of that word declared around the `if` (a
+// line above it in the function no deeper than the `else`) or in the `else` leaves the site.
+
+static Str other_variant(Str variant) {
+    Str error = "error";
+    Str ok = "ok";
+    return starts_with(variant, ok) ? error : ok;
+}
+
+// The place of the read `name.variant` (not `name.variant2`) in `text` from `from`, or `countof(text)`.
+static Usize variant_read_at(Str text, Usize from, Str name, Str variant) {
+    Usize found = word_at(text, from, name);
+    while (found < countof(text)) {
+        Usize dot = found + countof(name);
+        Usize after = dot + 1 + countof(variant);
+        if (dot < countof(text) && text[dot] == '.' && after <= countof(text) &&
+            starts_with(text[dot + 1:countof(text)], variant) && (after == countof(text) || !word_char(text[after])))
+            return found;
+        found = word_at(text, found + 1, name);
+    }
+    return countof(text);
+}
+
+// The start of the line above the one at `at`, or `at` when it is the first.
+static Usize line_above(Str source, Usize at) {
+    if (at == 0) return 0;
+    Usize k = at - 1;
+    while (k > 0 && source[k - 1] != '\n')
+        k -= 1;
+    return k;
+}
+
+// The start of the nearest non-blank line above `at` whose indent is below `indent`, or `countof(source)`.
+static Usize header_above(Str source, Usize at, Usize indent) {
+    Usize line = at;
+    while (line > 0) {
+        line = line_above(source, line);
+        if (!blank(source, line) && indent_of(source, line) < indent) return line;
+    }
+    return countof(source);
+}
+
+// Whether the trimmed test `test` of an `if` tests `name` for the variant other than `variant`.
+static Bool tests_other(Str test, Str name, Str variant) {
+    Str other = other_variant(variant);
+    Str equal = types::message_of(format::push(name, " == .", other));
+    Str unequal = types::message_of(format::push(name, " != .", variant));
+    Str pattern = types::message_of(format::push(".", other, "(", other, ") := ", name));
+    return same_str(test, equal) || same_str(test, unequal) || same_str(test, pattern);
+}
+
+// The place of `name` as a whole word in `text` outside string literals and `//` comments, or `countof(text)`:
+// `"no error"` declares no name `error`.
+static Usize code_word_at(Str text, Str name) {
+    Usize found = word_at(text, 0, name);
+    while (found < countof(text)) {
+        Bool quoted = false;
+        Bool comment = false;
+        Usize line = found;
+        while (line > 0 && text[line - 1] != '\n')
+            line -= 1;
+        for (Usize i = line; i < found && !comment; i++) {
+            if (quoted && text[i] == '\\')
+                i += 1;
+            else if (text[i] == '"')
+                quoted = !quoted;
+            else if (!quoted && text[i] == '/' && i + 1 < found && text[i + 1] == '/')
+                comment = true;
+        }
+        if (comment) {
+            Usize end = found;
+            while (end < countof(text) && text[end] != '\n')
+                end += 1;
+            found = word_at(text, end, name);
+        } else if (quoted) {
+            found = word_at(text, found + 1, name);
+        } else {
+            return found;
+        }
+    }
+    return countof(text);
+}
+
+// Whether a line of `source[start:stop]` no deeper than `indent` names `word`.
+static Bool named_around(Str source, Usize start, Usize stop, Usize indent, Str word) {
+    Usize line = start;
+    while (line < stop) {
+        Str text = source[line:line_end(source, line)];
+        if (!blank(source, line) && indent_of(source, line) <= indent && code_word_at(text, word) < countof(text))
+            return true;
+        line = next_line(source, line);
+    }
+    return false;
+}
+
+// The fixes of the `else:` above the read of `name.variant` at `at`, added to `out`.
+static core::Errors else_edits(core::Errors out, Str source, Usize at, Str name, Str variant) {
+    Usize read_line = line_above(source, at + 1);
+    Usize head = header_above(source, read_line, indent_of(source, read_line));
+    if (head == countof(source)) return out;
+    Usize indent = indent_of(source, head);
+    if (!same_str(source[head + indent:line_end(source, head)], "else:") || fixed_at(out, head + indent)) return out;
+    Usize line = line_above(source, head);
+    while (line > 0 && (blank(source, line) || indent_of(source, line) > indent))
+        line = line_above(source, line);
+    Str if_line = source[line + indent_of(source, line):line_end(source, line)];
+    if (indent_of(source, line) != indent || !starts_with(if_line, "if ")) return out;
+    Usize colon = condition_end(source, line + indent + 3);
+    if (colon + 1 != line_end(source, line) || !tests_other(source[line + indent + 3:colon], name, variant)) return out;
+    Usize body_end = next_line(source, head);
+    while (body_end < countof(source) && (blank(source, body_end) || indent_of(source, body_end) > indent))
+        body_end = next_line(source, body_end);
+    if (body_end > countof(source)) body_end = countof(source);
+    Usize start = function_start(source, head);
+    Str body = source[next_line(source, head):body_end];
+    if (named_around(source, start, head, indent, variant) || code_word_at(body, variant) < countof(body)) return out;
+    Str why = "the `else` of a Result's test binds the other variant: write `else if .v(v) := r:`";
+    Str chained = types::message_of(format::push("else if .", variant, "(", variant, ") := ", name, ":"));
+    out = add_why(out, head + indent, head + indent + 5, chained, why);
+    Usize from = next_line(source, head);
+    Usize found = variant_read_at(source[0:body_end], from, name, variant);
+    while (found < body_end) {
+        out = add_why(out, found, found + countof(name) + 1 + countof(variant), variant, why);
+        found = variant_read_at(source[0:body_end], found + 1, name, variant);
+    }
+    return out;
+}
+
+// The name `R` and the variant of a read `R.ok` or `R.error` that `e` reports with no fix, or false.
+static Bool unbound_read(Str source, types::Error e, Str *name, Str *variant) {
+    if (countof(e.fix) > 0 || countof(e.fix_module) > 0 || e.span.end > countof(source) || e.span.start >= e.span.end)
+        return false;
+    Bool ok_read = starts_with(e.message, "a `Result(") && word_at(e.message, 0, "unwrapped") < countof(e.message);
+    Bool error_read = starts_with(e.message, "`.` needs a record, found `Result(");
+    Str read = source[e.span.start:e.span.end];
+    Str tail = ok_read ? ".ok" : ".error";
+    if ((!ok_read && !error_read) || countof(read) <= countof(tail)) return false;
+    if (!same_str(read[countof(read) - countof(tail):countof(read)], tail)) return false;
+    *name = read[0:countof(read) - countof(tail)];
+    *variant = tail[1:countof(tail)];
+    return plain_name(*name);
+}
+
+// A variant test inside an `and` chain (#3083; the lead, 2026-11-11, Q1 (b)): the test becomes a pattern where it
+// stands, and each read of the payload in the rest of the chain and in the body reads the binding.
+//
+//   if added == .ok and found == .ok:              if added == .ok and .ok(ok) := found:
+//       run(found.ok)                                  run(ok)
+//
+// The conjuncts before the test still run first, and the chain has no `or`. A Result's test is `R == .ok` or
+// `R != .error` for `ok` (and the other way for `error`); a payload enumeration's is `k == .v`, with `k` a name or a
+// field chain. The binding takes the variant's name; where that name is already in the function, or is an imported
+// module or alias, it is `<variant>_value`, and a site where that is taken too stays. A body that writes `k`, takes its
+// address or writes through the payload stays: the binding is a copy.
+
+// Whether `text` is names joined by single dots (`k`, `e.kind`).
+static Bool dotted_name(Str text) {
+    if (countof(text) == 0 || text[0] == '.' || text[countof(text) - 1] == '.') return false;
+    for (Usize i = 0; i < countof(text); i++) {
+        if (text[i] == '.') {
+            if (text[i - 1] == '.') return false;
+        } else if (!word_char(text[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// `text` without the blanks at both ends.
+static Str trimmed(Str text) {
+    Usize a = 0;
+    Usize b = countof(text);
+    while (a < b && text[a] == ' ')
+        a += 1;
+    while (b > a && text[b - 1] == ' ')
+        b -= 1;
+    return text[a:b];
+}
+
+// Whether `word` is the name an `import` line of `source` brings in: the last part of its path, or its alias.
+static Bool imported_name(Str source, Str word) {
+    Usize line = 0;
+    while (line < countof(source)) {
+        Str text = source[line:line_end(source, line)];
+        if (starts_with(text, "import ") || starts_with(text, "pub import ")) {
+            Usize end = countof(text);
+            while (end > 0 && (text[end - 1] == ';' || text[end - 1] == ' '))
+                end -= 1;
+            Usize from = end;
+            while (from > 0 && word_char(text[from - 1]))
+                from -= 1;
+            if (same_str(text[from:end], word)) return true;
+        }
+        line = next_line(source, line);
+    }
+    return false;
+}
+
+// Whether the trimmed conjunct `test` tests `name` for `variant`; `result` says `name` is a Result.
+static Bool tests_variant(Str test, Str name, Str variant, Bool result) {
+    Str equal = types::message_of(format::push(name, " == .", variant));
+    if (same_str(test, equal)) return true;
+    if (!result) return false;
+    Str unequal = types::message_of(format::push(name, " != .", other_variant(variant)));
+    return same_str(test, unequal);
+}
+
+// The end of the read `name.variant` at `at` in `source` with the fields after it (`.f.g`).
+static Usize after_fields(Str source, Usize at) {
+    Usize k = at;
+    while (k + 1 < countof(source) && source[k] == '.' && word_char(source[k + 1])) {
+        k += 1;
+        while (k < countof(source) && word_char(source[k]))
+            k += 1;
+    }
+    return k;
+}
+
+// Whether `text` at `at` is an assignment: ` = `, ` += ` and the other compound forms.
+static Bool assigns_at(Str text, Usize at) {
+    Str rest = text[at:countof(text)];
+    if (starts_with(rest, " = ")) return true;
+    if (countof(rest) < 4 || rest[0] != ' ') return false;
+    return rest[2] == '=' && rest[3] == ' ' && rest[1] != '=' && rest[1] != '!' && rest[1] != '<' && rest[1] != '>';
+}
+
+// Whether `source[from:to]` changes `name` or its payload: `name = `, `&name`, or a write `name.variant... = `.
+static Bool body_changes(Str source, Usize from, Usize to, Str name, Str variant) {
+    Str text = source[0:to];
+    Usize found = word_at(text, from, name);
+    while (found < to) {
+        Usize end = found + countof(name);
+        if (assigns_at(text, end)) return true;
+        if (found > 0 && text[found - 1] == '&') return true;
+        found = word_at(text, found + 1, name);
+    }
+    found = variant_read_at(text, from, name, variant);
+    while (found < to) {
+        Usize end = after_fields(text, found + countof(name));
+        if (assigns_at(text, end)) return true;
+        found = variant_read_at(text, found + 1, name, variant);
+    }
+    return false;
+}
+
+// The line of the `if`, `else if` or `while` whose block holds the line at `line` (or that line itself), with the
+// length of its keyword in `keyword`, or `countof(source)`.
+static Usize chain_header(Str source, Usize line, Usize *keyword) {
+    Usize at = line;
+    while (at < countof(source)) {
+        Str text = source[at + indent_of(source, at):line_end(source, at)];
+        if (starts_with(text, "if "))
+            *keyword = 3;
+        else if (starts_with(text, "while "))
+            *keyword = 6;
+        else if (starts_with(text, "else if "))
+            *keyword = 8;
+        else
+            *keyword = 0;
+        if (*keyword > 0 && text[countof(text) - 1] == ':' && at != line) return at;
+        if (*keyword > 0 && at == line) return at;
+        if (starts_with(text, "else:") || indent_of(source, at) == 0) return countof(source);
+        at = header_above(source, at, indent_of(source, at));
+    }
+    return countof(source);
+}
+
+// The test of `name` for `variant` among the conjuncts at the top level of the condition `source[cond:colon]`, split
+// at ` and `, in `*test_start` and `*test_end`; false for a chain with an ` or ` or one that starts with the test (the
+// checker binds that one).
+static Bool chain_test(Str source, Usize cond, Usize colon, Str name, Str variant, Bool result, Usize *test_start,
+                       Usize *test_end) {
+    *test_start = countof(source);
+    *test_end = countof(source);
+    Usize depth = 0;
+    Bool quoted = false;
+    Usize part = cond;
+    Usize index = 0;
+    for (Usize i = cond; i <= colon; i++) {
+        char ch = i < colon ? source[i] : ' ';
+        if (quoted) {
+            if (ch == '\\')
+                i += 1;
+            else if (ch == '"')
+                quoted = false;
+            continue;
+        }
+        if (ch == '"')
+            quoted = true;
+        else if (ch == '(' || ch == '[')
+            depth += 1;
+        else if ((ch == ')' || ch == ']') && depth > 0)
+            depth -= 1;
+        if (depth > 0 || ch == '"') continue;
+        if (i < colon && starts_with(source[i:colon], " or ")) return false;
+        Bool split = i == colon || starts_with(source[i:colon], " and ");
+        if (!split) continue;
+        Str test = trimmed(source[part:i]);
+        if (*test_start == countof(source) && tests_variant(test, name, variant, result)) {
+            if (index == 0) return false;
+            *test_start = part;
+            while (source[*test_start] == ' ')
+                *test_start += 1;
+            *test_end = *test_start + countof(test);
+        }
+        index += 1;
+        part = i + 5;
+    }
+    return *test_start < countof(source);
+}
+
+// The fixes that bind the read `name.variant` at `at` in an `and` chain above it, added to `out`.
+static core::Errors chain_edits(core::Errors out, Str source, Usize at, Str name, Str variant, Bool result) {
+    Usize read_line = line_above(source, at + 1);
+    Usize keyword = 0;
+    Usize head = chain_header(source, read_line, &keyword);
+    if (head == countof(source)) return out;
+    Usize indent = indent_of(source, head);
+    Usize cond = head + indent + keyword;
+    Usize colon = condition_end(source, cond);
+    if (colon == line_end(source, head)) return out;
+    Usize body_end = line_end(source, head);
+    if (colon + 1 == body_end) {
+        body_end = next_line(source, head);
+        while (body_end < countof(source) && (blank(source, body_end) || indent_of(source, body_end) > indent))
+            body_end = next_line(source, body_end);
+        if (body_end > countof(source)) body_end = countof(source);
+    }
+    if (at >= body_end) return out;
+    Usize test_start = countof(source);
+    Usize test_end = countof(source);
+    if (!chain_test(source, cond, colon, name, variant, result, &test_start, &test_end)) return out;
+    if (at < test_end) return out;
+    if (fixed_at(out, test_start)) return out;
+    // The binding's name.
+    Usize start = function_start(source, head);
+    Usize stop = function_end(source, start);
+    Str bound = variant;
+    if (code_word_at(source[start:stop], variant) < stop - start || imported_name(source, variant)) {
+        bound = types::message_of(format::push(variant, "_value"));
+        if (code_word_at(source[start:stop], bound) < stop - start || imported_name(source, bound)) return out;
+    }
+    if (body_changes(source, test_end, body_end, name, variant)) return out;
+    Str why = "a variant test in an `and` chain binds its payload where it stands: write `.v(v) := k`";
+    Str pattern = types::message_of(format::push(".", variant, "(", bound, ") := ", name));
+    out = add_why(out, test_start, test_end, pattern, why);
+    Usize found = variant_read_at(source[0:body_end], test_end, name, variant);
+    while (found < body_end) {
+        out = add_why(out, found, found + countof(name) + 1 + countof(variant), bound, why);
+        found = variant_read_at(source[0:body_end], found + 1, name, variant);
+    }
+    return out;
+}
+
+// A test of a Result's error whose body uses the error and leaves, with the value read below it (#3083; the lead,
+// 2026-11-11, Q2 (b)): a `match` that gives the value and runs the body for the error.
+//
+//   if .error(error) := lexed:                     ok := match lexed:
+//       return error.code                              .ok(value): value
+//   tokens := lexed.ok                                 .error(error): return error.code
+//                                                  tokens := ok
+//
+// Only when the body is one line that leaves (`return`, `break`, `continue` or a trap), no `else` follows, the result
+// is not changed below the test, and the names `ok` and `value` are not in the function; otherwise the site stays. A
+// longer body stays too: the checker types a block arm that ends in `return` as `Void` (`ok + 1` then fails).
+
+// Whether the line at `at` leaves the block: `return`, `break`, `continue`, or a call of a trap.
+static Bool line_leaves(Str source, Usize at) {
+    Str text = source[at + indent_of(source, at):line_end(source, at)];
+    if (same_str(text, "return") || starts_with(text, "return ") || same_str(text, "break") ||
+        same_str(text, "continue"))
+        return true;
+    return starts_with(text, "c.abort()") || starts_with(text, "c.exit(") || starts_with(text, "trap()") ||
+           starts_with(text, "c.__builtin_trap()");
+}
+
+// The fixes that turn the test of `name`'s error above the read `name.ok` at `at` into a `match`, added to `out`.
+static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name) {
+    Usize read_line = line_above(source, at + 1);
+    Str test = types::message_of(format::push("if .error(error) := ", name, ":"));
+    Usize start = function_start(source, at);
+    // The nearest line above the read in its block that is the test.
+    Usize line = read_line;
+    Usize floor = indent_of(source, read_line);
+    Usize head = countof(source);
+    while (line > start) {
+        line = line_above(source, line);
+        if (blank(source, line)) continue;
+        Usize indent = indent_of(source, line);
+        if (indent > floor) continue;
+        floor = indent;
+        if (same_str(source[line + indent:line_end(source, line)], test)) {
+            head = line;
+            break;
+        }
+    }
+    if (head == countof(source)) return out;
+    Usize indent = indent_of(source, head);
+    if (fixed_at(out, head + indent)) return out;
+    // The body, its last line at the body's indent, and the line after it.
+    Usize body = next_line(source, head);
+    if (body >= countof(source) || blank(source, body) || indent_of(source, body) <= indent) return out;
+    Usize inner = indent_of(source, body);
+    Usize last = body;
+    Usize after = body;
+    while (after < countof(source) && (blank(source, after) || indent_of(source, after) > indent)) {
+        if (!blank(source, after) && indent_of(source, after) == inner) last = after;
+        after = next_line(source, after);
+    }
+    // One line: the checker types a block arm that ends in `return` as `Void`, so a longer body stays (reported).
+    if (last != body || next_line(source, body) < after || !line_leaves(source, last)) return out;
+    if (after < countof(source) && starts_with(source[after + indent_of(source, after):countof(source)], "else"))
+        return out;
+    // The names, and no change of the result below the test.
+    Usize stop = function_end(source, start);
+    Str region = source[start:stop];
+    if (code_word_at(region, "ok") < countof(region) || code_word_at(region, "value") < countof(region)) return out;
+    Usize block_end = after;
+    while (block_end < countof(source) && (blank(source, block_end) || indent_of(source, block_end) >= indent))
+        block_end = next_line(source, block_end);
+    if (block_end > countof(source)) block_end = countof(source);
+    if (body_changes(source, after, block_end, name, "ok")) return out;
+    Str why = "a Result whose error is handled where it is tested and whose value is read below: write a `match`";
+    Str pad = types::message_of(format::push(source[head:head + indent], "    "));
+    Str leave = source[body + inner:line_end(source, body)];
+    Str arms = types::message_of(
+        format::push("ok := match ", name, ":\n", pad, ".ok(value): value\n", pad, ".error(error): ", leave));
+    out = add_why(out, head + indent, line_end(source, body), arms, why);
+    Usize found = read_at(source[0:block_end], after, name);
+    while (found < block_end) {
+        out = add_why(out, found, found + countof(name) + 3, "ok", why);
+        found = read_at(source[0:block_end], found + 1, name);
+    }
+    return out;
+}
+
+// The name `k` and the variant `v` of a read `k.v` of a payload enumeration that `e` reports with no fix, or false.
+static Bool unbound_payload(Str source, types::Error e, Str *name, Str *variant) {
+    if (countof(e.fix) > 0 || countof(e.fix_module) > 0 || e.span.end > countof(source) || e.span.start >= e.span.end)
+        return false;
+    if (word_at(e.message, 0, "payload") == countof(e.message) || !starts_with(e.message, "`")) return false;
+    Str read = source[e.span.start:e.span.end];
+    if (!dotted_name(read)) return false;
+    Usize dot = countof(read);
+    while (dot > 0 && read[dot - 1] != '.')
+        dot -= 1;
+    if (dot < 2) return false;
+    *name = read[0:dot - 1];
+    *variant = read[dot:countof(read)];
+    return true;
+}
+
+export core::Errors result_tests(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error e = c->errors[i];
+        Str name = "";
+        Str variant = "";
+        if (unbound_payload(source, e, &name, &variant)) {
+            out = chain_edits(out, source, e.span.start, name, variant, false);
+            continue;
+        }
+        if (!unbound_read(source, e, &name, &variant)) continue;
+        out = chain_edits(out, source, e.span.start, name, variant, true);
+        out = else_edits(out, source, e.span.start, name, variant);
+        if (!same_str(variant, "ok")) continue;
+        out = match_edits(out, source, e.span.start, name);
+        Usize start = function_start(source, e.span.start);
+        Usize stop = function_end(source, start);
+        if (word_at(source[start:stop], 0, variant) < stop - start) continue; // the binding `ok` could not be written
+        out = name_tests(out, source, start, e.span.start, name);
+    }
+    core::Errors some = fix_optional::some_reads(source, c); // `x.some` and its tests, here for fix's import table
+    for (Usize i = 0; i < countof(some); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = some[i];
     }
     return out;
 }
