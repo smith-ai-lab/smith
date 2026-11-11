@@ -2176,7 +2176,9 @@ export types::TypeRef applied_for(types::Checked *r, const ast::TypeExpr *applie
     ast::TypeArg given[:] = applied->kind.applied.args;
     const types::Symbol *symbol = types::type_through_modules(r, path);
     if (symbol == nullptr || symbol->kind != .function_symbol) return nullptr;
-    ast::ExprRef args[:] = mem::alloc_slice(ast::ExprRef, countof(given));
+    ast::ExprRef *block =
+        (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), countof(given), alignof(ast::ExprRef));
+    ast::ExprRef args[:] = block[0:countof(given)];
     for (Usize i = 0; i < countof(given); i++) {
         ast::TypeArg one = given[i];
         if (one == .value) {

@@ -1,5 +1,5 @@
 # What a function run at compile time refuses (#3039, step 2), each with the call it happened in.
-import c <string.h> as cstring
+extern fn rand() -> i32
 
 fn deep(n: i32) -> i32:
     deep(n + 1)
@@ -16,8 +16,8 @@ fn divide(n: i32) -> i32:
 fn through(n: i32) -> i32:
     divide(n - 2)
 
-fn length() -> usize:
-    cstring.strlen("abc".data)
+fn length() -> i32:
+    rand()
 
 mut count: i32 = 0
 

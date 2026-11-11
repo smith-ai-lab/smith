@@ -1040,8 +1040,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     Bool is_imported = false;
     Usize record = 0;
     if (callee_record(e, callee, &record) && !function_twin(e, callee, written_args)) return construct(e, x, record);
-    if (expected_record(e, callee, hint, &record)) return construct(e, x, record);
-    if (made_record(e, x, &record)) return construct(e, x, record);
+    if (expected_record(e, callee, hint, &record) || made_record(e, x, &record)) return construct(e, x, record);
     if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
     if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
     if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)
