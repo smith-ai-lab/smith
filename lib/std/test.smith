@@ -1571,6 +1571,9 @@ constexpr U64 seeds_max = 1'000'000'000;
 constexpr U64 seed_root = 0x5eed;            // the key the properties' seeds are drawn from
 constexpr Usize commands_max = 1U << 30;     // what a worker serves before it exits and is forked again
 constexpr Usize rounds_max = (Usize)1 << 40; // polls of the runner's loops: more than a run can make
+const char *job_names[jobs_max + 1]; // the test each slot was last given: what a wait on its worker names
+Usize waits_fired = 0;               // waits that hit their grace (bounded_wait): each fails the run
+constexpr F64 wait_grace = 120.0;    // seconds the runner waits for a process of its own, a test not counted
 
 typedef enum : U8 {
     End_Passed,
@@ -2244,9 +2247,6 @@ typedef struct {
 
 Process processes[jobs_max + 1];
 constexpr Usize shrink_slot = jobs_max;
-const char *job_names[jobs_max + 1]; // the test each slot was last given: what a wait on its worker names
-Usize waits_fired = 0;               // waits that hit their grace (bounded_wait): each fails the run
-constexpr F64 wait_grace = 120.0;    // seconds the runner waits for a process of its own, a test not counted
 
 // Every worker, and every --isolate child, leads a process group of its own (setpgid, in the child and in the runner,
 // so neither waits for the other): the processes a test starts are in it and nowhere else. The runner shares its group
