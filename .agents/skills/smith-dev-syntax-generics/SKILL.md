@@ -14,7 +14,7 @@ fn alloc(T: type, n: usize) -> []T: ...         # mem.alloc(u8, 10): T is an ord
 fn table(const n: usize) -> [n]f32: ...         # table(64): a compile-time value
 ```
 
-A type is a parameter like any other, of type `type`; `const` marks a compile-time argument. Each distinct set of them is one instance; there is no run-time dispatch.
+A type is a parameter like any other, of type `type`; `const` marks a compile-time argument. (Decided 2026-11-10, D23 and D24: `const` is removed, a parameter is compile-time when a use needs it, and a result type may be any compile-time expression of type `type`, such as a call; see [smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md). The front end catches up in #3041 and #3039.) Each distinct set of them is one instance; there is no run-time dispatch.
 
 ## Inferred parameters
 

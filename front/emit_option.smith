@@ -79,10 +79,20 @@ export Bool is_applied(const ast::TypeExpr *t) {
 static state::TyResult applied_argument(state::Emitter *e, const ast::TypeExpr *t, Usize i) {
     if (t->kind != .applied) return state::ty_fail("not an applied type", t->span);
     ast::TypeArg args[:] = t->kind.applied.args;
-    if (i >= countof(args)) return state::ty_fail("not emitted yet: this applied type", t->span);
+    Str name = t->kind.applied.name.segments[countof(t->kind.applied.name.segments) - 1].text;
+    if (i >= countof(args))
+        return state::ty_fail_with(t->span, "not emitted yet: `", name, "` with ", countof(args), " arguments");
     const ast::TypeArg *arg = &args[i];
-    if (!(*arg == .type)) return state::ty_fail("not emitted yet: this applied type", t->span);
-    return state::type_of(e, arg->type.type);
+    if (*arg == .type) return state::type_of(e, arg->type.type);
+    // `Result(emit.Module, emit.Error)`: the parser reads a lower-case first name as a value; the checker took the
+    // chain of names as the type it names, and so does the emitter (#3036)
+    ast::Path path = {};
+    if (*arg == .value) path = types::member_path(arg->value.value);
+    if (countof(path.segments) == 0)
+        return state::ty_fail_with(t->span, "not emitted yet: `", name, "` with a value as argument ", i + 1);
+    ast::TypeExpr *named = ast::make_type({.named = {.path = path}});
+    named->span = path.span;
+    return state::type_of(e, named);
 }
 
 typedef state::Ty TyList[:];
