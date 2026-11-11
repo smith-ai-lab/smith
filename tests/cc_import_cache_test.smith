@@ -2,8 +2,9 @@
 // `<cache>/smith/imports` and gives the same object and the same diagnostics as a compile without the cache; a
 // header read with other defines is another entry; an edited header and a damaged entry are read again;
 // SMITH_IMPORT_CACHE=0 writes nothing. Each test has a cache folder of its own, and `log` a line of counts for each
-// process. smith-covers: runtime/import_cache.c front/module_cache.smith front/compile.smith shim/cimport.cpp
-// runtime/front_flag.c
+// process.
+// smith-covers: runtime/import_cache.c front/module_cache.smith front/compile.smith shim/cimport.cpp
+// smith-covers: runtime/front_flag.c
 module cc_import_cache_test;
 
 import std::test;
