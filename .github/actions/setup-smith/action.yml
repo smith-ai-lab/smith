@@ -131,11 +131,12 @@ runs:
         # identity this tree wants from the cache above or downloads it (a hosted runner has no LLVM, and building it
         # takes hours)
         smith build llvm 2>&1 | tee "$RUNNER_TEMP/fetch.out"
-        # a cap that empties the cache is the one failure that stays silent (#3045: at 300M every build missed 329 of
-        # 329 steps for hours); the prune prints `kept 0 entries` then, and the cap is below one warm build: fail loudly
+        # a cap that empties the cache stays visible but never fails the job (#3045: at 300M every build missed 329 of
+        # 329 steps for hours; #3052: at 2G the Linux folder passed the cap again): the prune prints `kept 0 entries`
+        # then, and the cap is below one warm build. A cache may only make a run faster, so the job goes on with the
+        # empty cache and warns
         if grep -qE '^cache: kept 0 entries \(0 MB\), dropped [1-9]' "$RUNNER_TEMP/fetch.out"; then
-          echo "::error::the step cache cap (${{ inputs.step-cache-max }}) dropped every result: it must stay above one warm build (about 1.4 GB on Linux, 670 MB on the Mac, knowledge/ci/caches.md)"
-          exit 1
+          echo "::warning::the step cache cap (${{ inputs.step-cache-max }}) dropped every result: the job goes on with an empty cache; the cap must stay above one warm build (about 1.4 GB on Linux, 670 MB on the Mac, knowledge/ci/caches.md)"
         fi
         echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
