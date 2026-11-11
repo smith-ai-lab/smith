@@ -1,5 +1,5 @@
-// Tests of the fix-it for a name the fixed file never imports (#3077): a module named by its full path, and a library of
-// smith read through its C header (`c.smith_requires` is `contract.requires`).
+// Tests of the fix-it for a name the fixed file never imports (#3077): a module named by its full path, and a library
+// of smith read through its C header (`c.smith_requires` is `contract.requires`).
 module front_fix_imports_test;
 
 import front::ast;
@@ -12,6 +12,12 @@ import <string.h>;
 
 static Bool same(Str a, Str b) {
     return countof(a) == countof(b) && mem::equal(a, b);
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++)
+        if (mem::equal(text[i:i + countof(needle)], needle)) return true;
+    return false;
 }
 
 static Str source_of(Str path) {
@@ -58,7 +64,8 @@ export void test_front_fix_imports_a_module_named_by_its_full_path_is_imported()
 }
 
 export void test_front_fix_imports_a_library_module_named_alone_is_imported() {
-    expect("pub fn run() -> i32:\n    return array.filled(3)\n", "import std.array\npub fn run() -> i32:\n    return array.filled(3)\n");
+    expect("pub fn run() -> i32:\n    return array.filled(3)\n",
+           "import std.array\npub fn run() -> i32:\n    return array.filled(3)\n");
 }
 
 export void test_front_fix_imports_a_module_already_imported_is_not_imported_again() {
@@ -84,8 +91,9 @@ export void test_front_fix_imports_a_test_macro_is_the_module_call() {
 }
 
 export void test_front_fix_imports_a_library_already_imported_keeps_one_import() {
-    expect("module m;\nimport <smith/test.h>;\nimport std::test;\nexport void test_a() {\n    c::smith_check(true);\n}\n",
-           "import std.test\npub fn test_a():\n    test.check(true)\n");
+    expect(
+        "module m;\nimport <smith/test.h>;\nimport std::test;\nexport void test_a() {\n    c::smith_check(true);\n}\n",
+        "import std.test\npub fn test_a():\n    test.check(true)\n");
 }
 
 export void test_front_fix_imports_a_name_the_module_lacks_keeps_the_header() {
@@ -95,7 +103,17 @@ export void test_front_fix_imports_a_name_the_module_lacks_keeps_the_header() {
            "    c.smith_no_such_check(1)\n");
 }
 
+// A real C header is no library of smith: no `std` import is written, and the header stays (the name itself is the
+// checker's: `c.strlen` or `string.strlen`, by whether clang can read the header where the test runs).
 export void test_front_fix_imports_a_real_c_name_keeps_the_header() {
-    expect("module m;\nimport <string.h>;\nexport Usize n(const char *s) {\n    return c::strlen(s);\n}\n",
-           "import c <string.h>\npub fn n(s: *char) -> usize:\n    return c.strlen(s)\n");
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    fix::Fixed first = fix::fix_text(
+        "t.smith", "module m;\nimport <string.h>;\nexport Usize n(const char *s) {\n    return c::strlen(s);\n}\n");
+    test::check(!has(first.text, "import std."));
+    test::check(has(first.text, "import c <string.h>"));
 }

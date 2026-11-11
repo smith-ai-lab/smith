@@ -478,8 +478,8 @@ static Usize imp_import_place(const ast::Module *module) {
     return countof(module->decls) > 0 ? module->decls[0]->span.start : 0;
 }
 
-// The import that a chain `a.b.c` imp_at `from` needs: the longest prefix of imp_at least two segments that the loader finds
-// as a module. Empty when there is none.
+// The import that a chain `a.b.c` imp_at `from` needs: the longest prefix of imp_at least two segments that the loader
+// finds as a module. Empty when there is none.
 static Str imp_module_of_chain(Str source, Usize from, types::ModuleLoader load) {
     Usize ends[8];
     Usize count = 0;
@@ -506,7 +506,7 @@ static Str imp_module_of_chain(Str source, Usize from, types::ModuleLoader load)
 }
 
 static core::Errors imp_module_path_fixes(Str source, const ast::Module *module, const types::Checked *checked,
-                                      types::ModuleLoader load) {
+                                          types::ModuleLoader load) {
     core::Errors out = {};
     Str added[8];
     Usize added_count = 0;
@@ -515,7 +515,8 @@ static core::Errors imp_module_path_fixes(Str source, const ast::Module *module,
         Str name = imp_unknown_name(e.message);
         if (countof(name) == 0 || countof(e.module) > 0) continue;
         Usize from = e.span.start;
-        if (!imp_at(source, from, name) || from + countof(name) >= countof(source) || source[from + countof(name)] != '.')
+        if (!imp_at(source, from, name) || from + countof(name) >= countof(source) ||
+            source[from + countof(name)] != '.')
             continue;
         if (from > 0 && (imp_word_char(source[from - 1]) || source[from - 1] == '.')) continue;
         Str path = imp_module_of_chain(source, from, load);
@@ -546,7 +547,7 @@ static core::Errors imp_module_path_fixes(Str source, const ast::Module *module,
 // ---- (b) a library read through its C header
 
 // The C name and the name of each export of a module that has an `@c_name`.
-struct imp_Library {
+struct ImpLibrary {
     Str c_names[128];
     Str names[128];
     Usize count;
@@ -555,7 +556,8 @@ struct imp_Library {
 static Bool imp_is_c_name(ast::Attribute attribute) {
     Usize n = countof(attribute.name.segments);
     if (n == 1) return imp_same(attribute.name.segments[0].text, "c_name");
-    return n == 2 && imp_same(attribute.name.segments[0].text, "std") && imp_same(attribute.name.segments[1].text, "c_name");
+    return n == 2 && imp_same(attribute.name.segments[0].text, "std") &&
+           imp_same(attribute.name.segments[1].text, "c_name");
 }
 
 static Str imp_c_name_of(const ast::Decl *d) {
@@ -577,8 +579,8 @@ static Str imp_decl_name(const ast::Decl *d) {
     return "";
 }
 
-static imp_Library imp_library_of(const ast::Module *module) {
-    imp_Library lib = {};
+static ImpLibrary imp_library_of(const ast::Module *module) {
+    ImpLibrary lib = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
         if (!d->exported && !d->is_pub) continue;
@@ -623,19 +625,21 @@ static Bool imp_other_c_import(const ast::Module *module, const ast::Decl *excep
 }
 
 // The index of the export whose C name is `word`, or the count when there is none.
-static Usize imp_find_c_name(const imp_Library *lib, Str word) {
+static Usize imp_find_c_name(const ImpLibrary *lib, Str word) {
     for (Usize i = 0; i < lib->count; i++)
         if (imp_same(lib->c_names[i], word)) return i;
     return lib->count;
 }
 
-// The import_fixes that write `base.NAME` as `stem.name` for every use of `base` (`c`, or the header's own binding) in the
-// text. False when a use of the header's own binding names something the module does not export, or when the text
+// The import_fixes that write `base.NAME` as `stem.name` for every use of `base` (`c`, or the header's own binding) in
+// the text. False when a use of the header's own binding names something the module does not export, or when the text
 // uses `c.` for a name it does not export and the header is the only one imported with a language.
-static Bool imp_rename_uses(Str source, Str base, Str stem, const imp_Library *lib, Bool own, core::Edits *fix, Usize *uses) {
+static Bool imp_rename_uses(Str source, Str base, Str stem, const ImpLibrary *lib, Bool own, core::Edits *fix,
+                            Usize *uses) {
     for (Usize i = 0; i + countof(base) + 1 < countof(source); i++) {
         if (!imp_at(source, i, base) || source[i + countof(base)] != '.') continue;
-        if (i > 0 && (imp_word_char(source[i - 1]) || source[i - 1] == '.' || source[i - 1] == '/')) continue; // not `smith/test.h`
+        if (i > 0 && (imp_word_char(source[i - 1]) || source[i - 1] == '.' || source[i - 1] == '/'))
+            continue; // not `smith/test.h`
         Usize from = i + countof(base) + 1;
         Usize end = from;
         while (end < countof(source) && imp_word_char(source[end]))
@@ -661,7 +665,7 @@ static core::Errors imp_library_fixes(Str source, const ast::Module *module, typ
         if (countof(stem) == 0) continue;
         const ast::Module *found = imp_find(load, as_str(format::push("std.", stem)));
         if (found == nullptr) continue;
-        imp_Library lib = imp_library_of(found);
+        ImpLibrary lib = imp_library_of(found);
         core::Edits fix = {};
         Usize uses = 0;
         // `c.name` is the header's name until a second `import c` makes the checker write the binding; `stem.name` is
@@ -683,7 +687,7 @@ static core::Errors imp_library_fixes(Str source, const ast::Module *module, typ
 }
 
 static core::Errors import_fixes(Str source, const ast::Module *module, const types::Checked *checked,
-                          types::ModuleLoader load) {
+                                 types::ModuleLoader load) {
     core::Errors out = {};
     if (load == nullptr || countof(module->decls) == 0) return out;
     out = imp_library_fixes(source, module, load);
