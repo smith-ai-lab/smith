@@ -23,6 +23,7 @@
 module front::types_attr;
 
 import front::ast;
+import front::eval;
 import front::effects_table;
 import front::parse as syntax;
 import front::types;
@@ -101,8 +102,10 @@ static Bool constant_call(const types::Checked *r, const ast::Expr *e) {
     return false;
 }
 
-// Whether an expression is known at compile time: literals, constants, and operations on them.
-static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
+// Whether an expression is known at compile time. What `front::eval` computes is (numbers, Bools, enumerators, types,
+// and operators on them); a string, a null, an array and a struct built from constants are too, though step 1 of
+// #3039 holds no value for them yet, so their parts are read here.
+static Bool is_constant(types::Checked *r, const ast::Expr *root) {
     const ast::Expr *stack[32];
     Usize top = 0;
     stack[top++] = root;
@@ -115,7 +118,10 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         }
         if (e->kind == .variant && e->kind.variant.payload == nullptr) continue;
         if (e->kind == .name) {
-            const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
+            ast::Path path = e->kind.name.path;
+            if (eval::is_known(r, e)) continue; // the compiler computes it (#3039)
+            // a constant whose value is a string or a struct: step 3 computes those, until then its being one is enough
+            const types::Symbol *s = types::lookup_path(&r->scopes, path);
             if (types::constant_initializer(s) == nullptr) return false;
             continue;
         }
@@ -235,7 +241,7 @@ export Bool ceiling_of(const ast::Attribute list[:], U32 *mask) {
 // `@align(N)` (D18, #2669): one argument, a compile-time power of two.
 static void check_align(types::Checked *r, const ast::Attribute *a) {
     U64 value = 0;
-    if (countof(a->args) != 1 || !types::fold_length(r, a->args[0], &value) || value == 0 ||
+    if (countof(a->args) != 1 || !eval::length_for(r, a->args[0], "", &value) || value == 0 ||
         (value & (value - 1)) != 0) {
         types::fail(r, a->span, "the alignment must be a power of two known at compile time");
     }
