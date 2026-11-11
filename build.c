@@ -3294,10 +3294,9 @@ static int build_friction(SmithRun *run) {
 // grammar's corpus tests.
 // ---- Tools from this repository's release (#3161): a run reaches GitHub only. The tools that tests download are
 // pinned here (upstream URL and the sha256 of the file); the same bytes are kept as the assets of the release
-// `tools-<id>` of this repository, made by the workflow tools-release from these pins, where <id> is the first six hex
+// `tools-<id>` of this repository, made by a step of ci.yml's `warm` from these pins, where <id> is the first six hex
 // digits of each pin's hash in this order, so a changed pin looks for a new release. A fetch reads that release first;
 // while it does not exist yet it falls back to the upstream URL and says so on a line starting `external:`.
-// SMITH_TOOLS_UPSTREAM=1 reads upstream only (the workflow that makes the release).
 typedef struct {
     const char *file; // the file's name upstream and in the release
     const char *url;
@@ -3339,7 +3338,6 @@ static const char *build_tools_id(SmithBuild *b) {
 static const char *build_tool_path(SmithBuild *b, const char *file) {
     const BuildToolPin *pin = build_tool_pin(file);
     SmithPackage upstream = {.url = pin->url, .hash = pin->hash};
-    if (strcmp(smith_env(b, "SMITH_TOOLS_UPSTREAM", ""), "1") == 0) return build_package_path(b, &upstream);
     SmithPackage mirror = {
         .url = smith_fmt(b, "https://github.com/smith-ai-lab/smith/releases/download/tools-%s/%s", build_tools_id(b),
                          pin->file),
@@ -3353,8 +3351,8 @@ static const char *build_tool_path(SmithBuild *b, const char *file) {
     return build_package_path(b, &upstream);
 }
 
-// `smith build tools-list`: the release's id, then one line per pin: file, url, hash (tab separated). The workflow
-// tools-release downloads each url, checks the hash and makes the release.
+// `smith build tools-list`: the release's id, then one line per pin: file, url, hash (tab separated). The `warm`
+// step downloads each url, checks the hash and makes the release.
 static int build_tools_list_run(SmithRun *run) {
     printf("tools-%s\n", build_tools_id(run->b));
     for (size_t i = 0; i < sizeof build_tool_pins / sizeof build_tool_pins[0]; i++)

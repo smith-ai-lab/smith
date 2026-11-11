@@ -1146,6 +1146,31 @@ jobs:
           # its own commit's release by name, not whatever the release list calls the newest (#2833)
           stage0: ${{ github.event_name == 'push' && format('stage0-{0}', github.sha) || '' }}
           test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
+      - name: Make the release of the pinned tools (#3161)
+        # the one place that reaches the upstream hosts: `smith build nvim` and the tree-sitter fetch read the release
+        # `tools-<id>` of this repository (knowledge/ci/caches.md). Releases are immutable, so all assets at once; a
+        # no-op when it exists. Runs before the step below so that one reads it
+        if: runner.os == 'Linux' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -eu
+          list=$(mktemp)
+          "$SMITH" build tools-list >"$list"
+          tag=$(grep -m 1 '^tools-' "$list")
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "tools: $tag exists" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          d=$(mktemp -d)
+          files=()
+          while IFS=$'\t' read -r file url hash; do
+            curl -fsSL --retry 5 --retry-all-errors -o "$d/$file" "$url"
+            echo "${hash#sha256:}  $d/$file" | sha256sum -c -
+            files+=("$d/$file")
+          done < <(grep -P '\t' "$list")
+          gh release create "$tag" "${files[@]}" --prerelease --latest=false --target "$GITHUB_SHA" \
+            --title "$tag" --notes "The tools the tests download, pinned in build.c (#3161)."
+          echo "tools: made $tag with ${#files[@]} files" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Fetch what the test jobs download (#2825)
         # Linux only: `smith build nvim` fetches Neovim for Linux x86_64 and fails on a Mac, and the jobs that restore
         # this cache (the test parts, check-fmt-prove, check-lint, release-linux) are all Linux
