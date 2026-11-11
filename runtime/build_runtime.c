@@ -2656,13 +2656,16 @@ static size_t smith_handlers_made_count;
 static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, const char *object) {
     const char *source = smith_library(b, "handlers");
     const char *const flags[] = {"-std=gnu23", "-O2", "-fPIC", "-I", ".smith/include", "-c", nullptr};
-    const char *const tail[] = {source, "-o", object, nullptr};
+    // a depfile, so that the step cache serves it: without one, every fresh build compiled it (#3050)
+    const char *depfile = smith_text("%s.d", object);
+    const char *const tail[] = {source, "-o", object, "-MD", "-MF", depfile, nullptr};
     SmithStep step = {
         .command = smith_cat(b, smith_one(SMITH_COPY_STRING(program->linker)), smith_copy_list(flags), tail, nullptr),
         .inputs = smith_one(source),
         .implicit_inputs = smith_cat(b, smith_one(smith_compiler_file(program->linker)),
                                      smith_one(".smith/include/smith/handlers.h"), nullptr),
         .outputs = smith_one(object),
+        .depfile = depfile,
         .description = smith_text("compile %s", object),
     };
     smith_step(b, &step);

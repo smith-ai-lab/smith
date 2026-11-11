@@ -113,6 +113,25 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   The compiler is not an input of the key: the key holds its identity already, so a step that lists the compiler as an
   input (a header step's `.smith/compiler/<hash>` file, which holds the compiler's path, size and time, new in every job)
   leaves that input out of the key (#3002). It had made every header step miss in every job after the one that stored it.
+  A header step waits for its compile's implicit inputs too, since the pass is given the compile's flags (#3050): a test
+  module's pass is given `-include build/tests_list.h`, and run before the scan wrote that file it wrote another header
+  and no depfile, so which of a fresh build's header steps were served (and every compile downstream of them) changed
+  from build to build. A fresh test build of an unchanged tree went from 950 to 1093 of 1131 steps served.
+- **The compiler's identity, when it is the smith that runs the build** (the test build: the smith under test compiles
+  its own tests), is the digest of its file with the commit, the build-id and, in a Mach-O file, the code signature
+  blanked (`runtime/self_digest.c`). The linker signs every arm64 binary and the signature hashes each page, those with
+  the commit and LC_UUID among them, so before #3050 the Mac's digest changed with every commit (main's `warm` served 4
+  of 924 test steps after a docs-only commit). The whole binary is the key: a change to any of smith's code rebuilds
+  every test.
+- **Why a step missed: `SMITH_STEP_CACHE_LOG=<file>`** (#3050). Every build that sees it, nested ones included, appends a
+  line per step, after the name of its project's folder (the root shows as `@`): `hit <output>`, `miss <output>:
+  <reason>`, `stored <output>` or `not stored <output>: <reason>`. A new key's miss names the first line where the key
+  differs from the last key stored for the same output (`steps/k/`, by folder name and output; pruned with the
+  manifests): `a new key: line 5 was [input c:13e8... runtime/executor_cache.c] now [input c:8ff3... ...]`, or the
+  command's flag, the environment or the compiler. A known key whose variants all fail names the file: `the key is known
+  but no variant holds: .smith/include/front/emit.h is c:8c84..., the variant read c:6340...`. A step not stored says
+  why (it printed something, no depfile, a file it read changed after it began). Compare two runs' logs, or read one
+  run's against the cache it restored.
 
 ## `.smith` compiles in one process (#2888)
 

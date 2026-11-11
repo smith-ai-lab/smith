@@ -10,6 +10,9 @@ inputs:
   inputs:
     description: "regex of the paths whose change makes a low rate normal"
     default: "^$"
+  misses:
+    description: "steps and tests-built: the file of SMITH_STEP_CACHE_LOG, whose first miss lines say why (#3050)"
+    default: ""
 runs:
   using: composite
   steps:
@@ -18,6 +21,7 @@ runs:
         CACHE_NAME: ${{ inputs.name }}
         CACHE_LOG: ${{ inputs.log }}
         CACHE_INPUTS: ${{ inputs.inputs }}
+        CACHE_MISSES: ${{ inputs.misses }}
         CACHE_BASE: ${{ github.event.merge_group.base_sha }}
       run: |
         # Reports the hit rate of the caches a job used (#2876): one line per cache in the job summary, the first misses with
@@ -39,6 +43,9 @@ runs:
         if [ "$name" = steps ] || [ "$name" = tests-built ]; then
           total=$(grep -cE '^\[[0-9]+/[0-9]+\] ' "$log" 2>/dev/null || true)
           hits=$(grep -c ' (cached)$' "$log" 2>/dev/null || true)
+          # the step cache's own log (#3050): the first misses with the line of the key that differs, cut to one line each
+          [ -n "${CACHE_MISSES:-}" ] && grep -E '^[^ ]+: miss ' "$CACHE_MISSES" 2>/dev/null | head -n 5 | cut -c1-400 |
+            sed "s/^/cache $name: /" | tee -a "$summary"
         else
           while read -r h t; do hits=$((hits + h)); total=$((total + t)); done < <(
             sed -n "s/^cache $name: \([0-9]*\) of \([0-9]*\) (.*/\1 \2/p" "$log" 2>/dev/null)

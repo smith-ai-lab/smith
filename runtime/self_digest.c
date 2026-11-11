@@ -42,7 +42,8 @@ static int smith_tc_hex_value(char c) {
 
 // A little-endian 32-bit word of the file at `at`, which the caller checked is inside it.
 static uint32_t smith_tc_word(const uint8_t *file, size_t at) {
-    return (uint32_t)file[at] | (uint32_t)file[at + 1] << 8 | (uint32_t)file[at + 2] << 16 | (uint32_t)file[at + 3] << 24;
+    return (uint32_t)file[at] | (uint32_t)file[at + 1] << 8 | (uint32_t)file[at + 2] << 16 |
+           (uint32_t)file[at + 3] << 24;
 }
 
 // Where the code signature of a 64-bit Mach-O file is (LC_CODE_SIGNATURE's dataoff and datasize). The linker signs

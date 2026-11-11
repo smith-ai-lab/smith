@@ -16,6 +16,8 @@ import std::mem;
 import std::test;
 import scratch;
 import <smith_core_step_cache.h>;
+import <stdio.h>;
+import <stdlib.h>;
 import <sys/stat.h>;
 import <time.h>;
 
@@ -637,4 +639,82 @@ export void test_build_step_cache_a_header_step_does_not_key_on_the_compiler_fil
     expect_counts("compiler file: the first job runs the header step", 1, 0, &first);
     Build second = header_build(b, a.cache, 1000);
     expect_counts("compiler file: a job whose file differs is served it", 0, 1, &second);
+}
+
+// The log of SMITH_STEP_CACHE_LOG (#3050) says why each step missed: a changed source, an explicit input, is a new key
+// and the line names it with its old and new content; a changed header, read through the depfile, leaves the key known
+// and names the file no variant matches.
+export void test_build_step_cache_the_log_says_which_input_changed() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = project("a");
+    defer scratch::clean(&a);
+    scratch::Project b = project("b");
+    defer scratch::clean(&b);
+    scratch::own_cache(&a);
+    c::setenv("SMITH_STEP_CACHE_LOG", format::push(a.dir, "/steps.log").data, 1);
+    defer c::unsetenv("SMITH_STEP_CACHE_LOG");
+    Build first = build(a, a.cache, 1000);
+    expect_counts("log: the first folder compiles all three", 3, 0, &first);
+    put(b, "util.c", "#include \"util.h\"\nint util(void) { return 7; }\n", 100);
+    put(b, "other.h", "int other(void); // changed\n", 100);
+    Build second = build(b, a.cache, 1000);
+    expect_counts("log: the second folder compiles all three again", 3, 0, &second);
+    const char *log = scratch::read(&a, "steps.log");
+    scratch::expect_contains("log: a stored step", log, ": stored util.o\n");
+    scratch::expect_contains("log: a changed source is a new key, and the line names it", log,
+                             ": miss util.o: a new key: line ");
+    scratch::expect_contains("log: with its content now", log, " util.c] now [input c:");
+    scratch::expect_contains("log: a changed header names the file", log,
+                             ": miss other.o: the key is known but no variant holds: other.h is c:");
+    Build third = build(b, a.cache, 1000);
+    expect_counts("log: nothing is left to do", 0, 0, &third);
+}
+
+// A Mach-O file of 96 bytes: the header, one LC_CODE_SIGNATURE (data at 64, 32 bytes), 16 bytes of code at 48 and the
+// signature.
+static void write_macho(const scratch::Project p, const char *name, U8 code, U8 signature) {
+    U8 bytes[96] = {};
+    bytes[0] = 0xcf;
+    bytes[1] = 0xfa;
+    bytes[2] = 0xed;
+    bytes[3] = 0xfe;
+    bytes[16] = 1;  // ncmds
+    bytes[20] = 16; // sizeofcmds
+    bytes[32] = 0x1d;
+    bytes[36] = 16;
+    bytes[40] = 64;
+    bytes[44] = 32;
+    for (Usize i = 48; i < 64; i++)
+        bytes[i] = code;
+    for (Usize i = 64; i < 96; i++)
+        bytes[i] = signature;
+    c::FILE *file = c::fopen(format::push(p.dir, "/", name).data, "wb");
+    test::check_condition(file != nullptr);
+    test::check_equal(c::fwrite(bytes, 1, sizeof bytes, file), (Usize)96);
+    c::fclose(file);
+}
+
+static const char *digest_of(const scratch::Project p, const char *name) {
+    char *hex = mem::alloc_slice(char, 65).data;
+    test::check_condition(c::smith_core_self_digest(format::push(p.dir, "/", name).data, hex));
+    return hex;
+}
+
+// The linker signs an arm64 smith, and the signature hashes the pages the commit and LC_UUID are on (#3050): the
+// digest of the compiler blanks it, so two builds of the same code are one compiler, and a change to the code is not.
+export void test_build_step_cache_the_digest_of_smith_leaves_out_a_code_signature() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("macho", nullptr);
+    defer scratch::clean(&p);
+    write_macho(p, "one", 'a', 'x');
+    write_macho(p, "two", 'a', 'y');
+    write_macho(p, "other", 'b', 'x');
+    scratch::expect_text("digest: another signature is the same smith", digest_of(p, "one"), digest_of(p, "two"));
+    test::check_condition(__builtin_strcmp(digest_of(p, "one"), digest_of(p, "other")) != 0);
 }

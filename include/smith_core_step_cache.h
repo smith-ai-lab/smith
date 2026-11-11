@@ -29,3 +29,7 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
 // least recently used while the results are over `cap` bytes, at the time `now` (seconds). False when the cache
 // cannot be opened.
 bool smith_core_step_cache_prune(const char *cache, uint64_t cap, int64_t now);
+
+// The digest the step cache keys smith by when it is the compiler (runtime/self_digest.c): SHA-256 of the file with the
+// commit, the build-id and a Mach-O code signature blanked, in `hex` (65 bytes). False when the file cannot be read.
+bool smith_core_self_digest(const char *path, char *hex);

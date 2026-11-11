@@ -334,6 +334,40 @@ export void test_runner_project_smith_tests_are_found_and_selected_by_the_name_a
     }
 }
 
+// The header step of a test module is given the tests' flags, `-include build/tests_list.h` among them, so it waits for
+// that file: run before the scan wrote it, the pass wrote another header and no depfile, and a fresh build's header
+// steps were served by the step cache or not by which ran first (#3050).
+export void test_runner_project_a_test_modules_header_step_waits_for_the_list_of_tests() {
+    scratch::Project p = runner::built_copy("runner_base", "runner_lang", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run step = scratch::sh(&p, "grep '^build .smith/include/geometry/box_test.h:' .smith/build.ninja");
+    scratch::expect_contains("smith tests: the test module's header step lists the list of tests", step.out,
+                             " build/tests_list.h");
+}
+
+// The guard of #3050: a fresh build of tests that did not change (CI's every job) is served by the step cache, every
+// compile and header step of it. A step whose key holds something that changes from build to build, or that runs
+// before a file it reads is made, shows here as a step that ran.
+constexpr char fresh_tests[_] = "rm -rf .smith build && env SMITH_STEP_CACHE=1 SMITH_OUTPUT=full smith test --list "
+                                ">steps.txt 2>&1; grep -E '^\\[[0-9]+/[0-9]+\\] (compile|header) ' steps.txt";
+
+export void test_runner_project_a_second_fresh_build_of_the_same_tests_is_served() {
+    scratch::Project p = runner::built_copy("runner_base", "runner_lang", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, fresh_tests);
+    scratch::expect_contains("smith tests: the first fresh build compiles the tests", first.out, "] compile ");
+    scratch::Run second = scratch::sh(&p, format::push(fresh_tests, " | grep -v ' (cached)$' || true").data);
+    scratch::expect_text("smith tests: the second runs no compile and no header step", "", second.out);
+}
+
 export void test_runner_project_the_same_test_in_two_files_fails_the_build() {
     scratch::Project p = runner::project("runner_base", "runner_lang");
     defer scratch::clean(&p);

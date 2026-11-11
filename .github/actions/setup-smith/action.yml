@@ -131,6 +131,8 @@ runs:
       env:
         # the cache is saved whole, so it is kept small: the least recently used results go past this (#2833)
         SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
+        # one line per step: hit, or why it missed (#3050); the report below prints the first misses
+        SMITH_STEP_CACHE_LOG: ${{ runner.temp }}/steps-build.log
       run: |
         start=$(date +%s)
         # the output is kept to count the steps the step cache served (#2833): "N steps, M cached"
@@ -146,6 +148,7 @@ runs:
       with:
         name: steps
         log: ${{ runner.temp }}/build.out
+        misses: ${{ runner.temp }}/steps-build.log
         inputs: '^(build\.c|patches/|llvm/)'
 
     - name: Build the tests
@@ -153,6 +156,7 @@ runs:
       shell: bash
       env:
         SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
+        SMITH_STEP_CACHE_LOG: ${{ runner.temp }}/steps-tests.log
       run: |
         start=$(date +%s)
         # `--list` builds the runner and every test program (of the given `test-flags` part) and runs none of them. The compiler's errors go to stdout
@@ -190,6 +194,7 @@ runs:
       with:
         name: tests-built
         log: ${{ runner.temp }}/list.out
+        misses: ${{ runner.temp }}/steps-tests.log
         inputs: '^(build\.c|patches/|llvm/)'
 
     - name: Download the build of this run

@@ -148,8 +148,9 @@ static char smith_stepcache_why[1024];
 // ---------------------------------------------------------------- explaining a step (#3050)
 
 // SMITH_STEP_CACHE_LOG=<file>: one line for each step the cache sees, appended (nested builds share the file), after
-// the name of the project's folder: `hit <output>`, `miss <output>: <reason>`, `stored <output>` or `not stored <output>: <reason>`. A miss of a new key
-// names the first line where the key differs from the last key stored for the same output: which input changed.
+// the name of the project's folder: `hit <output>`, `miss <output>: <reason>`, `stored <output>` or `not stored
+// <output>: <reason>`. A miss of a new key names the first line where the key differs from the last key stored for the
+// same output: which input changed.
 static int smith_stepcache_log_fd = -2; // -2: not opened yet; -1: no log
 
 [[gnu::format(printf, 1, 2)]] static void smith_stepcache_log(const char *format, ...) {
@@ -954,15 +955,17 @@ static bool smith_stepcache_path(char *out, const char *kind, const char *hex, c
     return written > 0 && written < PATH_MAX;
 }
 
-// k/<xx>/<hash of the project folder's name and the output's path, the root a token>: the text of the last key stored
-// for that output (#3050). The folder's name, not its path, so a checkout elsewhere finds it; a nested project (the
-// tests' front-project) writes the same relative outputs as the one around it.
+// k/<xx>/<hash of the output's path, the root a token>: the texts of the last keys stored for that output, the newest
+// last (#3050). Several, since a nested project (the tests' front-project) writes the outputs of the one around it
+// under the same names with other flags: a miss is compared with the nearest.
+constexpr size_t smith_stepcache_last_max = 4;
+constexpr char smith_stepcache_key_start[] = "smith-step-cache 1\ncommand ";
+
 static bool smith_stepcache_last_path(const char *output, char path[PATH_MAX]) {
-    char storage[smith_exec_name_max + PATH_MAX + 64];
+    char storage[smith_exec_name_max + 64];
     SmithStepText name = {.data = storage, .capacity = sizeof storage};
     storage[0] = '\0';
-    const char *project = strrchr(smith_stepcache.roots[0], '/');
-    smith_steptext_addf(&name, "smith-step-last 1\n%s\n", project != nullptr ? project + 1 : "");
+    smith_steptext_add(&name, "smith-step-last 1\n", 18);
     if (!smith_stepcache_normalize(output, strlen(output), &name)) return false;
     char hex[smith_stepcache_hex];
     SmithSha256 sha;
@@ -972,6 +975,29 @@ static bool smith_stepcache_last_path(const char *output, char path[PATH_MAX]) {
     return smith_stepcache_path(path, "k", hex, nullptr);
 }
 
+// Reads the output's stored keys into smith_stepcache_last_storage: where each starts and its size. Returns how many.
+static size_t smith_stepcache_last_keys(const char *output, const char *starts[smith_stepcache_last_max],
+                                        size_t sizes[smith_stepcache_last_max]) {
+    char path[PATH_MAX];
+    size_t size = 0;
+    if (!smith_stepcache_last_path(output, path) ||
+        !smith_stepcache_read(path, smith_stepcache_last_storage, sizeof smith_stepcache_last_storage - 1, &size))
+        return 0;
+    smith_stepcache_last_storage[size] = '\0';
+    const char *at = smith_stepcache_last_storage;
+    const char *end = at + size;
+    size_t count = 0;
+    while (at < end && count < smith_stepcache_last_max) { // each key starts with the same line
+        const char *next = strstr(at + 1, smith_stepcache_key_start);
+        starts[count] = at;
+        sizes[count] = (size_t)((next != nullptr ? next : end) - at);
+        count++;
+        if (next == nullptr) break;
+        at = next;
+    }
+    return count;
+}
+
 // A piece of a line around the place where it differs, for the log.
 static void smith_stepcache_excerpt(const char *line, size_t size, size_t at, char *out, size_t capacity) {
     size_t from = at > 40 ? at - 40 : 0;
@@ -979,48 +1005,89 @@ static void smith_stepcache_excerpt(const char *line, size_t size, size_t at, ch
     snprintf(out, capacity, "%s%.*s%s", from > 0 ? "..." : "", (int)(to - from), line + from, to < size ? "..." : "");
 }
 
-// Why a new key is new: the first line where it differs from the last key stored for this output.
+// Where a stored key first differs from the key just made: its line (from 1), the byte in the line, and the offsets of
+// both lines; line 0 when the two are the same text.
+typedef struct {
+    size_t line;
+    size_t at;
+    size_t old_from, old_size, now_from, now_size;
+} SmithStepDiff;
+
+static SmithStepDiff smith_stepcache_diff(const char *old, size_t old_total) {
+    const char *now = smith_stepcache_keytext.data;
+    size_t now_total = smith_stepcache_keytext.size;
+    size_t i = 0;
+    size_t j = 0;
+    for (size_t line = 1; i < old_total || j < now_total; line++) { // bounded by the texts' lines
+        const char *o = memchr(old + i, '\n', old_total - i);
+        const char *n = memchr(now + j, '\n', now_total - j);
+        size_t old_size = (o != nullptr ? (size_t)(o - old) : old_total) - i;
+        size_t now_size = (n != nullptr ? (size_t)(n - now) : now_total) - j;
+        if (old_size != now_size || memcmp(old + i, now + j, old_size) != 0) {
+            size_t at = 0;
+            while (at < old_size && at < now_size && old[i + at] == now[j + at])
+                at++;
+            return (SmithStepDiff){line, at, i, old_size, j, now_size};
+        }
+        i += old_size + 1;
+        j += now_size + 1;
+    }
+    return (SmithStepDiff){};
+}
+
+// Why a new key is new: the first line where it differs from the nearest key stored for this output (the one that
+// agrees longest).
 static void smith_stepcache_compare_last(const char *output) {
-    char path[PATH_MAX];
-    size_t size = 0;
-    if (!smith_stepcache_last_path(output, path) ||
-        !smith_stepcache_read(path, smith_stepcache_last_storage, sizeof smith_stepcache_last_storage - 1, &size)) {
+    const char *starts[smith_stepcache_last_max];
+    size_t sizes[smith_stepcache_last_max];
+    size_t count = smith_stepcache_last_keys(output, starts, sizes);
+    if (count == 0) {
         snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key, and no key was stored for this output");
         return;
     }
-    smith_stepcache_last_storage[size] = '\0';
-    const char *old = smith_stepcache_last_storage;
-    const char *now = smith_stepcache_keytext.data;
-    for (size_t line = 1; *old != '\0' || *now != '\0'; line++) { // bounded by the texts' lines
-        size_t old_size = strcspn(old, "\n");
-        size_t now_size = strcspn(now, "\n");
-        if (old_size != now_size || memcmp(old, now, old_size) != 0) {
-            size_t at = 0;
-            while (at < old_size && at < now_size && old[at] == now[at])
-                at++;
-            char was[256];
-            char is[256];
-            smith_stepcache_excerpt(old, old_size, at, was, sizeof was);
-            smith_stepcache_excerpt(now, now_size, at, is, sizeof is);
-            snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key: line %zu was [%s] now [%s]", line,
-                     was, is);
-            return;
+    SmithStepDiff best = {};
+    const char *old = nullptr;
+    for (size_t k = 0; k < count; k++) {
+        SmithStepDiff diff = smith_stepcache_diff(starts[k], sizes[k]);
+        if (old == nullptr || diff.line > best.line || (diff.line == best.line && diff.at > best.at)) {
+            best = diff;
+            old = starts[k];
         }
-        old += old_size + (old[old_size] == '\n' ? 1 : 0);
-        now += now_size + (now[now_size] == '\n' ? 1 : 0);
     }
-    snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key, the same text as the last stored");
+    if (best.line == 0) {
+        snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key, the same text as one stored");
+        return;
+    }
+    char was[256];
+    char is[256];
+    smith_stepcache_excerpt(old + best.old_from, best.old_size, best.at, was, sizeof was);
+    smith_stepcache_excerpt(smith_stepcache_keytext.data + best.now_from, best.now_size, best.at, is, sizeof is);
+    snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key: line %zu was [%s] now [%s]", best.line, was,
+             is);
 }
 
-// Keeps the text of the key just stored as this output's last.
+// Keeps the text of the key just stored as this output's newest, with up to three before it whose command differs.
 static void smith_stepcache_keep_last(const char *output) {
+    const char *starts[smith_stepcache_last_max];
+    size_t sizes[smith_stepcache_last_max];
+    size_t count = smith_stepcache_last_keys(output, starts, sizes);
+    static char kept_storage[smith_stepcache_text_max];
+    SmithStepText kept = {.data = kept_storage, .capacity = sizeof kept_storage};
+    kept_storage[0] = '\0';
+    const char *now = smith_stepcache_keytext.data;
+    size_t command = strcspn(now + sizeof smith_stepcache_key_start - 1, "\n") + sizeof smith_stepcache_key_start - 1;
+    size_t first = count >= smith_stepcache_last_max ? count - smith_stepcache_last_max + 1 : 0;
+    for (size_t k = first; k < count; k++) { // the same command is the same compile in another state: the new one stays
+        if (sizes[k] > command && memcmp(starts[k], now, command + 1) == 0) continue;
+        smith_steptext_add(&kept, starts[k], sizes[k]);
+    }
+    smith_steptext_add(&kept, now, smith_stepcache_keytext.size);
     char path[PATH_MAX];
     char temporary[PATH_MAX];
-    if (!smith_stepcache_last_path(output, path) || !smith_stepcache_make_parent(path) ||
+    if (kept.full || !smith_stepcache_last_path(output, path) || !smith_stepcache_make_parent(path) ||
         snprintf(temporary, sizeof temporary, "%s/tmp/%d-%u", smith_stepcache.folder, (int)getpid(),
                  smith_stepcache.counter++) >= (int)sizeof temporary ||
-        !smith_stepcache_make_parent(temporary) ||
-        !smith_stepcache_write(temporary, smith_stepcache_keytext.data, smith_stepcache_keytext.size))
+        !smith_stepcache_make_parent(temporary) || !smith_stepcache_write(temporary, kept.data, kept.size))
         return;
     if (rename(temporary, path) != 0) unlink(temporary);
 }
@@ -1248,8 +1315,8 @@ bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key
     }
     if (smith_stepcache_logging()) {
         if (total == 0) smith_stepcache_compare_last(output);
-        smith_stepcache_log("miss %s: %s%s", output, total == 0 ? "" : "the key is known but no variant holds: ",
-                            smith_stepcache_why);
+        smith_stepcache_log("miss %s: %s%s", output,
+                            total == 0 ? "" : "the key is known but no variant holds: ", smith_stepcache_why);
     }
     return false;
 }
@@ -1614,6 +1681,11 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
     close(home);
     *ran = commands;
     return back && on;
+}
+
+// include/smith_core_step_cache.h: the digest of a smith as the step cache keys its compiler.
+bool smith_core_self_digest(const char *path, char *hex) {
+    return smith_self_digest(path, hex);
 }
 
 // include/smith_core_step_cache.h: the prune a build starts with, with the cap and the time given.
