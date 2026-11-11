@@ -119,11 +119,18 @@ struct SmallC {
 
 typedef struct BigC (*Make)(U8);
 typedef Usize (*Total)(struct BigC);
-typedef Usize (*Through)(Usize (*)(struct BigC), U8);
+// A `fn` value is a pair: the function, which takes the environment first, and the environment.
+struct Closure {
+    Usize (*call)(void *, struct BigC);
+    void *environment;
+};
+
+typedef Usize (*Through)(struct Closure, U8);
 typedef U8 (*Copied)(U8);
 typedef struct SmallC (*Pair)(I64);
 
-static Usize c_first_and_last(struct BigC b) {
+static Usize c_first_and_last(void *environment, struct BigC b) {
+    (void)environment;
     return (Usize)b.data[0] * 1000 + (Usize)b.data[16383] + b.size;
 }
 
@@ -162,7 +169,7 @@ export void test_front_emit_aggregate_a_big_struct_crosses_the_c_abi_both_ways()
     test::check_equal(made->size, (Usize)16384);
     made->data[5] = 3;
     test::check_equal(total(*made), (Usize)(2 * 16384 + 1 + 16384));
-    test::check_equal(through(c_first_and_last, 7), (Usize)(7000 + 7 + 16384));
+    test::check_equal(through((struct Closure){.call = c_first_and_last}, 7), (Usize)(7000 + 7 + 16384));
     struct SmallC small = pair(40);
     test::check_equal(small.a + small.b, (I64)81);
     mem::free(made);
