@@ -2006,7 +2006,11 @@ jobs:
           # ahead, whose run may have failed or not finished: its count is not main's (2026-11-07: #2660 fell to 551,
           # failed, and still merged because #2670 behind it compared against that 551 and passed)
           before=
-          for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
+          # A PR check runs on the PR's head, not merged with main (#2856): its count is compared with the count of the
+          # commit it branched from, else every merge that raised main's count since then reads as a loss here (#3052)
+          start=$BASE
+          if [ "$SAMPLED" = true ] && mb=$(git merge-base HEAD "$BASE" 2>/dev/null) && [ -n "$mb" ]; then start=$mb; fi
+          for sha in $(git rev-list --first-parent --max-count=20 "$start"); do
             id=
             for a in $(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
               ok=$(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
