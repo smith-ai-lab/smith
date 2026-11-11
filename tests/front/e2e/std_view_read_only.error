@@ -1,0 +1,1 @@
+<dir>/src/std_view_read_only.smith:10:19: error: expected U8[:], found const U8[:]: this drops const; make the target's element const, or copy the data

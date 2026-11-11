@@ -1,38 +1,57 @@
-import std.arena
 import std.array
-import std.mem
 
 struct Pair:
     a: i32
     b: f64
 
-# std's generics instantiated from another module, each with two types (#3078): mem.try_alloc and arena.try_push
-# return `.some(p)`, arena.push hands its `*mut Arena` on, and mem.view makes a typed slice of bytes.
+struct Pool:
+    memory: *mut u8
+    used: usize
+
+# The forms `smith lint --fix` writes for std's generics that failed where a file instantiates them (#3078), each
+# instantiated with two types: mem.view's result slice (no `struct smith_array_T_n` left), mem.try_alloc's
+# `.some(p)` (not `{.some = p}`), and arena.push, a `T: type` generic whose pointer goes on to a `*mut` parameter.
+fn take(pool: *mut Pool, size: usize, align: usize) -> *mut void:
+    pad := (align - pool.used % align) % align
+    result := pool.memory + pool.used + pad
+    pool.used += pad + size
+    result.cast(*mut void)
+
+fn push(pool: *mut Pool, T: type) -> *mut T:
+    return take(pool, sizeof(T), alignof(T)).cast(*mut T)
+
+fn try_at(memory: *void, T: type) -> Option(*T):
+    if memory == nullptr:
+        return .none
+    return .some(memory.cast(*mut T))
+
+fn view(data: []mut u8, T: type) -> []T:
+    mut result: []T = undefined
+    result.data = data.data.cast(*mut T)
+    result.count[0] = data.count[0] / sizeof(T)
+    return result
+
+mut memory: [64]u64 = array.filled(u64, 64, 0)
+
 pub fn check() -> i32:
-    if p := mem.try_alloc(Pair):
-        if p.a != 0 or p.b != 0.0:
-            return 1
+    mut pool := Pool(memory = (&memory[0]).cast(*mut u8), used = 0)
+    s := push(&pool, u16)
+    t := push(&pool, Pair)
+    if s.* != 0 or t.a != 0 or pool.used != 24:
+        return 1
+    if p := try_at(t.cast(*void), Pair):
+        if p.b != 0.0:
+            return 2
     else:
-        return 2
-    if q := mem.try_alloc(u64):
+        return 3
+    if q := try_at(s.cast(*void), u16):
         if q.* != 0:
-            return 3
+            return 4
     else:
-        return 4
-    mut memory: [64]u8 = array.filled(u8, 64, 0)
-    mut a := arena.fixed(&memory[0], 64)
-    if r := arena.try_push(&a, Pair):
-        if r.a != 0:
-            return 5
-    else:
-        return 6
-    s := arena.push(&a, u16)
-    t := arena.push(&a, Pair)
-    if s.* != 0 or t.a != 0:
-        return 7
+        return 5
     mut raw: [8]u8 = array.filled(u8, 8, 1)
-    words := mem.view(raw[:], u32)
-    halves := mem.view(raw[:], u16)
+    words := view(raw[:], u32)
+    halves := view(raw[:], u16)
     if countof(words) != 2 or countof(halves) != 4 or halves[3] != 257:
-        return 8
+        return 6
     0
