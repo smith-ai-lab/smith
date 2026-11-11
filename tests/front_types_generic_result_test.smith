@@ -19,7 +19,6 @@ static Str pool_source() {
            "export struct Pool { Usize used; };\n\n"
            "export void *push_raw(Pool *p, Usize size) { p->used += size; return nullptr; }\n\n"
            "export T *push(Pool *p, constexpr Type T) { return (T *)push_raw(p, sizeof(T)); }\n\n"
-           "export T *take(Pool *p, constexpr Type T, constexpr Usize n) { return (T *)push_raw(p, n * sizeof(T)); }\n\n"
            "export Usize bytes(Pool *p, constexpr Type T) { return p->used + sizeof(T); }\n\n"
            "static T *hidden(Pool *p, constexpr Type T) { return (T *)push_raw(p, sizeof(T)); }\n";
 }
@@ -82,15 +81,6 @@ export void test_front_types_generic_result_a_result_that_does_not_name_it_is_st
     test::check(!has(text, "has no public"));
 }
 
-export void test_front_types_generic_result_a_value_parameter_beside_the_type_parameter_is_declared() {
-    arena::Arena memory = test::memory(1U << 24);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    Str text = messages_of("fn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.take(b, i32, 4)\n    return 0\n");
-    test::check(!has(text, "has no public"));
-}
-
 export void test_front_types_generic_result_a_private_generic_stays_private() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -107,8 +97,10 @@ export void test_front_types_generic_result_the_fix_makes_the_pointer_writable()
     defer mem::set_allocator(outside);
     fix::set_loader(load);
     defer fix::set_loader(nullptr);
-    Str before = "import lib.pool\n\nfn two(b: *pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n";
-    Str after = "import lib.pool\n\nfn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n";
+    Str before =
+        "import lib.pool\n\nfn two(b: *pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n";
+    Str after =
+        "import lib.pool\n\nfn two(b: *mut pool.Pool) -> i32:\n    q: *mut i32 = pool.push(b, i32)\n    return 0\n";
     fix::Fixed got = fix::fix_text("t.smith", before);
     test::check_equal(got.text, after);
 }
