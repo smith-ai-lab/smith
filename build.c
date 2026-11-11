@@ -1300,29 +1300,70 @@ static const char *const *build_header_pass_inputs(SmithBuild *b, const BuildCon
 // about 10 ms to start, so a step per header made a build that changed the smith (all of them run again, to find
 // their bytes the same) cost 2 s of CPU (#639). It is restat: a header whose bytes did not change leaves its compile
 // alone.
+//
+// The pass is split (#3079): one step for the modules the tests share (`scratch`, `runner`, the front end's: every
+// file that is not a `*_test.smith`), whose headers the tests' headers read, then the tests in build_header_parts
+// steps that run side by side, since no module imports a `*_test` module. One step took 2.5 s on one core for 368
+// headers while the other cores had nothing to do. The count is fixed, not the machine's cores, so the steps and
+// their keys are the same everywhere.
+constexpr size_t build_header_parts = 4;
+
+static bool build_is_test_module(const char *path) {
+    static const char suffix[] = "_test.smith";
+    size_t length = strlen(path);
+    return length >= sizeof suffix - 1 && strcmp(path + length - (sizeof suffix - 1), suffix) == 0;
+}
+
+// One step of the pass: `smith-cc --smith-headers` over `pairs` (source, header, ...), after the headers in `needs`.
+static void build_header_pass_step(SmithBuild *b, const BuildConfig *config, const char *smith_cc,
+                                   const char *const *flags, const char *const *pairs, const char *const *needs,
+                                   const char *description) {
+    const char *const *sources = smith_list(b, nullptr);
+    const char *const *outputs = smith_list(b, nullptr);
+    for (size_t i = 0; pairs[i] != nullptr; i += 2) {
+        sources = smith_cat(b, sources, smith_list(b, pairs[i], nullptr), nullptr);
+        outputs = smith_cat(b, outputs, smith_list(b, pairs[i + 1], nullptr), nullptr);
+    }
+    if (outputs[0] == nullptr) return;
+    SmithStep write = {
+        .command = smith_cat(b, smith_list(b, smith_cc, "--smith-headers", nullptr), flags,
+                             smith_list(b, "--", nullptr), pairs, nullptr),
+        .inputs = sources,
+        .implicit_inputs = smith_cat(b, build_header_pass_inputs(b, config), needs, nullptr),
+        .order_only_inputs = smith_list(b, smith_cc, nullptr),
+        .outputs = outputs,
+        .description = description,
+        .restat = true, // written only when its bytes change
+    };
+    smith_step(b, &write);
+}
+
 static const char *const *build_test_header_step(SmithBuild *b, const BuildConfig *config, const char *smith_cc,
                                                  const char *const *flags, const char *const *tests) {
-    const char *const *pairs = smith_list(b, nullptr);
-    const char *const *outputs = smith_list(b, nullptr);
+    const char *const *shared = smith_list(b, nullptr); // pairs of the modules that are not tests
+    const char *const *shared_headers = smith_list(b, nullptr);
+    const char *const *parts[build_header_parts];
+    for (size_t i = 0; i < build_header_parts; i++)
+        parts[i] = smith_list(b, nullptr);
     const char *const *headers = smith_list(b, nullptr); // one per test, in order
+    size_t leaves = 0;
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = build_test_header(b, tests[i]);
         headers = smith_cat(b, headers, smith_list(b, header, nullptr), nullptr);
         if (build_front_linked(tests[i])) continue; // made by its smith_object
-        pairs = smith_cat(b, pairs, smith_list(b, tests[i], header, nullptr), nullptr);
-        outputs = smith_cat(b, outputs, smith_list(b, header, nullptr), nullptr);
+        if (build_is_test_module(tests[i])) {
+            size_t part = leaves++ % build_header_parts;
+            parts[part] = smith_cat(b, parts[part], smith_list(b, tests[i], header, nullptr), nullptr);
+        } else {
+            shared = smith_cat(b, shared, smith_list(b, tests[i], header, nullptr), nullptr);
+            shared_headers = smith_cat(b, shared_headers, smith_list(b, header, nullptr), nullptr);
+        }
     }
-    SmithStep write = {
-        .command = smith_cat(b, smith_list(b, smith_cc, "--smith-headers", nullptr), flags,
-                             smith_list(b, "--", nullptr), pairs, nullptr),
-        .inputs = tests,
-        .implicit_inputs = build_header_pass_inputs(b, config),
-        .order_only_inputs = smith_list(b, smith_cc, nullptr),
-        .outputs = outputs,
-        .description = "headers of the tests",
-        .restat = true, // written only when its bytes change
-    };
-    smith_step(b, &write);
+    build_header_pass_step(b, config, smith_cc, flags, shared, smith_list(b, nullptr), "headers of the tests' modules");
+    for (size_t i = 0; i < build_header_parts; i++) {
+        const char *description = smith_fmt(b, "headers of the tests (%zu of %zu)", i + 1, build_header_parts);
+        build_header_pass_step(b, config, smith_cc, flags, parts[i], shared_headers, description);
+    }
     return headers;
 }
 
