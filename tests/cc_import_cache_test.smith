@@ -3,6 +3,7 @@
 // header read with other defines is another entry; an edited header and a damaged entry are read again;
 // SMITH_IMPORT_CACHE=0 writes nothing. Each test has a cache folder of its own, and `log` a line of counts for each
 // process. smith-covers: runtime/import_cache.c front/module_cache.smith front/compile.smith shim/cimport.cpp
+// runtime/front_flag.c
 module cc_import_cache_test;
 
 import std::test;
@@ -114,4 +115,20 @@ export void test_cc_import_cache_is_off_when_the_variable_is_0() {
     scratch::expect_contains("it compiles", run.out, "status 0\n");
     scratch::expect_lacks("no cache", run.out, "cache made");
     scratch::expect_lacks("nothing counted", run.out, "counted");
+}
+
+// `smith lint --fix` names the folder of what it keeps between processes by the import identity, as the import cache
+// names its own (#3080): it hashed smith's own binary for the name before, seconds of every call.
+export void test_cc_import_cache_the_fixer_names_its_folder_by_the_same_identity() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    write_project(&p);
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache; smith cc --front-end=new -c a.smith -o a.o; "
+                                       "smith lint --fix util.smith; ls -d cache/smith/imports/*/ | wc -l; "
+                                       "for d in cache/smith/imports/*/; do "
+                                       "test -d cache/smith/fix-imports/$(basename $d) && echo same name; done");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("the fixer ran", run.out, "util.smith: 0 fixes applied");
+    scratch::expect_contains("the fixer's folder", run.out, "same name");
 }
