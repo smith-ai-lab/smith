@@ -205,8 +205,22 @@ runs:
         log: ${{ runner.temp }}/list.out
         inputs: '^(build\.c|patches/|llvm/)'
 
+    # The download takes 8 s at most; once in about 280 jobs the transfer went quiet for 19 minutes (job 130328180929,
+    # 570 MB in 1,152 s) and the 20-minute job limit cancelled the job before any test ran. A stall is cut at 3 minutes
+    # and tried once more, so it costs about 3.5 minutes (#3045).
     - name: Download the build of this run
+      id: download
       if: inputs.artifact != ''
+      continue-on-error: true
+      timeout-minutes: 3
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/smith-build
+
+    - name: Download the build of this run, second try
+      if: inputs.artifact != '' && steps.download.outcome != 'success'
+      timeout-minutes: 5
       uses: actions/download-artifact@v4
       with:
         name: ${{ inputs.artifact }}
