@@ -161,3 +161,22 @@ export void test_front_fix_generic_mut_a_value_local_whose_address_goes_to_a_mut
                  "    mut counter := Counter(buffer, capacity, 0)\n"
                  "    bump(&counter, countof(args))\n    return counter.n\n");
 }
+
+// A function generic over `T: type` (smith's own spelling, no `constexpr` flag) is read as `auto` and `constexpr Type`
+// ones are (#3078): `std.arena`'s `push(arena: *Arena, T: type)` hands `arena` to `push_raw(arena: *mut Arena)`.
+export void test_front_fix_generic_mut_a_pointer_of_a_type_generic_handed_to_a_mut_parameter_is_mut() {
+    expect_fixed("struct Pool:\n    used: usize\n\nfn take(pool: *mut Pool, n: usize) -> *void:\n"
+                 "    pool.used += n\n    return nullptr\n\npub fn push(pool: *Pool, T: type) -> *T:\n"
+                 "    return take(pool, sizeof(T)).cast(*T)\n",
+                 "struct Pool:\n    used: usize\n\nfn take(pool: *mut Pool, n: usize) -> *void:\n"
+                 "    pool.used += n\n    return nullptr\n\npub fn push(pool: *mut Pool, T: type) -> *T:\n"
+                 "    return take(pool, sizeof(T)).cast(*T)\n");
+}
+
+// An option's braces in a generic body are the variant, as a Result's are (#3078: `mem.try_alloc`, `arena.try_push`).
+export void test_front_fix_generic_mut_an_option_literal_in_a_type_generic_is_a_variant() {
+    expect_fixed("pub fn first(x: *i32, T: type) -> Option(*T):\n    if x == nullptr:\n        return .none\n"
+                 "    return {.some = x.cast(*T)}\n",
+                 "pub fn first(x: *i32, T: type) -> Option(*T):\n    if x == nullptr:\n        return .none\n"
+                 "    return .some(x.cast(*T))\n");
+}

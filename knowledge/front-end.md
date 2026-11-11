@@ -53,5 +53,5 @@ One page per area, so two front-end tickets edit two files (#3082: this page was
 - [The formatter (`front/format_space.smith`, `front/format.smith`, #1886)](front-end/format.md)
 - [Tests](front-end/tests.md)
 - [front::types_attr (`front/types_attr.smith`, #1628)](front-end/types-attr.md)
-- [Effect inference (`front/effects_*.smith`, #1939)](front-end/effects.md)
+- [front::effects_table (`front/effects_table.smith`, #1965, piece 1 of #1939)](front-end/effects.md)
 - [Return types and function names (`front/parse_type.smith`, `front/parse_decl.smith`, #1959)](front-end/return-types.md)

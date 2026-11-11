@@ -238,3 +238,97 @@ export core::Errors reassigned(Str source, const ast::Module *module) {
     }
     return out;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// `x.some` (#3083)
+//
+//   if b.v == .some: b.v.some else: -1          if v := b.v: v else: -1
+//
+// There is no `x.some` (smith-dev-syntax-options): after a test, `x` is the value. Two fixes, both where the checker
+// reports the read: `N.some` on a name that is not an option (a binding the option guard wrote, `if v := b.v:` with
+// `v.some` left) is `N`; and a test `F == .some` (`F != .some`) of an option field `F` read as `F.some` below it in the
+// function is written `F != .none` (`F == .none`), which the checker's guard of an option field binds on the next pass.
+// A name keeps its test: `x == .some` over a name that cannot change is the checker's (`some_test_fix`), and a `mut`
+// name cannot be narrowed.
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    return starts_with(a, b);
+}
+
+// Whether `text` is a member chain of names, `a.b` or `a.b.c`: names joined by single dots, at least one dot.
+static Bool member_chain(Str text) {
+    Usize dots = 0;
+    for (Usize i = 0; i < countof(text); i++) {
+        if (text[i] == '.') {
+            if (i == 0 || i + 1 == countof(text) || text[i - 1] == '.') return false;
+            dots += 1;
+        } else if (!word_char(text[i])) {
+            return false;
+        }
+    }
+    return dots > 0;
+}
+
+// The start of the function that holds `at`: the nearest line above it at column 0 that is not blank.
+static Usize enclosing_function(Str s, Usize at) {
+    Usize line = line_start(s, at);
+    while (line > 0 && (s[line] == ' ' || s[line] == '\n' || s[line] == '#'))
+        line = line_start(s, line - 1);
+    return line;
+}
+
+static core::Errors some_fix(core::Errors out, Usize start, Usize stop, Str text, Str why) {
+    for (Usize i = 0; i < countof(out); i++)
+        if (out[i].span.start == start) return out;
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    ast::Span at = {.start = (U32)start, .end = (U32)stop};
+    fix[0] = (core::Edit){.span = at, .text = text};
+    out = mem::realloc(out, countof(out) + 1);
+    out[countof(out) - 1] = (core::ParseError){.span = at, .message = why, .fix = fix};
+    return out;
+}
+
+// The tests `field == .some` and `field != .some` in `source[start:stop]`, written with `.none`.
+static core::Errors field_tests(core::Errors out, Str source, Usize start, Usize stop, Str field) {
+    Str why = "an option is tested with `.none`: write `== .some` as `!= .none`";
+    for (Usize i = start; i + countof(field) + 9 <= stop; i++) {
+        if (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.')) continue;
+        if (!starts_with(source[i:countof(source)], field)) continue;
+        Usize op = i + countof(field);
+        Str after = source[op:countof(source)];
+        Bool equal = starts_with(after, " == .some");
+        if (!equal && !starts_with(after, " != .some")) continue;
+        if (op + 9 < countof(source) && (word_char(source[op + 9]) || source[op + 9] == '(')) continue;
+        out = some_fix(out, op, op + 9, equal ? " != .none" : " == .none", why);
+    }
+    return out;
+}
+
+export core::Errors some_reads(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    Str lead = "`.` needs a record, found `";
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error e = c->errors[i];
+        if (countof(e.fix) > 0 || countof(e.fix_module) > 0 || e.span.end > countof(source) ||
+            e.span.start + 5 >= e.span.end || !starts_with(e.message, lead))
+            continue;
+        Str read = source[e.span.start:e.span.end];
+        if (!same_text(read[countof(read) - 5:countof(read)], ".some")) continue;
+        Str base = read[0:countof(read) - 5];
+        Str found = e.message[countof(lead):countof(e.message)];
+        Bool option = starts_with(found, "Option(");
+        if (starts_with(found, "Result(")) continue;
+        Bool name = countof(base) > 0;
+        for (Usize k = 0; k < countof(base); k++)
+            if (!word_char(base[k])) name = false;
+        if (!option && name) {
+            Str why = "a name that is not an option is the value already: write it without `.some`";
+            out = some_fix(out, e.span.end - 5, e.span.end, "", why);
+        } else if (option && member_chain(base)) {
+            out = field_tests(out, source, enclosing_function(source, e.span.start), e.span.start, base);
+        }
+    }
+    return out;
+}
