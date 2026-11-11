@@ -1763,6 +1763,10 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
             types::element_of(t); // tested as a local: a test of the field `element` would make it an option
         if (inner != nullptr) element = inner;
     }
+    if (t != nullptr && t->kind == .result_type) { // `.ok(x)` binds the value, `.error(e)` the error (#3087)
+        types::TypeRef carried = types::same_text(pattern.name, "error") ? types::error_of(t) : types::element_of(t);
+        if (carried != nullptr) element = carried;
+    }
     types::Symbol symbol = {
         .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
     symbol.init = s->kind.if_let.value; // a fix that makes the value writable reaches it through the name (#2643)

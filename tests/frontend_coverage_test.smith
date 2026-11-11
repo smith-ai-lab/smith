@@ -2,7 +2,11 @@
 // on a small fixed table of five files (one passes, three fail at the check stage, one of them with
 // more errors that the first would have hidden (#1922), one fails at the parse stage; the causes rank by the files
 // they stop first, #2247). The tool is a
-// project of its own in a scratch folder, run by the smith under test; no real file is read or changed. smith-covers:
+// project of its own in a scratch folder, run by the smith under test; no real file is read or changed.
+// The smith the tool is given is a launcher of two lines that starts the smith under test (#3076): outside a build
+// folder the tool keys its caches by the bytes of the smith it is given, and built as these tests build it
+// (unoptimized, with the sanitizers) it read the 437 MB of smith for 19 s in each of its eleven runs, 178 of the file's
+// 195 CPU s. Each test has a scratch folder and so caches of its own; no test is about that key. smith-covers:
 // scripts/frontend_coverage/main.smith
 module frontend_coverage_test;
 
@@ -81,7 +85,8 @@ export void test_frontend_coverage_filtered_run_equals_the_full_run_and_names_th
     scratch::write(&p, "repo/c.smith", "pub fn two() -> i32:\n    return nothing_here\n");
     scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
     scratch::Run run = scratch::sh(
-        &p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+        &p, "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+            "chmod +x $S && git -C repo init -q && git -C repo add -A && "
             "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/all\" > all.tsv && "
             "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/some\" a.smith > some.tsv; "
             "for f in a b c; do grep \"^$f.smith\" all.tsv > all_$f.tsv; grep \"^$f.smith\" some.tsv > some_$f.tsv; "
@@ -117,7 +122,8 @@ export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_t
     scratch::write(&p, "repo/c.smith", "pub fn two() -> i32:\n    return nothing_here\n");
     scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
     scratch::Run run = scratch::sh(
-        &p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+        &p, "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+            "chmod +x $S && git -C repo init -q && git -C repo add -A && "
             "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/all\" > all.tsv && "
             "for k in 1 2 3; do smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/s$k\" shard:$k/3 > s$k.tsv; done; "
             "cat s1.tsv s2.tsv s3.tsv | cut -f1 | uniq | sort | uniq -c | awk '$1 != 1' | wc -l; "
@@ -156,7 +162,8 @@ export void test_frontend_coverage_a_generics_fix_does_not_depend_on_the_order_o
     scratch::copy_tree(&p, "tests/smith-lang/cases/generic-slice-derived/src/main.smith",
                        "repo/derived/src/main.smith");
     scratch::Run run = scratch::sh(
-        &p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+        &p, "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+            "chmod +x $S && git -C repo init -q && git -C repo add -A && "
             "for j in 1 2 4; do SMITH_COVERAGE_JOBS=$j smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/j$j\" > j$j.tsv; "
             "echo \"jobs $j: $(grep -c 'main.smith.pass' j$j.tsv) of 2, $(grep -c 'main.smith.check' j$j.tsv) "
             "failed\"; done");
