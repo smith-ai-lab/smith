@@ -166,6 +166,19 @@ static void smith_lc_add_file(SmithSha256 *sha, const char *path) {
 
 // ---- The first key
 
+// Leaves the folder of clang's module cache out of a command being keyed: `-fmodules-cache-path=<cache>/modules/<id>`
+// names the compiler's build (a smith rebuilt with another smith has another), where the compiled modules are kept,
+// not what they say, so a finding cannot move with it (#3062: a rebuilt smith reran every file with a module flag).
+static void smith_lc_drop_cache_path(char *text) {
+    static const char flag[] = "-fmodules-cache-path=";
+    for (char *at = strstr(text, flag); at != nullptr; at = strstr(at, flag)) { // bounded by the text
+        char *value = at + sizeof flag - 1;
+        size_t length = strcspn(value, "\t\"");
+        memmove(value, value + length, strlen(value + length) + 1);
+        at = value;
+    }
+}
+
 // Whether the byte can continue a name: the root of a project is replaced only where its path ends.
 static bool smith_lc_name_char(char c) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '-' ||
@@ -222,11 +235,29 @@ static bool smith_lc_add_configs(SmithSha256 *sha, const char *file) {
 
 constexpr size_t smith_lc_walk_max = (size_t)1 << 20;
 constexpr size_t smith_lc_headers_max = (size_t)1 << 13;
+constexpr size_t smith_lc_header_head = (size_t)1 << 14; // the lines of a header's head that name its module
 static char smith_lc_walk[smith_lc_walk_max];
-static const char *smith_lc_walk_headers[smith_lc_headers_max];
 
-static int smith_lc_compare_names(const void *a, const void *b) {
-    return strcmp(*(const char *const *)a, *(const char *const *)b);
+// A generated header (or a module's `.body` beside it) and what its head says: the module, the source it was made
+// from and the modules it imports (`// smith-imports:`, the list the lowering walks, runtime/lang_names.c). nullptr
+// when the head has no such line.
+typedef struct {
+    const char *path;
+    const char *module;
+    const char *source;
+    const char *imports;
+} SmithLcHeader;
+
+static SmithLcHeader smith_lc_header_list[smith_lc_headers_max];
+static size_t smith_lc_header_count;
+static uint32_t smith_lc_header_seen[smith_lc_headers_max]; // the walk that last took each header
+static uint32_t smith_lc_header_walk;
+static char smith_lc_header_pool[(size_t)1 << 20];
+static size_t smith_lc_header_pool_used;
+static char smith_lc_header_text[smith_lc_header_head + 1];
+
+static int smith_lc_compare_headers(const void *a, const void *b) {
+    return strcmp(((const SmithLcHeader *)a)->path, ((const SmithLcHeader *)b)->path);
 }
 
 // Appends a folder's entries to the queue of the walk; false when the queue is full.
@@ -244,38 +275,156 @@ static bool smith_lc_walk_folder(const char *folder, size_t *used) {
     return fits;
 }
 
-// The digest of every header under .smith/include, which `smith build` writes for the modules: a .smith file reads
-// those through its imports without the preprocessor, so clang-tidy's dependency file never names them. Made once.
-static bool smith_lc_add_generated_headers(SmithSha256 *sha) {
-    if (!smith_lc.headers_made) {
-        smith_lc.headers_made = true;
-        size_t count = 0;
-        bool fits = snprintf(smith_lc_walk, smith_lc_walk_max, ".smith/include") > 0;
-        size_t used = strlen(smith_lc_walk) + 1;
-        for (size_t at = 0; at < used && fits;) { // bounded by the queue
-            const char *path = smith_lc_walk + at;
-            size_t length = strlen(path);
-            struct stat info;
-            if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
-                fits = smith_lc_walk_folder(path, &used);
-            } else if (length > 2 && strcmp(path + length - 2, ".h") == 0) {
-                fits = count < smith_lc_headers_max;
-                if (fits) smith_lc_walk_headers[count++] = path;
-            }
-            at += length + 1;
-        }
-        if (fits) {
-            qsort((void *)smith_lc_walk_headers, count, sizeof smith_lc_walk_headers[0], smith_lc_compare_names);
-            SmithSha256 all;
-            smith_sha256_init(&all);
-            for (size_t i = 0; i < count; i++) // bounded by the headers
-                smith_lc_add_file(&all, smith_lc_walk_headers[i]);
-            smith_sha256_final(&all, smith_lc.headers);
-        }
-        smith_lc.headers_ok = fits;
+// A copy of the rest of the head's line that starts with `marker` (up to `end`, or the line's end), in the pool;
+// nullptr when no line starts so, the line is cut or the pool is full.
+static const char *smith_lc_head_line(const char *text, const char *marker, const char *end) {
+    size_t length = strlen(marker);
+    for (const char *line = text; line != nullptr && *line != '\0'; line = strchr(line, '\n')) { // bounded by the head
+        if (*line == '\n') line += 1;
+        if (strncmp(line, marker, length) != 0) continue;
+        const char *start = line + length;
+        const char *stop = strchr(start, '\n');
+        if (stop == nullptr) return nullptr;
+        const char *word = end != nullptr ? strstr(start, end) : nullptr;
+        if (word != nullptr && word < stop) stop = word;
+        size_t size = (size_t)(stop - start);
+        if (smith_lc_header_pool_used + size + 1 > sizeof smith_lc_header_pool) return nullptr;
+        char *copy = smith_lc_header_pool + smith_lc_header_pool_used;
+        memcpy(copy, start, size);
+        copy[size] = '\0';
+        smith_lc_header_pool_used += size + 1;
+        return copy;
     }
-    if (smith_lc.headers_ok) smith_lc_text_add(sha, smith_lc.headers);
-    return smith_lc.headers_ok;
+    return nullptr;
+}
+
+// Reads what the head of a generated header says into its entry.
+static void smith_lc_read_head(SmithLcHeader *header) {
+    FILE *file = fopen(header->path, "rb");
+    if (file == nullptr) return;
+    size_t size = fread(smith_lc_header_text, 1, smith_lc_header_head, file);
+    fclose(file);
+    smith_lc_header_text[size] = '\0';
+    header->module = smith_lc_head_line(smith_lc_header_text, "// smith-module: ", nullptr);
+    header->source = smith_lc_head_line(smith_lc_header_text, "// Generated by smith from ", ". Do not edit.");
+    header->imports = smith_lc_head_line(smith_lc_header_text, "// smith-imports:", nullptr);
+}
+
+static bool smith_lc_ends(const char *text, const char *suffix) {
+    size_t length = strlen(text);
+    size_t tail = strlen(suffix);
+    return length > tail && strcmp(text + length - tail, suffix) == 0;
+}
+
+// The generated headers and bodies under .smith/include, which `smith build` writes for the modules, sorted by path,
+// and the digest of all of them. Made once.
+static bool smith_lc_list_headers(void) {
+    if (smith_lc.headers_made) return smith_lc.headers_ok;
+    smith_lc.headers_made = true;
+    smith_lc_header_count = 0;
+    smith_lc_header_pool_used = 0;
+    bool fits = snprintf(smith_lc_walk, smith_lc_walk_max, ".smith/include") > 0;
+    size_t used = strlen(smith_lc_walk) + 1;
+    for (size_t at = 0; at < used && fits;) { // bounded by the queue
+        const char *path = smith_lc_walk + at;
+        struct stat info;
+        if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+            fits = smith_lc_walk_folder(path, &used);
+        } else if (smith_lc_ends(path, ".h") || smith_lc_ends(path, ".body")) {
+            fits = smith_lc_header_count < smith_lc_headers_max;
+            if (fits) smith_lc_header_list[smith_lc_header_count++] = (SmithLcHeader){.path = path};
+        }
+        at += strlen(path) + 1;
+    }
+    if (fits) {
+        qsort(smith_lc_header_list, smith_lc_header_count, sizeof smith_lc_header_list[0], smith_lc_compare_headers);
+        SmithSha256 all;
+        smith_sha256_init(&all);
+        for (size_t i = 0; i < smith_lc_header_count; i++) { // bounded by the headers
+            smith_lc_add_file(&all, smith_lc_header_list[i].path);
+            if (smith_lc_ends(smith_lc_header_list[i].path, ".h")) smith_lc_read_head(&smith_lc_header_list[i]);
+        }
+        smith_sha256_final(&all, smith_lc.headers);
+    }
+    smith_lc.headers_ok = fits;
+    return fits;
+}
+
+// The entry of a header by its path, or nullptr.
+static SmithLcHeader *smith_lc_header_at(const char *path) {
+    SmithLcHeader probe = {.path = path};
+    return bsearch(&probe, smith_lc_header_list, smith_lc_header_count, sizeof smith_lc_header_list[0],
+                   smith_lc_compare_headers);
+}
+
+// The header of a module, as the lowering finds it (smith_lang_module_to_path): a::b::c is a/b/c.h, and the standard
+// library's std::x is smith/x.h. `suffix` is ".h" or ".body".
+static bool smith_lc_module_path(const char *module, size_t length, const char *suffix, char *out, size_t capacity) {
+    size_t used = (size_t)snprintf(out, capacity, ".smith/include/%s",
+                                   length > 5 && strncmp(module, "std::", 5) == 0 ? "smith/" : "");
+    size_t i = length > 5 && strncmp(module, "std::", 5) == 0 ? 5 : 0;
+    for (; i < length && used + 8 < capacity; i++) { // bounded by the name
+        bool colons = module[i] == ':' && i + 1 < length && module[i + 1] == ':';
+        out[used++] = colons ? '/' : module[i];
+        i += colons ? 1 : 0;
+    }
+    return snprintf(out + used, capacity - used, "%s", suffix) < (int)(capacity - used) && i == length;
+}
+
+// Takes a header (and its body, when there is one) into the walk once; false when the module has no header here.
+static bool smith_lc_take_module(const char *module, size_t length, size_t *queue, size_t *count) {
+    char path[PATH_MAX];
+    if (!smith_lc_module_path(module, length, ".h", path, sizeof path)) return false;
+    SmithLcHeader *header = smith_lc_header_at(path);
+    if (header == nullptr || header->imports == nullptr) return false;
+    size_t index = (size_t)(header - smith_lc_header_list);
+    if (smith_lc_header_seen[index] == smith_lc_header_walk) return true;
+    smith_lc_header_seen[index] = smith_lc_header_walk;
+    queue[(*count)++] = index;
+    if (smith_lc_module_path(module, length, ".body", path, sizeof path)) {
+        SmithLcHeader *body = smith_lc_header_at(path);
+        if (body != nullptr) smith_lc_header_seen[body - smith_lc_header_list] = smith_lc_header_walk;
+    }
+    return true;
+}
+
+static size_t smith_lc_walk_queue[smith_lc_headers_max];
+
+// The headers a .smith file reads through its imports (clang-tidy's dependency file never names them, as they are read
+// without the preprocessor): its own module's header and each one its `// smith-imports:` lead to, transitively, with
+// their bodies, each by its name and digest in the order of their paths. False when the file has no header of its own
+// or an import has none here: the caller then keys on all of them.
+static bool smith_lc_add_import_headers(SmithSha256 *sha, const char *file) {
+    const SmithLcHeader *own = nullptr;
+    for (size_t i = 0; i < smith_lc_header_count && own == nullptr; i++) // bounded by the headers
+        if (smith_lc_header_list[i].source != nullptr && strcmp(smith_lc_header_list[i].source, file) == 0)
+            own = &smith_lc_header_list[i];
+    if (own == nullptr || own->module == nullptr) return false;
+    smith_lc_header_walk += 1;
+    size_t count = 0;
+    if (!smith_lc_take_module(own->module, strlen(own->module), smith_lc_walk_queue, &count)) return false;
+    for (size_t at = 0; at < count; at++) { // each header is taken once
+        const char *word = smith_lc_header_list[smith_lc_walk_queue[at]].imports;
+        for (size_t guard = 0; *word != '\0' && guard < smith_lc_headers_max; guard++) { // bounded by the list
+            while (*word == ' ')
+                word += 1;
+            size_t length = strcspn(word, " ");
+            if (length > 0 && !smith_lc_take_module(word, length, smith_lc_walk_queue, &count)) return false;
+            word += length;
+        }
+    }
+    for (size_t i = 0; i < smith_lc_header_count; i++) // in the order of their paths
+        if (smith_lc_header_seen[i] == smith_lc_header_walk) smith_lc_add_file(sha, smith_lc_header_list[i].path);
+    return true;
+}
+
+// A .smith file's generated headers: those of its imports, else the digest of every one (#3062: an export changed in
+// one module then reran every .smith file). The reason, for SMITH_LINT_CACHE=why.
+static bool smith_lc_add_generated_headers(SmithSha256 *sha, const char *file, bool *all) {
+    if (!smith_lc_list_headers()) return false;
+    *all = !smith_lc_add_import_headers(sha, file);
+    if (*all) smith_lc_text_add(sha, smith_lc.headers);
+    return true;
 }
 
 // The environment that changes a compile or the tool's answer.
@@ -356,6 +505,7 @@ static bool smith_lc_add_database(SmithSha256 *sha) {
     size_t swapped =
         whole ? smith_lc_swap(smith_lc_entry, size, smith_lc_scratch, sizeof smith_lc_scratch, true) : SIZE_MAX;
     if (swapped == SIZE_MAX) return false;
+    smith_lc_drop_cache_path(smith_lc_scratch);
     smith_lc_text_add(sha, smith_lc_scratch);
     return true;
 }
@@ -413,7 +563,7 @@ static void smith_lc_second_key(SmithLcJob *job, char key[smith_sha256_hex_size]
 
 // SMITH_LINT_CACHE=why: the first key by its inputs, each as the first 8 hex digits of its digest, so the key of the
 // same file in two runs (a job that saves the cache and one that restores it) can be compared (#2995).
-static void smith_lc_say_inputs(const char *file, const char *own_flags, bool has_headers) {
+static void smith_lc_say_inputs(const char *file, const char *own_flags, const char *headers) {
     char whole[smith_sha256_hex_size];
     char database[smith_sha256_hex_size] = "-";
     char configs[smith_sha256_hex_size] = "-";
@@ -428,7 +578,7 @@ static void smith_lc_say_inputs(const char *file, const char *own_flags, bool ha
     smith_sha256_final(&sha, configs);
     fprintf(stderr, "smith lint: %s: key inputs: smith+env %.8s, name %.8s, %s %.8s, .clang-tidy %.8s, headers %.8s\n",
             file, whole, smith_lc_relative(file), own_flags != smith_lc_scratch ? "flags" : "database", database,
-            configs, has_headers ? smith_lc.headers : "-");
+            configs, headers);
 }
 
 // Finds the keys of a file with the flags of its compile (tab separated; nullptr: it has none of its own).
@@ -442,14 +592,16 @@ void smith_lc_plan(size_t number, const char *file, const char *flags) {
     size_t length =
         flags != nullptr ? smith_lc_swap(flags, strlen(flags), smith_lc_flags, sizeof smith_lc_flags, true) : SIZE_MAX;
     if (flags != nullptr && length != SIZE_MAX) {
+        smith_lc_drop_cache_path(smith_lc_flags);
         smith_lc_text_add(&sha, smith_lc_flags);
     } else if (!smith_lc_add_database(&sha)) {
         smith_lc_why(file, "no compile command to key on");
         return;
     }
     if (!smith_lc_add_configs(&sha, smith_lc_relative(file))) return;
-    size_t name_length = strlen(file);
-    if (name_length > 6 && strcmp(file + name_length - 6, ".smith") == 0 && !smith_lc_add_generated_headers(&sha)) {
+    bool smith_source = smith_lc_ends(file, ".smith");
+    bool all = false;
+    if (smith_source && !smith_lc_add_generated_headers(&sha, smith_lc_relative(file), &all)) {
         smith_lc_why(file, "too many generated headers to key on");
         return;
     }
@@ -460,7 +612,7 @@ void smith_lc_plan(size_t number, const char *file, const char *flags) {
         smith_lc_why(file, "runs: no manifest of an earlier run");
         if (smith_lc.explain)
             smith_lc_say_inputs(file, flags != nullptr && length != SIZE_MAX ? smith_lc_flags : smith_lc_scratch,
-                                name_length > 6 && strcmp(file + name_length - 6, ".smith") == 0);
+                                !smith_source ? "-" : (all ? smith_lc.headers : "imports"));
         return;
     }
     smith_lc_second_key(job, job->key);

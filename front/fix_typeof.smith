@@ -579,12 +579,116 @@ static core::ParseError same_type_fix(Str source, const ast::Decl *d) {
     return out;
 }
 
+// The fix of a local of today's magic slice struct in a function generic over `T: type` (#3078): C's
+// `struct smith_array_T_n result = {};` is the slice of T that the instance makes, which is the function's result
+// (`mem.view(data, T) -> []T` fills its `data` and `count` and returns it). The fixer reads it as the C struct
+// `c.smith_array_T_n`, which no header declares; it is `mut result: <the result type> = undefined`. Empty when the
+// text at `i` is not such a declaration.
+static core::ParseError magic_slice_local(Str source, Usize i, Str param, Str result, Usize floor) {
+    core::ParseError none = {};
+    Str tag = types::message_of(format::push("c.smith_array_", param, "_n"));
+    if (!at(source, i, tag) || (i + countof(tag) < countof(source) && word_char(source[i + countof(tag)]))) return none;
+    if (i < floor + 3 || source[i - 1] != ' ' || source[i - 2] != ':') return none;
+    Usize name_end = i - 2;
+    Usize name_start = name_end;
+    while (name_start > floor && word_char(source[name_start - 1]))
+        name_start -= 1;
+    if (name_start == name_end) return none;
+    Bool is_mut = name_start >= floor + 4 && at(source, name_start - 4, "mut ");
+    Usize line = is_mut ? name_start - 4 : name_start;
+    while (line > floor && source[line - 1] == ' ')
+        line -= 1;
+    if (line > floor && source[line - 1] != '\n') return none;
+    core::Edits fix = {};
+    if (!is_mut) fix = push(fix, name_start, name_start, "mut ");
+    Usize after = i + countof(tag);
+    if (at(source, after, " = {}")) {
+        fix = push(fix, i, after + 5, types::message_of(format::push(result, " = undefined")));
+    } else {
+        fix = push(fix, i, after, result);
+    }
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)i, .end = (U32)after};
+    out.message = "today's `struct smith_array_T_n` local is the slice the function returns: write its result type";
+    out.fix = fix;
+    return out;
+}
+
+// The line at `i` (its first non-blank character) is `name.data = x.cast(*mut P)` and the body declares
+// `name: <result>`, a read-only `[]P`: the cast that today's `(P *)x` became is `*P` (#3078, `std.mem.view`), since the
+// slice's pointer is read-only and the bytes it views may be too (a cast to `*mut` of a read-only pointer is refused).
+static core::ParseError readonly_data_cast(Str source, Usize i, Str param, Str result, Usize floor, Usize end) {
+    core::ParseError none = {};
+    Usize name_end = i;
+    while (name_end < end && word_char(source[name_end]))
+        name_end += 1;
+    if (name_end == i || !at(source, name_end, ".data = ")) return none;
+    Usize line_end = name_end;
+    while (line_end < end && source[line_end] != '\n')
+        line_end += 1;
+    Str tail = types::message_of(format::push(".cast(*mut ", param, ")"));
+    if (line_end < countof(tail) || !at(source, line_end - countof(tail), tail)) return none;
+    Str declared = types::message_of(format::push(source[i:name_end], ": ", result));
+    Bool found = false;
+    for (Usize k = floor; k + countof(declared) <= end && !found; k++) {
+        if (at(source, k, declared) && (k == floor || !word_char(source[k - 1]))) found = true;
+    }
+    if (!found) return none;
+    Usize star = line_end - countof(tail) + 7; // `.cast(*` is 7 bytes
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)star, .end = (U32)(star + 4)};
+    out.message = "the pointer of a read-only `[]T` the function returns is `*T`: a cast to `*mut` drops const";
+    out.fix = push(out.fix, star, star + 4, "");
+    return out;
+}
+
+// The fixes of `readonly_data_cast` in the body of `d` for type parameter `param`, a line at a time.
+static core::Errors readonly_data_casts(Str source, Str param, Str result, Usize body, Usize end, core::Errors out) {
+    if (countof(result) < 3 || !at(result, 0, "[]") || at(result, 0, "[]mut ")) return out;
+    for (Usize i = body; i < end; i++) {
+        if (source[i] != '\n') continue;
+        Usize first = i + 1;
+        while (first < end && source[first] == ' ')
+            first += 1;
+        core::ParseError found = readonly_data_cast(source, first, param, result, body, end);
+        if (countof(found.fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = found;
+    }
+    return out;
+}
+
+// The fixes of `magic_slice_local` in the body of `d`, one for each such local of each type parameter.
+static core::Errors magic_slice_locals(Str source, const ast::Decl *d, core::Errors out) {
+    if (d->kind != .function || d->kind.function.body == nullptr || d->kind.function.result == nullptr) return out;
+    const ast::TypeExpr *result = d->kind.function.result;
+    if (result->span.end > countof(source) || result->span.start >= result->span.end) return out;
+    Str written = source[result->span.start:result->span.end];
+    Usize body = d->kind.function.body->span.start;
+    Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize k = 0; k < countof(params); k++) {
+        const ast::TypeExpr *type = params[k].type;
+        if (type == nullptr || type->span.end > countof(source) || type->span.start >= type->span.end) continue;
+        if (!same(source[type->span.start:type->span.end], "type")) continue;
+        out = readonly_data_casts(source, params[k].name, written, body, end, out);
+        for (Usize i = body; i < end; i++) {
+            core::ParseError found = magic_slice_local(source, i, params[k].name, written, body);
+            if (countof(found.fix) == 0) continue;
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = found;
+        }
+    }
+    return out;
+}
+
 // The fixes of the module: each generic function over a slice, and each `typeof` of a type written out.
 export core::Errors edits(Str source, const ast::Module *module) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .function) continue;
+        out = magic_slice_locals(source, d, out);
         core::ParseError found = generic_fix(source, d);
         if (countof(found.fix) == 0) found = pointer_fix(source, d);
         if (countof(found.fix) == 0) found = concept_fix(source, d);
