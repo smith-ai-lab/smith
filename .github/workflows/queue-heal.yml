@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A zeroth pass (#3158) enforces the intake freeze: while issue #73 carries the label `queue-frozen` it dequeues every entry but the one labelled `queue-exempt`, labels it `frozen-out` and enqueues nothing; when the label is gone it relabels each `frozen-out` PR `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -101,10 +101,71 @@ jobs:
           q=$(echo "$list" | grep -c . || true)
           now=$(date -u +%s)
           lost=0
+
+          # zeroth pass (#3158): the intake freeze. The label `queue-frozen` on issue #73 is the one switch (the lead adds and
+          # removes it); the label `queue-exempt` on a PR names the one entry that may stay (the fix for the cause). While
+          # frozen, every other queue entry is dequeued (no `dequeued` label: it did nothing wrong; the label `frozen-out`
+          # instead) and nothing is enqueued: not the `ready` pass, not the re-queue of lost entries. When the switch is off,
+          # each PR labelled `frozen-out`, oldest first, is relabelled `ready`, and the fifth pass enqueues it once its `ci`
+          # is green: one path in, with the owner's token, so this pass never creates the front of an empty queue itself.
+          # Dequeuing runs from the back of the queue to the front, so the entries behind the front go first.
+          names=$(gh api "repos/$REPO/issues/73/labels" --paginate --jq '.[].name') \
+            || { log "queue-heal: cannot read the freeze switch (#73), nothing done"; exit 1; }
+          frozen=false
+          echo "$names" | grep -qx queue-frozen && frozen=true
+          freeze_pass() {
+            local exempt pr id out="" ex="" kept=""
+            exempt=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+              --jq '.[] | select([.labels[].name] | index("queue-exempt")) | .number') \
+              || { log "queue-heal: cannot list the open PRs, nothing done"; exit 1; }
+            for pr in $exempt; do ex="$ex #$pr"; done
+            for pr in $(echo "$list" | tac); do
+              case " $(echo $exempt) " in *" $pr "*) kept="$pr"$'\n'"$kept"; continue ;; esac
+              id=$(gh api "repos/$REPO/pulls/$pr" --jq .node_id) || { log "queue-heal: #$pr unreadable, left in the queue"; kept="$pr"$'\n'"$kept"; continue; }
+              if dry; then
+                log "dry-run: would dequeue #$pr (frozen)"
+                log "dry-run: would label #$pr frozen-out"
+                out="$out #$pr"
+                continue
+              fi
+              if gh api graphql -f query='
+                  mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$id" --silent; then
+                gh api -X POST "repos/$REPO/issues/$pr/labels" -f "labels[]=frozen-out" --silent || true
+                out="$out #$pr"
+              else
+                log "queue-heal: #$pr frozen, dequeue failed"
+                kept="$pr"$'\n'"$kept"
+              fi
+            done
+            log "queue-heal: frozen, dequeued${out:- none}, exempt${ex:- none}"
+            list=$(printf '%s' "$kept" | grep . || true)
+            q=$(echo "$list" | grep -c . || true)
+          }
+          unfreeze_pass() {
+            local pr out=""
+            log "queue-heal: not frozen"
+            for pr in $(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+                --jq '.[] | select([.labels[].name] | index("frozen-out")) | "\(.created_at) \(.number)"' | sort | cut -d' ' -f2); do
+              if dry; then
+                log "dry-run: would label #$pr ready"
+                log "dry-run: would unlabel #$pr frozen-out"
+              else
+                gh api -X POST "repos/$REPO/issues/$pr/labels" -f "labels[]=ready" --silent \
+                  && gh api -X DELETE "repos/$REPO/issues/$pr/labels/frozen-out" --silent || { log "queue-heal: #$pr unfreeze failed"; continue; }
+              fi
+              out="$out #$pr"
+            done
+            [ -n "$out" ] && log "queue-heal: unfrozen, ready$out"
+            return 0
+          }
+          if [ "$frozen" = true ]; then freeze_pass; else unfreeze_pass; fi
+
           # a PR labelled `dequeued` was taken out on purpose by queue-ops: an API dequeue leaves no timeline event
           open=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
             --jq '.[] | select([.labels[].name] | index("dequeued") | not) | .number') \
             || { log "queue-heal: cannot list the open PRs, nothing done"; exit 1; }
+          # nothing is re-queued while frozen
+          [ "$frozen" = true ] && open=""
           for pr in $open; do
             case "$queued" in *" $pr "*) continue ;; esac
             # the last merge-queue event of the PR: "<event> <time>"
@@ -130,6 +191,7 @@ jobs:
           # `ready`. A PR whose ci is not green yet keeps the label and is tried again on the next pass.
           ready_pass() {
             local pr info mergeable state id sha ci pos n=0
+            [ "$frozen" = true ] && { log "queue-heal: frozen, none ready"; return 0; }
             for pr in $(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
                 --jq '.[] | select([.labels[].name] | (index("ready") and (index("dequeued") | not))) | .number'); do
               case "$queued" in *" $pr "*) continue ;; esac
