@@ -1894,7 +1894,7 @@ static state::Status array_constant(state::Emitter *e, state::Ty ty, state::Size
         return state::success();
     }
     if (x->kind != .array_lit)
-        return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
+        return state::fold(e, x, ty, out); // `squares()`: baked whole when the evaluator runs it (#3039)
     state::SizedTy chain[16];
     Usize n = 0;
     state::Ty level = ty;
@@ -2020,7 +2020,13 @@ static state::Status compound_constant(state::Emitter *e, state::Ty ty, const as
         *out = c::LLVMConstNull(ty.llvm); // `static mut memory: arena.Arena = mem.zeroed(arena.Arena)` (#3036)
         return state::success();
     }
-    if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
+    if (x->kind == .call && ty.kind == .record) {
+        state::Status built = construction_constant(e, ty, x, out);
+        if (built != .error) return built;
+        // `corner(7)`: a call of a function the evaluator runs is baked whole (#3039)
+        state::Status baked = state::fold(e, x, ty, out);
+        return baked != .error ? baked : built;
+    }
     if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, out);
 
     if (x->kind != .compound) {

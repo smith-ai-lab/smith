@@ -2931,6 +2931,35 @@ export Bool length(types::Checked *r, const ast::Expr *e, U64 *out) {
 
 // The value of `e` when it is an integer, a character, a boolean or an enumerator, as the 64 bits a `match` compares
 // (a negative number in two's complement).
+// A struct or array a computation left in the heap, for the emitter to write into the program (#3039): how many cells
+// it has (0 when `v` is not one), and cell `i` as a number (`is_float` false: `bits`), a float (`is_float`: `real`) or
+// neither (false; a nested struct, a string and a pointer are not baked yet).
+export Usize baked_cells(Value v) {
+    if (v == .aggregate) return cells_in(v.aggregate.object);
+    return 0;
+}
+
+export Bool baked_cell(Value v, Usize i, Bool *is_float, U64 *bits_out, F64 *real) {
+    if (v == .aggregate) {
+        Value cell = cell_get(v.aggregate.object, i);
+        *is_float = false;
+        if (cell == .integer) {
+            *bits_out = cell.integer.negative ? 0 - cell.integer.magnitude : cell.integer.magnitude;
+            return true;
+        }
+        if (cell == .boolean) {
+            *bits_out = cell.boolean.value ? 1 : 0;
+            return true;
+        }
+        if (cell == .floating) {
+            *is_float = true;
+            *real = cell.floating.value;
+            return true;
+        }
+    }
+    return false;
+}
+
 export Bool bits(types::Checked *r, const ast::Expr *e, U64 *out) {
     Outcome found = value(r, e);
     if (!found.known) return false;

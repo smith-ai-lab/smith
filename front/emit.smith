@@ -88,6 +88,7 @@ import front::ast;
 import front::emit_aggregate as aggregates;
 import front::eval;
 import front::emit_arith as arith;
+import front::emit_builtin as builtin;
 import front::emit_call as call;
 import front::emit_control as control;
 import front::emit_debug as debug;
@@ -2295,6 +2296,45 @@ static void declare_all(state::Emitter *e) {
     }
 }
 
+// A struct or array of numbers the evaluator built (#3039, baking), as the constant of type `to`: one LLVM constant,
+// element by element in the order of the LLVM type's own elements. Nested structs, strings and pointers are not baked
+// yet (false: the value is built at run time as before).
+static Bool baked_aggregate(eval::Value v, state::Ty to, c::LLVMValueRef *out) {
+    Usize count = eval::baked_cells(v);
+    if (count == 0 || count > 65536) return false;
+    builtin::Cells parts[:] = mem::alloc_slice(builtin::Cells, count);
+    c::LLVMTypeRef kind = to.llvm;
+    Bool is_array = c::LLVMGetTypeKind(kind) == c::LLVMArrayTypeKind;
+    if (!is_array && c::LLVMCountStructElementTypes(kind) != count) {
+        mem::free(parts.data);
+        return false;
+    }
+    for (Usize i = 0; i < count; i++) {
+        c::LLVMTypeRef part = is_array ? c::LLVMGetElementType(kind) : c::LLVMStructGetTypeAtIndex(kind, (U32)i);
+        Bool is_float = false;
+        U64 bits = 0;
+        F64 real = 0.0;
+        if (!eval::baked_cell(v, i, &is_float, &bits, &real)) {
+            mem::free(parts.data);
+            return false;
+        }
+        c::LLVMTypeKind part_kind = c::LLVMGetTypeKind(part);
+        if (is_float && (part_kind == c::LLVMFloatTypeKind || part_kind == c::LLVMDoubleTypeKind)) {
+            parts[i].item = c::LLVMConstReal(part, real);
+        } else if (!is_float && part_kind == c::LLVMIntegerTypeKind) {
+            parts[i].item = c::LLVMConstInt(part, bits, 0);
+        } else {
+            mem::free(parts.data);
+            return false;
+        }
+    }
+    c::LLVMValueRef *items = (c::LLVMValueRef *)parts.data;
+    *out = is_array ? c::LLVMConstArray2(c::LLVMGetElementType(kind), items, count)
+                    : c::LLVMConstNamedStruct(kind, items, (U32)count);
+    mem::free(parts.data);
+    return true;
+}
+
 // `x` built in a function nothing keeps and folded to the constant of type `to` (a global's initializer, #2510).
 // The constant `front::eval` computes for `x` (#3039), as a number or a Bool of type `to`; false when it computes none
 // of these, and the value is built and folded as before (a struct, a string: step 3).
@@ -2303,6 +2343,8 @@ static Bool computed_constant(state::Emitter *e, const ast::Expr *x, state::Ty t
     types::Checked *checked = (types::Checked *)(Usize)e->options.checked; // the evaluator reads names in its scopes
     eval::Outcome found = eval::value(checked, x);
     if (!found.known) return false;
+    if (found.value == .aggregate && (to.kind == .array || to.kind == .record))
+        return baked_aggregate(found.value, to, out);
     U64 bits = 0;
     if (found.value == .floating && to.kind == .floating) {
         *out = c::LLVMConstReal(to.llvm, found.value.floating.value);
@@ -2316,6 +2358,9 @@ static Bool computed_constant(state::Emitter *e, const ast::Expr *x, state::Ty t
 
 static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state::Ty to, c::LLVMValueRef *out) {
     if (computed_constant(e, x, to, out)) return state::success();
+    if (to.kind == .array ||
+        to.kind == .record) // a struct or array is written only when the evaluator computed it (#3039)
+        return state::failf(x->span, "the initializer of a global is a constant of type ", to.name);
     c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), nullptr, 0, 0);
     c::LLVMValueRef scratch = c::LLVMAddFunction(e->module, ".fold", type);
     state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
