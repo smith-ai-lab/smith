@@ -8,22 +8,28 @@
 #include "prove.hpp"
 #include "proved.hpp"
 
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "platform.h"
 
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <thread>
@@ -37,6 +43,10 @@ extern "C" int smith_lang_command(int argc, char **argv, int first, char **out, 
 // out as bitcode when the output is named `*.bc`. Declared by hand, as in runtime/front_flag.c (the lag rule).
 extern "C" int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count,
                                      const char *triple);
+
+#ifndef SMITH_PROVER_IDENTITY
+#define SMITH_PROVER_IDENTITY ""
+#endif
 
 namespace {
 
@@ -68,7 +78,7 @@ struct Arguments {
         "  --memory=GB       the memory one function may use (default 8)\n"
         "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
         "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
-        "  --no-cache        ask the solver again, not the store\n"
+        "  --no-cache        ask the solver again, not the step store\n"
         "  --induction       prove every loop that has a smith_invariant by induction (one pass)\n"
         "  --unroll          unroll every loop that has a bound, its invariant checked on each pass\n"
         "  --induction-from=N  by default a loop with an invariant is unrolled up to N passes (16)\n"
@@ -189,7 +199,7 @@ int compile_with_new_front_end(const char *resource, const std::string &file, co
 // Compiles one file to bitcode in `output` with the clang smith runs in process. Returns clang's exit status. A .smith
 // file goes through smith's own front end instead when the flags have `--front-end=new`.
 int compile(const char *program, const char *resource, const std::string &file, const std::vector<std::string> &flags,
-            const std::string &output) {
+            const std::string &output, const std::string &depfile) {
     // A .smith file is C2y and lowered by the compiler's hook: smith_lang_command gives it `-x c` and the standard.
     bool smith = is_smith(file);
     if (smith && wants_new_front_end(flags)) return compile_with_new_front_end(resource, file, flags, output);
@@ -201,6 +211,8 @@ int compile(const char *program, const char *resource, const std::string &file, 
                                "-UNDEBUG", "-Wno-unused-command-line-argument", sanitizers, "-fsanitize-trap=all"}) {
         words.emplace_back(forced);
     }
+    // The files this compile reads, for the group's record (GroupRecord): what the compile is a function of.
+    if (!depfile.empty()) words.insert(words.end(), {"-MD", "-MF", depfile});
     words.insert(words.end(), {"-Xclang", "-disable-O0-optnone", "-o", output, file});
     std::vector<char *> pointers;
     for (std::string &word : words)
@@ -346,6 +358,224 @@ void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
             std::printf(" %s = %s", name.c_str(), value.c_str());
         std::printf("\n");
     }
+}
+
+// ---- the folder of the group's records ----
+
+// The group's records (below) are files of this folder, named by a hash of what the group is a function of; the
+// solver's answers are not (#3174: they are entries of the step store). An entry unused for 31 days is removed, checked
+// at most once a week.
+std::string cache_directory() {
+    const char *base = std::getenv("XDG_CACHE_HOME");
+    std::string root = base != nullptr && *base != '\0' ? base : "";
+    if (root.empty()) {
+        const char *home = std::getenv("HOME");
+        if (home == nullptr || *home == '\0') return "";
+        root = std::string(home) + "/.cache";
+    }
+    return root + "/smith/proofs";
+}
+
+std::string cache_path(const std::string &key) {
+    std::string directory = cache_directory();
+    if (directory.empty()) return "";
+    llvm::SHA256 hash;
+    hash.update(key);
+    // The build time is not part of the prover's identity, so a rebuild of smith with the same prover keeps every
+    // record.
+    hash.update(prove::prover_identity());
+    std::array<uint8_t, 32> digest = hash.final();
+    static const char *const hex = "0123456789abcdef";
+    std::string name;
+    for (uint8_t byte : digest) {
+        name += hex[byte >> 4];
+        name += hex[byte & 15];
+    }
+    return directory + "/" + name;
+}
+
+void cache_prune(const std::string &directory) {
+    std::string stamp = directory + "/prune.timestamp";
+    struct stat info{};
+    time_t now = time(nullptr);
+    if (stat(stamp.c_str(), &info) == 0 && now - info.st_mtime < 7L * 24 * 3600) return;
+    std::error_code ignored;
+    for (const auto &entry : std::filesystem::directory_iterator(directory, ignored)) {
+        struct stat file{};
+        if (entry.path().filename() == "prune.timestamp") continue;
+        if (stat(entry.path().c_str(), &file) == 0 && now - file.st_mtime > 31L * 24 * 3600)
+            std::filesystem::remove(entry.path(), ignored);
+    }
+    std::ofstream(stamp) << "pruned\n";
+}
+
+// ---- the group's record: a group whose every function was proved from the step store alone is not compiled again ----
+
+// Asking the store for a function's answers needs its IR, so a group that solves nothing new still paid for compiling
+// every source to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run
+// of a group ends with every function proved by answers of the step store alone (no query ran), the group keeps a
+// record: the files its compiles read (as the compilers' depfiles name them) with the digest of each, and the lines it
+// printed. The next run of the same group (the same sources, libraries, flags and options, the same prover, the same
+// compiler: smith_import_identity hashes the front end, the runtime, lib/std and the LLVM pack) reads the files named,
+// and when every digest holds, the compile would read the same bytes and prove the same: the lines are printed again.
+// Any other case runs as it did. A compile with no depfile (`--front-end=new`), a file that cannot be read or named,
+// and one that names a macro for the time keep no record.
+extern "C" const char smith_import_identity[];
+
+struct GroupRecord {
+    std::string path; // empty: no record is read or kept
+    std::set<std::string> dependencies;
+    std::string lines; // what the group printed before its summary line: the trusted functions
+    std::string tail;  // and after it: the coverage
+    unsigned proved = 0, trusted = 0;
+};
+
+bool file_digest(const std::string &path, std::string &hex) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::stringstream text;
+    text << file.rdbuf();
+    std::string bytes = text.str();
+    // The macros that give the time (spelled in two pieces: tests/prove_misc_test.smith greps this file for them).
+    for (const char *macro : {"__DA"
+                              "TE__",
+                              "__TI"
+                              "ME__",
+                              "__TIME"
+                              "STAMP__"}) {
+        if (bytes.find(macro) != std::string::npos) return false;
+    }
+    llvm::SHA256 hash;
+    hash.update(bytes);
+    std::array<uint8_t, 32> digest = hash.final();
+    static const char *const digits = "0123456789abcdef";
+    hex.clear();
+    for (uint8_t byte : digest) {
+        hex += digits[byte >> 4];
+        hex += digits[byte & 15];
+    }
+    return true;
+}
+
+// The record's name: everything the group's compiles and proofs are a function of besides the files they read.
+std::string group_record_path(const Arguments &arguments) {
+    const prove::Options &options = arguments.options;
+    bool plain = !options.no_cache && options.only.empty() && !options.verbose && !options.dump &&
+                 options.emit_ir.empty() && !wants_new_front_end(arguments.flags) && smith_import_identity[0] != '\0';
+    if (!plain) return "";
+    std::string key = "group\n";
+    for (const std::string &file : arguments.files)
+        key += "file " + file + "\n";
+    for (const std::string &file : arguments.libraries)
+        key += "library " + file + "\n";
+    for (const std::string &flag : arguments.flags)
+        key += "flag " + flag + "\n";
+    key += "budget " + std::to_string(options.budget_seconds) + " memory " + std::to_string(options.memory_bytes) +
+           " loops " + std::to_string(static_cast<int>(options.loops)) + " from " +
+           std::to_string(options.induction_from_passes) + "\n";
+    key += std::string("identity ") + smith_import_identity + "\n";
+    std::string path = cache_path(key);
+    size_t slash = path.rfind('/');
+    return slash == std::string::npos ? "" : path.substr(0, slash + 1) + "group-" + path.substr(slash + 1);
+}
+
+// Prints the record's lines and the last one when every file it names has the digest it had; false otherwise.
+bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::time_point start) {
+    if (record.path.empty()) return false;
+    std::ifstream file(record.path);
+    std::string line;
+    if (!std::getline(file, line) || line != "smith-prove-group 1") return false;
+    if (!std::getline(file, line) || line.rfind("counts ", 0) != 0) return false;
+    char *rest = nullptr;
+    unsigned proved = static_cast<unsigned>(std::strtoul(line.c_str() + 7, &rest, 10));
+    if (*rest != ' ') return false;
+    unsigned trusted = static_cast<unsigned>(std::strtoul(rest + 1, &rest, 10));
+    if (*rest != '\0') return false;
+    std::string text, tail;
+    bool replaying = false, in_tail = false;
+    std::set<std::string> named;
+    while (std::getline(file, line)) {
+        if (replaying) {
+            if (line == "===" && !in_tail) {
+                in_tail = true;
+            } else {
+                (in_tail ? tail : text) += line + "\n";
+            }
+        } else if (line == "---") {
+            replaying = true;
+        } else if (line.size() > 66 && line.compare(0, 2, "D ") == 0 && line[66] == ' ') {
+            std::string hex;
+            std::string path = line.substr(67);
+            if (!file_digest(path, hex) || hex != line.substr(2, 64)) return false;
+            named.insert(path);
+        } else {
+            return false;
+        }
+    }
+    if (!replaying || !in_tail) return false;
+    for (const std::vector<std::string> *list : {&arguments.files, &arguments.libraries}) {
+        for (const std::string &source : *list) {
+            if (named.count(source) == 0) return false;
+        }
+    }
+    utimes(record.path.c_str(), nullptr); // used now
+    std::fputs(text.c_str(), stdout);
+    double seconds = std::chrono::duration<double>(Clock::now() - start).count();
+    std::printf("%u proved, 0 failed", proved);
+    if (trusted > 0) std::printf(", %u trusted", trusted);
+    if (proved > 0) std::printf(", %u cached", proved);
+    std::printf(" in %.2f s (not compiled)\n", seconds);
+    std::fputs(tail.c_str(), stdout);
+    return true;
+}
+
+// Keeps the record of a group that ended with all of its functions reused from the cache.
+void group_keep(const GroupRecord &record, const std::vector<std::string> &depfiles, const Arguments &arguments) {
+    if (record.path.empty()) return;
+    std::set<std::string> dependencies;
+    for (const std::string &all : depfiles) { // the text of each compile's depfile
+        std::string word;
+        if (all.empty()) return;
+        bool first = true;
+        for (size_t i = 0; i < all.size(); i++) {
+            char c = all[i];
+            if (c == '\\' && i + 1 < all.size() && (all[i + 1] == '\n' || all[i + 1] == '\r')) {
+                i += all[i + 1] == '\r' && i + 2 < all.size() && all[i + 2] == '\n' ? 2 : 1;
+                c = ' ';
+            } else if (c == '\\' && i + 1 < all.size() && all[i + 1] == ' ') {
+                return; // a name with a space: not recorded
+            }
+            if (c == ' ' || c == '\n' || c == '\t' || c == '\r') {
+                if (!word.empty() && !first) dependencies.insert(word);
+                if (!word.empty() && first && word.back() == ':') first = false;
+                word.clear();
+                if (c == '\n') first = true;
+            } else {
+                word += c;
+            }
+        }
+        if (!word.empty() && !first) dependencies.insert(word);
+    }
+    for (const std::vector<std::string> *list : {&arguments.files, &arguments.libraries})
+        dependencies.insert(list->begin(), list->end());
+    std::string out = "smith-prove-group 1\n";
+    out += "counts " + std::to_string(record.proved) + " " + std::to_string(record.trusted) + "\n";
+    for (const std::string &path : dependencies) {
+        std::string hex;
+        if (path.find('\n') != std::string::npos || !file_digest(path, hex)) return;
+        out += "D " + hex + " " + path + "\n";
+    }
+    out += "---\n" + record.lines + "===\n" + record.tail;
+    std::string directory = record.path.substr(0, record.path.rfind('/'));
+    std::error_code ignored;
+    std::filesystem::create_directories(directory, ignored);
+    std::string temporary = record.path + ".tmp" + std::to_string(getpid());
+    {
+        std::ofstream file(temporary);
+        file << out;
+    }
+    std::filesystem::rename(temporary, record.path, ignored);
+    cache_prune(directory);
 }
 
 // ---- the proof file: what a release build leaves out (issue #221, shim/proved.hpp) ----
@@ -536,7 +766,8 @@ void emit_ir(const prove::Prepared &prepared, const prove::Options &options) {
     file << prove::program_ir_text(prepared);
 }
 
-// Proves a prepared function and prints what there is to say about it. Returns 0 when it is proved, 1 when it is not.
+// Proves a prepared function and prints what there is to say about it. Returns 0 when it is proved, 1 when it is not,
+// and 2 when it is proved with no query to the solver run now (every answer was in the step store).
 int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
     std::string label = prepared.unit.name + "  (" + at(prepared.unit.file, prepared.unit.line) + ")";
     emit_ir(prepared, options);
@@ -556,7 +787,7 @@ int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
     int status = 1;
     switch (outcome.status) {
     case prove::Outcome::Proved:
-        status = 0;
+        status = outcome.solved_now == 0 ? 2 : 0; // 2: no query ran, every answer was in the step store
         record_checks(prepared.unit);
         if (options.verbose)
             std::printf("ok    %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
@@ -735,7 +966,7 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
 
 // Proves each function in a process of its own, so that a crash or a function that will not finish is a failure of that
 // function and nothing more, and the budget is a clock the prover cannot overrun. Returns 0 for a proof, 1 for a
-// failure.
+// failure, 2 for a proof that asked the solver nothing.
 int prove_in_child(prove::Program &loaded, const std::string &name, const std::string &label,
                    const prove::Options &options) {
     std::fflush(nullptr);
@@ -746,7 +977,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
         end_with_parent_or_budget(parent, options);
         int status = prove_unit(loaded, name, options);
         std::fflush(nullptr);
-        _exit(status);
+        _exit(status == 2 ? 4 : status); // 4: proved, from the step store alone
     }
     Clock::time_point begin = Clock::now();
     double allowed = wall_backstop(options);
@@ -781,7 +1012,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
         }
         usleep(2000);
     }
-    if (WIFEXITED(status)) return WEXITSTATUS(status) == 0 ? 0 : 1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status) == 0 ? 0 : WEXITSTATUS(status) == 4 ? 2 : 1;
     if (WIFSIGNALED(status) && WTERMSIG(status) == SIGXCPU) {
         std::printf(
             "FAIL  %s\n  over its budget of %.0f s of CPU time (counted as on %u idle cores): it has used "
@@ -796,6 +1027,18 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 }
 
 } // namespace
+
+// SMITH_PROVER_IDENTITY, the macro, is the hash `smith build` made (build_prover_identity in build.c). The environment
+// variable of the same name replaces it, for the test that a proof follows the identity and not the binary
+// (tests/prove_misc_test.smith): it can only make a group's record unreachable or name a record of its own.
+std::string prove::prover_identity() {
+    const char *replaced = std::getenv("SMITH_PROVER_IDENTITY");
+    if (replaced != nullptr && *replaced != '\0') return std::string("smith-prove-cache-as ") + replaced;
+    if (SMITH_PROVER_IDENTITY[0] != '\0') return "smith-prove-cache-id " SMITH_PROVER_IDENTITY;
+    // No identity (a build without the hash): LLVM's version, which decides the IR and Alive2's reading of it, and the
+    // version bumped by hand when a change to the prover can change a proof's outcome.
+    return std::string("smith-prove-cache-" SMITH_PROVER_VERSION " llvm-") + LLVM_VERSION_STRING;
+}
 
 // Z3's static initializers, which `build_z3_defer` in build.c moved out of the section dyld runs at load (there are ten
 // thousand, and every smith process would pay for them) into __DATA,__smith_prove. `smith prove` is the one command
@@ -812,6 +1055,9 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     Clock::time_point start = Clock::now();
     std::setvbuf(stdout, nullptr, _IOLBF, 0); // each result as soon as it is known
     Arguments arguments = parse(argc, argv);
+    GroupRecord record;
+    record.path = group_record_path(arguments);
+    if (group_replay(record, arguments, start)) return 0;
     // The prover reads every check: the compile that makes its IR never leaves one out for an earlier proof.
     setenv("SMITH_PROVING", "1", 1);
 
@@ -833,13 +1079,24 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     }
     if (!smith_inputs.empty()) setenv("SMITH_LANG_INPUTS", smith_inputs.c_str(), 1);
     std::vector<std::string> bitcode;
+    std::vector<std::string> depfiles;
     int status = 0;
     std::vector<std::string> sources = arguments.files;
     sources.insert(sources.end(), arguments.libraries.begin(), arguments.libraries.end());
     for (size_t i = 0; i < sources.size() && status == 0; i++) {
         std::string output = std::string(directory.data()) + "/" + std::to_string(i) + ".bc";
-        status = compile(program, resource, sources[i], arguments.flags, output);
+        std::string depfile = record.path.empty() ? "" : std::string(directory.data()) + "/" + std::to_string(i) + ".d";
+        status = compile(program, resource, sources[i], arguments.flags, output, depfile);
         bitcode.push_back(output);
+        std::string text;
+        if (!depfile.empty()) {
+            std::ifstream file(depfile);
+            std::stringstream all;
+            all << file.rdbuf();
+            text = all.str();
+            unlink(depfile.c_str());
+        }
+        depfiles.push_back(text);
     }
     prove::Program loaded;
     loaded.verbose = arguments.options.verbose;
@@ -864,6 +1121,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     }
     unsigned proved = 0;
     unsigned failed = 0;
+    unsigned cached = 0;
     unsigned trusted = 0;
     auto wanted_name = [&](const std::string &source_name) {
         if (arguments.options.only.empty()) return true;
@@ -882,6 +1140,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
                       function.name.c_str(), at(function.file, function.line).c_str(), function.requires_count,
                       function.ensures_count);
         std::fputs(said, stdout);
+        record.lines += said;
     }
     // The checks the children prove are written for a release build from a run of every function of the group
     // (--function proves a part, which would drop the rest): a function that fails records nothing, so its checks stay.
@@ -889,10 +1148,12 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     for (const std::string &name : prove::program_units(loaded)) {
         if (!wanted_name(prove::program_label(loaded, name))) continue;
         int one = prove_in_child(loaded, name, prove::program_label(loaded, name), arguments.options);
-        if (one == 1)
+        if (one == 1) {
             failed++;
-        else
+        } else {
             proved++;
+            cached += one == 2;
+        }
     }
     if (checks_file != nullptr) {
         unsigned arithmetic_proved = 0;
@@ -913,12 +1174,17 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         std::printf("%u of %u functions have contracts", coverage.with_contract, coverage.total);
         if (without == 0) {
             std::printf("\n");
+            record.tail += std::to_string(coverage.with_contract) + " of " + std::to_string(coverage.total) +
+                           " functions have contracts\n";
         } else if (arguments.options.verbose) {
             std::printf("; the %u without:\n", without);
             for (const prove::Without &function : coverage.without)
                 std::printf("without  %s  (%s)\n", function.name.c_str(), at(function.file, function.line).c_str());
         } else {
             std::printf("; smith prove -v lists the %u without\n", without);
+            record.tail += std::to_string(coverage.with_contract) + " of " + std::to_string(coverage.total) +
+                           " functions have contracts; smith prove -v lists the " + std::to_string(without) +
+                           " without\n";
         }
     };
     if (proved + failed + trusted == 0) {
@@ -932,7 +1198,13 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
     std::printf("%u proved, %u failed", proved, failed);
     if (trusted > 0) std::printf(", %u trusted", trusted);
+    if (cached > 0) std::printf(", %u cached", cached);
     std::printf(" in %.2f s\n", seconds);
     say_coverage();
+    if (failed == 0 && cached == proved) {
+        record.proved = proved;
+        record.trusted = trusted;
+        group_keep(record, depfiles, arguments);
+    }
     return failed == 0 ? 0 : 1;
 }

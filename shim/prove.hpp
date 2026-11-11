@@ -215,6 +215,15 @@ std::set<const llvm::Instruction *> data_cone(const llvm::Instruction *root);
 // The IR of a prepared function as the prover checks it, with the proof points listed in comments.
 std::string program_ir_text(const Prepared &prepared);
 
+// ---- shim/prove.cpp ----
+
+// The prover's identity (#3076): what every cache of proofs puts in its key beside what was proved, so a proof made by
+// one prover is never the answer of another. `smith build` hashes the prover's sources, the LLVM pack and the solvers'
+// archives into it (build.c, build_prover_identity); a smith built without it falls back to the version bumped by hand.
+// It does not hold the rest of smith: a change to the compiler, the runtime or the libraries reaches a proof only
+// through the IR, which is the other half of the key.
+std::string prover_identity();
+
 // ---- shim/prove_bitwuzla.cpp ----
 
 // Timeout: the deadline passed. Unknown: the solver could not read or decide the query.
@@ -267,10 +276,11 @@ struct Outcome {
     unsigned queries_written = 0;
     std::vector<std::pair<std::string, double>> phases; // where the charged time went, in order
     std::vector<Finding> findings;
-    std::string error;      // for Error
-    double seconds = 0;     // wall time
-    double cpu_seconds = 0; // CPU time of the process, every thread, since the proof began
-    double charged = 0;     // what the budget counts: the time on solver_threads idle cores (see Options)
+    std::string error;       // for Error
+    double seconds = 0;      // wall time
+    double cpu_seconds = 0;  // CPU time of the process, every thread, since the proof began
+    unsigned solved_now = 0; // the queries that ran in this process: the rest were found in the step store
+    double charged = 0;      // what the budget counts: the time on solver_threads idle cores (see Options)
 };
 
 // CPU time (user and system, every thread) the process has used.

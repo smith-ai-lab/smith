@@ -624,6 +624,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         };
         // Decides the jobs on several threads; false when the budget ran out first. The round is charged the longest
         // query or all of them divided by the threads, whichever is more: what it takes on that many idle cores.
+        std::atomic<unsigned> ran_now{0}; // the queries the solver ran in this process
         auto solve = [&](const std::vector<Job *> &jobs, const char *name) {
             double left = options.budget_seconds - charged();
             if (left <= 0) return false;
@@ -636,6 +637,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                     double kept = 0;
                     jobs[i]->verdict = bitwuzla_check(jobs[i]->text, left, process_start, Options::solver_threads,
                                                       !options.no_cache, kept);
+                    if (kept < 0) ran_now++;
                     jobs[i]->cpu = kept >= 0 ? kept : thread_cpu_seconds() - before;
                 }
             };
@@ -659,6 +661,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             for (Job *job : jobs) {
                 if (job->verdict == Verdict::Timeout) return false;
                 if (job->verdict != Verdict::Unknown || job->text.empty()) continue;
+                ran_now++;
                 smt::Solver fallback(true); // a query Bitwuzla cannot read: Z3 decides it, if it can
                 fallback.add(job->whole);
                 smt::Result answer;
@@ -955,6 +958,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 outcome.queries.push_back(time);
             }
         }
+        outcome.solved_now = ran_now;
         if (timed_out)
             outcome.status = Outcome::Timeout;
         else if (outcome.status != Outcome::Error && !outcome.findings.empty())
