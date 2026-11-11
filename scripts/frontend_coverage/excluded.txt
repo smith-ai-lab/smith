@@ -22,8 +22,6 @@ tests/smith-lang/cases/error-countof-pointer/src/main.smith	error-fixture
 tests/smith-lang/cases/error-defer-name/src/main.smith	error-fixture
 tests/smith-lang/cases/error-enum-convert/src/main.smith	error-fixture
 tests/smith-lang/cases/error-enum-payload/src/main.smith	error-fixture
-tests/smith-lang/cases/error-enum-type-function-export/src/main.smith	error-fixture
-tests/smith-lang/cases/error-enum-type-function-generic/src/main.smith	error-fixture
 tests/smith-lang/cases/error-enum-type-function/src/main.smith	error-fixture
 tests/smith-lang/cases/error-export-two-names/src/two.smith	error-fixture
 tests/smith-lang/cases/error-fields-enum-member/src/main.smith	error-fixture
@@ -74,7 +72,6 @@ tests/smith-lang/cases/error-try-generic-kind/src/main.smith	error-fixture
 tests/smith-lang/cases/error-try-kind/src/main.smith	error-fixture
 tests/smith-lang/cases/error-try-plain-function/src/main.smith	error-fixture
 tests/smith-lang/cases/error-tuple-index/src/main.smith	error-fixture
-tests/smith-lang/cases/error-type-function-pointee/src/main.smith	error-fixture
 tests/smith-lang/cases/error-type-value-import/src/main.smith	error-fixture
 tests/smith-lang/cases/error-type-value-runtime/src/main.smith	error-fixture
 tests/smith-lang/cases/error-type-value-slice-bounds/src/main.smith	error-fixture
