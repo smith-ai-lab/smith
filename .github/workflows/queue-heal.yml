@@ -208,7 +208,7 @@ jobs:
           # since T: one step up (1, 2, 4, 8). It prints `queue-heal: health 7 of 10, group size 1` on every pass and
           # runs from an EXIT trap, after the second pass. Same PUT and token fallback as queue-ops' set-group-size.
           tune() {
-            local id rs g t runs h total after bad nb
+            local id rs g t runs h total after bad nb cur
             id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ] \
               || { log "queue-heal: health unknown, group size unreadable (no ruleset main)"; return 0; }
             rs=$(gh api "repos/$REPO/rulesets/$id") || { log "queue-heal: health unknown, group size unreadable"; return 0; }
