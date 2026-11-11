@@ -6,7 +6,7 @@ tags: [ci, process]
 ---
 # CI jobs, scope and the split
 
-**A typical queue run (#2870)** is a change whose untested tests fit in one part (a parts PR). Its heavy jobs, at most 6 at once on Linux with the count's shards:
+**A typical queue run (#2870)** is a change whose untested tests fit in one part (a parts PR). Its heavy jobs, at most 5 at once on Linux (the count runs after the merge, on the push to main: [count](count.md), #3052):
 
 | job | runs | why it is its own job |
 |---|---|---|
@@ -15,7 +15,7 @@ tags: [ci, process]
 | `check-fmt-prove`, `check-lint` | after `build-linux` | two jobs so neither is longer than the other path (lead, 2026-11-08, #2833); their `Checks` step prints where the time went (#2985): lint's `linted N files (R run, C cached, T s, setup S s: build info, needs, plan and hash)`, prove's `G groups, build B s, proofs P s` and its count of functions reused from the cache |
 | `macos` | beside them | the macOS job (#1709): the `--macos-only` tests whose inputs changed (its own test store) |
 | `macos-lint` | beside them | `smith lint` of the code only the Mac sees (#3045): its own job and tree, since lint and the tests cannot share one (`.smith/build.ninja`); it builds smith, not the tests; a queue run holds 3 of the 5 hosted macOS slots (`macos`, `macos-lint`, `release-pack-macos`) |
-| `frontend-coverage-fix`, `frontend-coverage` (and `-shard` ×2 to 8 when two or more parts are left) | the count ([count](count.md)) | the fix job builds the release smith and, in a warm run, counts itself (#2832) |
+| `release-pack-macos`, `release-pack-linux` | a queue run, beside the others | the release tarballs of the commit main moves to ([release](../release.md)), #3052 |
 | `ci` | last, light | the verdict |
 
 More parts (a change to `lib/std/test.smith`, the nightly's empty store) run in `test-linux`, one job per part on the build `build-linux` uploads, and a pull request's part runs there too, beside `check-fmt-prove`, so its checks are not behind its tests. No job gathers the test stores: each job that runs tests publishes its own ([caches](caches.md)). Until #2870 a typical run also had `build-linux-release` (now in `frontend-coverage-fix`, #2890), `test-linux` (now in `build-linux` for one part) and `save-test-cache` (now in each test job; the `macos` job's store upload of #2867 became its own `test-cache/save`): before, the batch heads 42558311503 and 42559604613 ran 9 jobs outside the count.

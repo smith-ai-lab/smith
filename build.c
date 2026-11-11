@@ -457,10 +457,12 @@ static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *con
 }
 
 // The shims whose compile is mostly clang's and LLVM's headers (knowledge/precompiled-shim-headers.md): they are
-// compiled with the header shim/pch.h precompiled (build_shim_pch). The rest are small (`lsp` and `clangd` measured
-// slower with it: loading the header costs more than their includes).
+// compiled with the header shim/pch.h precompiled (build_shim_pch). `cimport`, `cimport_deps`, `lldb_dap` and
+// `lldb_explain` joined them in #3079 (6.7 to 2.1 s, 5.6 to 1.2, 3.7 to 1.0, 3.6 to 1.3). The rest gain nothing or
+// lose (`lsp` and `symbolize` measured slower with it: loading the header costs more than their includes).
 static bool build_shim_uses_pch(const char *name) {
-    const char *const names[] = {"hook", "tidy", "affine", "effects_infer"};
+    const char *const names[] = {"hook",    "tidy",         "affine",   "effects_infer",
+                                 "cimport", "cimport_deps", "lldb_dap", "lldb_explain"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (strcmp(name, names[i]) == 0) return true;
     }
