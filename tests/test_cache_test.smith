@@ -1,8 +1,8 @@
 // The cache of `smith test` (#2686, runtime/test_cache.c, lib/std/test.smith): a test that passed is not run again
 // while nothing it depends on has changed. Each case runs `smith test` in a project of its own, with a cache of its own
-// and the cache on (a runner inside a test has it off, so a scratch project's runs stay what they say). smith-covers:
-// runtime/test_cache.c runtime/verbs.c runtime/changed.c lib/std/test.smith tests/runner.smith smith-covers:
-// tests/build_fixtures/runner_cache/
+// and the cache on (a runner inside a test has it off, so a scratch project's runs stay what they say).
+// smith-covers: runtime/test_cache.c runtime/verbs.c runtime/changed.c lib/std/test.smith tests/runner.smith
+// smith-covers: tests/build_fixtures/runner_cache/
 module test_cache_test;
 
 import std::arena;

@@ -39,6 +39,7 @@ module front::emit_memory;
 import front::ast;
 import front::emit_arith as arith;
 import front::emit_builtin as builtin;
+import front::emit_lambda as lambdas;
 import front::emit_match as matching;
 import front::emit_state as state;
 import front::types;
@@ -1075,6 +1076,8 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
     }
     if ((from.ty.kind == .pointer && to.kind == .integer) || (from.ty.kind == .integer && to.kind == .pointer))
         return pointer_integer_cast(e, w, from, to);
+    if ((to.kind == .fn_value || to.kind == .fn_pointer) && (from.ty.kind == .pointer || from.ty.kind == .integer))
+        return lambdas::from_address(e, from, to, w->span); // `address.to(Run)`, which the checker allows (#3110)
     return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name);
 }
 
@@ -1861,7 +1864,8 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         return state::success();
     }
     if (ty.kind == .pointer && global_address(e, x, out)) return state::success();
-    if (ty.kind == .integer) return state::fold(e, x, ty, out); // `~0.to(u64)`, `(a >> 1).to(i64)`: built and folded
+    // `~0.to(u64)`, `small(i16) or tiny(i64)`, `ratio * 2.0`: computed by the compiler (#3039), else built and folded
+    if (ty.kind == .integer || ty.kind == .boolean || ty.kind == .floating) return state::fold(e, x, ty, out);
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 

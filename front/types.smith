@@ -1541,6 +1541,8 @@ export struct NodeType {
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
     Bool decided;            // the condition of an `if` that asks about types: one branch is kept (#1902)
     Bool keeps_then;         // when `decided`: the `then` branch is the one kept, else the `else` branch
+    Bool has_value; // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
+    U64 value;
 };
 
 // A test of a payload enumeration's variant, `if k == .v:` or `if k != .v: return`, kept for the fix of the reads `k.v`
@@ -1577,6 +1579,16 @@ export typedef const ast::Module *(*HeaderLoader)(Str header, Bool angled);
 // Gives the type of an expression (J1b's `infer`), for `typeof(a + b)` in a type; this file cannot import it (#1918).
 export typedef TypeRef (*ExprTyper)(Checked *r, const ast::Expr *e);
 
+// Gives the value of an expression that must be an integer known at compile time and not negative, such as an array
+// length (#3039). `what` names what needs it ("an array length") and makes the folder report the reason when the value
+// is not known; an empty `what` asks quietly. J1d sets it to `front::eval`, which this file cannot import.
+export typedef Bool (*LengthFolder)(Checked *r, const ast::Expr *e, Str what, U64 *out);
+
+// Gives the type of a module-level constant written without one whose initializer is no literal
+// (`const words = page / sizeof(usize)`, #3039): the type of the value the compiler computes, or null when it computes
+// none. J1d sets it to `front::eval`'s.
+export typedef TypeRef (*ConstantTyper)(Checked *r, const ast::Expr *init);
+
 // Why the last `ModuleLoader` call returned null although the module exists: "<file>:<line>: <first parse error>", or
 // "" when the module is not there. The loader sets it on each call; `collect_imports` reads it (#2224).
 static Str load_failure_text = "";
@@ -1587,10 +1599,12 @@ export void set_load_failure(Str text) {
 
 export struct Options {
     Target target;
-    BodyChecker bodies;   // null: bodies are not checked
-    ExprTyper expression; // null: `typeof` of an expression that is not a name is refused
-    ModuleLoader load;    // null: imports are not read
-    HeaderLoader headers; // null: C headers are not read
+    BodyChecker bodies;     // null: bodies are not checked
+    ExprTyper expression;   // null: `typeof` of an expression that is not a name is refused
+    LengthFolder length;    // null: only an integer literal is a length
+    ConstantTyper constant; // null: a constant written without a type takes one only from a literal
+    ModuleLoader load;      // null: imports are not read
+    HeaderLoader headers;   // null: C headers are not read
 };
 
 // What a call passed for one compile-time parameter of a generic function (#1908, part of #1700): a type, or a value.
@@ -1824,6 +1838,26 @@ export void set_decided(Checked *r, const ast::Expr *condition, Bool keeps_then)
     entry = entry_in(r, condition, max_instances);
     entry->decided = true;
     entry->keeps_then = keeps_then;
+}
+
+// Records the value the compiler computed for an expression that has no run-time form (a question about a type, a
+// call of a concept), as the 64 bits of its type: the emitter writes the constant (#3039).
+export void set_value(Checked *r, const ast::Expr *node, U64 value) {
+    NodeType *entry = entry_in(r, node, r->current);
+    entry->has_value = true;
+    entry->value = value;
+    if (r->current == max_instances) return;
+    entry = entry_in(r, node, max_instances);
+    entry->has_value = true;
+    entry->value = value;
+}
+
+// The value the checker computed for an expression in the body of `instance`; false when it recorded none.
+export Bool value_in(const Checked *r, const ast::Expr *node, Usize instance, U64 *value) {
+    const NodeType *entry = find_in(r, node, instance);
+    if (entry == nullptr || !entry->has_value) return false;
+    *value = entry->value;
+    return true;
 }
 
 // Whether the checker answered the condition of an `if` in the body of `instance`, and which branch it kept.
@@ -2375,7 +2409,7 @@ static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef eleme
     return vector_of(&r->table, element, count->kind.integer.value);
 }
 
-static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out);
+static Bool constant_length(Checked *r, const ast::Expr *root, Str what, U64 *out);
 
 // `arena::slice_of(T, count)`: `count` nested slices of `T` (a block when 2 or more), where `count` is a literal, a
 // constant, or `countof` of a pack.
@@ -2385,7 +2419,7 @@ static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef ele
     U64 count = 0;
     const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
     const ast::Expr *count_expr = value_argument(second);
-    if (count_expr == nullptr || !constant_length(r, count_expr, &count) || count < 1) {
+    if (count_expr == nullptr || !constant_length(r, count_expr, "", &count) || count < 1) {
         failf(r, node->span, "`slice_of` takes an element type and a count known at compile time, of 1 or more");
         return r->table.invalid;
     }
@@ -2441,39 +2475,6 @@ static TypeRef build_block(Checked *r, ast::Span span, ast::ExprRef dims[:], Typ
     if (empty == 0) return cell;
     if (empty == 1) return slice_of(&r->table, cell, false);
     return block_of(&r->table, cell, empty);
-}
-
-// One step of `constant_length`: an expression, and whether its operands' values are already on the value stack.
-struct LengthStep {
-    const ast::Expr *expr;
-    Bool operands_done;
-};
-
-static LengthStep length_step(const ast::Expr *expr, Bool operands_done) {
-    LengthStep step = {.expr = expr, .operands_done = operands_done};
-    return step;
-}
-
-// Applies a binary operator to two lengths; false when it is not a length operator or the result is not a length
-// (a division by zero, a negative subtraction, a shift of 64 or more).
-static Bool apply_length(ast::BinaryOp op, U64 a, U64 b, U64 *out) {
-    if (op == .add)
-        *out = a + b;
-    else if (op == .multiply)
-        *out = a * b;
-    else if (op == .subtract && a >= b)
-        *out = a - b;
-    else if (op == .divide && b != 0)
-        *out = a / b;
-    else if (op == .remainder && b != 0)
-        *out = a % b;
-    else if (op == .shift_left && b < 64)
-        *out = a << b;
-    else if (op == .shift_right && b < 64)
-        *out = a >> b;
-    else
-        return false;
-    return true;
 }
 
 export const Symbol *type_through_modules(const Checked *r, ast::Path path);
@@ -2629,118 +2630,17 @@ export Bool name_path(const ast::Expr *e, ast::Path *path) {
     return true;
 }
 
-// The operand of `countof(x)`, else null.
-static const ast::Expr *counted_operand(const ast::Expr *e) {
-    if (e->kind != .query) return nullptr;
-    if (e->kind.query.op != .count_of) return nullptr;
-    return e->kind.query.operand;
-}
-
-// The value of an array length that is known at compile time: an integer literal, a name of a constant (`constexpr`,
-// `const`, or a `let` that is not `mut`) whose initializer is one, and `+ - * / % << >>` of these. An explicit stack,
-// never recursion, and a budget of steps so a constant defined by itself ends. False when it is anything else.
-static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
-    LengthStep steps[32];
-    U64 values[32];
-    Usize top = 0;
-    Usize have = 0;
-    steps[top++] = length_step(root, false);
-    for (Usize budget = 0; top > 0; budget++) {
-        if (budget == 256) return false;
-        LengthStep step = steps[--top];
-        const ast::Expr *e = step.expr;
-        if (e == nullptr) return false;
-        if (e->kind == .integer) {
-            values[have++] = e->kind.integer.value;
-            continue;
-        }
-        ast::Path path = {};
-        ast::Path counted_path = {};
-        if (name_path(counted_operand(e), &counted_path)) {
-            // `countof(dims)` of a pack in an instance: the number of elements of the tuple it is bound to
-            const Symbol *pack = type_through_modules(r, counted_path);
-            if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
-                return false;
-            values[have++] = (U64)countof(slots_of(pack->type).items);
-            continue;
-        }
-        if (names_a_constant(e, &path)) {
-            const Symbol *s = type_through_modules(r, path);
-            const ast::Expr *init = constant_initializer(s);
-            if (init == nullptr || top == 32) return false;
-            steps[top++] = length_step(init, false);
-            continue;
-        }
-        if (e->kind == .cast && e->kind.cast.form == .convert) {
-            // `n.to(usize)`, which the fixer writes into a constant (#2506): the checked conversion keeps the value
-            if (top == 32) return false;
-            steps[top++] = length_step(e->kind.cast.operand, false);
-            continue;
-        }
-        if (e->kind == .binary) {
-            ast::BinaryOp op = e->kind.binary.op;
-            const ast::Expr *left = e->kind.binary.left;
-            const ast::Expr *right = e->kind.binary.right;
-            if (step.operands_done) {
-                U64 value = 0;
-                if (have < 2 || !apply_length(op, values[have - 2], values[have - 1], &value)) return false;
-                have -= 2;
-                values[have++] = value;
-            } else {
-                if (top + 3 > 32 || have + 2 > 32) return false;
-                steps[top++] = length_step(e, true);
-                steps[top++] = length_step(right, false);
-                steps[top++] = length_step(left, false);
-            }
-            continue;
-        }
-        return false;
-    }
-    if (have != 1) return false;
-    *out = values[0];
-    return true;
-}
-
-// The value of `root` when it is known at compile time as an array length is (`array.filled(u8, n, 0)`, #2339).
-export Bool fold_length(const Checked *r, const ast::Expr *root, U64 *out) {
-    return constant_length(r, root, out);
-}
-
-// The value of a `match` pattern known at compile time (#2336): an integer, character or boolean literal, its negation,
-// a name of a constant whose initializer is one, or what `constant_length` folds. False for anything else, such as a
-// C header's constant, whose value the checker does not hold.
-export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
-    const ast::Expr *e = root;
-    Bool negated = false;
-    for (Usize budget = 0; e != nullptr && budget < 32; budget++) {
-        U64 value = 0;
-        Bool known = true;
-        ast::Path path = {};
-        const ast::Expr *inner = negated_operand(e);
-        if (inner != nullptr) {
-            negated = !negated;
-            e = inner;
-            continue;
-        }
-        const ast::Expr *at = e;
-        if (at->kind == .integer) {
-            value = at->kind.integer.value;
-        } else if (at->kind == .character) {
-            value = at->kind.character.value;
-        } else if (at->kind == .boolean) {
-            value = at->kind.boolean.value ? 1 : 0;
-        } else if (names_a_constant(e, &path)) {
-            const Symbol *s = type_through_modules(r, path);
-            const ast::Expr *init = constant_initializer(s);
-            if (init == nullptr) return false;
-            e = init;
-            continue;
-        } else {
-            known = constant_length(r, e, &value);
-        }
-        if (!known) return false;
-        *out = negated ? 0 - value : value;
+// The value of an array length or a count: an integer known at compile time that is not negative (#3039). A literal
+// is read here; anything else is `front::eval`'s to give, through `Options.length`. `what` is the folder's (empty:
+// nothing is reported).
+static Bool constant_length(Checked *r, const ast::Expr *root, Str what, U64 *out) {
+    if (root->kind == .integer) {
+        *out = root->kind.integer.value;
         return true;
+    }
+    if (r->options.length != nullptr) return r->options.length(r, root, what, out);
+    if (countof(what) > 0) {
+        failf(r, root->span, what, " must be known at compile time; write an integer");
     }
     return false;
 }
@@ -2778,13 +2678,11 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
             }
         }
         U64 length = 0;
-        if (count == nullptr || !constant_length(r, count, &length)) {
-            ast::Span at = node->span;
-            if (count != nullptr) at = count->span;
-            failf(r, at, "not yet typed: an array length that is not a constant; write an integer, a constant or ",
-                  "arithmetic on constants");
+        if (count == nullptr) {
+            failf(r, node->span, "an array has a length: write `[4]T`, or `[]T` for a slice");
             return r->table.invalid;
         }
+        if (!constant_length(r, count, "an array length", &length)) return r->table.invalid;
         Bool is_const = node->kind.array.element->qualifiers.is_const;
         set_length(r, count, length);
         TypeRef made = array_of(&r->table, w->values[base].type, length, is_const);
@@ -3426,6 +3324,38 @@ static Bool type_uses(const ast::TypeExpr *t, Str name) {
     return false;
 }
 
+// Whether the written type names `name` as a type, anywhere inside it: `T`, `T *`, `T[:]`, `Option(T)`.
+static Bool type_names(const ast::TypeExpr *t, Str name) {
+    const ast::TypeExpr *todo[32];
+    Usize n = 0;
+    if (t != nullptr) todo[n++] = t;
+    while (n > 0) {
+        const ast::TypeExpr *x = todo[--n];
+        if (x == nullptr) continue;
+        if (x->kind == .named && countof(x->kind.named.path.segments) == 1 &&
+            same_text(x->kind.named.path.segments[0].text, name))
+            return true;
+        Usize children = 1;
+        if (x->kind == .function) children = countof(x->kind.function.params) + 1;
+        if (x->kind == .tuple) children = countof(x->kind.tuple.elements);
+        if (x->kind == .applied) children = countof(x->kind.applied.args);
+        for (Usize i = 0; i < children && n < countof(todo); i++) {
+            const ast::TypeExpr *inner = child(x, i);
+            if (inner != nullptr) todo[n++] = inner;
+        }
+    }
+    return false;
+}
+
+// Whether the result of a function names one of its own type parameters (`T *push(Pool *p, constexpr Type T)`): the
+// call site says what the result is, as it says what the argument `T` is (#3101).
+static Bool result_names_type_parameter(ast::Param list[:], const ast::TypeExpr *result_type) {
+    for (Usize i = 0; i < countof(list); i++) {
+        if (is_type_name(list[i].type) && type_names(result_type, list[i].name)) return true;
+    }
+    return false;
+}
+
 // Marks the value parameters of a function in smith's own syntax that a type of its signature uses: they are known at
 // compile time, with one instance per value (owner, 2026-11-08: "Yeah, drop const from parameters").
 static void mark_used_in_types(ast::Param list[:], const ast::TypeExpr *result_type) {
@@ -3567,7 +3497,9 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
                 .name = p->name, .kind = .variable, .type = params[i].type, .is_new = p->is_new, .written = p->type});
     }
     TypeRef result = r->table.void_type;
-    if (result_type != nullptr && !is_type_name(result_type)) {
+    if (result_names_type_parameter(list, result_type)) {
+        result = r->table.invalid; // its type is the argument's: `T` is not a type here (#3101)
+    } else if (result_type != nullptr && !is_type_name(result_type)) {
         r->new_syntax = (countof(list) > 0 && list[0].is_new) || is_new_function(d);
         result = resolve(r, result_type); // (`Type`: a type function)
         r->new_syntax = false;
@@ -4359,6 +4291,24 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
     declare_in_module(r, symbol, d->span);
 }
 
+// After pass 3 of a module: each constant written without a type whose initializer is no literal takes the type of
+// the value the compiler computes for it (#3039). Every name of the module is declared by now, so the order the
+// constants are written in does not matter.
+static void type_constants(Checked *r, const ast::Module *m) {
+    if (r->options.constant == nullptr) return;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .variable || d->from_c || !d->kind.variable.is_new) continue;
+        const ast::Expr *init = d->kind.variable.init;
+        if (init == nullptr || d->kind.variable.type->kind != .auto_type) continue;
+        const Symbol *found = lookup(&r->scopes, qualified(r, false, d->kind.variable.name));
+        if (found == nullptr || found->kind != .variable || found->decl != d) continue;
+        if (found->type != r->table.automatic) continue;
+        TypeRef computed = r->options.constant(r, init);
+        if (computed != nullptr) ((Symbol *)(Usize)found)->type = computed;
+    }
+}
+
 static Bool declare_module_alias(Checked *r, const ast::Decl *d);
 
 // Pass 3 for one declaration.
@@ -4959,6 +4909,7 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
                 r->scopes.count = symbols;
             }
         }
+        type_constants(r, m);
     }
     r->prefix = "";
 }
@@ -5165,6 +5116,7 @@ export Checked check(const ast::Module *m, Options o) {
     }
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_member(&r, m->decls[i]);
+    type_constants(&r, m);
     if (o.bodies == nullptr) return r;
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];

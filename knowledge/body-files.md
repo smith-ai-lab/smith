@@ -41,9 +41,11 @@ lowered with the parser's types. The module's own compile has the whole lowered 
   effects check ignores its redeclarations.
 - **The depfile.** Everything included from a system buffer is a system header, which `-MMD` leaves out, so the
   assembled text names each file it reads with a `#if __has_include(...)` (a lookup is recorded by where it finds the
-  file, not by who asks): each taken module's `.body`, its source (a body made in memory has no file, so its source
-  line is copied from the body's text) and the C headers of its `H` section. An edit to any of them rebuilds the
-  importer. The compile that first makes a body file starts before it, so ninja's rule runs that compile once more. State is the one limit by design: a function that names a variable of the
+  file, not by who asks): each taken module's source (the line is copied from the body's text) and the C headers of
+  its `H` section. An edit to any of them rebuilds the importer. The `.body` file itself is not named (#3079): it is
+  made from the source, by whichever importer needs it first, so naming it made a compile that had read it stale as
+  soon as a neighbour wrote it again (its result was never stored in the step cache, and the next build ran it once
+  more). State is the one limit by design: a function that names a variable of the
   module that is not constant is not carried (a copy would be a second variable), and a call to it is the error it was.
   A function whose evaluation calls a generic's instance is not carried yet (the instance is written at the end of the
   module's file).

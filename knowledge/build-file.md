@@ -14,7 +14,7 @@ clang inside: no C++, no LLVM, it runs an external clang) still builds with one 
 
 Status: v1, v1.5 (`smith_defer`, `smith_lines`), C-function steps (`.run`, `.args`, `smith_run_lines`,
 `smith_run_status`) and the changes found by porting game (below) are implemented. checkers and smith itself build with
-it. `.content_hash` is declared but not implemented. The
+it. `.content_hash` is implemented for function steps only ([the executor](executor.md#function-steps)). The
 23 cases that shaped it, each in make, ninja, Zig 0.17.0 and a smith `build.c`, are in
 [the 23 cases](build-cases.md).
 

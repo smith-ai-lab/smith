@@ -1,0 +1,24 @@
+# The binding a guard is fixed into (#3083) keeps an `@affine` payload affine: `.full(full) := b else:` moves the
+# token out once, and a second use is still an error.
+
+@affine
+struct Token:
+    id: u64
+
+enum Box:
+    full: Token
+    empty
+
+fn take(token: Token) -> u64:
+    token.id
+
+# was `if b != .full: return 0` with `take(b.full)` twice
+fn twice(b: Box) -> u64:
+    .full(full) := b else:
+        return 0
+    first := take(full)
+    second := take(full)
+    first + second
+
+pub fn check() -> i32:
+    0
