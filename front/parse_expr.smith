@@ -418,9 +418,15 @@ static ast::Expr *variant_value(parse::Parser *p) {
     return make(parse::span_from(p, start), {.variant = {.name = parse::text(p, name), .payload = payload}});
 }
 
-// A type where a value is expected: `f(I32)`, `Option(I32)`.
+// A type where a value is expected: `f(I32)`, `Option(I32)`. A type compared with `==` or `!=` is the C type itself, so
+// `typeof(x) == char *` is `*mut char` and `== const char *` is `*char`, as in a cast (#3027: it was `*char`, and
+// std.format's `write` of a `*mut char` piece had no rule).
 static ast::Expr *type_value(parse::Parser *p) {
+    lex::TokenKind before = p->position > 0 ? p->tokens[p->position - 1].kind : lex::end_of_file;
+    Bool was_cast = p->in_cast;
+    if (before == lex::equal_equal || before == lex::bang_equal) p->in_cast = true;
     ast::TypeExpr *type = parse::type(p);
+    p->in_cast = was_cast;
     if (type == nullptr) return nullptr;
     return make(type->span, {.type_value = {.type = type}});
 }
@@ -1567,6 +1573,28 @@ static void chain_warning(parse::Parser *p, const ast::Expr *callee) {
         no_edits());
 }
 
+// The span of what is inside the parentheses at `span`, when they open at its start and the one that closes them is its
+// last byte; else `span`. The parentheses of `countof(x)` are the query's, so a fix of `x` (`r.ok` is `ok`) keeps them:
+// the operand's span covered them, as `paren` gives a grouped expression (#3027: `countof(bytes.ok)` became
+// `countofok`).
+static ast::Span inside_parentheses(Str source, ast::Span span) {
+    if (span.end <= span.start + 1 || span.end > countof(source)) return span;
+    if (source[span.start] != '(' || source[span.end - 1] != ')') return span;
+    Usize depth = 0;
+    for (Usize i = span.start; i < span.end; i++) {
+        if (source[i] == '(') depth += 1;
+        if (source[i] == ')') depth -= 1;
+        if (depth == 0 && i + 1 < span.end) return span;
+    }
+    U32 start = span.start + 1;
+    U32 end = span.end - 1;
+    while (start < end && (source[start] == ' ' || source[start] == '\n'))
+        start += 1;
+    while (end > start && (source[end - 1] == ' ' || source[end - 1] == '\n'))
+        end -= 1;
+    return (ast::Span){.start = start, .end = end};
+}
+
 // Takes the last pending operator and applies it to its operands.
 static void reduce(Stack *st) {
     st->op_count -= 1;
@@ -1603,10 +1631,13 @@ static void reduce(Stack *st) {
         cast_warning(st, &op, right);
         push_value(st, make(between(op.start, right), {.cast = {.type = op.type, .operand = right}}));
         break;
-    case .query_form:
+    case .query_form: {
         if (op.legacy) countof_warning(st, &op, right);
-        push_value(st, make(between(op.start, right), {.query = {.op = op.query, .type = nullptr, .operand = right}}));
+        ast::Span whole = between(op.start, right);
+        if (!op.legacy) right->span = inside_parentheses(st->parser->source, right->span);
+        push_value(st, make(whole, {.query = {.op = op.query, .type = nullptr, .operand = right}}));
         break;
+    }
     case .try_form:
         push_value(st, make(between(op.start, right), {.try_expr = {.operand = right}}));
         break;

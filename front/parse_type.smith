@@ -1461,3 +1461,13 @@ static ast::TypeExpr *read(parse::Parser *p) {
 export ast::TypeExpr *type(parse::Parser *p) {
     return read(p);
 }
+
+// The type after `name:` in smith's own syntax (a parameter, a binding): the position is a type, so a lowercase type
+// function applied there is one, `o: maybe(usize)`, as in a result (#3027: it was read as `maybe` and a stray `(`).
+export ast::TypeExpr *declared(parse::Parser *p) {
+    Bool in_result = p->in_result;
+    p->in_result = true;
+    ast::TypeExpr *type = parse::type(p);
+    p->in_result = in_result;
+    return type;
+}
