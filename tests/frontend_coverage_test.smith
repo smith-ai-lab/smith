@@ -1,9 +1,9 @@
 // scripts/frontend_coverage/main.smith (#1730), the tool of `smith build frontend-coverage`: its grouping and summary
-// on a small fixed table of five files (one passes, three fail at the check stage, one of them with
-// more errors that the first would have hidden (#1922), one fails at the parse stage; the causes rank by the files
-// they stop first, #2247). The tool is a
-// project of its own in a scratch folder, run by the smith under test; no real file is read or changed. smith-covers:
-// scripts/frontend_coverage/main.smith
+// on a small fixed table of five files (one passes, three fail at the check stage, one of them with more errors that
+// the first would have hidden (#1922), one fails at the parse stage; the causes rank by the files they stop first,
+// #2247). The tool is a project of its own in a scratch folder, run by the smith under test; no real file is read or
+// changed.
+// smith-covers: scripts/frontend_coverage/main.smith
 module frontend_coverage_test;
 
 import std::arena;

@@ -1,8 +1,9 @@
 // One process, many files (#2888): `smith cc --front-end=new` with several files reads each imported module and C
 // header once, and a file compiled with others gives the same object and the same diagnostics as compiled alone. A
-// file's C headers are read with its own compile command's flags, so two files with different defines do not share
-// one; a generic of an imported module is instantiated in each file; an error in an imported module is reported in
-// every file that imports it. smith-covers: front/compile.smith front/types.smith runtime/front_flag.c
+// file's C headers are read with its own compile command's flags, so two files with different defines do not share one;
+// a generic of an imported module is instantiated in each file; an error in an imported module is reported in every
+// file that imports it.
+// smith-covers: front/compile.smith front/types.smith runtime/front_flag.c
 module cc_shared_files_test;
 
 import std::test;
