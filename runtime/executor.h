@@ -260,6 +260,7 @@ typedef struct {
     size_t target_count;
     const char
         *verb; // the project verb that asked for its target (smith run), for the message when the project has none
+    const char *self; // the path of the smith that runs the build: a command's hash reads it as the word `smith`
 } SmithExecOptions;
 
 constexpr size_t smith_exec_recap_max = 16; // failed steps the recap lists; the rest are counted

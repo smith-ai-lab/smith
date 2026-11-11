@@ -35,7 +35,7 @@ smith parses the `.smith/build.ninja` that build.c's program wrote; the program 
 Two files in the manifest's `builddir` (`.smith/`), text, appended to as jobs end and compacted when more than two
 thirds of the lines are dead:
 - `.smith/.smith_log`: `# smith log 1`, then one line per output and run, `<start ms> <end ms> <mtime ns> <hash> <path>`.
-  The hash is FNV-1a 64 of the command. The mtime is the time the command started, on the file system's clock (ninja's own rule:
+  The hash is FNV-1a 64 of the command, with the path of the smith that runs the build read as the word `smith`: the commands that compile the build file name that smith, and the same smith at another path (a copy, a worktree's stage0) would otherwise compile and link `.smith/program` again and run every function step after it (#3079; 14 steps in smith's own tree). The mtime is the time the command started, on the file system's clock (ninja's own rule:
   an input modified after that, even while the command ran, makes the output out of date); a restat step that changed
   an output records that output's time if it is later. This is `.ninja_log`'s job (a changed command reruns the step). The durations are kept
   for whoever wants them; the jobs start in ninja's order, the longest chain of commands after them first.
