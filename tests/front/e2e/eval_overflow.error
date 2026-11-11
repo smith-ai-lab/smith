@@ -1,0 +1,4 @@
+<dir>/src/eval_overflow.smith:2:13: error: this overflows `I32` at compile time: 2147483647 + 1
+<dir>/src/eval_overflow.smith:4:14: error: this divides by zero at compile time
+<dir>/src/eval_overflow.smith:5:12: error: this shifts by 40 at compile time, which is not below the 32 bits of the value
+<dir>/src/eval_overflow.smith:6:12: error: `300` does not fit `U8` at compile time

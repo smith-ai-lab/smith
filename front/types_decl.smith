@@ -61,6 +61,7 @@
 module front::types_decl;
 
 import front::ast;
+import front::eval;
 import front::types;
 import front::types_attr;
 import front::types_builtin;
@@ -810,12 +811,27 @@ static void require_constant(types::Checked *r, Str name, const ast::Expr *init)
     if (init == nullptr || types_expr::is_undefined(init)) {
         return;
     }
+    // The compiler computes it (#3039): an error of the computation (`top + 1` past the type, a division by zero) is
+    // reported; a call is not run yet (step 2), so a value that is not known is refused only for what can never be.
+    eval::Outcome found = eval::value(r, init);
+    if (found.failed) {
+        eval::report(r, found, init, "this constant");
+        return;
+    }
+    if (found.known) return;
     const ast::Expr *bad = not_constant(r, init);
     if (bad != nullptr) {
         types::failf(r, bad->span, "`const ", name,
                      "` is known at compile time, but this is not; use a constant here, or write `", name,
                      " := ...` without `const`");
     }
+}
+
+// Whether a local's written type lets it hold a type: none (`const T = typeof(x)`) or `type` itself.
+static Bool holds_type(const ast::TypeExpr *written) {
+    if (written->kind == .auto_type) return true;
+    if (written->kind != .named || countof(written->kind.named.path.segments) != 1) return false;
+    return types::same_text(written->kind.named.path.segments[0].text, "type");
 }
 
 static void local_variable(types::Checked *r, const ast::Decl *d) {
@@ -831,6 +847,19 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     // the initializer is already smith's own syntax: a lambda in `let _ = f(fn(a: i32) -> bool: ...)` writes `bool`
     if (is_new) {
         r->new_body = true;
+    }
+    types::TypeRef held = nullptr;
+    if (is_new && !is_mut && init != nullptr && holds_type(written) &&
+        (init->kind == .type_value || init->kind == .name))
+        held = eval::type_held(r, init);
+    if (held != nullptr) {
+        // `Element := typeof(xs[0])`, `wide: type = u16`: a constant that holds a type is a name of that type
+        // (#3039), as at module level; nothing is stored for it, and the mark on its value tells the emitter.
+        // `p := Pair(n, n)` reads as a type too, and is not one.
+        types::set_value(r, init, 1);
+        types::Symbol alias = {.name = name, .kind = .type_name, .type = held, .decl = d};
+        (void)types::declare(&r->scopes, alias);
+        return;
     }
     types::TypeRef type = r->table.automatic;
     if (written->kind != .auto_type) {
@@ -1580,172 +1609,37 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
-// Whether `e` is `and`, `or` or `not`, the connectives a compile-time question about a type is joined with.
-static Bool connective(const ast::Expr *e) {
-    if (e->kind == .unary) return e->kind.unary.op == .logical_not;
-    if (e->kind != .binary) return false;
-    return e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or;
-}
-
-// A call of a concept function being answered: its declaration and the types its parameters stand for. Frame 0 is
-// the condition itself, read in the scopes of the function that holds it.
-struct ConceptFrame {
-    const ast::Decl *decl;
-    types::TypeRef args[8];
-};
-
-// Declares the type parameters of `frame` in a scope of their own (`T` in `is_float(T)`), or pushes nothing when the
-// frame is the condition itself. The caller pops the scope with `leave_frame`.
-static void enter_frame(types::Checked *r, const ConceptFrame *frame) {
-    const ast::Decl *decl = frame->decl;
-    if (decl == nullptr) return;
-    if (decl->kind != .function) return;
-    ast::Param params[:] = decl->kind.function.params;
-    types::push_scope(&r->scopes);
-    for (Usize i = 0; i < countof(params); i++) {
-        types::Symbol bound = {.name = params[i].name, .kind = .type_name, .type = frame->args[i]};
-        (void)types::declare(&r->scopes, bound);
+// `static_assert(c, "m")` (#3039): the compiler computes `c`. False stops the compile with the message. A condition
+// it cannot compute is typed as any condition is, so an error of its own comes first; otherwise the reason it is not
+// known is the error.
+static void static_assertion(types::Checked *r, const ast::Expr *condition, Str message, ast::Span span) {
+    eval::Outcome found = eval::typed(r, condition);
+    Bool typed = false;
+    if (!found.known) {
+        // the checker types it, so that `sizeof(x.field)` has its type, and the evaluator is asked again
+        Usize before = r->error_count;
+        (void)types_expr::check(r, condition, r->table.bool_type);
+        if (r->error_count != before) return;
+        found = eval::typed(r, condition);
+        typed = true;
     }
-}
-
-static void leave_frame(types::Checked *r, const ConceptFrame *frame) {
-    const ast::Decl *decl = frame->decl;
-    if (decl == nullptr) return;
-    if (decl->kind == .function) types::pop_scope(&r->scopes);
-}
-
-// The type an argument of a concept call stands for (`typeof(x)`, `T`, `i32`), or null when it is none or not known
-// until an instance (the parameter of a template).
-static types::TypeRef concept_argument(types::Checked *r, const ast::Expr *arg) {
-    types::TypeRef t = nullptr;
-    Usize errors = r->error_count;
-    if (arg->kind == .name) {
-        const types::Symbol *s = types::lookup_path(&r->scopes, arg->kind.name.path);
-        if (s != nullptr && s->kind == .type_name) t = s->type;
-        if (s == nullptr) {
-            ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
-            written->span = arg->span;
-            written->kind = (ast::TypeKind){.named = {.path = arg->kind.name.path}};
-            r->new_syntax = true;
-            t = types::resolve(r, written);
-            r->new_syntax = false;
-        }
-    } else if (arg->kind == .type_value) {
-        r->new_syntax = true;
-        t = types::resolve(r, arg->kind.type_value.type);
-        r->new_syntax = false;
-    }
-    r->error_count = errors;
-    if (t == nullptr || t == r->table.invalid || t->kind == .concept_type || t->kind == .automatic) return nullptr;
-    return t;
-}
-
-// The concept function `e` calls, with the types of its arguments bound in `made`; false when `e` is no call of a
-// concept function, or an argument's type is not known yet.
-static Bool concept_call(types::Checked *r, const ast::Expr *e, ConceptFrame *made) {
-    if (e->kind != .call) return false;
-    ast::ExprRef args[:] = e->kind.call.args;
-    const ast::Expr *callee = e->kind.call.callee;
-    if (callee->kind != .name) return false;
-    ast::Path path = callee->kind.name.path;
-    const types::Symbol *s = types::lookup_path(&r->scopes, path);
-    if (s == nullptr || s->kind != .function_symbol) return false;
-    const ast::Decl *decl = s->decl;
-    if (decl == nullptr) return false;
-    if (decl->kind != .function) return false;
-    ast::Param params[:] = decl->kind.function.params;
-    if (types::concept_body(decl) == nullptr || countof(args) != countof(params)) return false;
-    if (countof(args) > countof(made->args)) return false;
-    for (Usize i = 0; i < countof(args); i++) {
-        made->args[i] = concept_argument(r, args[i]);
-        if (made->args[i] == nullptr) return false;
-    }
-    made->decl = decl;
-    return true;
-}
-
-// The answer of one question that is no connective, read in its frame: a built-in question (`is_float(T)`,
-// `typeof(x) == i32`), or `true` and `false` in the body of a concept.
-static Bool leaf_answer(types::Checked *r, const ast::Expr *e, const ConceptFrame *frame, Bool *value) {
-    if (e->kind == .boolean && frame->decl != nullptr) {
-        *value = e->kind.boolean.value;
-        return true;
-    }
-    enter_frame(r, frame);
-    Bool known = types_builtin::query_value(r, e, value);
-    leave_frame(r, frame);
-    return known;
-}
-
-// The answer of a condition made of questions about types (`is_integer(typeof(x)) and is_signed(typeof(x))`,
-// `typeof(x) == *char or typeof(x) == []char`, a call of a concept function such as `floaty(typeof(x))`), joined by
-// `and`, `or` and `not`; false when a part is not such a question or its type is not known yet. A concept's call is
-// answered by its body, read with its parameters bound to the argument types, on the same stack (no recursion). An
-// instance keeps the branch the answer picks, as for one question (#1902).
-static Bool query_answer(types::Checked *r, const ast::Expr *test, Bool *answer) {
-    const ast::Expr *nodes[32];
-    Bool opened[32];
-    Usize frame_of[32];
-    Bool values[32];
-    ConceptFrame frames[8];
-    Usize frame_count = 1;
-    frames[0].decl = nullptr;
-    Usize n = 1;
-    Usize have = 0;
-    nodes[0] = test;
-    opened[0] = false;
-    frame_of[0] = 0;
-    while (n > 0) {
-        const ast::Expr *e = nodes[n - 1];
-        Usize f = frame_of[n - 1];
-        if (opened[n - 1]) {
-            n -= 1;
-            if (e->kind == .unary) {
-                values[have - 1] = !values[have - 1];
-            } else if (e->kind == .binary) {
-                Bool left = values[have - 2]; // the left side is answered first
-                Bool right = values[have - 1];
-                have -= 1;
-                values[have - 1] = e->kind.binary.op == .logical_and ? left && right : left || right;
-            } // a concept's call: the answer of its body stays
-        } else if (connective(e)) {
-            opened[n - 1] = true;
-            if (n + 2 > countof(nodes)) return false;
-            if (e->kind == .unary) {
-                nodes[n] = e->kind.unary.operand;
-                frame_of[n] = f;
-                opened[n++] = false;
-            } else if (e->kind == .binary) {
-                nodes[n] = e->kind.binary.right;
-                frame_of[n] = f;
-                opened[n++] = false;
-                nodes[n] = e->kind.binary.left;
-                frame_of[n] = f;
-                opened[n++] = false;
-            }
+    if (found.known && found.value == .boolean) {
+        if (found.value.boolean.value) return;
+        if (countof(message) == 0) {
+            types::fail(r, span, "static_assert failed");
         } else {
-            ConceptFrame called = {};
-            enter_frame(r, &frames[f]);
-            Bool is_concept = frame_count < countof(frames) && concept_call(r, e, &called);
-            leave_frame(r, &frames[f]);
-            if (is_concept) {
-                if (n + 1 > countof(nodes)) return false;
-                opened[n - 1] = true;
-                frames[frame_count] = called;
-                nodes[n] = types::concept_body(called.decl);
-                frame_of[n] = frame_count++;
-                opened[n++] = false;
-            } else {
-                n -= 1;
-                Bool value = false;
-                if (have == countof(values) || !leaf_answer(r, e, &frames[f], &value)) return false;
-                values[have++] = value;
-            }
+            types::fail(r, span, message);
         }
+        return;
     }
-    if (have != 1) return false;
-    *answer = values[0];
-    return true;
+    Usize before = r->error_count;
+    if (!typed) (void)types_expr::check(r, condition, r->table.bool_type);
+    if (r->error_count != before) return;
+    if (found.failed) {
+        eval::report(r, found, condition, "this condition");
+        return;
+    }
+    types::failf(r, span, "static_assert needs a condition known at compile time: ", found.why);
 }
 
 static void if_statement(types::Checked *r, const ast::Stmt *s) {
@@ -1756,27 +1650,43 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
-    // A condition about the target that `when::live_module` did not decide (#2277); a local named `target` is not one.
-    if (when::about_target(test) && !when::is_folded_fact(test) && types::lookup(&r->scopes, "target") == nullptr) {
-        types::failf(r, test->span,
-                     "a condition on `target` is decided at compile time and this one cannot be: write it with "
-                     "`target.os == .macos` (or `.linux`), `target.static_analyzer`, `!`, `&&`, `||`, "
-                     "`true` and `false`");
-        return;
+    // A condition known at compile time keeps one branch (#3039): the other is neither checked nor emitted, so it may
+    // name what does not exist here. `front::eval` gives the value: facts of the target, questions about types,
+    // constants, calls of concepts, and the operators that join them.
+    // The checker's own reading of the test comes after the notes of its guards, so the evaluator is asked without
+    // typing anything first; an ordinary test it cannot answer yet is typed, and asked again (`sizeof(x) == 8`).
+    Bool always = is_constexpr || (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr);
+    eval::Outcome found = eval::typed(r, test);
+    Bool typed = false;
+    if (always && !found.known && !found.failed) {
+        found = eval::value(r, test);
+    } else if (!found.known && !found.failed) {
+        note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
+        (void)types_expr::check(r, test, r->table.bool_type);
+        found = eval::typed(r, test);
+        typed = true;
     }
-    if (is_constexpr) {
-        not_yet(r, s, "if constexpr in a body");
-        return;
-    }
-    Bool answer = false;
-    if (query_answer(r, test, &answer)) { // `is_slice(typeof(x))`: one branch is live (#1902)
+    if (found.known && found.value == .boolean) {
+        Bool answer = found.value.boolean.value;
         types::set_decided(r, test, answer);
         const ast::Stmt *live = answer ? then_branch : else_branch;
         if (live != nullptr) push(live, nullptr, enter);
         return;
     }
-    note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
-    (void)types_expr::check(r, test, r->table.bool_type);
+    if (found.failed && !typed) { // the condition is computed, and computing it is an error (`1 / 0 == 0`)
+        eval::report(r, found, test, "this condition");
+        return;
+    }
+    if (found.failed) eval::report(r, found, test, "this condition");
+    // A condition about the target is always decided at compile time; a local named `target` is not one (#2277).
+    if (always) {
+        eval::report(r, found, test, is_constexpr ? "the condition of `if constexpr`" : "a condition on `target`");
+        return;
+    }
+    if (!typed) {
+        note_guard(r, s);
+        (void)types_expr::check(r, test, r->table.bool_type);
+    }
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
@@ -2160,7 +2070,7 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .match_stmt) {
         match_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        (void)types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+        static_assertion(r, s->kind.static_assert_stmt.condition, s->kind.static_assert_stmt.message, s->span);
     }
 }
 
@@ -2176,7 +2086,7 @@ static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .return_stmt) {
         return_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        (void)types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+        static_assertion(r, s->kind.static_assert_stmt.condition, s->kind.static_assert_stmt.message, s->span);
     } else if (s->kind == .break_stmt || s->kind == .continue_stmt) {
         return; // a `match` arm that leaves the loop (#2336)
     } else {
@@ -2471,21 +2381,16 @@ export void uninstall() {
 
 export types::Options options(types::Target target) {
     install();
-    return (types::Options){.target = target, .bodies = check_body, .expression = types_expr::infer};
-}
-
-// A condition against Bool; the fixer drops a `(void)` cast, so the type is read here.
-static void check_condition(types::Checked *r, const ast::Expr *condition) {
-    const types::Ty *t = types_expr::check(r, condition, r->table.bool_type);
-    if (t == nullptr) return;
+    return (types::Options){.target = target,
+                            .bodies = check_body,
+                            .expression = types_expr::infer,
+                            .length = eval::length_for,
+                            .constant = eval::type_for};
 }
 
 // A module-level variable's initializer, against its declared type.
 static void check_initializer(types::Checked *r, const ast::Decl *d) {
-    if (d->kind == .static_assert_decl) { // its condition folds before emit (`target.float_radix == 2`)
-        check_condition(r, d->kind.static_assert_decl.condition);
-        return;
-    }
+    if (d->kind == .static_assert_decl) return; // `check_once` computes it, once
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
         return;
     }
@@ -2500,6 +2405,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     Str name = d->kind.variable.name;
     Bool constant = d->kind.variable.is_constexpr;
+    Bool computed = d->kind.variable.is_new && !d->kind.variable.is_mut;
     const ast::Expr *init = d->kind.variable.init;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || !types::declared_by(symbol, d)) {
@@ -2512,6 +2418,11 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     types::TypeRef type = symbol->type;
     if (constant) {
         require_constant(r, name, init);
+    } else if (computed) {
+        // a module-level `x := v` is always computed by the compiler (D23): an error of the computation is reported;
+        // a value that is not known yet (a call, until step 2 of #3039) is left to the emitter
+        eval::Outcome found = eval::value(r, init);
+        if (found.failed) eval::report(r, found, init, "this constant");
     }
     if (is_auto(type)) {
         (void)types_expr::infer(r, init);
@@ -2533,7 +2444,8 @@ static types::Checked check_once(const ast::Module *m, types::Target target, typ
         const ast::Decl *asserted = m->decls[i];
         if (asserted->kind == .static_assert_decl) {
             state.function = "static_assert";
-            check_condition(&r, asserted->kind.static_assert_decl.condition);
+            static_assertion(&r, asserted->kind.static_assert_decl.condition, asserted->kind.static_assert_decl.message,
+                             asserted->span);
         }
     }
     check_instances(&r);

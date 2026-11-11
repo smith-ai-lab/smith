@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A sixth pass (#3057) labels a PR that failed behind a failed group `ready`, so the fifth enqueues it again. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -159,6 +159,53 @@ jobs:
             [ "$n" = 0 ] && log "queue-heal: none ready"
             return 0
           }
+          # sixth pass (#3057): an entry that failed behind a failed group goes back in. One full run holds a whole batch
+          # (batch-wait), so when a bad entry fails it the groups ahead build their own trees (the split) and GitHub
+          # removes, with the bad entry, the good entries queued behind it. A removed PR is one of those when the newest
+          # merge_group run of ci for it failed in the last hour and the group it was built on (the sha that ends its
+          # branch `pr-<N>-<sha>`) is the head of a merge_group run that failed too: the failure was in its tree before
+          # it. It gets the label `ready`, and the fifth pass enqueues it. An entry whose base passed, or was main,
+          # failed by itself and is left to its runner. It runs before the fifth pass.
+          inherited() {
+            local runs cutoff pr run concl base bconcl n=0
+            runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 \
+              --jq '.workflow_runs[] | "\(.head_branch) \(.head_sha) \(.conclusion // .status) \(.id) \(.updated_at)"') \
+              || { log "queue-heal: merge_group runs unreadable, none re-queued behind a failed group"; return 0; }
+            cutoff=$(date -u -d '-60 minutes' +%Y-%m-%dT%H:%M:%SZ)
+            # a run failed when it concluded `failure`, or `cancelled` with a failed job that is not `ci` or `changes`:
+            # a run whose job timed out, or that the verdict cut short, ends `cancelled` (#3051), and so does a run
+            # that batch-wait or queue-guard cancelled, which has no such job
+            failed_run() {
+              [ "$2" = failure ] && return 0
+              [ "$2" = cancelled ] || return 1
+              [ "$(gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 --jq \
+                '[.jobs[] | select(.conclusion == "failure" and .name != "ci" and .name != "changes")] | length' 2>/dev/null)" -gt 0 ] 2>/dev/null
+            }
+            # newest first, so the first line of a PR is its newest run; ISO times in UTC compare as text
+            while read -r pr run concl base bconcl; do
+              [ -n "$pr" ] || continue
+              case "$queued" in *" $pr "*) continue ;; esac
+              # `open` holds the open PRs without the label `dequeued`
+              case " $(echo $open) " in *" $pr "*) ;; *) continue ;; esac
+              failed_run "$run" "$concl" && failed_run "$base" "$bconcl" || continue
+              n=$((n + 1))
+              if dry; then
+                log "dry-run: would label #$pr ready (run $run failed behind failed run $base)"
+                continue
+              fi
+              gh api -X POST "repos/$REPO/issues/$pr/labels" -f "labels[]=ready" --silent \
+                && log "queue-heal: #$pr failed behind a failed group (run $run on run $base), labelled ready" \
+                || log "queue-heal: #$pr failed behind a failed group (run $run on run $base), label refused"
+            done < <(echo "$runs" | awk -v cutoff="$cutoff" '
+              { k = split($1, part, "/"); split(part[k], name, "-"); pr[NR] = name[2]; base[NR] = name[3]
+                concl[NR] = $3; id[NR] = $4; at[NR] = $5; if (!($2 in of)) { of[$2] = $4; was[$2] = $3 } }
+              END { for (i = 1; i <= NR; i++) { if (pr[i] in seen) continue; seen[pr[i]] = 1
+                      if ((concl[i] == "failure" || concl[i] == "cancelled") && at[i] >= cutoff && (base[i] in of))
+                        print pr[i], id[i], concl[i], of[base[i]], was[base[i]] } }')
+            [ "$n" = 0 ] && log "queue-heal: none failed behind a failed group"
+            return 0
+          }
+          inherited
           ready_pass
           # what it enqueued joins the list the later passes read
           dry || { list=$(entries) || true; q=$(echo "$list" | grep -c . || true); }
@@ -200,12 +247,15 @@ jobs:
           }
           conflicts
 
-          # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4, 8) by the health of the merge_group
+          # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4) by the health of the merge_group
           # runs of ci since the ruleset's last change (its `updated_at`, which a change of B sets again). A failure halves B,
-          # three passes double it (cap 8); cancelled runs count for neither. Same PUT and token fallback as queue-ops'
+          # three passes double it (cap 4); cancelled runs count for neither. At 1 a failure cannot halve, so there three
+          # passes after the newest failure double it (#3057). The cap is what the 20 hosted job slots carry (#3057): one
+          # full run peaks at 13 Linux jobs and each of the B - 1 waiting groups holds one, so 4 leaves the 4 slots
+          # ci-dispatch reserves for pull request checks and 8 would leave none. Same PUT and token fallback as queue-ops'
           # set-build-entries. It runs from an EXIT trap, after the second pass.
           tune() {
-            local id rs b t runs n m nb
+            local id rs b t runs n m nb last
             id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ]               || { log "queue-heal: build entries unreadable (no ruleset main), kept"; return 0; }
             rs=$(gh api "repos/$REPO/rulesets/$id") || { log "queue-heal: build entries unreadable, kept"; return 0; }
             b=$(echo "$rs" | jq -r '[.rules[] | select(.type == "merge_queue") | .parameters.max_entries_to_build][0] // empty')
@@ -217,11 +267,19 @@ jobs:
             # ISO times in UTC compare as text
             n=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "success"' | grep -c . || true)
             m=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "failure"' | grep -c . || true)
+            # at 1 there is nothing to halve, so no change is written, T stays and a failure would count for ever
+            # (#3057: `1 kept (11 passed, 1 failed)` for 7 hours on 2026-11-10, one pull request per run). There only
+            # the passes created after the newest failure count, and that failure is behind them.
+            if [ "$b" = 1 ] && [ "$m" -gt 0 ]; then
+              last=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "failure" { print $1 }' | sort | tail -n 1)
+              n=$(echo "$runs" | awk -v t="$last" '$1 > t && $2 == "success"' | grep -c . || true)
+              m=0
+            fi
             nb=$b
             if [ "$m" -gt 0 ]; then
               nb=$((b / 2)); [ "$nb" -ge 1 ] || nb=1
-            elif [ "$n" -ge 3 ] && [ "$b" -lt 8 ]; then
-              nb=$((b * 2)); [ "$nb" -le 8 ] || nb=8
+            elif [ "$n" -ge 3 ] && [ "$b" -lt 4 ]; then
+              nb=$((b * 2)); [ "$nb" -le 4 ] || nb=4
             fi
             if [ "$nb" = "$b" ]; then
               log "queue-heal: build entries $b kept ($n passed, $m failed since $t)"
@@ -254,6 +312,26 @@ jobs:
             --jq "[.workflow_runs[] | select(.head_branch | startswith(\"gh-readonly-queue/main/pr-$front-\"))][0] | \"\(.id) \(.status) \(.conclusion)\"") \
             || { log "queue-heal: front #$front run unreadable, left alone"; exit 0; }
           set -- $run
+          # a run that just completed can still read `null` for its conclusion: read it again, up to 6 times 10 s apart,
+          # so the eviction does not wait for the next pass (#3051)
+          for _ in 1 2 3 4 5 6; do
+            [ "${2:-}" = completed ] && [ "${3:-null}" = null ] || break
+            sleep 10
+            run=$(gh api -X GET "repos/$REPO/actions/runs/$1" --jq '"\(.id) \(.status) \(.conclusion)"') || break
+            set -- $run
+          done
+          # a job that hits its timeout ends the run `cancelled` though the `ci` check fails: GitHub kept such an entry
+          # (#3040: shard 5 hung 30 minutes, `ci` failed at 00:21:31Z, the run was `cancelled`, the entry stayed 58 minutes
+          # and the group behind it was built on it, #3051). A completed `cancelled` run whose `ci` job failed is a
+          # failed run, unless one of our own guards cancelled it (`batch-wait`: its group merged with a later one,
+          # `queue-guard`: its group left the queue); those entries leave the queue by themselves.
+          if [ "${2:-}" = completed ] && [ "${3:-}" = cancelled ]; then
+            if gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 \
+              | jq -e '([.jobs[] | select(.name == "ci" and .conclusion == "failure")] | length > 0)
+                and ([.jobs[].steps[]? | select((.name | test("Wait while a later queue|queue-guard")) and (.conclusion == "failure" or .conclusion == "cancelled"))] | length == 0)' >/dev/null; then
+              set -- "$1" "$2" failure
+            fi
+          fi
           if [ "${3:-}" != failure ]; then
             log "queue-heal: front #$front ok (run ${1:-none} ${2:-none})"
             exit 0
