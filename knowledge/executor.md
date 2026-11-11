@@ -35,7 +35,7 @@ smith parses the `.smith/build.ninja` that build.c's program wrote; the program 
 Two files in the manifest's `builddir` (`.smith/`), text, appended to as jobs end and compacted when more than two
 thirds of the lines are dead:
 - `.smith/.smith_log`: `# smith log 1`, then one line per output and run, `<start ms> <end ms> <mtime ns> <hash> <path>`.
-  The hash is FNV-1a 64 of the command. The mtime is the time the command started, on the file system's clock (ninja's own rule:
+  The hash is FNV-1a 64 of the command, with the path of the smith that runs the build read as the word `smith`: the commands that compile the build file name that smith, and the same smith at another path (a copy, a worktree's stage0) would otherwise compile and link `.smith/program` again and run every function step after it (#3079; 14 steps in smith's own tree). The mtime is the time the command started, on the file system's clock (ninja's own rule:
   an input modified after that, even while the command ran, makes the output out of date); a restat step that changed
   an output records that output's time if it is later. This is `.ninja_log`'s job (a changed command reruns the step). The durations are kept
   for whoever wants them; the jobs start in ninja's order, the longest chain of commands after them first.
@@ -66,6 +66,7 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   command names with `-isystem`, `-isysroot`, `--sysroot`, `SDKROOT`; a folder named with `-I`, `-iquote`, `-idirafter`,
   `-F` is the project's even then). A project file is keyed by content (with its folder a token, so the generated module
   map of two folders is one file), a system file by path, size and time (smith's own unpacked copy of clang, `~/.local/share/smith/clang/llvm-<identity>/`, by path and size only: a job unpacks it afresh, so its times are new every job, and its folder is named for what it holds, #2833).
+  The hash is the processor's own SHA-256 where it has one (x86-64 SHA extensions asked of `cpuid`, ARMv8 where smith is compiled for it, as on every Mac; `smith_sha256_blocks` in `runtime/package.c`), over 1 GB a second against 140 MB for the portable block, which stays for the rest and is what the fast one is checked against on one block at first use. A file's hash is remembered for the run by path, size, time and inode, except a file too new to trust its time: 100 ms where its time shows a clock finer than a second, 2 s otherwise (#3079: with 2 s for all, the 437 MB smith a build had just linked was read again for each step that takes it).
 - **A hit is what a rebuild makes.** A compile that writes debug info (`-g`) is given `-ffile-prefix-map=<project folder>=.`
   by the manifest (build.c's `smith_render_command`, for smith's own build and every project's alike; a command that
   names a prefix map itself keeps its own), so the object holds no folder: a `debug` object is shared by every worktree
@@ -113,6 +114,26 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   The compiler is not an input of the key: the key holds its identity already, so a step that lists the compiler as an
   input (a header step's `.smith/compiler/<hash>` file, which holds the compiler's path, size and time, new in every job)
   leaves that input out of the key (#3002). It had made every header step miss in every job after the one that stored it.
+
+### Function steps
+
+A function step (`.run`) with `.content_hash = true` is served too (#3079). The build runtime writes `content_hash = 1`
+on its edge, and the executor takes such an edge, when it has no depfile, no pool and a command that starts
+`.smith/program --run `, as a step of a second kind. Its key is the command (the function's place in the program, the
+paths and the arguments, the root spelled as a token) and the bytes of every input the manifest names, of which
+`.smith/program` is one for every function step: so the function's code, the build file and the runtime are in the key.
+No compiler and no environment variable is. It has one variant, with no files, because a function writes no depfile.
+All its outputs are stored as their bytes and none is rewritten when the folder already has those bytes, so what
+depends on them is left alone. As for a compile, nothing is stored when the step printed anything or an input was
+written after it began, and a result whose output holds the folder's path is served in that folder only.
+
+**How the executor knows a function reads nothing else: it does not.** A compile tells the cache what it read (its
+depfile); a function is C that can open any file, read the environment or the clock, and run a program. So the field is
+the build file's word that the function's outputs follow from the program, `.args`, `.inputs` and `.implicit_inputs`
+alone, and a step without the field is never served, whatever its shape. The runtime refuses the field where the step
+itself says otherwise: with a `.depfile` (it reads files it learns at run time), `.always` or a pool. A wrong word is a
+stale output that no build notices; the catch is the verify build of #3079's design (run a served step anyway and
+compare the bytes), which is not built. On a `.command` step the field is still the error "not implemented yet".
 
 ## `.smith` compiles in one process (#2888)
 

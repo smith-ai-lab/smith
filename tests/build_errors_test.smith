@@ -104,7 +104,7 @@ export void test_build_errors_an_unimplemented_field_exits_2() {
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("errors: an unimplemented field exits 2", 2, &run);
     scratch::expect_contains("errors: the unimplemented message", run.err,
-                             "smith: build.c: .content_hash is not implemented yet");
+                             "smith: build.c: .content_hash on a .command step is not implemented yet");
 }
 
 // 9g. A step, a task or an alias declared twice.
