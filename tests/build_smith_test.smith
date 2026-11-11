@@ -304,6 +304,33 @@ export void test_build_smith_check_reads_a_build_smith_with_no_main() {
     expect_yes("check: a build.smith with no main is linted and tested", ok);
 }
 
+// smith check names the parts this host cannot run and counts them (#3163); --require turns one into a failure, and a
+// name that is no part is refused.
+export void test_build_smith_check_names_the_parts_that_did_not_run_and_require_fails_them() {
+    scratch::Project p = scratch::make("checked_require", "smith_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run plain = scratch::sh(&p, "env SMITH_OUTPUT=full smith check; echo \"host=$(uname)\"");
+    scratch::expect_contains("check: the last lines count the parts", plain.err, "smith check: ");
+    scratch::expect_contains("check: ... as ok, failed and not run here", plain.err, " not run here\n");
+    scratch::Run required =
+        scratch::sh(&p, "env SMITH_OUTPUT=full smith check --require macos-tests; echo \"host=$(uname)\"");
+    if (c::strstr(plain.out, "host=Linux") != nullptr) {
+        scratch::expect_contains("check: Linux names the macOS parts", plain.err,
+                                 "smith check: not run here: macos-lint, macos-tests");
+        scratch::expect_contains("check: ... and --require fails the part that did not run", required.err,
+                                 "smith check: failed:");
+        scratch::expect_contains("check: ... naming it", required.err, "macos-tests");
+    }
+    scratch::Run refused = scratch::sh(&p, "env SMITH_OUTPUT=full smith check --require nonsense");
+    scratch::expect_status("check: --require names a part that does not exist", 2, &refused);
+    scratch::Run base = scratch::sh(&p, "env SMITH_OUTPUT=full smith check --base main");
+    scratch::expect_status("check: --base needs --changed", 2, &base);
+}
+
 // 10. A mistake in a build.smith names build.smith, not build.c, and every name collision is reported in one run (#47).
 
 export void test_build_smith_a_mistake_in_a_build_smith_names_build_smith_and_every_collision() {

@@ -1591,6 +1591,8 @@ int smith_run_project(int count, char **args, const char *self) {
 
 // ---- check
 
+static size_t smith_check_ok_count; // the parts that ran and passed, for the last lines
+
 // Reports a part: its line, and for a part whose output went to a log, the detail on success and the excerpt on
 // failure.
 static void smith_check_part(const char *name, int status, SmithCheckClock since, const char **failed,
@@ -1605,6 +1607,7 @@ static void smith_check_part(const char *name, int status, SmithCheckClock since
         smith_quiet_detail(name, text, size, detail, sizeof detail, coverage, sizeof coverage);
         char shown[80] = "";
         if (coverage[0] != '\0') snprintf(shown, sizeof shown, " (%s)", coverage);
+        smith_check_ok_count++;
         fprintf(stderr, "smith check: %s ok%s%s%s (%.1f s wall, %.1f s cpu)\n", name, shown,
                 detail[0] != '\0' ? ": " : "", detail, wall, cpu);
         return;
@@ -1708,18 +1711,107 @@ static void smith_check_promises(bool list) {
         fprintf(stderr, "smith check:   %s\n", smith_promise_list[i]);
 }
 
+// The parts a host cannot run are named in the last lines, never skipped silently (#3163). `--require <part>[,..]` (or
+// `all`) turns a part that did not run into a failure; CI passes it on the platform that must run the part.
+constexpr size_t smith_check_parts_max = 16;
+static const char *const smith_check_part_names[] = {"fmt",   "docs",       "lint",        "test",
+                                                     "prove", "macos-lint", "macos-tests", nullptr};
+
+typedef struct {
+    bool changed;        // --changed: lint and test only what the change since the base reaches
+    const char *base;    // --base <ref>, else the verbs' own default
+    const char *require; // --require list, else null
+    bool every_task;     // -v
+} SmithCheckOptions;
+
+static bool smith_check_required(const SmithCheckOptions *options, const char *part) {
+    if (options->require == nullptr) return false;
+    size_t length = strlen(part);
+    for (const char *c = options->require; *c != '\0';) { // bounded by the option's text
+        size_t end = strcspn(c, ",");
+        if ((end == 3 && strncmp(c, "all", 3) == 0) || (end == length && strncmp(c, part, length) == 0)) return true;
+        c += end + (c[end] == ',' ? 1 : 0);
+    }
+    return false;
+}
+
+static void smith_check_options_read(const SmithVerbArgs *split, SmithCheckOptions *options) {
+    *options = (SmithCheckOptions){};
+    for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
+        const char *arg = split->own[i];
+        if (strcmp(arg, "-v") == 0) {
+            options->every_task = true;
+        } else if (strcmp(arg, "--changed") == 0) {
+            options->changed = true;
+        } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
+            options->base = split->own[++i];
+        } else if (strcmp(arg, "--require") == 0 && i + 1 < split->own_count) {
+            options->require = split->own[++i];
+        } else if (strncmp(arg, "--require=", 10) == 0 && arg[10] != '\0') {
+            options->require = arg + 10;
+        } else {
+            smith_die(smith_exit_usage,
+                      "takes no arguments but -v, --changed, --base <ref>, --require <parts> and -D options", "check");
+        }
+    }
+    if (options->base != nullptr && !options->changed) smith_die(smith_exit_usage, "--base needs --changed", "check");
+    for (const char *c = options->require; c != nullptr && *c != '\0';) { // each name must be a part or `all`
+        size_t end = strcspn(c, ",");
+        bool known = end == 3 && strncmp(c, "all", 3) == 0;
+        for (size_t p = 0; !known && smith_check_part_names[p] != nullptr; p++)
+            known = strlen(smith_check_part_names[p]) == end && strncmp(c, smith_check_part_names[p], end) == 0;
+        if (!known)
+            smith_die(smith_exit_usage,
+                      "--require names a part that does not exist (fmt, docs, lint, test, prove, macos-lint, "
+                      "macos-tests, all)",
+                      "check");
+        c += end + (c[end] == ',' ? 1 : 0);
+    }
+}
+
+// A part that did not run on this host: counted, named in the last lines, a failure when it is required.
+static void smith_check_not_run(const SmithCheckOptions *options, const char *part, const char **not_run,
+                                size_t *not_run_count, const char **failed, size_t *failed_count) {
+    not_run[(*not_run_count)++] = part;
+    if (smith_check_required(options, part)) failed[(*failed_count)++] = part;
+}
+
+// Adds `--changed` (and `--base <ref>`) to the options a part's child gets.
+static void smith_check_scope(const SmithCheckOptions *options, SmithVerbArgs *split, bool lint) {
+    if (!options->changed) return;
+    static char lint_changed[PATH_MAX + 16];
+    smith_verb_room(split->option_count, 3, "--changed");
+    if (lint) {
+        if (options->base != nullptr)
+            snprintf(lint_changed, sizeof lint_changed, "--changed=%s", options->base);
+        else
+            snprintf(lint_changed, sizeof lint_changed, "--changed");
+        split->options[split->option_count++] = lint_changed;
+        return;
+    }
+    split->options[split->option_count++] = (char *)"--changed";
+    if (options->base != nullptr) {
+        split->options[split->option_count++] = (char *)"--base";
+        split->options[split->option_count++] = (char *)options->base;
+    }
+}
+
 // `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
+// `--changed [--base <ref>]` limits lint and the tests to what the change reaches; the parts this host cannot run are
+// named in the last lines (`--require` makes one a failure).
 int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
-    bool every_task = split->own_count == 1 && strcmp(split->own[0], "-v") == 0;
-    if (split->own_count > (every_task ? 1U : 0U))
-        smith_die(smith_exit_usage, "takes no arguments but -D options and -v", "check");
+    SmithCheckOptions options;
+    smith_check_options_read(split, &options);
+    bool every_task = options.every_task;
     if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
     bool loud = every_task || smith_quiet_full();      // otherwise each part's output goes to its log
     SmithCheckClock since = {};
-    const char *failed[8];
-    size_t failed_count = 0;
+    const char *failed[smith_check_parts_max];
+    const char *not_run[smith_check_parts_max];
+    size_t failed_count = 0, not_run_count = 0;
+    smith_check_ok_count = 0;
     since = smith_check_clock();
     smith_check_part("fmt", smith_fmt_project(self, true), since, failed, &failed_count, nullptr);
     since = smith_check_clock();
@@ -1727,22 +1819,32 @@ int smith_check_project(int count, char **args, const char *self) {
     if (access("build.c", R_OK) != 0 && access("build.smith", R_OK) != 0 && access("main.smith", R_OK) != 0 &&
         access("main.c", R_OK) != 0) {
         fprintf(stderr, "smith check: no build file and no main, so lint, test and prove are skipped\n");
+        for (size_t p = 2; p < 5; p++)
+            smith_check_not_run(&options, smith_check_part_names[p], not_run, &not_run_count, failed, &failed_count);
     } else {
-        smith_check_run(self, "lint", split, loud, failed, &failed_count);
-#ifdef __APPLE__
-        smith_check_run(self, "test", split, loud, failed, &failed_count);
-#else
-        // The tests that need macOS cannot run here: the runner's `--skip-macos`, as CI's test shards pass it.
+        static SmithVerbArgs lint_split;
+        lint_split = *split;
+        smith_check_scope(&options, &lint_split, true);
+        smith_check_run(self, "lint", &lint_split, loud, failed, &failed_count);
         static SmithVerbArgs test_split;
         test_split = *split;
+        smith_check_scope(&options, &test_split, false);
+#ifdef __APPLE__
+        smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
+#else
+        // The tests that need macOS cannot run here: the runner's `--skip-macos`, as CI's test shards pass it.
+        smith_verb_room(test_split.option_count, 1, "--skip-macos");
         test_split.options[test_split.option_count++] = (char *)"--skip-macos";
         fprintf(stderr, "smith check: the macOS-only tests do not run on this host\n");
         smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
+        smith_check_not_run(&options, "macos-lint", not_run, &not_run_count, failed, &failed_count);
+        smith_check_not_run(&options, "macos-tests", not_run, &not_run_count, failed, &failed_count);
 #endif
         if (smith_has_prover()) {
             smith_check_run(self, "prove", split, loud, failed, &failed_count);
         } else {
             fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
+            smith_check_not_run(&options, "prove", not_run, &not_run_count, failed, &failed_count);
         }
         // The promises are read from the summaries of the project's own compiles, which lint, test and prove need not
         // have made (a project never built): the default build, a no-op when fresh, makes them.
@@ -1750,6 +1852,14 @@ int smith_check_project(int count, char **args, const char *self) {
         (void)smith_check_child(self, "build", split, loud, build_log);
     }
     smith_check_promises(every_task);
+    if (not_run_count > 0) {
+        fprintf(stderr, "smith check: not run here:");
+        for (size_t i = 0; i < not_run_count; i++)
+            fprintf(stderr, "%s %s", i > 0 ? "," : "", not_run[i]);
+        fputc('\n', stderr);
+    }
+    fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", smith_check_ok_count, failed_count,
+            not_run_count);
     if (failed_count == 0) {
         fprintf(stderr, "smith check: ok\n");
         return 0;

@@ -1103,6 +1103,69 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  check-new:
+    # The whole check as one command (#3163): `smith check`, the verb a runner runs before a push, on the tree just built.
+    # It runs BESIDE the old jobs and decides nothing: `continue-on-error` keeps its result out of `ci`'s verdict, and
+    # `ci` prints whether it agrees with the old jobs (`compare:` line) so the two can be compared for 20 runs before
+    # an old job is deleted. A PR check passes `--changed --base <merge-base>`, the queue the whole suite; both require
+    # every Linux part to have run (the macOS parts are the Mac jobs').
+    needs: [changes, pack, build-linux]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+      SMITH_OUTPUT: full
+      SMITH_TEST_STATS: "1"
+    permissions:
+      contents: read
+      actions: write # queue-guard: `gh run cancel` (#2256)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/queue-guard
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux
+      - name: Restore the lint and proof caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
+          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+          restore-keys: smith-lintprove-${{ runner.os }}-
+      - uses: ./.github/actions/test-cache
+        with:
+          os: linux
+          imports-from: linux-*
+      - name: Neovim 0.11+ for the editor tests
+        shell: bash
+        run: echo "$("$SMITH" build nvim | tail -n 1)" >>"$GITHUB_PATH"
+      - name: smith check
+        id: check
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ needs.changes.outputs.base }}
+        run: |
+          flags=
+          if [ "$EVENT" = workflow_dispatch ]; then
+            mb=$(git merge-base "$BASE" HEAD) || { echo "::error::no merge-base of $BASE and HEAD"; exit 1; }
+            flags="--changed --base $mb"
+          fi
+          code=0
+          start=$SECONDS
+          "$SMITH" check $flags --require fmt,docs,lint,test,prove 2>&1 | tee "$RUNNER_TEMP/check.log" || code=${PIPESTATUS[0]}
+          echo "result=$([ "$code" = 0 ] && echo pass || echo fail)" >>"$GITHUB_OUTPUT"
+          { echo "### smith check ($((SECONDS - start)) s, exit $code)"; echo '```'; grep '^smith check: ' "$RUNNER_TEMP/check.log" | tail -n 12; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          exit "$code"
+
   docs-linux:
     # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
     # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
@@ -1130,7 +1193,7 @@ jobs:
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The count (`frontend-coverage`) is not here (#3052): it runs on the push to main, after the merge, and its own
     # job fails (the push run is red) when the count falls.
-    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, release-pack-macos, release-pack-linux]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, check-new, release-pack-macos, release-pack-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1214,6 +1277,17 @@ jobs:
               exit 1
             fi
           done
+      - name: Compare the new check with the old jobs (#3163)
+        # `check-new` decides nothing yet: this line is the data of the 20 runs that precede deleting an old job
+        if: always() && needs.changes.outputs.scope == 'full'
+        env:
+          NEW: ${{ needs.check-new.outputs.result }}
+          OLD: ${{ steps.verdict.outcome }}
+        run: |
+          old=$([ "$OLD" = success ] && echo pass || echo fail)
+          new=${NEW:-none}
+          if [ "$new" = none ]; then verdict="no answer from check-new"; elif [ "$new" = "$old" ]; then verdict=agree; else verdict=DISAGREE; fi
+          echo "compare: smith check $new, old jobs $old: $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
       # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
       # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
       # Only once every job before it ran: a cancelled or abandoned job (a lost job, #2965) posts nothing, and the next pass restarts

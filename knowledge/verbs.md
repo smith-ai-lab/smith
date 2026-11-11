@@ -116,6 +116,11 @@ How each verb uses it:
   prints `smith check: <part> ok: <detail> (<n> s wall, <n> s cpu)` or `FAILED (status N)` and the excerpt of its log (Quiet output, below), and the last line is `smith check: ok` or
   `smith check: failed: <parts>`. The exit status is 1 if any part failed. prove is skipped (and says so) by a smith
   without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c, main.smith or main.c.
+  `--changed [--base <ref>]` limits lint and the tests to what the change since the base reaches. A part this host
+  cannot run (the macOS lint and tests on Linux, prove without a prover) is never a silent pass: the last lines are
+  `smith check: not run here: <parts>` and `smith check: <n> ok, <n> failed, <n> not run here`, the exit status stays 0
+  for them, and `--require <part>[,<part>...]` (or `all`) makes a part that did not run a failure, as CI asks on the
+  platform that must run it (#3163).
 
 **Quiet output** (issue #78): agents pay for every byte a tool prints, and again on every later turn, so `smith check`,
 `smith test`, `smith lint` and a project's `smith prove` print one line per stage and write the rest to a log:
