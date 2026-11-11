@@ -968,6 +968,41 @@ bool smith_lint_expand_dirs(int *argc, char ***argv) {
     return true;
 }
 
+// `smith lint FILE ...` (#3151): a file among the arguments (before any `--`) that `.clang-format-ignore` names is left
+// out, as `smith fmt` leaves it out and as the project lint never walks it, so naming it (the pre-push hook names every
+// changed file) cannot lint a test input that CI's lint skips. When that leaves no file, there is nothing to lint: the
+// line says so and the status is 0. Returns the new argument count.
+int smith_lint_drop_ignored(int argc, char **argv) {
+    static char *kept[smith_defaults_args_max];
+    int out = 0;
+    int dropped = 0;
+    int files = 0;
+    bool flags = false;
+    for (int i = 0; i < argc && i < smith_defaults_args_max - 1; i++) { // bounded by the arguments
+        const char *name = argv[i];
+        struct stat info;
+        flags = flags || (i >= 2 && strcmp(name, "--") == 0);
+        bool file = i >= 2 && !flags && name[0] != '-' && stat(name, &info) == 0 && S_ISREG(info.st_mode);
+        while (file && name[0] == '.' && name[1] == '/')
+            name += 2; // bounded by the name
+        if (file && smith_lint_ignored(name)) {
+            dropped++;
+            continue;
+        }
+        files += file ? 1 : 0;
+        kept[out++] = argv[i];
+    }
+    if (dropped == 0) return argc;
+    if (files == 0) {
+        fprintf(stderr, "smith lint: linted 0 files (%d named by .clang-format-ignore)\n", dropped);
+        exit(0);
+    }
+    for (int i = 0; i < out; i++)
+        argv[i] = kept[i];
+    argv[out] = nullptr;
+    return out;
+}
+
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
 // on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
 // `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook, the way `smith lint
