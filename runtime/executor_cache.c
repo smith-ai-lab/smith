@@ -137,6 +137,48 @@ static void smith_stepcache_feed(SmithSha256 *sha, const char *text) {
     smith_sha256_update(sha, (const uint8_t *)text, strlen(text));
 }
 
+// The text of the last key made (smith_stepcache_key), and the text of an output's last stored key, read to explain a
+// miss (#3050).
+static char smith_stepcache_key_storage[smith_stepcache_text_max];
+static char smith_stepcache_last_storage[smith_stepcache_text_max];
+static SmithStepText smith_stepcache_keytext;
+// Why the last key, variant or store failed, for the log.
+static char smith_stepcache_why[1024];
+
+// ---------------------------------------------------------------- explaining a step (#3050)
+
+// SMITH_STEP_CACHE_LOG=<file>: one line for each step the cache sees, appended (nested builds share the file):
+// `hit <output>`, `miss <output>: <reason>`, `stored <output>` or `not stored <output>: <reason>`. A miss of a new key
+// names the first line where the key differs from the last key stored for the same output: which input changed.
+[[gnu::format(printf, 1, 2)]] static void smith_stepcache_log(const char *format, ...) {
+    static int fd = -2;
+    if (fd == -2) {
+        const char *path = getenv("SMITH_STEP_CACHE_LOG");
+        fd = path != nullptr && *path != '\0' ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644) : -1;
+    }
+    if (fd < 0) return;
+    char line[4096];
+    va_list arguments;
+    va_start(arguments, format);
+    int length = vsnprintf(line, sizeof line - 1, format, arguments);
+    va_end(arguments);
+    if (length < 0) return;
+    size_t size = (size_t)length < sizeof line - 1 ? (size_t)length : sizeof line - 2;
+    for (size_t i = 0; i < size; i++) { // the root's tokens, and no line break inside a line
+        if (line[i] == smith_stepcache_root_token || line[i] == smith_stepcache_percent_token)
+            line[i] = '@';
+        else if (line[i] == '\n')
+            line[i] = ' ';
+    }
+    line[size] = '\n';
+    (void)!write(fd, line, size + 1); // one write: lines of nested builds do not interleave
+}
+
+static bool smith_stepcache_logging(void) {
+    const char *path = getenv("SMITH_STEP_CACHE_LOG");
+    return path != nullptr && *path != '\0';
+}
+
 static bool smith_stepcache_name_char(char c) {
     return isalnum((unsigned char)c) != 0 || c == '_' || c == '-' || c == '.';
 }
@@ -850,41 +892,47 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
     const char *compiler = smith_stepcache_program(scope->words[0]);
     const char *clang = getenv("SMITH_CLANG");
     const char *external = clang != nullptr && *clang != '\0' ? smith_stepcache_program(clang) : "none";
-    if (compiler == nullptr || external == nullptr) return false;
-    SmithSha256 sha;
-    smith_sha256_init(&sha);
-    smith_stepcache_feed(&sha, "smith-step-cache 1\ncommand ");
-    SmithStepText command = {.data = smith_stepcache_lines, .capacity = sizeof smith_stepcache_lines};
-    command.data[0] = '\0';
-    if (!smith_stepcache_normalize(edge->command, strlen(edge->command), &command)) return false;
-    smith_sha256_update(&sha, (const uint8_t *)command.data, command.size);
-    smith_stepcache_feed(&sha, "\n");
-    smith_stepcache_feed(&sha, smith_stepcache.environment);
-    smith_stepcache_feed(&sha, "compiler ");
-    smith_stepcache_feed(&sha, compiler);
-    smith_stepcache_feed(&sha, "\nclang ");
-    smith_stepcache_feed(&sha, external);
-    smith_stepcache_feed(&sha, "\n");
+    if (compiler == nullptr || external == nullptr) {
+        snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "the compiler %s has no identity", scope->words[0]);
+        return false;
+    }
+    // The key is the SHA-256 of this text, which a miss compares with the text of the output's last key (#3050).
+    SmithStepText *text = &smith_stepcache_keytext;
+    *text = (SmithStepText){.data = smith_stepcache_key_storage, .capacity = sizeof smith_stepcache_key_storage};
+    text->data[0] = '\0';
+    smith_steptext_add(text, "smith-step-cache 1\ncommand ", 27);
+    if (!smith_stepcache_normalize(edge->command, strlen(edge->command), text)) return false;
+    smith_steptext_add(text, "\n", 1);
+    smith_steptext_add(text, smith_stepcache.environment, strlen(smith_stepcache.environment));
+    smith_steptext_addf(text, "compiler %s\nclang %s\n", compiler, external);
     *newest = 0;
     uint32_t inputs = edge->explicit_count + edge->implicit_count;
     for (uint32_t k = 0; k < inputs; k++) {
         const char *path = exec->graph.nodes[exec->graph.ids[edge->inputs + k]].path;
         char spec[smith_stepcache_hex + 32];
         int64_t mtime = 0;
-        if (!smith_stepcache_spec(path, spec, sizeof spec, &mtime, now)) return false;
+        if (!smith_stepcache_spec(path, spec, sizeof spec, &mtime, now)) {
+            snprintf(smith_stepcache_why, sizeof smith_stepcache_why,
+                     "the input %s cannot be keyed (unreadable, or it names a time macro)", path);
+            return false;
+        }
         if (mtime > *newest) *newest = mtime;
         // The compiler is in the key above as its identity (the smith that runs the build, with its commit and build-id
         // blanked). A step that lists it as an input, to run after it is replaced (build.c's header steps, whose
         // `.smith/compiler/<hash>` file holds its path, size and time), would add the bytes of this job's copy of the
         // same compiler and never hit in another job (#3002).
         if (smith_stepcache_is_compiler_input(path)) continue;
-        command.size = 0;
-        command.data[0] = '\0';
-        smith_steptext_addf(&command, "input %s ", spec);
-        if (!smith_stepcache_normalize(path, strlen(path), &command)) return false;
-        smith_steptext_add(&command, "\n", 1);
-        smith_sha256_update(&sha, (const uint8_t *)command.data, command.size);
+        smith_steptext_addf(text, "input %s ", spec);
+        if (!smith_stepcache_normalize(path, strlen(path), text)) return false;
+        smith_steptext_add(text, "\n", 1);
     }
+    if (text->full) {
+        snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "the key is over %zu bytes", text->capacity);
+        return false;
+    }
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    smith_sha256_update(&sha, (const uint8_t *)text->data, text->size);
     smith_sha256_final(&sha, hex);
     return true;
 }
@@ -895,6 +943,74 @@ static bool smith_stepcache_path(char *out, const char *kind, const char *hex, c
                       ? snprintf(out, PATH_MAX, "%s/%s/%.2s/%s", smith_stepcache.folder, kind, hex, hex)
                       : snprintf(out, PATH_MAX, "%s/%s/%.2s/%s/%s", smith_stepcache.folder, kind, hex, hex, name);
     return written > 0 && written < PATH_MAX;
+}
+
+// k/<xx>/<hash of the output's path, the root a token>: the text of the last key stored for that output (#3050).
+static bool smith_stepcache_last_path(const char *output, char path[PATH_MAX]) {
+    char storage[smith_exec_name_max + 64];
+    SmithStepText name = {.data = storage, .capacity = sizeof storage};
+    storage[0] = '\0';
+    smith_steptext_add(&name, "smith-step-last 1\n", 18);
+    if (!smith_stepcache_normalize(output, strlen(output), &name)) return false;
+    char hex[smith_stepcache_hex];
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    smith_sha256_update(&sha, (const uint8_t *)name.data, name.size);
+    smith_sha256_final(&sha, hex);
+    return smith_stepcache_path(path, "k", hex, nullptr);
+}
+
+// A piece of a line around the place where it differs, for the log.
+static void smith_stepcache_excerpt(const char *line, size_t size, size_t at, char *out, size_t capacity) {
+    size_t from = at > 40 ? at - 40 : 0;
+    size_t to = size - from > 160 ? from + 160 : size;
+    snprintf(out, capacity, "%s%.*s%s", from > 0 ? "..." : "", (int)(to - from), line + from, to < size ? "..." : "");
+}
+
+// Why a new key is new: the first line where it differs from the last key stored for this output.
+static void smith_stepcache_compare_last(const char *output) {
+    char path[PATH_MAX];
+    size_t size = 0;
+    if (!smith_stepcache_last_path(output, path) ||
+        !smith_stepcache_read(path, smith_stepcache_last_storage, sizeof smith_stepcache_last_storage - 1, &size)) {
+        snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key, and no key was stored for this output");
+        return;
+    }
+    smith_stepcache_last_storage[size] = '\0';
+    const char *old = smith_stepcache_last_storage;
+    const char *now = smith_stepcache_keytext.data;
+    for (size_t line = 1; *old != '\0' || *now != '\0'; line++) { // bounded by the texts' lines
+        size_t old_size = strcspn(old, "\n");
+        size_t now_size = strcspn(now, "\n");
+        if (old_size != now_size || memcmp(old, now, old_size) != 0) {
+            size_t at = 0;
+            while (at < old_size && at < now_size && old[at] == now[at])
+                at++;
+            char was[256];
+            char is[256];
+            smith_stepcache_excerpt(old, old_size, at, was, sizeof was);
+            smith_stepcache_excerpt(now, now_size, at, is, sizeof is);
+            snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key: line %zu was [%s] now [%s]", line,
+                     was, is);
+            return;
+        }
+        old += old_size + (old[old_size] == '\n' ? 1 : 0);
+        now += now_size + (now[now_size] == '\n' ? 1 : 0);
+    }
+    snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "a new key, the same text as the last stored");
+}
+
+// Keeps the text of the key just stored as this output's last.
+static void smith_stepcache_keep_last(const char *output) {
+    char path[PATH_MAX];
+    char temporary[PATH_MAX];
+    if (!smith_stepcache_last_path(output, path) || !smith_stepcache_make_parent(path) ||
+        snprintf(temporary, sizeof temporary, "%s/tmp/%d-%u", smith_stepcache.folder, (int)getpid(),
+                 smith_stepcache.counter++) >= (int)sizeof temporary ||
+        !smith_stepcache_make_parent(temporary) ||
+        !smith_stepcache_write(temporary, smith_stepcache_keytext.data, smith_stepcache_keytext.size))
+        return;
+    if (rename(temporary, path) != 0) unlink(temporary);
 }
 
 static void smith_stepcache_touch(const char *path) {
@@ -984,8 +1100,12 @@ static bool smith_stepcache_variant_holds(const SmithStepVariant *variant, int64
         if (!smith_stepcache_expand(space + 1, (size_t)(newline - space - 1), &text)) return false;
         char spec[smith_stepcache_hex + 32];
         int64_t mtime = 0;
-        if (!smith_stepcache_spec(path, spec, sizeof spec, &mtime, now)) return false;
-        if (strlen(spec) != (size_t)(space - line) || memcmp(spec, line, (size_t)(space - line)) != 0) return false;
+        bool read = smith_stepcache_spec(path, spec, sizeof spec, &mtime, now);
+        if (!read || strlen(spec) != (size_t)(space - line) || memcmp(spec, line, (size_t)(space - line)) != 0) {
+            snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "%s is %s, the variant read %.*s", path,
+                     read ? spec : "unreadable", (int)(space - line), line);
+            return false;
+        }
         line = newline + 1;
     }
     return true;
@@ -1080,9 +1200,20 @@ static bool smith_stepcache_apply(SmithExec *exec, const SmithEdge *edge, const 
 bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key, int64_t now) {
     SmithEdge *edge = &exec->graph.edges[number];
     key->valid = false;
-    if (!smith_stepcache_open(exec) || !smith_stepcache_eligible(exec, edge)) return false;
+    if (!smith_stepcache_open(exec)) return false;
+    const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
+    if (!smith_stepcache_eligible(exec, edge)) {
+        if (edge->has_deps && !exec->options.dry_run && smith_stepcache.state == SmithStepCache_On)
+            smith_stepcache_log("miss %s: not a compile the cache serves (no -MD -MF, a shell feature or a flag)",
+                                output);
+        return false;
+    }
     int64_t newest = 0;
-    if (!smith_stepcache_key(exec, edge, key->manifest, &newest, now)) return false;
+    smith_stepcache_why[0] = '\0';
+    if (!smith_stepcache_key(exec, edge, key->manifest, &newest, now)) {
+        smith_stepcache_log("miss %s: no key: %s", output, smith_stepcache_why);
+        return false;
+    }
     key->valid = true;
     SmithStepVariant found[smith_stepcache_variants_max] = {};
     size_t total = smith_stepcache_variants(key->manifest, found);
@@ -1092,13 +1223,21 @@ bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key
         char result[smith_stepcache_hex];
         char folder[PATH_MAX];
         smith_stepcache_result_key(key->manifest, variant, result);
-        if (!smith_stepcache_path(folder, "r", result, nullptr) || !smith_stepcache_apply(exec, edge, folder)) continue;
+        if (!smith_stepcache_path(folder, "r", result, nullptr) || !smith_stepcache_apply(exec, edge, folder)) {
+            snprintf(smith_stepcache_why, sizeof smith_stepcache_why, "the result of a variant that holds is gone");
+            continue;
+        }
         smith_stepcache_touch(folder);
         char manifest[PATH_MAX];
         if (smith_stepcache_path(manifest, "m", key->manifest, nullptr)) smith_stepcache_touch(manifest);
-        smith_plan_explain(exec, "%s restored from the step cache",
-                           exec->graph.nodes[smith_plan_output(exec, edge, 0)].path);
+        smith_plan_explain(exec, "%s restored from the step cache", output);
+        smith_stepcache_log("hit %s", output);
         return true;
+    }
+    if (smith_stepcache_logging()) {
+        if (total == 0) smith_stepcache_compare_last(output);
+        smith_stepcache_log("miss %s: %s%s", output, total == 0 ? "" : "the key is known but no variant holds: ",
+                            smith_stepcache_why);
     }
     return false;
 }
@@ -1224,27 +1363,46 @@ static void smith_stepcache_add_variant(const char *key, const SmithStepText *va
 // After a compile that ran and passed: stores its outputs for the inputs it read. Nothing is stored when the compile
 // printed anything (a warning is not hidden), a file it read was written after it began, or a key cannot be made.
 void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job, int64_t now) {
-    if (!job->key.valid || job->output_size > 0 || job->truncated || job->step_deps == nullptr ||
-        job->depfile_text == nullptr || !smith_stepcache_eligible(exec, edge))
+    const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
+    const char *why = nullptr;
+    if (!job->key.valid || job->step_deps == nullptr || job->depfile_text == nullptr ||
+        !smith_stepcache_eligible(exec, edge))
         return;
     char again[smith_stepcache_hex];
     int64_t newest = 0;
-    if (!smith_stepcache_key(exec, edge, again, &newest, now) || strcmp(again, job->key.manifest) != 0 ||
-        newest >= job->wall)
+    if (job->output_size > 0 || job->truncated) {
+        why = "the compile printed something (a warning is not hidden)";
+    } else if (!smith_stepcache_key(exec, edge, again, &newest, now) || strcmp(again, job->key.manifest) != 0) {
+        why = "an input changed while it ran";
+    } else if (newest >= job->wall) {
+        why = "an input is newer than the start of the compile";
+    }
+    if (why != nullptr) {
+        smith_stepcache_log("not stored %s: %s", output, why);
         return;
+    }
     bool rooted = false;
     for (uint32_t k = 0; k < edge->output_count && !rooted; k++) {
-        const char *output = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
-        rooted = !smith_ends_with(output, ".fx") && smith_stepcache_contains_root(output);
+        const char *path = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
+        rooted = !smith_ends_with(path, ".fx") && smith_stepcache_contains_root(path);
     }
     static char variant_storage[smith_stepcache_text_max];
     SmithStepText variant = {.data = variant_storage, .capacity = sizeof variant_storage};
     variant.data[0] = '\0';
-    if (!smith_stepcache_variant_lines(job, rooted, &variant, now)) return;
+    if (!smith_stepcache_variant_lines(job, rooted, &variant, now)) {
+        smith_stepcache_log("not stored %s: a file it read cannot be keyed or changed after it began", output);
+        return;
+    }
     SmithStepVariant parsed = {.start = variant.data, .size = variant.size, .rooted = rooted};
     char result[smith_stepcache_hex];
     smith_stepcache_result_key(job->key.manifest, &parsed, result);
-    if (smith_stepcache_write_result(exec, edge, job, result)) smith_stepcache_add_variant(job->key.manifest, &variant);
+    if (!smith_stepcache_write_result(exec, edge, job, result)) {
+        smith_stepcache_log("not stored %s: its result could not be written", output);
+        return;
+    }
+    smith_stepcache_add_variant(job->key.manifest, &variant);
+    smith_stepcache_keep_last(output);
+    smith_stepcache_log("stored %s", output);
 }
 
 // ---------------------------------------------------------------- the 31-day rule and the cap
@@ -1330,6 +1488,7 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
     // a manifest is used when its results are (a hit touches both), so the cutoff that drops the oldest results drops
     // the manifests as old: they were 122,000 files that the cap left (#2833)
     smith_stepcache_pass("m", now, cutoff, false);
+    smith_stepcache_pass("k", now, cutoff, false); // the last keys, which only explain a miss (#3050)
     char temporary[PATH_MAX];
     if (snprintf(temporary, sizeof temporary, "%s/tmp", smith_stepcache.folder) < (int)sizeof temporary)
         smith_stepcache_pass_shard(temporary, now, -1, false);
