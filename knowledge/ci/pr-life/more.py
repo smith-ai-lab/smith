@@ -12,6 +12,12 @@ def p90(x): x=sorted(x); return x[int(.9*len(x))] if x else None
 e=[h(r['firstq'],r['merged']) for r in M if r['eject'] and r['firstq']]; ne=[h(r['firstq'],r['merged']) for r in M if not r['eject'] and r['firstq']]
 print(f'queued→merged: thrown out at least once {len(e)} PRs med {med(e):.2f} h p90 {p90(e):.2f}; never thrown out {len(ne)} med {med(ne):.2f} p90 {p90(ne):.2f}')
 print(f'hours queued→merged summed: ejected {sum(e):.0f}, not {sum(ne):.0f}; excess over the non-ejected median: {sum(x-med(ne) for x in e):.0f} h')
+print('| day merged | removed PRs | queued→merged med (p90) | never removed | queued→merged med (p90) |'); print('|---|---|---|---|---|')
+for day in sorted({r['merged'].strftime('%m-%d') for r in M}):
+    R=[r for r in M if r['merged'].strftime('%m-%d')==day and r['firstq']]
+    a=[h(r['firstq'],r['merged']) for r in R if r['eject']]; b=[h(r['firstq'],r['merged']) for r in R if not r['eject']]
+    f=lambda x:f'{med(x):.2f} ({p90(x):.2f})' if x else '-'
+    print(f'| {day} | {len(a)} | {f(a)} | {len(b)} | {f(b)} |')
 rd=[r for r in M if r['red']]; nr=[r for r in M if not r['red']]
 f=lambda R:[h(r['opened'],r['merged']) for r in R]
 print(f'opened→merged: PRs with a red PR check {len(rd)} med {med(f(rd)):.2f} h; without {len(nr)} med {med(f(nr)):.2f} h')
