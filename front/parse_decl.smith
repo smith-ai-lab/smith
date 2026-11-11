@@ -2128,8 +2128,8 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
-    char text[:] = format::push(is_public ? "pub " : "", word, ": ",
-                                  with_dims(writable_dims(dims.text, written), written));
+    char text[:] =
+        format::push(is_public ? "pub " : "", word, ": ", with_dims(writable_dims(dims.text, written), written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");

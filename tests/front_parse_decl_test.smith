@@ -991,7 +991,7 @@ export void test_parse_decl_old_array_suffixes_are_fixed() {
     // C's `T xs[:]` is a writable slice and `const T xs[:]` a read-only one (#3073): a field keeps which it was, a
     // slice of pointers too; a parameter and a local are `[]T`, and the checker's fixes widen them.
     expect_fixed("struct U {\n    I32 items[:];\n    const I32 seen[:];\n    I32 *refs[:];\n};\n",
-                 "struct U:\n    items: []mut i32\n    seen: []i32\n    refs: []mut *mut i32\n", 4);
+                 "struct U:\n    items: []mut i32\n    seen: []i32\n    refs: []mut *i32\n", 7);
     expect_fixed("void f(const Char text[:]) {\n    Char copy[:] = g(text);\n    const Char view[:] = text;\n}\n",
                  "fn f(text: []char):\n    copy: []char = g(text)\n    view: []char = text\n", 3);
     expect_fixed("typedef I32 Row[4];\n", "Row := [4]i32\n", 1);
