@@ -3526,6 +3526,8 @@ static int pre_push_step(const char *name, const char *const *argv) {
     return status;
 }
 
+static int pre_push_tests(const char *smith, const char *const *sources, size_t count);
+
 // args: the smith to use (built from this tree), the base ref.
 static int build_pre_push(SmithRun *run) {
     const char *smith = run->args[0];
@@ -3562,6 +3564,10 @@ static int build_pre_push(SmithRun *run) {
         status = status != 0 ? status : pre_push_step("lint", lint);
         if (status != 0) return status;
     }
+    return pre_push_tests(smith, sources, count);
+}
+
+static int pre_push_tests(const char *smith, const char *const *sources, size_t count) {
     // The tests of the changed files themselves, without the ones only macOS runs (CI's Linux shards pass the same
     // flag); the wider `--changed` selection stays in CI until it fits the budget (lead, 2026-11-11).
     char names[4096] = "";
