@@ -1367,7 +1367,9 @@ static Bool mentions_const(Str raw) {
 // A slice `T xs[:]` is writable, `[]mut T`, and `const T xs[:]` read-only, `[]T` (#3073), as `T *p` is `*mut T` and
 // `const T *p` is `*T`: today's two are the structs `smith_array_T_n` and `smith_array_const_T_n`, so the source
 // already says which, and the new `[]T` is read-only. `raw` is the element type as written; only a one-dimension
-// slice of a plain element changes (a `volatile` one keeps `with_dims`' spelling).
+// slice of a plain element changes (a `volatile` one keeps `with_dims`' spelling). A parameter stays `[]T`: C never
+// made a slice's elements const through a `const` record, so a writable parameter would refuse the slice field of a
+// `*T` record, and the checker's fix writes `[]mut T` on a parameter that needs it.
 static Str writable_dims(Str dims, Str raw) {
     if (!same_text(dims, "[]") || mentions_const(raw) || starts_with(raw, "volatile")) return dims;
     return "[]mut ";
@@ -1410,7 +1412,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
-    type = with_dims(writable_dims(dims, raw), type);
+    type = with_dims(dims, type);
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
     if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
