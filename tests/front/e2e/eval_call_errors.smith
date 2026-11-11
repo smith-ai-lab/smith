@@ -1,0 +1,39 @@
+# What a function run at compile time refuses (#3039, step 2), each with the call it happened in.
+extern fn rand() -> i32
+
+fn deep(n: i32) -> i32:
+    deep(n + 1)
+
+fn spin(n: i32) -> i32:
+    mut i := 0
+    while i >= 0:
+        i = n
+    i
+
+fn divide(n: i32) -> i32:
+    100 / n
+
+fn through(n: i32) -> i32:
+    divide(n - 2)
+
+fn length() -> i32:
+    rand()
+
+mut count: i32 = 0
+
+fn next() -> i32:
+    count + 1
+
+fn third(n: i32) -> i32:
+    xs: [3]i32 = [n, n, n]
+    xs[2]
+
+static_assert(deep(0) == 1)
+static_assert(spin(1) == 1)
+static_assert(through(2) == 1)
+static_assert(length() == 3)
+static_assert(next() == 1)
+static_assert(third(1) == 1)
+
+pub fn check() -> i32:
+    0

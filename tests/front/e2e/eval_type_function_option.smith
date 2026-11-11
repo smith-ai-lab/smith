@@ -1,0 +1,21 @@
+# A type function's call inside another type (`Option(widen(T))`), and `sizeof` of a call (#3039, step 2).
+fn widen(T: type) -> type:
+    if sizeof(T) < 4: i32 else: T
+
+fn keep[T](x: T) -> T:
+    x
+
+fn first(T: type, xs: []T) -> Option(widen(T)):
+    if countof(xs) == 0:
+        return .none
+    W := widen(T)
+    .some(xs[0].to(W))
+
+pub fn check() -> i32:
+    bytes: [2]u8 = [200, 100]
+    got := first(u8, bytes[0:2])
+    if got == .none:
+        return 1
+    if sizeof(keep(7.to(i64))) != 8:
+        return 2
+    0

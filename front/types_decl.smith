@@ -852,6 +852,9 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (is_new && !is_mut && init != nullptr && holds_type(written) &&
         (init->kind == .type_value || init->kind == .name))
         held = eval::type_held(r, init);
+    if (is_new && !is_mut && init != nullptr && holds_type(written) && held == nullptr)
+        held = eval::held_for(r, init); // `W := widen(T)`
+    if (held != nullptr && init != nullptr && init->kind == .call) types::set_held(r, d, held);
     if (held != nullptr) {
         // `Element := typeof(xs[0])`, `wide: type = u16`: a constant that holds a type is a name of that type
         // (#3039), as at module level; nothing is stored for it, and the mark on its value tells the emitter.
@@ -1656,14 +1659,16 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     // The checker's own reading of the test comes after the notes of its guards, so the evaluator is asked without
     // typing anything first; an ordinary test it cannot answer yet is typed, and asked again (`sizeof(x) == 8`).
     Bool always = is_constexpr || (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr);
-    eval::Outcome found = eval::typed(r, test);
+    // Only a condition that is always decided requires its value: any other runs the functions it calls where they
+    // can run, and an error inside one leaves the condition to run time (`eval::tried`).
+    eval::Outcome found = always ? eval::typed(r, test) : eval::tried(r, test);
     Bool typed = false;
     if (always && !found.known && !found.failed) {
         found = eval::value(r, test);
     } else if (!found.known && !found.failed) {
         note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
         (void)types_expr::check(r, test, r->table.bool_type);
-        found = eval::typed(r, test);
+        found = eval::tried(r, test);
         typed = true;
     }
     if (found.known && found.value == .boolean) {
@@ -2229,7 +2234,6 @@ static void drain(types::Checked *r) {
 // Functions and the module
 
 static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature);
-static Bool declares_type(const ast::Decl *function);
 
 // The types::BodyChecker: the body of one function of the module.
 export void check_body(types::Checked *r, const ast::Decl *target) {
@@ -2247,47 +2251,10 @@ export void check_body(types::Checked *r, const ast::Decl *target) {
     if (symbol->generic) {
         return; // a template: its bodies are the instances' (check_instances)
     }
-    if (declares_type(target)) {
-        return; // a type function: its unnamed `enum:` or `struct:` is the type it returns (#2251)
+    if (eval::returns_type(target)) {
+        return; // a type function runs at compile time only: what is wrong in it is reported where a call runs it
     }
     check_function(r, target, symbol->type);
-}
-
-// Whether a function's result is written `type`.
-static Bool returns_type(const ast::TypeExpr *result) {
-    if (result == nullptr || result->kind != .named) {
-        return false;
-    }
-    ast::Path path = result->kind.named.path;
-    return countof(path.segments) == 1 && types::same_text(path.segments[0].text, "type");
-}
-
-// Whether `function` is a type function (`-> type`) whose last statement is an unnamed `enum:` or `struct:` block:
-// that declaration is the type each call returns (`Option(i32)`), so the body has nothing else to check.
-// Whether a statement declares an `enum:` or `struct:` with no name.
-static Bool declares_unnamed(const ast::Stmt *last) {
-    if (last->kind != .declaration) {
-        return false;
-    }
-    const ast::Decl *declared = last->kind.declaration.decl;
-    if (declared->kind == .enumeration) return countof(declared->kind.enumeration.name) == 0;
-    if (declared->kind == .record) return countof(declared->kind.record.name) == 0;
-    return false;
-}
-
-static Bool declares_type(const ast::Decl *target) {
-    if (target->kind != .function) {
-        return false;
-    }
-    if (!returns_type(target->kind.function.result)) {
-        return false;
-    }
-    const ast::Stmt *body = target->kind.function.body;
-    if (block_size(body) == 0) {
-        return false;
-    }
-    const ast::Stmt *last = block_item(body, block_size(body) - 1);
-    return declares_unnamed(last);
 }
 
 // The body of `function` against `signature`: the parameters in a scope of their own, then the body.
@@ -2327,8 +2294,6 @@ static void check_function(types::Checked *r, const ast::Decl *target, types::Ty
     types::TypeRef outer_generator = state.generator;
     state.generator = types_stream::generator_element(types::element_of(signature), target->kind.function.body);
     types::TypeRef returned = types::element_of(signature);
-    if (returns_type(target->kind.function.result))
-        returned = types::builtin(&r->table, "type"); // a type function returns a type value
     walk(r, target->kind.function.body, state.generator != nullptr ? r->table.void_type : returned);
     state.generator = outer_generator;
     types_fn::check_once(r, params, target->kind.function.body);
@@ -2389,7 +2354,9 @@ export types::Options options(types::Target target) {
                             .bodies = check_body,
                             .expression = types_expr::infer,
                             .length = eval::length_for,
-                            .constant = eval::type_for};
+                            .constant = eval::type_for,
+                            .applied = eval::applied_for,
+                            .held = eval::held_for};
 }
 
 // A module-level variable's initializer, against its declared type.

@@ -227,9 +227,8 @@ struct Checked {
 
 typedef Checked CheckedList[:];
 
-// The checker's anonymous record `t` as a `Ty`: the same record a written type of the same fields makes.
-export state::TyResult from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
-    if (!is_anonymous(t)) return state::ty_fail("not an anonymous struct", span);
+// The checker's record `t` as a `Ty`, from its fields: the same record a written type of the same fields makes.
+static state::TyResult from_slots(state::Emitter *e, types::TypeRef t, ast::Span span) {
     CheckedList frames = {};
     frames = mem::realloc(frames, max_depth);
     frames[0].node = t;
@@ -282,4 +281,15 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t, ast::Sp
     }
     mem::free(frames.data);
     return result;
+}
+
+// The checker's anonymous record `t` as a `Ty`.
+export state::TyResult from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
+    if (!is_anonymous(t)) return state::ty_fail("not an anonymous struct", span);
+    return from_slots(e, t, span);
+}
+
+// The `struct:` a type function made (`Pair(i32)`), from the fields the checker gave it.
+export state::TyResult from_made(state::Emitter *e, types::TypeRef t, ast::Span span) {
+    return from_slots(e, t, span);
 }

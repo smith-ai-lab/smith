@@ -1,0 +1,47 @@
+# A function that returns a type is ordinary code over values of type `type` (#3039, step 2): it runs at compile time
+# wherever a type is written, a result type included.
+
+fn slice_of(element: type, count: usize) -> type:
+    mut t: type = element
+    for i in range(0, count):
+        t = []t
+    return t
+
+fn widen(T: type) -> type:
+    if sizeof(T) < 4: i32 else: T
+
+fn pointee_or(T: type, other: type) -> type:
+    if is_pointer(T): other else: T
+
+fn add[T](a: T, b: T) -> widen(T):
+    W := widen(T)
+    a.to(W) + b.to(W)
+
+fn first(xs: slice_of(i32, 1)) -> i32:
+    xs[0]
+
+Numbers := slice_of(i32, 1)
+
+static_assert(slice_of(i32, 0) == i32);
+static_assert(slice_of(i32, 1) == []i32 and slice_of(f32, 2) == [][]f32);
+static_assert(widen(u8) == i32 and widen(i64) == i64);
+static_assert(sizeof(widen(i16)) == 4);
+static_assert(pointee_or(u8, bool) == u8);
+
+pub fn check() -> i32:
+    small := add(100.to(u8), 200.to(u8))
+    static_assert(typeof(small) == i32)
+    if small != 300:
+        return 1
+    wide := add(1.to(i64), 2.to(i64))
+    static_assert(typeof(wide) == i64)
+    numbers: [3]i32 = [7, 8, 9]
+    view: slice_of(i32, 1) = numbers[0:3]
+    if first(view) != 7:
+        return 2
+    at := &numbers[0]
+    static_assert(pointee_or(typeof(at), bool) == bool)
+    again: Numbers = view
+    if countof(again) != 3:
+        return 3
+    0
