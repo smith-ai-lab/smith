@@ -938,6 +938,17 @@ static bool smith_changed_declared(const char *text, const char *path, char *pat
     return false;
 }
 
+// Whether `path` matches the glob `pattern` (the rules of `// smith-covers:`), for the test store's narrower key (#3164).
+bool smith_changed_glob_match(const char *pattern, const char *path) {
+    return smith_changed_glob(pattern, strlen(pattern), path);
+}
+
+// Whether the text of a test carries `// smith-covers:` lines (`*marked`), and whether one of them matches `path`.
+bool smith_changed_covers_path(const char *text, const char *path, bool *marked) {
+    char pattern[PATH_MAX];
+    return smith_changed_declared(text, path, pattern, sizeof pattern, marked);
+}
+
 // The first path the diff adds or deletes (a rename is both), or nullptr: what a test that scans the whole tree reads.
 static const char *smith_changed_listing_change(void) {
     for (size_t p = 0; p < smith_changed_path_count; p++) {

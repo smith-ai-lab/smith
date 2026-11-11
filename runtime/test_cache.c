@@ -11,6 +11,13 @@
 // test is never stored. A test the key cannot pin down is not cached: unknown means run it. That is a test with the
 // marker `// smith-test: uncached`, one that reads the clock, the network, entropy or a file without `files`, one that
 // asks git, and one whose source file is not found.
+//
+// VERIFY MODE (#3164, knowledge/test-store.md). Two narrower keys are made beside each test's key: the same key with the
+// smith under test replaced by what the test covers (the content of the files its `// smith-covers:` lines name, else of
+// the files that generate code), and that key with `build.c` left out of the base. They are not used to skip a test.
+// A passed test is stored under them too; a test whose key misses and whose narrower key holds is run all the same, and
+// `store` says on stderr how many of those passed and names each that did not: a wrong hit of the narrower key, found
+// before the key goes live.
 #include "test_cache.h"
 #include "changed.h"
 #include "core.h"
@@ -37,6 +44,9 @@ typedef struct {
     char key[smith_sha256_hex_size];
     bool cacheable;
     bool hit;
+    bool narrow_ok;                                 // the narrower keys exist (the test could be cached)
+    char narrow[2][smith_sha256_hex_size];          // the narrower keys (verify mode, #3164)
+    bool narrow_hit[2];
 } SmithTcTest;
 
 static SmithTcTest smith_tc_tests[smith_tc_tests_max];
@@ -51,6 +61,8 @@ static bool smith_tc_seen[smith_changed_files_max];
 static uint32_t smith_tc_stack[smith_tc_stack_max];
 static char smith_tc_self_hex[smith_sha256_hex_size];
 static char smith_tc_base_hex[smith_sha256_hex_size];
+static char smith_tc_base_narrow_hex[smith_sha256_hex_size]; // the base without build.c, plus the LLVM pack's name
+static bool smith_tc_base_quiet;                              // the second pass over the base makes no notes
 static bool smith_tc_why; // SMITH_RESULT_CACHE=why: say why a test runs
 static char smith_tc_text[smith_tc_text_max + 1];
 
@@ -67,6 +79,7 @@ static char smith_tc_stale[PATH_MAX]; // the first file of a manifest that is no
 static bool smith_tc_report;          // CI or SMITH_RESULT_CACHE=why: print the hit rate and the first misses
 
 static void smith_tc_note(const char *name, const char *value) {
+    if (smith_tc_base_quiet) return;
     int put = snprintf(smith_tc_notes + smith_tc_notes_used, smith_tc_notes_max - smith_tc_notes_used, "%s\t%.*s\n",
                        name, (int)smith_tc_value_max, value);
     if (put > 0 && smith_tc_notes_used + (size_t)put < smith_tc_notes_max) smith_tc_notes_used += (size_t)put;
@@ -170,15 +183,16 @@ static void smith_tc_feed_environment(SmithSha256 *sha) {
         char name[96];
         snprintf(name, sizeof name, "environment %.*s", equals != nullptr ? (int)(equals - kept[i]) : 80, kept[i]);
         smith_tc_note(name, equals != nullptr ? equals + 1 : "");
-        if (smith_tc_why) fprintf(stderr, "smith test cache: the key holds %s\n", kept[i]);
+        if (smith_tc_why && !smith_tc_base_quiet) fprintf(stderr, "smith test cache: the key holds %s\n", kept[i]);
     }
 }
 
 // Feeds the content of the project's build files (the flags a test is compiled with) and of the cwd's.
-static void smith_tc_feed_build_files(SmithSha256 *sha) {
+static void smith_tc_feed_build_files(SmithSha256 *sha, bool with_build_c) {
     static const char *const files[] = {"build.c", "build.smith", ".clang-format", nullptr};
     char hex[smith_sha256_hex_size];
     for (size_t i = 0; files[i] != nullptr; i++) { // a short fixed list
+        if (!with_build_c && strcmp(files[i], "build.c") == 0) continue;
         if (smith_tc_hash_path(files[i], hex)) {
             smith_tc_feed(sha, hex);
             char name[96];
@@ -189,6 +203,7 @@ static void smith_tc_feed_build_files(SmithSha256 *sha) {
     char here[PATH_MAX];
     if (getcwd(here, sizeof here) == nullptr || strcmp(here, smith_tc_root) == 0) return;
     for (size_t i = 0; files[i] != nullptr; i++) { // the same in the folder the runner runs in
+        if (!with_build_c && strcmp(files[i], "build.c") == 0) continue;
         char path[PATH_MAX];
         snprintf(path, sizeof path, "%s/%s", here, files[i]);
         if (smith_tc_hash_path(path, hex)) {
@@ -201,20 +216,55 @@ static void smith_tc_feed_build_files(SmithSha256 *sha) {
 }
 
 // What every key holds: the options and the place of the runner, the environment and the build files.
-static void smith_tc_make_base(void) {
+static void smith_tc_base_hash(bool with_build_c, char hex[smith_sha256_hex_size]) {
     SmithSha256 sha;
     smith_sha256_init(&sha);
-    smith_tc_notes_used = 0;
-    smith_tc_notes[0] = '\0';
     smith_tc_feed(&sha, smith_tc_header);
     smith_tc_feed(&sha, smith_tc_options);
     smith_tc_note("options of the run", smith_tc_options);
     smith_tc_feed(&sha, smith_tc_runner);
     smith_tc_note("runner", smith_tc_runner);
     smith_tc_feed_environment(&sha);
-    smith_tc_feed_build_files(&sha);
+    smith_tc_feed_build_files(&sha, with_build_c);
     smith_tc_note("smith under test (SMITH_SELF)", smith_tc_self_hex);
-    smith_sha256_final(&sha, smith_tc_base_hex);
+    smith_sha256_final(&sha, hex);
+}
+
+// The default name of the LLVM pack, which `build.c` holds (`smith_env(b, "SMITH_LLVM_NAME", "<name>")`): the one thing
+// of `build.c` that decides what the code generator is, kept in the base that leaves `build.c` out (#3164).
+static void smith_tc_llvm_name(char *out, size_t size) {
+    static const char marker[] = "\"SMITH_LLVM_NAME\", \"";
+    out[0] = '\0';
+    FILE *file = fopen("build.c", "r");
+    char line[512];
+    for (size_t guard = 0; file != nullptr && guard < ((size_t)1 << 20); guard++) { // bounded by the lines of build.c
+        if (fgets(line, sizeof line, file) == nullptr) break;
+        char *at = strstr(line, marker);
+        if (at == nullptr) continue;
+        at += sizeof marker - 1;
+        snprintf(out, size, "%.*s", (int)strcspn(at, "\""), at);
+        break;
+    }
+    if (file != nullptr) fclose(file);
+}
+
+// What every key holds: the options and the place of the runner, the environment and the build files. The second base
+// is the first without `build.c` and with the pack's name (verify mode, #3164).
+static void smith_tc_make_base(void) {
+    smith_tc_notes_used = 0;
+    smith_tc_notes[0] = '\0';
+    smith_tc_base_quiet = false;
+    smith_tc_base_hash(true, smith_tc_base_hex);
+    smith_tc_base_quiet = true;
+    smith_tc_base_hash(false, smith_tc_base_narrow_hex);
+    smith_tc_base_quiet = false;
+    char name[64];
+    smith_tc_llvm_name(name, sizeof name);
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    smith_tc_feed(&sha, smith_tc_base_narrow_hex);
+    smith_tc_feed(&sha, name);
+    smith_sha256_final(&sha, smith_tc_base_narrow_hex);
 }
 
 // The path of the runner as the project spells it: without the folder of this checkout, so a worktree shares keys.
@@ -375,11 +425,13 @@ static size_t smith_tc_closure(size_t first) {
 
 // Feeds the files of the closure marked in smith_tc_seen; says whether one of the tests' own sources runs smith, and
 // whether one cannot be cached. A `tests/` helper counts as a test's own source.
-static void smith_tc_feed_closure(SmithSha256 *sha, bool *runs_smith, bool *uncached) {
+static void smith_tc_feed_closure(SmithSha256 *shas, size_t hashes, bool *runs_smith, bool *uncached) {
     for (size_t f = 0; f < smith_changed_file_count; f++) { // bounded by the files
         if (!smith_tc_seen[f]) continue;
-        smith_tc_feed(sha, smith_changed_files[f]);
-        smith_tc_feed(sha, smith_tc_file_digest(f));
+        for (size_t h = 0; h < hashes; h++) { // the key and the narrower keys
+            smith_tc_feed(&shas[h], smith_changed_files[f]);
+            smith_tc_feed(&shas[h], smith_tc_file_digest(f));
+        }
         bool own = smith_tc_test_file(smith_changed_files[f]) || smith_changed_starts(smith_changed_files[f], "tests/");
         if (!own || !smith_changed_is_source(smith_changed_files[f])) continue;
         size_t size = smith_changed_read(smith_changed_files[f]);
@@ -389,19 +441,96 @@ static void smith_tc_feed_closure(SmithSha256 *sha, bool *runs_smith, bool *unca
     }
 }
 
-// The key of one test, or false when it cannot be cached (why says which).
+// ---- The narrower keys (verify mode, #3164)
+
+// The files that generate code, for a test that declares no `// smith-covers:` (#3079, section 7). Wider than the
+// compiler's own list on purpose: a file too many costs a miss, a file too few a wrong hit.
+static const char *const smith_tc_codegen[] = {
+    "shim/hook.cpp", "shim/clang.cpp", "shim/cimport*.cpp", "shim/affine.cpp", "shim/effects*.cpp", "shim/lld.cpp",
+    "shim/*.h",      "runtime/lang*.c", "runtime/lang*.h",  "runtime/cc*.c",    "runtime/cc*.h",     "front/",
+    "lib/std/*.smith", "include/smith/", "patches/",       "templates/",       nullptr};
+
+static char smith_tc_codegen_hex[smith_sha256_hex_size];
+static bool smith_tc_codegen_made;
+static char smith_tc_cover_hex[smith_changed_files_max][smith_sha256_hex_size];
+static uint8_t smith_tc_cover_state[smith_changed_files_max]; // 0 not read yet, 1 declares nothing, 2 declares
+
+// Whether `path` is one of the files that generate code.
+static bool smith_tc_is_codegen(const char *path) {
+    if (smith_changed_ends(path, "_test.smith")) return false;
+    for (size_t i = 0; smith_tc_codegen[i] != nullptr; i++) { // a short fixed list
+        if (smith_changed_glob_match(smith_tc_codegen[i], path)) return true;
+    }
+    return false;
+}
+
+static const char *smith_tc_codegen_digest(void) {
+    if (!smith_tc_codegen_made) {
+        smith_tc_codegen_made = true;
+        SmithSha256 sha;
+        smith_sha256_init(&sha);
+        for (size_t f = 0; f < smith_changed_file_count; f++) { // bounded by the files
+            if (!smith_tc_is_codegen(smith_changed_files[f])) continue;
+            smith_tc_feed(&sha, smith_changed_files[f]);
+            smith_tc_feed(&sha, smith_tc_file_digest(f));
+        }
+        smith_sha256_final(&sha, smith_tc_codegen_hex);
+    }
+    return smith_tc_codegen_hex;
+}
+
+// The digest of the files test file `file` declares it covers (`// smith-covers:`), or nullptr when it declares none.
+static const char *smith_tc_cover_digest(size_t file) {
+    if (smith_tc_cover_state[file] != 0) return smith_tc_cover_state[file] == 2 ? smith_tc_cover_hex[file] : nullptr;
+    smith_tc_cover_state[file] = 1;
+    size_t size = smith_changed_read(smith_changed_files[file]);
+    bool marked = false;
+    if (size > 0) (void)smith_changed_covers_path(smith_changed_text, "", &marked);
+    if (!marked) return nullptr;
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    for (size_t f = 0; f < smith_changed_file_count; f++) { // bounded by the files
+        bool ignored = false;
+        if (!smith_changed_covers_path(smith_changed_text, smith_changed_files[f], &ignored)) continue;
+        smith_tc_feed(&sha, smith_changed_files[f]);
+        smith_tc_feed(&sha, smith_tc_file_digest(f));
+    }
+    smith_sha256_final(&sha, smith_tc_cover_hex[file]);
+    smith_tc_cover_state[file] = 2;
+    return smith_tc_cover_hex[file];
+}
+
+// What the narrower keys hold for the smith under test: the files its test sources cover when they declare it, else
+// the files that generate code.
+static void smith_tc_narrow_self(const uint32_t *sources, size_t found, SmithSha256 *shas, size_t hashes) {
+    bool declared = false;
+    for (size_t i = 0; i < found; i++) { // bounded by the files
+        const char *covers = smith_tc_cover_digest(sources[i]);
+        if (covers == nullptr) continue;
+        declared = true;
+        for (size_t h = 0; h < hashes; h++)
+            smith_tc_feed(&shas[h], covers);
+    }
+    if (declared) return;
+    for (size_t h = 0; h < hashes; h++)
+        smith_tc_feed(&shas[h], smith_tc_codegen_digest());
+}
+
+// The key of one test, or false when it cannot be cached (why says which). Fills the narrower keys too.
 static bool smith_tc_key(SmithTcTest *test, const char **why) {
     uint32_t sources[8];
     size_t found = smith_tc_sources(test->name, sources, 8);
-    SmithSha256 sha;
-    smith_sha256_init(&sha);
-    smith_tc_feed(&sha, smith_tc_base_hex);
-    smith_tc_feed(&sha, test->name);
+    SmithSha256 sha[3]; // the key, the narrower key, the narrower key without build.c
+    for (size_t h = 0; h < 3; h++) {
+        smith_sha256_init(&sha[h]);
+        smith_tc_feed(&sha[h], h == 2 ? smith_tc_base_narrow_hex : smith_tc_base_hex);
+        smith_tc_feed(&sha[h], test->name);
+    }
     bool runs_smith = false;
     bool uncached = false;
     for (size_t i = 0; i < found; i++) { // bounded by the files
         smith_tc_closure(sources[i]);
-        smith_tc_feed_closure(&sha, &runs_smith, &uncached);
+        smith_tc_feed_closure(sha, 3, &runs_smith, &uncached);
     }
     if (found == 0) *why = "no source file for its module or its function";
     if (uncached) *why = "its source reads the clock, the network, a file without files::, or asks to be uncached";
@@ -411,9 +540,13 @@ static bool smith_tc_key(SmithTcTest *test, const char **why) {
             *why = "it runs smith and the smith under test (SMITH_SELF) cannot be read";
             return false;
         }
-        smith_tc_feed(&sha, smith_tc_self_hex);
+        smith_tc_feed(&sha[0], smith_tc_self_hex);
+        smith_tc_narrow_self(sources, found, &sha[1], 2);
     }
-    smith_sha256_final(&sha, test->key);
+    smith_sha256_final(&sha[0], test->key);
+    smith_sha256_final(&sha[1], test->narrow[0]);
+    smith_sha256_final(&sha[2], test->narrow[1]);
+    test->narrow_ok = true;
     return true;
 }
 
@@ -657,13 +790,24 @@ static void smith_tc_write_results(const char *folder) {
     FILE *hits = fopen(path, "w");
     snprintf(path, sizeof path, "%s/keys", folder);
     FILE *keys = fopen(path, "w");
+    snprintf(path, sizeof path, "%s/narrow", folder);
+    FILE *narrow = fopen(path, "w"); // `name<TAB>key<TAB>key`: the narrower keys (verify mode, #3164)
+    snprintf(path, sizeof path, "%s/verify", folder);
+    FILE *verify = fopen(path, "w"); // `name<TAB>keys`: the tests that run and that a narrower key would have served
     for (size_t i = 0; hits != nullptr && keys != nullptr && i < smith_tc_test_count; i++) { // bounded by the tests
         const SmithTcTest *test = &smith_tc_tests[i];
         if (test->hit) fprintf(hits, "%s\n", test->name);
         if (test->cacheable) fprintf(keys, "%s\t%s\n", test->name, test->key);
+        if (test->cacheable && narrow != nullptr)
+            fprintf(narrow, "%s\t%s\t%s\n", test->name, test->narrow[0], test->narrow[1]);
+        if (!test->hit && (test->narrow_hit[0] || test->narrow_hit[1]) && verify != nullptr)
+            fprintf(verify, "%s\t%s\n", test->name,
+                    test->narrow_hit[0] ? (test->narrow_hit[1] ? "1,2" : "1") : "2");
     }
     if (hits != nullptr) fclose(hits);
     if (keys != nullptr) fclose(keys);
+    if (narrow != nullptr) fclose(narrow);
+    if (verify != nullptr) fclose(verify);
 }
 
 // The digest of the smith under test, kept in the store by build-id (the step cache does the same, executor_cache.c):
@@ -719,6 +863,8 @@ static int smith_tc_check(const char *folder) {
     char base_reason[512] = "";
     size_t shown = 0;
     size_t hits = 0;
+    size_t narrow_hits[2] = {0, 0};
+    size_t would[2] = {0, 0};
     for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
         SmithTcTest *test = &smith_tc_tests[i];
         const char *why = "";
@@ -730,6 +876,11 @@ static int smith_tc_check(const char *folder) {
         bool stored = test->cacheable && stat(entry, &info) == 0;
         test->hit = test->cacheable && smith_tc_manifest_holds(test->key);
         if (test->hit) hits++;
+        for (size_t k = 0; k < 2; k++) { // bounded: the two narrower keys (verify mode, #3164)
+            test->narrow_hit[k] = test->cacheable && smith_tc_manifest_holds(test->narrow[k]);
+            if (test->narrow_hit[k]) narrow_hits[k]++;
+            if (test->narrow_hit[k] && !test->hit) would[k]++;
+        }
         if (test->cacheable && !test->hit) smith_tc_say(test->name, "no entry, or a file it read has changed");
         if (!smith_tc_report || !test->cacheable || test->hit || shown >= smith_tc_report_max) continue;
         if (stored) {
@@ -745,6 +896,12 @@ static int smith_tc_check(const char *folder) {
         fprintf(stderr, "cache test-store: %zu of %zu (%zu%%)\n", hits, smith_tc_test_count,
                 hits * 100 / smith_tc_test_count);
     if (smith_tc_report) fprintf(stderr, "cache test-store: smith hashed whole %u times\n", smith_tc_self_hashed);
+    if (smith_tc_report && smith_tc_test_count > 0)
+        fprintf(stderr,
+                "cache test-store: verify: the narrower key would serve %zu of %zu (%zu%%), without build.c %zu of %zu "
+                "(%zu%%); %zu and %zu of them are run to be compared\n",
+                narrow_hits[0], smith_tc_test_count, narrow_hits[0] * 100 / smith_tc_test_count, narrow_hits[1],
+                smith_tc_test_count, narrow_hits[1] * 100 / smith_tc_test_count, would[0], would[1]);
     smith_tc_save_base();
     smith_tc_write_results(folder);
     return 0;
@@ -820,11 +977,11 @@ static void smith_tc_prune(void) {
     }
 }
 
-// The names in `<folder>/passed`, sorted, in a pool; their count.
-static size_t smith_tc_load_passed(const char *folder, const char **names) {
-    static char pool[(size_t)1 << 21];
+// The names in `<folder>/<list>` (`passed` or `ran`), sorted, in `pool`; their count.
+static size_t smith_tc_load_list(const char *folder, const char *list, char *pool, size_t pool_size,
+                                 const char **names) {
     char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/passed", folder);
+    snprintf(path, sizeof path, "%s/%s", folder, list);
     FILE *file = fopen(path, "r");
     if (file == nullptr) return 0;
     size_t used = 0;
@@ -833,7 +990,7 @@ static size_t smith_tc_load_passed(const char *folder, const char **names) {
     for (size_t guard = 0; guard < smith_tc_tests_max; guard++) { // bounded by the passed tests
         if (fgets(name, sizeof name, file) == nullptr) break;
         size_t length = strcspn(name, "\n");
-        if (length == 0 || used + length + 1 > sizeof pool) continue;
+        if (length == 0 || used + length + 1 > pool_size) continue;
         memcpy(pool + used, name, length);
         pool[used + length] = '\0';
         names[count++] = pool + used;
@@ -844,6 +1001,50 @@ static size_t smith_tc_load_passed(const char *folder, const char **names) {
     return count;
 }
 
+static size_t smith_tc_load_passed(const char *folder, const char **names) {
+    static char pool[(size_t)1 << 21];
+    return smith_tc_load_list(folder, "passed", pool, sizeof pool, names);
+}
+
+// Verify mode (#3164): the tests that ran although a narrower key held (`<folder>/verify`), counted by whether they
+// passed. One that ran and did not pass is a wrong hit of that key, and is named on stderr, loudly. Only the run's
+// report decides; nothing is stored or skipped by it.
+static void smith_tc_verify(const char *folder, const char **passed, size_t passed_count) {
+    static char ran_pool[(size_t)1 << 21];
+    static const char *ran[smith_tc_tests_max];
+    size_t ran_count = smith_tc_load_list(folder, "ran", ran_pool, sizeof ran_pool, ran);
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/verify", folder);
+    FILE *file = fopen(path, "r");
+    if (file == nullptr) return;
+    size_t compared = 0;
+    size_t agreed = 0;
+    char row[smith_tc_name_max + 16];
+    for (size_t guard = 0; guard < smith_tc_tests_max; guard++) { // bounded by the tests
+        if (fgets(row, sizeof row, file) == nullptr) break;
+        char *tab = strchr(row, '\t');
+        if (tab == nullptr) continue;
+        *tab = '\0';
+        tab[1 + strcspn(tab + 1, "\n")] = '\0';
+        const char *name = row;
+        if (bsearch((const void *)&name, (const void *)ran, ran_count, sizeof ran[0], smith_tc_compare) == nullptr)
+            continue;
+        compared++;
+        if (bsearch((const void *)&name, (const void *)passed, passed_count, sizeof passed[0], smith_tc_compare) !=
+            nullptr) {
+            agreed++;
+            continue;
+        }
+        fprintf(stderr,
+                "cache test-store: VERIFY DIFFERENCE %s: the narrower key %s held, so it would have been served, and it "
+                "did not pass\n",
+                name, tab + 1);
+    }
+    fclose(file);
+    fprintf(stderr, "cache test-store: verify: %zu tests the narrower keys would have served ran, %zu passed, %zu differ\n",
+            compared, agreed, compared - agreed);
+}
+
 // `smith test --cache store <folder>`: for the tests of `<folder>/passed` (names), each with its key in `keys`, writes
 // the manifest from `<folder>/reads/<clean name>.txt`.
 static int smith_tc_store_main(const char *folder) {
@@ -851,6 +1052,9 @@ static int smith_tc_store_main(const char *folder) {
     char path[PATH_MAX];
     if (!smith_tc_store_folder() || !smith_tc_load_options(folder) || !smith_tc_open_project()) return 0;
     size_t count = smith_tc_load_passed(folder, names);
+    smith_tc_verify(folder, names, count);
+    snprintf(path, sizeof path, "%s/narrow", folder);
+    FILE *narrow = fopen(path, "r");
     snprintf(path, sizeof path, "%s/keys", folder);
     FILE *keys = fopen(path, "r");
     char row[smith_tc_name_max + 80];
@@ -868,7 +1072,21 @@ static int smith_tc_store_main(const char *folder) {
         smith_tc_clean(name, clean, sizeof clean);
         snprintf(path, sizeof path, "%s/reads/%s.txt", folder, clean);
         smith_tc_write_entry(key, path);
+        char other[smith_tc_name_max + 2 * smith_sha256_hex_size + 4]; // the narrower keys of the same test
+        while (narrow != nullptr && fgets(other, sizeof other, narrow) != nullptr) { // the same order as `keys`
+            char *first = strchr(other, '\t');
+            if (first == nullptr || strncmp(other, name, (size_t)(first - other)) != 0 || name[first - other] != '\0')
+                continue;
+            char *second = strchr(first + 1, '\t');
+            if (second == nullptr) break;
+            *second = '\0';
+            second[1 + strcspn(second + 1, "\n")] = '\0';
+            smith_tc_write_entry(first + 1, path);
+            smith_tc_write_entry(second + 1, path);
+            break;
+        }
     }
+    if (narrow != nullptr) fclose(narrow);
     if (keys != nullptr) fclose(keys);
     smith_tc_prune();
     return 0;

@@ -120,3 +120,27 @@ export void test_test_cache_the_import_cache_log_is_not_part_of_the_key() {
         scratch::sh(&p, "env SMITH_IMPORT_CACHE=0 SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test 2>&1");
     scratch::expect_lacks("log: another variable runs them again", other.out, " cached:");
 }
+
+// Verify mode (#3164): the narrower keys are made beside the key and used for nothing but a report. A change to build.c
+// misses every key; the key without build.c would still serve the tests, they run all the same, and the report counts
+// them as the same result.
+export void test_test_cache_verify_mode_reports_the_tests_a_narrower_key_would_have_served() {
+    scratch::Project p = cached_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("verify: the first run passes", 0, &first);
+    scratch::Run edit = scratch::sh(&p, "echo '// a comment' >> build.c");
+    scratch::expect_status("verify: build.c is edited", 0, &edit);
+    scratch::Run second = scratch::sh(&p, "env SMITH_RESULT_CACHE=why SMITH_OUTPUT=full smith test 2>&1");
+    scratch::expect_status("verify: the second run passes", 0, &second);
+    scratch::expect_lacks("verify: ... build.c is in the key, so nothing is cached", second.out, " cached:");
+    scratch::expect_contains("verify: ... the key without build.c would serve three tests", second.out,
+                             "without build.c 3 of 4");
+    scratch::expect_contains("verify: ... they ran again and passed", second.out,
+                             "3 tests the narrower keys would have served ran, 3 passed, 0 differ");
+    scratch::expect_lacks("verify: ... no difference is reported", second.out, "VERIFY DIFFERENCE");
+}

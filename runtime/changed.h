@@ -58,6 +58,10 @@ void smith_changed_build_graph(void);
 
 bool smith_changed_runs_smith(const char *text);
 
+bool smith_changed_glob_match(const char *pattern, const char *path);
+
+bool smith_changed_covers_path(const char *text, const char *path, bool *marked);
+
 extern const char *smith_changed_self;
 
 void smith_changed_filter_add(SmithChangedBuffer *filter, const char *name);
