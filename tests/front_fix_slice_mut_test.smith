@@ -56,3 +56,11 @@ export void test_front_fix_slice_mut_a_longer_name_and_a_field_are_not_the_local
 export void test_front_fix_slice_mut_a_writable_slice_is_left() {
     expect_inserts("fn f():\n    mut xs: []mut i32 = []\n    xs = mem.realloc(xs, 2)\n", 0, 0);
 }
+
+// The slice `std.mem.view` makes is writable (#3078): its result, its local, the bytes it takes and the cast of its
+// pointer are `mut`, four inserts.
+export void test_front_fix_slice_mut_the_slice_a_view_returns_is_mut() {
+    expect_inserts("pub fn view(data: []u8, T: type) -> []T:\n    mut result: []T = undefined\n"
+                   "    result.data = data.data.cast(*T)\n    return result\n",
+                   4, 20);
+}

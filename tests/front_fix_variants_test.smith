@@ -165,3 +165,24 @@ export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays_
     Str want_ternary = "I32 g(void) {\n    return k(c ? console::output : console::input);\n}\n";
     test::check_equal(out[1].text, want_ternary);
 }
+
+// A file fixed alone spells an enumerator of an imported module as that module's enum declares it (#3084): `Replace` is
+// `replace` in a call and in a `switch` arm (the arm still names a variant of the enumeration, so the match stays
+// exhaustive), and a C enumerator the file reads through `c::` keeps its C spelling.
+export void test_front_fix_variants_a_switch_arm_and_a_call_of_an_imported_enum() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str files = "export typedef enum {\n    Replace, // creates the file\n    Read,\n    Append,\n} Mode;\n";
+    Str user = "fn f(mode: files.Mode) -> i32:\n    match mode:\n        files.Replace: return 1\n"
+               "        .Read: return 2\n        _: return c.O_RDONLY\n"
+               "fn g():\n    write(files.Append, c.O_RDONLY)\n";
+    fix_variants::Word sources[1] = {word(user)};
+    fix_variants::Word imported[1] = {word(files)};
+    fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
+    Str want = "fn f(mode: files.Mode) -> i32:\n    match mode:\n        files.replace: return 1\n"
+               "        .read: return 2\n        _: return c.O_RDONLY\n"
+               "fn g():\n    write(files.append, c.O_RDONLY)\n";
+    test::check_equal(out[0].text, want);
+}
