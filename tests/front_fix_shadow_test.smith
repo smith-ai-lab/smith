@@ -1,0 +1,74 @@
+// Tests of the rename of a local or parameter named like an imported module (#3027, `fix_variants::rename_shadows`):
+// the name gets a trailing `_` in its function, the module's own uses (`arena::push`) stay, and so do fields and
+// globals.
+module front_fix_shadow_test;
+
+import front::fix;
+import front::fix_variants;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_renamed(Str source, Str want) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(fix_variants::rename_shadows(source), want);
+}
+
+export void test_front_fix_shadow_a_parameter_named_like_a_module() {
+    expect_renamed("module m;\nimport std::arena;\nvoid f(arena::Arena *arena) {\n    arena::push(arena, 1);\n"
+                   "    arena->used = 0;\n}\n",
+                   "module m;\nimport std::arena;\nvoid f(arena::Arena *arena_) {\n    arena::push(arena_, 1);\n"
+                   "    arena_->used = 0;\n}\n");
+}
+
+export void test_front_fix_shadow_a_local_and_a_loop_name() {
+    expect_renamed("module m;\nimport std::array;\nimport std::text;\nvoid f(Str s) {\n    Str text = s;\n"
+                   "    for (Usize array = 0; array < 3; array++) {\n        g(text, array);\n    }\n}\n",
+                   "module m;\nimport std::array;\nimport std::text;\nvoid f(Str s) {\n    Str text_ = s;\n"
+                   "    for (Usize array_ = 0; array_ < 3; array_++) {\n        g(text_, array_);\n    }\n}\n");
+}
+
+// The new name is free in the file: `text_` is taken, so it is `text__`.
+export void test_front_fix_shadow_the_new_name_is_free() {
+    expect_renamed("module m;\nimport std::text;\nvoid f(Str text, Str text_) {\n    g(text, text_);\n}\n",
+                   "module m;\nimport std::text;\nvoid f(Str text__, Str text_) {\n    g(text__, text_);\n}\n");
+}
+
+// A field (`.arena`, `->arena`, its declaration in a struct), a global and an alias's own module are left.
+export void test_front_fix_shadow_fields_and_globals_stay() {
+    Str fields = "module m;\nimport std::arena;\nstruct S {\n    Usize arena;\n};\nUsize f(S *s, S t) {\n"
+                 "    return s->arena + t.arena;\n}\n";
+    expect_renamed(fields, fields);
+    Str global = "module m;\nimport std::arena;\nstatic Usize arena = 0;\nUsize f() {\n    return arena;\n}\n";
+    expect_renamed(global, global);
+    expect_renamed("module m;\nimport std::format as fmt;\nvoid f(Str fmt) {\n    fmt::push(fmt);\n}\n",
+                   "module m;\nimport std::format as fmt;\nvoid f(Str fmt_) {\n    fmt::push(fmt_);\n}\n");
+}
+
+// The whole fixer: `(const U8 *)text` with `import std::text` was `text.cast(u8.*)` (count A's reading of #3027).
+export void test_front_fix_shadow_a_cast_of_a_parameter_named_like_a_module() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "module m;\n\nimport std::text;\n"
+                                 "const U8 *bytes_of(const char *text) {\n    return (const U8 *)text;\n}\n");
+    Str want = "\nimport std.text\nfn bytes_of(text_: *char) -> *u8:\n    return text_.cast(*u8)\n";
+    test::check_equal(fixed.text, want);
+}
+
+// The `in` -> `in_` rename (#2390) leaves the path of a header: `<netinet/in.h>` is a file, not a C name `in`.
+export void test_front_fix_shadow_a_header_named_in_keeps_its_path() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "module m;\n\nimport <netinet/in.h>;\n\nI32 f(I32 in) {\n    return in;\n}\n");
+    Str want = "\nimport c <netinet/in.h>\n\nfn f(in_: i32) -> i32:\n    return in_\n";
+    test::check_equal(fixed.text, want);
+}

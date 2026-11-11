@@ -12,7 +12,7 @@ Issue #2339, a slice of #1823; the lead's decision on #1406 and #2339 (2026-11-0
 
 **Decision.** `array.filled(T, n, value) -> [n]T` (after `import std.array`) is a form the checker and the emitter know, as `countof` and `sizeof` are. Neither syntax can evaluate a function at compile time: today's generics cannot return an array (C cannot), and the new front end has no general compile-time evaluator.
 
-- *Checker* (`front/types_builtin.smith`, shape `filled`): the callee is the name `filled` read through a module that is `std.array`; `T` is the first argument read as a type, `n` is folded by `types::fold_length` (the rule of an array length), `value` is typed with `T` expected. The result is `[n]T`; the checker records `n` on the call, which is how the emitter tells the call apart.
+- *Checker* (`front/types_builtin.smith`, shape `filled`): the callee is the name `filled` read through a module that is `std.array`; `T` is the first argument read as a type, `n` is computed through `types::Options.length` (the rule of an array length, `front::eval`), `value` is typed with `T` expected. The result is `[n]T`; the checker records `n` on the call, which is how the emitter tells the call apart.
 - *Emitter* (`front/emit_builtin.smith`, `front/emit_memory.smith`): at file scope (`filled_constant`) the null constant when the value is zero, else a constant array of the value; in a function a constant value is a constant array and any other a fill loop.
 - *Header* (`front/compile.smith`, `variable_line`): a `pub` global with a written type is an `extern T name[N]` line with its symbol in `__asm__`.
 - *Library*: `lib/std/array.smith` holds the documentation and the registry row (`std::array`); it has no body for `filled`.
