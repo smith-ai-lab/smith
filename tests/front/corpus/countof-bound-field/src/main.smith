@@ -1,0 +1,15 @@
+# `countof` of a slice field of a name bound by `else` (`.ok(ok) := done else:`), read at run time (#3036).
+import c <stdio.h>
+
+pub struct Output:
+    pub bytes: []u8
+
+fn count(done: Result(Output, i32)) -> usize:
+    .ok(ok) := done else:
+        return 0
+    return countof(ok.bytes)
+
+fn main() -> i32:
+    data: [3]u8 = [1, 2, 3]
+    _ := stdio.printf("%zu\n", count(.ok(Output(bytes = data[0:3]))))
+    return 0
