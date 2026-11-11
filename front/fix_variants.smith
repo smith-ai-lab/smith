@@ -316,10 +316,12 @@ export Words rename_all(Words sources) {
 // In smith's own syntax a local, parameter or loop name that is the name of an imported module is a shadowing error
 // (owner, 2026-11-10: "yeah it should be a shadowing error please"): `arena: *Arena` with `import std.arena`. Today's
 // syntax tells the two apart by `::` (`arena::push(a, ...)` is the module, `arena->used` the local), and once fixed
-// both are `arena.`, so the rename is made on today's text, before every other pass. The name gets a trailing `_` (the
-// rule of `in` -> `in_`, #2390), and another while that name is in the file:
+// both are `arena.`, so the rename is made on today's text, before every other pass. The name gets the suffix `_value`
+// (decided by the lead, #3084: `json` is `json_value`); a module whose `<name>_value` is already a name in the file is
+// left alone, with its locals, and the checker's shadowing error reports it. The module is never renamed:
 //
-//   void f(arena::Arena *arena) { arena::push(arena, 1); }   void f(arena::Arena *arena_) { arena::push(arena_, 1); }
+//   void f(arena::Arena *arena) { arena::push(arena, 1); }
+//   void f(arena::Arena *arena_value) { arena::push(arena_value, 1); }
 //
 // Renamed: a name inside a function's parameters or body that has no `::` after it and no `.`, `->` or `::` before it,
 // and no `(` after it (a function of that name). A name used at the top level of the file (a global, a function) is
@@ -448,11 +450,10 @@ export Str rename_shadows(Str source) {
     }
     Names spelled = mem::alloc_slice(ShadowName, countof(modules));
     for (Usize m = 0; m < countof(modules); m++) {
-        Str next = as_str(format::push(modules[m].text, "_"));
-        while (in_file(source, tokens, next)) {
-            next = as_str(format::push(next, "_"));
-        }
-        spelled[m].text = next;
+        Str next = as_str(format::push(modules[m].text, "_value"));
+        // `<name>_value` is already in the file: the module's locals stay (spelled "" is never matched below).
+        Str none = "";
+        spelled[m].text = in_file(source, tokens, next) ? none : next;
     }
     Str out = "";
     Usize at = 0;
@@ -462,6 +463,8 @@ export Str rename_shadows(Str source) {
         if (listed(kept, text)) continue;
         for (Usize m = 0; m < countof(modules); m++) {
             if (!mem::equal(modules[m].text, text)) continue;
+            Str chosen = spelled[m].text;
+            if (countof(chosen) == 0) break;
             out = as_str(format::push(out, source[at:tokens[i].span.start], spelled[m].text));
             at = tokens[i].span.end;
             break;

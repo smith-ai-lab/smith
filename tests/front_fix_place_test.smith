@@ -67,3 +67,17 @@ export void test_front_fix_place_a_name_of_the_variant_in_the_function_is_left()
     expect("fn f(k: mut E, count: i32):\n    if k == .count:\n        k.count.n = count\n",
            "fn f(k: mut E, count: i32):\n    if k == .count:\n        k.count.n = count\n");
 }
+
+export void test_front_fix_place_a_discard_is_written_with_a_colon() {
+    expect("fn f():\n    _ = write(1, \"x\", 1)\n", "fn f():\n    _ := write(1, \"x\", 1)\n");
+}
+
+export void test_front_fix_place_a_discard_inside_a_block_keeps_its_indent() {
+    expect("fn f(k: E):\n    if k == .a:\n        _ = take(k)\n",
+           "fn f(k: E):\n    if k == .a:\n        _ := take(k)\n");
+}
+
+export void test_front_fix_place_a_comparison_with_underscore_and_a_name_ending_in_it_are_left() {
+    expect("fn f(a_: i32):\n    a_ = 1\n    _x = 2\n    _ == 3\n",
+           "fn f(a_: i32):\n    a_ = 1\n    _x = 2\n    _ == 3\n");
+}

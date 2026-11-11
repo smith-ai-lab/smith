@@ -319,6 +319,28 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_n
                                               "grep -o 'smith lint: linted [0-9]* files' | sort -u"));
 }
 
+// Files named on the command line: one that `.clang-format-ignore` names is left out (as `smith fmt` leaves it out and
+// the project lint never walks it, #3151), so the pre-push hook, which names every changed file, cannot lint a test
+// input CI skips; a named real file with a finding still fails.
+export void test_lint_with_named_files_leaves_out_those_the_ignore_list_names() {
+    scratch::Project p = scratch::make("s", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    (void)lint(&p, "printf 'int Bad_Ignored = 0;\\n' >ignored.smith; printf 'ignored.smith\\n' >.clang-format-ignore; "
+                   "run ignored.smith >alone.out; echo $? >alone.status; "
+                   "run ignored.smith geometry/box.smith >mixed.out; echo $? >mixed.status");
+    scratch::expect_text("a named file the ignore list names is not linted", "0",
+                         scratch::capture(&p, "cat alone.status"));
+    scratch::expect_text("... and a named real file with a finding still fails", "1",
+                         scratch::capture(&p, "cat mixed.status"));
+    scratch::expect_text("... without a word about the ignored one", "0",
+                         scratch::capture(&p, "cat alone.out mixed.out | grep -c Bad_Ignored"));
+}
+
 // --- a call to a generic: the instance is judged as the generic's name, not `push_array<F64>` ----------------------
 
 export void test_lint_a_module_that_calls_a_generic_lints_clean() {
