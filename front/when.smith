@@ -355,6 +355,9 @@ static const ast::Stmt *choose(const ast::Stmt *s) {
 // `d` itself when its body has none (and any other declaration).
 static const ast::Decl *decided(const ast::Decl *d, Os os) {
     if (d->kind != .function || d->kind.function.body == nullptr) return d;
+    // A condition is decided only when it names `target` (`about_target`). The copy below was most of what a file
+    // paid for each function of each module it imports (10 to 26% of its compile, #3080).
+    if (d->kind.function.no_target) return d;
     choosing_os = os;
     chose = false;
     ast::Decl *copy = ast_clone::clone_decl_choosing(d, choose);
