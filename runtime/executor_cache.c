@@ -1267,6 +1267,25 @@ static struct {
     uint64_t dropped_bytes;
 } smith_stepcache_tally;
 
+// The bytes of the cutoff's own age step that stay (#3045): the step holds more than has to go, and the entries of a
+// restored cache all have about one time, so dropping the whole step dropped the whole cache.
+static uint64_t smith_stepcache_spare;
+
+// Whether the second pass removes this entry: it is idle for 31 days, or older than the cutoff's step, or in that step
+// and past the bytes of it that stay.
+static bool smith_stepcache_goes(const char *path, const struct stat *info, time_t now, long cutoff) {
+    if (now - info->st_mtime > smith_stepcache_idle_seconds) return true;
+    if (!smith_cache_goes(info->st_mtime, now, cutoff)) return false;
+    if (!smith_cache_edge(info->st_mtime, now, cutoff)) return true;
+    if (smith_stepcache_spare == UINT64_MAX) return false;
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    smith_cache_measure(path, &bytes, &newest);
+    if (bytes > smith_stepcache_spare) return true;
+    smith_stepcache_spare -= bytes;
+    return false;
+}
+
 // What a pass over the results does with each: add its size to the ages (the first pass), or remove it when it is
 // idle for 31 days or older than the cutoff of #618's cap (the second).
 static void smith_stepcache_pass_shard(const char *shard, time_t now, long cutoff, bool measure) {
@@ -1286,7 +1305,7 @@ static void smith_stepcache_pass_shard(const char *shard, time_t now, long cutof
             smith_cache_measure(path, &bytes, &newest);
             smith_cache_ages_add(bytes, info.st_mtime, now);
             smith_stepcache_tally.seen++;
-        } else if (now - info.st_mtime > smith_stepcache_idle_seconds || smith_cache_goes(info.st_mtime, now, cutoff)) {
+        } else if (smith_stepcache_goes(path, &info, now, cutoff)) {
             uint64_t bytes = 0;
             time_t newest = 0;
             smith_cache_measure(path, &bytes, &newest);
@@ -1329,12 +1348,15 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
     smith_stepcache_pass("r", now, -1, true);
     uint64_t before = smith_cache_ages.total;
     long cutoff = smith_cache_cutoff(before > cap ? before - cap : 0);
+    smith_stepcache_spare = smith_cache_spare(cutoff, before > cap ? before - cap : 0);
     smith_stepcache_pass("r", now, cutoff, false);
     size_t seen = smith_stepcache_tally.seen;
     size_t dropped = smith_stepcache_tally.dropped;
     uint64_t gone = smith_stepcache_tally.dropped_bytes;
     // a manifest is used when its results are (a hit touches both), so the cutoff that drops the oldest results drops
     // the manifests as old: they were 122,000 files that the cap left (#2833)
+    // the manifests of the cutoff's step stay: they are small, and a manifest is not worth a pass of its own
+    smith_stepcache_spare = UINT64_MAX;
     smith_stepcache_pass("m", now, cutoff, false);
     char temporary[PATH_MAX];
     if (snprintf(temporary, sizeof temporary, "%s/tmp", smith_stepcache.folder) < (int)sizeof temporary)
