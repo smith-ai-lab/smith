@@ -233,7 +233,7 @@ static Bool declares(Str source, lex::Tokens tokens, Usize colon) {
 static Bool used_as_type(Str source, lex::Tokens tokens, Usize i) {
     lex::TokenKind next = i + 1 < countof(tokens) ? tokens[i + 1].kind : lex::end_of_file;
     // a name on the next line is the next statement, not a declared name (`= console.Input` then `t: ...`)
-    Bool same_line = i + 1 < countof(tokens) && !tokens[i + 1].line_break;
+    Bool same_line = i + 1 < countof(tokens) && !tokens[i].line_break;
     if (same_line && (next == lex::name || next == lex::star)) return true;
     Usize head = i;
     if (head >= 2 && (tokens[head - 1].kind == lex::colon_colon || tokens[head - 1].kind == lex::dot) &&
