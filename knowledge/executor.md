@@ -137,7 +137,7 @@ compare the bytes), which is not built. On a `.command` step the field is still 
 
 ## `.smith` compiles in one process (#2888)
 
-Each `.smith` compile of a build is its own `smith cc --front-end=new` process, so each reads std and its C headers again. Within one process they are read once (knowledge/front-end.md, "One process, many files"): a command line with several `.smith` files shares them, and a later file's import drops from about 500 ms to about 2 ms. What it shares never changes a result: modules are keyed by their whole source, headers by the header, its folder and the file's own flags. The executor still runs one process per compile, so a build gets the sharing between its compiles only through the disk cache of the same entries (#2891); a long-lived compile worker (#2893) is parked.
+Each `.smith` compile of a build is its own `smith cc --front-end=new` process, so each reads std and its C headers again. Within one process they are read once ([one process, many files](front-end/driver.md)): a command line with several `.smith` files shares them, and a later file's import drops from about 500 ms to about 2 ms. What it shares never changes a result: modules are keyed by their whole source, headers by the header, its folder and the file's own flags. The executor still runs one process per compile, so a build gets the sharing between its compiles only through the disk cache of the same entries (#2891); a long-lived compile worker (#2893) is parked.
 
 ## Keep writing `build.ninja`
 
