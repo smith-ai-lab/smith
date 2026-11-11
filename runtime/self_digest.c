@@ -40,11 +40,43 @@ static int smith_tc_hex_value(char c) {
     return -1;
 }
 
+// A little-endian 32-bit word of the file at `at`, which the caller checked is inside it.
+static uint32_t smith_tc_word(const uint8_t *file, size_t at) {
+    return (uint32_t)file[at] | (uint32_t)file[at + 1] << 8 | (uint32_t)file[at + 2] << 16 | (uint32_t)file[at + 3] << 24;
+}
+
+// Where the code signature of a 64-bit Mach-O file is (LC_CODE_SIGNATURE's dataoff and datasize). The linker signs
+// every arm64 binary, and the signature holds a hash of each page, those with the commit and LC_UUID among them: it
+// changes with every commit as they do, so it is blanked with them (#3050). False for any other file.
+static bool smith_tc_signature(const uint8_t *file, size_t length, size_t *at, size_t *size) {
+    constexpr uint32_t magic = 0xfeedfacf;
+    constexpr uint32_t code_signature = 0x1d;
+    constexpr size_t header = 32;
+    if (length < header || smith_tc_word(file, 0) != magic) return false;
+    uint32_t commands = smith_tc_word(file, 16);
+    size_t place = header;
+    for (uint32_t i = 0; i < commands && place + 16 <= length; i++) { // bounded by ncmds and the file
+        uint32_t command = smith_tc_word(file, place);
+        uint32_t command_size = smith_tc_word(file, place + 4);
+        if (command_size < 8) return false;
+        if (command == code_signature) {
+            size_t offset = smith_tc_word(file, place + 8);
+            size_t bytes = smith_tc_word(file, place + 12);
+            if (offset > length || bytes > length - offset) return false;
+            *at = offset;
+            *size = bytes;
+            return true;
+        }
+        place += command_size;
+    }
+    return false;
+}
+
 // The digest of the smith under test (#2833). Its build-id and the commit it was built from are in the file, so they
 // change with every commit; counted as they are, no test that runs smith could pass from the cache on another commit,
 // and the key of every test held the build-id. Here both are blanked (they are zeros in what is hashed), so the digest
 // changes with the code smith was built from and not with the commit it happens to carry. A file that does not hold
-// them (or when this smith knows no commit) is hashed whole.
+// them (or when this smith knows no commit) is hashed whole. A Mach-O file's code signature is blanked too.
 bool smith_self_digest(const char *path, char hex[smith_sha256_hex_size]) {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return false;
@@ -57,8 +89,8 @@ bool smith_self_digest(const char *path, char hex[smith_sha256_hex_size]) {
     const uint8_t *file = mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (file == MAP_FAILED) return false;
-    size_t at[2 * smith_tc_blank_max];
-    size_t size[2 * smith_tc_blank_max];
+    size_t at[2 * smith_tc_blank_max + 1]; // the commits, the ids and the signature
+    size_t size[2 * smith_tc_blank_max + 1];
     size_t count = 0;
     size_t commit_size = strlen(smith_commit);
     count +=
@@ -80,6 +112,7 @@ bool smith_self_digest(const char *path, char hex[smith_sha256_hex_size]) {
         for (size_t i = first; i < count; i++)
             size[i] = smith_platform_id_bytes;
     }
+    if (smith_tc_signature(file, length, &at[count], &size[count])) count++;
     for (size_t i = 1; i < count; i++) { // insertion sort by place: few
         size_t place = at[i], width = size[i], j = i;
         for (; j > 0 && at[j - 1] > place; j--) {
@@ -89,7 +122,7 @@ bool smith_self_digest(const char *path, char hex[smith_sha256_hex_size]) {
         at[j] = place;
         size[j] = width;
     }
-    static const uint8_t zeros[64];
+    static const uint8_t zeros[4096];
     SmithSha256 sha;
     smith_sha256_init(&sha);
     size_t done = 0;

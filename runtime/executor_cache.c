@@ -147,22 +147,29 @@ static char smith_stepcache_why[1024];
 
 // ---------------------------------------------------------------- explaining a step (#3050)
 
-// SMITH_STEP_CACHE_LOG=<file>: one line for each step the cache sees, appended (nested builds share the file):
-// `hit <output>`, `miss <output>: <reason>`, `stored <output>` or `not stored <output>: <reason>`. A miss of a new key
+// SMITH_STEP_CACHE_LOG=<file>: one line for each step the cache sees, appended (nested builds share the file), after
+// the name of the project's folder: `hit <output>`, `miss <output>: <reason>`, `stored <output>` or `not stored <output>: <reason>`. A miss of a new key
 // names the first line where the key differs from the last key stored for the same output: which input changed.
+static int smith_stepcache_log_fd = -2; // -2: not opened yet; -1: no log
+
 [[gnu::format(printf, 1, 2)]] static void smith_stepcache_log(const char *format, ...) {
-    static int fd = -2;
-    if (fd == -2) {
+    if (smith_stepcache_log_fd == -2) {
         const char *path = getenv("SMITH_STEP_CACHE_LOG");
-        fd = path != nullptr && *path != '\0' ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644) : -1;
+        smith_stepcache_log_fd =
+            path != nullptr && *path != '\0' ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644) : -1;
     }
+    int fd = smith_stepcache_log_fd;
     if (fd < 0) return;
     char line[4096];
+    const char *project = strrchr(smith_stepcache.roots[0], '/');
+    int prefix = snprintf(line, sizeof line - 1, "%s: ", project != nullptr ? project + 1 : smith_stepcache.roots[0]);
+    if (prefix < 0 || (size_t)prefix >= sizeof line / 2) prefix = 0;
     va_list arguments;
     va_start(arguments, format);
-    int length = vsnprintf(line, sizeof line - 1, format, arguments);
+    int length = vsnprintf(line + prefix, sizeof line - 1 - (size_t)prefix, format, arguments);
     va_end(arguments);
     if (length < 0) return;
+    length += prefix;
     size_t size = (size_t)length < sizeof line - 1 ? (size_t)length : sizeof line - 2;
     for (size_t i = 0; i < size; i++) { // the root's tokens, and no line break inside a line
         if (line[i] == smith_stepcache_root_token || line[i] == smith_stepcache_percent_token)
@@ -858,6 +865,8 @@ static bool smith_stepcache_start(SmithExec *exec, const char *base) {
     cache->table_capacity = smith_stepcache_memo_max * 2;
     cache->table = smith_exec_carve(exec, cache->table_capacity * sizeof(uint32_t));
     cache->state = SmithStepCache_On;
+    if (smith_stepcache_log_fd >= 0) close(smith_stepcache_log_fd);
+    smith_stepcache_log_fd = -2; // the log is opened again for this cache
     smith_stepcache_environment();
     return cache->state == SmithStepCache_On;
 }
@@ -945,12 +954,15 @@ static bool smith_stepcache_path(char *out, const char *kind, const char *hex, c
     return written > 0 && written < PATH_MAX;
 }
 
-// k/<xx>/<hash of the output's path, the root a token>: the text of the last key stored for that output (#3050).
+// k/<xx>/<hash of the project folder's name and the output's path, the root a token>: the text of the last key stored
+// for that output (#3050). The folder's name, not its path, so a checkout elsewhere finds it; a nested project (the
+// tests' front-project) writes the same relative outputs as the one around it.
 static bool smith_stepcache_last_path(const char *output, char path[PATH_MAX]) {
-    char storage[smith_exec_name_max + 64];
+    char storage[smith_exec_name_max + PATH_MAX + 64];
     SmithStepText name = {.data = storage, .capacity = sizeof storage};
     storage[0] = '\0';
-    smith_steptext_add(&name, "smith-step-last 1\n", 18);
+    const char *project = strrchr(smith_stepcache.roots[0], '/');
+    smith_steptext_addf(&name, "smith-step-last 1\n%s\n", project != nullptr ? project + 1 : "");
     if (!smith_stepcache_normalize(output, strlen(output), &name)) return false;
     char hex[smith_stepcache_hex];
     SmithSha256 sha;
@@ -1365,9 +1377,11 @@ static void smith_stepcache_add_variant(const char *key, const SmithStepText *va
 void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job, int64_t now) {
     const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
     const char *why = nullptr;
-    if (!job->key.valid || job->step_deps == nullptr || job->depfile_text == nullptr ||
-        !smith_stepcache_eligible(exec, edge))
+    if (!job->key.valid || !smith_stepcache_eligible(exec, edge)) return;
+    if (job->step_deps == nullptr || job->depfile_text == nullptr) {
+        smith_stepcache_log("not stored %s: no depfile was read", output);
         return;
+    }
     char again[smith_stepcache_hex];
     int64_t newest = 0;
     if (job->output_size > 0 || job->truncated) {

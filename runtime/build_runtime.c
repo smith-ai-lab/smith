@@ -2292,7 +2292,11 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
             smith_cat(b, smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
                       smith_header_pass_flags(b, object), smith_list(b, "-MD", "-MF", depfile, nullptr), nullptr),
         .inputs = smith_one(object->source),
-        .implicit_inputs = smith_one(smith_compiler_file(object->compiler)),
+        // the pass is given the compile's flags, so it waits for the files the compile does: a test's
+        // `-include build/tests_list.h` read before the scan wrote it gave another header and no depfile, so whether
+        // a fresh build's header steps were served depended on which ran first (#3050)
+        .implicit_inputs =
+            smith_cat(b, object->implicit_inputs, smith_one(smith_compiler_file(object->compiler)), nullptr),
         .outputs = smith_one(header),
         .description = smith_text("header %s", object->source),
         .depfile = depfile, // the files the pass read: the step cache serves the header for their contents (#2937)
