@@ -11,6 +11,7 @@ name: ci
 # the queue. The pre-push hook is the check before the merge, the queue run the test.
 on:
   workflow_dispatch:
+    inputs:
       mac:
         description: "Only by hand, to test the Mac watchdog (#2835): `mac` runs the macOS job on the owner's Mac, `dead` on a Mac that does not answer (the watchdog must fall back to hosted macos-26); `auto` is the rule of pick-mac"
         type: choice
@@ -474,17 +475,6 @@ jobs:
           line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
           [ -n "$line" ] || line=unknown
           echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Tools some tests need
-        timeout-minutes: 5
-        # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`. It runs
-        # while smith builds: the macOS test stage waits for it
-        shell: bash
-        run: |
-          # the owner's Mac already has them: three runners share it, so install only what is missing
-          if command -v nvim >/dev/null && command -v gtimeout >/dev/null; then nohup true >"$RUNNER_TEMP/brew.log" 2>&1 &
-          else HOMEBREW_NO_AUTO_UPDATE=1 nohup brew install neovim coreutils >"$RUNNER_TEMP/brew.log" 2>&1 &
-          fi
-          echo $! >"$RUNNER_TEMP/brew.pid"
       - uses: actions/checkout@v4
         timeout-minutes: 10
         with:
@@ -525,8 +515,6 @@ jobs:
             echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           }
           macos_tests() {
-            while kill -0 "$(cat "$RUNNER_TEMP/brew.pid")" 2>/dev/null; do sleep 1; done
-            tail -n 3 "$RUNNER_TEMP/brew.log"
             # shellcheck disable=SC2086
             "$SMITH" test $MACFLAGS --costs "$PWD/.github/shard-costs.tsv"
           }
