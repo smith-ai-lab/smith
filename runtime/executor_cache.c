@@ -201,6 +201,21 @@ static bool smith_stepcache_normalize(const char *text, size_t length, SmithStep
     return !out->full;
 }
 
+// Leaves the folder of clang's module cache out of a command being keyed (#3175, as runtime/lint_cache.c does for a
+// lint): `-fmodules-cache-path=<cache>/modules/<id>` names the smith that compiles (its build id changes with every
+// build of it), where compiled modules are kept, not what the compile reads, so an object cannot move with it. With it
+// in the key the ~90 compiles of smith's own sources (the only commands with the flag) were served in no run.
+static void smith_stepcache_drop_modules_path(SmithStepText *text) {
+    static const char flag[] = "-fmodules-cache-path=";
+    for (char *at = strstr(text->data, flag); at != nullptr; at = strstr(at, flag)) { // bounded by the text
+        char *value = at + sizeof flag - 1;
+        size_t length = strcspn(value, " \t\"'");
+        memmove(value, value + length, strlen(value + length) + 1);
+        text->size -= length;
+        at = value;
+    }
+}
+
 // The other way: the tokens become this build's root.
 static bool smith_stepcache_expand(const char *text, size_t length, SmithStepText *out) {
     char percent[PATH_MAX];
@@ -944,6 +959,7 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
     SmithStepText command = {.data = smith_stepcache_lines, .capacity = sizeof smith_stepcache_lines};
     command.data[0] = '\0';
     if (!smith_stepcache_normalize(edge->command, strlen(edge->command), &command)) return false;
+    if (!function) smith_stepcache_drop_modules_path(&command);
     smith_sha256_update(&sha, (const uint8_t *)command.data, command.size);
     smith_stepcache_feed(&sha, "\n");
     if (!function) {
