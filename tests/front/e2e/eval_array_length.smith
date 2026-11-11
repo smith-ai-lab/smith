@@ -1,0 +1,29 @@
+# An array's length is any integer known at compile time (#3039): `sizeof` of a type, a fact of the target, a
+# constant, and arithmetic on them.
+
+struct Address:
+    host: u32
+    port: u16
+    family: u16
+
+slots := 4
+wide := slots * 2 + 1
+
+pub fn check() -> i32:
+    mut raw: [sizeof(Address)]u8 = undefined
+    mut digits: [target.f32_mantissa_bits]u8 = undefined
+    mut table: [wide]i32 = undefined
+    mut pairs: [countof(fields(Address)) * 2]i32 = undefined
+    raw[0] = 1
+    digits[0] = 2
+    table[0] = 3
+    pairs[0] = 4
+    if countof(raw) != 8:
+        return 1
+    if countof(digits) != 24:
+        return 2
+    if countof(table) != 9:
+        return 3
+    if countof(pairs) != 6:
+        return 4
+    0
