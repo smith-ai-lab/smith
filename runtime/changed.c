@@ -1212,10 +1212,12 @@ static bool smith_changed_build_c_gate(const char *base, const char *head) {
 static bool smith_changed_collect(const char *base_name, const char *head, bool relative, const char *who, char *base,
                                   size_t size) {
     if (!smith_changed_base(base_name, base, size) || (head != nullptr && !smith_changed_name_ok(head))) {
+        // each verb names the form it takes: `smith test` refuses `--changed=<ref>`, `smith lint` has no --base (#3082)
+        bool lint = strncmp(who, "smith lint", 10) == 0;
         fprintf(smith_changed_out(),
-                "%s: no base: pass --changed=<ref> (or --base <ref>) (no upstream, origin/HEAD or origin/main to "
-                "compare with)\n",
-                who);
+                "%s: no base: pass %s (no merge-base with the upstream, origin/HEAD or origin/main: a branch made "
+                "from origin/main has one)\n",
+                who, lint ? "--changed=<ref>" : "--changed --base <ref>");
         return false;
     }
     static const char *const list[] = {"ls-files", "--cached", "--others", "--exclude-standard", nullptr};
