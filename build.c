@@ -1288,12 +1288,25 @@ static const char *build_test_header(SmithBuild *b, const char *source) {
 // inputs and that smith as order-only: they run after it is linked, and again only when the pass can have changed.
 // With the binary itself as an input every edit of any file of smith ran them again, and the executor read all of the
 // new binary to key each (437 MB, 3.1 s, twice: 6.3 s of an 8.6 s edit rebuild, #3079).
+//
+// The pass also reads the headers of the modules a source imports, so the headers this build makes of the libraries
+// and of the front end's linked modules are inputs too, with the hand-written ones of include/: the binary used to
+// stand for them (a library that changes relinks it). Their steps write a header only when its bytes change, so an
+// edit that keeps a module's interface runs nothing here.
 static const char *const *build_header_pass_inputs(SmithBuild *b, const BuildConfig *config) {
+    const char *const *front = smith_list(b, nullptr);
+    const char *const *modules = build_front_modules(b);
+    for (size_t i = 0; modules[i] != nullptr; i++) { // bounded by the tree
+        if (!build_front_linked(smith_fmt(b, "front/%s.smith", modules[i]))) continue;
+        front =
+            smith_cat(b, front, smith_list(b, smith_fmt(b, ".smith/include/front/%s.h", modules[i]), nullptr), nullptr);
+    }
     return smith_cat(
-        b, smith_glob(b, smith_list(b, "runtime/lang*.c", "runtime/lang*.h", nullptr)),
+        b,
+        smith_glob(b, smith_list(b, "runtime/lang*.c", "runtime/lang*.h", "include/*.h", "include/smith/*.h", nullptr)),
         smith_list(b, "smith.c", "runtime/front_flag.c", "runtime/front_flag.h", nullptr),
         smith_when(b, config->linkable, smith_list(b, smith_fmt(b, "%s/lib/smith-clang.id", config->llvm), nullptr)),
-        nullptr);
+        config->headers, build_linked_headers(b), front, nullptr);
 }
 
 // The headers of all the tests are one step, `smith-cc --smith-headers`: each is a few ms of work but a process costs
