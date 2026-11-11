@@ -310,112 +310,120 @@ static void *system_raw(void *block, Usize size) {
     return result;
 }
 
-static void system_release(void *block) {
-    contract::trusted();
-    mem::Allocator *before = mem::set_allocator(nullptr);
-    c::free(block); // NOLINT(smith-effects): the edge
-    mem::set_allocator(before);
-}
-
-// What one file of `run` parses and checks (#2888): the system's allocator, with every block it hands out recorded, so
-// that what is left once the file's report is out is freed (`file_memory_release`). It is not an arena: the parser
-// grows its lists one element at a time, and an arena copies a block it cannot extend, which on today's syntax took
-// more memory than the machine had. A block starts `file_header` bytes after the system's, which holds its size.
+// What one file of `run` parses and checks (#2888, #3112): blocks bumped from chunks, so that the file's memory is freed
+// by dropping the chunks. A chunk is 1 MB, and each new one doubles up to 64 MB; a block larger than a chunk gets a
+// chunk of its own. A block is a header of `file_header` bytes that holds its size, then the block. `realloc` of the
+// last block of the chunk in force grows it in place (the parser grows its lists one element at a time, and the list
+// it is growing is the last block); any other grows by copy, and the old block stays until the chunks go. `free` of the
+// last block takes it back; any other is not freed one by one.
 constexpr Usize file_header = 16;
+constexpr Usize file_chunk_header = 32;
+constexpr Usize file_chunk_first = 1U << 20;
+constexpr Usize file_chunk_last = 64U << 20;
 
-static void **file_live = nullptr; // the blocks handed out, by address (open addressing; `file_gone` marks a removal)
-static Usize file_capacity = 0;
-static Usize file_used = 0; // live blocks and removals, which a growth drops
-static Usize file_count = 0;
-static U8 file_gone_mark = 0;
+struct FileChunk {
+    FileChunk *next;
+    Usize size; // bytes of the chunk, its header included
+    Usize used; // bytes handed out, its header included
+    Usize pad;
+};
 
-static Usize file_slot(const void *block) {
-    return (Usize)(((U64)(Usize)block >> 4) * 0x9E3779B97F4A7C15ULL >> 20);
+static FileChunk *file_chunks = nullptr; // the chunk being bumped first, then the others
+static Usize file_chunk_size = file_chunk_first;
+static U8 *file_last = nullptr; // the last block handed out from the chunk in force, null when it was freed
+
+static Usize file_round(Usize size) {
+    return (size + 15) & ~(Usize)15;
 }
 
-// Puts `block` in a free slot; the table has room.
-static void file_place(void *block) {
-    Usize i = file_slot(block) & (file_capacity - 1);
-    while (file_live[i] != nullptr && file_live[i] != (void *)&file_gone_mark)
-        i = (i + 1) & (file_capacity - 1);
-    if (file_live[i] == nullptr) file_used += 1;
-    file_live[i] = block;
-    file_count += 1;
-}
-
-static void file_grow() {
-    void **old = file_live;
-    Usize old_capacity = file_capacity;
-    file_capacity = old_capacity == 0 ? 1U << 16 : old_capacity * 2;
-    file_live = (void **)system_raw(nullptr, file_capacity * sizeof(void *));
-    if (file_live == nullptr) c::abort();
-    for (Usize i = 0; i < file_capacity; i++) {
-        file_live[i] = nullptr;
-    }
-    file_used = 0;
-    file_count = 0;
-    for (Usize i = 0; i < old_capacity; i++) {
-        if (old[i] != nullptr && old[i] != (void *)&file_gone_mark) file_place(old[i]);
-    }
-    system_release((void *)old);
-}
-
-static void file_insert(void *block) {
-    if (2 * (file_used + 1) > file_capacity) file_grow();
-    file_place(block);
-}
-
-// The slot of `block`, or the capacity when it is not one of ours.
-static Usize file_find(const void *block) {
-    if (file_capacity == 0 || block == nullptr) return file_capacity;
-    Usize i = file_slot(block) & (file_capacity - 1);
-    while (file_live[i] != nullptr) {
-        if (file_live[i] == block) return i;
-        i = (i + 1) & (file_capacity - 1);
-    }
-    return file_capacity;
+static FileChunk *file_chunk_new(Usize size) {
+    FileChunk *chunk = (FileChunk *)system_raw(nullptr, size);
+    if (chunk == nullptr) return nullptr;
+    chunk->next = nullptr;
+    chunk->size = size;
+    chunk->used = file_chunk_header;
+    chunk->pad = 0;
+    return chunk;
 }
 
 static void *file_alloc(mem::Allocator *self, Usize size, Usize align) {
     (void)self;
     if (align > file_header) return nullptr; // nothing in the front end asks for more than 16
-    U8 *raw = (U8 *)system_raw(nullptr, size + file_header);
-    if (raw == nullptr) return nullptr;
+    if (size > ((Usize)-1) / 2) return nullptr;
+    Usize need = file_header + file_round(size);
+    if (file_chunks != nullptr && file_chunks->size - file_chunks->used >= need) {
+        U8 *raw = (U8 *)file_chunks + file_chunks->used;
+        file_chunks->used += need;
+        *(Usize *)raw = size;
+        file_last = raw + file_header;
+        return file_last;
+    }
+    if (need + file_chunk_header > file_chunk_size) { // larger than a chunk: its own, behind the one in force
+        FileChunk *own = file_chunk_new(need + file_chunk_header);
+        if (own == nullptr) return nullptr;
+        own->used = own->size;
+        if (file_chunks == nullptr) {
+            file_chunks = own;
+            file_last = nullptr;
+        } else {
+            own->next = file_chunks->next;
+            file_chunks->next = own;
+        }
+        U8 *raw = (U8 *)own + file_chunk_header;
+        *(Usize *)raw = size;
+        return raw + file_header;
+    }
+    FileChunk *chunk = file_chunk_new(file_chunk_size);
+    if (chunk == nullptr) return nullptr;
+    if (file_chunk_size < file_chunk_last) file_chunk_size *= 2;
+    chunk->next = file_chunks;
+    file_chunks = chunk;
+    U8 *raw = (U8 *)chunk + chunk->used;
+    chunk->used += need;
     *(Usize *)raw = size;
-    file_insert(raw + file_header);
-    return raw + file_header;
-}
-
-static void file_free(mem::Allocator *self, void *block) {
-    (void)self;
-    Usize at = file_find(block);
-    if (at == file_capacity) return;
-    file_live[at] = (void *)&file_gone_mark;
-    file_count -= 1;
-    system_release((U8 *)block - file_header);
-}
-
-static void *file_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
-    if (block == nullptr) return file_alloc(self, size, align);
-    Usize at = file_find(block);
-    if (at == file_capacity || align > file_header) return nullptr;
-    U8 *raw = (U8 *)system_raw((U8 *)block - file_header, size + file_header);
-    if (raw == nullptr) return nullptr;
-    *(Usize *)raw = size;
-    file_live[at] = (void *)&file_gone_mark;
-    file_count -= 1;
-    file_insert(raw + file_header);
-    return raw + file_header;
+    file_last = raw + file_header;
+    return file_last;
 }
 
 static Bool file_owns(mem::Allocator *self, const void *block) {
     (void)self;
-    return file_find(block) != file_capacity;
+    for (const FileChunk *chunk = file_chunks; chunk != nullptr; chunk = chunk->next) {
+        const U8 *start = (const U8 *)chunk;
+        if ((const U8 *)block >= start + file_chunk_header + file_header && (const U8 *)block < start + chunk->size)
+            return true;
+    }
+    return false;
 }
 
 static Usize file_size(mem::Allocator *self, const void *block) {
     (void)self;
     return *(const Usize *)((const U8 *)block - file_header);
+}
+
+static void file_free(mem::Allocator *self, void *block) {
+    (void)self;
+    if (block == nullptr || (U8 *)block != file_last) return;
+    file_chunks->used = (Usize)((U8 *)block - file_header - (U8 *)file_chunks);
+    file_last = nullptr;
+}
+
+static void *file_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
+    if (block == nullptr) return file_alloc(self, size, align);
+    if (align > file_header || !file_owns(self, block)) return nullptr;
+    if ((U8 *)block == file_last && size <= ((Usize)-1) / 2) { // the last block grows where it is
+        Usize start = (Usize)((U8 *)block - file_header - (U8 *)file_chunks);
+        Usize need = file_header + file_round(size);
+        if (start + need <= file_chunks->size) {
+            file_chunks->used = start + need;
+            *(Usize *)((U8 *)block - file_header) = size;
+            return block;
+        }
+    }
+    Usize old = file_size(self, block);
+    void *moved = file_alloc(self, size, align);
+    if (moved == nullptr) return nullptr;
+    __builtin_memcpy(moved, block, old < size ? old : size);
+    return moved;
 }
 
 static mem::Allocator file_allocator = {
@@ -425,21 +433,21 @@ static mem::Allocator *file_memory() {
     return &file_allocator;
 }
 
-// Frees every block the file's allocator still holds. `run` calls it before a file, for the file before it: the last
-// file of a process is never freed block by block, which took 19% of a whole-tree pass (10.7 of 57 s, #3080).
+// Drops every chunk the file's allocator holds. `run` calls it before a file, for the file before it: the last file of
+// a process is never released, which took 19% of a whole-tree pass (10.7 of 57 s, #3080).
 static void file_memory_release() {
     contract::trusted();                                  // the system's allocator is the edge
-    mem::Allocator *before = mem::set_allocator(nullptr); // once, not around each block
-    for (Usize i = 0; i < file_capacity; i++) {
-        void *block = file_live[i];
-        if (block != nullptr && block != (void *)&file_gone_mark) {
-            c::free((U8 *)block - file_header); // NOLINT(smith-effects): the edge
-        }
-        file_live[i] = nullptr;
+    mem::Allocator *before = mem::set_allocator(nullptr); // once, not around each chunk
+    FileChunk *chunk = file_chunks;
+    while (chunk != nullptr) {
+        FileChunk *next = chunk->next;
+        c::free(chunk); // NOLINT(smith-effects): the edge
+        chunk = next;
     }
     mem::set_allocator(before);
-    file_used = 0;
-    file_count = 0;
+    file_chunks = nullptr;
+    file_last = nullptr;
+    file_chunk_size = file_chunk_first;
 }
 
 static Str roots_key(roots::Roots named_by) {
