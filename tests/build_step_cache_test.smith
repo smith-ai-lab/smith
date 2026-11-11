@@ -475,8 +475,11 @@ export void test_build_step_cache_a_debug_build_is_shared_by_a_second_folder() {
     (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 smith build -v >log.txt 2>&1");
     scratch::Run second = scratch::sh(&b, "env SMITH_STEP_CACHE=1 smith build -v >log.txt 2>&1");
     scratch::expect_status("debug: the second folder builds", 0, &second);
+    // the handlers object every program links is served too (#3050): counted apart
     scratch::expect_text("debug: its three compiles are served", "3",
-                         scratch::capture(&b, "grep -c '(cached)' log.txt"));
+                         scratch::capture(&b, "grep '(cached)' log.txt | grep -vc smith_handlers"));
+    scratch::expect_text("debug: and the handlers object", "1",
+                         scratch::capture(&b, "grep '(cached)' log.txt | grep -c smith_handlers"));
     scratch::expect_contains("debug: and the link runs", scratch::read(&b, "log.txt"), "-o build/debug/b");
     scratch::expect_text("debug: the object holds no folder", "0",
                          scratch::capture(&b, "grep -c \"$PWD\" build/debug/main.o || true"));
