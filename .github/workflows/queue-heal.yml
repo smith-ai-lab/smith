@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A sixth pass (#3057) labels a PR that failed behind a failed group `ready`, so the fifth enqueues it again. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A sixth pass (#3057) labels a PR that failed behind a failed group, or whose first failed job failed first in another PR's run too (#3051), `ready` (twice per head at most), so the fifth enqueues it again. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -179,29 +179,69 @@ jobs:
               [ "$2" = failure ] && return 0
               [ "$2" = cancelled ] || return 1
               [ "$(gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 --jq \
-                '[.jobs[] | select(.conclusion == "failure" and .name != "ci" and .name != "changes")] | length' 2>/dev/null)" -gt 0 ] 2>/dev/null
+                '[.jobs[] | select(.name != "ci" and .name != "changes" and (.conclusion == "failure" or any(.steps[]?; .conclusion == "failure")))] | length' 2>/dev/null)" -gt 0 ] 2>/dev/null
             }
-            # newest first, so the first line of a PR is its newest run; ISO times in UTC compare as text
-            while read -r pr run concl base bconcl; do
-              [ -n "$pr" ] || continue
-              case "$queued" in *" $pr "*) continue ;; esac
+            # the job a run failed in first: a job that failed, or one that fail-fast cancelled after a step of it failed
+            first_failed() {
+              gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 --jq \
+                '[.jobs[] | select(.name != "ci" and (.conclusion == "failure" or any(.steps[]?; .conclusion == "failure")))]
+                 | sort_by(.completed_at) | .[0].name // empty' 2>/dev/null
+            }
+            # how often this head was labelled `ready` again by this pass: the `ready` labels after the PR's newest
+            # commit or force push (a push is a new head and starts the count again)
+            tries() {
+              local ev since
+              ev=$(gh api -X GET "repos/$REPO/issues/$1/timeline" -f per_page=100 --paginate --jq \
+                '.[] | if .event == "committed" then "push \(.committer.date)" elif .event == "head_ref_force_pushed" then "push \(.created_at)"
+                 elif .event == "labeled" and .label.name == "ready" then "ready \(.created_at)" else empty end') || { echo 9; return; }
+              since=$(echo "$ev" | awk '$1 == "push" { print $2 }' | sort | tail -n 1)
+              echo "$ev" | awk -v since="${since:-0}" '$1 == "ready" && $2 > since' | grep -c . || true
+            }
+            # newest first, so the first line of a PR is its newest run; ISO times in UTC compare as text. The rows are
+            # read first: a run is judged against the other PRs' failed runs of the last hour (#3051)
+            local rows="" r_pr r_run r_concl r_base r_bconcl r_job other reason oj tried
+            declare -A job
+            while read -r r_pr r_run r_concl r_base r_bconcl; do
+              [ -n "$r_pr" ] || continue
+              case "$queued" in *" $r_pr "*) continue ;; esac
               # `open` holds the open PRs without the label `dequeued`
-              case " $(echo $open) " in *" $pr "*) ;; *) continue ;; esac
-              failed_run "$run" "$concl" && failed_run "$base" "$bconcl" || continue
-              n=$((n + 1))
-              if dry; then
-                log "dry-run: would label #$pr ready (run $run failed behind failed run $base)"
-                continue
-              fi
-              gh api -X POST "repos/$REPO/issues/$pr/labels" -f "labels[]=ready" --silent \
-                && log "queue-heal: #$pr failed behind a failed group (run $run on run $base), labelled ready" \
-                || log "queue-heal: #$pr failed behind a failed group (run $run on run $base), label refused"
+              case " $(echo $open) " in *" $r_pr "*) ;; *) continue ;; esac
+              rows="$rows$r_pr $r_run $r_concl $r_base $r_bconcl"$'\n'
+              job[$r_pr]=$(first_failed "$r_run")
             done < <(echo "$runs" | awk -v cutoff="$cutoff" '
               { k = split($1, part, "/"); split(part[k], name, "-"); pr[NR] = name[2]; base[NR] = name[3]
                 concl[NR] = $3; id[NR] = $4; at[NR] = $5; if (!($2 in of)) { of[$2] = $4; was[$2] = $3 } }
               END { for (i = 1; i <= NR; i++) { if (pr[i] in seen) continue; seen[pr[i]] = 1
-                      if ((concl[i] == "failure" || concl[i] == "cancelled") && at[i] >= cutoff && (base[i] in of))
-                        print pr[i], id[i], concl[i], of[base[i]], was[base[i]] } }')
+                      if ((concl[i] == "failure" || concl[i] == "cancelled") && at[i] >= cutoff)
+                        print pr[i], id[i], concl[i], (base[i] in of) ? of[base[i]] : "-", (base[i] in of) ? was[base[i]] : "-" } }')
+            while read -r r_pr r_run r_concl r_base r_bconcl; do
+              [ -n "$r_pr" ] || continue
+              reason=""
+              if failed_run "$r_run" "$r_concl" && failed_run "$r_base" "$r_bconcl"; then
+                reason="its group's base run $r_base failed too"
+              elif [ -n "${job[$r_pr]}" ] && failed_run "$r_run" "$r_concl"; then
+                # the same job failed first in another PR's run of the last hour: not this PR's alone
+                other=""
+                for oj in $(echo "$rows" | awk -v me="$r_pr" '$1 != me { print $1 }'); do
+                  [ "${job[$oj]}" = "${job[$r_pr]}" ] && { other=$oj; break; }
+                done
+                [ -n "$other" ] && reason="job ${job[$r_pr]} failed first in #$other's run too"
+              fi
+              [ -n "$reason" ] || continue
+              tried=$(tries "$r_pr")
+              if [ "$tried" -ge 2 ]; then
+                log "queue-heal: #$r_pr not re-enqueued again (removed with $reason; labelled ready $tried times for this head)"
+                continue
+              fi
+              n=$((n + 1))
+              if dry; then
+                log "dry-run: would label #$r_pr ready (removed with $reason; run $r_run)"
+                continue
+              fi
+              gh api -X POST "repos/$REPO/issues/$r_pr/labels" -f "labels[]=ready" --silent \
+                && log "queue-heal: #$r_pr labelled ready, re-enqueued by the next pass (removed with $reason; run $r_run)" \
+                || log "queue-heal: #$r_pr removed with $reason, label refused"
+            done <<<"$rows"
             [ "$n" = 0 ] && log "queue-heal: none failed behind a failed group"
             return 0
           }
