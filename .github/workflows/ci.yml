@@ -1804,7 +1804,7 @@ jobs:
     needs: [changes, frontend-coverage-fix]
     if: ${{ !cancelled() && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.count == 'true' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -1860,8 +1860,13 @@ jobs:
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
           touch "$RUNNER_TEMP/before-count"
-          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
-          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
+          # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
+          # from the diff is deterministic, so there is no retry: the command is bounded to 7 minutes and fails the entry.
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          status=$?
+          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 7 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           # the rows this shard measured (#2832): the save job adds them to the cache main starts from
           mkdir -p "$RUNNER_TEMP/rows"
