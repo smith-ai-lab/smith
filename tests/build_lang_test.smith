@@ -232,6 +232,36 @@ export void test_build_lang_an_edit_to_a_function_run_at_compile_time_rebuilds_t
     scratch::expect_contains("body files: and it is the static_assert that says so", both, "static assertion failed");
 }
 
+// Two importers of one body, two folders, one step cache (#3079). Each importer's compile is stored, because neither
+// depends on a file a compile writes, so the second folder compiles no importer. When the depfile named calc.body, the
+// importer that began before the body was written (both, when they wrote it side by side) was never stored, and the
+// second folder compiled it and stored a result of its own. No timing is needed: with the old depfile at least one
+// importer is always compiled again.
+constexpr char body_side[_] = "module side;\n\nimport calc;\n\nstatic_assert(calc::fib(4) == 9);\n\n"
+                              "export I32 zero() {\n    return calc::fib(3) - 7;\n}\n";
+constexpr char body_both[_] = "module main;\n\nimport calc;\nimport side;\n\nstatic_assert(calc::fib(5) == 11);\n\n"
+                              "I32 main(void) {\n    return calc::fib(3) - 7 + side::zero();\n}\n";
+
+export void test_build_lang_two_importers_of_a_body_are_served_to_a_second_folder() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = body_project();
+    defer scratch::clean(&p);
+    scratch::own_cache(&p);
+    scratch::write(&p, "src/side.smith", body_side);
+    scratch::write(&p, "src/main.smith", body_both);
+    (void)scratch::sh(&p, "mkdir ../q && cp -R bin build.c src ../q/");
+    scratch::Run first = scratch::sh(&p, "SMITH_STEP_CACHE=1 smith build 2>&1");
+    scratch::expect_status("two importers: the first folder builds", 0, &first);
+    scratch::expect_lacks("two importers: and compiles everything itself", first.out, "(cached)");
+    scratch::Run second = scratch::sh(&p, "cd ../q && SMITH_STEP_CACHE=1 smith build 2>&1");
+    scratch::expect_status("two importers: the second folder builds", 0, &second);
+    scratch::expect_contains("two importers: one importer is served", second.out, "compile src/main.smith (cached)");
+    scratch::expect_contains("two importers: and the other", second.out, "compile src/side.smith (cached)");
+}
+
 // A module's header names the types of the modules it imports, so its header step waits for their headers and runs
 // again when one changes (#781: it ran only for an edit to its own source, so a rebuild after main moved left a header
 // naming `smith_random_Key`): game::replay holds a lib::text type, which only lib::text's edit renames in C.
