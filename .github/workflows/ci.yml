@@ -1355,7 +1355,7 @@ jobs:
           rm -f ~/.cache/smith/steps/prune.timestamp
           saved=$(du -sm ~/.cache/smith/steps | cut -f1)
           echo "step cache saved: $saved MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
-          # one warm build leaves 650 to 670 MB (the Mac 669, Linux 650, 2026-11-11): a folder under 400 MB means a cap or
+          # one warm build leaves 670 MB on the Mac and about 1.4 GB on Linux (the release profile, #3052): a folder under 400 MB means a cap or
           # a prune emptied it, and every job after would miss all 329 steps (#3045)
           if [ "$saved" -lt 400 ]; then echo "::error::the step cache to save is $saved MB, under one warm build (650 MB): a cap emptied it"; exit 1; fi
       - name: Save the step cache
