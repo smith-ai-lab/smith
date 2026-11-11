@@ -1,6 +1,7 @@
 // gh_retry (.github/actions/api-budget/action.yml, #2986): the shell function the `api-budget` action defines for the
 // later steps of a job. A rate-limit error makes it read GET /rate_limit, sleep until the reset and try again; any
-// other error returns at once; a quota that never returns fails after API_WAIT_MAX. The test cuts the function out of
+// other error returns at once; a quota that never returns fails after API_WAIT_MAX; the output is passed on byte for
+// byte, NUL bytes included. The test cuts the function out of
 // the action file and feeds it the error text GitHub prints, with a fake `gh` and a sleep that only records.
 // smith-reads-tree
 // smith-covers: .github/actions/api-budget/
@@ -27,7 +28,9 @@ constexpr const char *script =
     "grep -c 'api budget: waiting 8 s for the quota' err; "
     "out=$(gh_retry other 2>err); echo \"other: rc=$? out=$out\"; cat err; "
     "FAILS=99; rm -f n; out=$(API_WAIT_MAX=20 gh_retry flaky 2>err); echo \"never: rc=$?\"; cat sleeps; "
-    "grep -c 'gave up after waiting 20 s' err";
+    "grep -c 'gave up after waiting 20 s' err; "
+    // the output byte for byte (#3052): a zip went through `$(...)`, which drops NUL bytes
+    "bin() { printf 'P\\0K\\0\\n\\377'; }; bin > want; gh_retry bin > got; cmp want got && echo 'bytes: same'";
 
 export void test_gh_retry_waits_out_the_rate_limit_and_returns_other_errors_at_once() {
     scratch::Project p = scratch::make("p", nullptr);
@@ -50,6 +53,7 @@ export void test_gh_retry_waits_out_the_rate_limit_and_returns_other_errors_at_o
                          "sleep 8\n"
                          "sleep 8\n"
                          "sleep 4\n"
-                         "1",
+                         "1\n"
+                         "bytes: same",
                          run.out);
 }

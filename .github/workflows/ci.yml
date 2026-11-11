@@ -2024,9 +2024,11 @@ jobs:
             exit 1
           fi
           if [ -z "$before" ]; then
-            echo "no count on main's last 20 commits: nothing to compare with"
-            echo "count: no main results to compare (no passing count on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+            # a gate that finds nothing to compare with fails: it passed silently for a day while every download of main's
+            # count was corrupt (#3052), and a merge that lowered the count would have gone in
+            echo "::error::no count on main's last 20 commits to compare with: the gate cannot tell whether this merge lowers the count. Look at the downloads above (a 404, a corrupt zip) and ask the lead"
+            echo "count: no main results to compare (no passing count found on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           if [ "$UNCACHED" = true ]; then
             # The nightly count (#2955) has no cache: it must equal the cached count of the same commit, row by row. The
@@ -2080,13 +2082,15 @@ jobs:
           fi
           if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
             # a table has one or more rows per file (path, stage); a file's stage is its first row's, `pass` or the stage
-            # that failed; a file one table lacks counts as failing there
+            # that failed; a file only one table has (it left the total or is new, #3037) is not listed
             { awk -F'\t' -v base="${sha:0:7}" '
                 FNR == 1 { f++ }
+                /^[ \t]/ { next }
                 !((f, $1) in st) { st[f, $1] = ($2 == "pass") ? "pass" : "fail"; all[$1] = 1 }
                 END {
                   for (p in all) {
-                    a = ((1, p) in st) ? st[1, p] : "fail"; b = ((2, p) in st) ? st[2, p] : "fail"
+                    if (!((1, p) in st) || !((2, p) in st)) continue
+                    a = st[1, p]; b = st[2, p]
                     if (a == b) continue
                     if (a == "pass") { print "count: pass->fail " p; down++ } else { print "count: fail->pass " p; up++ }
                   }
@@ -2097,11 +2101,23 @@ jobs:
           else
             echo "count: no main results to compare (no results.tsv in the count of ${sha:0:7} or in this run)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
+          # like with like (#3052): when both tables are there, the passes are counted on the files both counts measured,
+          # so a change to the total (files that leave it, #3037, or new files) neither lowers nor raises the comparison;
+          # without a table, the two totals' passes
+          now_c=$now; before_c=$before; like=
+          if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
+            read -r before_c now_c common < <(awk -F'\t' 'FNR == 1 { f++ } /^[ \t]/ { next }
+              !((f, $1) in st) { st[f, $1] = ($2 == "pass") ? 1 : 0; if (f == 2) seen[$1] = 1 }
+              END { for (p in seen) if ((1, p) in st) { n++; a += st[1, p]; b += st[2, p] } print a + 0, b + 0, n + 0 }' \
+              "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv")
+            like=" on the $common files both measured"
+          fi
+          echo "count: main's last count $before files pass at ${sha:0:7}, this one $now; $now_c against $before_c$like"
+          if [ "$now_c" -ge "$before_c" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
-          why=$([ -n "$pr" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
-          if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
-          echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
+          why=$([ -n "$pr" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ') || why=
+          if [ -n "$why" ]; then echo "::warning::the count fell from $before_c to $now_c files$like; the PR says: ${why#Count drop: }"; exit 0; fi
+          echo "::error::the count fell from $before_c to $now_c files pass$like. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
       - name: API budget (last)
         if: always()
