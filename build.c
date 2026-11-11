@@ -3562,7 +3562,23 @@ static int build_pre_push(SmithRun *run) {
         status = status != 0 ? status : pre_push_step("lint", lint);
         if (status != 0) return status;
     }
-    return pre_push_step("tests the change reaches", (const char *[]){smith, "test", "--changed", nullptr});
+    // The tests of the changed files themselves, without the ones only macOS runs (CI's Linux shards pass the same
+    // flag); the wider `--changed` selection stays in CI until it fits the budget (lead, 2026-11-11).
+    char names[4096] = "";
+    for (size_t i = 0; i < count; i++) {
+        const char *name = strrchr(sources[i], '/');
+        name = name != nullptr ? name + 1 : sources[i];
+        size_t length = strcspn(name, ".");
+        if ((length == 5 && strncmp(name, "build", 5) == 0) || strlen(names) + length + 2 >= sizeof names) continue;
+        snprintf(names + strlen(names), sizeof names - strlen(names), "%s%.*s", names[0] != '\0' ? "," : "",
+                 (int)length, name);
+    }
+    if (names[0] == '\0') {
+        puts("pre-push: no test file of its own among the changes");
+        return 0;
+    }
+    return pre_push_step("tests of the changed files",
+                         (const char *[]){smith, "test", "--skip-macos", "--test", names, nullptr});
 }
 
 static int build_pre_push_test(SmithRun *run) {
@@ -3782,6 +3798,16 @@ static int build_frontend_coverage(SmithRun *run) {
                : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
+// The first `smith build` in a clone makes git use .githooks (#3132), so the pre-push check is active before the first
+// push with nothing for the agent or the owner to do. A hooksPath someone already set is left alone.
+static void build_install_hooks(void) {
+    if (access(".githooks/pre-push", X_OK) != 0 || access(".git", F_OK) != 0) return;
+    const char *const get[] = {"git", "config", "--get", "core.hooksPath", nullptr};
+    if (build_spawn(&(BuildSpawn){.argv = get, .log = "/dev/null"}) == 0) return;
+    const char *const set[] = {"git", "config", "core.hooksPath", ".githooks", nullptr};
+    build_spawn(&(BuildSpawn){.argv = set, .log = "/dev/null"});
+}
+
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep friction = {
         .run = build_friction,
@@ -3950,6 +3976,7 @@ void build(SmithBuild *b) {
     build_nvim_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);
+    build_install_hooks();
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.
