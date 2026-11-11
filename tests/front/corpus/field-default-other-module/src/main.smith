@@ -1,0 +1,9 @@
+# A field left out takes its default, written in the record's own module: `span: Span = Span()` of `shapes.Named` is
+# built here, where `Span` is not a name (#3036).
+import c <stdio.h>
+import shapes
+
+fn main() -> i32:
+    n := shapes.Named(text = 7)
+    _ := stdio.printf("%d %d %d\n", n.text, n.span.start, n.span.end)
+    return 0

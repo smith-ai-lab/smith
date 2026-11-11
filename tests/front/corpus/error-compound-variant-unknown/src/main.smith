@@ -1,0 +1,14 @@
+# `{.square = c}` names no variant of the payload enumeration (#3036).
+pub struct Circle:
+    pub radius: i32
+
+pub enum Shape:
+    circle: Circle
+    empty
+
+fn unit() -> Shape:
+    return {.square = Circle(radius = 3)}
+
+fn main() -> i32:
+    _ := unit()
+    return 0
