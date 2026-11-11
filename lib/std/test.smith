@@ -3443,8 +3443,9 @@ Bool failed_so_far(const Plan *plan, Usize next) {
 constexpr F64 beat_every = 60.0; // seconds between the lines that say what the runner is waiting for
 
 // Every minute, what is running and for how long (#3127): a run that goes quiet names its tests in the log.
+F64 beat_at = 0; // when the last line was printed, or the first look
+
 void heartbeat(const Plan *plan, F64 now) {
-    static F64 beat_at = 0;
     if (beat_at == 0) beat_at = now;
     if (now - beat_at < beat_every) return;
     beat_at = now;
