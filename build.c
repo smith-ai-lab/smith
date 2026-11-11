@@ -3536,7 +3536,8 @@ static int build_pre_push(SmithRun *run) {
         return 0;
     }
     const char *const *changed = build_gate_git(
-        run, ".", (const char *[]){"diff", "--name-only", "--diff-filter=d", smith_fmt(run->b, "%s...HEAD", base), nullptr});
+        run, ".",
+        (const char *[]){"diff", "--name-only", "--diff-filter=d", smith_fmt(run->b, "%s...HEAD", base), nullptr});
     const char *sources[4096] = {};
     size_t count = 0;
     bool other = false;
