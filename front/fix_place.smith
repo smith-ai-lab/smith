@@ -11,8 +11,9 @@
 //
 //   fix_place::edits(source)   one fix for each test, and one for each `_ = x` statement
 //
-// A statement that starts with `_ =` discards a value the way C did (`(void)x` and `_ = x` in today's syntax); in the new
-// syntax `_` is no name to assign to, and the discard is `_ := x` (smith-dev-syntax-attributes: `_` for unused, #3084).
+// A statement that starts with `_ =` discards a value the way C did (`(void)x` and `_ = x` in today's syntax); in the
+// new syntax `_` is no name to assign to, and the discard is `_ := x` (smith-dev-syntax-attributes: `_` for unused,
+// #3084).
 module front::fix_place;
 
 import front::ast;
@@ -143,10 +144,8 @@ static core::Errors discard_edits(Str source, core::Errors out) {
         if (starts_with(source[head:end], "_ = ")) {
             core::Edits fix = {};
             fix = mem::realloc(fix, 1);
-            fix[0] = (core::Edit){};
-            fix[0].span.start = (U32)(head + 2);
-            fix[0].span.end = (U32)(head + 2);
-            fix[0].text = ":";
+            Str colon = ":";
+            fix[0] = (core::Edit){.span = {.start = (U32)(head + 2), .end = (U32)(head + 2)}, .text = colon};
             core::ParseError made = {};
             made.span = (ast::Span){.start = (U32)head, .end = (U32)(head + 3)};
             made.message = "`_` is no name to assign to: a discarded value is `_ := x`";

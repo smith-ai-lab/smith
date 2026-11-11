@@ -18,10 +18,11 @@ static void expect_renamed(Str source, Str want) {
 }
 
 export void test_front_fix_shadow_a_parameter_named_like_a_module() {
-    expect_renamed("module m;\nimport std::arena;\nvoid f(arena::Arena *arena) {\n    arena::push(arena, 1);\n"
-                   "    arena->used = 0;\n}\n",
-                   "module m;\nimport std::arena;\nvoid f(arena::Arena *arena_value) {\n    arena::push(arena_value, 1);\n"
-                   "    arena_value->used = 0;\n}\n");
+    expect_renamed(
+        "module m;\nimport std::arena;\nvoid f(arena::Arena *arena) {\n    arena::push(arena, 1);\n"
+        "    arena->used = 0;\n}\n",
+        "module m;\nimport std::arena;\nvoid f(arena::Arena *arena_value) {\n    arena::push(arena_value, 1);\n"
+        "    arena_value->used = 0;\n}\n");
 }
 
 export void test_front_fix_shadow_a_local_and_a_loop_name() {
@@ -40,10 +41,11 @@ export void test_front_fix_shadow_a_taken_name_leaves_the_file_alone() {
 
 // Only the module whose new name is taken keeps its locals.
 export void test_front_fix_shadow_a_taken_name_leaves_only_its_own_module() {
-    expect_renamed("module m;\nimport std::array;\nimport std::text;\nvoid f(Str text, Usize array, Str text_value) {\n"
-                   "    g(text, array, text_value);\n}\n",
-                   "module m;\nimport std::array;\nimport std::text;\nvoid f(Str text, Usize array_value, Str text_value) {\n"
-                   "    g(text, array_value, text_value);\n}\n");
+    expect_renamed(
+        "module m;\nimport std::array;\nimport std::text;\nvoid f(Str text, Usize array, Str text_value) {\n"
+        "    g(text, array, text_value);\n}\n",
+        "module m;\nimport std::array;\nimport std::text;\nvoid f(Str text, Usize array_value, Str text_value) {\n"
+        "    g(text, array_value, text_value);\n}\n");
 }
 
 // The suffix is `_value`: `json` is `json_value`, and a lambda's capture of it is renamed with it (#3084).
