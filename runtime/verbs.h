@@ -6,6 +6,7 @@
 bool smith_front_end_flag(const char *arg);
 
 bool smith_lint_expand_dirs(int *argc, char ***argv);
+int smith_lint_drop_ignored(int argc, char **argv);
 
 int smith_lint_project(int count, char **args, const char *self);
 

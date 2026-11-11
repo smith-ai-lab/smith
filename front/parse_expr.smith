@@ -2068,7 +2068,9 @@ static ast::Expr *conversion(parse::Parser *p, ast::Expr *operand) {
     ast::CastForm form = .convert;
     if (same_text(word, "wrap")) form = .wrapping;
     if (same_text(word, "cast")) form = .reinterpret;
-    ast::TypeExpr *type = parse::type(p);
+    // The argument is any expression that evaluates to a type, so a type function applied is read as one,
+    // `a.to(widen(i32))`, whatever its case (#3122).
+    ast::TypeExpr *type = p->new_syntax ? parse_type::declared(p) : parse::type(p);
     if (type == nullptr) return nullptr;
     parse::expect(p, lex::right_paren, "`)` to end the type");
     return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand, .form = form}});
