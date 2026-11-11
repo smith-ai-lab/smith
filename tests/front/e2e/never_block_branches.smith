@@ -1,15 +1,15 @@
 fn pick(flag: bool, n: i32) -> i32:
-    let v = if flag:
+    v := if flag:
         n
     else:
-        let doubled = n * 2
+        doubled := n * 2
         return doubled
     v + 1
 
 fn first_positive(xs: []i32) -> i32:
-    let mut total = 0
+    mut total := 0
     for x in xs:
-        let step = if x > 0:
+        step := if x > 0:
             x
         else:
             continue
@@ -17,13 +17,13 @@ fn first_positive(xs: []i32) -> i32:
     total
 
 fn within(o: ?i32) -> i32:
-    let v = o else:
-        let fallback = 40
+    v := o else:
+        fallback := 40
         return fallback + 2
     v + 1
 
 fn nested(n: i32) -> i32:
-    let v = match n:
+    v := match n:
         0: 10
         _:
             if n > 5:
@@ -35,7 +35,7 @@ fn nested(n: i32) -> i32:
 pub fn check() -> i32:
     if pick(true, 3) != 4 or pick(false, 3) != 6:
         return 1
-    let xs = [3, -1, 4]
+    xs := [3, -1, 4]
     if first_positive(xs[:]) != 7:
         return 2
     if within(.some(1)) != 2 or within(.none) != 42:

@@ -1,8 +1,8 @@
 fn twice(o: ?i32) -> i32:
-    let r = match o:
+    r := match o:
         .some(n): n
         .none:
-            let seen = 7
+            seen := 7
             return seen * 2
     r + 1
 
