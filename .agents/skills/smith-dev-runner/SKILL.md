@@ -50,13 +50,13 @@ Queue operations go through the lead (owner, 2026-11-09: "Can you just say like,
 - **Friction.** End the PR body with `## Friction`: each point that cost you about 5 minutes or more, with `(~N min)`, or `none`. A clean run is a good result, not a gap to fill. File no friction issue and comment on none: every 4 hours the lead reads the merged PRs and turns a cause seen twice, or one that cost 30 minutes or more, into a ticket at once ([smith-dev-tickets](../smith-dev-tickets/SKILL.md), Friction). A point you can fix in your own files, fix in the same PR.
 
 ## Models
-The only place that names models; tickets name difficulties. Four levels, every one at medium effort (owner, 2026-11-09: "okay we should keep each one on medium probably."). Only the lead sets `difficulty:expert`; it is for a design whose decision shapes many later tickets, or a root cause two attempts have missed, never for implementation with a clear spec however large. A runner stuck at `hard` messages the lead rather than raising the label.
+The only place that names models; tickets name difficulties. Four levels, every one at medium effort (owner, 2026-11-09: "okay we should keep each one on medium probably."). Only the lead sets `difficulty:expert`; it is for a design whose decision shapes many later tickets, or a root cause two attempts have missed, never for implementation with a clear spec however large. A runner stuck at `hard` messages the lead rather than raising the label. No runner runs on a model above `claude-opus-5-5`, whatever the label (owner, 2026-11-11, after the usage limit was hit: "any worker who is using fable needs to move to opus medium and we need to change change the skill so nothing can go to fable"); `expert` now only marks the ticket for the daily note.
 
 | Difficulty | Model | Effort |
 |---|---|---|
 | `difficulty:easy` | `claude-haiku-5-5` | medium |
 | `difficulty:medium` | `claude-sonnet-5-5` | medium |
 | `difficulty:hard` | `claude-opus-5-5` | medium |
-| `difficulty:expert` | `claude-fable-5-2` | medium |
+| `difficulty:expert` | `claude-opus-5-5` | medium |
 
 A successor's prompt is `You are a smith runner. Load the skill smith-dev-runner and follow it.`, and its `append_system_prompt` is `You are a smith runner in the smith-ai-lab/smith factory, started by the lead or by the runner before you. Your first message is your task: load the skill smith-dev-runner and run its loop to the end without asking for confirmation.` (a runner whose only instruction is the first message may read it as another bot's request and stop to ask a human: four did on 2026-11-03).
