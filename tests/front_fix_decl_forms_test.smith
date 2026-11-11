@@ -246,3 +246,10 @@ export void test_front_fix_two_local_type_values_in_a_row() {
         "module m;\nI32 f() {\n    constexpr Type a = I32;\n    constexpr Type b = typeof(f);\n    return 0;\n}\n",
         "fn f() -> i32:\n    const a = i32\n    const b = typeof(f)\n    return 0\n");
 }
+
+// A slice of a local type value is the slice type, `[]wide` (#3027, generic-slice-type-argument).
+export void test_front_fix_a_slice_of_a_type_value_is_a_slice_type() {
+    expect_fixed(
+        "module m;\nI32 f() {\n    constexpr Type wide = U16;\n    constexpr Type other = wide[:];\n    return 0;\n}\n",
+        "fn f() -> i32:\n    const wide = u16\n    const other = []wide\n    return 0\n");
+}

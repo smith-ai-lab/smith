@@ -1922,6 +1922,28 @@ static Bool array_list(parse::Parser *p, ast::TypeExpr *type, U32 equal_end, U32
     return true;
 }
 
+// Whether a type value's initializer is `name[:]`, a slice of a lowercase type value (`wide[:]`); a capitalized type
+// (`U16[:]`) is renamed by its own fix first.
+static Bool slice_of_value_name(Str value) {
+    Usize n = countof(value);
+    if (n < 4 || value[n - 3] != '[' || value[n - 2] != ':' || value[n - 1] != ']') return false;
+    if (value[0] < 'a' || value[0] > 'z') return false;
+    for (Usize i = 0; i < n - 3; i++) {
+        char ch = value[i];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'))
+            return false;
+    }
+    return true;
+}
+
+// Where an initializer ends before the `;` at `semi`: blanks before it are not part of it.
+static U32 value_end(const parse::Parser *p, U32 semi) {
+    U32 end = semi;
+    while (end > 0 && (p->source[end - 1] == ' ' || p->source[end - 1] == '\t'))
+        end -= 1;
+    return end;
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
@@ -1972,6 +1994,11 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     }
     if (type_value || automatic || lowercase_type(pre, head, raw))
         text = as_str(format::push(lead, name, untyped_of(lead)));
+    // `constexpr Type other = wide[:];`: a slice of a type value is the type `[]wide` (smith-dev-syntax-types, #3027)
+    if ((type_value || lowercase_type(pre, head, raw)) && slice_of_value_name(value))
+        list_edits = with_edit(list_edits,
+                               edit(value_end(p, last.span.start) - (U32)countof(value), value_end(p, last.span.start),
+                                    as_str(format::push("[]", value[0:countof(value) - 3]))));
     if (bare_extern) {
         text = as_str(format::push(name, ": ", written));
         to = head.name.span.end;
