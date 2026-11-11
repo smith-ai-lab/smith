@@ -13,4 +13,3 @@ You are a worker: one session, one ticket, named in your prompt.
 - Measure the ticket's prediction and write the result in the ticket body.
 - Message the lead twice at most: when you need a ruling, and when done.
 - Start no other session. When your pull request has merged, stop.
-- A change to the LLVM configuration (`patches/`, the name in build.c) needs its pack before the pull request enters the queue (#3170): start `llvm.yml` with `workflow_dispatch` on your branch, and queue the PR only once the release `llvm-<name>-<os>-<arch>` is published. A queue run never builds a pack: with the pack missing it fails in `changes` in seconds, naming this dispatch.
