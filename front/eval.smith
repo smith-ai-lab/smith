@@ -1,11 +1,11 @@
-// front::eval: the one place the new front end decides a value at compile time (#3039, step 1 of 3).
+// front::eval: the one place the new front end decides a value at compile time (#3039, steps 1 and 2 of 3).
 //
 // `eval::value(r, expr)` gives the value of an expression when it is known at compile time, in the scopes the checker
 // `r` is in. It is asked wherever the language needs a constant: a `const`, an array length, a `static_assert`, the
 // condition of a compile-time `if`, a `match` pattern, an attribute's argument. Every answer is the target's
 // (`r->table.target`), never the host's.
 //
-// Step 1 runs no function. What it reads:
+// What it reads:
 //   literals        integers, characters, booleans, floats
 //   names           a constant (`const`, or a name that is not `mut`) through its initializer, in the module that
 //                   declares it; a compile-time parameter bound in an instance; a type
@@ -16,12 +16,16 @@
 //   target          `target.os`, `target.arch`, `target.f32_mantissa_bits` and the other facts (`target_fact`)
 //   conversions     `x.to(T)` (checked) and `x.wrap(T)` between numbers
 //   `if` as a value  `if c: a else: b` with a condition that is known
+//   calls           a smith function with a body, run statement by statement (declarations, assignment to a `mut`
+//                   local, `if`, `while`, `for i in range(a, b)`, `match`, `break`, `continue`, `return`, `assert`)
+//                   over numbers, bools, enumerators and types; a function whose result is `type` is a type
+//                   function (`applied_for`, `held_for`); `slice.with_dims(T, k)` is built in
 // Anything else is not known: the outcome names the part (`at`) and says why (`why`), and the caller writes the error
 // for its own place.
 //
 // The working defaults of #3039, each behind one function so that it is cheap to change: `step_limit`, `depth_limit`
-// (the limits), `may_run` (which functions run: only a concept function in step 1) and `target_fact` (which facts
-// `target` has). Nothing here recurses: a run is a stack of steps and a stack of values.
+// (the limits), `may_run` (which functions are answered by their one expression: a concept function) and `target_fact`
+// (which facts `target` has). Nothing here recurses: a run is a stack of steps and a stack of values.
 module front::eval;
 
 import front::ast;
@@ -363,9 +367,12 @@ static void unknown(Run *run, ast::Span at, Str why) {
     if (run->stopped) return;
     run->stopped = true;
     Str told = why;
-    if (run->frame_count > 0)
-        told = msg(format::push("`", shown_call(run, 0), "` cannot run at compile time: ", why));
+    if (run->frame_count > 0) told = msg(format::push("`", shown_call(run, 0), "` cannot run at compile time: ", why));
     run->out = (Outcome){.known = false, .value = boolean_value(false), .failed = false, .at = at, .why = told};
+}
+
+static Bool starts_with(Str text, Str head) {
+    return countof(text) >= countof(head) && same(text[0:countof(head)], head);
 }
 
 // Stops the run with an error of the evaluation itself (an overflow, a failed contract, a limit), with the calls it
@@ -374,13 +381,12 @@ static void unknown(Run *run, ast::Span at, Str why) {
 static void failed(Run *run, ast::Span at, Str why) {
     if (run->stopped) return;
     Bool inside = run->frame_count > 0;
-    Str told = msg(format::push(why, chain(run)));
+    // a message that starts with the one call being run (`spin(1)` ran ...) has said where
+    Bool said = run->frame_count == 1 && starts_with(why, msg(format::push("`", shown_call(run, 0), "`")));
+    Str told = said ? why : msg(format::push(why, chain(run)));
     run->stopped = true;
-    run->out = (Outcome){.known = false,
-                         .value = boolean_value(false),
-                         .failed = !(inside && run->lenient),
-                         .at = at,
-                         .why = told};
+    run->out = (Outcome){
+        .known = false, .value = boolean_value(false), .failed = !(inside && run->lenient), .at = at, .why = told};
 }
 
 // A step of the same module as `from`, at phase 0.
@@ -1198,6 +1204,8 @@ static Bool counted(types::TypeRef t, U64 *count) {
     return false;
 }
 
+static Bool makes_type(Run *run, const ast::Expr *e);
+
 static void query_step(Run *run, Step s) {
     const ast::Expr *e = s.expr;
     if (e->kind != .query) return;
@@ -1207,7 +1215,13 @@ static void query_step(Run *run, Step s) {
     types::TypeRef size = types::builtin(&r->table, "Usize");
     const ast::Expr *reflected = (op == .count_of && operand != nullptr) ? fields_argument(operand) : nullptr;
     types::TypeRef t = nullptr;
-    if (e->kind.query.type != nullptr) {
+    if (s.phase == 1) { // `sizeof(Pair(u8))`: the call was run, and its value is the type
+        t = held_type(pop_value(run));
+    } else if (operand != nullptr && reflected == nullptr && makes_type(run, operand)) {
+        push_step(run, later(s, 1));
+        push_step(run, expr_step(operand, s));
+        return;
+    } else if (e->kind.query.type != nullptr) {
         t = resolve_quiet(run, e->kind.query.type);
     } else if (reflected != nullptr) {
         t = operand_type(run, reflected);
@@ -1252,9 +1266,10 @@ export Bool may_run(const ast::Decl *d) {
 
 // The name a call names when its callee is one plain name, else an empty text.
 static Str callee_name(const ast::Expr *callee) {
-    if (callee->kind != .name) return "";
-    ast::Path path = callee->kind.name.path;
-    if (countof(path.segments) != 1) return "";
+    ast::Path path = {};
+    // `float(T)`, `signed(T)`: the parser reads a name of today's C types as a type
+    if (callee->kind != .name && callee->kind != .type_value) return "";
+    if (!types::names_a_constant(callee, &path) || countof(path.segments) != 1) return "";
     return path.segments[0].text;
 }
 
@@ -1369,10 +1384,29 @@ static void call_step(Run *run, Step s) {
         push_step(run, expr_step(args[0], s));
     } else if (countof(contract) > 0) {
         contract_step(run, s, contract);
+    } else if (symbol != nullptr && types::is_with_dims(symbol->name) && countof(args) == 2) {
+        push_step(run, later(s, 5)); // built in: no function over types writes `[,]T`
+        push_step(run, expr_step(args[1], s));
+        push_step(run, expr_step(args[0], s));
     } else if (decl == nullptr || symbol == nullptr) {
         unknown(run, e->span, "this is not a call of a function, so it is not run at compile time");
     } else {
         arguments_step(run, s, symbol, decl);
+    }
+}
+
+// `slice.with_dims(T, k)`: the element and the count are read.
+static void with_dims_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    Value count = pop_value(run);
+    Value element = pop_value(run);
+    if (element != .type_value || count != .integer || count.integer.negative) {
+        unknown(run, e->span, "`slice.with_dims` takes an element type and a count known at compile time");
+    } else if (count.integer.magnitude == 0) {
+        failed(run, e->span,
+               "`slice.with_dims` makes a slice of 1 or more dimensions, not 0; write the element type itself");
+    } else {
+        push_value(run, type_value(types::with_dims(run->r, element.type_value.type, count.integer.magnitude)));
     }
 }
 
@@ -1439,8 +1473,10 @@ static void call_enter(Run *run, Step s) {
         add_local(run, params[i].name, run->values[base + i], params[i].is_mut, nullptr);
     run->have = base;
     if (run->frame_count > depth_limit()) {
+        Str outermost = shown_call(run, 0);
+        run->frame_count = 0; // the message names the first call; the 512 that follow say nothing more
         failed(run, e->span,
-               msg(format::push("`", shown_call(run, 0), "` is ", depth_limit(),
+               msg(format::push("`", outermost, "` is ", depth_limit(),
                                 " calls deep at compile time; the recursion does not end")));
         return;
     }
@@ -1979,10 +2015,14 @@ static void resume(Run *run, Step s) {
         contract_resume(run, s);
     } else if (e->kind == .call && s.phase == 3) {
         call_enter(run, s);
+    } else if (e->kind == .call && s.phase == 5) {
+        with_dims_resume(run, s);
     } else if (e->kind == .call) {
         call_leave(run, s);
     } else if (e->kind == .assign) {
         assign_step(run, s);
+    } else if (e->kind == .query) {
+        query_step(run, s);
     } else {
         settle_name(run, s); // a name or a member: its constant's initializer is read
     }
@@ -1993,6 +2033,12 @@ static Bool names_variable(Run *run, const ast::Expr *e, ast::Path *path) {
     if (!types::names_a_constant(e, path)) return false;
     const types::Symbol *symbol = types::type_through_modules(run->r, *path);
     return symbol != nullptr && symbol->kind == .variable;
+}
+
+// Whether the expression makes or reads a value with memory, which step 3 of #3039 brings.
+static Bool has_memory(const ast::Expr *e) {
+    return e->kind == .array_lit || e->kind == .string || e->kind == .index || e->kind == .slice_of ||
+           e->kind == .tuple_lit || (e->kind == .unary && e->kind.unary.op == .address_of);
 }
 
 static void enter(Run *run, Step s) {
@@ -2039,6 +2085,10 @@ static void enter(Run *run, Step s) {
         assign_step(run, s);
     } else if (e->kind == .stmt_expr) {
         push_step(run, stmt_step(e->kind.stmt_expr.stmt, s));
+    } else if (has_memory(e)) {
+        unknown(run, e->span,
+                "this is a value with memory (an array, a slice, a string, a struct or a pointer), and compile-time "
+                "code holds only numbers, bools, enumerators and types");
     } else {
         unknown(run, e->span, "this is not known at compile time");
     }
@@ -2102,6 +2152,13 @@ export Outcome typed(types::Checked *r, const ast::Expr *e) {
     return compute(r, e, true, false);
 }
 
+// As `typed`, where nothing requires the value (the condition of an `if`): an error inside a call the expression
+// makes (a failed contract, a loop that does not end) leaves the value unknown, and the program makes the call when it
+// runs.
+export Outcome tried(types::Checked *r, const ast::Expr *e) {
+    return compute(r, e, true, true);
+}
+
 // The type `e` is when it is one known at compile time (`typeof(xs[0])`, `u32`, `Pair(i32)`); null for a value,
 // one that only reads like a type (`Pair(n, n)`) included.
 export types::TypeRef type_held(types::Checked *r, const ast::Expr *e) {
@@ -2153,13 +2210,17 @@ export Bool returns_type(const ast::Decl *d) {
     return written_as(d->kind.function.result, "type");
 }
 
+// Whether `e` is a call of a type function.
+static Bool makes_type(Run *run, const ast::Expr *e) {
+    if (e->kind != .call) return false;
+    return returns_type(function_of(called(run, e->kind.call.callee)));
+}
+
 // `types::Options.held`: the type the call `e` is when it calls a type function (`Pair(i32)`); null when `e` is no
 // such call. A call that gives no type is reported, and the invalid type given.
 export types::TypeRef held_for(types::Checked *r, const ast::Expr *e) {
-    if (e->kind != .call) return nullptr;
     Run look = {.r = r};
-    const types::Symbol *symbol = called(&look, e->kind.call.callee);
-    if (!returns_type(function_of(symbol))) return nullptr;
+    if (!makes_type(&look, e)) return nullptr;
     Outcome found = compute(r, e, false, false);
     Value v = found.value;
     if (found.known && v == .type_value) return v.type_value.type;

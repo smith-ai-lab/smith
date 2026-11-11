@@ -2456,28 +2456,58 @@ static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef eleme
 
 static Bool constant_length(Checked *r, const ast::Expr *root, Str what, U64 *out);
 
-// `arena::slice_of(T, count)`: `count` nested slices of `T` (a block when 2 or more), where `count` is a literal, a
-// constant, or `countof` of a pack.
-static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef element) {
+// Whether a function's full name is `slice.with_dims` of std.slice, or std.arena's `slice_of`, the same function
+// under its old name, which std.arena and std.mem keep until the old front end can read the new one from them.
+export Bool is_with_dims(Str name) {
+    return same_text(name, "std::slice::with_dims") || same_text(name, "std::arena::slice_of");
+}
+
+// Whether `path` names `slice.with_dims` of std.slice, however the module is imported (`from std.slice import
+// with_dims` too). It is built in: a function over types cannot write `[,]T`.
+export Bool names_with_dims(const Checked *r, ast::Path path) {
+    const Symbol *named = type_through_modules(r, path);
+    return named != nullptr && named->kind == .function_symbol && is_with_dims(named->name);
+}
+
+// `slice.with_dims(T, k)`: the slice of `k` dimensions known at run time over `T`. `slice.with_dims(f32, 1)` is
+// `[]f32`, `slice.with_dims(f32, 2)` is `[,]f32`.
+export TypeRef with_dims(Checked *r, TypeRef element, U64 count) {
+    if (count == 1) return slice_of(&r->table, element, false);
+    return block_of(&r->table, element, count);
+}
+
+static TypeRef build_with_dims(Checked *r, const ast::TypeExpr *node, TypeRef element) {
     if (node->kind != .applied) return r->table.invalid;
     ast::TypeArg args[:] = node->kind.applied.args;
     U64 count = 0;
     const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
     const ast::Expr *count_expr = value_argument(second);
-    if (count_expr == nullptr || !constant_length(r, count_expr, "", &count) || count < 1) {
-        failf(r, node->span, "`slice_of` takes an element type and a count known at compile time, of 1 or more");
+    if (count_expr == nullptr || !constant_length(r, count_expr, "", &count)) {
+        failf(r, node->span, "the count of `slice.with_dims` is not known at compile time; write a constant, for ",
+              "example `slice.with_dims(f32, 2)`");
         return r->table.invalid;
     }
-    if (count == 1) return slice_of(&r->table, element, false);
-    return block_of(&r->table, element, count);
+    if (count < 1) {
+        failf(r, node->span, "`slice.with_dims` makes a slice of 1 or more dimensions, not 0; write the element ",
+              "type itself");
+        return r->table.invalid;
+    }
+    return with_dims(r, element, count);
 }
 
 static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path applied_name, Usize args, const Walk *w,
                              Usize base, Usize n) {
     ast::Span span = node->span;
     Str name = path_text(applied_name);
-    if ((same_text(name, "slice_of") || same_text(name, "arena::slice_of")) && args == 2 && n == 1)
-        return build_slice_of(r, node, w->values[base].type);
+    if (names_with_dims(r, applied_name)) {
+        if (args == 2 && n == 1) {
+            TypeRef dims = build_with_dims(r, node, w->values[base].type);
+            set_type(r, (const ast::Expr *)(Usize)node, dims); // the emitter asks `applied_type` for it
+            return dims;
+        }
+        failf(r, span, "`slice.with_dims` takes an element type and a count; write `slice.with_dims(f32, 2)`");
+        return r->table.invalid;
+    }
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     // `iter(T)`, the result of a generator in smith's own syntax (#1428), is the stream of `T`

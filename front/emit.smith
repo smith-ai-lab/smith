@@ -1854,8 +1854,8 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     known = known || (base->kind == .enumeration && matching::type_enum(e, types::name_of(base), &ty));
     if (!known && e->options.checked != nullptr && types::is_made(e->options.checked, base)) {
         // the `struct:` or `enum:` of a type function (`Pair(i32)`): built from the checker's type
-        state::TyResult made = base->kind == .record ? records::from_made(e, base, span)
-                                                     : matching::enum_from_checked(e, base, span);
+        state::TyResult made =
+            base->kind == .record ? records::from_made(e, base, span) : matching::enum_from_checked(e, base, span);
         if (made == .error) return made;
         ty = made.ok;
         known = true;

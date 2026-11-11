@@ -765,6 +765,27 @@ static Bool expected_record(state::Emitter *e, const ast::Expr *callee, state::H
     return state::same_text(name[start:countof(name)], want);
 }
 
+// A construction of the `struct:` a type function made (`IntPair(1, 2)`, `Pair(i32)(first = 1, second = 2)`): the
+// checker typed the call as that record, which is built from its fields the first time it is needed.
+static Bool made_record(state::Emitter *e, const ast::Expr *x, Usize *at) {
+    if (e->options.checked == nullptr || x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    ast::Path path = {};
+    if (callee->kind != .call) { // not `Pair(i32)(1, 2)`: the callee names the type, where a function may be named
+        if (!types::names_a_constant(callee, &path)) return false;
+        const types::Symbol *named = types::type_through_modules(e->options.checked, path);
+        if (named == nullptr || named->kind != .type_name) return false;
+    }
+    types::TypeRef typed = types::type_of(e->options.checked, x);
+    if (typed == nullptr || typed->kind != .record || !types::is_made(e->options.checked, typed)) return false;
+    state::TyResult made = state::type_of_checked(e, typed, x->span);
+    if (made == .error) {
+        state::free_text(made.error.message);
+        return false;
+    }
+    return record_of_type(e, made.ok, at);
+}
+
 // The field values are on the value stack, the first deepest: start from zero and insert each.
 static state::Status construct_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *x = w->expr;
@@ -1020,6 +1041,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     Usize record = 0;
     if (callee_record(e, callee, &record) && !function_twin(e, callee, written_args)) return construct(e, x, record);
     if (expected_record(e, callee, hint, &record)) return construct(e, x, record);
+    if (made_record(e, x, &record)) return construct(e, x, record);
     if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
     if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
     if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)

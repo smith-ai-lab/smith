@@ -135,7 +135,123 @@ export void test_front_eval_a_concept_function_is_answered_by_its_body() {
     expect(source, "a", "true");
     expect(source, "b", "false");
     expect(source, "c", "true");
-    expect(source, "d", "unknown: `sq(...)` is a call, and a function is not run at compile time yet; write the value");
+    expect(source, "d", "9");
+}
+
+// Step 2: a function runs where its value is asked for: recursion, locals that change, loops, `match`, `return` from
+// inside a loop, and a parameter in brackets worked out from the argument.
+export void test_front_eval_a_function_runs() {
+    Str source = "fn fib(n: i32) -> i32:\n"
+                 "    if n < 2: n else: fib(n - 1) + fib(n - 2)\n"
+                 "fn sum(n: u32) -> u32:\n"
+                 "    mut total: u32 = 0\n"
+                 "    for i in range(0, n + 1):\n"
+                 "        if i == 3:\n"
+                 "            continue\n"
+                 "        total += i\n"
+                 "    total\n"
+                 "fn first_over(limit: i32) -> i32:\n"
+                 "    mut i := 0\n"
+                 "    while i < 100:\n"
+                 "        if i * i > limit:\n"
+                 "            return i\n"
+                 "        i += 1\n"
+                 "    return -1\n"
+                 "fn kind(T: type) -> i32:\n"
+                 "    match sizeof(T):\n"
+                 "        1: 10\n"
+                 "        2, 4: 20\n"
+                 "        _: 30\n"
+                 "fn bits[T](x: T) -> usize:\n"
+                 "    sizeof(T) * 8\n"
+                 "fn scaled(x: i32, by: i32 = 3) -> i32:\n"
+                 "    x * by\n"
+                 "a := fib(10)\n"
+                 "b := sum(4)\n"
+                 "c := first_over(50)\n"
+                 "d := kind(u8) + kind(u32) + kind(f64)\n"
+                 "e := bits(a)\n"
+                 "f := scaled(5) + scaled(5, 2)\n";
+    expect(source, "a", "55");
+    expect(source, "b", "7");
+    expect(source, "c", "8");
+    expect(source, "d", "60");
+    expect(source, "e", "32");
+    expect(source, "f", "25");
+}
+
+// A function that returns a type is run like any other: its value is the type.
+export void test_front_eval_a_type_function_runs() {
+    Str source = "fn slice_of(element: type, count: usize) -> type:\n"
+                 "    mut t: type = element\n"
+                 "    for i in range(0, count):\n"
+                 "        t = []t\n"
+                 "    return t\n"
+                 "fn widen(T: type) -> type:\n"
+                 "    if sizeof(T) < 4: i32 else: T\n"
+                 "fn pair(T: type) -> type:\n"
+                 "    struct:\n"
+                 "        first: T\n"
+                 "        second: T\n"
+                 "a := slice_of(u8, 2) == [][]u8\n"
+                 "b := widen(u8) == i32 and widen(u64) == u64\n"
+                 "c := sizeof(pair(u16))\n"
+                 "d := pair(u8) == pair(u8) and pair(u8) != pair(i8)\n"
+                 "e := sizeof(slice_of(u8, 0))\n";
+    expect(source, "a", "true");
+    expect(source, "b", "true");
+    expect(source, "c", "4");
+    expect(source, "d", "true");
+    expect(source, "e", "1");
+}
+
+// What a run refuses, each with the call it happened in: the limits, a failed contract, an overflow, a C function, a
+// global that changes, a value with memory.
+export void test_front_eval_a_run_that_stops_says_where() {
+    Str source = "import c <string.h> as cstring\n"
+                 "fn deep(n: i32) -> i32:\n"
+                 "    deep(n + 1)\n"
+                 "fn spin(n: i32) -> i32:\n"
+                 "    mut i := 0\n"
+                 "    while i >= 0:\n"
+                 "        i = n\n"
+                 "    i\n"
+                 "fn half(n: i32) -> i32:\n"
+                 "    contract.requires(n % 2 == 0)\n"
+                 "    n / 2\n"
+                 "fn divide(n: i32) -> i32:\n"
+                 "    100 / n\n"
+                 "fn through(n: i32) -> i32:\n"
+                 "    divide(n - 2)\n"
+                 "mut count: i32 = 0\n"
+                 "fn next() -> i32:\n"
+                 "    count + 1\n"
+                 "fn third(n: i32) -> i32:\n"
+                 "    xs: [3]i32 = [n, n, n]\n"
+                 "    xs[2]\n"
+                 "fn nothing(n: i32):\n"
+                 "    mut i := n\n"
+                 "    i += 1\n"
+                 "a := deep(0)\n"
+                 "b := spin(1)\n"
+                 "c := half(3)\n"
+                 "d := half(4)\n"
+                 "e := through(2)\n"
+                 "f := next()\n"
+                 "g := third(1)\n"
+                 "h := nothing(1)\n";
+    expect(source, "a", "failed: `deep(0)` is 512 calls deep at compile time; the recursion does not end");
+    expect(source, "b",
+           "failed: `spin(1)` ran 1048576 steps at compile time without finishing; a loop here does not end, or the "
+           "work belongs at run time");
+    expect(source, "c", "failed: `contract.requires` fails at compile time (in `half(3)`)");
+    expect(source, "d", "2");
+    expect(source, "e", "failed: this divides by zero at compile time (in `divide(0)`, called from `through(2)`)");
+    expect(source, "f", "unknown: `next()` cannot run at compile time: `count` is a variable that can change");
+    expect(source, "g",
+           "unknown: `third(1)` cannot run at compile time: this is a value with memory (an array, a slice, a string, "
+           "a struct or a pointer), and compile-time code holds only numbers, bools, enumerators and types");
+    expect(source, "h", "unknown: this has no value");
 }
 
 export void test_front_eval_target_facts() {

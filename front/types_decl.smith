@@ -1659,14 +1659,16 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     // The checker's own reading of the test comes after the notes of its guards, so the evaluator is asked without
     // typing anything first; an ordinary test it cannot answer yet is typed, and asked again (`sizeof(x) == 8`).
     Bool always = is_constexpr || (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr);
-    eval::Outcome found = eval::typed(r, test);
+    // Only a condition that is always decided requires its value: any other runs the functions it calls where they
+    // can run, and an error inside one leaves the condition to run time (`eval::tried`).
+    eval::Outcome found = always ? eval::typed(r, test) : eval::tried(r, test);
     Bool typed = false;
     if (always && !found.known && !found.failed) {
         found = eval::value(r, test);
     } else if (!found.known && !found.failed) {
         note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
         (void)types_expr::check(r, test, r->table.bool_type);
-        found = eval::typed(r, test);
+        found = eval::tried(r, test);
         typed = true;
     }
     if (found.known && found.value == .boolean) {
