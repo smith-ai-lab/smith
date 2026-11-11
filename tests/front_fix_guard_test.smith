@@ -2,6 +2,7 @@
 // `.ok(ok) := r else:` and the reads `r.ok` become `ok`.
 module front_fix_guard_test;
 
+import front::fix;
 import front::fix_guard;
 import front::parse as core;
 import std::arena;
@@ -72,4 +73,123 @@ export void test_front_fix_guard_a_name_ok_in_the_function_leaves_the_site() {
 export void test_front_fix_guard_a_call_named_like_return_is_not_a_leave() {
     expect("fn f(s: Str):\n    r := g(s)\n    if r == .error: returned(s)\n    use(r.ok)\n",
            "fn f(s: Str):\n    r := g(s)\n    if r == .error: returned(s)\n    use(r.ok)\n");
+}
+
+// The whole fixer on `before` gives `after`, and a second run changes nothing.
+static void expect_fixed(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, after);
+}
+
+static Str half_text() {
+    return "fn half(n: i32) -> Result(i32, i32):\n    if n < 0:\n        return .error(n)\n    .ok(n / 2)\n";
+}
+
+static Str with_half(Str rest) {
+    return as_str(format::push(half_text(), rest));
+}
+
+// `R == .error` is `R != .ok` where `R.ok` is read after it (#3083): the checker then binds the guard of an `or` chain.
+// The blank line is the chain's own split (`types_decl::note_rest_guard`).
+export void test_front_fix_guard_an_error_test_in_an_or_chain_is_a_guard() {
+    expect_fixed(with_half("fn small(n: i32) -> i32:\n    r := half(n)\n    if r == .error or r.ok > 100:\n"
+                           "        return 0\n    r.ok\n"),
+                 with_half("fn small(n: i32) -> i32:\n    r := half(n)\n    .ok(ok) := r else:\n        return 0\n"
+                           "    \n    if ok > 100:\n        return 0\n    ok\n"));
+}
+
+// `R != .error` is `R == .ok`, which starts an `and` chain that binds the payload.
+export void test_front_fix_guard_a_not_error_test_starts_an_and_chain() {
+    expect_fixed(with_half("fn big(n: i32) -> i32:\n    r := half(n)\n    if r != .error and r.ok > 3:\n"
+                           "        return r.ok\n    -1\n"),
+                 with_half("fn big(n: i32) -> i32:\n    r := half(n)\n    if .ok(ok) := r and ok > 3:\n"
+                           "        return ok\n    -1\n"));
+}
+
+// The `else` of a Result's test reads the other variant: `else if .ok(ok) := r:`, and the same the other way round.
+export void test_front_fix_guard_the_else_binds_the_other_variant() {
+    expect_fixed(with_half("fn either(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n    if r == .error:\n"
+                           "        total = r.error\n    else:\n        total = r.ok + 1\n    total\n"),
+                 with_half("fn either(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n"
+                           "    if .error(error) := r:\n        total = error\n    else if .ok(ok) := r:\n"
+                           "        total = ok + 1\n    total\n"));
+    expect_fixed(with_half("fn either(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n    if r == .ok:\n"
+                           "        total = r.ok\n    else:\n        total = r.error - 1\n    total\n"),
+                 with_half("fn either(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n"
+                           "    if .ok(ok) := r:\n        total = ok\n    else if .error(error) := r:\n"
+                           "        total = error - 1\n    total\n"));
+}
+
+// A generic function's Result is read the same way.
+export void test_front_fix_guard_a_generic_result_is_bound() {
+    Str wrap = "fn wrap(T: type, value: T) -> Result(T, i32):\n    .ok(value)\n";
+    expect_fixed(
+        as_str(format::push(wrap, "fn read() -> i64:\n    w := wrap(i64, 9)\n    if w != .error and w.ok == 9:\n"
+                                  "        return w.ok\n    0\n")),
+        as_str(format::push(wrap, "fn read() -> i64:\n    w := wrap(i64, 9)\n    if .ok(ok) := w and ok == 9:\n"
+                                  "        return ok\n    0\n")));
+}
+
+// A guard that passes the result up is `try`'s, a `match` binds its arms, and a name `ok` leaves the tests alone.
+export void test_front_fix_guard_try_match_and_a_taken_name_keep_their_forms() {
+    expect_fixed(with_half("fn quarter(n: i32) -> Result(i32, i32):\n    r := half(n)\n    if r == .error:\n"
+                           "        return r\n    half(r.ok)\n"),
+                 with_half("fn quarter(n: i32) -> Result(i32, i32):\n    ok := try half(n)\n    half(ok)\n"));
+    expect_fixed(with_half("fn arms(n: i32) -> i32:\n    r := half(n)\n    match r:\n        .ok: r.ok\n"
+                           "        .error: r.error\n"),
+                 with_half("fn arms(n: i32) -> i32:\n    r := half(n)\n    match r:\n        .ok(ok): ok\n"
+                           "        .error(error): error\n"));
+    Str taken = with_half("fn taken(n: i32) -> i32:\n    ok := 3\n    r := half(n)\n    if r == .error or r.ok > 9:\n"
+                          "        return ok\n    r.ok\n");
+    expect_fixed(taken, taken);
+}
+
+// A variant test after the first conjunct of an `and` chain is a pattern where it stands (#3083; the lead, Q1 (b)): the
+// conjuncts before it still run first, and a name of the variant already in the function is spelled `<variant>_value`.
+export void test_front_fix_guard_a_test_inside_an_and_chain_is_a_pattern() {
+    expect_fixed(with_half("fn later(n: i32) -> i32:\n    r := half(n)\n    if n > 2 and r == .ok:\n"
+                           "        return r.ok\n    -1\n"),
+                 with_half("fn later(n: i32) -> i32:\n    r := half(n)\n    if n > 2 and .ok(ok) := r:\n"
+                           "        return ok\n    -1\n"));
+    expect_fixed(with_half("fn inner(n: i32) -> i32:\n    first := half(n)\n    second := half(n + 2)\n"
+                           "    if .ok(ok) := first:\n        if ok > 1 and second != .error:\n"
+                           "            return ok + second.ok\n    -1\n"),
+                 with_half("fn inner(n: i32) -> i32:\n    first := half(n)\n    second := half(n + 2)\n"
+                           "    if .ok(ok) := first:\n        if ok > 1 and .ok(ok_value) := second:\n"
+                           "            return ok + ok_value\n    -1\n"));
+    Str shape = "enum Shape:\n    circle: i32\n    empty\n";
+    expect_fixed(as_str(format::push(shape, "fn radius(s: Shape, n: i32) -> i32:\n    if n > 0 and s == .circle:\n"
+                                            "        return s.circle\n    0\n")),
+                 as_str(format::push(shape, "fn radius(s: Shape, n: i32) -> i32:\n"
+                                            "    if n > 0 and .circle(circle) := s:\n        return circle\n    0\n")));
+}
+
+// A chain with an `or`, and a body that writes the result, stay as they are.
+export void test_front_fix_guard_an_or_chain_and_a_write_keep_the_test() {
+    Str written = with_half("fn written(n: i32) -> i32:\n    mut r := half(n)\n    if n > 2 and r == .ok:\n"
+                            "        r = half(1)\n        return r.ok\n    -1\n");
+    expect_fixed(written, written);
+}
+
+// The test of a Result's error whose body leaves, with the value read below it, is a `match` (#3083; the lead, Q2 (b)).
+export void test_front_fix_guard_an_error_body_that_returns_is_a_match_arm() {
+    expect_fixed(
+        with_half("fn handled(n: i32) -> i32:\n    r := half(n)\n    if r == .error:\n"
+                  "        return r.error * 2\n    r.ok + 1\n"),
+        with_half("fn handled(n: i32) -> i32:\n    r := half(n)\n    ok := match r:\n        .ok(value): value\n"
+                  "        .error(error): return error * 2\n    ok + 1\n"));
+}
+
+// A body that does not leave keeps the test, and the read below it stays for the next fix.
+export void test_front_fix_guard_an_error_body_that_does_not_leave_is_left() {
+    expect_fixed(with_half("fn kept(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n    if r == .error:\n"
+                           "        total = r.error\n    total + r.ok\n"),
+                 with_half("fn kept(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n"
+                           "    if .error(error) := r:\n        total = error\n    total + r.ok\n"));
 }

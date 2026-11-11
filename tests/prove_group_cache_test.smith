@@ -2,6 +2,8 @@
 // compiled the next time while the files its compile read, its flags and its options, and the compiler, are what they
 // were; its summary line then says "(not compiled)". The record is kept by the run that reused every function, so a
 // group proved afresh is replayed from its third run on. Anything else runs as before. The cache is the case's own.
+// Its smith children run prove, cc and build by the token lowering: nothing under front/ (#3076).
+// smith-covers: smith.c runtime/ shim/ include/ lib/ patches/ tests/prove/ tests/build_fixtures/prove_cases/
 module prove_group_cache_test;
 
 import std::arena;
