@@ -51,7 +51,6 @@ tests/smith-lang/cases/error-lambda-param-count/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-param-untyped/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-returns-disagree/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-wrong-signature/src/main.smith	error-fixture
-tests/smith-lang/cases/error-main-io-make/src/main.smith	error-fixture
 tests/smith-lang/cases/error-module-first/src/late.smith	error-fixture
 tests/smith-lang/cases/error-module-missing/src/main.smith	error-fixture
 tests/smith-lang/cases/error-plain-c-macro/src/main.smith	error-fixture
