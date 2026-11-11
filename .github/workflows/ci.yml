@@ -1297,6 +1297,13 @@ jobs:
         # each OS saves the cache of what its jobs build: the Mac builds only its `--macos-only` tests
         os: ${{ fromJSON(needs.changes.outputs.warm_os) }}
     runs-on: ${{ matrix.os }}
+    # One warm per OS at a time on main (#3069): a running warm always finishes, and a warm still waiting is replaced
+    # by the one of a newer push, whose stage0 every later job fetches; the older commit's cache would be keyed by a
+    # stage0 no job uses any more. At 10 merges an hour and warms of about 14 minutes this skips about half of them;
+    # the replaced push run ends `cancelled` (no required check reads a push run). A pull request's dry run is alone.
+    concurrency:
+      group: warm-${{ github.event_name == 'push' && 'main' || github.run_id }}-${{ matrix.os }}
+      cancel-in-progress: false
     timeout-minutes: 25
     permissions:
       contents: write # the release-asset step replaces the assets of the rolling `step-cache` prerelease (#2755)
@@ -1401,21 +1408,10 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
-      - name: Upload the step cache for cloud runners
-        # the Actions cache cannot be read from outside Actions, so a cloud runner (smith-dev-runner, step 3) downloads
-        # the same folder as an artifact. Only this job on main writes it; 3 days keep it inside free storage, and the
-        # folder is already pruned to SMITH_CACHE_MAX by the build above (#2690)
-        if: runner.os == 'Linux' && env.DRY_RUN != '1'
-        uses: actions/upload-artifact@v4
-        with:
-          name: smith-steps-linux-${{ github.sha }}
-          path: ~/.cache/smith/steps
-          retention-days: 3
-          compression-level: 1
-          if-no-files-found: warn
       - name: Publish the step cache as release assets
         # a cloud runner cannot download an Actions artifact (its zip is served from a host the session's proxy refuses
-        # by name), but it can download a release asset. The repository's releases are immutable (a release takes its
+        # by name, and the upload of one cost 3.35 runner-minutes a push for no reader: it is gone, #3069), but it can
+        # download a release asset. The repository's releases are immutable (a release takes its
         # assets when it is created and never again, #2772), so each push to main creates its own prerelease
         # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
         # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
