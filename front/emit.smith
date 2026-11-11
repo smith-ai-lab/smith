@@ -658,16 +658,19 @@ static Usize instance_index(const state::Emitter *e) {
     return index;
 }
 
+// Whether the checker computed the Bool of this comparison or call (#3039): it has no run-time form.
+static Bool is_computed(const state::Emitter *e, const ast::Expr *x, U64 *computed) {
+    if ((x->kind != .binary && x->kind != .call) || e->options.checked == nullptr) return false;
+    return types::value_in(e->options.checked, x, instance_index(e), computed);
+}
+
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     walk_kind = state::expr_kind_name(x).data;
     try debug::expr_location(e, x);
     if (hint.present && (hint.ty.kind == .slice || hint.ty.kind == .block) && is_array_place(e, x))
         return emit_memory::array_as_slice(e, x, hint);
     U64 computed = 0;
-    if ((x->kind == .binary || x->kind == .call) && e->options.checked != nullptr &&
-        types::value_in(e->options.checked, x, instance_index(e), &computed)) {
-        return control::computed_boolean(e, computed); // the checker computed it: it has no run-time form (#3039)
-    }
+    if (is_computed(e, x, &computed)) return control::computed_boolean(e, computed);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
     const ast::Decl *imported = nullptr;
