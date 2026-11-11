@@ -2,6 +2,8 @@
 # The tree-sitter parser `smith build` generates into tree-sitter/src/ (gitignored).
 tree-sitter/src/*
 tree-sitter/src/tree_sitter/*
+# What `smith build` fetches or generates into tree-sitter/.vendor (gitignored, up to megabytes), never ours to format.
+tree-sitter/.vendor/**
 # Inputs and expectations of the tests, written as the case needs them (some are broken or oddly formatted on purpose).
 tests/smith-lang/cases/**
 tests/tree_sitter_cases/*
