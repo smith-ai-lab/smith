@@ -4437,24 +4437,46 @@ bool smith_core_route(const SmithCoreRoute *route, SmithCoreRouted *routed) {
 #endif
 
 #ifdef SMITH_CORE
+constexpr size_t smith_new_environment_max = 4096; // variables of the child's environment
+
+// The child's environment, an array of its own: the runner's variables, minus the "-NAME" entries and with the
+// "NAME=value" ones set. It never calls setenv, whose tree of names lives in malloc memory: a test's allocator may have
+// put it in a block the runner gives back for the next test, and setenv in the fork then walks stale nodes (tfind SEGV,
+// #3066).
+static void smith_new_child_environment(const char *const *entries) {
+    static char *table[smith_new_environment_max + 1];
+    size_t count = 0;
+    for (size_t i = 0; environ != nullptr && environ[i] != nullptr; i++) { // ended by nullptr
+        SMITH_ASSERT(count < smith_new_environment_max);
+        table[count++] = environ[i];
+    }
+    for (size_t i = 0; entries != nullptr && entries[i] != nullptr; i++) { // ended by nullptr
+        bool remove = entries[i][0] == '-';
+        const char *name = entries[i] + (remove ? 1 : 0);
+        const char *equals = strchr(name, '=');
+        SMITH_ASSERT(remove || (equals != nullptr && equals != name));
+        size_t length = remove ? strlen(name) : (size_t)(equals - name);
+        size_t kept = 0;
+        for (size_t j = 0; j < count; j++) { // bounded by count
+            bool same = strncmp(table[j], name, length) == 0 && table[j][length] == '=';
+            if (!same) table[kept++] = table[j];
+        }
+        count = kept;
+        if (!remove) {
+            SMITH_ASSERT(count < smith_new_environment_max);
+            table[count++] = (char *)entries[i];
+        }
+    }
+    table[count] = nullptr;
+    environ = table;
+}
+
 // The child of smith_core_new: it enters the folder, which a caller could not leave again, and ends in smith_die or
 // the exit of smith_new_main, as the command does.
 static void smith_new_child(const char *folder, const char *name, const char *language, const char *const *environment,
                             FILE *out) {
     if (chdir(folder) != 0) _exit(smith_exit_missing);
-    for (size_t i = 0; environment != nullptr && environment[i] != nullptr; i++) { // ended by nullptr
-        if (environment[i][0] == '-') {
-            unsetenv(environment[i] + 1);
-            continue;
-        }
-        const char *equals = strchr(environment[i], '=');
-        SMITH_ASSERT(equals != nullptr && equals != environment[i]);
-        char variable[256];
-        SMITH_ASSERT((size_t)(equals - environment[i]) < sizeof variable);
-        smith_copy_bytes(variable, environment[i], (size_t)(equals - environment[i]));
-        variable[equals - environment[i]] = '\0';
-        setenv(variable, equals + 1, 1);
-    }
+    smith_new_child_environment(environment);
     char *args[4] = {};
     int count = 0;
     if (language != nullptr) {
