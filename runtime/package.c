@@ -559,6 +559,24 @@ bool smith_cache_goes(time_t used, time_t now, long cutoff) {
     return cutoff >= 0 && (long)(now > used ? now - used : 0) >= cutoff;
 }
 
+// Whether an entry last used at `used` is in the cutoff's own step (not older than it): the step the cutoff fell in,
+// of which only some of the bytes need to go.
+bool smith_cache_edge(time_t used, time_t now, long cutoff) {
+    long age = (long)(now > used ? now - used : 0);
+    return cutoff >= 0 && age >= cutoff && age < cutoff + (long)smith_cache_age_step;
+}
+
+// The bytes of the cutoff's own step that may stay: the step and the older ones hold `shed` bytes, `excess` must go,
+// so the rest of the step stays (#3045). Without this the whole step went: after a restore every entry has about the
+// same time, so one step held a whole cache of 2 GB and the prune of 45 MB over the cap dropped all of it.
+uint64_t smith_cache_spare(long cutoff, uint64_t excess) {
+    if (cutoff < 0) return 0;
+    uint64_t shed = 0;
+    for (size_t step = smith_cache_age_steps; step-- > 0 && (long)step * (long)smith_cache_age_step >= cutoff;)
+        shed += smith_cache_ages.bytes[step];
+    return shed > excess ? shed - excess : 0;
+}
+
 // Records that a build uses the package <hex>: <packages>/<hex>.used.
 static void smith_package_use(const char *packages, const char *digits) {
     char stamp[PATH_MAX];

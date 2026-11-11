@@ -90,5 +90,9 @@ long smith_cache_cutoff(uint64_t excess);
 
 bool smith_cache_goes(time_t used, time_t now, long cutoff);
 
+bool smith_cache_edge(time_t used, time_t now, long cutoff);
+
+uint64_t smith_cache_spare(long cutoff, uint64_t excess);
+
 bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
                           char hash[smith_package_hash_size], SmithPackageFault *error);

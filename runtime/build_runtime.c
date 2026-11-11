@@ -382,9 +382,24 @@ static void smith_check_stamp(const SmithStep *step) {
         smith_fail(".stamp is the step's output; give .stamp or .outputs, not both");
 }
 
+// .content_hash on a function step (#3079): the step cache serves its outputs for the program, the arguments and the
+// bytes of the inputs it declares. Only the build file knows that the function reads nothing else, so the field is its
+// word for that; a step that says otherwise (a depfile of what it read, .always) cannot give it. On a .command step the
+// field is not implemented.
+static void smith_check_content_hash(const SmithStep *step) {
+    if (!step->content_hash) return;
+    if (step->run == nullptr) smith_unimplemented(".content_hash on a .command step");
+    if (smith_count(step->outputs) == 0 && step->stamp == nullptr)
+        smith_fail(".content_hash serves a step's outputs, and this one has none");
+    if (step->depfile != nullptr)
+        smith_fail(".content_hash says the function reads only its .inputs; a step with a .depfile reads more");
+    if (step->always) smith_fail(".content_hash serves a step by its inputs; an .always step runs every time");
+    if (step->pool != nullptr) smith_fail(".content_hash is not for a step in a pool");
+}
+
 static void smith_check_step(const SmithStep *step) {
     smith_check_stamp(step);
-    if (step->content_hash) smith_unimplemented(".content_hash");
+    smith_check_content_hash(step);
     bool has_command = step->command != nullptr && step->command[0] != nullptr;
     if (step->run != nullptr) {
         if (has_command) smith_fail("a step has .run or .command, not both");
@@ -497,6 +512,7 @@ static const char *smith_step_difference(const SmithStep *left, const SmithStep 
     if (!smith_same_text(left->description, right->description)) return ".description";
     if (!smith_same_text(left->pool, right->pool)) return ".pool";
     if (left->restat != right->restat) return ".restat";
+    if (left->content_hash != right->content_hash) return ".content_hash";
     if (left->always != right->always) return ".always";
     if (left->test != right->test) return ".test";
     return nullptr;
@@ -5432,6 +5448,7 @@ static void smith_put_edge(FILE *out, const SmithEntry *entry) {
         fputs("  deps = gcc\n", out);
     }
     if (step->restat) fputs("  restat = 1\n", out);
+    if (step->content_hash) fputs("  content_hash = 1\n", out);
     if (step->pool != nullptr) smith_put_value(out, "pool", step->pool);
 }
 

@@ -870,19 +870,23 @@ bool smith_lint_fix_requested(int count, char **args) {
 // Gives the fixer a folder for what it keeps between processes (#2889), unless the caller set one (the count gives its
 // own per smith, #2586): the mended text of each import and the masks of its fields (`front::fix::mended_import`,
 // `fix_zero`), keyed there by the hash of the path and the text. The fixer depends on the code of the smith that runs
-// it, so the folder is named by `smith_self_digest`: another smith reads none of these entries. A failure only leaves
-// the fixer cold; a cache entry never changes the fixed file.
+// it, so the folder is named by `smith_front_std_identity`: another smith reads none of these entries. That is the
+// import identity compiled in (front/, lib/std/, the runtime: the fixer's code), and the digest of the binary only in
+// a smith that has none: hashing smith's 425 MB took 3.7 s of every `smith lint --fix`, whatever the file (#3080).
+// A failure only leaves the fixer cold; a cache entry never changes the fixed file.
+#ifndef SMITH_CORE // the core smith has no front end, so no fixer and no identity
 static void smith_lint_fix_import_cache(const char *self) {
     if (getenv("SMITH_FIX_IMPORT_CACHE") != nullptr) return;
     char digest[smith_sha256_hex_size];
     char base[PATH_MAX];
     char folder[PATH_MAX];
     SmithPackageFault fault;
-    if (self == nullptr || !smith_self_digest(self, digest) || !smith_cache_base(base, &fault)) return;
+    if (!smith_front_std_identity(self, digest) || !smith_cache_base(base, &fault)) return;
     int written = snprintf(folder, sizeof folder, "%s/fix-imports/%.16s", base, digest);
     if (written <= 0 || (size_t)written >= sizeof folder || !smith_package_make_folders(folder)) return;
     setenv("SMITH_FIX_IMPORT_CACHE", folder, 1);
 }
+#endif
 
 int smith_lint_fix(int count, char **args, const char *self) {
 #ifdef SMITH_CORE

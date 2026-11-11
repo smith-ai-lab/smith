@@ -4,6 +4,8 @@
 // in tests/build_fixtures/prove_cases) and the note about memory a callee may write. The programs are tests/prove/*.c
 // and tests/prove/geometry/*.smith ($c); the helpers are in tests/prove_cases.smith. See
 // tests/prove_test.smith for the proofs' cache and budget.
+// Its smith children run prove and cc, one of them with smith's own front end (front/); no other verb.
+// smith-covers: smith.c runtime/ shim/ include/ lib/ patches/ front/ tests/prove/ tests/build_fixtures/prove_cases/
 module prove_smith_test;
 
 import std::arena;
