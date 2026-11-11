@@ -115,9 +115,14 @@ jobs:
         run: |
           name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
           build=false
-          if [ "$FORK" != true ] && [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+          # A queue run never builds the pack: an LLVM build would hold the one queue run for its whole length (#3170).
+          # An asset a pull request needs is made before it enters the queue, by a hand-started run.
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
             for tag in "llvm-$name-darwin-arm64" "llvm-$name-linux-x86_64"; do
-              gh release view "$tag" >/dev/null 2>&1 || build=true
+              gh release view "$tag" >/dev/null 2>&1 || {
+                echo "::error::no LLVM pack $tag: start llvm.yml with workflow_dispatch on the pull request's branch, and queue the PR once it is published"
+                exit 1
+              }
             done
           fi
           echo "build=$build" >>"$GITHUB_OUTPUT"
