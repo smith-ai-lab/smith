@@ -582,6 +582,13 @@ static Str layout_first_error(Str source) {
     return p.errors[0].message;
 }
 
+static Str layout_first_warning(Str source) {
+    parse::Parser p = layout_parser_of(source);
+    ast::Module m = parse_decl::file(&p, "test.smith");
+    if (countof(p.warnings) == 0) return "no warning";
+    return p.warnings[0].message;
+}
+
 static Str new_dump_of(Str source) {
     parse::Parser p = new_parser_of(source);
     ast::Module m = parse_decl::file(&p, "test.smith");
@@ -697,6 +704,19 @@ export void test_parse_decl_keyword_names_a_field() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     expect_text(layout_first_error("struct P:\n    module: str\n    type: Kind\n"), "no error");
+}
+
+// A `static_assert` at the top of a file ends with the line in smith's own syntax, as inside a function (#3027); a `;`
+// is still read, with a warning whose fix removes it.
+export void test_parse_decl_a_top_level_static_assert_ends_with_the_line() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(layout_first_error("static_assert(limit, \"a limit\")\nstatic_assert(other)\n"), "no error");
+    expect_text(layout_first_error("static_assert(limit);\nstatic_assert(other)\n"), "no error");
+    expect_text(layout_first_warning("static_assert(limit);\n"),
+                "a declaration ends with the line, not `;`: remove it");
 }
 
 // 1 when the first field of a record declaration is written in smith's own syntax, 0 when not, 2 for no record.

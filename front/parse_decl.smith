@@ -1512,7 +1512,8 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     } else if (prototype) {
         edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
     }
-    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    if (pre->is_constexpr && pre->constexpr_after > pre->constexpr_start)
+        edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     // A private function has no `static` in smith's own syntax: the name is private without it.
     if (pre->is_static) edits = with_edit(edits, edit(pre->static_start, pre->static_after, ""));
     edits = with_unused(pre, edits);
@@ -1899,7 +1900,10 @@ static Bool lowercase_type(const Prefixes *pre, Head head, Str raw) {
 // The edits that delete a `constexpr`: a file's is recorded by the prefixes, a local one only for a `Type` value.
 static parse::Edits drop_constexpr(const parse::Parser *p, const Prefixes *pre, Head head, Str raw,
                                    parse::Edits edits) {
-    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    // Only a file's `constexpr` is recorded; a local one's span is empty, and its fix (an insertion at 0) would
+    // collide with the next local's, which then kept `constexpr` (#3027: `constexpr const b: type = u16`).
+    if (pre->is_constexpr && pre->constexpr_after > pre->constexpr_start)
+        edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     if (lowercase_type(pre, head, raw) && !pre->top)
         edits = with_edit(edits, edit(constexpr_before(p, head.type_start), head.type_start, ""));
     return edits;
@@ -3195,7 +3199,21 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
         }
     }
     parse::expect(p, lex::right_paren, "`)`");
-    parse::expect(p, lex::semicolon, "`;` after `static_assert`");
+    // In smith's own syntax it ends with the line, as inside a function (#3027); a `;` before the line break is
+    // still read, with a warning whose fix removes it, as after a statement.
+    lex::Token semi = parse::peek(p);
+    if ((p->new_syntax || p->layout) && semi.kind == lex::semicolon) {
+        parse::advance(p);
+        parse::Edits edits = mem::alloc_slice(parse::Edit, 1);
+        Str nothing = "";
+        edits[0] = (parse::Edit){.span = semi.span, .text = nothing};
+        if (semi.line_break || at_line_end(p))
+            parse::warning_fix(p, semi.span, "a declaration ends with the line, not `;`: remove it", edits);
+    } else if (p->new_syntax || p->layout) {
+        end_line(p, "declaration");
+    } else {
+        parse::expect(p, lex::semicolon, "`;` after `static_assert`");
+    }
     ast::DeclKind kind = {.static_assert_decl = {.condition = condition, .message = message}};
     return make(p, start, pre, kind);
 }

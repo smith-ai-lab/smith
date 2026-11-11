@@ -54,7 +54,7 @@ export void test_front_fix_struct_fields_with_several_names() {
 
 export void test_front_fix_static_assert_with_joined_strings() {
     expect_fixed("module m;\nstatic_assert(1, \"one \"\n                  \"two\");\n",
-                 "static_assert(1 != 0, \"one \"\n                  \"two\");\n");
+                 "static_assert(1 != 0, \"one \"\n                  \"two\")\n");
 }
 
 export void test_front_fix_bit_int_type_parses() {
@@ -237,4 +237,12 @@ export void test_front_fix_a_compared_pointer_type_keeps_its_mut() {
     expect_fixed("module m;\nvoid f(auto x) {\n    if constexpr (typeof(x) == char * || typeof(x) == const char *) {\n"
                  "        g(x);\n    }\n}\n",
                  "fn f(x: auto):\n    if typeof(x) == *mut char or typeof(x) == *char:\n        g(x)\n");
+}
+
+// Two local type values in a row are both written `const` (#3027): the fix of each held an empty insertion at 0 for a
+// `constexpr` it had not recorded, the second collided with the first, and a later pass left `constexpr const b: type`.
+export void test_front_fix_two_local_type_values_in_a_row() {
+    expect_fixed(
+        "module m;\nI32 f() {\n    constexpr Type a = I32;\n    constexpr Type b = typeof(f);\n    return 0;\n}\n",
+        "fn f() -> i32:\n    const a = i32\n    const b = typeof(f)\n    return 0\n");
 }
