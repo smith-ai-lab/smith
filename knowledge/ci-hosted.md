@@ -13,6 +13,6 @@ The rest is one file per topic, so a change to one topic edits one file. A new C
 - [CI jobs, scope and the split](ci/jobs.md): What the ci.yml jobs are, how the scope of a run is decided, what a pull request runs and what the queue runs, how the tests are split into parts, the times, and what a hosted run does not cover.
 - [CI and the merge queue](ci/queue.md): How a pull request's run yields to the merge queue, queue-ops, a group that left the queue cancelling itself, batching, main's runs not cancelling each other, and a failure not ending the run.
 - [CI caches, downloads and the step cache](ci/caches.md): What a job's setup restores and builds, the lint, proof and test-result caches, the step cache for cloud sessions, where packages come from, and downloads that retry.
-- [The front-end coverage count in CI](ci/count.md): The merge queue's front-end coverage count and how its rows are cached.
+- [The front-end coverage count in CI](ci/count.md): The front-end coverage count, counted on each push to main with its alarm, and how its rows are cached.
 - [The owner's Mac in CI](ci/mac.md): GitHub's runners come first and the owner's Mac is overflow, the Mac's Linux runners, the owner's setup steps and the fetch-smith check on the Mac.
 - [Testing a main-only step before it merges](ci/warm.md): How warm writes are tested as a dry run before a change merges.
