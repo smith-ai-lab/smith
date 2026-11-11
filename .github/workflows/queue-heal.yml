@@ -258,8 +258,19 @@ jobs:
           # second pass: only the front entry's group is built on main alone, so only its failure is its own
           front=$(echo "$list" | head -n 1)
           [ -n "$front" ] || { log "queue-heal: queue empty, no front entry"; exit 0; }
+          # only a run of the CURRENT entry may be judged (#3158 defect, 2026-11-11): a PR that failed in the queue earlier and
+          # enters again has an old failed run on a branch with the same `pr-<N>-` prefix, and in the minutes before its new
+          # run is listed the newest match was that old run, so the PR was dequeued at once (#3129 at 15:16:33Z, #3056 at
+          # 14:51Z). The entry's group is made after it is enqueued, so its run is created at or after `enqueuedAt`; an older
+          # run is not the entry's, and with no run yet the front is "no run yet" (the grace logic below), never a failure.
+          at=$(gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) { mergeQueue(branch: "main") { entries(first: 1) { nodes { enqueuedAt } } } }
+            }' --jq '.data.repository.mergeQueue.entries.nodes[0].enqueuedAt // empty' 2>/dev/null) || at=
+          [ -n "$at" ] || { log "queue-heal: front #$front enqueue time unreadable, left alone"; exit 0; }
           run=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 \
-            --jq "[.workflow_runs[] | select(.head_branch | startswith(\"gh-readonly-queue/main/pr-$front-\"))][0] | \"\(.id) \(.status) \(.conclusion)\"") \
+            | jq -r --arg at "$at" --arg pre "gh-readonly-queue/main/pr-$front-" \
+              '[.workflow_runs[] | select((.head_branch | startswith($pre)) and .created_at >= $at)][0] | "\(.id) \(.status) \(.conclusion)"') \
             || { log "queue-heal: front #$front run unreadable, left alone"; exit 0; }
           set -- $run
           # a run that just completed can still read `null` for its conclusion: read it again, up to 6 times 10 s apart,
@@ -287,10 +298,6 @@ jobs:
           # queue stands still. That is a fault, not "ok": say so, and re-queue the front PR with the owner's token (an
           # event that token causes starts the run), once the entry is older than the grace period.
           if [ -z "${1:-}" ] || [ "${1:-}" = null ]; then
-            at=$(gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
-              query($owner: String!, $name: String!) {
-                repository(owner: $owner, name: $name) { mergeQueue(branch: "main") { entries(first: 1) { nodes { enqueuedAt } } } }
-              }' --jq '.data.repository.mergeQueue.entries.nodes[0].enqueuedAt // empty' 2>/dev/null) || at=
             age=0; [ -n "$at" ] && age=$(( now - $(date -u -d "$at" +%s) ))
             if [ "$age" -gt 300 ]; then
               log "queue-heal: FAULT front #$front has no merge_group run after $((age / 60)) min (queue stands still)"
