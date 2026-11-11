@@ -117,6 +117,11 @@ runs:
     - name: Fetch the LLVM pack
       if: inputs.artifact == ''
       shell: bash
+      env:
+        # this is the first smith verb of the job, so it is the one that prunes the step cache (at most once an hour,
+        # and it stamps the time). Without the cap here it pruned at the 10 GB default, and the builds below, with
+        # 300M, skipped their prune: the folder stayed 9.8 GB and took 2 minutes to restore (#3045)
+        SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
       run: |
         start=$(date +%s)
         # the release's `smith build llvm` takes the pack of the

@@ -346,6 +346,12 @@ export Bool is_alloc(const state::Emitter *e, const ast::Expr *x) {
            table::names_alloc(e->options.checked, x->kind.call.callee, countof(x->kind.call.args));
 }
 
+// Whether the call `x` is `mem.zeroed(T)` of std.mem.
+export Bool is_zeroed(const state::Emitter *e, const ast::Expr *x) {
+    return x->kind == .call && e->options.checked != nullptr &&
+           table::names_zeroed(e->options.checked, x->kind.call.callee, countof(x->kind.call.args));
+}
+
 // a * b, or the largest size when it overflows: no allocator has that many bytes, so std.mem refuses it by name.
 static c::LLVMValueRef times_or_largest(state::Emitter *e, c::LLVMValueRef a, c::LLVMValueRef b) {
     c::LLVMTypeRef word = c::LLVMTypeOf(a);
