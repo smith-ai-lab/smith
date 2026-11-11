@@ -1582,6 +1582,14 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
     return encoded;
 }
 
+// The folder that holds the smith under test and its smith-cc. With no LLVM install to link smith from (a
+// documents-only pull request's `docs-linux`, #3160) the smith under test is the smith that runs this build, named by
+// its absolute path.
+static const char *build_smith_home(SmithBuild *b, const char *binary, const char *folder) {
+    if (binary[0] != '/') return smith_fmt(b, "$repo/%s", folder);
+    return smith_fmt(b, "%.*s", (int)(strrchr(binary, '/') - binary), binary);
+}
+
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
 // workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
@@ -1592,13 +1600,14 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
 // `.smith` (the stage0 has none). A test that needs a build or a process of its own (a stop, a sanitizer's catch) stays
 // in its script. Returns the runner's path.
 static const char *build_units(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
+    const bool running = binary[0] == '/';
+    const char *home = build_smith_home(b, binary, folder);
     static const char setup[] =
         "repo=$PWD; p=$1/units-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && ln -sfn "
         "\"$repo/lib\" \"$p/lib\" && "
         "{ cmp -s tests/units/build.c \"$p/build.c\" || cp tests/units/build.c \"$p/build.c\"; } && cd \"$p\" && ";
-    const char *self = smith_fmt(b, "$repo/%s", binary);
-    const char *environment =
-        smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", folder, self);
+    const char *self = running ? binary : smith_fmt(b, "$repo/%s", binary);
+    const char *environment = smith_fmt(b, "PATH=\"%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", home, self);
     // A run with COVERAGE=1 (#456): the runner gives every test a folder of profiles, merges them as the test
     // ends, and the records are joined into .smith/coverage/coverage.tsv when the run is over, red or green.
     const char *measure =
@@ -1607,7 +1616,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
                                  "; rc=$?; cd \"$repo\" && \"%s\" test --coverage join .smith/coverage "
                                  "\"$(git rev-parse HEAD)\" .smith/coverage/coverage.tsv; exit $rc",
                                  self);
-    const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", running ? home : folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
     // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
@@ -1734,9 +1743,11 @@ static int build_prove_sound_full(SmithRun *run) {
 // `smith build install` (which sets nothing) runs the same tests as `smith check`. The quiet form is tested with the
 // variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
-    const char *units = config->hook ? build_units(b, config, binary, folder) : "";
+    const char *units = build_units(b, config, config->hook ? binary : smith_env(b, "SMITH_SELF", ""), folder);
     if (config->hook) build_front_units(b, config, binary, folder);
-    const char *const *tasks = smith_when(b, units[0] != '\0', smith_list(b, "test-units", "test-front", nullptr));
+    const char *const *tasks = smith_when(b, units[0] != '\0',
+                                          config->hook ? smith_list(b, "test-units", "test-front", nullptr)
+                                                       : smith_list(b, "test-units", nullptr));
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command =
