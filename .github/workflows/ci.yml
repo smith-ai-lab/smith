@@ -1557,6 +1557,13 @@ jobs:
     # on the push to main, after the merge (#3052): see `frontend-coverage`.
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.outputs.count == 'true' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' }}
+    # The push counts take one slot at a time beside the queue (#3052): one fix job of main runs, one waits, and a newer
+    # push replaces the waiting one (GitHub cancels it; its run's shards and gate skip). A count skipped so is no loss: the
+    # next one compares with main's last passed count and names every merge since. A warm count is this job alone; the
+    # shards of a cold one can still run beside the next fix job. The nightly and a run by hand have a group each.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'count-main' || format('count-{0}', github.run_id) }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
     # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
@@ -1878,7 +1885,7 @@ jobs:
     # the job when the count falls below main's last one and writes one line `frontend-coverage-change:` the lead reads. A batch of the queue is one push, so the count
     # names the batch. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md).
     needs: [changes, frontend-coverage-fix, frontend-coverage-shard]
-    if: ${{ !cancelled() && needs.changes.outputs.count == 'true' && needs.frontend-coverage-fix.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.changes.outputs.count == 'true' && (needs.frontend-coverage-fix.result == 'success' || needs.frontend-coverage-fix.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
