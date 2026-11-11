@@ -73,7 +73,7 @@ runs:
         out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
         assets=("$out/smith-tests.sha")
         if [ "$n" -gt 0 ]; then
-          mkdir -p "$dir"; extra=(); [ "$a" -gt 0 ] && extra=(-C "$answers" steps/a)
+          mkdir -p "$dir"; extra=(); [ "$a" -gt 0 ] && extra=(-C "${answers%/steps}" steps/a)
           tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/smith-tests-$OS.tar.gz"; assets+=("$out/smith-tests-$OS.tar.gz")
         fi
         if [ "$m" -gt 0 ]; then
