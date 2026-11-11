@@ -12,12 +12,12 @@
 // marker `// smith-test: uncached`, one that reads the clock, the network, entropy or a file without `files`, one that
 // asks git, and one whose source file is not found.
 //
-// VERIFY MODE (#3164, knowledge/test-store.md). Two narrower keys are made beside each test's key: the same key with the
-// smith under test replaced by what the test covers (the content of the files its `// smith-covers:` lines name, else of
-// the files that generate code), and that key with `build.c` left out of the base. They are not used to skip a test.
-// A passed test is stored under them too; a test whose key misses and whose narrower key holds is run all the same, and
-// `store` says on stderr how many of those passed and names each that did not: a wrong hit of the narrower key, found
-// before the key goes live.
+// VERIFY MODE (#3164, knowledge/test-store.md). Two narrower keys are made beside each test's key: the same key with
+// the smith under test replaced by what the test covers (the content of the files its `// smith-covers:` lines name,
+// else of the files that generate code), and that key with `build.c` left out of the base. They are not used to skip a
+// test. A passed test is stored under them too; a test whose key misses and whose narrower key holds is run all the
+// same, and `store` says on stderr how many of those passed and names each that did not: a wrong hit of the narrower
+// key, found before the key goes live.
 #include "test_cache.h"
 #include "changed.h"
 #include "core.h"
@@ -44,8 +44,8 @@ typedef struct {
     char key[smith_sha256_hex_size];
     bool cacheable;
     bool hit;
-    bool narrow_ok;                                 // the narrower keys exist (the test could be cached)
-    char narrow[2][smith_sha256_hex_size];          // the narrower keys (verify mode, #3164)
+    bool narrow_ok;                        // the narrower keys exist (the test could be cached)
+    char narrow[2][smith_sha256_hex_size]; // the narrower keys (verify mode, #3164)
     bool narrow_hit[2];
 } SmithTcTest;
 
@@ -62,8 +62,8 @@ static uint32_t smith_tc_stack[smith_tc_stack_max];
 static char smith_tc_self_hex[smith_sha256_hex_size];
 static char smith_tc_base_hex[smith_sha256_hex_size];
 static char smith_tc_base_narrow_hex[smith_sha256_hex_size]; // the base without build.c, plus the LLVM pack's name
-static bool smith_tc_base_quiet;                              // the second pass over the base makes no notes
-static bool smith_tc_why; // SMITH_RESULT_CACHE=why: say why a test runs
+static bool smith_tc_base_quiet;                             // the second pass over the base makes no notes
+static bool smith_tc_why;                                    // SMITH_RESULT_CACHE=why: say why a test runs
 static char smith_tc_text[smith_tc_text_max + 1];
 
 // What the base of every key holds, as `<name>\t<value>` lines, so a miss can say which input differs (#2876). The base
@@ -446,9 +446,10 @@ static void smith_tc_feed_closure(SmithSha256 *shas, size_t hashes, bool *runs_s
 // The files that generate code, for a test that declares no `// smith-covers:` (#3079, section 7). Wider than the
 // compiler's own list on purpose: a file too many costs a miss, a file too few a wrong hit.
 static const char *const smith_tc_codegen[] = {
-    "shim/hook.cpp", "shim/clang.cpp", "shim/cimport*.cpp", "shim/affine.cpp", "shim/effects*.cpp", "shim/lld.cpp",
-    "shim/*.h",      "runtime/lang*.c", "runtime/lang*.h",  "runtime/cc*.c",    "runtime/cc*.h",     "front/",
-    "lib/std/*.smith", "include/smith/", "patches/",       "templates/",       nullptr};
+    "shim/hook.cpp", "shim/clang.cpp", "shim/cimport*.cpp", "shim/affine.cpp", "shim/effects*.cpp",
+    "shim/lld.cpp",  "shim/*.h",       "runtime/lang*.c",   "runtime/lang*.h", "runtime/cc*.c",
+    "runtime/cc*.h", "front/",         "lib/std/*.smith",   "include/smith/",  "patches/",
+    "templates/",    nullptr};
 
 static char smith_tc_codegen_hex[smith_sha256_hex_size];
 static bool smith_tc_codegen_made;
@@ -801,8 +802,7 @@ static void smith_tc_write_results(const char *folder) {
         if (test->cacheable && narrow != nullptr)
             fprintf(narrow, "%s\t%s\t%s\n", test->name, test->narrow[0], test->narrow[1]);
         if (!test->hit && (test->narrow_hit[0] || test->narrow_hit[1]) && verify != nullptr)
-            fprintf(verify, "%s\t%s\n", test->name,
-                    test->narrow_hit[0] ? (test->narrow_hit[1] ? "1,2" : "1") : "2");
+            fprintf(verify, "%s\t%s\n", test->name, test->narrow_hit[0] ? (test->narrow_hit[1] ? "1,2" : "1") : "2");
     }
     if (hits != nullptr) fclose(hits);
     if (keys != nullptr) fclose(keys);
@@ -1035,13 +1035,15 @@ static void smith_tc_verify(const char *folder, const char **passed, size_t pass
             agreed++;
             continue;
         }
-        fprintf(stderr,
-                "cache test-store: VERIFY DIFFERENCE %s: the narrower key %s held, so it would have been served, and it "
-                "did not pass\n",
-                name, tab + 1);
+        fprintf(
+            stderr,
+            "cache test-store: VERIFY DIFFERENCE %s: the narrower key %s held, so it would have been served, and it "
+            "did not pass\n",
+            name, tab + 1);
     }
     fclose(file);
-    fprintf(stderr, "cache test-store: verify: %zu tests the narrower keys would have served ran, %zu passed, %zu differ\n",
+    fprintf(stderr,
+            "cache test-store: verify: %zu tests the narrower keys would have served ran, %zu passed, %zu differ\n",
             compared, agreed, compared - agreed);
 }
 

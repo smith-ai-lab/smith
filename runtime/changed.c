@@ -938,7 +938,8 @@ static bool smith_changed_declared(const char *text, const char *path, char *pat
     return false;
 }
 
-// Whether `path` matches the glob `pattern` (the rules of `// smith-covers:`), for the test store's narrower key (#3164).
+// Whether `path` matches the glob `pattern` (the rules of `// smith-covers:`), for the test store's narrower key
+// (#3164).
 bool smith_changed_glob_match(const char *pattern, const char *path) {
     return smith_changed_glob(pattern, strlen(pattern), path);
 }

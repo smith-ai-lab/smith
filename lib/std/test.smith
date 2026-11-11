@@ -4348,7 +4348,8 @@ void cache_store(const Plan *plan) {
         __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", &cache_folder[0], &clean[0]);
         c::unlink(path);
     }
-    static const char *const cache_files[_] = {"names", "options", "hits", "keys", "passed", "ran", "narrow", "verify", nullptr};
+    static const char *const cache_files[_] = {"names", "options", "hits",   "keys", "passed",
+                                               "ran",   "narrow",  "verify", nullptr};
     for (Usize i = 0; cache_files[i] != nullptr; i++) {
         __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], cache_files[i]);
         c::unlink(path);
