@@ -626,14 +626,14 @@ static char excluded_reason[excluded_max][reason_size];
 static Bool excluded_seen[excluded_max];
 static Usize excluded_count = 0;
 
-static Bool starts_with(const char text[:], const char prefix[:]) {
+static Bool begins_with(const char text[:], const char prefix[:]) {
     return countof(text) >= countof(prefix) && same(text[0:countof(prefix)], prefix);
 }
 
 // Whether `reason` is one of the fixed set: `error-fixture`, or `old-form: ` and a form.
 static Bool valid_reason(const char reason[:]) {
     if (same(reason, "error-fixture")) return true;
-    return starts_with(reason, "old-form: ") && countof(reason) > 10;
+    return begins_with(reason, "old-form: ") && countof(reason) > 10;
 }
 
 static Bool excluded_line(const char line[:]) {
@@ -705,7 +705,7 @@ static Usize apply_exclusions() {
             return excluded_count + 1;
         }
         if (same(text_of(excluded_reason[k][0:reason_size]), "error-fixture") &&
-            starts_with(text_of(entries[i].message[0:message_size]), "compile ended with status ")) {
+            begins_with(text_of(entries[i].message[0:message_size]), "compile ended with status ")) {
             console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
                                  " is an error fixture but its compile ended without a diagnostic: ",
                                  (const char *)entries[i].message, "\n");
