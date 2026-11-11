@@ -10,6 +10,8 @@
 //    refuting run must die with the text.
 // A test runs one harness or one corpus file on one seed of 2000 inputs, and with --full on 8 seeds of 50000 (about a
 // minute; `smith build prove-sound-full`).
+// Its smith children run prove, cc and build by the token lowering: nothing under front/ (#3076).
+// smith-covers: smith.c runtime/ shim/ include/ lib/ patches/ tests/prove/
 module prove_sound_test;
 
 import std::arena;
