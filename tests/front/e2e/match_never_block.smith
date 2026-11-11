@@ -1,0 +1,14 @@
+fn twice(o: ?i32) -> i32:
+    r := match o:
+        .some(n): n
+        .none:
+            seen := 7
+            return seen * 2
+    r + 1
+
+pub fn check() -> i32:
+    if twice(.some(4)) != 5:
+        return 1
+    if twice(.none) != 14:
+        return 2
+    0

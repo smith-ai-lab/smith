@@ -38,7 +38,8 @@ build's one pass ([effect-inference](effect-inference.md)). Because the line of 
 line added above a function changes that function's summary key.
 
 **The proof cache** (`~/.cache/smith/proofs`, `shim/prove.cpp`, [CI caches](ci/caches.md)). The unit is one function
-with a contract. The key is the IR the prover checks, plus the prover and LLVM versions; not the smith binary. A
+with a contract. The key is the IR the prover checks, plus the prover's identity (`prove::prover_identity`: a hash of the prover's
+sources, the LLVM pack and the solvers' archives, made by `build_prover_identity` in `build.c`); not the smith binary. A
 callee with `smith_ensures` is used through its contract, any other callee is inlined, so the IR the prover checks
 already holds what the proof depends on.
 

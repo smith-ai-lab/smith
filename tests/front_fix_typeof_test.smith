@@ -136,3 +136,22 @@ export void test_front_fix_typeof_the_next_function_does_not_make_an_auto_a_slic
                  "fn same[T](a: T, b: T):\n    use(a, b)\nfn size(a: *usize) -> usize:\n    "
                  "return countof(a)\n");
 }
+
+// Today's magic slice struct of a type parameter is the function's result (#3078, `std.mem.view`): the fixer read it as
+// the C struct `c.smith_array_T_n`, which no header declares.
+export void test_front_fix_typeof_the_magic_slice_of_a_type_parameter_is_the_result_type() {
+    expect_fixed("module m;\nexport typeof(T[:]) view(U8 *data, Usize n, constexpr Type T) {\n"
+                 "    struct smith_array_T_n result = {};\n    result.data = (T *)data;\n"
+                 "    result.count[0] = n / sizeof(T);\n    return result;\n}\n",
+                 "pub fn view(data: *u8, n: usize, T: type) -> []T:\n    mut result: []T = undefined\n"
+                 "    result.data = data.cast(*T)\n    result.count[0] = n / sizeof(T)\n    return result\n");
+}
+
+// A C pointer type compared with a `typeof` keeps its pointee's writability when the parser's old-type warning writes
+// it, as in a cast (#3078, `std.format.put`): that warning runs in the passes before the file reads as smith's own
+// syntax, so `fix_typeof` never saw `char *`, and both comparisons became `*char`.
+export void test_front_fix_typeof_a_compared_pointer_type_keeps_its_mut() {
+    expect_fixed("module m;\nexport Bool text(auto x) {\n"
+                 "    return typeof(x) == char * || typeof(x) == const char *;\n}\n",
+                 "pub fn text(x: auto) -> bool:\n    return typeof(x) == *mut char or typeof(x) == *char\n");
+}
