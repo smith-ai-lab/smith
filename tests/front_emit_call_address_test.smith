@@ -1,0 +1,179 @@
+// Tests of a call whose callee is a conversion of an address to a function type, `(address.to(Run))()` (#3110): the
+// form the fixer writes for C's `((Run)found.ok)()`, in the front-end tests that call what the JIT made. The emitted
+// code calls C functions this file passes by address, so they are plain functions with no context.
+module front_emit_call_address_test;
+
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+};
+
+static void begin(Scenario *s, Str source) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    test::check_equal(s->checked.error_count, (Usize)0);
+    Str none = "no error";
+    if (s->checked.error_count > 0) test::check_equal(s->checked.errors[0].message, none);
+    mem::set_allocator(outside);
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` with the checker's types and adds it to `host`.
+static void add(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {.target = host->target, .checked = &s->checked};
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options);
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str none = "no error";
+        test::check_equal(emitted.error.message, none);
+        emit::free_error(emitted.error);
+    }
+}
+
+// The message of the first error `source` gets from the checker or the emitter, or "" when it has none.
+static Str error_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    mem::set_allocator(outside);
+    if (s->checked.error_count > 0) return s->checked.errors[0].message;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {.target = host->target, .checked = &s->checked};
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options);
+    if (emitted == .ok) return "";
+    return emitted.error.message;
+}
+
+// Whether `text` holds `part`.
+static Bool holds(Str text, Str part) {
+    for (Usize at = 0; at + countof(part) <= countof(text); at++) {
+        Bool same = true;
+        for (Usize i = 0; i < countof(part) && same; i++)
+            same = text[at + i] == part[i];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str source() {
+    return "Run := fn() -> i32\n"
+           "Add := fn(i32, i32) -> i32\n"
+           "pub fn called(address: usize) -> i32:\n"
+           "    (address.to(Run))()\n"
+           "pub fn stored(address: usize, a: i32, b: i32) -> i32:\n"
+           "    add := address.to(Add)\n"
+           "    add(a, b) + (address.to(Add))(1, 2)\n"
+           "pub fn through(address: *void) -> i32:\n"
+           "    (address.to(Run))()\n"
+           "fn twice(f: Run) -> i32:\n"
+           "    f() + f()\n"
+           "pub fn passed(address: usize) -> i32:\n"
+           "    twice(address.to(Run))\n";
+}
+
+typedef I32 (*Called)(Usize);
+typedef I32 (*Stored)(Usize, I32, I32);
+typedef I32 (*Through)(void *);
+
+static I32 c_seven() {
+    return 7;
+}
+
+static I32 c_add(I32 a, I32 b) {
+    return a + b;
+}
+
+// The example of #3110: the address of a function, converted and called, gives the function's result.
+export void test_front_emit_call_address_a_converted_address_is_called() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    add(source(), &host, &s);
+    Called called = (Called)symbol_of(&host, "called");
+    test::check_equal(called((Usize)c_seven), (I32)7);
+    emit_jit::stop(&host);
+}
+
+// The conversion is a `fn` value like any other: stored in a local and called with arguments, or passed on.
+export void test_front_emit_call_address_a_converted_address_is_a_fn_value() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    add(source(), &host, &s);
+    Stored stored = (Stored)symbol_of(&host, "stored");
+    test::check_equal(stored((Usize)c_add, 40, 2), (I32)45);
+    Called passed = (Called)symbol_of(&host, "passed");
+    test::check_equal(passed((Usize)c_seven), (I32)14);
+    emit_jit::stop(&host);
+}
+
+// A `*void` from C converted to a function type is called the same way.
+export void test_front_emit_call_address_a_void_pointer_from_c_is_called() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    add(source(), &host, &s);
+    Through through = (Through)symbol_of(&host, "through");
+    test::check_equal(through((void *)c_seven), (I32)7);
+    emit_jit::stop(&host);
+}
+
+// A call with more arguments than the function type takes stays an error.
+export void test_front_emit_call_address_a_wrong_argument_count_is_an_error() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Str message = error_of("Run := fn() -> i32\n"
+                           "pub fn called(address: usize) -> i32:\n"
+                           "    (address.to(Run))(1)\n",
+                           &host, &s);
+    test::check_equal(countof(message) > 0, true);
+    emit_jit::stop(&host);
+}
+
+// An integer narrower than a pointer is not an address: the checker refuses it, as between a pointer and an integer.
+export void test_front_emit_call_address_a_narrow_integer_is_not_an_address() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Str message = error_of("Run := fn() -> i32\n"
+                           "pub fn called(address: u32) -> i32:\n"
+                           "    (address.to(Run))()\n",
+                           &host, &s);
+    test::check_equal(holds(message, "a pointer and an integer cast only if the integer is as wide as a pointer"),
+                      true);
+    emit_jit::stop(&host);
+}
