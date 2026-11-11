@@ -15,3 +15,19 @@ const char smith_lint_identity[] = SMITH_LINT_IDENTITY;
 #endif
 
 const char smith_fmt_identity[] = SMITH_FMT_IDENTITY;
+
+// The identities of a compile (#3175), which the step cache (runtime/executor_cache.c) keys the compiler of a smith-cc
+// step by in place of the whole binary. The first is the embedded clang and the sources that run inside a C, C++ or
+// Objective-C compile; the second adds the front end, for a .smith compile (both made by `build_compile_identity` in
+// build.c). Empty without an LLVM install, and the step cache then keys on the binary.
+#ifndef SMITH_COMPILE_IDENTITY
+#define SMITH_COMPILE_IDENTITY ""
+#endif
+
+const char smith_compile_identity[] = SMITH_COMPILE_IDENTITY;
+
+#ifndef SMITH_LANG_IDENTITY
+#define SMITH_LANG_IDENTITY ""
+#endif
+
+const char smith_lang_identity[] = SMITH_LANG_IDENTITY;

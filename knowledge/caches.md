@@ -20,7 +20,15 @@ from either is simply fetched or built again:
 - `packages/<hex>/`: what `smith_package` extracted (above).
 - `steps/`: the executor's compile steps (`m/` manifests, `r/` results; [the executor](executor.md) says what is keyed).
   The 31-day rule and #618's cap (`SMITH_CACHE_MAX`, least recently used first, the same `smith_cache_cutoff` code) apply;
-  a hit touches its entry when a minute old (#2833), and the check runs at most once an hour (`steps/prune.timestamp`), at a build's start. The manifests go with the results: the cutoff that drops the oldest results drops the manifests as old, and a prune that dropped something prints `cache: kept N entries (X MB), dropped M (Y MB)`. CI keeps it at 300 MB (`setup-smith`'s `step-cache-max`), and `warm` leaves the stamp out of its save so the next build prunes.
+  **A compile is keyed on what its compiler reads (#3175), not on the smith binary.** When the compiler of a step is the
+  running smith, its place in the key is an identity `smith build` computed (`build_compile_identity` in `build.c`,
+  compiled into `runtime/lint_identity.c`): for a C, C++ or Objective-C source the LLVM pack and the sources that run
+  inside the compile (`shim/clang.cpp`, `hook.cpp`, `effects_infer.cpp`, `affine.cpp` and the project headers they
+  include, by `-MM`); for a `.smith` source also `lib/std`, the lowering (`runtime/lang*`), `shim/cimport*` and `smith.c`.
+  A commit that touches only the verbs, the caches, `build.c` or the prover leaves both. A response file, `-x`, `.metal`,
+  `--front-end` (smith's own front end, `front/`, which no identity names) or a smith with no identity keep the digest of
+  the whole binary. A file that runs inside a compile and is missing from the lists is a wrong hit, so add it there.
+  A hit touches its entry when a minute old (#2833), and the check runs at most once an hour (`steps/prune.timestamp`), at a build's start. The manifests go with the results: the cutoff that drops the oldest results drops the manifests as old, and a prune that dropped something prints `cache: kept N entries (X MB), dropped M (Y MB)`. CI keeps it at 300 MB (`setup-smith`'s `step-cache-max`), and `warm` leaves the stamp out of its save so the next build prunes.
 - `modules/<LC_UUID of the smith>/`: clang's module cache for `smith_modules` (below), one folder for each smith binary
   (issue #575): clang keys a module by its flags and paths, not by the compiler and resource folder that built it, so two
   smiths on one cache (CI's, a lane's, the installed one) would read each other's modules. The folders are pruned sooner than the

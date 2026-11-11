@@ -768,22 +768,57 @@ static const char *build_fmt_identity(SmithBuild *b, const BuildConfig *config) 
     return smith_capture_or(b, (const char *[]){"sh", "-c", script, "sh", config->llvm_id, nullptr}, "");
 }
 
+// The compile identities (#3175): what the step cache keys the compiler of a smith-cc step by instead of the whole
+// binary, which changes with every commit although a compile reads almost none of it. `c` is the identity of a C, C++
+// or Objective-C compile: the LLVM pack (clang, its token hook patch) and the sources that run inside it, which are
+// shim/clang.cpp, hook.cpp, effects_infer.cpp and affine.cpp with every project header the preprocessor reads for them
+// (`-MM`: the compiler's list, never written by hand). `lang` adds what turns a .smith source into C by default (the
+// token lowering): lib/std, the lowering (runtime/lang*), shim/cimport* and smith.c, which routes the .smith inputs.
+// Not front/: only `--front-end=new` reaches it (smith.c's smith_front_requested), and a command with that flag is
+// keyed by the whole binary. Each file by name and SHA-256, sorted, after the pack. Not in either: the
+// runtime's verbs and caches, build.c, the prover, the linker shim and the tools. Empty without an LLVM install.
+static const char *build_compile_identity(SmithBuild *b, const BuildConfig *config, bool lang) {
+    if (!config->linkable) return "";
+    const char *script =
+        "set -e; mode=$1; pack=$2; cxx=$3; shift 3; files=; "
+        "for s in shim/clang.cpp shim/hook.cpp shim/effects_infer.cpp shim/affine.cpp; do "
+        "deps=$(\"$cxx\" \"$@\" -MM $s); "
+        "files=\"$files $(printf '%s\\n' \"$deps\" | tr -d '\\\\' | tr ' ' '\\n' | grep -v ':$' | grep .)\"; done; "
+        "case $files in *shim/hook.cpp*) ;; *) exit 1 ;; esac; "
+        "if [ \"$mode\" = lang ]; then files=\"$files $(find lib/std -type f) "
+        "$(ls runtime/lang*.c runtime/lang*.h shim/cimport*) smith.c\"; fi; "
+        "files=$(printf '%s\\n' $files | LC_ALL=C sort -u); "
+        "{ printf 'smith-compile-identity 1 %s\\n%s\\n' \"$mode\" \"$pack\"; shasum -a 256 $files; } | "
+        "shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b,
+                            smith_cat(b,
+                                      (const char *[]){"sh", "-c", script, "sh", lang ? "lang" : "c", config->llvm_id,
+                                                       config->cxx, nullptr},
+                                      build_shim_flags(b, config), nullptr),
+                            "");
+}
+
 // runtime/lint_identity.c, the lint and fmt identities above in a translation unit of its own, as the commit's
 // (build_commit_object).
 static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *identity = build_lint_identity(b, config);
     const char *fmt_identity = build_fmt_identity(b, config);
+    const char *compile_identity = build_compile_identity(b, config, false);
+    const char *lang_identity = build_compile_identity(b, config, true);
     SmithObject object = {
         .compiler = config->cc,
         .source = "runtime/lint_identity.c",
         .output = smith_fmt(b, "%s/lint_identity.o", folder),
-        .flags =
-            smith_cat(b, config->cflags,
-                      smith_when(b, identity[0] != '\0',
-                                 (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
-                      smith_when(b, fmt_identity[0] != '\0',
-                                 (const char *[]){smith_fmt(b, "-DSMITH_FMT_IDENTITY=\"%s\"", fmt_identity), nullptr}),
-                      nullptr),
+        .flags = smith_cat(
+            b, config->cflags,
+            smith_when(b, identity[0] != '\0',
+                       (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
+            smith_when(b, fmt_identity[0] != '\0',
+                       (const char *[]){smith_fmt(b, "-DSMITH_FMT_IDENTITY=\"%s\"", fmt_identity), nullptr}),
+            smith_when(b, compile_identity[0] != '\0' && lang_identity[0] != '\0',
+                       (const char *[]){smith_fmt(b, "-DSMITH_COMPILE_IDENTITY=\"%s\"", compile_identity),
+                                        smith_fmt(b, "-DSMITH_LANG_IDENTITY=\"%s\"", lang_identity), nullptr}),
+            nullptr),
     };
     smith_object(b, &object);
     return object;
@@ -1250,7 +1285,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         b, config->cflags,
         (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
                          "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IMPORT_IDENTITY_LINKED",
-                         "-DSMITH_IN_PROCESS", nullptr},
+                         "-DSMITH_COMPILE_IDENTITY_LINKED", "-DSMITH_IN_PROCESS", nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", "-DSMITH_TREE_SITTER",
                          nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
