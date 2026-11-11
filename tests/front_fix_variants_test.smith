@@ -162,5 +162,6 @@ export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays_
                "    output: process.Output = ok\n    s: console.Stream = if c: console.output else: console.input\n"
                "    t: console.Stream = console.output\n    return a\n";
     test::check_equal(out[0].text, want);
-    test::check_equal(out[1].text, "I32 g(void) {\n    return k(c ? console::output : console::input);\n}\n");
+    Str want_ternary = "I32 g(void) {\n    return k(c ? console::output : console::input);\n}\n";
+    test::check_equal(out[1].text, want_ternary);
 }
