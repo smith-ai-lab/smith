@@ -48,7 +48,7 @@ jobs:
     # no push saves the fixed files of a count to start from), and hands the folder to the
     # shards as an artifact.
     # It builds the release profile (-O2, #2684) of smith itself, which `build-linux-release` did in a job of its own: the
-    # count runs the smith it measures, and the dev build of `build-linux` (-O0) made six of eight shards (then 8 parts, now at most 4, #3196) hit their
+    # count runs the smith it measures, and the dev build of `build-linux` (-O0) made six of eight shards  hit their
     # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
     # count is this job and the merge (2 jobs); a cold one also runs the shards on the build it packs. It runs after each code merge to main (#3196): see `frontend-coverage`.
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
     # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
     timeout-minutes: 60
     outputs:
-      # the shards sized from the rows left to measure (#2832): 1 to 4 parts, a quarter of the tree each when cold
+      # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
       shards: ${{ steps.plan.outputs.shards }}
       count: ${{ steps.plan.outputs.count }}
     permissions:
@@ -134,12 +134,12 @@ jobs:
         id: plan
         shell: bash
         run: |
-          # a part measures at most a quarter of the tree: a cold count is 4 parts (8 until #3196), a warm one is 1 or 2
+          # a part measures at most an eighth of the tree: a cold count is 8 parts, a warm one is 1 or 2
           read -r missing total < <(sed -n 's/^frontend_coverage: rows to measure: \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$RUNNER_TEMP/fix.txt" | tail -n 1)
-          n=4
-          if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (4 * missing + total - 1) / total )); fi
+          n=8
+          if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (8 * missing + total - 1) / total )); fi
           [ "$n" -lt 1 ] && n=1
-          [ "$n" -gt 4 ] && n=4
+          [ "$n" -gt 8 ] && n=8
           echo "count=$n" >>"$GITHUB_OUTPUT"
           echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
           echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -196,9 +196,9 @@ jobs:
         uses: ./.github/actions/api-budget
 
   frontend-coverage-shard:
-    # one quarter of the count (#2697, 8 parts until #3196): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
+    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
-    # count. The job `frontend-coverage` below joins the tables. The count was one job of 27
+    # count. The job `frontend-coverage` below joins the eight tables. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
     # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
     needs: frontend-coverage-fix
@@ -260,7 +260,7 @@ jobs:
           # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
           # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
           # from the diff is deterministic, so there is no retry: the command is bounded to 7 minutes and fails the entry.
-          timeout -k 10 600 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
           [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 7 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
@@ -331,7 +331,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/coverage"
           out="$RUNNER_TEMP/coverage/output.txt"
           tables=
-          parts=${{ needs.frontend-coverage-fix.outputs.count || 4 }}
+          parts=${{ needs.frontend-coverage-fix.outputs.count || 8 }}
           for k in $(seq 1 "$parts"); do
             d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
             if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
