@@ -3991,6 +3991,22 @@ static void build_install_hooks(void) {
     build_spawn(&(BuildSpawn){.argv = set, .log = "/dev/null"});
 }
 
+static void build_pre_push_tasks(SmithBuild *b, const char *binary) {
+    SmithStep pre_push = {
+        .run = build_pre_push,
+        .args = smith_list(b, smith_option_value(b, "smith", binary, "pre-push: the smith built from this tree"),
+                           smith_option_value(b, "base", "origin/main", "pre-push: the base ref"), nullptr),
+        .description = "checking format, lint and the tests a push reaches (the pre-push hook, #3132)",
+    };
+    smith_task(b, "pre-push", &pre_push);
+    SmithStep pre_push_test = {
+        .run = build_pre_push_test,
+        .description = "testing the pre-push check's file classes",
+        .test = true,
+    };
+    smith_task(b, "test-pre-push", &pre_push_test);
+}
+
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep friction = {
         .run = build_friction,
@@ -4055,19 +4071,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .test = true,
     };
     smith_task(b, "test-docs-gate", &gate_test);
-    SmithStep pre_push = {
-        .run = build_pre_push,
-        .args = smith_list(b, smith_option_value(b, "smith", binary, "pre-push: the smith built from this tree"),
-                           smith_option_value(b, "base", "origin/main", "pre-push: the base ref"), nullptr),
-        .description = "checking format, lint and the tests a push reaches (the pre-push hook, #3132)",
-    };
-    smith_task(b, "pre-push", &pre_push);
-    SmithStep pre_push_test = {
-        .run = build_pre_push_test,
-        .description = "testing the pre-push check's file classes",
-        .test = true,
-    };
-    smith_task(b, "test-pre-push", &pre_push_test);
+    build_pre_push_tasks(b, binary);
 }
 
 // Whether the LLVM install has the token hook (patches/clang-token-hook.patch), which `smith build llvm` applies: an
