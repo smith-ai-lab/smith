@@ -263,6 +263,12 @@ export Bool names_alloc(const types::Checked *c, const ast::Expr *callee, Usize 
     return (arguments == 2 && names_std(c, callee, "std.mem", "alloc")) || names_push_slice(c, callee, arguments);
 }
 
+// Whether a call of `callee` with that many arguments is `mem.zeroed(T)` of std.mem: a global's initializer folds it to
+// the zero constant of the global's type (#3036).
+export Bool names_zeroed(const types::Checked *c, const ast::Expr *callee, Usize arguments) {
+    return arguments == 1 && names_std(c, callee, "std.mem", "zeroed");
+}
+
 // The builtin a call's callee names, when it is one: a single plain name that no scope declares, or `array.filled`.
 export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry *found) {
     if (names_filled(c, callee)) {

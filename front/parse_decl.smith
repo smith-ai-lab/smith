@@ -1555,8 +1555,10 @@ static Bool list_is_init(const parse::Parser *p, U32 equal_end, U32 semicolon) {
            same_text(trimmed(source_between(p, list->close.end, semicolon)), "");
 }
 
+// An applied type is one too (#3027): `maybe(Usize) x = {.some = v};` is `x := maybe(usize)(some = v)`, as
+// `Pair(i32)(1, 2)` builds a value of a type function's type.
 static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
-    return type->kind == .named && list_is_init(p, equal_end, semicolon);
+    return (type->kind == .named || type->kind == .applied) && list_is_init(p, equal_end, semicolon);
 }
 
 // The warning of a positional list `{1, 2}` that writes it as the array `[1, 2]` loses its fix when the declaration
@@ -1714,6 +1716,42 @@ static U32 item_lists(const parse::Parser *p, U32 from, U32 to, Str type, parse:
     return count;
 }
 
+// The items of the braces at `from` (up to `to`) of an array of tuples, each a braced list `{1, 2.0f}`, written as the
+// tuples `(1, 2.0f)` (#3027): their number, and their edits in `edits`; 0 when an item is not a braced list. The
+// array fix of each item's own list is dropped, as `tuple_list` drops it.
+static U32 tuple_items(parse::Parser *p, U32 from, U32 to, parse::Edits *edits) {
+    Usize at = 0;
+    while (at < countof(p->tokens) && p->tokens[at].span.start < from)
+        at += 1;
+    if (at >= countof(p->tokens) || p->tokens[at].kind != lex::left_brace) return 0;
+    U32 count = 0;
+    parse::Edits found = {};
+    at += 1;
+    while (at < countof(p->tokens) && p->tokens[at].span.start < to) {
+        if (p->tokens[at].kind != lex::left_brace) return 0;
+        Usize open = at;
+        Usize depth = 0;
+        for (; at < countof(p->tokens) && p->tokens[at].span.start < to; at += 1) {
+            lex::TokenKind kind = p->tokens[at].kind;
+            if (kind == lex::left_brace || kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+            if (kind == lex::right_brace || kind == lex::right_paren || kind == lex::right_bracket) depth -= 1;
+            if (depth == 0) break;
+        }
+        if (at >= countof(p->tokens) || p->tokens[at].kind != lex::right_brace) return 0;
+        found = with_edit(found, edit(p->tokens[open].span.start, p->tokens[open].span.end, "("));
+        found = with_edit(found, edit(p->tokens[at].span.start, p->tokens[at].span.end, ")"));
+        count += 1;
+        at += 1;
+        if (at < countof(p->tokens) && p->tokens[at].kind == lex::comma) at += 1;
+        if (at < countof(p->tokens) && p->tokens[at].kind == lex::right_brace) break;
+    }
+    for (Usize i = 0; i + 1 < countof(found); i += 2)
+        drop_array_fix(p, found[i].span.start);
+    for (Usize i = 0; i < countof(found); i += 1)
+        *edits = with_edit(*edits, found[i]);
+    return count;
+}
+
 // Whether the dimensions text is one pair of brackets (`[5]`), not `[2][3]`.
 static Bool single_dimension(Str text) {
     Usize brackets = 0;
@@ -1867,6 +1905,19 @@ static parse::Edits drop_constexpr(const parse::Parser *p, const Prefixes *pre, 
     return edits;
 }
 
+// The `{...}` list of an array declaration: `T xs[_] = {a, b};` is `xs: [2]T = [a, b]`: smith has no `[_]` length (not
+// settled), so the count of the elements is written; any other `{...}` list on an array has no spelling yet. A length
+// that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the checker's error,
+// not a silent zero fill. False when the list has no fix.
+static Bool array_list(parse::Parser *p, ast::TypeExpr *type, U32 equal_end, U32 end, Str written, Dims *dims,
+                       parse::Edits *item_edits, Bool *zero_later) {
+    U32 count = braced_count(p, equal_end, end, written, dims->text, item_edits, zero_later);
+    if (count == 0 && type->kind == .tuple) count = tuple_items(p, equal_end, end, item_edits);
+    if (count == 0 || (!same_text(dims->text, "[_]") && !single_dimension(dims->text))) return false;
+    if (same_text(dims->text, "[_]")) dims->text = as_str(format::push("[", count, "]"));
+    return true;
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
@@ -1893,15 +1944,9 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
     Str zeros = zero_fill(pre, dims, written, has_init, value);
     if (suffixed && !has_init && (pre->is_static || pre->top) && countof(zeros) == 0) fixable = false;
-    if (suffixed && countof(zeros) == 0 && countof(value) > 0 && value[0] == '{') {
-        // `T xs[_] = {a, b};` is `xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
-        // elements is written; any other `{...}` list on an array has no spelling yet.
-        // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
-        // checker's error, not a silent zero fill.
-        U32 count = braced_count(p, equal_end, last.span.start, written, dims.text, &item_edits, &zero_later);
-        if (count == 0 || (!same_text(dims.text, "[_]") && !single_dimension(dims.text))) fixable = false;
-        if (same_text(dims.text, "[_]")) dims.text = as_str(format::push("[", count, "]"));
-    }
+    if (suffixed && countof(zeros) == 0 && countof(value) > 0 && value[0] == '{' &&
+        !array_list(p, type, equal_end, last.span.start, written, &dims, &item_edits, &zero_later))
+        fixable = false;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
@@ -1913,7 +1958,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     written = with_dims(dims.text, written);
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
-    parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
+    // An array of tuples (`(i32, f32) xs[2]`) is no tuple: its list is the array's, and its items are the tuples.
+    parse::Edits list_edits = suffixed ? item_edits : tuple_list(p, type, equal_end, last.span.start, item_edits);
     if (!lone_zero_list(p, type, equal_end, last.span.start, value, item_edits, &list_edits) &&
         named_list_here(p, type, equal_end, last.span.start, dims.text)) {
         text = as_str(format::push(lead, name, untyped_of(lead)));
@@ -2278,7 +2324,7 @@ static ast::FieldDecl parse_new_field(parse::Parser *p) {
     if (parse::accept(p, lex::kw_pub)) field.is_pub = true;
     field.name = parse::text(p, parse::advance(p));
     parse::advance(p);
-    field.type = parse::type(p);
+    field.type = parse_type::declared(p);
     if (field.type == nullptr) {
         recover_line(p);
         return field;
@@ -3298,7 +3344,7 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str lead, Boo
     }
     Bool typed = false;
     if (parse::accept(p, lex::colon)) {
-        *type = parse::type(p);
+        *type = parse_type::declared(p);
         if (*type == nullptr) return false;
         typed = true;
     }
@@ -3502,7 +3548,7 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
         param->is_pack = true;
         pack_fix(p, param->name, name.span, dots);
     } else {
-        param->type = parse::type(p);
+        param->type = parse_type::declared(p);
         if (param->type == nullptr) return false;
         if (parse::accept(p, lex::ellipsis)) {
             param->is_pack = true; // `nums: i32...`, `nums: int...`
@@ -3590,7 +3636,7 @@ static ParamList parse_generics(parse::Parser *p) {
         param.name = parse::text(p, parse::advance(p));
         param.is_new = true;
         if (parse::accept(p, lex::colon)) {
-            param.type = parse::type(p);
+            param.type = parse_type::declared(p);
             if (param.type == nullptr) return list;
         }
         param.span = parse::span_from(p, start);

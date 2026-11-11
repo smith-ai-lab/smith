@@ -99,7 +99,9 @@ jobs:
       mac: ${{ steps.mac.outputs.mac }}
       # whether `warm` runs, and on which OSes: a push to main runs it for real on both; a pull request that changes the
       # job (or the setup action it runs) runs it as a dry run on Linux only (#2769, knowledge/ci-hosted.md)
-      warm: ${{ steps.warm.outputs.warm }}
+      warm: ${{ steps.scope.outputs.docs_push == 'true' && 'false' || steps.warm.outputs.warm }}
+      # a docs-only diff (#3044): what `docs-linux` also runs
+      docs_tests: ${{ steps.scope.outputs.docs_tests }}
       warm_os: ${{ steps.warm.outputs.os }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
@@ -167,20 +169,32 @@ jobs:
         id: scope
         env:
           BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
-          # a push's commit before (main's previous tip): the count skips a merge of documents only
-          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
           UNCACHED_INPUT: ${{ inputs.uncached }}
+          BEFORE: ${{ github.event.before }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
           # Other workflows (llvm.yml) change nothing this one runs; ci.yml itself and the actions it uses do.
           documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
           workflows='^[.]github/workflows/'
-          gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
+          # the one list of documentation paths (#3044): a diff of only these builds nothing on any platform. Markdown
+          # elsewhere (templates/new, plugin/knowledge, tests/docs/fixtures) is read by tests, so it stays code.
+          gated='^([^/]+[.]md|knowledge/.*|[.]agents/.*|[.]claude/skills/.*)$'
+          docs_push=false
           scope=full
           changed=
           # a push to main is a commit the merge queue already checked: it only publishes the release
-          if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            scope=release; BASE=
+            # a push of only documentation (#3044): the compiler did not change, so there is no release and no warm
+            # build; the scope is none. A push whose range cannot be read stays release.
+            if [ -n "$BEFORE" ] && ! printf '%s' "$BEFORE" | grep -qE '^0+$' && pushed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" 2>/dev/null) && [ -n "$pushed" ]; then
+              if [ -z "$(printf '%s\n' "$pushed" | grep -vE "$documents|$gated|$workflows" || true)" ] \
+                && [ -z "$(printf '%s\n' "$pushed" | grep -E '^([.]github/workflows/ci[.]yml|[.]github/actions/.*)$' || true)" ]; then
+                scope=none; docs_push=true
+              fi
+            fi
+          fi
           # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
           # everything not yet on main. Scoped by its own diff, a docs-only entry behind a code change ran no tests,
           # passed, and carried the failing code onto main (#1539 behind #1541, 2026-11-02)
@@ -198,6 +212,14 @@ jobs:
           # in the queue. A docs scope keeps the whole job (it is where the docs check runs); the queue runs it always.
           mac_run=true
           mac_tests=true
+          # docs-only (#3044): no macOS job at all, in a PR check and in a queue run; the checks that read documents run
+          # on Linux in `docs-linux` with the published release. `docs_tests`: the diff reaches what readme_test and
+          # skills_test read (README.md, the skills): they build a test runner (about 2 minutes cold), `smith docs` does not.
+          docs_tests=false
+          if [ "$scope" = docs ]; then
+            mac_run=false
+            if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then docs_tests=true; fi
+          fi
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
             mac_tests=false
             if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_tests=true; fi
@@ -206,16 +228,11 @@ jobs:
           # The count (#2914) runs after the merge, on the push to main, and in the nightly run (#3052, owner,
           # 2026-11-11: "Do we need the count job? ... We mostly need to figure out what to work on with translation
           # next. And we want a rough idea of how much work is left."). It is on no PR check and no queue run: it was
-          # 11 to 13 minutes of every queue run and the end of its critical path. A push counts unless the merge
-          # changed only documents (README, knowledge/, the skills, images): those change no row.
+          # 11 to 13 minutes of every queue run and the end of its critical path. A push counts unless it was documents
+          # only (scope none, #3044): those change no row.
           count=false
           [ "$GITHUB_EVENT_NAME" = schedule ] && count=true
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            count=true
-            if [ -n "$BEFORE" ] && moved=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null) && [ -n "$moved" ]; then
-              printf '%s\n' "$moved" | grep -vE "$documents" | grep -vE "$gated" | grep -q . || count=false
-            fi
-          fi
+          [ "$GITHUB_EVENT_NAME" = push ] && [ "$scope" != none ] && count=true
           # The nightly run (#2955), or a dispatch by hand that asks for it, counts with no cache and compares the table
           # with the cached count of the same commit: the soundness check every count cache names. It needs the count.
           uncached=false
@@ -225,6 +242,8 @@ jobs:
           fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
+          echo "docs_tests=$docs_tests" >>"$GITHUB_OUTPUT"
+          echo "docs_push=$docs_push" >>"$GITHUB_OUTPUT"
           echo "mac_tests=$mac_tests" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
           echo "uncached=$uncached" >>"$GITHUB_OUTPUT"
@@ -573,9 +592,9 @@ jobs:
             stage readme "$SMITH" test --test readme_test,skills_test
           else
             # fmt, docs and prove run on Linux (`check-fmt-prove`, #2234); lint runs on both platforms, since each sees
-            # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there)
-            names="lint test"
-            stage lint "$SMITH" lint
+            # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
+            # on the Mac it is the job `macos-lint`, beside this one (#3045), so the two take their minutes together
+            names="test"
             stage test macos_tests
           fi
           # the test stage's output, with the SMITH_TEST_STATS lines, is the log `smith build ci-times` reads (#1139)
@@ -622,6 +641,50 @@ jobs:
           line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
           [ -n "$line" ] || line=unknown
           echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  macos-lint:
+    # `smith lint` of the code only the Mac sees, beside `macos` and not after it (#3045): the two stages cannot share one
+    # tree (they collide on .smith/build.ninja), so each gets its own job and its own copy, and the job takes the longer
+    # of the two, not their sum (lint 102 to 151 s, the macOS tests 116 to 173 s, on 2026-11-10). It builds smith only,
+    # not the tests (`tests: false`: 109 to 156 s of `macos` that lint does not need). It runs where `macos` runs its
+    # tests: a full run whose diff reaches the Mac's code (`mac_tests`). It takes one more hosted macOS slot of the
+    # five, so a second run's jobs may queue behind the first (knowledge/ci/caches.md).
+    needs: [changes, pack, watch]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.watch.result == 'success' && needs.changes.outputs.mac_run == 'true' && needs.changes.outputs.mac_tests == 'true' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ${{ fromJSON(needs.watch.outputs.runner) }}
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.watch.outputs.cores }}
+      SMITH_OUTPUT: full
+    permissions:
+      contents: read
+      actions: write # queue-guard: `gh run cancel` (#2256)
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 10
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/queue-guard
+      - uses: ./.github/actions/setup-smith
+        timeout-minutes: 20
+        with:
+          tests: "false"
+      - name: Lint
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
+          echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != 0 ]; then
+            tail -n 60 "$RUNNER_TEMP/lint.log"
+            echo "FAIL lint"
+            echo "::error::smith lint failed"
+            exit 1
+          fi
+          echo "ok lint"
 
   build-linux:
     # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
@@ -975,12 +1038,34 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  docs-linux:
+    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
+    # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
+    # One small Linux job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+      DOCS_TESTS: ${{ needs.changes.outputs.docs_tests }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/fetch-smith
+      - name: Documentation checks
+        run: |
+          smith docs
+          if [ "$DOCS_TESTS" = true ]; then smith test --test readme_test,skills_test; fi
+
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The count (`frontend-coverage`) is not here (#3052): it runs on the push to main, after the merge, and its own
     # job fails (the push run is red) when the count falls.
-    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, release-pack-macos, release-pack-linux]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, release-pack-macos, release-pack-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1001,6 +1086,9 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
+          DOCS_LINUX: ${{ needs.docs-linux.result }}
+          MACOS_LINT: ${{ needs.macos-lint.result }}
+          MAC_TESTS: ${{ needs.changes.outputs.mac_tests }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
           TEST_LINUX: ${{ needs.build-linux.outputs.tests || needs.test-linux.result }}
@@ -1037,18 +1125,20 @@ jobs:
             exit 1
           fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes macos, `release` (a push to main,
+          # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes docs-linux (#3044), `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
-          full) owed="MACOS TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
-          docs) owed="MACOS" ;;
+          full) owed="MACOS MACOS_LINT TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
+          docs) owed="DOCS_LINUX" ;;
           release) owed="" ;;
           *) owed="" ;;
           esac
           # `macos` is owed wherever it runs; a PR check whose diff cannot reach the Mac's code runs it as a build only
           # (#2822, #2832), which is still owed
           if [ "$MAC_RUN" = false ]; then owed=${owed/MACOS/}; fi
+          # `macos-lint` runs only where the Mac's tests run (#3045)
+          if [ "$MAC_RUN" = false ] || [ "$MAC_TESTS" != true ]; then owed=${owed/MACOS_LINT/}; fi
           # a PR check lints in `check-fmt-prove`, so it owes no `check-lint` (#2856)
           if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group builds the release main will publish (#2832): one that does not build fails the entry
@@ -1781,7 +1871,7 @@ jobs:
     needs: [changes, frontend-coverage-fix]
     if: ${{ !cancelled() && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.count == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -1837,8 +1927,13 @@ jobs:
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
           touch "$RUNNER_TEMP/before-count"
-          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
-          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
+          # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
+          # from the diff is deterministic, so there is no retry: the command is bounded to 7 minutes and fails the entry.
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          status=$?
+          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 7 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           # the rows this shard measured (#2832): the save job adds them to the cache main starts from
           mkdir -p "$RUNNER_TEMP/rows"
