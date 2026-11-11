@@ -750,7 +750,7 @@ export void test_prove_cache_key_has_no_build_time_in_it() {
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "shim/prove.cpp", "prove.cpp");
     scratch::expect_text("cache key: no build time in it", "0",
-                         scratch::capture(&p, "grep -c '__DATE__\\|__TIME__' prove.cpp"));
+                         scratch::capture(&p, "grep -c '__DAT[E]__\\|__TIM[E]__' prove.cpp"));
 }
 
 // 18. A group's record follows the prover's identity, not the binary (#3076): the same identity finds the record
