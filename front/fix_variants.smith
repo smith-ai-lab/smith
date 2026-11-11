@@ -232,7 +232,9 @@ static Bool declares(Str source, lex::Tokens tokens, Usize colon) {
 // type as another one names a variant (process's `Output`, console's `Stream.Output`, #3027).
 static Bool used_as_type(Str source, lex::Tokens tokens, Usize i) {
     lex::TokenKind next = i + 1 < countof(tokens) ? tokens[i + 1].kind : lex::end_of_file;
-    if (next == lex::name || next == lex::star) return true;
+    // a name on the next line is the next statement, not a declared name (`= console.Input` then `t: ...`)
+    Bool same_line = i + 1 < countof(tokens) && !tokens[i + 1].line_break;
+    if (same_line && (next == lex::name || next == lex::star)) return true;
     Usize head = i;
     if (head >= 2 && (tokens[head - 1].kind == lex::colon_colon || tokens[head - 1].kind == lex::dot) &&
         tokens[head - 2].kind == lex::name)
