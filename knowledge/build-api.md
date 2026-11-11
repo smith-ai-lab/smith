@@ -10,7 +10,7 @@ Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith
 generated mesh list. Everything else is later. The text below is the API in C names, as in `<smith/build.h>`, generated from [lib/std/build.smith](../lib/std/build.smith)
 (generated from [lib/std/build.smith](../lib/std/build.smith), where the types come in the order they depend on
 each other) without its `#pragma once`, includes and `extern "C"` guards; a struct is anonymous and has only the typedef
-name, as the module writes it. Setting `.content_hash` is the error `smith: build.c: .content_hash is not implemented yet`.
+name, as the module writes it. `.content_hash` is for a function step ([function steps served from the step cache](executor.md#function-steps)); on a `.command` step it is the error `smith: build.c: .content_hash on a .command step is not implemented yet`.
 
 ```c
 // smith/build.h: the API of a project's build file, which `smith build` compiles and runs to write build.ninja.
@@ -34,7 +34,8 @@ typedef struct {
 // The return value is the exit status. Like a command, the function writes the outputs it declares; one with none gets
 // smith's stamp. run->b works with every helper that needs no build() state (smith_fmt, smith_cat, smith_join,
 // smith_list, smith_lines, smith_glob, smith_capture, smith_write). Editing the build file reruns every .run step,
-// since the function's code is part of the program. .content_hash is not implemented yet and exits 2.
+// since the function's code is part of the program. .content_hash on a .run step: the step cache serves its outputs
+// for the program, the arguments and the bytes of .inputs, so the function must read nothing else (#3079).
 typedef struct {
     SmithBuild *b;
     const char *const *inputs;  // the step's .inputs
@@ -57,7 +58,7 @@ typedef struct {
     bool always;               // run on every build
     int (*run)(SmithRun *run); // a C function in the build file instead of .command; 0 succeeds
     const char *const *args;   // given to .run as run->args
-    bool content_hash;         // later: rerun only when the inputs' bytes changed
+    bool content_hash;         // a .run step: served from the step cache by its inputs' bytes; .command: later
     bool test;                 // `smith test` runs this task or builds this step (smith_tests sets it on its task)
 } SmithStep;
 
