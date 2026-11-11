@@ -61,7 +61,7 @@ Hourly check (smith-dev-lead, "What wakes you"). You are in charge of things goi
 1. Open PRs > `wip` on #73: the pool is `paused` for new feature PRs until they are below it. Tell every runner. CI and queue work, and translation work measured locally, go on.
 2. No merge to main in 60 minutes while the queue is non-empty: treat it as p0. Find the cause now (the front entry's failing job) and remove it. Don't wait for the next check.
 3. Any merge-queue run failed since the last check: look at the failed step. A code failure means dequeue that PR at once (queue-ops `dequeue`) and message its runner. An external failure (504, timeout, cancelled, API rate limit) means re-enqueue what it threw out, and file or update the p1 ticket that removes the cause.
-4. Queued `pull_request` runs exceed `merge_group` runs: cancel the queued PR runs (queue-ops `cancel-pr-runs`), keeping PRs that touch `.github/`.
+4. (A pull request runs no check since #3170, so there are no queued PR runs to cancel; read the queue's job waits instead.)
 5. Opened > merged last hour, two hours running: lower `wip`.
 6. Main red: p0. A claim whose runner is not working: restart it. A chain that ended with room under `wip`: start its successor, critical path first.
 7. The count: update #73 when a push run's coverage job reports a new one (#3052: the count runs after the merge; read the line `frontend-coverage-change:` of the job `frontend-coverage` in each push run of `ci.yml`, format in knowledge/ci/count.md: `fell` names the merges and the files lost). Flat for 3 hours or more: make sure at least two runners are on translation tickets (the top of #73's work order), and say what blocks them if they are not moving.
