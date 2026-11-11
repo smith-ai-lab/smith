@@ -32,7 +32,7 @@ static void check(const char *label, const char *cases, const char *want) {
     scratch::expect_text(label, want, run.out);
 }
 
-export void test_a_knowledge_only_diff_runs_no_macos_and_no_document_tests() {
+export void test_a_knowledge_only_diff_runs_no_mac_job_and_no_document_tests() {
     check("knowledge", "case_ knowledge/a.md", "knowledge/a.md: scope=docs mac_run=false docs_tests=false\n");
 }
 
@@ -40,7 +40,7 @@ export void test_a_readme_or_skill_diff_also_runs_the_document_tests() {
     check("readme", "case_ README.md", "README.md: scope=docs mac_run=false docs_tests=true\n");
 }
 
-export void test_one_code_file_gives_the_full_check_with_macos() {
+export void test_one_code_file_gives_the_full_check_with_the_mac_job() {
     check("code", "case_ lib/a.c", "lib/a.c: scope=full mac_run=true docs_tests=false\n");
 }
 
