@@ -100,8 +100,6 @@ jobs:
       # whether `warm` runs, and on which OSes: a push to main runs it for real on both; a pull request that changes the
       # job (or the setup action it runs) runs it as a dry run on Linux only (#2769, knowledge/ci-hosted.md)
       warm: ${{ steps.scope.outputs.docs_push == 'true' && 'false' || steps.warm.outputs.warm }}
-      # a docs-only diff (#3044): what `docs-linux` also runs
-      docs_tests: ${{ steps.scope.outputs.docs_tests }}
       warm_os: ${{ steps.warm.outputs.os }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
@@ -222,13 +220,16 @@ jobs:
           # in the queue. A docs scope keeps the whole job (it is where the docs check runs); the queue runs it always.
           mac_run=true
           mac_tests=true
-          # docs-only (#3044): no macOS job at all, in a PR check and in a queue run; the checks that read documents run
-          # on Linux in `docs-linux` with the published release. `docs_tests`: the diff reaches what readme_test and
-          # skills_test read (README.md, the skills): they build a test runner (about 2 minutes cold), `smith docs` does not.
-          docs_tests=false
+          # docs-only (#3044): no macOS job at all, in a PR check and in a queue run; `smith docs` runs on Linux in
+          # `docs-linux` with the published release. README.md and the skills are read by readme_test and skills_test,
+          # which need a smith built from this tree (the release compiler cannot run `smith test` without a build), so a
+          # diff that reaches them is code: the full path runs those tests.
           if [ "$scope" = docs ]; then
-            mac_run=false
-            if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then docs_tests=true; fi
+            if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then
+              scope=full
+            else
+              mac_run=false
+            fi
           fi
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
             mac_tests=false
@@ -252,7 +253,6 @@ jobs:
           fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
-          echo "docs_tests=$docs_tests" >>"$GITHUB_OUTPUT"
           echo "docs_push=$docs_push" >>"$GITHUB_OUTPUT"
           echo "mac_tests=$mac_tests" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
@@ -1101,9 +1101,9 @@ jobs:
         uses: ./.github/actions/api-budget
 
   docs-linux:
-    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
-    # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
-    # One small Linux job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack.
+    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build. One small Linux
+    # job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack. A diff that touches README.md or the
+    # skills is not this scope: their tests need a built smith, so it takes the full path.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ubuntu-latest
@@ -1111,7 +1111,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_OUTPUT: full
-      DOCS_TESTS: ${{ needs.changes.outputs.docs_tests }}
     permissions:
       contents: read
     steps:
@@ -1120,7 +1119,6 @@ jobs:
       - name: Documentation checks
         run: |
           smith docs
-          if [ "$DOCS_TESTS" = true ]; then smith test --test readme_test,skills_test; fi
 
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)

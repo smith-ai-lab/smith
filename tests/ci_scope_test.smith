@@ -9,7 +9,7 @@ import scratch;
 
 // Cuts the Scope step's script out of the workflow, makes a repository with one commit of a code file and a concept,
 // then for each case: commits the named file, runs the script as `workflow_dispatch` against the commit before it
-// (or as `push`) and prints the three outputs it decides on.
+// (or as `push`) and prints the two outputs it decides on.
 static const char *const setup =
     "awk '/^      - name: Scope$/{f=1;next} f&&/^        run: \\|/{r=1;next} r&&/^      - name:/{exit} "
     "r&&/^          /{sub(/^          /,\"\");print}' \"$SMITH_REPO/.github/workflows/ci.yml\" >scope.sh && "
@@ -19,7 +19,7 @@ static const char *const setup =
     "case_() { echo x >>\"$1\"; git add -A; git commit -q -m c; rm -f out sum; "
     "GITHUB_OUTPUT=$PWD/out GITHUB_STEP_SUMMARY=$PWD/sum GITHUB_EVENT_NAME=${EVENT:-workflow_dispatch} "
     "BASE=$(git rev-parse HEAD~1) BEFORE=$(git rev-parse HEAD~1) GITHUB_SHA=$(git rev-parse HEAD) bash scope.sh; "
-    "echo \"$1: $(grep -E '^(scope|mac_run|docs_tests)=' out | paste -sd' ')\"; }; ";
+    "echo \"$1: $(grep -E '^(scope|mac_run)=' out | paste -sd' ')\"; }; ";
 
 static void check(const char *label, const char *cases, const char *want) {
     scratch::Project p = scratch::make("repository", nullptr);
@@ -32,29 +32,34 @@ static void check(const char *label, const char *cases, const char *want) {
     scratch::expect_text(label, want, run.out);
 }
 
-export void test_a_knowledge_only_diff_runs_no_mac_job_and_no_document_tests() {
-    check("knowledge", "case_ knowledge/a.md", "knowledge/a.md: scope=docs mac_run=false docs_tests=false\n");
+export void test_a_knowledge_only_diff_runs_no_mac_job() {
+    check("knowledge", "case_ knowledge/a.md", "knowledge/a.md: scope=docs mac_run=false\n");
 }
 
-export void test_a_readme_or_skill_diff_also_runs_the_document_tests() {
-    check("readme", "case_ README.md", "README.md: scope=docs mac_run=false docs_tests=true\n");
+export void test_a_readme_or_skill_diff_takes_the_full_path_because_its_tests_need_a_build() {
+    check("readme", "case_ README.md", "README.md: scope=full mac_run=true\n");
+}
+
+export void test_a_skill_diff_takes_the_full_path_too() {
+    check("skill", "mkdir -p .claude/skills/x; echo s >.claude/skills/x/SKILL.md; case_ .claude/skills/x/SKILL.md",
+          ".claude/skills/x/SKILL.md: scope=full mac_run=true\n");
 }
 
 export void test_one_code_file_gives_the_full_check_with_the_mac_job() {
-    check("code", "case_ lib/a.c", "lib/a.c: scope=full mac_run=true docs_tests=false\n");
+    check("code", "case_ lib/a.c", "lib/a.c: scope=full mac_run=true\n");
 }
 
 export void test_a_document_next_to_a_code_file_is_not_docs_only() {
     check("mixed", "mkdir -p knowledge; echo y >knowledge/m.md; case_ lib/a.c",
-          "lib/a.c: scope=full mac_run=true docs_tests=false\n");
+          "lib/a.c: scope=full mac_run=true\n");
 }
 
 export void test_markdown_that_tests_read_stays_code() {
-    check("template", "case_ templates/new/t.md", "templates/new/t.md: scope=full mac_run=true docs_tests=false\n");
+    check("template", "case_ templates/new/t.md", "templates/new/t.md: scope=full mac_run=true\n");
 }
 
 export void test_a_push_of_only_documents_is_scope_none_and_a_code_push_is_a_release() {
     check("push", "EVENT=push case_ knowledge/a.md; EVENT=push case_ lib/a.c",
-          "knowledge/a.md: scope=none mac_run=true docs_tests=false\n"
-          "lib/a.c: scope=release mac_run=true docs_tests=false\n");
+          "knowledge/a.md: scope=none mac_run=true\n"
+          "lib/a.c: scope=release mac_run=true\n");
 }
