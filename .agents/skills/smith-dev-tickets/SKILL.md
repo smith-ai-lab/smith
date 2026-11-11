@@ -24,12 +24,11 @@ Owner, 2026-11-07, on tickets that each made a 100-line PR: "the time it takes t
 A ticket exists only when it is on a lane list of #73 or in the roadmap step that comes next. An idea for later is a line on [later](../../../knowledge/later.md), not an issue. A cause the count finds goes into the body of its part's ticket, never into a new ticket.
 
 ## Labels
-Every ticket has exactly one difficulty label and one priority label, set when it is filed.
-- **Difficulty:**
-  - `difficulty:easy`: docs, a README, or a change spelled out line by line in the ticket.
-  - `difficulty:medium`: ordinary code with a clear spec. Most tickets.
-  - `difficulty:hard`: a high bar, for design judgment or a change across many parts that cannot be split. Owner: "It should be a high bar to set something as hard."
-  - `difficulty:expert`: set only by the lead, for a design whose decision shapes many later tickets or a root cause two attempts have missed, never for implementation with a clear spec however large. A runner stuck at `hard` messages the lead rather than raising the label.
+Every ticket has one priority label, set when it is filed, and at most one difficulty label.
+- **Difficulty:** `difficulty:easy` or no label at all (owner, 2026-11-11: "Either you mark it as easy, or you don't mark it at all. If you mark it as easy we use haiku. Otherwise we use sonnet.").
+  - `difficulty:easy`: docs, a README, or a change spelled out line by line in the ticket. A runner on the small model takes it.
+  - no label: everything else.
+  - `difficulty:medium`, `difficulty:hard` and `difficulty:expert` are no longer used and mean nothing; take one off when you edit a ticket that still has it.
 - **Priority:** `p0` (main is red), `p1` (an urgent blocker, set by the lead), `p2` (the current goal), `p3` (everything else).
 - `blocked` only when another ticket unlocks it, named by a line `**Waits for #N**` in the body, one line per ticket. Owner, 2026-11-02: "we should never let you mark something as blocked unless you have a ticket saying what unlocks it." A question or a decision is not a dependency: a question goes to the lead (`send_message`), and the lead edits the body with the answer. The runner whose merge closes the last ticket a `Waits for` line names removes `blocked`. Without the line, no one does: #1506–#1509 sat blocked for hours after #1518 merged.
 - **One change in flight per workflow file** (#2989): a ticket that edits a file under `.github/workflows/` or `.github/actions/` carries `**Waits for #N**` (and `blocked`) naming the open ticket that already edits that file, unless the lead writes in the body why the two cannot conflict (different jobs, no shared lines) and which merges first. A `p0` is exempt.
