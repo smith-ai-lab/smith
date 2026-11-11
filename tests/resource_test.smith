@@ -232,6 +232,26 @@ export void test_resource_the_runtime_folder_holds_the_files() {
     }
 }
 
+// The unpacked files carry a fixed old time (2000-01-01), not the time of the unpack (#3050): the folder is named for
+// its contents and appears whole by a rename, and a compile that began before another process unpacked it read files
+// "written after it began", so the step cache did not store it and a second folder compiled it again.
+export void test_resource_the_unpacked_files_are_older_than_any_compile() {
+    scratch::Project p = scratch::make("p", "resource");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!begin(&p)) {
+        return;
+    }
+    first_compile(&p);
+    scratch::expect_text("resource: stddef.h is there", "yes",
+                         text_after(&p, "yn \"$folder/lib/clang/$major/include/stddef.h\""));
+    scratch::expect_text("resource: and no unpacked file is newer than 2001", "0",
+                         text_after(&p, "find \"$folder\" -type f -newermt 2001-01-01 | wc -l | tr -d ' '"));
+}
+
 static void is_a_copy(const scratch::Project *p, const char *program) {
     char name[256];
     char command[256];

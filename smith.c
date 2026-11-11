@@ -459,7 +459,12 @@ static size_t smith_resource_write(const char *root, size_t offset) {
         if (put <= 0) smith_die(smith_exit_usage, "cannot write", path);
         done += (size_t)put;
     }
-    if (fchmod(fd, (mode_t)file.mode) != 0 || close(fd) != 0) smith_die(smith_exit_usage, "cannot write", path);
+    // A fixed old time (2000-01-01), set after each part is written: the folder is named for its contents and appears
+    // whole by a rename, so its files never change once a compile can read them, and a compile that started before
+    // another process unpacked them must not count them as written after it began (#3050: its result was not stored).
+    const struct timespec times[2] = {{.tv_sec = 946684800}, {.tv_sec = 946684800}};
+    if (futimens(fd, times) != 0 || fchmod(fd, (mode_t)file.mode) != 0 || close(fd) != 0)
+        smith_die(smith_exit_usage, "cannot write", path);
     return offset + file.stored;
 }
 
