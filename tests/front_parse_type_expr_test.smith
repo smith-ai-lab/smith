@@ -59,3 +59,27 @@ export void test_type_expr_a_concept_call_is_not_an_old_type() {
     check_clean("signed(T)");
     check_clean("float(T) and signed(U)");
 }
+
+// Gap 1: where an expression is read, a type form is the type: `*u8`, `*mut T`, `?T`, `?*T` as an argument or an
+// alias value. `*x` of a value stays a dereference, with its fix to `x.*`.
+export void test_type_expr_a_type_form_is_an_expression() {
+    check_clean("is_pointer(*u8)");
+    check_clean("is_pointer(*mut u8)");
+    check_clean("is_pointer(*i32, *f64)");
+    check_clean("is_pointer(?i32)");
+    check_clean("is_pointer(?*u8)");
+    check_clean("is_pointer([]u8)");
+    check_clean("is_pointer([4]u8)");
+    check_clean("typeof(x) == *u8");
+}
+
+export void test_type_expr_a_star_before_a_value_is_still_a_dereference() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of("f(*p)");
+    _ = parse::expression(&p);
+    test::check_equal(countof(p.errors), (Usize)0);
+    test::check_equal(countof(p.warnings), (Usize)1);
+}
