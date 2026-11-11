@@ -27,4 +27,4 @@ extern @c_name("smith_task_switch") fn switch_stacks(save: **void, to: *void)
 - Assembly inside a function waits until after the switch-over.
 - `smith lint --fix` writes the old `__asm__("a\n" "b\n");` at file scope as this literal, and an `extern` prototype's `__asm__("sym")` label as `@c_name`.
 - The tree-sitter grammar has `tagged_literal`; `editors/neovim/queries/smith/injections.scm` highlights the text of an `asm` literal as assembly.
-- Test: `tests/front_asm_literal_test.smith`. Rules: [knowledge/front-end.md](../../../knowledge/front-end.md), D7 in [decisions](../../../knowledge/decisions.md).
+- Test: `tests/front_asm_literal_test.smith`. Rules: [the parser of statements](../../../knowledge/front-end/parse-stmt.md), D7 in [decisions](../../../knowledge/decisions.md).
