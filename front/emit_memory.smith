@@ -1861,7 +1861,8 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         return state::success();
     }
     if (ty.kind == .pointer && global_address(e, x, out)) return state::success();
-    if (ty.kind == .integer) return state::fold(e, x, ty, out); // `~0.to(u64)`, `(a >> 1).to(i64)`: built and folded
+    // `~0.to(u64)`, `small(i16) or tiny(i64)`, `ratio * 2.0`: computed by the compiler (#3039), else built and folded
+    if (ty.kind == .integer || ty.kind == .boolean || ty.kind == .floating) return state::fold(e, x, ty, out);
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
