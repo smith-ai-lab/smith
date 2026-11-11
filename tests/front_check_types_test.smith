@@ -122,15 +122,15 @@ export void test_front_check_types_array_length_through_a_to_conversion() {
 }
 
 export void test_front_check_types_array_length_variable_is_refused() {
-    fails(with_length("let mut n = 4\n\n", "n"), "an array length that is not a constant", "");
+    fails(with_length("let mut n = 4\n\n", "n"), "an array length must be known at compile time", "`n` is a variable");
 }
 
 export void test_front_check_types_array_length_negative_is_refused() {
-    fails(with_length("const n = 2\n\n", "n - 3"), "an array length that is not a constant", "");
+    fails(with_length("const n = 2\n\n", "n - 3"), "an array length cannot be `-1`", "");
 }
 
 export void test_front_check_types_array_length_division_by_zero_is_refused() {
-    fails(with_length("", "4 / 0"), "an array length that is not a constant", "");
+    fails(with_length("", "4 / 0"), "divides by zero at compile time", "");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

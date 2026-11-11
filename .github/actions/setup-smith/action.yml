@@ -35,8 +35,11 @@ inputs:
     description: >
       the size the step cache is kept within (SMITH_CACHE_MAX): the least recently used results go past it, with their
       manifests, at the start of a build. The one place the cap is written (#2833): `warm` saves the folder whole, so
-      it is what every job restores. A build reads about 20 MB of it, so 300M keeps about 15 builds' worth
-    default: 300M
+      it is what every job restores. One warm build leaves 650 to 670 MB on the Mac and about 1.4 GB on Linux since it
+      builds the release profile too (#3052: 1,397 MB, 2,332 results), so a cap under that prunes the whole of what
+      `warm` saved (#3045: at 300M every build missed all 329 steps, 28 s became 67 to 108 s; #3052: at 1G every Linux
+      build failed on "dropped every result"). 2G keeps the newest Linux build with room for the next one's new results
+    default: 2G
 
   stage0:
     description: >
@@ -120,14 +123,20 @@ runs:
       env:
         # this is the first smith verb of the job, so it is the one that prunes the step cache (at most once an hour,
         # and it stamps the time). Without the cap here it pruned at the 10 GB default, and the builds below, with
-        # 300M, skipped their prune: the folder stayed 9.8 GB and took 2 minutes to restore (#3045)
+        # their cap, skipped their prune: the folder stayed 9.8 GB and took 2 minutes to restore (#3045)
         SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
       run: |
         start=$(date +%s)
         # the release's `smith build llvm` takes the pack of the
         # identity this tree wants from the cache above or downloads it (a hosted runner has no LLVM, and building it
         # takes hours)
-        smith build llvm
+        smith build llvm 2>&1 | tee "$RUNNER_TEMP/fetch.out"
+        # a cap that empties the cache is the one failure that stays silent (#3045: at 300M every build missed 329 of
+        # 329 steps for hours); the prune prints `kept 0 entries` then, and the cap is below one warm build: fail loudly
+        if grep -qE '^cache: kept 0 entries \(0 MB\), dropped [1-9]' "$RUNNER_TEMP/fetch.out"; then
+          echo "::error::the step cache cap (${{ inputs.step-cache-max }}) dropped every result: it must stay above one warm build (about 1.4 GB on Linux, 670 MB on the Mac, knowledge/ci/caches.md)"
+          exit 1
+        fi
         echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build smith
