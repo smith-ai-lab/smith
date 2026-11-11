@@ -1367,9 +1367,10 @@ static Bool mentions_const(Str raw) {
 // A slice `T xs[:]` is writable, `[]mut T`, and `const T xs[:]` read-only, `[]T` (#3073), as `T *p` is `*mut T` and
 // `const T *p` is `*T`: today's two are the structs `smith_array_T_n` and `smith_array_const_T_n`, so the source
 // already says which, and the new `[]T` is read-only. `raw` is the element type as written; only a one-dimension
-// slice of a plain element changes (a `volatile` one keeps `with_dims`' spelling). A parameter stays `[]T`: C never
-// made a slice's elements const through a `const` record, so a writable parameter would refuse the slice field of a
-// `*T` record, and the checker's fix writes `[]mut T` on a parameter that needs it.
+// slice of a plain element changes (a `volatile` one keeps `with_dims`' spelling). Only a field takes it: a parameter
+// or a local stays `[]T`, since C never made a slice's elements const through a `const` record, so a writable one
+// would refuse the slice field of a `*T` record (`args: []mut ExprRef = call.args`), and the checker's fix writes
+// `[]mut T` on a parameter that needs it. A field is shared by every function, so no such fix reaches it.
 static Str writable_dims(Str dims, Str raw) {
     if (!same_text(dims, "[]") || mentions_const(raw) || starts_with(raw, "volatile")) return dims;
     return "[]mut ";
@@ -1921,7 +1922,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     }
     Str lead = variable_lead(pre, type_value);
     if (zero_later && !pre->is_constexpr) lead = "mut ";
-    written = with_dims(writable_dims(dims.text, raw), written);
+    written = with_dims(dims.text, written);
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
     parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
