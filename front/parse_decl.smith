@@ -1364,6 +1364,18 @@ static Bool mentions_const(Str raw) {
     return false;
 }
 
+// A slice `T xs[:]` is writable, `[]mut T`, and `const T xs[:]` read-only, `[]T` (#3073), as `T *p` is `*mut T` and
+// `const T *p` is `*T`: today's two are the structs `smith_array_T_n` and `smith_array_const_T_n`, so the source
+// already says which, and the new `[]T` is read-only. `raw` is the element type as written; only a one-dimension
+// slice of a plain element changes (a `volatile` one keeps `with_dims`' spelling). Only a field takes it: a parameter
+// or a local stays `[]T`, since C never made a slice's elements const through a `const` record, so a writable one
+// would refuse the slice field of a `*T` record (`args: []mut ExprRef = call.args`), and the checker's fix writes
+// `[]mut T` on a parameter that needs it. A field is shared by every function, so no such fix reaches it.
+static Str writable_dims(Str dims, Str raw) {
+    if (!same_text(dims, "[]") || mentions_const(raw) || starts_with(raw, "volatile")) return dims;
+    return "[]mut ";
+}
+
 // One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
 // `rest: ...`, an attribute first. An array suffix moves in front of the type (`I32 xs[3]` is `xs: [3]I32`). Empty when
 // it has no mechanical fix (no name, `auto x`, a qualified slice).
@@ -2213,7 +2225,8 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
     if (same_text(written, "constexpr Type")) written = "type";
-    char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
+    char text[:] =
+        format::push(is_public ? "pub " : "", word, ": ", with_dims(writable_dims(dims.text, written), written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");
