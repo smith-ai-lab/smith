@@ -1,0 +1,101 @@
+// Tests of the fix-it for a name the fixed file never imports (#3077): a module named by its full path, and a library of
+// smith read through its C header (`c.smith_requires` is `contract.requires`).
+module front_fix_imports_test;
+
+import front::ast;
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+import <string.h>;
+
+static Bool same(Str a, Str b) {
+    return countof(a) == countof(b) && mem::equal(a, b);
+}
+
+static Str source_of(Str path) {
+    if (same(path, "std.contract")) {
+        return "module std::contract;\n[[std::c_name(\"smith_requires\")]] export void requires(Bool condition) {}\n"
+               "[[std::c_name(\"smith_ensures\")]] export void ensures(Bool condition) {}\n";
+    }
+    if (same(path, "std.test")) {
+        return "module std::test;\n[[std::c_name(\"smith_check\")]] export void check(Bool condition) {}\n"
+               "[[std::c_name(\"smith_check_equal_i32\")]] export void check_equal_i32(I32 a, I32 b) {}\n";
+    }
+    if (same(path, "std.array")) return "module std::array;\nexport I32 filled(I32 n) { return n; }\n";
+    if (same(path, "front.emit_state")) return "module front::emit_state;\nexport I32 make() { return 1; }\n";
+    return "";
+}
+
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    Str source = source_of(path);
+    if (countof(source) == 0) return nullptr;
+    parser::Parsed p = fix::parse_for_fix("lib.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_imports_a_module_named_by_its_full_path_is_imported() {
+    expect("import std.mem\n\npub fn run() -> i32:\n    return front.emit_state.make()\n",
+           "import front.emit_state\nimport std.mem\n\npub fn run() -> i32:\n    return emit_state.make()\n");
+}
+
+export void test_front_fix_imports_a_library_module_named_alone_is_imported() {
+    expect("pub fn run() -> i32:\n    return array.filled(3)\n", "import std.array\npub fn run() -> i32:\n    return array.filled(3)\n");
+}
+
+export void test_front_fix_imports_a_module_already_imported_is_not_imported_again() {
+    expect("import front.emit_state\n\npub fn run() -> i32:\n    return emit_state.make()\n",
+           "import front.emit_state\n\npub fn run() -> i32:\n    return emit_state.make()\n");
+}
+
+export void test_front_fix_imports_a_local_named_like_the_head_gets_no_import() {
+    expect("pub fn run(front: i32) -> i32:\n    return front\n", "pub fn run(front: i32) -> i32:\n    return front\n");
+}
+
+export void test_front_fix_imports_a_contract_macro_is_the_module_call() {
+    expect("module m;\nimport <smith/contract.h>;\nexport I32 f(I32 x) {\n    c::smith_requires(x > 0);\n"
+           "    c::smith_ensures(x > 0);\n    return x;\n}\n",
+           "import std.contract\npub fn f(x: i32) -> i32:\n    contract.requires(x > 0)\n"
+           "    contract.ensures(x > 0)\n    return x\n");
+}
+
+export void test_front_fix_imports_a_test_macro_is_the_module_call() {
+    expect("module m;\nimport <smith/test.h>;\nexport void test_a() {\n    c::smith_check(true);\n"
+           "    c::smith_check_equal_i32(1, 1);\n}\n",
+           "import std.test\npub fn test_a():\n    test.check(true)\n    test.check_equal_i32(1, 1)\n");
+}
+
+export void test_front_fix_imports_a_library_already_imported_keeps_one_import() {
+    expect("module m;\nimport <smith/test.h>;\nimport std::test;\nexport void test_a() {\n    c::smith_check(true);\n}\n",
+           "import std.test\npub fn test_a():\n    test.check(true)\n");
+}
+
+export void test_front_fix_imports_a_name_the_module_lacks_keeps_the_header() {
+    expect("module m;\nimport <smith/test.h>;\nexport void test_a() {\n    c::smith_check(true);\n"
+           "    c::smith_no_such_check(1);\n}\n",
+           "import c <smith/test.h>\npub fn test_a():\n    c.smith_check(true)\n"
+           "    c.smith_no_such_check(1)\n");
+}
+
+export void test_front_fix_imports_a_real_c_name_keeps_the_header() {
+    expect("module m;\nimport <string.h>;\nexport Usize n(const char *s) {\n    return c::strlen(s);\n}\n",
+           "import c <string.h>\npub fn n(s: *char) -> usize:\n    return c.strlen(s)\n");
+}
