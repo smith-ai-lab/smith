@@ -975,7 +975,10 @@ static void jobs_drain() {
 }
 
 // Starts `program` in `folder` with an address space capped at `limit` (a ulimit -v value), after the oldest
-// job when all the slots are busy.
+// job when all the slots are busy. Its CPU time is capped too (ulimit -t, #3027): a fixer at 300 s (the largest,
+// front/types_expr.smith, takes about 55 s), a compile at 120 s. Before the cap, lib/std/console_test.smith held a
+// queue run's shard for 30 minutes in LLVM's codegen of a 32 KB struct copied by value. A batch killed by the cap is
+// measured again file by file (`finish_group`), and a file killed alone fails its own row by the signal.
 static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const char *folder,
                              const char *const program[:]) {
     if (job_count == job_limit) job_finish();
@@ -988,13 +991,15 @@ static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const c
     const char *argv[job_args_max];
     argv[0] = "/bin/sh";
     argv[1] = "-c";
-    argv[2] = "ulimit -v \"$1\"; o=$2; e=$3; cd \"$4\" || exit 127; shift 4; exec \"$@\" >\"$o\" 2>\"$e\"";
+    argv[2] =
+        "ulimit -v \"$1\"; ulimit -t \"$2\"; o=$3; e=$4; cd \"$5\" || exit 127; shift 5; exec \"$@\" >\"$o\" 2>\"$e\"";
     argv[3] = "sh";
     argv[4] = limit;
-    argv[5] = job->out;
-    argv[6] = job->err;
-    argv[7] = folder;
-    Usize n = 8;
+    argv[5] = is_fix ? "300" : "120";
+    argv[6] = job->out;
+    argv[7] = job->err;
+    argv[8] = folder;
+    Usize n = 9;
     for (Usize i = 0; i < countof(program) && n < job_args_max; i++) {
         argv[n] = program[i];
         n += 1;
