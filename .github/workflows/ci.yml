@@ -2054,6 +2054,9 @@ jobs:
             # corrupt (#3052)
             echo "::error::no count on main's last 20 commits to compare with: the alarm cannot tell whether the count fell. Look at the downloads above (a 404, a corrupt zip) and ask the lead"
             echo "count: no main results to compare (no passing count found on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
+            printf 'The count of %s (%s files pass) found no count on main'"'"'s last 20 commits to compare with: %s\n\nThe Gate step lists the downloads it tried. Opened by ci.yml (#3052).\n' \
+              "$GITHUB_SHA" "$now" "$RUN_URL" >"$RUNNER_TEMP/alarm.md"
+            alarm "Count alarm: no count on main to compare ${GITHUB_SHA:0:7} with" "$RUNNER_TEMP/alarm.md"
             exit 1
           fi
           if [ "$UNCACHED" = true ]; then
