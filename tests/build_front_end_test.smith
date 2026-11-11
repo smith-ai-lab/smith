@@ -2,7 +2,8 @@
 // smith's own front end, as `smith cc --front-end=new` does; without the flag the old front end compiles them, and
 // objects of the two never share a cache entry. The program is `fn main() -> i32:` with an indented body, a form only
 // the new front end reads, and it exits 7. (Named build_front_end_test, not front_*: tests/front_* belong to the front
-// end's own runner.) smith-covers: smith.c runtime/front_flag.c runtime/verbs.c runtime/build_runtime.c
+// end's own runner.)
+// smith-covers: smith.c runtime/front_flag.c runtime/verbs.c runtime/build_runtime.c
 module build_front_end_test;
 
 import std::test;

@@ -226,6 +226,57 @@ export state::TyResult pointer_from_checked(state::Emitter *e, types::TypeRef t)
     return {.ok = ty};
 }
 
+// The code of a `fn` value made from an address, `address.to(Run)` (#3110): its context is the address of a plain
+// function of the same parameters, which it calls with the rest. One per `fn` type, so the value is a `fn` value like
+// any other: stored, passed or called.
+static c::LLVMValueRef address_thunk(state::Emitter *e, state::Ty ty) {
+    state::FnTy shape = {};
+    if (!fn_shape(ty, &shape)) return nullptr;
+    Str label = state::msg(format::push("smith.through.", ty.name));
+    char *name = state::cstr(label);
+    state::free_text(label);
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(e->module, name);
+    if (found != nullptr) {
+        mem::free(name);
+        return found;
+    }
+    c::LLVMValueRef thunk = c::LLVMAddFunction(e->module, name, code_type(e, shape));
+    mem::free(name);
+    c::LLVMSetLinkage(thunk, c::LLVMInternalLinkage);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, thunk, "entry"));
+    c::LLVMValueRef args[max_parts];
+    for (Usize i = 0; i < shape.part_count; i++)
+        args[i] = c::LLVMGetParam(thunk, (U32)i + 1);
+    c::LLVMValueRef target = c::LLVMGetParam(thunk, 0);
+    c::LLVMValueRef called = c::LLVMBuildCall2(b, plain_code_type(shape), target, args, (U32)shape.part_count, "");
+    if (is_void(*shape.element))
+        c::LLVMBuildRetVoid(b);
+    else
+        c::LLVMBuildRet(b, called);
+    c::LLVMDisposeBuilder(b);
+    return thunk;
+}
+
+// An address (a pointer, or an integer as wide as one) as a function type, `address.to(Run)` (#3110): a C function
+// pointer is the address; a `fn` value is the address as the context of `address_thunk`'s code.
+export state::Status from_address(state::Emitter *e, state::Value from, state::Ty to, ast::Span span) {
+    c::LLVMTypeRef word = state::pointer_type(e, 0);
+    c::LLVMValueRef address =
+        from.ty.kind == .pointer ? from.llvm : c::LLVMBuildIntToPtr(e->builder, from.llvm, word, "address");
+    if (to.kind == .fn_pointer) {
+        state::push_value(e, (state::Value){.llvm = address, .ty = to});
+        return state::success();
+    }
+    c::LLVMValueRef thunk = address_thunk(e, to);
+    if (thunk == nullptr) return state::failf(span, "not emitted yet: an address converted to ", to.name);
+    c::LLVMValueRef made = c::LLVMGetUndef(to.llvm);
+    made = c::LLVMBuildInsertValue(e->builder, made, thunk, 0, "code");
+    made = c::LLVMBuildInsertValue(e->builder, made, address, 1, "context");
+    state::push_value(e, (state::Value){.llvm = made, .ty = to});
+    return state::success();
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // A lambda
 

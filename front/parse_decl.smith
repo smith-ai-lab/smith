@@ -1364,10 +1364,22 @@ static Bool mentions_const(Str raw) {
     return false;
 }
 
+// A slice `T xs[:]` is writable, `[]mut T`, and `const T xs[:]` read-only, `[]T` (#3073), as `T *p` is `*mut T` and
+// `const T *p` is `*T`: today's two are the structs `smith_array_T_n` and `smith_array_const_T_n`, so the source
+// already says which, and the new `[]T` is read-only. `raw` is the element type as written; only a one-dimension
+// slice of a plain element changes (a `volatile` one keeps `with_dims`' spelling). Only a field takes it: a parameter
+// or a local stays `[]T`, since C never made a slice's elements const through a `const` record, so a writable one
+// would refuse the slice field of a `*T` record (`args: []mut ExprRef = call.args`), and the checker's fix writes
+// `[]mut T` on a parameter that needs it. A field is shared by every function, so no such fix reaches it.
+static Str writable_dims(Str dims, Str raw) {
+    if (!same_text(dims, "[]") || mentions_const(raw) || starts_with(raw, "volatile")) return dims;
+    return "[]mut ";
+}
+
 // One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
 // `rest: ...`, an attribute first. An array suffix moves in front of the type (`I32 xs[3]` is `xs: [3]I32`). Empty when
 // it has no mechanical fix (no name, `auto x`, a qualified slice).
-static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
+static Str new_parameter(const parse::Parser *p, Usize from, Usize to, Bool generic) {
     Usize at = from;
     Str prefix = "";
     Bool unused = false;
@@ -1405,7 +1417,25 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
     if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
+    // A generic function's body is checked only in another module's instance, so the checker's `*mut` fix never reaches
+    // its own file: a pointer to a named type with no `const` is writable here, as a result is (#3027, std.arena's
+    // `push`). A pointer to a slice or to a primitive keeps the rules of fix_typeof and fix_generic_mut.
+    if (generic && countof(type) > 1 && type[0] == '*' && type[1] >= 'A' && type[1] <= 'Z' && !mentions_const(raw))
+        type = as_str(format::push("*mut ", type[1:countof(type)]));
     return as_str(format::push(prefix, name, ": ", type));
+}
+
+// Whether a parameter list, the tokens after `open` up to `close`, makes the function generic: a `constexpr Type`, an
+// `auto` or a pack.
+static Bool generic_parameters(const parse::Parser *p, Usize open, Usize close) {
+    for (Usize i = open + 1; i < close; i++) {
+        lex::TokenKind kind = p->tokens[i].kind;
+        if (kind == lex::kw_auto) return true;
+        if (kind == lex::kw_constexpr && i + 1 < close && p->tokens[i + 1].kind == lex::type_name &&
+            same_text(parse::text(p, p->tokens[i + 1]), "Type"))
+            return true;
+    }
+    return false;
 }
 
 // The parameters, the tokens after `open` up to `close`, as `a: T, b: U`. False when one has no mechanical fix.
@@ -1413,6 +1443,7 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
     Str none = "";
     *out = none;
     if (close == open + 1 || (close == open + 2 && p->tokens[open + 1].kind == lex::kw_void)) return true;
+    Bool generic = generic_parameters(p, open, close);
     Usize depth = 0;
     Usize from = open + 1;
     for (Usize i = open + 1; i <= close; i++) {
@@ -1424,7 +1455,7 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
             // A C-variadic definition keeps its `...` last (`fn f(format: *char, ...)`, #2333).
             Bool dots = i == close && i == from + 1 && p->tokens[from].kind == lex::ellipsis;
             Str one = "...";
-            if (!dots) one = new_parameter(p, from, i);
+            if (!dots) one = new_parameter(p, from, i, generic);
             if (countof(one) == 0) return false;
             if (countof(*out) > 0)
                 *out = as_str(format::push(*out, ", ", one));
@@ -1512,7 +1543,8 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     } else if (prototype) {
         edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
     }
-    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    if (pre->is_constexpr && pre->constexpr_after > pre->constexpr_start)
+        edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     // A private function has no `static` in smith's own syntax: the name is private without it.
     if (pre->is_static) edits = with_edit(edits, edit(pre->static_start, pre->static_after, ""));
     edits = with_unused(pre, edits);
@@ -1899,7 +1931,10 @@ static Bool lowercase_type(const Prefixes *pre, Head head, Str raw) {
 // The edits that delete a `constexpr`: a file's is recorded by the prefixes, a local one only for a `Type` value.
 static parse::Edits drop_constexpr(const parse::Parser *p, const Prefixes *pre, Head head, Str raw,
                                    parse::Edits edits) {
-    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    // Only a file's `constexpr` is recorded; a local one's span is empty, and its fix (an insertion at 0) would
+    // collide with the next local's, which then kept `constexpr` (#3027: `constexpr const b: type = u16`).
+    if (pre->is_constexpr && pre->constexpr_after > pre->constexpr_start)
+        edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     if (lowercase_type(pre, head, raw) && !pre->top)
         edits = with_edit(edits, edit(constexpr_before(p, head.type_start), head.type_start, ""));
     return edits;
@@ -1916,6 +1951,28 @@ static Bool array_list(parse::Parser *p, ast::TypeExpr *type, U32 equal_end, U32
     if (count == 0 || (!same_text(dims->text, "[_]") && !single_dimension(dims->text))) return false;
     if (same_text(dims->text, "[_]")) dims->text = as_str(format::push("[", count, "]"));
     return true;
+}
+
+// Whether a type value's initializer is `name[:]`, a slice of a lowercase type value (`wide[:]`); a capitalized type
+// (`U16[:]`) is renamed by its own fix first.
+static Bool slice_of_value_name(Str value) {
+    Usize n = countof(value);
+    if (n < 4 || value[n - 3] != '[' || value[n - 2] != ':' || value[n - 1] != ']') return false;
+    if (value[0] < 'a' || value[0] > 'z') return false;
+    for (Usize i = 0; i < n - 3; i++) {
+        char ch = value[i];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'))
+            return false;
+    }
+    return true;
+}
+
+// Where an initializer ends before the `;` at `semi`: blanks before it are not part of it.
+static U32 value_end(const parse::Parser *p, U32 semi) {
+    U32 end = semi;
+    while (end > 0 && (p->source[end - 1] == ' ' || p->source[end - 1] == '\t'))
+        end -= 1;
+    return end;
 }
 
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
@@ -1968,6 +2025,11 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     }
     if (type_value || automatic || lowercase_type(pre, head, raw))
         text = as_str(format::push(lead, name, untyped_of(lead)));
+    // `constexpr Type other = wide[:];`: a slice of a type value is the type `[]wide` (smith-dev-syntax-types, #3027)
+    if ((type_value || lowercase_type(pre, head, raw)) && slice_of_value_name(value))
+        list_edits = with_edit(list_edits,
+                               edit(value_end(p, last.span.start) - (U32)countof(value), value_end(p, last.span.start),
+                                    as_str(format::push("[]", value[0:countof(value) - 3]))));
     if (bare_extern) {
         text = as_str(format::push(name, ": ", written));
         to = head.name.span.end;
@@ -2162,7 +2224,9 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
-    char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
+    if (same_text(written, "constexpr Type")) written = "type";
+    char text[:] =
+        format::push(is_public ? "pub " : "", word, ": ", with_dims(writable_dims(dims.text, written), written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");
@@ -2226,6 +2290,10 @@ static ast::FieldDecl parse_field(parse::Parser *p, Style *style, Bool top) {
         parse_alignas(p, &aligned);
     field.attributes = aligned.attributes;
     U32 start = parse::peek(p).span.start;
+    // `constexpr Type of;`, a field that holds a type, is `of: type`: the struct is then a compile-time one (#3027)
+    if (parse::at(p, lex::kw_constexpr) && parse::peek_at(p, 1).kind == lex::type_name &&
+        same_text(parse::text(p, parse::peek_at(p, 1)), "Type"))
+        parse::advance(p);
     if (take_tag_keyword(p)) field.type = parse::type(p);
     if (field.type == nullptr) {
         recover(p);
@@ -3195,7 +3263,21 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
         }
     }
     parse::expect(p, lex::right_paren, "`)`");
-    parse::expect(p, lex::semicolon, "`;` after `static_assert`");
+    // In smith's own syntax it ends with the line, as inside a function (#3027); a `;` before the line break is
+    // still read, with a warning whose fix removes it, as after a statement.
+    lex::Token semi = parse::peek(p);
+    if ((p->new_syntax || p->layout) && semi.kind == lex::semicolon) {
+        parse::advance(p);
+        parse::Edits edits = mem::alloc_slice(parse::Edit, 1);
+        Str nothing = "";
+        edits[0] = (parse::Edit){.span = semi.span, .text = nothing};
+        if (semi.line_break || at_line_end(p))
+            parse::warning_fix(p, semi.span, "a declaration ends with the line, not `;`: remove it", edits);
+    } else if (p->new_syntax || p->layout) {
+        end_line(p, "declaration");
+    } else {
+        parse::expect(p, lex::semicolon, "`;` after `static_assert`");
+    }
     ast::DeclKind kind = {.static_assert_decl = {.condition = condition, .message = message}};
     return make(p, start, pre, kind);
 }
@@ -4138,6 +4220,29 @@ static void fix_module_line(parse::Parser *p, lex::Token module_token, lex::Toke
     warn(p, module_token.span.start, semi.span.end, message, edits);
 }
 
+// Whether `text` holds the letters `target` anywhere. A comment or a longer name counts: this only rules a text out.
+static Bool says_target(Str text) {
+    for (Usize i = 0; i + 6 <= countof(text); i++) {
+        if (text[i] == 't' && text[i + 1] == 'a' && text[i + 2] == 'r' && text[i + 3] == 'g' && text[i + 4] == 'e' &&
+            text[i + 5] == 't') {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Marks a function of the file whose text, from the token at `first` to the last one read, never says `target`
+// (`no_target`, #3080): `front::when` then knows without copying it that no `if` of its body is about the target.
+static void note_target(const parse::Parser *p, ast::Decl *item, Usize first) {
+    if (p->position <= first || p->position > countof(p->tokens)) return;
+    Usize start = p->tokens[first].span.start;
+    Usize end = p->tokens[p->position - 1].span.end;
+    if (start > end || end > countof(p->source)) return;
+    Bool none = !says_target(p->source[start:end]);
+    if (item->kind != .function) return;
+    item->kind.function.no_target = none;
+}
+
 // A whole file: an optional `module x::y;` (recorded in the module's name until the keyword is the switch), then
 // declarations to the end of the file. `file` is the file's name, kept in the module.
 export ast::Module file(parse::Parser *p, Str file) {
@@ -4153,7 +4258,10 @@ export ast::Module file(parse::Parser *p, Str file) {
         if (parse::at(p, lex::end_of_file)) break;
         Usize before = p->position;
         ast::Decl *item = parse_one(p, true);
-        if (item != nullptr) result.decls = push_decl(result.decls, item);
+        if (item != nullptr) {
+            note_target(p, item, before);
+            result.decls = push_decl(result.decls, item);
+        }
         if (p->position == before) parse::advance(p);
     }
     return result;

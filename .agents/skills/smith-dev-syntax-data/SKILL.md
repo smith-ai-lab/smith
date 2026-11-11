@@ -29,6 +29,14 @@ pub enum Shape:                     # a payload enum; C's union is an error in a
     empty
 ```
 
+A field may hold a type, written like a type parameter (`T: type`); a struct with such a field is a compile-time value, as a `type` is (the lead, #3027):
+
+```smith
+struct Field:
+    name: [16]char
+    of: type
+```
+
 ## Building values
 
 | Value | Written |
