@@ -316,7 +316,8 @@ export void test_batch_wait_waits_for_the_full_build_ahead_then_holds_every_wait
                              "group ahead refs/heads/gh-readonly-queue/main/pr-1-M is building; waiting for it");
     scratch::expect_contains("batch_wait: until its branch went", train.err,
                              "refs/heads/gh-readonly-queue/main/pr-1-M is gone; no group ahead is building");
-    scratch::expect_contains("batch_wait: then the settle time", train.err, "last for now; waiting 2 s for later groups");
+    scratch::expect_contains("batch_wait: then the settle time", train.err,
+                             "last for now; waiting 2 s for later groups");
     // entry 2 has a later group, so it waits on it whatever is ahead, and is merged by it (its branch goes)
     __builtin_snprintf(states, sizeof states, "%s %s\n%s\n-\n-", one, rest, rest);
     scratch::Run second = wait_as(&p, states, "60", "30", "pr-2-A", "B");

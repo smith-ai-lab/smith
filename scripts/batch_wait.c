@@ -43,13 +43,13 @@
 // and so on to the front: every group ahead of the failed one builds at once, the longest that passes merges, and
 // the first that fails names the bad entry. A split does not wait for a group ahead.
 //
-// Prints `batch=alone` (no later group), `batch=waited` (waited, now last), `batch=split` or `batch=capped` (waited BATCH_WAIT_CAP
-// seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's 120-minute check
-// timeout) on stdout and exits 0. Exits 3 when its own branch is gone on two reads BATCH_WAIT_MISS_SLEEP seconds
-// apart (5; the group merged or was dropped, as a jump drops every group): the caller cancels the run. A failed read
-// builds (it costs runners, never safety). It polls every BATCH_WAIT_POLL seconds (30) and logs one line on stderr
-// per change of state. BATCH_WAIT_LS_REMOTE replaces `git ls-remote` (the test's fake queue). Exits 2 on a usage
-// error. Plain C23, libc and git through popen (build it with -std=gnu2x), no allocation.
+// Prints `batch=alone` (no later group), `batch=waited` (waited, now last), `batch=split` or `batch=capped` (waited
+// BATCH_WAIT_CAP seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's
+// 120-minute check timeout) on stdout and exits 0. Exits 3 when its own branch is gone on two reads
+// BATCH_WAIT_MISS_SLEEP seconds apart (5; the group merged or was dropped, as a jump drops every group): the caller
+// cancels the run. A failed read builds (it costs runners, never safety). It polls every BATCH_WAIT_POLL seconds (30)
+// and logs one line on stderr per change of state. BATCH_WAIT_LS_REMOTE replaces `git ls-remote` (the test's fake
+// queue). Exits 2 on a usage error. Plain C23, libc and git through popen (build it with -std=gnu2x), no allocation.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -306,6 +306,41 @@ static int finish(const char *state, const char *why) {
     return 0;
 }
 
+// What the last group knows between polls: the batch's deadline (-1 until computed), the end of the settle time, and
+// the group ahead whose full build it waits for ("" for none).
+typedef struct {
+    long start;
+    long deadline;
+    long settled;
+    int window;
+    int settle;
+    char blocker[line_size];
+} Last;
+
+// One poll as the last group: 0 to build now, 1 to wait for the full build ahead, 2 to wait for the deadline.
+static int last_waits(Last *last, const char *own, const char *url, const char *listing, long now) {
+    if (last->blocker[0] != '\0' && !listed(listing, last->blocker)) {
+        fprintf(stderr, "batch-wait: %s is gone; no group ahead is building\n", last->blocker);
+        last->blocker[0] = '\0';
+        last->deadline = -1;
+        last->settled = now + last->settle;
+    }
+    if (last->deadline < 0) {
+        // walked again after a group ahead went: another one may be building (a split builds several)
+        last->deadline = batch_deadline(url, own, listing, last->start, last->window, last->blocker);
+        if (last->deadline < last->settled) last->deadline = last->settled;
+        if (last->blocker[0] != '\0')
+            fprintf(stderr, "batch-wait: group ahead %s is building; waiting for it\n", last->blocker);
+    }
+    if (last->blocker[0] != '\0') return 1;
+    if (now >= last->deadline) {
+        if (last->window > 0) fprintf(stderr, "batch: deadline reached, building\n");
+        return 0;
+    }
+    fprintf(stderr, "batch-wait: last for now; waiting %ld s for later groups\n", last->deadline - now);
+    return 2;
+}
+
 int main(int argc, char **argv) {
     if (argc != 4) {
         fprintf(stderr, "usage: batch_wait OWN_REF HEAD_SHA REPO_URL\n");
@@ -322,14 +357,10 @@ int main(int argc, char **argv) {
     int polls = poll > 0 ? cap / poll : cap;
     int window = setting("BATCH_WAIT_WINDOW", window_seconds);
     int window_polls = poll > 0 ? window / poll : window;
-    long start = clock_now(0);
-    long deadline = -1;
+    Last last = {.start = clock_now(0), .deadline = -1, .window = window, .settle = setting("BATCH_WAIT_SETTLE", 15)};
     char later[later_size];
     char listing[listing_size];
-    char last[later_size] = "";
-    char blocker[line_size] = "";
-    int settle = setting("BATCH_WAIT_SETTLE", 15);
-    long settled = 0;
+    char logged[later_size] = "";
     int waited = 0;
     int misses = 0;
     // each pass is a poll or a miss; two misses in a row end it, so the bound is twice the polls of the cap
@@ -346,39 +377,19 @@ int main(int argc, char **argv) {
         }
         misses = 0;
         if (read == Read_Last) {
-            long now = clock_now(pass);
-            if (blocker[0] != '\0' && !listed(listing, blocker)) {
-                fprintf(stderr, "batch-wait: %s is gone; no group ahead is building\n", blocker);
-                blocker[0] = '\0';
-                deadline = -1;
-                settled = now + settle;
-            }
-            if (deadline < 0) {
-                // walked again after a group ahead went: another one may be building (a split builds several)
-                deadline = batch_deadline(argv[3], argv[1], listing, start, window, blocker);
-                if (deadline < settled) deadline = settled;
-                if (blocker[0] != '\0')
-                    fprintf(stderr, "batch-wait: group ahead %s is building; waiting for it\n", blocker);
-            }
-            if (blocker[0] != '\0') {
-                if (waited >= polls) return finish("capped", "capped; running full checks");
-                waited += 1;
-                sleep((unsigned)poll);
-                continue;
-            }
-            if (now >= deadline) {
-                if (window > 0) fprintf(stderr, "batch: deadline reached, building\n");
+            int wait = last_waits(&last, argv[1], argv[3], listing, clock_now(pass));
+            if (wait == 0)
                 return finish(waited ? "waited" : "alone",
                               waited ? "now last; running full checks" : "last entry; running full checks");
-            }
-            fprintf(stderr, "batch-wait: last for now; waiting %ld s for later groups\n", deadline - now);
+            if (wait == 1 && waited >= polls) return finish("capped", "capped; running full checks");
+            if (wait == 1) waited += 1;
             sleep((unsigned)poll);
             continue;
         }
         if (waited >= polls) return finish("capped", "capped; running full checks");
         if (later_failed(argv[3], later)) return finish("split", "a later group failed; running full checks");
-        if (strcmp(later, last) != 0) fprintf(stderr, "batch-wait: waiting on %s\n", later);
-        strcpy(last, later);
+        if (strcmp(later, logged) != 0) fprintf(stderr, "batch-wait: waiting on %s\n", later);
+        strcpy(logged, later);
         waited += 1;
         sleep((unsigned)poll);
     }
