@@ -410,7 +410,6 @@ void cache_prune(const std::string &directory) {
 }
 
 // ---- the group's record: a group whose every function was proved from the step store alone is not compiled again ----
-
 // Asking the store for a function's answers needs its IR, so a group that solves nothing new still paid for compiling
 // every source to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run
 // of a group ends with every function proved by answers of the step store alone (no query ran), the group keeps a
@@ -418,8 +417,7 @@ void cache_prune(const std::string &directory) {
 // printed. The next run of the same group (the same sources, libraries, flags and options, the same prover, the same
 // compiler: smith_import_identity hashes the front end, the runtime, lib/std and the LLVM pack) reads the files named,
 // and when every digest holds, the compile would read the same bytes and prove the same: the lines are printed again.
-// Any other case runs as it did. A compile with no depfile (`--front-end=new`), a file that cannot be read or named,
-// and one that names a macro for the time keep no record.
+// Any other case runs as it did; a compile with no depfile, an unreadable file or a macro for the time keeps no record.
 extern "C" const char smith_import_identity[];
 
 struct GroupRecord {
@@ -518,7 +516,8 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
             if (named.count(source) == 0) return false;
         }
     }
-    utimes(record.path.c_str(), nullptr); // used now
+    if (access(".smith/proved", F_OK) != 0) return false; // a replay writes no .pts: prove again to write them
+    utimes(record.path.c_str(), nullptr);                 // used now
     std::fputs(text.c_str(), stdout);
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
     std::printf("%u proved, 0 failed", proved);
