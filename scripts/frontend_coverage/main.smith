@@ -846,6 +846,9 @@ static typeof(const char[:]) located_at(const char line[:], Usize error, const c
 
 // Every error of a compile's output, as an entry each: `a.smith:3:7: error: message` is `message` at `3:7`. Output
 // with no `error:` line (a crash, a missing tool) is one entry with the text as it stands. Returns how many.
+// SIGXCPU, the signal `ulimit -t` stops a job with (the same number on Linux and macOS).
+constexpr I32 cpu_signal = 24;
+
 static Usize record_errors(const char *path, const char output[:], const char stage[:], I32 status) {
     Usize made = 0;
     Usize at = 0;
@@ -860,6 +863,11 @@ static Usize record_errors(const char *path, const char output[:], const char st
             made += 1;
         }
         at = end + 1;
+    }
+    if (made == 0 && status == 128 + cpu_signal) {
+        // over the CPU cap of `job_start` (SIGXCPU): the row says so, not a checker error (#3027)
+        add_entry(view_of(path), stage, "timed out: over the count's CPU limit for one compile", "");
+        made = 1;
     }
     if (made == 0) {
         char message[message_size];
@@ -948,6 +956,9 @@ static void job_finish() {
     } else if (ran.status != 0) {
         char message[message_size];
         copy_text(message[0:message_size], ran.text);
+        // over the CPU cap of `job_start` (SIGXCPU): the row says so (#3027)
+        if (ran.status == 128 + cpu_signal)
+            copy_text(message[0:message_size], view_of("timed out: over the count's CPU limit for one fixer"));
         add_entry(view_of(tree[job->file]), "fixer", message[0:message_size], "");
         fixed_ok[job->file] = false;
         // A fixer that ended by a plain failure (status 1 to 126) fails the same way again on the same inputs: its
