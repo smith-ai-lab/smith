@@ -702,6 +702,9 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+      - name: Fail fast
+        if: failure()
+        uses: ./.github/actions/fail-fast
       - name: API budget (last)
         if: always()
         env:
@@ -918,6 +921,9 @@ jobs:
         with:
           restore: "false"
           flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+      - name: Fail fast
+        if: failure() || steps.tests.outcome == 'failure'
+        uses: ./.github/actions/fail-fast
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
@@ -961,6 +967,9 @@ jobs:
           part: ${{ matrix.shard }}
           count: ${{ matrix.count }}
           flags: ${{ matrix.flags }}
+      - name: Fail fast
+        if: failure()
+        uses: ./.github/actions/fail-fast
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
@@ -1047,6 +1056,9 @@ jobs:
             fi
           done
           exit $failed
+      - name: Fail fast
+        if: failure()
+        uses: ./.github/actions/fail-fast
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
@@ -1104,6 +1116,9 @@ jobs:
             echo "::error::smith lint failed"
           fi
           exit $code
+      - name: Fail fast
+        if: failure()
+        uses: ./.github/actions/fail-fast
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
