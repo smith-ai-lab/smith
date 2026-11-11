@@ -65,9 +65,13 @@ jobs:
           # the secret is a personal token without the `workflow` scope, so it cannot queue a PR that changes a workflow
           # file (#3070 sat `enqueue refused` on every pass from 02:51Z)
           enqueue_gql() {
-            GH_TOKEN="$BASE_TOKEN" gh api graphql "$@" 2>/dev/null \
-              || { [ -n "$OWNER_TOKEN" ] && GH_TOKEN="$OWNER_TOKEN" gh api graphql "$@"; }
+            local err="${RUNNER_TEMP:-/tmp}/enqueue.err"
+            GH_TOKEN="$BASE_TOKEN" gh api graphql "$@" 2>"$err" \
+              || { [ -n "$OWNER_TOKEN" ] && GH_TOKEN="$OWNER_TOKEN" gh api graphql "$@" 2>"$err"; }
           }
+          # neither token can queue a PR that changes a workflow file (GITHUB_TOKEN: no `workflows` permission, the secret:
+          # no `workflow` scope; queue-ops run 42953053031 on #3070); a session's enable_pr_auto_merge can
+          needs_session() { grep -qi 'workflow' "${RUNNER_TEMP:-/tmp}/enqueue.err" 2>/dev/null; }
 
           # the queue's entries on main: "<pr>" per line, front first
           entries() {
@@ -160,6 +164,10 @@ jobs:
                   -f id="$id" --jq '.data.enqueuePullRequest.mergeQueueEntry.position'); then
                 gh api -X DELETE "repos/$REPO/issues/$pr/labels/ready" --silent || true
                 log "queue-heal: enqueued #$pr (ready) at position $pos"
+              elif needs_session; then
+                # retrying every pass cannot change that: the label goes, the runner turns auto-merge on by MCP
+                gh api -X DELETE "repos/$REPO/issues/$pr/labels/ready" --silent || true
+                log "queue-heal: #$pr (ready) changes a workflow file, which no token here can queue: a session turns auto-merge on for it (enable_pr_auto_merge), label ready removed"
               else
                 log "queue-heal: #$pr (ready) enqueue refused, kept"
               fi
