@@ -3292,6 +3292,79 @@ static int build_friction(SmithRun *run) {
 // its source archive. The CLI is kept in $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools), and is needed only on
 // the machine that builds smith. ABI 15 is what Neovim 0.12 loads. `smith build tree-sitter -Dcorpus` also runs the
 // grammar's corpus tests.
+// ---- Tools from this repository's release (#3161): a run reaches GitHub only. The tools that tests download are
+// pinned here (upstream URL and the sha256 of the file); the same bytes are kept as the assets of the release
+// `tools-<id>` of this repository, made by a step of ci.yml's `warm` from these pins, where <id> is the first six hex
+// digits of each pin's hash in this order, so a changed pin looks for a new release. A fetch reads that release first;
+// while it does not exist yet it falls back to the upstream URL and says so on a line starting `external:`.
+typedef struct {
+    const char *file; // the file's name upstream and in the release
+    const char *url;
+    const char *hash;
+} BuildToolPin;
+
+static const BuildToolPin build_tool_pins[] = {
+    {"nvim-linux-x86_64.tar.gz", "https://github.com/neovim/neovim/releases/download/v0.11.5/nvim-linux-x86_64.tar.gz",
+     "sha256:b2f91117be5b5ea39edd7297156dc2a4a8df4add6c95a90809a8df19e7ab6f52"},
+    {"tree-sitter-linux-arm64.gz",
+     "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-linux-arm64.gz",
+     "sha256:404be5d54a4955571c4067c21d4699660eab3a534cefb0659341b207f7139ec5"},
+    {"tree-sitter-linux-x64.gz",
+     "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-linux-x64.gz",
+     "sha256:d01042f94ba3d6827ddc9788e235f75d8366431be42bdf90ade534d960c98b7d"},
+    {"tree-sitter-macos-arm64.gz",
+     "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-macos-arm64.gz",
+     "sha256:46cb97d9a2c52c94e22d9a76c2f1116156b8b61f98360e2a9cce05fcb197cd4d"},
+    {"tree-sitter-macos-x64.gz",
+     "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-macos-x64.gz",
+     "sha256:b740262cb0f35be64e39b50ad68b020433924a7bcee5ae5c8e40e68d71215647"},
+};
+
+static const BuildToolPin *build_tool_pin(const char *file) {
+    for (size_t i = 0; i < sizeof build_tool_pins / sizeof build_tool_pins[0]; i++)
+        if (strcmp(build_tool_pins[i].file, file) == 0) return &build_tool_pins[i];
+    fprintf(stderr, "smith: no pinned tool named %s\n", file);
+    exit(2);
+}
+
+static const char *build_tools_id(SmithBuild *b) {
+    const char *id = "";
+    for (size_t i = 0; i < sizeof build_tool_pins / sizeof build_tool_pins[0]; i++)
+        id = smith_fmt(b, "%s%.6s", id, build_tool_pins[i].hash + strlen("sha256:"));
+    return id;
+}
+
+// The path of a pinned tool's package: this repository's release first, else upstream (see above).
+static const char *build_tool_path(SmithBuild *b, const char *file) {
+    const BuildToolPin *pin = build_tool_pin(file);
+    SmithPackage upstream = {.url = pin->url, .hash = pin->hash};
+    SmithPackage mirror = {
+        .url = smith_fmt(b, "https://github.com/smith-ai-lab/smith/releases/download/tools-%s/%s", build_tools_id(b),
+                         pin->file),
+        .hash = pin->hash,
+    };
+    __auto_type found = smith_package(b, &mirror);
+    if (sizeof found == sizeof(void *) || *(const int *)(const char *)&found == 0)
+        return build_unwrap(b, &found, sizeof found, "package", mirror.url);
+    fprintf(stderr, "external: %s is not in the release tools-%s of this repository; fetching it from %s\n", pin->file,
+            build_tools_id(b), pin->url);
+    return build_package_path(b, &upstream);
+}
+
+// `smith build tools-list`: the release's id, then one line per pin: file, url, hash (tab separated). The `warm`
+// step downloads each url, checks the hash and makes the release.
+static int build_tools_list_run(SmithRun *run) {
+    printf("tools-%s\n", build_tools_id(run->b));
+    for (size_t i = 0; i < sizeof build_tool_pins / sizeof build_tool_pins[0]; i++)
+        printf("%s\t%s\t%s\n", build_tool_pins[i].file, build_tool_pins[i].url, build_tool_pins[i].hash);
+    return 0;
+}
+
+static void build_tools_list_task(SmithBuild *b) {
+    SmithStep task = {.run = build_tools_list_run, .description = "listing the pinned tools and their release (#3161)"};
+    smith_task(b, "tools-list", &task);
+}
+
 typedef struct {
     const char *asset; // the release's file, without .gz
     const char *hash;
@@ -3316,11 +3389,7 @@ static const char *build_tree_sitter_cli(SmithBuild *b) {
     BuildTreeSitterPin pin = build_tree_sitter_pin(b);
     const char *cli = smith_fmt(b, "%s/%s-0.27.1", tools, pin.asset);
     if (access(cli, X_OK) == 0) return cli;
-    const char *source = build_package_path(
-        b,
-        &(SmithPackage){.url = smith_fmt(
-                            b, "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/%s.gz", pin.asset),
-                        .hash = pin.hash});
+    const char *source = build_tool_path(b, smith_fmt(b, "%s.gz", pin.asset));
     if (build_make_folder(b, tools) != 0) return nullptr;
     if (build_publish(b, smith_fmt(b, "%s/%s", source, pin.asset), cli) != 0) return nullptr;
     return build_exec(smith_list(b, "/bin/chmod", "+x", cli, nullptr)) == 0 ? cli : nullptr;
@@ -3457,9 +3526,7 @@ static int build_nvim_run(SmithRun *run) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     const char *tools = smith_fmt(b, "%s/smith/tools", cache);
     const char *link = smith_fmt(b, "%s/nvim-0.11.5", tools);
-    const char *source = build_package_path(
-        b, &(SmithPackage){.url = "https://github.com/neovim/neovim/releases/download/v0.11.5/nvim-linux-x86_64.tar.gz",
-                           .hash = "sha256:b2f91117be5b5ea39edd7297156dc2a4a8df4add6c95a90809a8df19e7ab6f52"});
+    const char *source = build_tool_path(b, "nvim-linux-x86_64.tar.gz");
     if (build_make_folder(b, tools) != 0) return 1;
     int status = build_remove(b, link);
     status = status != 0 ? status : build_exec(smith_list(b, "/bin/ln", "-s", source, link, nullptr));
@@ -4307,6 +4374,7 @@ void build(SmithBuild *b) {
     build_install(b, &config, config.binary, tested);
     build_release(b, &config, folder);
     build_nvim_task(b);
+    build_tools_list_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);
     build_install_hooks();
