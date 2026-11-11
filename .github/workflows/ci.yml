@@ -1591,8 +1591,6 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
-      - name: Install lld
-        run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
@@ -1684,8 +1682,6 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
-      - name: Install lld
-        run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           # the release profile in the default folder, as the queue run builds it (#2832): `-DPROFILE=release release`
@@ -1751,8 +1747,6 @@ jobs:
         with:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
-      - name: Install lld
-        run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
@@ -1965,8 +1959,6 @@ jobs:
         with:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
-      - name: Install lld
-        run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
@@ -2076,8 +2068,6 @@ jobs:
         with:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
-      - name: Install lld
-        run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
