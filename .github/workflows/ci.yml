@@ -2009,7 +2009,8 @@ jobs:
           # A PR check runs on the PR's head, not merged with main (#2856): its count is compared with the count of the
           # commit it branched from, else every merge that raised main's count since then reads as a loss here (#3052)
           start=$BASE
-          if [ "$SAMPLED" = true ] && mb=$(git merge-base HEAD "$BASE" 2>/dev/null) && [ -n "$mb" ]; then start=$mb; fi
+          # (a warm count of one part is not sampled and still a PR check: #3060's own check compared its head with main's tip)
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && mb=$(git merge-base HEAD "$BASE" 2>/dev/null) && [ -n "$mb" ]; then start=$mb; fi
           for sha in $(git rev-list --first-parent --max-count=20 "$start"); do
             id=
             for a in $(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
