@@ -1871,6 +1871,22 @@ static size_t smith_check_index(const char *name) {
     return smith_check_part_count;
 }
 
+// The closing lines: the parts this host did not run (failed when `--require` names them) and the count.
+static void smith_check_not_run(const bool *not_run, const SmithCheckArgs *given, size_t ran, const char **failed,
+                                size_t *failed_count) {
+    size_t skipped = 0, ran_failed = *failed_count;
+    char names[256] = "";
+    for (size_t i = 0; i < smith_check_part_count; i++) {
+        if (!not_run[i]) continue;
+        skipped++;
+        snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s", names[0] != '\0' ? ", " : "",
+                 smith_check_parts[i]);
+        if (given->required[i]) failed[(*failed_count)++] = smith_check_parts[i];
+    }
+    if (skipped > 0) fprintf(stderr, "smith check: not run here: %s\n", names);
+    fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, *failed_count, skipped);
+}
+
 // `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
 // A part this host cannot run (the macOS lint and tests on Linux, the proofs without a prover, lint, test and prove
@@ -1929,17 +1945,7 @@ int smith_check_project(int count, char **args, const char *self) {
         (void)smith_check_child(self, "build", split, loud, build_log);
     }
     smith_check_promises(every_task);
-    size_t skipped = 0, ran_failed = failed_count;
-    char names[256] = "";
-    for (size_t i = 0; i < smith_check_part_count; i++) {
-        if (!not_run[i]) continue;
-        skipped++;
-        snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s", names[0] != '\0' ? ", " : "",
-                 smith_check_parts[i]);
-        if (given.required[i]) failed[failed_count++] = smith_check_parts[i];
-    }
-    if (skipped > 0) fprintf(stderr, "smith check: not run here: %s\n", names);
-    fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, failed_count, skipped);
+    smith_check_not_run(not_run, &given, ran, failed, &failed_count);
     if (failed_count == 0) {
         fprintf(stderr, "smith check: ok\n");
         return 0;
