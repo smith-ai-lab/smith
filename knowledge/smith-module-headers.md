@@ -46,6 +46,7 @@ run by hand (no task regenerates headers and no check compares them). smith's ow
   the smith that builds smith (`CC`, the previous release: the lag rule), so smith.c's compile, which has `-I
   .smith/include`, includes headers the previous release wrote; C never reads the `// smith-generic:` lines.
 - **Many headers at once (#639):** `smith cc --smith-headers [compile flags] -- a.smith a.h b.smith b.h` writes the pairs one
+- **What reruns the pass in smith's own build (#3079):** the steps that run it with the smith the build just linked (the tests' `--smith-headers` batch, the `smith new` template's headers) take as inputs the pass's own sources (`runtime/lang*.c` and `.h`, `runtime/front_flag.*`, `smith.c`, the LLVM pack's `smith-clang.id`; `build_header_pass_inputs` in `build.c`) and that smith only as an order-only input. With the binary as an input, every edit of any file of smith ran them again and the executor read the whole new binary to key each one: 6.3 s of an 8.6 s edit rebuild. A file the pass comes to depend on goes in that list.
   after the other in one process, each in a forked child (the lowering keeps its tables in statics), and exits 1 if any
   failed. A smith process costs about 10 ms to start (a 240 MB image with 400,000 fixups) and a header about 2, so
   smith's own build writes the headers of all the tests (`tests/*.smith`, `lib/*_test.smith`) in one restat step,
