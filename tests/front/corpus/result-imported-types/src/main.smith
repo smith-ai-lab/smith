@@ -1,0 +1,18 @@
+# `Result(shapes.Box, shapes.Fault)`: a lower-case first name reads as a value to the parser; the checker and the
+# emitter take the chain of names as the type it names (#3036).
+import c <stdio.h>
+import shapes
+
+fn make(ok: bool) -> Result(shapes.Box, shapes.Fault):
+    if ok:
+        return .ok(shapes.Box(side = 4))
+    return .error(shapes.Fault(code = 9))
+
+fn main() -> i32:
+    good := make(true)
+    if .ok(box) := good:
+        _ := stdio.printf("side %d\n", box.side)
+    bad := make(false)
+    if .error(fault) := bad:
+        _ := stdio.printf("code %d\n", fault.code)
+    return 0

@@ -627,9 +627,9 @@ jobs:
             stage readme "$SMITH" test --test readme_test,skills_test
           else
             # fmt, docs and prove run on Linux (`check-fmt-prove`, #2234); lint runs on both platforms, since each sees
-            # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there)
-            names="lint test"
-            stage lint "$SMITH" lint
+            # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
+            # on the Mac it is the job `macos-lint`, beside this one (#3045), so the two take their minutes together
+            names="test"
             stage test macos_tests
           fi
           # the test stage's output, with the SMITH_TEST_STATS lines, is the log `smith build ci-times` reads (#1139)
@@ -676,6 +676,50 @@ jobs:
           line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
           [ -n "$line" ] || line=unknown
           echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  macos-lint:
+    # `smith lint` of the code only the Mac sees, beside `macos` and not after it (#3045): the two stages cannot share one
+    # tree (they collide on .smith/build.ninja), so each gets its own job and its own copy, and the job takes the longer
+    # of the two, not their sum (lint 102 to 151 s, the macOS tests 116 to 173 s, on 2026-11-10). It builds smith only,
+    # not the tests (`tests: false`: 109 to 156 s of `macos` that lint does not need). It runs where `macos` runs its
+    # tests: a full run whose diff reaches the Mac's code (`mac_tests`). It takes one more hosted macOS slot of the
+    # five, so a second run's jobs may queue behind the first (knowledge/ci/caches.md).
+    needs: [changes, pack, watch]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.watch.result == 'success' && needs.changes.outputs.mac_run == 'true' && needs.changes.outputs.mac_tests == 'true' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ${{ fromJSON(needs.watch.outputs.runner) }}
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.watch.outputs.cores }}
+      SMITH_OUTPUT: full
+    permissions:
+      contents: read
+      actions: write # queue-guard: `gh run cancel` (#2256)
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 10
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/queue-guard
+      - uses: ./.github/actions/setup-smith
+        timeout-minutes: 20
+        with:
+          tests: "false"
+      - name: Lint
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
+          echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != 0 ]; then
+            tail -n 60 "$RUNNER_TEMP/lint.log"
+            echo "FAIL lint"
+            echo "::error::smith lint failed"
+            exit 1
+          fi
+          echo "ok lint"
 
   build-linux:
     # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
@@ -1033,7 +1077,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
+    needs: [changes, pack, macos, macos-lint, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1054,6 +1098,8 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
+          MACOS_LINT: ${{ needs.macos-lint.result }}
+          MAC_TESTS: ${{ needs.changes.outputs.mac_tests }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
           TEST_LINUX: ${{ needs.build-linux.outputs.tests || needs.test-linux.result }}
@@ -1095,7 +1141,7 @@ jobs:
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
-          full) owed="MACOS TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
+          full) owed="MACOS MACOS_LINT TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
           docs) owed="MACOS" ;;
           release) owed="" ;;
           *) owed="" ;;
@@ -1103,6 +1149,8 @@ jobs:
           # `macos` is owed wherever it runs; a PR check whose diff cannot reach the Mac's code runs it as a build only
           # (#2822, #2832), which is still owed
           if [ "$MAC_RUN" = false ]; then owed=${owed/MACOS/}; fi
+          # `macos-lint` runs only where the Mac's tests run (#3045)
+          if [ "$MAC_RUN" = false ] || [ "$MAC_TESTS" != true ]; then owed=${owed/MACOS_LINT/}; fi
           # a PR check lints in `check-fmt-prove`, so it owes no `check-lint` (#2856)
           if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to

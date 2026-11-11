@@ -1,0 +1,2 @@
+src/main.smith:10:12: warning: a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array
+src/main.smith:10:12: error: a `{...}` list makes a struct, an array, an Option or a Result, not a `Shape`; write a value of type `Shape`
