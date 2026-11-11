@@ -222,7 +222,8 @@ jobs:
           mac_tests=true
           # docs-only (#3044): no macOS job at all, in a PR check and in a queue run; `smith docs` runs on Linux in
           # `docs-linux` with the published release. README.md and the skills are read by readme_test and skills_test,
-          # which need a smith built from this tree (the release compiler cannot run `smith test` without a build), so a
+          # which need the LLVM pack and the tests built (`smith test` without the pack stops with "this verb was given
+          # arguments, but build.c does not read them", measured on release 7461728), so a
           # diff that reaches them is code: the full path runs those tests.
           if [ "$scope" = docs ]; then
             if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then
@@ -1103,7 +1104,7 @@ jobs:
   docs-linux:
     # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build. One small Linux
     # job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack. A diff that touches README.md or the
-    # skills is not this scope: their tests need a built smith, so it takes the full path.
+    # skills is not this scope: their tests need the LLVM pack and a build, so it takes the full path.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ubuntu-latest
