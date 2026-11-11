@@ -1,0 +1,1411 @@
+// front::eval: the one place the new front end decides a value at compile time (#3039, step 1 of 3).
+//
+// `eval::value(r, expr)` gives the value of an expression when it is known at compile time, in the scopes the checker
+// `r` is in. It is asked wherever the language needs a constant: a `const`, an array length, a `static_assert`, the
+// condition of a compile-time `if`, a `match` pattern, an attribute's argument. Every answer is the target's
+// (`r->table.target`), never the host's.
+//
+// Step 1 runs no function. What it reads:
+//   literals        integers, characters, booleans, floats
+//   names           a constant (`const`, or a name that is not `mut`) through its initializer, in the module that
+//                   declares it; a compile-time parameter bound in an instance; a type
+//   operators       `+ - * / % << >> & | ^ ~`, comparisons, `and or not`, with the checks a run would make: a result
+//                   that does not fit its type, a division by zero and a shift past the width are errors (`failed`)
+//   types           `sizeof`, `alignof`, `countof`, `typeof`, `==` on two types, the questions about a type
+//                   (`is_slice(T)`, `int(T)`) and a concept function (`fn small(T: type) -> bool: sizeof(T) <= 4`)
+//   target          `target.os`, `target.arch`, `target.f32_mantissa_bits` and the other facts (`target_fact`)
+//   conversions     `x.to(T)` (checked) and `x.wrap(T)` between numbers
+//   `if` as a value  `if c: a else: b` with a condition that is known
+// Anything else is not known: the outcome names the part (`at`) and says why (`why`), and the caller writes the error
+// for its own place.
+//
+// The working defaults of #3039, each behind one function so that it is cheap to change: `step_limit`, `depth_limit`
+// (the limits), `may_run` (which functions run: only a concept function in step 1) and `target_fact` (which facts
+// `target` has). Nothing here recurses: a run is a stack of steps and a stack of values.
+module front::eval;
+
+import front::ast;
+import front::types;
+import front::when;
+import std::arena;
+import std::format;
+import std::mem;
+import target;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Values
+
+// A value known at compile time. An integer is a magnitude and a sign, so every `i64` and every `u64` is held; its
+// type is null for a literal no type has been given to yet (`4096` in `const page = 4096`). An enumerator is the
+// index of its slot in its enumeration. A fact is a name of the target (`target.os` is the fact `os` named `linux`).
+export typedef enum {
+    struct {
+        U64 magnitude;
+        Bool negative;
+        types::TypeRef type;
+    } integer;
+    struct {
+        Bool value;
+    } boolean;
+    struct {
+        F64 value;
+        types::TypeRef type;
+    } floating;
+    struct {
+        types::TypeRef type;
+        Usize index;
+    } enumerator;
+    struct {
+        types::TypeRef type;
+    } type_value;
+    struct {
+        ast::Text family;
+        ast::Text name;
+    } fact;
+} Value;
+
+// What `value` found: the value when `known`; else the part that is not known (`at`) and why. `failed` is an error of
+// the evaluation itself (an overflow, a division by zero): `why` is the whole message and the caller reports it as it
+// stands.
+export struct Outcome {
+    Bool known;
+    Value value;
+    Bool failed;
+    ast::Span at;
+    Str why;
+};
+
+// The most steps one evaluation takes before it is an error, and the deepest chain of names and calls: the numbers of
+// the old front end (clang's). No way to raise them yet (#3039, default 3).
+export U64 step_limit() {
+    return 1048576;
+}
+
+export Usize depth_limit() {
+    return 512;
+}
+
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+static Bool same(Str a, Str b) {
+    return types::same_text(a, b);
+}
+
+export Value integer_value(U64 magnitude, Bool negative, types::TypeRef type) {
+    Value made = {.integer = {.magnitude = magnitude, .negative = negative && magnitude != 0, .type = type}};
+    return made;
+}
+
+export Value boolean_value(Bool value) {
+    Value made = {.boolean = {.value = value}};
+    return made;
+}
+
+export Value type_value(types::TypeRef type) {
+    Value made = {.type_value = {.type = type}};
+    return made;
+}
+
+static Value floating_value(F64 value, types::TypeRef type) {
+    Value made = {.floating = {.value = value, .type = type}};
+    return made;
+}
+
+static Value enumerator_value(types::TypeRef type, Usize index) {
+    Value made = {.enumerator = {.type = type, .index = index}};
+    return made;
+}
+
+static Value fact_value(Str family, Str name) {
+    Value made = {.fact = {.family = family, .name = name}};
+    return made;
+}
+
+// The value as a message shows it: `-3`, `true`, `1.5`, `.linux`, `u32`.
+export Str show(Value v) {
+    if (v == .integer) return msg(format::push(v.integer.negative ? "-" : "", v.integer.magnitude));
+    if (v == .boolean) return v.boolean.value ? "true" : "false";
+    if (v == .floating) return msg(format::push(v.floating.value));
+    if (v == .enumerator) {
+        types::Slot slots[:] = types::slots_of(v.enumerator.type).items;
+        return msg(format::push(".", slots[v.enumerator.index].name));
+    }
+    if (v == .type_value) return types::show(v.type_value.type);
+    if (v == .fact) return msg(format::push(".", v.fact.name));
+    return "";
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Whole numbers: a magnitude and a sign
+
+constexpr U64 most = 0xFFFFFFFFFFFFFFFF;
+
+// A whole number, or `ok` false when the result has no 64-bit magnitude.
+struct Whole {
+    U64 magnitude;
+    Bool negative;
+    Bool ok;
+};
+
+static Whole whole(U64 magnitude, Bool negative) {
+    return (Whole){.magnitude = magnitude, .negative = negative && magnitude != 0, .ok = true};
+}
+
+static Whole lost() {
+    return (Whole){.ok = false};
+}
+
+static Whole whole_add(Whole a, Whole b) {
+    if (a.negative == b.negative) {
+        if (a.magnitude > most - b.magnitude) return lost();
+        return whole(a.magnitude + b.magnitude, a.negative);
+    }
+    if (a.magnitude >= b.magnitude) return whole(a.magnitude - b.magnitude, a.negative);
+    return whole(b.magnitude - a.magnitude, b.negative);
+}
+
+static Whole whole_multiply(Whole a, Whole b) {
+    if (a.magnitude != 0 && b.magnitude > most / a.magnitude) return lost();
+    return whole(a.magnitude * b.magnitude, a.negative != b.negative);
+}
+
+// -1, 0 or 1 as `a` is below, equal to or above `b`.
+static I32 whole_order(Whole a, Whole b) {
+    if (a.negative != b.negative) return a.negative ? -1 : 1;
+    if (a.magnitude == b.magnitude) return 0;
+    Bool below = a.magnitude < b.magnitude;
+    if (a.negative) below = !below;
+    return below ? -1 : 1;
+}
+
+// Whether `w` is a value of the integer type `t`; any whole number is one of a literal with no type yet.
+static Bool fits(types::TypeRef t, Whole w) {
+    if (t == nullptr || t->kind != .integer) return true;
+    U32 bits = types::bits_of(t);
+    if (bits > 64) return true;
+    if (types::signed_of(t)) {
+        U64 limit = (U64)1 << (bits - 1);
+        return w.negative ? w.magnitude <= limit : w.magnitude < limit;
+    }
+    if (w.negative) return false;
+    return bits == 64 || w.magnitude < ((U64)1 << bits);
+}
+
+// The width the bits of an integer of type `t` are read in: its own up to 64, and 64 for a literal with no type.
+static U32 width_of(types::TypeRef t) {
+    if (t == nullptr || t->kind != .integer) return 64;
+    U32 bits = types::bits_of(t);
+    return bits > 64 ? 64 : bits;
+}
+
+static U64 mask_of(U32 bits) {
+    if (bits >= 64) return most;
+    return ((U64)1 << bits) - 1;
+}
+
+// The two's complement bits of `w` in `bits` bits.
+static U64 pattern_of(Whole w, U32 bits) {
+    U64 raw = w.negative ? 0 - w.magnitude : w.magnitude;
+    return raw & mask_of(bits);
+}
+
+// The whole number that `raw` is as `bits` bits, signed or not.
+static Whole from_pattern(U64 raw, U32 bits, Bool is_signed) {
+    U64 kept = raw & mask_of(bits);
+    if (is_signed && ((kept >> (bits - 1)) & 1) != 0) return whole(0 - (kept | ~mask_of(bits)), true);
+    return whole(kept, false);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A run: a stack of steps and a stack of values
+
+// One step: the value of an expression (or of a statement that is one, `if c: a else: b`), and where the step is in
+// it. `prefix` is the module whose names the expression reads; `type` and `mark` are what a later phase needs back.
+struct Step {
+    const ast::Expr *expr;
+    const ast::Stmt *stmt;
+    U32 phase;
+    Str prefix;
+    types::TypeRef type;
+};
+
+struct Run {
+    types::Checked *r;
+    Step steps[:];
+    Usize top;
+    Value values[:];
+    Usize have;
+    U64 ran;
+    Usize depth;  // the names and calls being read, one inside the other
+    Usize scopes; // the scopes pushed for the parameters of the calls being read
+    Bool stopped;
+    Bool typed_only; // never ask the checker to type an operand: read only the types it recorded
+    Outcome out;
+};
+
+static void push_step(Run *run, Step step) {
+    if (run->top == countof(run->steps)) {
+        Usize capacity = countof(run->steps) * 2;
+        if (capacity < 32) capacity = 32;
+        run->steps = mem::realloc(run->steps, capacity);
+    }
+    run->steps[run->top] = step;
+    run->top += 1;
+}
+
+static void push_value(Run *run, Value value) {
+    if (run->have == countof(run->values)) {
+        Usize capacity = countof(run->values) * 2;
+        if (capacity < 32) capacity = 32;
+        run->values = mem::realloc(run->values, capacity);
+    }
+    run->values[run->have] = value;
+    run->have += 1;
+}
+
+static Value pop_value(Run *run) {
+    run->have -= 1;
+    return run->values[run->have];
+}
+
+// Stops the run: `at` is not known at compile time, because `why`.
+static void unknown(Run *run, ast::Span at, Str why) {
+    if (run->stopped) return;
+    run->stopped = true;
+    run->out = (Outcome){.known = false, .value = boolean_value(false), .failed = false, .at = at, .why = why};
+}
+
+// Stops the run with an error of the evaluation itself.
+static void failed(Run *run, ast::Span at, Str why) {
+    unknown(run, at, why);
+    run->out.failed = true;
+}
+
+// A step of the same module as `from`, at phase 0.
+static Step expr_step(const ast::Expr *e, Step from) {
+    return (Step){.expr = e, .stmt = nullptr, .phase = 0, .prefix = from.prefix, .type = nullptr};
+}
+
+static Step stmt_step(const ast::Stmt *s, Step from) {
+    return (Step){.expr = nullptr, .stmt = s, .phase = 0, .prefix = from.prefix, .type = nullptr};
+}
+
+// The step `from` again, at a later phase.
+static Step later(Step from, U32 phase) {
+    Step again = from;
+    again.phase = phase;
+    return again;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Types
+
+static Bool is_open(const Run *run, types::TypeRef t) {
+    return t == nullptr || t == run->r->table.invalid || t->kind == .automatic || t->kind == .concept_type;
+}
+
+// A written type, resolved without reporting: a name the checker does not know leaves the value unknown, and the
+// checker reports the name where it types the expression.
+static types::TypeRef resolve_quiet(Run *run, const ast::TypeExpr *written) {
+    types::Checked *r = run->r;
+    Usize errors = r->error_count;
+    Bool was_new = r->new_syntax;
+    r->new_syntax = true;
+    types::TypeRef made = types::resolve(r, written);
+    r->new_syntax = was_new;
+    r->error_count = errors;
+    return made;
+}
+
+// The type a plain name stands for when no symbol has it (`u8`, `i32`), else null.
+static types::TypeRef type_named(Run *run, const ast::Expr *e, ast::Path path) {
+    ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
+    written->span = e->span;
+    written->kind = (ast::TypeKind){.named = {.path = path}};
+    types::TypeRef made = resolve_quiet(run, written);
+    if (is_open(run, made)) return nullptr;
+    return made;
+}
+
+// The type of the operand of `sizeof`, `alignof`, `countof`: the type a name of a type stands for, the type the
+// checker gave the expression, or the one it gives now. Null when it has none yet.
+static types::TypeRef operand_type(Run *run, const ast::Expr *x) {
+    types::Checked *r = run->r;
+    if (x->kind == .type_value) return resolve_quiet(run, x->kind.type_value.type);
+    ast::Path path = {};
+    if (types::name_path(x, &path)) {
+        const types::Symbol *s = types::type_through_modules(r, path);
+        if (s != nullptr && s->kind == .type_name) return s->type;
+        if (s != nullptr && s->kind == .variable && s->type != nullptr && s->type->kind != .type_type) return s->type;
+        if (s == nullptr) return type_named(run, x, path);
+    }
+    types::TypeRef recorded = types::type_of(r, x);
+    if (recorded != nullptr) return recorded;
+    if (run->typed_only || r->options.expression == nullptr) return nullptr;
+    Usize errors = r->error_count;
+    types::TypeRef made = r->options.expression(r, x);
+    r->error_count = errors;
+    return made;
+}
+
+// Whether `text` is `Str` and `other` a read-only slice of `Char`: one type to `typeof(x) == T` (#2853).
+static Bool text_and_chars(const Run *run, types::TypeRef text, types::TypeRef other) {
+    if (text->kind != .text || other->kind != .slice) return false;
+    return other->kind.slice.pointee_const && other->kind.slice.element == types::builtin(&run->r->table, "Char");
+}
+
+static Bool same_type(const Run *run, types::TypeRef a, types::TypeRef b) {
+    return a == b || text_and_chars(run, a, b) || text_and_chars(run, b, a);
+}
+
+// The questions about a type that are built in: `is_slice(T)` and its family, and the concepts (`int(T)`, `num(T)`).
+static Bool is_question(Str name) {
+    return same(name, "is_slice") || same(name, "is_array") || same(name, "is_record") || same(name, "is_pointer") ||
+           same(name, "is_integer") || same(name, "is_float") || same(name, "is_signed") || same(name, "is_bool") ||
+           same(name, "is_enum");
+}
+
+static Bool is_concept(Str name) {
+    return same(name, "int") || same(name, "signed") || same(name, "unsigned") || same(name, "float") ||
+           same(name, "num") || same(name, "pointer");
+}
+
+static Bool question_answer(Str name, types::TypeRef t) {
+    if (same(name, "is_slice")) return t->kind == .slice || t->kind == .text || t->kind == .block;
+    if (same(name, "is_array")) return t->kind == .array;
+    if (same(name, "is_record")) return t->kind == .record;
+    if (same(name, "is_pointer")) return t->kind == .pointer;
+    if (same(name, "is_integer")) return t->kind == .integer;
+    if (same(name, "is_float")) return t->kind == .floating;
+    if (same(name, "is_signed")) return t->kind == .integer && types::signed_of(t);
+    if (same(name, "is_bool")) return t->kind == .bool_type;
+    if (same(name, "is_enum")) return t->kind == .enumeration;
+    return types::concept_holds(name, t);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The target
+
+static Bool set_flag(Bool value, Bool *out) {
+    *out = value;
+    return true;
+}
+
+// A fact of `target` that is a Bool, false when `fact` is not one.
+static Bool flag_fact(Str fact, Bool *out) {
+    if (same(fact, "static_analyzer"))
+        return set_flag(false, out); // the new front end never runs under clang's analyzer
+    if (same(fact, "address_sanitizer")) return set_flag(target::address_sanitizer, out);
+    if (same(fact, "undefined_sanitizer")) return set_flag(target::undefined_sanitizer, out);
+    if (same(fact, "thread_sanitizer")) return set_flag(target::thread_sanitizer, out);
+    if (same(fact, "assertions")) return set_flag(target::assertions, out);
+    if (same(fact, "fast_math")) return set_flag(__FINITE_MATH_ONLY__ != 0, out);
+    return false;
+}
+
+// The value of `target.<fact>`, false when `target` has no such fact (#3039: which facts exist is the owner's
+// question; these are the ones the checker read before). The system and the processor are the ones smith runs on
+// (`when::host`), as `@when` reads them, until a compile names another target; the sanitizers and `assertions` are
+// those of the build smith itself was made with, which is what the checker folded before (#2461).
+export Bool target_fact(const types::Checked *r, Str fact, Value *out) {
+    types::TypeRef number = types::builtin(&r->table, "I32");
+    Bool flag = false;
+    if (same(fact, "os")) {
+        *out = fact_value("os", when::host() == when::os_macos ? "macos" : "linux");
+    } else if (same(fact, "arch")) {
+        *out = fact_value("arch", when::host_arch() == when::arch_aarch64 ? "aarch64" : "x86_64");
+    } else if (same(fact, "float_radix")) {
+        *out = integer_value(2, false, number);
+    } else if (same(fact, "f32_mantissa_bits")) {
+        *out = integer_value(24, false, number);
+    } else if (same(fact, "f64_mantissa_bits")) {
+        *out = integer_value(53, false, number);
+    } else if (same(fact, "float_eval_method")) {
+        *out = integer_value(0, false, number);
+    } else if (flag_fact(fact, &flag)) {
+        *out = boolean_value(flag);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// Whether `name` is a name the fact `family` can have (`.macos` and `.linux` of `os`).
+static Bool fact_has(Str family, Str name) {
+    if (same(family, "os")) return same(name, "macos") || same(name, "linux");
+    return same(name, "aarch64") || same(name, "x86_64");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Literals and names
+
+static void literal_step(Run *run, const ast::Expr *e) {
+    types::TypeRef t = types::type_of(run->r, e);
+    if (e->kind == .integer) {
+        if (t != nullptr && t->kind != .integer) t = nullptr;
+        push_value(run, integer_value(e->kind.integer.value, false, t));
+    } else if (e->kind == .character) {
+        if (t != nullptr && t->kind != .integer) t = nullptr;
+        push_value(run, integer_value(e->kind.character.value, false, t));
+    } else if (e->kind == .boolean) {
+        push_value(run, boolean_value(e->kind.boolean.value));
+    } else if (e->kind == .floating) {
+        if (t != nullptr && t->kind != .floating) t = nullptr;
+        push_value(run, floating_value(e->kind.floating.value, t));
+    }
+}
+
+// The module a symbol is declared in, as its name carries it (`std::math::` of `std::math::pi`); the module of the
+// step that names it when its name has none (a local, a name of the module checked).
+static Str module_of(Str name, Str inherited) {
+    for (Usize i = countof(name); i >= 2; i--) {
+        if (name[i - 1] == ':' && name[i - 2] == ':') return name[0:i];
+    }
+    return inherited;
+}
+
+// A name that is a symbol: a bound compile-time parameter, a type, or a constant, whose initializer is read next in
+// the module that declares it, and given the constant's type after (`settle`).
+static void symbol_step(Run *run, Step s, const types::Symbol *symbol) {
+    const ast::Expr *e = s.expr;
+    if (symbol->has_value) {
+        push_value(run, integer_value(symbol->value, false, symbol->type));
+        return;
+    }
+    if (symbol->kind == .type_name) {
+        if (is_open(run, symbol->type)) {
+            unknown(run, e->span, msg(format::push("`", symbol->name, "` is a type known only in an instance")));
+            return;
+        }
+        push_value(run, type_value(symbol->type));
+        return;
+    }
+    const ast::Expr *init = types::constant_initializer(symbol);
+    if (init == nullptr) {
+        Str what = "not known until the program runs";
+        if (symbol->kind == .function_symbol) what = "a function";
+        if (symbol->kind == .variable && !symbol->is_const) what = "a variable that can change";
+        unknown(run, e->span, msg(format::push("`", symbol->name, "` is ", what)));
+        return;
+    }
+    if (run->depth == depth_limit()) {
+        unknown(run, e->span, msg(format::push("`", symbol->name, "` is defined by itself")));
+        return;
+    }
+    run->depth += 1;
+    Step settle = later(s, 1);
+    settle.type = symbol->type;
+    push_step(run, settle);
+    Step read = expr_step(init, s);
+    if (init->kind == .variant) read.type = symbol->type;
+    read.prefix = module_of(symbol->name, s.prefix);
+    push_step(run, read);
+}
+
+static void name_step(Run *run, Step s, ast::Path path) {
+    const types::Symbol *symbol = types::type_through_modules(run->r, path);
+    if (symbol != nullptr) {
+        symbol_step(run, s, symbol);
+        return;
+    }
+    types::TypeRef named = type_named(run, s.expr, path);
+    if (named == nullptr) {
+        unknown(run, s.expr->span, "this name is not known at compile time");
+        return;
+    }
+    push_value(run, type_value(named));
+}
+
+// The initializer of a constant is read: the value takes the constant's type, which it must fit.
+static void settle_name(Run *run, Step s) {
+    run->depth -= 1;
+    Value v = pop_value(run);
+    types::TypeRef declared = s.type;
+    if (declared == nullptr || is_open(run, declared)) {
+        push_value(run, v);
+        return;
+    }
+    if (v == .integer && declared->kind == .integer) {
+        Whole w = whole(v.integer.magnitude, v.integer.negative);
+        if (!fits(declared, w)) {
+            failed(run, s.expr->span,
+                   msg(format::push("`", show(v), "` does not fit `", types::show(declared), "` at compile time")));
+            return;
+        }
+        push_value(run, integer_value(w.magnitude, w.negative, declared));
+        return;
+    }
+    if (v == .integer && declared->kind == .floating) {
+        F64 real = (F64)v.integer.magnitude;
+        push_value(run, floating_value(v.integer.negative ? -real : real, declared));
+        return;
+    }
+    if (v == .floating && declared->kind == .floating) {
+        push_value(run, floating_value(v.floating.value, declared));
+        return;
+    }
+    push_value(run, v);
+}
+
+// A path of names as the checker's lookups take it.
+static ast::Path path_of(const types::Names *names, Usize count, ast::Span span) {
+    ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, count);
+    for (Usize i = 0; i < count; i++)
+        segments[i] = (ast::Identifier){.text = names->items[i], .span = span};
+    return (ast::Path){.segments = segments, .span = span};
+}
+
+// The index of the enumerator `name` of the enumeration `t`; false when it has none.
+static Bool enumerator_index(types::TypeRef t, Str name, Usize *index) {
+    if (t == nullptr || t->kind != .enumeration) return false;
+    types::Slot slots[:] = types::slots_of(t).items;
+    for (Usize i = 0; i < countof(slots); i++) {
+        if (same(slots[i].name, name)) {
+            *index = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+// `a.b`: a fact of the target (`target.os`), an enumerator through its type (`Color.green`), or a name read through
+// a module or a C header (`m.limit`, `k.SIDE`).
+static void member_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    types::Checked *r = run->r;
+    types::Names names = types::member_names(e);
+    if (names.count < 2) {
+        unknown(run, e->span, "a member of a value is not read at compile time");
+        return;
+    }
+    Value fact = boolean_value(false);
+    if (names.count == 2 && same(names.items[0], "target") && types::scoped(r, "target") == nullptr) {
+        if (target_fact(r, names.items[1], &fact)) {
+            push_value(run, fact);
+        } else {
+            unknown(run, e->span, msg(format::push("`target` has no fact `", names.items[1], "`")));
+        }
+        return;
+    }
+    const types::Symbol *owner = types::type_through_modules(r, path_of(&names, names.count - 1, e->span));
+    Usize index = 0;
+    if (owner != nullptr && owner->kind == .type_name && !types::is_payload_enum(owner->type) &&
+        enumerator_index(owner->type, names.items[names.count - 1], &index)) {
+        push_value(run, enumerator_value(owner->type, index));
+        return;
+    }
+    const types::Symbol *symbol = types::type_through_modules(r, path_of(&names, names.count, e->span));
+    if (symbol == nullptr) {
+        unknown(run, e->span, "a member of a value is not read at compile time");
+        return;
+    }
+    symbol_step(run, s, symbol);
+}
+
+// `.green` where the checker has given it its enumeration.
+static void variant_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    types::TypeRef t = types::type_of(run->r, e);
+    if (t == nullptr) t = s.type; // the initializer of `const c: Color = .green`: the constant's type
+    Usize index = 0;
+    if (t == nullptr || e->kind != .variant || e->kind.variant.payload != nullptr || types::is_payload_enum(t) ||
+        !enumerator_index(t, e->kind.variant.name, &index)) {
+        unknown(run, e->span, "this variant is not known at compile time");
+        return;
+    }
+    push_value(run, enumerator_value(t, index));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Operators
+
+static Str op_text(ast::BinaryOp op) {
+    if (op == .add) return "+";
+    if (op == .subtract) return "-";
+    if (op == .multiply) return "*";
+    if (op == .divide) return "/";
+    if (op == .remainder) return "%";
+    if (op == .shift_left) return "<<";
+    return ">>";
+}
+
+static Bool is_comparison(ast::BinaryOp op) {
+    return op == .less || op == .greater || op == .less_equal || op == .greater_equal || op == .equal ||
+           op == .not_equal;
+}
+
+static Bool compare(ast::BinaryOp op, I32 order) {
+    if (op == .less) return order < 0;
+    if (op == .greater) return order > 0;
+    if (op == .less_equal) return order <= 0;
+    if (op == .greater_equal) return order >= 0;
+    if (op == .equal) return order == 0;
+    return order != 0;
+}
+
+// The type of an operation on two integers: the one both have, or the one that has one beside a literal; none when
+// the two differ (the checker reports that where it types the operation).
+// The type a type value holds; null for any other value.
+static types::TypeRef held_type(Value v) {
+    if (v == .type_value) return v.type_value.type;
+    return nullptr;
+}
+
+static types::TypeRef joined_type(types::TypeRef a, types::TypeRef b) {
+    if (a == nullptr) return b;
+    if (b == nullptr || a == b) return a;
+    return nullptr;
+}
+
+// `+ - * / %` of two whole numbers; `ok` false for a result with no 64-bit magnitude. The caller has refused a zero
+// divisor.
+static Whole arithmetic(ast::BinaryOp op, Whole a, Whole b) {
+    if (op == .add) return whole_add(a, b);
+    if (op == .subtract) return whole_add(a, whole(b.magnitude, !b.negative));
+    if (op == .multiply) return whole_multiply(a, b);
+    if (op == .divide) return whole(a.magnitude / b.magnitude, a.negative != b.negative);
+    return whole(a.magnitude % b.magnitude, a.negative);
+}
+
+// `<< >> & | ^` on the bits of the type, as the machine does them.
+static Whole bitwise(ast::BinaryOp op, Whole a, Whole b, types::TypeRef t) {
+    U32 bits = width_of(t);
+    Bool is_signed = t != nullptr && types::signed_of(t);
+    U64 left = pattern_of(a, bits);
+    U64 right = pattern_of(b, bits);
+    if (op == .bit_and) return from_pattern(left & right, bits, is_signed);
+    if (op == .bit_or) return from_pattern(left | right, bits, is_signed);
+    if (op == .bit_xor) return from_pattern(left ^ right, bits, is_signed);
+    if (op == .shift_left) return from_pattern(left << b.magnitude, bits, is_signed);
+    if (is_signed && a.negative) { // an arithmetic shift keeps the sign
+        U64 filled = (left >> b.magnitude) | ~(mask_of(bits) >> b.magnitude);
+        return from_pattern(filled, bits, true);
+    }
+    return from_pattern(left >> b.magnitude, bits, is_signed);
+}
+
+static void integer_binary(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
+    if (l != .integer || r != .integer) return;
+    Whole a = whole(l.integer.magnitude, l.integer.negative);
+    Whole b = whole(r.integer.magnitude, r.integer.negative);
+    types::TypeRef t = joined_type(l.integer.type, r.integer.type);
+    if (is_comparison(op)) {
+        push_value(run, boolean_value(compare(op, whole_order(a, b))));
+        return;
+    }
+    Bool shift = op == .shift_left || op == .shift_right;
+    if (shift) t = l.integer.type;
+    if ((op == .divide || op == .remainder) && b.magnitude == 0) {
+        failed(run, e->span, "this divides by zero at compile time");
+        return;
+    }
+    if (shift && (b.negative || b.magnitude >= width_of(t))) {
+        failed(run, e->span,
+               msg(format::push("this shifts by ", show(r), " at compile time, which is not below the ", width_of(t),
+                                " bits of the value")));
+        return;
+    }
+    Bool on_bits = shift || op == .bit_and || op == .bit_or || op == .bit_xor;
+    Whole result = on_bits ? bitwise(op, a, b, t) : arithmetic(op, a, b);
+    if (!result.ok && t != nullptr && types::bits_of(t) > 64) {
+        unknown(run, e->span, "a value wider than 64 bits is not computed at compile time yet");
+        return;
+    }
+    if (!result.ok || !fits(t, result)) {
+        Str of = t == nullptr ? msg(format::push("64 bits")) : msg(format::push("`", types::show(t), "`"));
+        failed(run, e->span,
+               msg(format::push("this overflows ", of, " at compile time: ", show(l), " ", op_text(op), " ", show(r))));
+        return;
+    }
+    push_value(run, integer_value(result.magnitude, result.negative, t));
+}
+
+static F64 real_of(Value v) {
+    if (v == .floating) return v.floating.value;
+    if (v == .integer) return v.integer.negative ? -(F64)v.integer.magnitude : (F64)v.integer.magnitude;
+    return 0.0;
+}
+
+static void floating_binary(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
+    F64 a = real_of(l);
+    F64 b = real_of(r);
+    types::TypeRef t = l == .floating ? l.floating.type : nullptr;
+    if (t == nullptr && r == .floating) t = r.floating.type;
+    if (is_comparison(op)) {
+        I32 order = a < b ? -1 : (a > b ? 1 : 0);
+        if (a != a || b != b) { // not a number compares unequal to everything
+            push_value(run, boolean_value(op == .not_equal));
+            return;
+        }
+        push_value(run, boolean_value(compare(op, order)));
+    } else if (op == .add) {
+        push_value(run, floating_value(a + b, t));
+    } else if (op == .subtract) {
+        push_value(run, floating_value(a - b, t));
+    } else if (op == .multiply) {
+        push_value(run, floating_value(a * b, t));
+    } else if (op == .divide) {
+        push_value(run, floating_value(a / b, t));
+    } else {
+        unknown(run, e->span, "this operator is not computed on a float at compile time");
+    }
+}
+
+// The number today's sources compare a named fact with (`target::os == target::linux`, `target::arch == 0`): the
+// one `types_expr::fold_target_system` writes for the bare fact.
+static U64 fact_number(Str family, Str name) {
+    if (same(family, "os")) return (U64)(same(name, "macos") ? when::os_macos : when::os_linux);
+    return (U64)(same(name, "aarch64") ? when::arch_aarch64 : when::arch_x86_64);
+}
+
+// `==` and `!=` of two values that are not numbers: booleans, types, enumerators, facts.
+static void equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
+    Bool equal = false;
+    if (l == .boolean && r == .boolean) {
+        equal = l.boolean.value == r.boolean.value;
+    } else if (l == .type_value && r == .type_value) {
+        equal = same_type(run, l.type_value.type, r.type_value.type);
+    } else if (l == .enumerator && r == .enumerator && l.enumerator.type == r.enumerator.type) {
+        equal = l.enumerator.index == r.enumerator.index;
+    } else if (l == .fact && r == .fact && same(l.fact.family, r.fact.family)) {
+        equal = same(l.fact.name, r.fact.name);
+    } else if (l == .fact && r == .integer) {
+        equal = !r.integer.negative && fact_number(l.fact.family, l.fact.name) == r.integer.magnitude;
+    } else if (l == .integer && r == .fact) {
+        equal = !l.integer.negative && fact_number(r.fact.family, r.fact.name) == l.integer.magnitude;
+    } else {
+        unknown(run, e->span, "these two are not compared at compile time");
+        return;
+    }
+    push_value(run, boolean_value(equal == (op == .equal)));
+}
+
+static void binary_values(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
+    if (l == .integer && r == .integer) {
+        integer_binary(run, e, op, l, r);
+    } else if ((l == .floating || l == .integer) && (r == .floating || r == .integer)) {
+        floating_binary(run, e, op, l, r);
+    } else if (op == .equal || op == .not_equal) {
+        equality(run, e, op, l, r);
+    } else {
+        unknown(run, e->span, "this operator is not computed on these values at compile time");
+    }
+}
+
+// The name of `e` when it is a variant with no payload (`.linux`), else an empty text.
+static Str bare_variant(const ast::Expr *e) {
+    if (e->kind != .variant) return "";
+    if (e->kind.variant.payload != nullptr) return "";
+    return e->kind.variant.name;
+}
+
+// The variant `.name` as a value of what the other side of a comparison is: an enumerator of its enumeration, a name
+// of its fact.
+static Bool variant_like(Run *run, const ast::Expr *e, Str name, Value other, Value *out) {
+    Usize index = 0;
+    if (other == .enumerator && enumerator_index(other.enumerator.type, name, &index)) {
+        *out = enumerator_value(other.enumerator.type, index);
+        return true;
+    }
+    if (other == .fact && fact_has(other.fact.family, name)) {
+        *out = fact_value(other.fact.family, name);
+        return true;
+    }
+    if (other == .fact) {
+        Bool os = same(other.fact.family, "os");
+        unknown(run, e->span,
+                msg(format::push("`.", name, "` is not a name of `target.", other.fact.family, "`; write ",
+                                 os ? "`.macos` or `.linux`" : "`.aarch64` or `.x86_64`")));
+        return false;
+    }
+    unknown(run, e->span, msg(format::push("`.", name, "` is not a variant of the value it is compared with")));
+    return false;
+}
+
+// A binary operator. `and` and `or` read the left side first and the right only when the left does not decide; a
+// comparison with a bare variant (`target.os == .linux`) reads the other side first, which says what the variant is.
+static void binary_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .binary) return;
+    ast::BinaryOp op = e->kind.binary.op;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    Bool equality_op = op == .equal || op == .not_equal;
+    if (op == .logical_and || op == .logical_or) {
+        push_step(run, later(s, 2));
+        push_step(run, expr_step(left, s));
+    } else if (equality_op && countof(bare_variant(right)) > 0) {
+        push_step(run, later(s, 4));
+        push_step(run, expr_step(left, s));
+    } else if (equality_op && countof(bare_variant(left)) > 0) {
+        push_step(run, later(s, 5));
+        push_step(run, expr_step(right, s));
+    } else {
+        push_step(run, later(s, 1));
+        push_step(run, expr_step(right, s));
+        push_step(run, expr_step(left, s));
+    }
+}
+
+static void binary_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .binary) return;
+    ast::BinaryOp op = e->kind.binary.op;
+    if (s.phase == 1) {
+        Value r = pop_value(run);
+        Value l = pop_value(run);
+        binary_values(run, e, op, l, r);
+    } else if (s.phase == 2) { // the left side of `and`, `or`
+        Value l = pop_value(run);
+        if (l != .boolean) {
+            unknown(run, e->kind.binary.left->span, "this is not a bool known at compile time");
+        } else if (l.boolean.value == (op == .logical_or)) {
+            push_value(run, l); // `false and x`, `true or x`: the right side is not read
+        } else {
+            push_step(run, later(s, 3));
+            push_step(run, expr_step(e->kind.binary.right, s));
+        }
+    } else if (s.phase == 3) {
+        Value r = pop_value(run);
+        if (r != .boolean) {
+            unknown(run, e->kind.binary.right->span, "this is not a bool known at compile time");
+        } else {
+            push_value(run, r);
+        }
+    } else { // 4: the variant is on the right; 5: on the left
+        const ast::Expr *written = s.phase == 4 ? e->kind.binary.right : e->kind.binary.left;
+        Value other = pop_value(run);
+        Value variant = boolean_value(false);
+        if (variant_like(run, written, bare_variant(written), other, &variant)) equality(run, e, op, other, variant);
+    }
+}
+
+static void unary_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .unary) return;
+    ast::UnaryOp op = e->kind.unary.op;
+    Value v = pop_value(run);
+    if (op == .logical_not && v == .boolean) {
+        push_value(run, boolean_value(!v.boolean.value));
+    } else if (op == .plus && (v == .integer || v == .floating)) {
+        push_value(run, v);
+    } else if (op == .negate && v == .floating) {
+        push_value(run, floating_value(-v.floating.value, v.floating.type));
+    } else if (op == .negate && v == .integer) {
+        Whole w = whole(v.integer.magnitude, !v.integer.negative);
+        if (!fits(v.integer.type, w)) {
+            failed(run, e->span,
+                   msg(format::push("this overflows `", types::show(v.integer.type), "` at compile time: -", show(v))));
+            return;
+        }
+        push_value(run, integer_value(w.magnitude, w.negative, v.integer.type));
+    } else if (op == .bit_not && v == .integer) {
+        types::TypeRef t = v.integer.type;
+        U32 bits = width_of(t);
+        Whole w = whole(v.integer.magnitude, v.integer.negative);
+        Whole flipped = from_pattern(~pattern_of(w, bits), bits, t != nullptr && types::signed_of(t));
+        push_value(run, integer_value(flipped.magnitude, flipped.negative, t));
+    } else {
+        unknown(run, e->span, "this operator is not computed on this value at compile time");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Conversions
+
+// A whole number as a value of the integer type `to`: checked (`x.to(T)`), or its low bits (`x.wrap(T)`).
+static void integer_cast(Run *run, const ast::Expr *e, Whole w, types::TypeRef to, Bool wrapping, Str shown) {
+    if (wrapping) {
+        U32 bits = width_of(to);
+        Whole kept = from_pattern(pattern_of(w, 64), bits, types::signed_of(to));
+        push_value(run, integer_value(kept.magnitude, kept.negative, to));
+        return;
+    }
+    if (!fits(to, w)) {
+        failed(run, e->span, msg(format::push("`", shown, "` does not fit `", types::show(to), "` at compile time")));
+        return;
+    }
+    push_value(run, integer_value(w.magnitude, w.negative, to));
+}
+
+static void cast_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .cast) return;
+    Value v = pop_value(run);
+    Bool wrapping = e->kind.cast.form == .wrapping;
+    types::TypeRef to = resolve_quiet(run, e->kind.cast.type);
+    if (is_open(run, to) || e->kind.cast.form == .reinterpret) {
+        unknown(run, e->span, "this conversion is not known at compile time");
+    } else if (to->kind == .integer && v == .integer) {
+        integer_cast(run, e, whole(v.integer.magnitude, v.integer.negative), to, wrapping, show(v));
+    } else if (to->kind == .integer && v == .enumerator) {
+        types::Slot slots[:] = types::slots_of(v.enumerator.type).items;
+        integer_cast(run, e, whole(slots[v.enumerator.index].value, false), to, wrapping, show(v));
+    } else if (to->kind == .integer && v == .boolean) {
+        push_value(run, integer_value(v.boolean.value ? 1 : 0, false, to));
+    } else if (to->kind == .integer && v == .floating) {
+        F64 real = v.floating.value;
+        Bool negative = real < 0.0;
+        F64 size = negative ? -real : real;
+        if (real != real || size >= 18446744073709551616.0) {
+            failed(run, e->span,
+                   msg(format::push("`", show(v), "` does not fit `", types::show(to), "` at compile time")));
+            return;
+        }
+        integer_cast(run, e, whole((U64)size, negative), to, wrapping, show(v));
+    } else if (to->kind == .floating && (v == .integer || v == .floating)) {
+        F64 real = real_of(v);
+        if (types::bits_of(to) == 32) real = (F64)(F32)real;
+        push_value(run, floating_value(real, to));
+    } else {
+        unknown(run, e->span, "this conversion is not computed at compile time");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// sizeof, alignof, countof
+
+// The callee of `fields(T)` and its one argument, else null.
+static const ast::Expr *fields_argument(const ast::Expr *e) {
+    if (e->kind != .call) return nullptr;
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind != .name || countof(e->kind.call.args) != 1) return nullptr;
+    ast::Path path = callee->kind.name.path;
+    if (countof(path.segments) != 1 || !same(path.segments[0].text, "fields")) return nullptr;
+    return e->kind.call.args[0];
+}
+
+// The number `countof` gives for a type: an array's length, a tuple's (a pack's) elements. False for a count known
+// only at run time.
+static Bool counted(types::TypeRef t, U64 *count) {
+    if (t->kind == .array) {
+        *count = types::count_of(t);
+        return true;
+    }
+    if (t->kind == .tuple) {
+        *count = (U64)countof(types::slots_of(t).items);
+        return true;
+    }
+    return false;
+}
+
+static void query_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .query) return;
+    types::Checked *r = run->r;
+    ast::QueryOp op = e->kind.query.op;
+    const ast::Expr *operand = e->kind.query.operand;
+    types::TypeRef size = types::builtin(&r->table, "Usize");
+    const ast::Expr *reflected = (op == .count_of && operand != nullptr) ? fields_argument(operand) : nullptr;
+    types::TypeRef t = nullptr;
+    if (e->kind.query.type != nullptr) {
+        t = resolve_quiet(run, e->kind.query.type);
+    } else if (reflected != nullptr) {
+        t = operand_type(run, reflected);
+    } else {
+        t = operand_type(run, operand);
+    }
+    if (is_open(run, t)) {
+        unknown(run, e->span, "the type this asks about is not known yet");
+        return;
+    }
+    U64 answer = 0;
+    if (reflected != nullptr) {
+        if (t->kind != .record) {
+            unknown(run, e->span, "`fields` lists the fields of a struct");
+            return;
+        }
+        answer = (U64)countof(types::slots_of(t).items);
+    } else if (op == .count_of) {
+        if (!counted(t, &answer)) {
+            unknown(run, e->span, "this count is known only at run time");
+            return;
+        }
+    } else {
+        types::Layout layout = types::layout(&r->table.target, t);
+        if (!layout.known) {
+            unknown(run, e->span, msg(format::push("`", types::show(t), "` has no size")));
+            return;
+        }
+        answer = op == .size_of ? layout.size : layout.align;
+    }
+    push_value(run, integer_value(answer, false, size));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Calls
+
+// Which functions run at compile time. Step 1 runs only a concept function: every parameter a `type`, the result
+// `bool`, the body one expression (`types::concept_body`). Step 2 of #3039 makes this any function.
+export Bool may_run(const ast::Decl *d) {
+    return types::concept_body(d) != nullptr;
+}
+
+// The name a call names when its callee is one plain name, else an empty text.
+static Str callee_name(const ast::Expr *callee) {
+    if (callee->kind != .name) return "";
+    ast::Path path = callee->kind.name.path;
+    if (countof(path.segments) != 1) return "";
+    return path.segments[0].text;
+}
+
+// The function a call names, read through modules; null when its callee is no name of one.
+static const types::Symbol *called(Run *run, const ast::Expr *callee) {
+    types::Names names = types::member_names(callee);
+    ast::Path path = {};
+    const types::Symbol *symbol = nullptr;
+    if (names.count >= 2) {
+        symbol = types::type_through_modules(run->r, path_of(&names, names.count, callee->span));
+    } else if (types::name_path(callee, &path)) {
+        symbol = types::type_through_modules(run->r, path);
+    }
+    if (symbol == nullptr || symbol->kind != .function_symbol) return nullptr;
+    return symbol;
+}
+
+static const ast::Decl *function_of(const types::Symbol *symbol) {
+    if (symbol == nullptr) return nullptr;
+    const ast::Decl *decl = symbol->decl;
+    if (decl == nullptr || decl->kind != .function) return nullptr;
+    return decl;
+}
+
+// A call: its arguments are read first, in order, then `call_resume` answers it.
+static void call_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .call) return;
+    const ast::Expr *callee = e->kind.call.callee;
+    ast::ExprRef args[:] = e->kind.call.args;
+    const ast::Decl *decl = function_of(called(run, callee));
+    Str name = callee_name(callee);
+    Bool built_in = decl == nullptr && countof(args) == 1 && (is_question(name) || is_concept(name));
+    Bool runs = decl != nullptr && may_run(decl) && decl->kind == .function &&
+                countof(decl->kind.function.params) == countof(args);
+    if (!built_in && !runs) {
+        Str shown = "this";
+        if (countof(name) > 0) shown = name;
+        unknown(run, e->span,
+                msg(format::push("`", shown, "(...)` is a call, and a function is not run at compile time yet; write ",
+                                 "the value")));
+        return;
+    }
+    push_step(run, later(s, 1));
+    for (Usize i = countof(args); i > 0; i--)
+        push_step(run, expr_step(args[i - 1], s));
+}
+
+// The arguments of a call are on the value stack. A built-in question is answered; a concept function's body is read
+// next, in its own module, with its parameters declared as the types passed.
+static void call_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .call) return;
+    types::Checked *r = run->r;
+    ast::ExprRef args[:] = e->kind.call.args;
+    Usize base = run->have - countof(args);
+    for (Usize i = 0; i < countof(args); i++) {
+        Value given = run->values[base + i];
+        if (given != .type_value) {
+            unknown(run, args[i]->span, "this argument is not a type known at compile time");
+            return;
+        }
+    }
+    const types::Symbol *symbol = called(run, e->kind.call.callee);
+    const ast::Decl *decl = function_of(symbol);
+    if (decl == nullptr || decl->kind != .function) {
+        Value asked = pop_value(run);
+        push_value(run, boolean_value(question_answer(callee_name(e->kind.call.callee), held_type(asked))));
+        return;
+    }
+    if (run->depth == depth_limit()) {
+        unknown(run, e->span,
+                msg(format::push("`", symbol->name, "` is ", depth_limit(), " calls deep at compile time")));
+        return;
+    }
+    ast::Param params[:] = decl->kind.function.params;
+    types::push_scope(&r->scopes);
+    run->scopes += 1;
+    run->depth += 1;
+    for (Usize i = 0; i < countof(params); i++) {
+        types::Symbol bound = {.name = params[i].name, .kind = .type_name, .type = held_type(run->values[base + i])};
+        (void)types::declare(&r->scopes, bound);
+    }
+    run->have = base;
+    push_step(run, later(s, 2));
+    Step body = expr_step(types::concept_body(decl), s);
+    body.prefix = module_of(symbol->name, s.prefix);
+    push_step(run, body);
+}
+
+// The body of a concept function is read: its parameters leave the scope.
+static void call_leave(Run *run) {
+    types::pop_scope(&run->r->scopes);
+    run->scopes -= 1;
+    run->depth -= 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `if` as a value
+
+// A statement that is a value: a block of one statement, an expression, a `return` of one, or an `if` with an `else`
+// whose condition is known.
+static void statement_step(Run *run, Step s) {
+    const ast::Stmt *st = s.stmt;
+    if (st->kind == .block && countof(st->kind.block.items) == 1) {
+        push_step(run, stmt_step(st->kind.block.items[0], s));
+    } else if (st->kind == .expression) {
+        push_step(run, expr_step(st->kind.expression.value, s));
+    } else if (st->kind == .return_stmt && st->kind.return_stmt.value != nullptr) {
+        push_step(run, expr_step(st->kind.return_stmt.value, s));
+    } else if (st->kind == .if_stmt && st->kind.if_stmt.else_branch != nullptr) {
+        push_step(run, later(s, 1));
+        push_step(run, expr_step(st->kind.if_stmt.condition, s));
+    } else {
+        unknown(run, st->span, "a statement is not run at compile time");
+    }
+}
+
+static void statement_resume(Run *run, Step s) {
+    const ast::Stmt *st = s.stmt;
+    if (st->kind != .if_stmt) return;
+    Value test = pop_value(run);
+    if (test != .boolean) {
+        unknown(run, st->kind.if_stmt.condition->span, "this is not a bool known at compile time");
+        return;
+    }
+    push_step(run, stmt_step(test.boolean.value ? st->kind.if_stmt.then_branch : st->kind.if_stmt.else_branch, s));
+}
+
+static void conditional_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .conditional) return;
+    Value test = pop_value(run);
+    if (test != .boolean) {
+        unknown(run, e->kind.conditional.condition->span, "this is not a bool known at compile time");
+        return;
+    }
+    push_step(run, expr_step(test.boolean.value ? e->kind.conditional.then_value : e->kind.conditional.else_value, s));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The loop
+
+static void resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind == .binary) {
+        binary_resume(run, s);
+    } else if (e->kind == .unary) {
+        unary_resume(run, s);
+    } else if (e->kind == .cast) {
+        cast_resume(run, s);
+    } else if (e->kind == .conditional) {
+        conditional_resume(run, s);
+    } else if (e->kind == .call && s.phase == 1) {
+        call_resume(run, s);
+    } else if (e->kind == .call) {
+        call_leave(run);
+    } else {
+        settle_name(run, s); // a name or a member: its constant's initializer is read
+    }
+}
+
+// Whether `e`, written like a type, names a variable: its path is in `path`.
+static Bool names_variable(Run *run, const ast::Expr *e, ast::Path *path) {
+    if (!types::names_a_constant(e, path)) return false;
+    const types::Symbol *symbol = types::type_through_modules(run->r, *path);
+    return symbol != nullptr && symbol->kind == .variable;
+}
+
+static void enter(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    ast::Path path = {};
+    if (e->kind == .integer || e->kind == .character || e->kind == .boolean || e->kind == .floating) {
+        literal_step(run, e);
+    } else if (types::name_path(e, &path) || (e->kind == .type_value && names_variable(run, e, &path))) {
+        name_step(run, s, path); // also `N` of `[N]u8`: the parser reads a capitalized name as a type
+    } else if (e->kind == .member) {
+        member_step(run, s);
+    } else if (e->kind == .variant) {
+        variant_step(run, s);
+    } else if (e->kind == .type_value) {
+        types::TypeRef t = resolve_quiet(run, e->kind.type_value.type);
+        if (is_open(run, t)) {
+            unknown(run, e->span, "this type is not known yet");
+        } else {
+            push_value(run, type_value(t));
+        }
+    } else if (e->kind == .binary) {
+        binary_step(run, s);
+    } else if (e->kind == .unary) {
+        push_step(run, later(s, 1));
+        push_step(run, expr_step(e->kind.unary.operand, s));
+    } else if (e->kind == .cast) {
+        push_step(run, later(s, 1));
+        push_step(run, expr_step(e->kind.cast.operand, s));
+    } else if (e->kind == .conditional) {
+        push_step(run, later(s, 1));
+        push_step(run, expr_step(e->kind.conditional.condition, s));
+    } else if (e->kind == .query) {
+        query_step(run, s);
+    } else if (e->kind == .call) {
+        call_step(run, s);
+    } else if (e->kind == .stmt_expr) {
+        push_step(run, stmt_step(e->kind.stmt_expr.stmt, s));
+    } else {
+        unknown(run, e->span, "this is not known at compile time");
+    }
+}
+
+static void take(Run *run, Step s) {
+    if (s.stmt != nullptr && s.phase == 0) {
+        statement_step(run, s);
+    } else if (s.stmt != nullptr) {
+        statement_resume(run, s);
+    } else if (s.phase == 0) {
+        enter(run, s);
+    } else {
+        resume(run, s);
+    }
+}
+
+// The value of `e` at compile time, in the scopes `r` is in. See the top of the file for what is read.
+static Outcome compute(types::Checked *r, const ast::Expr *e, Bool typed_only) {
+    Run run = {.r = r, .typed_only = typed_only};
+    Str outside = r->prefix;
+    if (e == nullptr) return (Outcome){.known = false, .value = boolean_value(false), .why = "there is no value here"};
+    push_step(&run, (Step){.expr = e, .stmt = nullptr, .phase = 0, .prefix = outside, .type = nullptr});
+    while (run.top > 0 && !run.stopped) {
+        if (run.ran == step_limit()) {
+            failed(&run, e->span,
+                   msg(format::push("this ran ", step_limit(), " steps at compile time without finishing")));
+            break;
+        }
+        run.ran += 1;
+        run.top -= 1;
+        Step s = run.steps[run.top];
+        r->prefix = s.prefix;
+        take(&run, s);
+    }
+    r->prefix = outside;
+    for (; run.scopes > 0; run.scopes--)
+        types::pop_scope(&r->scopes);
+    if (run.stopped) return run.out;
+    return (Outcome){.known = true, .value = run.values[0], .failed = false, .at = e->span, .why = ""};
+}
+
+export Outcome value(types::Checked *r, const ast::Expr *e) {
+    return compute(r, e, false);
+}
+
+// As `value`, but the type of an operand of `sizeof`, `alignof` or `countof` is only the one the checker recorded: an
+// expression it has not typed yet leaves the value unknown. For a caller that types the expression itself afterwards
+// (an `if` condition, whose reads the checker's notes follow in order), and asks again.
+export Outcome typed(types::Checked *r, const ast::Expr *e) {
+    return compute(r, e, true);
+}
+
+// The type `e` is when it is one known at compile time (`typeof(xs[0])`, `u32`, `Pair(i32)`); null for a value,
+// one that only reads like a type (`Pair(n, n)`) included.
+export types::TypeRef type_held(types::Checked *r, const ast::Expr *e) {
+    Outcome found = value(r, e);
+    Value v = found.value;
+    if (!found.known || v != .type_value) return nullptr;
+    return v.type_value.type;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What the callers ask
+
+// Whether `e` is known at compile time.
+export Bool is_known(types::Checked *r, const ast::Expr *e) {
+    return value(r, e).known;
+}
+
+// The value of `e` when it is an integer that is not negative: an array length, a count.
+export Bool length(types::Checked *r, const ast::Expr *e, U64 *out) {
+    Outcome found = value(r, e);
+    if (!found.known || found.value != .integer || found.value.integer.negative) return false;
+    *out = found.value.integer.magnitude;
+    return true;
+}
+
+// The value of `e` when it is an integer, a character, a boolean or an enumerator, as the 64 bits a `match` compares
+// (a negative number in two's complement).
+export Bool bits(types::Checked *r, const ast::Expr *e, U64 *out) {
+    Outcome found = value(r, e);
+    if (!found.known) return false;
+    Value v = found.value;
+    if (v == .integer) {
+        *out = v.integer.negative ? 0 - v.integer.magnitude : v.integer.magnitude;
+    } else if (v == .boolean) {
+        *out = v.boolean.value ? 1 : 0;
+    } else if (v == .enumerator) {
+        *out = types::slots_of(v.enumerator.type).items[v.enumerator.index].value;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// The value of `e` when it is a boolean: the condition of a `static_assert` or of a compile-time `if`.
+export Bool condition(types::Checked *r, const ast::Expr *e, Bool *out) {
+    Outcome found = value(r, e);
+    if (!found.known || found.value != .boolean) return false;
+    *out = found.value.boolean.value;
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reporting
+
+// Where to report `found` for the expression `e` that needed a value: the part of `e` that stopped it, or `e` itself
+// when the reason is somewhere else (the initializer of a constant it names).
+static ast::Span place(Outcome found, const ast::Expr *e) {
+    if (found.at.start >= e->span.start && found.at.end <= e->span.end) return found.at;
+    return e->span;
+}
+
+// Reports why `e` is not a value `what` can use ("an array length"): the error of the evaluation, or what is not
+// known at compile time.
+export void report(types::Checked *r, Outcome found, const ast::Expr *e, Str what) {
+    if (found.failed) {
+        types::failf(r, place(found, e), found.why);
+    } else if (!found.known) {
+        types::failf(r, place(found, e), what, " must be known at compile time: ", found.why);
+    } else {
+        types::failf(r, e->span, what, " cannot be `", show(found.value), "`");
+    }
+}
+
+// `types::Options.length`: the value of `e` as an array length or a count. With a `what`, a value that is not one is
+// reported.
+export Bool length_for(types::Checked *r, const ast::Expr *e, Str what, U64 *out) {
+    Outcome found = value(r, e);
+    if (found.known && found.value == .integer && !found.value.integer.negative) {
+        *out = found.value.integer.magnitude;
+        return true;
+    }
+    if (countof(what) > 0) report(r, found, e, what);
+    return false;
+}
+
+// `types::Options.constant`: the type of a constant written without one, from the value computed for its
+// initializer. An integer no operand gave a type is an `i32`, or an `i64` when it does not fit; a float is an `f64`.
+// Null when no value is computed, or it is a type or a fact, which are not stored.
+export types::TypeRef type_for(types::Checked *r, const ast::Expr *init) {
+    Outcome found = value(r, init);
+    if (!found.known) return nullptr;
+    Value v = found.value;
+    if (v == .boolean) return r->table.bool_type;
+    if (v == .enumerator) return v.enumerator.type;
+    if (v == .floating) {
+        if (v.floating.type != nullptr) return v.floating.type;
+        return types::builtin(&r->table, "F64");
+    }
+    if (v != .integer) return nullptr;
+    if (v.integer.type != nullptr) return v.integer.type;
+    types::TypeRef narrow = types::builtin(&r->table, "I32");
+    if (fits(narrow, whole(v.integer.magnitude, v.integer.negative))) return narrow;
+    return types::builtin(&r->table, "I64");
+}
