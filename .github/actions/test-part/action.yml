@@ -21,7 +21,7 @@ inputs:
     description: '"true" restores the test-result store first; "false" when the job already did'
     default: "true"
   name:
-    description: the part's name in its store's tag and its log's artifact (`units-3of12`); empty, `<part>of<count>`
+    description: the part's name in its store's tag and its log's artifact (`units-3of8`); empty, `<part>of<count>`
     default: ""
   delta:
     description: '"true" publishes only the store entries this part added (./.github/actions/test-cache/save, #3061)'

@@ -24,8 +24,8 @@ inputs:
   delta:
     description: >
       "true" publishes only the test entries this job added since `./.github/actions/test-cache` restored the store, no
-      import cache, and prunes nothing (#3061): 12 of the 13 Linux parts, so a restore downloads one whole store and 12
-      small ones, not 13 copies of the whole. The one part without it carries what it restored on to the next commit
+      import cache, and prunes nothing (#3061): every units part, so a restore downloads one whole store and a small
+      one a units part, not a copy of the whole from each. The one part without it carries what it restored on to the next commit
     default: "false"
 
 runs:

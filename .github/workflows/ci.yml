@@ -1,6 +1,6 @@
 name: ci
 
-# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (13 hosted parts that restore the smith `build-linux` built, #1758, #3061)
+# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (9 hosted parts that restore the smith `build-linux` built, #1758, #3061)
 # and the checks (`check-fmt-prove`: fmt, docs, prove; `check-lint`: lint; same build, beside the shards, #2234), on pull
 # requests too; one macOS job (`macos`) builds and runs what only macOS can (lint of the code only the Mac sees, the
 # `--macos-only` tests; a documents-only change: docs and their tests);
@@ -663,7 +663,7 @@ jobs:
   build-linux:
     # builds smith once for the Linux jobs (#1758, #3061): one job builds, and each test part and check restores it as
     # an artifact. It builds no test: the parts wait for this job, and the tests' build was 76 to 142 s of its 222 to
-    # 274 s; each part builds the tests it runs (a twelfth of the units runner is 11 to 17 s; the front runner's build
+    # 274 s; each part builds the tests it runs (a part of the units runner is 11 to 17 s; the front runner's build
     # is the same minute for any shard, so it has a part of its own), on 4 cores that waited idle before
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
@@ -735,17 +735,19 @@ jobs:
           compression-level: 0
           retention-days: 1
       - name: The test parts
-        # A queue run and the nightly: 12 parts of the units runner and 1 of the front runner (#3061). The count is
+        # A queue run and the nightly: 8 parts of the units runner and 1 of the front runner (#3061). The count is
         # fixed: sizing it by what the test store leaves (#2833) needs the tests built, the 76 to 142 s this job no
-        # longer spends; a part whose tests the store holds builds its runner, asks the store and ends. 12 is from the
-        # budget of #3061: balanced by `.github/shard-costs.tsv`, the heaviest of 12 is 253 CPU seconds (110 s of
-        # tests), of 16 it is 225 (one file); the front runner's tests are about 200 CPU seconds behind a 66 s build.
+        # longer spends; a part whose tests the store holds builds its runner, asks the store and ends. 8 is the lead's
+        # choice from the budget of #3061 while the 20 hosted jobs are the limit: balanced by `.github/shard-costs.tsv`,
+        # the heaviest of 8 is 379 CPU seconds (165 s of tests, the last part ends about 6.3 min after the run starts),
+        # of 12 it is 253 (5.4 min, 4 more jobs), of 16 it is 225 (one file). Raise it when slots stop binding. The
+        # front runner's tests are about 180 CPU seconds behind a one-minute build.
         # A pull request's check runs its tests (`--changed`, both runners) in one part (#2856).
         id: size
         shell: bash
         env:
           FLAGS: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
-          UNITS: "12"
+          UNITS: "8"
         run: |
           part() { printf '{"shard":%s,"count":%s,"flags":"%s","name":"%s","delta":"%s"}' "$@"; }
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
