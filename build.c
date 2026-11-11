@@ -3573,6 +3573,31 @@ static int build_gate_commit(const char *dir, const char *path, const char *subj
     return status != 0 ? status : build_gate_scratch(dir, (const char *[]){"commit", "-q", "-m", subject, nullptr});
 }
 
+// The environment a hook gives (#3151): a second repository `other` (committed once, its HEAD in `before`) is named by
+// GIT_DIR and GIT_WORK_TREE, and must stay as it is while the gate's scratch repository `dir` is built. 0 on success.
+static int build_gate_hook_environment(SmithRun *run, const char *dir, char *other, char *before) {
+    snprintf(other, PATH_MAX, "%s-other", dir);
+    before[0] = '\0';
+    int status =
+        mkdir(other, 0700) != 0 ? 1 : build_gate_scratch(other, (const char *[]){"init", "-q", "-b", "main", nullptr});
+    status = status != 0 ? status : build_gate_commit(other, "keep.txt", "chore: other");
+    const char *const *head =
+        status != 0 ? nullptr : build_gate_git(run, other, (const char *[]){"rev-parse", "HEAD", nullptr});
+    if (head != nullptr && head[0] != nullptr) snprintf(before, 64, "%s", head[0]);
+    char other_git[PATH_MAX];
+    snprintf(other_git, sizeof other_git, "%s/.git", other);
+    setenv("GIT_DIR", other_git, 1);
+    setenv("GIT_WORK_TREE", other, 1);
+    return before[0] == '\0' ? 1 : status;
+}
+
+static bool build_gate_other_untouched(SmithRun *run, const char *other, const char *before) {
+    const char *const *after = build_gate_git(run, other, (const char *[]){"rev-parse", "HEAD", nullptr});
+    const char *const *dirty = build_gate_git(run, other, (const char *[]){"status", "--porcelain", nullptr});
+    return after != nullptr && after[0] != nullptr && strcmp(after[0], before) == 0 &&
+           (dirty == nullptr || dirty[0] == nullptr);
+}
+
 // The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill or concept change
 // makes it pass, a base that cannot be resolved passes.
 static int build_docs_gate_test(SmithRun *run) {
@@ -3580,22 +3605,9 @@ static int build_docs_gate_test(SmithRun *run) {
     snprintf(dir, sizeof dir, "%s/smith-gate-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
              (int)getpid());
     if (mkdir(dir, 0700) != 0) return 1;
-    // The environment a hook gives (#3151): GIT_DIR and GIT_WORK_TREE name another repository, which must stay as it
-    // is.
     char other[PATH_MAX];
-    snprintf(other, sizeof other, "%s-other", dir);
-    int status =
-        mkdir(other, 0700) != 0 ? 1 : build_gate_scratch(other, (const char *[]){"init", "-q", "-b", "main", nullptr});
-    status = status != 0 ? status : build_gate_commit(other, "keep.txt", "chore: other");
-    const char *const *head =
-        status != 0 ? nullptr : build_gate_git(run, other, (const char *[]){"rev-parse", "HEAD", nullptr});
-    char before[64] = "";
-    if (head != nullptr && head[0] != nullptr) snprintf(before, sizeof before, "%s", head[0]);
-    status = before[0] == '\0' ? 1 : status;
-    char other_git[PATH_MAX];
-    snprintf(other_git, sizeof other_git, "%s/.git", other);
-    setenv("GIT_DIR", other_git, 1);
-    setenv("GIT_WORK_TREE", other, 1);
+    char before[64];
+    int status = build_gate_hook_environment(run, dir, other, before);
     status = status != 0 ? status : build_gate_scratch(dir, (const char *[]){"init", "-q", "-b", "main", nullptr});
     status = status != 0 ? status : build_gate_commit(dir, "a.txt", "chore: start");
     status = status != 0 ? status : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "-b", "work", nullptr});
@@ -3648,10 +3660,7 @@ static int build_docs_gate_test(SmithRun *run) {
     }
     if (failed == 0 && strstr(build_gate_uncommitted(run, dir), "knowledge/new.md") == nullptr)
         failed = build_gate_fail("gate: an untracked concept must be named as uncommitted\n");
-    const char *const *after = build_gate_git(run, other, (const char *[]){"rev-parse", "HEAD", nullptr});
-    const char *const *dirty = build_gate_git(run, other, (const char *[]){"status", "--porcelain", nullptr});
-    if (failed == 0 && (after == nullptr || after[0] == nullptr || strcmp(after[0], before) != 0 ||
-                        (dirty != nullptr && dirty[0] != nullptr)))
+    if (failed == 0 && !build_gate_other_untouched(run, other, before))
         failed = build_gate_fail("gate: a repository named by GIT_DIR must not be touched\n");
     build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, other, nullptr}});
     return failed;
