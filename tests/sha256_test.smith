@@ -1,0 +1,82 @@
+// smith's SHA-256 (runtime/package.c) as a function, in process (issue #3076): bytes in, the digest out, through
+// `smith_core_sha256` (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process starts.
+// The digest is computed two ways: a portable loop, and the processor's SHA instructions where it has them. Every
+// digest of smith (a package, a key of the step cache, the smith under test) goes through it, so the two must agree on
+// every length and however the bytes are cut into pieces. The digests from a file, against `shasum`, are in
+// tests/build_packages_sha_test.smith.
+// smith-covers: runtime/package.c include/smith_core.h smith.c tests/units/
+module sha256_test;
+
+import std::test;
+import <smith_core.h>;
+import <string.h>;
+
+constexpr Usize hex_size = 65;
+constexpr Usize bytes_max = 4096;
+
+// The digest of a text, the portable way or the processor's.
+static void digest(const char *text, Bool portable, char *hex) {
+    Bool fast = false;
+    c::smith_core_sha256((const U8 *)text, c::strlen(text), 0, portable, hex, &fast);
+}
+
+static void vector(const char *text, const char *expected) {
+    char portable[hex_size] = {};
+    char processor[hex_size] = {};
+    digest(text, true, portable);
+    digest(text, false, processor);
+    test::check_equal(c::strcmp(portable, expected), 0);
+    test::check_equal(c::strcmp(processor, expected), 0);
+}
+
+export void test_sha256_matches_the_nist_vectors_both_ways() {
+    vector("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    vector("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    vector("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+           "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    vector("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnop"
+           "qrstu",
+           "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
+}
+
+// Bytes that repeat with no short period.
+static void fill(U8 *bytes, Usize size) {
+    U32 state = 2463534242U;
+    for (Usize i = 0; i < size; i++) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        bytes[i] = (U8)(state >> 8);
+    }
+}
+
+export void test_sha256_the_two_ways_agree_on_every_length_around_a_block() {
+    U8 bytes[bytes_max] = {};
+    fill(bytes, bytes_max);
+    for (Usize size = 0; size <= 260; size++) {
+        char portable[hex_size] = {};
+        char processor[hex_size] = {};
+        Bool fast = false;
+        c::smith_core_sha256(bytes, size, 0, true, portable, &fast);
+        test::check_equal(fast, false);
+        c::smith_core_sha256(bytes, size, 0, false, processor, &fast);
+        test::check_equal(c::strcmp(portable, processor), 0);
+    }
+}
+
+export void test_sha256_does_not_depend_on_how_the_bytes_are_cut() {
+    U8 bytes[bytes_max] = {};
+    fill(bytes, bytes_max);
+    char whole[hex_size] = {};
+    Bool fast = false;
+    c::smith_core_sha256(bytes, bytes_max, 0, true, whole, &fast);
+    const Usize pieces[9] = {1, 3, 55, 63, 64, 65, 127, 129, 1000};
+    for (Usize i = 0; i < 9; i++) {
+        char portable[hex_size] = {};
+        char processor[hex_size] = {};
+        c::smith_core_sha256(bytes, bytes_max, pieces[i], true, portable, &fast);
+        c::smith_core_sha256(bytes, bytes_max, pieces[i], false, processor, &fast);
+        test::check_equal(c::strcmp(portable, whole), 0);
+        test::check_equal(c::strcmp(processor, whole), 0);
+    }
+}

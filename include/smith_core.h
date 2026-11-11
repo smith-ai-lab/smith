@@ -25,6 +25,12 @@ bool smith_core_make_translate(const char *folder, const char *makefile, char *b
 bool smith_core_extract(const uint8_t *archive, size_t size, const char *url, const char *folder, char *contents,
                         size_t contents_size, char *error, size_t error_size);
 
+// The SHA-256 of `size` bytes as 64 hex digits and a terminator in `hex` (65 bytes), as runtime/package.c computes
+// every digest of smith (#3076). The bytes are fed in pieces of `piece` bytes (0: all at once). With `portable` only
+// the C loop runs; without it the processor's SHA instructions do where it has them, and `*fast` says whether they
+// did, so a test compares the two ways and knows which it compared.
+void smith_core_sha256(const uint8_t *data, size_t size, size_t piece, bool portable, char hex[65], bool *fast);
+
 // The files under `folder` as text for a test to compare, one line for each entry sorted as bytes, with paths relative
 // to `folder`: `<path> d`, `<path> l -> <target>` and `<path> f <mode, octal> <size> <CRC-32 of the bytes, hex>
 // <mtime>`. False when it does not fit or `folder` cannot be read.
