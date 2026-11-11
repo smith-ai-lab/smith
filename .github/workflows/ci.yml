@@ -2028,6 +2028,9 @@ jobs:
           find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
           # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
           grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+          # a shard that failed or hung says why in the log (#3128: its output was only in the artifact, so six failed
+          # counts could not be read from their logs)
+          [ "$status" = 0 ] || { echo "shard ${{ matrix.shard }} status $status, the last 60 lines of its output:"; tail -n 60 "$RUNNER_TEMP/coverage/output.txt"; }
           exit 0
       - name: Save the shard's rows
         if: always()
@@ -2154,6 +2157,8 @@ jobs:
               echo '```'
             fi
           } >>"$GITHUB_STEP_SUMMARY"
+          # the same tail in the log (#3128): the summary is not readable from a session, and the Gate's error points here
+          [ -n "$line" ] || { echo "Count output, the last 60 lines:"; tail -n 60 "$out" 2>/dev/null; }
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
           if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
