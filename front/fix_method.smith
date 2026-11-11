@@ -151,7 +151,8 @@ static Bool in_this_file(Str source, const types::Checked *c, Usize i) {
     if (e == nullptr || e->span.end > countof(source)) return false;
     Usize instance = c->nodes[i].instance;
     if (instance >= c->instance_count) return true;
-    return countof(c->instances[instance].prefix) == 0;
+    Str prefix = c->instances[instance].prefix;
+    return countof(prefix) == 0;
 }
 
 // The fixes of `module`'s tuple indexes `t[0]`, as errors that carry them. The checker rejects the index, so these are

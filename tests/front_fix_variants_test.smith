@@ -141,3 +141,26 @@ export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays(
                "    Result(Output, Error) r = (Output){};\n    g(console::is_terminal(console::output));\n}\n";
     test::check_equal(out[0].text, want);
 }
+
+// The same in the new syntax, which the rename reads once a file is mended: a declared name's type, a parameter, a
+// field, a result and an element type stay; a value after `if c:`, after `=` or in a ternary of today's syntax is the
+// variant.
+export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays_in_new_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str console = "export typedef enum {\n    Input,\n    Output,\n} Stream;\n";
+    Str user = "struct Run:\n    out: process.Output\n\nfn f(mut a: process.Output, b: []Output) -> Output:\n"
+               "    output: process.Output = ok\n    s: console.Stream = if c: console.Output else: console.Input\n"
+               "    t: console.Stream = console.Output\n    return a\n";
+    Str ternary = "I32 g(void) {\n    return k(c ? console::Output : console::Input);\n}\n";
+    fix_variants::Word sources[2] = {word(user), word(ternary)};
+    fix_variants::Word imported[1] = {word(console)};
+    fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
+    Str want = "struct Run:\n    out: process.Output\n\nfn f(mut a: process.Output, b: []Output) -> Output:\n"
+               "    output: process.Output = ok\n    s: console.Stream = if c: console.output else: console.input\n"
+               "    t: console.Stream = console.output\n    return a\n";
+    test::check_equal(out[0].text, want);
+    test::check_equal(out[1].text, "I32 g(void) {\n    return k(c ? console::output : console::input);\n}\n");
+}
