@@ -5,7 +5,6 @@
 module ci_scope_test;
 
 import std::test;
-import <stdio.h>;
 import scratch;
 
 // Cuts the Scope step's script out of the workflow, makes a repository with one commit of a code file and a concept,
@@ -25,9 +24,9 @@ static const char *const setup =
 static void check(const char *label, const char *cases, const char *want) {
     scratch::Project p = scratch::make("repository", nullptr);
     defer scratch::clean(&p);
-    char command[2048];
-    c::snprintf(command, sizeof command, "%s%s", setup, cases);
-    scratch::Run run = scratch::sh(&p, command);
+    scratch::write(&p, "setup.sh", setup);
+    scratch::write(&p, "cases.sh", cases);
+    scratch::Run run = scratch::sh(&p, "cat setup.sh cases.sh | bash");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_text(label, want, run.out);
