@@ -15,4 +15,5 @@ The rest is one file per topic, so a change to one topic edits one file. A new C
 - [CI caches, downloads and the step cache](ci/caches.md): What a job's setup restores and builds, the lint, proof and test-result caches, the step cache for cloud sessions, where packages come from, and downloads that retry.
 - [The front-end coverage count in CI](ci/count.md): The merge queue's front-end coverage count and how its rows are cached.
 - [The owner's Mac in CI](ci/mac.md): GitHub's runners come first and the owner's Mac is overflow, the Mac's Linux runners, the owner's setup steps and the fetch-smith check on the Mac.
-- [Testing a main-only step before it merges](ci/warm.md): How warm writes are tested as a dry run before a change merges.
+- [Testing a main-only step before it merges](ci/warm.md): How warm writes are tested as a dry run before a change merges, and one warm per OS at a time.
+- [The runner ledger](ci/ledger.md): Where the 20 hosted job slots go: runner-minutes by event, job and outcome over a window, and how to take it again.
