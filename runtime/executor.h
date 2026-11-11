@@ -95,6 +95,7 @@ typedef struct {
     uint32_t weight;  // commands on the longest chain from this edge to the end
     bool phony;
     bool restat;
+    bool content_hash; // `content_hash = 1`: a function step the step cache serves by its inputs' bytes (#3079)
     bool generator;
     bool has_deps; // `deps = gcc`: the depfile is read when the command ends, kept in the depfile log and removed
     bool dirty;
@@ -102,7 +103,7 @@ typedef struct {
     bool deps_missing;
     uint8_t scan;
     uint8_t want;
-    uint8_t step_cache; // 0 not looked at, 1 a compile the step cache serves, 2 not
+    uint8_t step_cache; // 0 not looked at, 1 a compile the step cache serves, 2 not, 3 a function step it serves
 } SmithEdge;
 
 typedef struct {

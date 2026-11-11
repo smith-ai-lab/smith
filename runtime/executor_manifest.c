@@ -444,6 +444,7 @@ static void smith_manifest_finish_edge(SmithExec *exec, const SmithLexer *lexer,
     if (edge->has_deps && edge->depfile == nullptr)
         smith_manifest_fail(exec, lexer, "deps needs a depfile", edge->rule);
     edge->restat = smith_manifest_is_set(smith_manifest_edge_variable(exec, block, "restat"));
+    edge->content_hash = smith_manifest_is_set(smith_manifest_edge_variable(exec, block, "content_hash"));
     edge->generator = smith_manifest_is_set(smith_manifest_edge_variable(exec, block, "generator"));
     const char *pool = smith_manifest_edge_variable(exec, block, "pool");
     if (smith_manifest_is_set(pool)) edge->pool = smith_manifest_pool_number(exec, lexer, pool);
