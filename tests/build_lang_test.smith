@@ -146,8 +146,11 @@ export void test_build_lang_a_plain_smith_file_builds_with_no_header() {
 }
 
 // An importer that runs a function of an import at compile time reads that module's .body, and the bodies of what the
-// module imports: under -MMD the depfile names them (the copies are a system buffer, and what is included from a
-// system file is a system header), so an edit that changes a body rebuilds the importer (issue #621).
+// module imports: under -MMD the depfile names the sources they are made from (the copies are a system buffer, and
+// what is included from a system file is a system header), so an edit that changes a body rebuilds the importer (issue
+// #621). It does not name the .body files (#3079, on purpose, where #621 named them): an importer's compile writes
+// them, so a compile that named one was stale as soon as a neighbour wrote it again, was never stored in the step
+// cache, and ran once more in the next build.
 constexpr char body_calc[_] = "module calc;\n\nimport other;\n\n"
                               "export I32 fib(I32 n) {\n    return other::twice(n) + 1;\n}\n";
 constexpr char body_other[_] = "module other;\n\nexport I32 twice(I32 n) {\n    return n * 2;\n}\n";
@@ -164,7 +167,7 @@ static scratch::Project body_project() {
     return p;
 }
 
-export void test_build_lang_a_depfile_names_the_body_files_a_compile_read() {
+export void test_build_lang_a_depfile_names_the_sources_of_the_bodies_a_compile_read() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -178,9 +181,12 @@ export void test_build_lang_a_depfile_names_the_body_files_a_compile_read() {
         scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -MMD -MF main.d -c src/main.smith -o main.o");
     scratch::expect_status("body files: the importer compiles", 0, &compiled);
     const char *depfile = scratch::read(&p, "main.d");
-    scratch::expect_contains("body files: -MMD names calc.body", depfile, ".smith/include/calc.body");
-    scratch::expect_contains("body files: and the body of what calc imports", depfile, ".smith/include/other.body");
-    scratch::expect_contains("body files: and the source of that module", depfile, "src/other.smith");
+    scratch::expect_contains("body files: -MMD names the source of calc", depfile, "src/calc.smith");
+    scratch::expect_contains("body files: and the source of what calc imports", depfile, "src/other.smith");
+    scratch::expect_text("body files: and no .body file, which this compile wrote", "no",
+                         __builtin_strstr(depfile, ".body") != nullptr ? "yes" : "no");
+    scratch::expect_text("body files: which is beside the header all the same", "yes",
+                         scratch::exists(&p, ".smith/include/calc.body") ? "yes" : "no");
 }
 
 export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer() {
@@ -192,16 +198,35 @@ export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer
     defer scratch::clean(&p);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_status("body files: the project builds", 0, &first);
-    // The compile that made the body files started before them, so (ninja's rule) the next build runs it once more.
-    scratch::Run again = scratch::build(&p, "");
-    scratch::expect_status("body files: the build after it", 0, &again);
+    // The compile that made the body files does not depend on them, so the next build has nothing to do (#3079).
     scratch::Run settled = scratch::build(&p, "");
-    scratch::expect_contains("body files: then it settles", settled.out, "no work to do");
+    scratch::expect_contains("body files: the build after it has no work", settled.out, "no work to do");
     scratch::sleep(&p, 1000);
     scratch::write(&p, "src/other.smith", "module other;\n\nexport I32 twice(I32 n) {\n    return n * 3;\n}\n");
     scratch::Run broken = scratch::build(&p, "");
     scratch::expect_failure("body files: an edit to a module a body imports rebuilds the importer, whose assert fails",
                             &broken);
+    char both[8192];
+    __builtin_snprintf(both, sizeof both, "%s%s", broken.out, broken.err);
+    scratch::expect_contains("body files: and it is the static_assert that says so", both, "static assertion failed");
+}
+
+// The importer does not depend on calc.body, only on calc's source: an edit to the function it runs at compile time
+// still rebuilds it, with the new body (#3079).
+export void test_build_lang_an_edit_to_a_function_run_at_compile_time_rebuilds_the_importer() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = body_project();
+    defer scratch::clean(&p);
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("body files: the project builds", 0, &first);
+    scratch::sleep(&p, 1000);
+    scratch::write(&p, "src/calc.smith",
+                   "module calc;\n\nimport other;\n\nexport I32 fib(I32 n) {\n    return other::twice(n) + 2;\n}\n");
+    scratch::Run broken = scratch::build(&p, "");
+    scratch::expect_failure("body files: an edit to the function rebuilds the importer, whose assert fails", &broken);
     char both[8192];
     __builtin_snprintf(both, sizeof both, "%s%s", broken.out, broken.err);
     scratch::expect_contains("body files: and it is the static_assert that says so", both, "static assertion failed");
