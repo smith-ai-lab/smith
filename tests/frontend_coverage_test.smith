@@ -6,8 +6,8 @@
 // The smith the tool is given is a launcher of two lines that starts the smith under test (#3076): outside a build
 // folder the tool keys its caches by the bytes of the smith it is given, and built as these tests build it
 // (unoptimized, with the sanitizers) it read the 437 MB of smith for 19 s in each of its eleven runs, 178 of the file's
-// 195 CPU s. Each test has a scratch folder and so caches of its own; no test is about that key. smith-covers:
-// scripts/frontend_coverage/main.smith
+// 195 CPU s. Each test has a scratch folder and so caches of its own; no test is about that key.
+// smith-covers: scripts/frontend_coverage/main.smith
 module frontend_coverage_test;
 
 import std::arena;
