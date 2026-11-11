@@ -121,3 +121,68 @@ export void test_front_fix_variants_of_an_imported_module_in_todays_syntax() {
     Str want = "fn f() -> bool:\n    return is_error(console.print(\"x\"), .closed)\n";
     test::check_equal(out[0].text, want);
 }
+
+// One imported module names a type as another names a variant: process's `typedef struct {...} Output;` and console's
+// `Stream` variant `Output`. Used as a type (a declaration, a pointer, a compound literal, a type argument) the name
+// stays; used as a value, even as a call's one argument, it is the variant (#3027:
+// tests/build_fixtures/runner_checked/tests/test_checked_process.smith became `output: process.output`).
+export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str console = "export typedef enum {\n    Input,\n    Output,\n} Stream;\n";
+    Str user = "void f(void) {\n    process::Output output = done.ok;\n    Output *o = &output;\n"
+               "    Result(Output, Error) r = (Output){};\n    g(console::is_terminal(console::Output));\n}\n";
+    fix_variants::Word sources[1] = {word(user)};
+    fix_variants::Word imported[1] = {word(console)};
+    fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
+    Str want = "void f(void) {\n    process::Output output = done.ok;\n    Output *o = &output;\n"
+               "    Result(Output, Error) r = (Output){};\n    g(console::is_terminal(console::output));\n}\n";
+    test::check_equal(out[0].text, want);
+}
+
+// The same in the new syntax, which the rename reads once a file is mended: a declared name's type, a parameter, a
+// field, a result and an element type stay; a value after `if c:`, after `=` or in a ternary of today's syntax is the
+// variant.
+export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays_in_new_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str console = "export typedef enum {\n    Input,\n    Output,\n} Stream;\n";
+    Str user = "struct Run:\n    out: process.Output\n\nfn f(mut a: process.Output, b: []Output) -> Output:\n"
+               "    output: process.Output = ok\n    s: console.Stream = if c: console.Output else: console.Input\n"
+               "    t: console.Stream = console.Output\n    return a\n";
+    Str ternary = "I32 g(void) {\n    return k(c ? console::Output : console::Input);\n}\n";
+    fix_variants::Word sources[2] = {word(user), word(ternary)};
+    fix_variants::Word imported[1] = {word(console)};
+    fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
+    Str want = "struct Run:\n    out: process.Output\n\nfn f(mut a: process.Output, b: []Output) -> Output:\n"
+               "    output: process.Output = ok\n    s: console.Stream = if c: console.output else: console.input\n"
+               "    t: console.Stream = console.output\n    return a\n";
+    test::check_equal(out[0].text, want);
+    Str want_ternary = "I32 g(void) {\n    return k(c ? console::output : console::input);\n}\n";
+    test::check_equal(out[1].text, want_ternary);
+}
+
+// A file fixed alone spells an enumerator of an imported module as that module's enum declares it (#3084): `Replace` is
+// `replace` in a call and in a `switch` arm (the arm still names a variant of the enumeration, so the match stays
+// exhaustive), and a C enumerator the file reads through `c::` keeps its C spelling.
+export void test_front_fix_variants_a_switch_arm_and_a_call_of_an_imported_enum() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str files = "export typedef enum {\n    Replace, // creates the file\n    Read,\n    Append,\n} Mode;\n";
+    Str user = "fn f(mode: files.Mode) -> i32:\n    match mode:\n        files.Replace: return 1\n"
+               "        .Read: return 2\n        _: return c.O_RDONLY\n"
+               "fn g():\n    write(files.Append, c.O_RDONLY)\n";
+    fix_variants::Word sources[1] = {word(user)};
+    fix_variants::Word imported[1] = {word(files)};
+    fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
+    Str want = "fn f(mode: files.Mode) -> i32:\n    match mode:\n        files.replace: return 1\n"
+               "        .read: return 2\n        _: return c.O_RDONLY\n"
+               "fn g():\n    write(files.append, c.O_RDONLY)\n";
+    test::check_equal(out[0].text, want);
+}

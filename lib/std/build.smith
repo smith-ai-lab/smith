@@ -37,7 +37,8 @@ module std::build;
 // The return value is the exit status. Like a command, the function writes the outputs it declares; one with none gets
 // smith's stamp. run->b works with every helper that needs no build() state (build::fmt, build::cat, build::join,
 // build::list, build::lines, build::glob, build::capture, build::write). Editing the build file reruns every .run step,
-// since the function's code is part of the program. .content_hash is not implemented yet and exits 2.
+// since the function's code is part of the program. .content_hash on a .run step: the step cache serves its outputs
+// for the program, the arguments and the bytes of .inputs, so the function must read nothing else (#3079).
 [[std::c_name("SmithRun")]] export typedef struct {
     Build *b;
     const char *const *inputs;  // the step's .inputs
@@ -60,7 +61,7 @@ module std::build;
     Bool always;             // run on every build
     I32 (*run)(Run *run);    // a C function in the build file instead of .command; 0 succeeds
     const char *const *args; // given to .run as run->args
-    Bool content_hash;       // later: rerun only when the inputs' bytes changed
+    Bool content_hash;       // a .run step: served from the step cache by its inputs' bytes; .command: later
     Bool test;               // `smith test` runs this task or builds this step (build::tests sets it on its task)
 } Step;
 

@@ -1,7 +1,8 @@
 // `--time` and SMITH_TIME (issue #2681): `smith build --time` prints, after its normal output, one `time:` line for
 // each phase of the build, the slowest steps and the total, and the phases add up to the total within 10%; `smith cc
 // --front-end=new --time` prints the front end's stages; the old path is one phase; without the flag nothing is
-// printed. smith-covers: smith.c runtime/executor.c runtime/executor_run.c front/compile.smith
+// printed.
+// smith-covers: smith.c runtime/executor.c runtime/executor_run.c front/compile.smith
 module build_time_test;
 
 import std::test;

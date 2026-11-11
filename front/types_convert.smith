@@ -552,6 +552,14 @@ static Verdict cast_by_kind(const Ctx *c) {
     if (from_type->kind == .integer && to_type->kind == .bool_type) return accept(cast);
     if (from_type->kind == .function && to_type->kind == .pointer)
         return accept(cast); // `f.cast(*void)`: Enzyme's entry points take one
+    if (to_type->kind == .function || to_type->kind == .fn_value) {
+        // An address as a function, `address.to(Run)`: what `dlsym` or a JIT gives, C's `((Run)address)()` (#3110).
+        // The same rule as between a pointer and an integer: a pointer, or an integer as wide as one.
+        if (from_type->kind == .pointer || pointer_wide(c, c->from)) return accept(cast);
+        if (from_type->kind == .integer)
+            return refuse(c, "a pointer and an integer cast only if the integer is as wide as a pointer",
+                          "cast through Usize");
+    }
     if (from_type->kind == .pointer || to_type->kind == .pointer) return cast_pointer(c);
     return refuse(c, "there is no cast between these types", "convert the parts one at a time");
 }

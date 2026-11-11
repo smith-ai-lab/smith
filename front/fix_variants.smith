@@ -209,6 +209,50 @@ static Bool declared_at(Found found, Usize offset) {
     return false;
 }
 
+// Whether the `:` at token `colon` ends a declared name (`output: T`, `fn f(a: T, mut b: T)`, a field): the name before
+// it starts its line or follows `(`, `,` or `mut`. `if c: console.Output` has a value after its `:`.
+static Bool declares(Str source, lex::Tokens tokens, Usize colon) {
+    if (colon == 0 || tokens[colon - 1].kind != lex::name) return false;
+    Usize k = colon - 1;
+    if (k == 0) return true;
+    lex::TokenKind before = tokens[k - 1].kind;
+    if (before == lex::left_paren || before == lex::comma || before == lex::kw_mut || before == lex::newline ||
+        before == lex::indent)
+        return true;
+    for (Usize at = tokens[k - 1].span.end; at < tokens[k].span.start; at++) {
+        if (source[at] == '\n') return true;
+    }
+    return false;
+}
+
+// Whether type name `i` is used as a type, not a variant. In today's syntax: a declaration's type
+// (`process::Output output`, `Output *o`), a compound literal or cast (`(Output){...}`, `(Output)x`), a type argument
+// (`Result(Output, Error)`). In the new syntax, which the rename also reads once a file is mended: after a declared
+// name's `:`, `->`, `*` or `]` (`output: process.Output`, `-> Output`, `[]Output`). An imported module can name a
+// type as another one names a variant (process's `Output`, console's `Stream.Output`, #3027).
+static Bool used_as_type(Str source, lex::Tokens tokens, Usize i) {
+    lex::TokenKind next = i + 1 < countof(tokens) ? tokens[i + 1].kind : lex::end_of_file;
+    // a name on the next line is the next statement, not a declared name (`= console.Input` then `t: ...`)
+    Bool same_line = i + 1 < countof(tokens) && !tokens[i].line_break;
+    if (same_line && (next == lex::name || next == lex::star)) return true;
+    Usize head = i;
+    if (head >= 2 && (tokens[head - 1].kind == lex::colon_colon || tokens[head - 1].kind == lex::dot) &&
+        tokens[head - 2].kind == lex::name)
+        head -= 2;
+    if (head == 0) return false;
+    lex::TokenKind before = tokens[head - 1].kind;
+    // not `?`: today's syntax still has `c ? console::Output : console::Input`
+    if (before == lex::arrow || before == lex::star || before == lex::right_bracket) return true;
+    if (before == lex::colon) return declares(source, tokens, head - 1);
+    if (before != lex::left_paren) return false;
+    // `(T){` and `(T)x`, but not a call's one argument, `f(console::Output)`
+    if (next == lex::right_paren) {
+        lex::TokenKind after = i + 2 < countof(tokens) ? tokens[i + 2].kind : lex::end_of_file;
+        return after == lex::left_brace || after == lex::name;
+    }
+    return head >= 2 && tokens[head - 2].kind == lex::type_name;
+}
+
 // `source` with each of `names` lowercase.
 export Str rename(Str source, Words names) {
     lex::Lexed read = lex::tokenize_new(source);
@@ -221,7 +265,7 @@ export Str rename(Str source, Words names) {
         lex::Token t = tokens[i];
         if (t.kind != lex::type_name) continue;
         Str name = lex::text(source, t);
-        if (!has(names, name)) continue;
+        if (!has(names, name) || used_as_type(source, tokens, i)) continue;
         lex::TokenKind before = i > 0 ? tokens[i - 1].kind : lex::end_of_file;
         Bool qualified = before == lex::dot || before == lex::colon_colon;
         Str spelled = snake(name);
@@ -272,10 +316,12 @@ export Words rename_all(Words sources) {
 // In smith's own syntax a local, parameter or loop name that is the name of an imported module is a shadowing error
 // (owner, 2026-11-10: "yeah it should be a shadowing error please"): `arena: *Arena` with `import std.arena`. Today's
 // syntax tells the two apart by `::` (`arena::push(a, ...)` is the module, `arena->used` the local), and once fixed
-// both are `arena.`, so the rename is made on today's text, before every other pass. The name gets a trailing `_` (the
-// rule of `in` -> `in_`, #2390), and another while that name is in the file:
+// both are `arena.`, so the rename is made on today's text, before every other pass. The name gets the suffix `_value`
+// (decided by the lead, #3084: `json` is `json_value`); a module whose `<name>_value` is already a name in the file is
+// left alone, with its locals, and the checker's shadowing error reports it. The module is never renamed:
 //
-//   void f(arena::Arena *arena) { arena::push(arena, 1); }   void f(arena::Arena *arena_) { arena::push(arena_, 1); }
+//   void f(arena::Arena *arena) { arena::push(arena, 1); }
+//   void f(arena::Arena *arena_value) { arena::push(arena_value, 1); }
 //
 // Renamed: a name inside a function's parameters or body that has no `::` after it and no `.`, `->` or `::` before it,
 // and no `(` after it (a function of that name). A name used at the top level of the file (a global, a function) is
@@ -404,11 +450,10 @@ export Str rename_shadows(Str source) {
     }
     Names spelled = mem::alloc_slice(ShadowName, countof(modules));
     for (Usize m = 0; m < countof(modules); m++) {
-        Str next = as_str(format::push(modules[m].text, "_"));
-        while (in_file(source, tokens, next)) {
-            next = as_str(format::push(next, "_"));
-        }
-        spelled[m].text = next;
+        Str next = as_str(format::push(modules[m].text, "_value"));
+        // `<name>_value` is already in the file: the module's locals stay (spelled "" is never matched below).
+        Str none = "";
+        spelled[m].text = in_file(source, tokens, next) ? none : next;
     }
     Str out = "";
     Usize at = 0;
@@ -418,6 +463,8 @@ export Str rename_shadows(Str source) {
         if (listed(kept, text)) continue;
         for (Usize m = 0; m < countof(modules); m++) {
             if (!mem::equal(modules[m].text, text)) continue;
+            Str chosen = spelled[m].text;
+            if (countof(chosen) == 0) break;
             out = as_str(format::push(out, source[at:tokens[i].span.start], spelled[m].text));
             at = tokens[i].span.end;
             break;

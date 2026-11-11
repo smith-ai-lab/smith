@@ -402,6 +402,303 @@ static core::Errors c_import_fixes(const ast::Module *module, const types::Check
     return out;
 }
 
+// ---- the import a fixed file lacks (#3077)
+//
+//   front.emit_state.Target(...)           import front.emit_state            a module named by its full path
+//                                          emit_state.Target(...)
+//   import c <smith/test.h>                import std.test                    a library read through its C header
+//   c.smith_check_equal_i32(a, 2)          test.check_equal_i32(a, 2)
+//
+// (a) The zero-value rewrite builds `emit::Options(...)` with the path of the type behind the alias (`emit::Target` is
+// `front.emit_state.Target`), and the file imports only `front.emit`: the checker says "unknown name `front`". The head
+// of the dotted chain at the error is read, and the longest prefix of it that the loader finds as a module is imported;
+// a name alone (`array.filled`, written by a fix that left the import to this one) is the module `std.array`.
+//
+// (b) A library of smith (`std.contract`, `std.test`, `std.arena`, `std.files`) is reached from C through its header:
+// `import c <smith/contract.h>` and `c.smith_requires(...)`. The module call is `contract.requires(...)`. The module's
+// own `@c_name` of each export says which name is which, so no table is written here; a file that reads a name the
+// module does not export keeps its import, and nothing is half rewritten. A real C name (`assert`, `errno`) is not a
+// name of a module and is left to `c_import_fixes`. A library with no module (`smith/json.h`, `lib/json.c`) is left:
+// the loader finds no `std.json`. This is part of fix.smith, not a module of its own: the lowering's table of imported
+// exports that have a C name holds 8192, and fix.smith's imports fill it, so one more imported module overflows it.
+
+static Bool imp_at(Str s, Usize i, Str pattern) {
+    if (i + countof(pattern) > countof(s)) return false;
+    return mem::equal(s[i:i + countof(pattern)], pattern);
+}
+
+static Bool imp_same(Str a, Str b) {
+    return countof(a) == countof(b) && imp_at(a, 0, b);
+}
+
+static Bool imp_word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+static core::Edits imp_push(core::Edits import_fixes, Usize from, Usize to, Str text) {
+    import_fixes = mem::realloc(import_fixes, countof(import_fixes) + 1);
+    import_fixes[countof(import_fixes) - 1] = (core::Edit){.span = {.start = (U32)from, .end = (U32)to}, .text = text};
+    return import_fixes;
+}
+
+static core::Errors imp_add(core::Errors out, core::Edits fix, Usize at_offset, Str why) {
+    core::ParseError made = {};
+    made.span = (ast::Span){.start = (U32)at_offset, .end = (U32)at_offset};
+    made.message = why;
+    made.fix = fix;
+    out = mem::realloc(out, countof(out) + 1);
+    out[countof(out) - 1] = made;
+    return out;
+}
+
+// A module the loader finds at the dotted path, or null.
+static const ast::Module *imp_find(types::ModuleLoader load, Str path) {
+    Str text = as_str(format::push(path));
+    return load(text.data);
+}
+
+// ---- (a) a module named by its full path
+
+// The text of the name in "unknown name `front`; declare it ...": empty for another message.
+static Str imp_unknown_name(Str message) {
+    Str lead = "unknown name `";
+    if (countof(message) <= countof(lead) || !imp_at(message, 0, lead)) return "";
+    Usize end = countof(lead);
+    while (end < countof(message) && message[end] != '`')
+        end += 1;
+    return message[countof(lead):end];
+}
+
+// Where the module's first import is, or where its first declaration starts: the new import goes in front of it.
+static Usize imp_import_place(const ast::Module *module) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .import_module || d->kind == .import_c || d->kind == .import_from) return d->span.start;
+    }
+    return countof(module->decls) > 0 ? module->decls[0]->span.start : 0;
+}
+
+// The import that a chain `a.b.c` imp_at `from` needs: the longest prefix of imp_at least two segments that the loader
+// finds as a module. Empty when there is none.
+static Str imp_module_of_chain(Str source, Usize from, types::ModuleLoader load) {
+    Usize ends[8];
+    Usize count = 0;
+    Usize i = from;
+    while (count < countof(ends)) {
+        Usize word = i;
+        while (i < countof(source) && imp_word_char(source[i]))
+            i += 1;
+        if (i == word) break;
+        ends[count] = i;
+        count += 1;
+        if (i + 1 >= countof(source) || source[i] != '.' || !imp_word_char(source[i + 1])) break;
+        i += 1;
+    }
+    for (Usize k = count; k >= 2; k--) {
+        Str path = source[from:ends[k - 1]];
+        if (imp_find(load, path) != nullptr) return path;
+    }
+    // A fix wrote `array.filled(...)` and left the import to this one: the name alone is a module of the library.
+    if (count == 0) return "";
+    Str library = as_str(format::push("std.", source[from:ends[0]]));
+    if (imp_find(load, library) != nullptr) return library;
+    return "";
+}
+
+static core::Errors imp_module_path_fixes(Str source, const ast::Module *module, const types::Checked *checked,
+                                          types::ModuleLoader load) {
+    core::Errors out = {};
+    Str added[8];
+    Usize added_count = 0;
+    for (Usize i = 0; i < checked->error_count; i++) {
+        types::Error e = checked->errors[i];
+        Str name = imp_unknown_name(e.message);
+        if (countof(name) == 0 || countof(e.module) > 0) continue;
+        Usize from = e.span.start;
+        if (!imp_at(source, from, name) || from + countof(name) >= countof(source) ||
+            source[from + countof(name)] != '.')
+            continue;
+        if (from > 0 && (imp_word_char(source[from - 1]) || source[from - 1] == '.')) continue;
+        Str path = imp_module_of_chain(source, from, load);
+        if (countof(path) == 0) continue;
+        Bool done = false;
+        for (Usize k = 0; k < added_count; k++)
+            if (imp_same(added[k], path)) done = true;
+        if (done || added_count == countof(added)) continue;
+        added[added_count] = path;
+        added_count += 1;
+        core::Edits fix = {};
+        Usize place = imp_import_place(module);
+        fix = imp_push(fix, place, place, as_str(format::push("import ", path, "\n")));
+        // `import front.emit_state` binds `emit_state`: every `front.emit_state.` of the text loses its `front.`.
+        Usize head = 0;
+        for (Usize k = 0; k < countof(path); k++)
+            if (path[k] == '.') head = k + 1;
+        for (Usize k = 0; k + countof(path) < countof(source); k++) {
+            if (!imp_at(source, k, path) || source[k + countof(path)] != '.') continue;
+            if (k > 0 && (imp_word_char(source[k - 1]) || source[k - 1] == '.')) continue;
+            fix = imp_push(fix, k, k + head, "");
+        }
+        out = imp_add(out, fix, place, "a module named by its full path needs its import");
+    }
+    return out;
+}
+
+// ---- (b) a library read through its C header
+
+// The C name and the name of each export of a module that has an `@c_name`.
+struct ImpLibrary {
+    Str c_names[128];
+    Str names[128];
+    Usize count;
+};
+
+static Bool imp_is_c_name(ast::Attribute attribute) {
+    Usize n = countof(attribute.name.segments);
+    if (n == 1) return imp_same(attribute.name.segments[0].text, "c_name");
+    return n == 2 && imp_same(attribute.name.segments[0].text, "std") &&
+           imp_same(attribute.name.segments[1].text, "c_name");
+}
+
+static Str imp_c_name_of(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute attribute = d->attributes[i];
+        if (!imp_is_c_name(attribute) || countof(attribute.args) != 1) continue;
+        const ast::Expr *argument = attribute.args[0];
+        if (argument->kind == .string) return argument->kind.string.bytes;
+    }
+    return "";
+}
+
+static Str imp_decl_name(const ast::Decl *d) {
+    if (d->kind == .function) return d->kind.function.name;
+    if (d->kind == .variable) return d->kind.variable.name;
+    if (d->kind == .record) return d->kind.record.name;
+    if (d->kind == .type_alias) return d->kind.type_alias.name;
+    if (d->kind == .enumeration) return d->kind.enumeration.name;
+    return "";
+}
+
+static ImpLibrary imp_library_of(const ast::Module *module) {
+    ImpLibrary lib = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (!d->exported && !d->is_pub) continue;
+        Str c_name = imp_c_name_of(d);
+        Str name = imp_decl_name(d);
+        if (countof(c_name) == 0 || countof(name) == 0 || lib.count == countof(lib.names)) continue;
+        lib.c_names[lib.count] = c_name;
+        lib.names[lib.count] = name;
+        lib.count += 1;
+    }
+    return lib;
+}
+
+// `test` of `smith/test.h`: empty when the header is not under `smith/` or does not end in `.h`.
+static Str imp_stem_of(Str header) {
+    Str folder = "smith/";
+    if (countof(header) <= countof(folder) + 2 || !imp_at(header, 0, folder)) return "";
+    if (!imp_at(header, countof(header) - 2, ".h")) return "";
+    Str stem = header[countof(folder):countof(header) - 2];
+    for (Usize i = 0; i < countof(stem); i++)
+        if (!imp_word_char(stem[i])) return "";
+    return stem;
+}
+
+static Bool imp_imports_module(const ast::Module *module, Str stem) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .import_module || countof(d->kind.import_module.path.segments) != 2) continue;
+        if (imp_same(d->kind.import_module.path.segments[0].text, "std") &&
+            imp_same(d->kind.import_module.path.segments[1].text, stem) && countof(d->kind.import_module.alias) == 0)
+            return true;
+    }
+    return false;
+}
+
+static Bool imp_other_c_import(const ast::Module *module, const ast::Decl *except) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d != except && d->kind == .import_c) return true;
+    }
+    return false;
+}
+
+// The index of the export whose C name is `word`, or the count when there is none.
+static Usize imp_find_c_name(const ImpLibrary *lib, Str word) {
+    for (Usize i = 0; i < lib->count; i++)
+        if (imp_same(lib->c_names[i], word)) return i;
+    return lib->count;
+}
+
+// The import_fixes that write `base.NAME` as `stem.name` for every use of `base` (`c`, or the header's own binding) in
+// the text. False when a use of the header's own binding names something the module does not export, or when the text
+// uses `c.` for a name it does not export and the header is the only one imported with a language.
+static Bool imp_rename_uses(Str source, Str base, Str stem, const ImpLibrary *lib, Bool own, core::Edits *fix,
+                            Usize *uses) {
+    for (Usize i = 0; i + countof(base) + 1 < countof(source); i++) {
+        if (!imp_at(source, i, base) || source[i + countof(base)] != '.') continue;
+        if (i > 0 && (imp_word_char(source[i - 1]) || source[i - 1] == '.' || source[i - 1] == '/'))
+            continue; // not `smith/test.h`
+        Usize from = i + countof(base) + 1;
+        Usize end = from;
+        while (end < countof(source) && imp_word_char(source[end]))
+            end += 1;
+        if (end == from) continue;
+        Usize k = imp_find_c_name(lib, source[from:end]);
+        if (k == lib->count) {
+            if (own) return false;
+            continue;
+        }
+        *fix = imp_push(*fix, i, end, as_str(format::push(stem, ".", lib->names[k])));
+        *uses += 1;
+    }
+    return true;
+}
+
+static core::Errors imp_library_fixes(Str source, const ast::Module *module, types::ModuleLoader load) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .import_c || !d->kind.import_c.angled || countof(d->kind.import_c.alias) > 0) continue;
+        Str stem = imp_stem_of(d->kind.import_c.header);
+        if (countof(stem) == 0) continue;
+        const ast::Module *found = imp_find(load, as_str(format::push("std.", stem)));
+        if (found == nullptr) continue;
+        ImpLibrary lib = imp_library_of(found);
+        core::Edits fix = {};
+        Usize uses = 0;
+        // `c.name` is the header's name until a second `import c` makes the checker write the binding; `stem.name` is
+        // the binding the checker's own fix wrote.
+        if (!imp_rename_uses(source, stem, stem, &lib, true, &fix, &uses)) continue;
+        if (!imp_rename_uses(source, "c", stem, &lib, !imp_other_c_import(module, d), &fix, &uses)) continue;
+        if (uses == 0) continue;
+        Usize begin = d->span.start;
+        Usize end = d->span.end;
+        if (imp_imports_module(module, stem)) {
+            if (end < countof(source) && source[end] == '\n') end += 1;
+            fix = imp_push(fix, begin, end, "");
+        } else {
+            fix = imp_push(fix, begin, end, as_str(format::push("import std.", stem)));
+        }
+        out = imp_add(out, fix, begin, "a library of smith is a module: import it and call its functions");
+    }
+    return out;
+}
+
+static core::Errors import_fixes(Str source, const ast::Module *module, const types::Checked *checked,
+                                 types::ModuleLoader load) {
+    core::Errors out = {};
+    if (load == nullptr || countof(module->decls) == 0) return out;
+    out = imp_library_fixes(source, module, load);
+    core::Errors paths = imp_module_path_fixes(source, module, checked, load);
+    for (Usize i = 0; i < countof(paths); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = paths[i];
+    }
+    return out;
+}
+
 // Whether the module imports a header with a language (`import c <h>`): only then does the checker need clang.
 static Bool imports_header(const ast::Module *module) {
     for (Usize i = 0; i < countof(module->decls); i++) {
@@ -507,6 +804,7 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     out = append(out, fix_bool::edits(source, checked));
     out = append(out, fix_const::edits(source));
     if (bindings_take_else()) out = append(out, fix_guard::edits(source));
+    out = append(out, fix_guard::result_tests(source, checked)); // `R == .error` is `R != .ok`, `x.some` (#3083)
     if (places_are_bound()) out = append(out, fix_place::edits(source));
     if (!values_take_patterns()) return out;
     return append(out, fix_chain::edits(source));
@@ -533,6 +831,8 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
     }
     out = append(out, c_import_fixes(module, &checked));
+    // a module named by its full path and a library read through its C header (#3077): the import the file lacks.
+    out = append(out, import_fixes(source, module, &checked, loader));
     out = append(out, c_shadow_fixes(source, &checked));
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     out = append(out, fix_zero::edits(source, module, &checked));

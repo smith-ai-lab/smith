@@ -2370,7 +2370,8 @@ static void smith_build_effects_argument(const char *self, char *out, size_t cap
 // The build program's two runs: compile build.c and run it (it writes the manifest), then the project's manifest.
 static int smith_build_run_manifests(const SmithExecOptions *options, char **program_argv) {
     SmithIo io = smith_io_make(0, nullptr);
-    SmithExecOptions program_options = {.jobs = options->jobs, .failures_allowed = 1, .quiet = true};
+    SmithExecOptions program_options = {
+        .jobs = options->jobs, .failures_allowed = 1, .quiet = true, .self = options->self};
     uint64_t mark = smith_time_now();
     int status = smith_exec_run(&io, ".smith/build-program/build.ninja", &program_options);
     smith_time_phase("compile the build file (or served from the cache)", 0, smith_time_since(mark));
@@ -2432,6 +2433,7 @@ static int smith_build_main_timed(int count, char **args, const char *self, cons
     SmithExecOptions options =
         smith_build_options((int)(ninja_used - smith_build_ninja_prefix), ninja_argv + smith_build_ninja_prefix);
     options.verb = verb;
+    options.self = self; // a build by this smith at another path changes no command line
 
     char clang[PATH_MAX];
     bool in_process = smith_build_compiler(self, clang);
@@ -3623,6 +3625,7 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     for (int i = 2; i < argc && strcmp(tool->command, "lint") == 0; i++) // bounded by the arguments
         by_project = by_project || strcmp(argv[i], "-p") == 0;
     if (strcmp(tool->command, "lint") == 0 && !by_project) (void)smith_lint_expand_dirs(&argc, &argv);
+    if (strcmp(tool->command, "lint") == 0 && !by_project) argc = smith_lint_drop_ignored(argc, argv);
     if (strcmp(tool->command, "lint") == 0) smith_lint_needs_build(argc, argv);
     if (strcmp(tool->command, "lsp") == 0) smith_lsp_needs_build(argc, argv);
     if (strcmp(tool->command, "lint") == 0 && !by_project) {
@@ -4073,8 +4076,9 @@ static void smith_stale_hint(const char *self, const char *target) {
     }
     if (!smith_newest_release_commit(newest) || strcmp(newest, smith_commit) == 0) return;
     fprintf(stderr,
-            "smith: this smith (%s) is older than the newest release (%s); run `smith build stage0` and put "
-            ".smith/stage0/bin first on PATH\n",
+            "smith: this smith (%s) is older than the newest release (%s); run `smith build stage0` (with -Dsteps=0 "
+            "when this smith is .smith/stage0 already: it is then the release main's step cache fits, not the newest) "
+            "and put .smith/stage0/bin first on PATH\n",
             smith_commit, newest);
 }
 

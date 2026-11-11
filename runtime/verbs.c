@@ -16,6 +16,7 @@
 #include "coverage.h"
 #include "docs.h"
 #include "executor.h"
+#include "fmt_cache.h"
 #include "lint_cache.h"
 #include "main.h"
 #include "mcp_unit.h"
@@ -456,32 +457,72 @@ static bool smith_fmt_list(size_t *count) {
     return true;
 }
 
-// `smith fmt` with no arguments: clang-format on every file git sees, in batches, in place; with `check`, its dry run,
-// which fails on a file that would change.
+// The files to format (those the cache did not answer), cut into batches of `size`, and how to run one.
+typedef struct {
+    const char *const *files;
+    size_t count;
+    size_t size;
+    const char *self;
+    bool check;
+    int status; // of the last batch that failed
+} SmithFmtRun;
+
+static char *const *smith_fmt_job(size_t job, void *context) {
+    const SmithFmtRun *run = (const SmithFmtRun *)context;
+    static char *argv[smith_verbs_batch + 6];
+    size_t used = 0;
+    argv[used++] = (char *)run->self;
+    argv[used++] = (char *)"fmt";
+    argv[used++] = (char *)(run->check ? "--dry-run" : "-i");
+    if (run->check) argv[used++] = (char *)"--Werror";
+    for (size_t i = job * run->size; i < run->count && i < (job + 1) * run->size; i++) // bounded by the batch
+        argv[used++] = (char *)run->files[i];
+    argv[used] = nullptr;
+    return argv;
+}
+
+// A batch that passed: each of its files, as it is now (after `-i`), is kept as formatted. One that failed keeps none.
+static void smith_fmt_done(size_t job, int wait_status, FILE *log, void *context) {
+    (void)log;
+    SmithFmtRun *run = (SmithFmtRun *)context;
+    int status = smith_verbs_status(wait_status);
+    if (status != 0) {
+        run->status = status;
+        return;
+    }
+    for (size_t i = job * run->size; i < run->count && i < (job + 1) * run->size; i++) // bounded by the batch
+        smith_fc_keep(run->files[i]);
+}
+
+static size_t smith_verbs_jobs(void);
+
+// `smith fmt` with no arguments: clang-format (or front::format) on every file git sees, in place; with `check`, its
+// dry run, which fails on a file that would change. A file the cache knows as formatted (runtime/fmt_cache.c) is left
+// out; the others go in batches side by side, one a core. SMITH_FMT_CACHE=why says how many each way.
 static int smith_fmt_project(const char *self, bool check) {
     size_t count = 0;
     if (!smith_fmt_list(&count)) return smith_exit_usage;
-    const char *const *files = smith_fmt_files;
     if (count == 0) {
         fprintf(stderr, "smith fmt: git sees no C, C++, Objective-C or .smith files here\n");
         return 0;
     }
-    int status = 0;
-    for (size_t first = 0; first < count; first += smith_verbs_batch) { // bounded by the files
-        char *argv[smith_verbs_batch + 6];
-        size_t used = 0;
-        argv[used++] = (char *)self;
-        argv[used++] = (char *)"fmt";
-        argv[used++] = (char *)(check ? "--dry-run" : "-i");
-        if (check) argv[used++] = (char *)"--Werror";
-        for (size_t i = first; i < count && i < first + smith_verbs_batch; i++)
-            argv[used++] = (char *)files[i];
-        argv[used] = nullptr;
-        int one = smith_verbs_wait(smith_verbs_start(argv, nullptr));
-        if (one != 0) status = one;
+    static const char *files[smith_verbs_files_max + 1];
+    size_t wanted = 0;
+    bool cache = smith_fc_open();
+    for (size_t i = 0; i < count; i++) { // bounded by the files
+        if (!cache || !smith_fc_formatted(smith_fmt_files[i])) files[wanted++] = smith_fmt_files[i];
     }
-    if (status != 0 && check) fprintf(stderr, "smith fmt: some files are not formatted; `smith fmt` formats them\n");
-    return status;
+    size_t jobs = smith_verbs_jobs();
+    size_t size = (wanted + jobs - 1) / jobs;
+    size = size < 1 ? 1 : (size > smith_verbs_batch ? smith_verbs_batch : size);
+    SmithFmtRun run = {.files = files, .count = wanted, .size = size, .self = self, .check = check};
+    smith_verbs_parallel((wanted + size - 1) / size, jobs, smith_fmt_job, smith_fmt_done, &run);
+    const char *why = getenv("SMITH_FMT_CACHE");
+    if (why != nullptr && strcmp(why, "why") == 0)
+        fprintf(stderr, "smith fmt: %zu files: %zu run, %zu cached\n", count, wanted, count - wanted);
+    if (run.status != 0 && check)
+        fprintf(stderr, "smith fmt: some files are not formatted; `smith fmt` formats them\n");
+    return run.status;
 }
 
 // ---- lint
@@ -881,6 +922,41 @@ bool smith_lint_expand_dirs(int *argc, char ***argv) {
     *argc = out;
     *argv = smith_lint_dir_argv;
     return true;
+}
+
+// `smith lint FILE ...` (#3151): a file among the arguments (before any `--`) that `.clang-format-ignore` names is left
+// out, as `smith fmt` leaves it out and as the project lint never walks it, so naming it (the pre-push hook names every
+// changed file) cannot lint a test input that CI's lint skips. When that leaves no file, there is nothing to lint: the
+// line says so and the status is 0. Returns the new argument count.
+int smith_lint_drop_ignored(int argc, char **argv) {
+    static char *kept[smith_defaults_args_max];
+    int out = 0;
+    int dropped = 0;
+    int files = 0;
+    bool flags = false;
+    for (int i = 0; i < argc && i < smith_defaults_args_max - 1; i++) { // bounded by the arguments
+        const char *name = argv[i];
+        struct stat info;
+        flags = flags || (i >= 2 && strcmp(name, "--") == 0);
+        bool file = i >= 2 && !flags && name[0] != '-' && stat(name, &info) == 0 && S_ISREG(info.st_mode);
+        while (file && name[0] == '.' && name[1] == '/')
+            name += 2; // bounded by the name
+        if (file && smith_lint_ignored(name)) {
+            dropped++;
+            continue;
+        }
+        files += file ? 1 : 0;
+        kept[out++] = argv[i];
+    }
+    if (dropped == 0) return argc;
+    if (files == 0) {
+        fprintf(stderr, "smith lint: linted 0 files (%d named by .clang-format-ignore)\n", dropped);
+        exit(0);
+    }
+    for (int i = 0; i < out; i++)
+        argv[i] = kept[i];
+    argv[out] = nullptr;
+    return out;
 }
 
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy

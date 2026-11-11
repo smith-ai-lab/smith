@@ -9,7 +9,11 @@
 // chain and `v` is no word of the function. The checker types the pattern on a pointer once #2647 lands, so
 // `fix.smith` waits for the parser to read the form. Tests: `tests/front_fix_place_test.smith`.
 //
-//   fix_place::edits(source)   one fix for each test
+//   fix_place::edits(source)   one fix for each test, and one for each `_ = x` statement
+//
+// A statement that starts with `_ =` discards a value the way C did (`(void)x` and `_ = x` in today's syntax); in the
+// new syntax `_` is no name to assign to, and the discard is `_ := x` (smith-dev-syntax-attributes: `_` for unused,
+// #3084).
 module front::fix_place;
 
 import front::ast;
@@ -131,8 +135,32 @@ static Bool reads_of(Str text, Str base, Str variant, Usize *places, Usize *coun
     return true;
 }
 
+// One fix for each line that starts with `_ = `: the `:` goes before the `=`, so `_ = f(x)` is `_ := f(x)`.
+static core::Errors discard_edits(Str source, core::Errors out) {
+    Usize at = 0;
+    while (at < countof(source)) {
+        Usize end = line_end(source, at);
+        Usize head = at + indent_of(source, at);
+        if (starts_with(source[head:end], "_ = ")) {
+            core::Edits fix = {};
+            fix = mem::realloc(fix, 1);
+            Str colon = ":";
+            fix[0] = (core::Edit){.span = {.start = (U32)(head + 2), .end = (U32)(head + 2)}, .text = colon};
+            core::ParseError made = {};
+            made.span = (ast::Span){.start = (U32)head, .end = (U32)(head + 3)};
+            made.message = "`_` is no name to assign to: a discarded value is `_ := x`";
+            made.fix = fix;
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = made;
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
 export core::Errors edits(Str source) {
-    core::Errors out = {};
+    core::Errors none = {};
+    core::Errors out = discard_edits(source, none);
     Usize last_function = countof(source);
     Usize at = 0;
     while (at < countof(source)) {

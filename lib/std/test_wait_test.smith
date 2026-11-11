@@ -1,0 +1,43 @@
+// The runner's bounded wait (std::test's bounded_wait, #3127): a process the runner waits for that never ends is killed
+// and reaped when the grace runs out, the wait is told as a failure, and one that ends in time is not touched. Twice a
+// CI job sat 17 minutes in an unbounded wait of the runner; this is that wait with a child that outlives its test.
+module std::test_wait_test;
+
+import <signal.h>;
+import <sys/wait.h>;
+import <unistd.h>;
+import std::clock;
+import std::test;
+
+// NOLINTBEGIN(smith-effects, smith-preprocessor): a forked child is the process the runner waits for
+export void test_wait_a_child_that_never_ends_is_killed_after_the_grace() {
+    I32 child = c::fork();
+    test::check(child >= 0);
+    if (child == 0) {
+        for (U32 turns = 0; turns < 100000; turns++) // bounded: the test kills it long before
+            c::pause();
+        c::_exit(0);
+    }
+    I32 status = 0;
+    U64 began = clock::monotonic();
+    Bool ended = test::bounded_wait(child, "a child that never ends", "std::test_wait_test", 0.3, &status);
+    U64 took = clock::monotonic() - began;
+    test::check_equal(ended, false);
+    test::check(c::WIFSIGNALED(status));
+    I32 signal_number = c::WTERMSIG(status);
+    test::check_equal(signal_number, (I32)c::SIGKILL);
+    test::check_less(took, 5 * clock::second);
+}
+
+export void test_wait_a_child_that_ends_in_time_is_not_killed() {
+    I32 child = c::fork();
+    test::check(child >= 0);
+    if (child == 0) c::_exit(7);
+    I32 status = 0;
+    Bool ended = test::bounded_wait(child, "a child that ends", "std::test_wait_test", 30.0, &status);
+    test::check_equal(ended, true);
+    test::check(c::WIFEXITED(status));
+    I32 code = c::WEXITSTATUS(status);
+    test::check_equal(code, 7);
+}
+// NOLINTEND(smith-effects, smith-preprocessor)

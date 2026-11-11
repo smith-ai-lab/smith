@@ -143,13 +143,25 @@ static core::Edits tuple_index_of(Str source, const types::Checked *c, const ast
     return out;
 }
 
+// Whether entry `i` of the side table is in this module's text: not in the body of an instance of another module's
+// generic function, whose spans are offsets in that module's file. `rest[0]` in `args::locals(1, 2, 3)`, unrolled in
+// the instance, indexed `source` past its end and failed an assert (#3027).
+static Bool in_this_file(Str source, const types::Checked *c, Usize i) {
+    const ast::Expr *e = c->nodes[i].node;
+    if (e == nullptr || e->span.end > countof(source)) return false;
+    Usize instance = c->nodes[i].instance;
+    if (instance >= c->instance_count) return true;
+    Str prefix = c->instances[instance].prefix;
+    return countof(prefix) == 0;
+}
+
 // The fixes of `module`'s tuple indexes `t[0]`, as errors that carry them. The checker rejects the index, so these are
 // read from a module that has errors (`edits` below needs none).
 export core::Errors tuple_edits(Str source, const types::Checked *c) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(c->nodes); i++) {
         const ast::Expr *e = c->nodes[i].node;
-        if (e == nullptr || e->kind != .index) continue;
+        if (e == nullptr || e->kind != .index || !in_this_file(source, c, i)) continue;
         core::Edits element = tuple_index_of(source, c, e);
         if (countof(element) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
@@ -167,7 +179,7 @@ export core::Errors edits(Str source, const types::Checked *c) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(c->nodes); i++) {
         const ast::Expr *e = c->nodes[i].node;
-        if (e == nullptr || e->kind != .call) continue;
+        if (e == nullptr || e->kind != .call || !in_this_file(source, c, i)) continue;
         core::Edits fix = fix_of(source, c, e);
         if (countof(fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
