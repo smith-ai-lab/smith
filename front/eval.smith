@@ -66,6 +66,17 @@ export typedef enum {
         ast::Text family;
         ast::Text name;
     } fact;
+    struct {
+        Usize object;
+        types::TypeRef type;
+    } aggregate; // a struct, an array or a tuple (step 3): its cells are the object's, in the compile-time heap
+    struct {
+        Usize object;
+        Usize begin;
+        Usize end;
+        types::TypeRef type;
+    } slice; // `str` and `[]T` (step 3): the cells `begin` to `end` of an object
+    unset;   // `undefined`: a cell nothing has written
     nothing; // what a statement that is no value leaves: an assignment, a loop, a call of a function with no result
 } Value;
 
@@ -133,6 +144,21 @@ static Value nothing_value() {
     return made;
 }
 
+static Value unset_value() {
+    Value made = .unset;
+    return made;
+}
+
+static Value aggregate_value(Usize object, types::TypeRef type) {
+    Value made = {.aggregate = {.object = object, .type = type}};
+    return made;
+}
+
+static Value slice_value(Usize object, Usize begin, Usize end, types::TypeRef type) {
+    Value made = {.slice = {.object = object, .begin = begin, .end = end, .type = type}};
+    return made;
+}
+
 // The value as a message shows it: `-3`, `true`, `1.5`, `.linux`, `u32`.
 export Str show(Value v) {
     if (v == .integer) return msg(format::push(v.integer.negative ? "-" : "", v.integer.magnitude));
@@ -144,6 +170,9 @@ export Str show(Value v) {
     }
     if (v == .type_value) return types::show(v.type_value.type);
     if (v == .fact) return msg(format::push(".", v.fact.name));
+    if (v == .aggregate) return msg(format::push("a value of `", types::show(v.aggregate.type), "`"));
+    if (v == .slice) return msg(format::push("a value of `", types::show(v.slice.type), "`"));
+    if (v == .unset) return "undefined";
     return "";
 }
 
@@ -406,6 +435,159 @@ static Step later(Step from, U32 phase) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The compile-time heap (step 3)
+//
+// A struct, an array or a tuple is an object: its type and its cells, one `Value` for each field or element. A value
+// that is one (`aggregate`) names its object, and every place that keeps it (a local, a cell, an argument) keeps a copy
+// (`copied`), so a write through one name is not seen through another. A slice (`str` is one) names a range of an
+// object's cells and shares them. The heap belongs to the outermost evaluation: it starts empty with it, and what an
+// `Outcome` holds is valid until the next evaluation starts. `memory_limit` is the most cells it holds (#3039).
+
+struct Object {
+    types::TypeRef type;
+    Value cells[:];
+};
+
+struct Heap {
+    Object items[:];
+    Usize count;
+    U64 cells;
+};
+
+static Heap heap = {};
+
+export U64 memory_limit() {
+    return 4194304;
+}
+
+static Bool is_open(const Run *run, types::TypeRef t);
+
+// The cells of an object. A slice field reached through an element of another slice is read through a local.
+static Usize cells_in(Usize object) {
+    Value cells[:] = heap.items[object].cells;
+    return countof(cells);
+}
+
+static Value cell_get(Usize object, Usize at) {
+    Value cells[:] = heap.items[object].cells;
+    return cells[at];
+}
+
+static void cell_set(Usize object, Usize at, Value v) {
+    Value cells[:] = heap.items[object].cells;
+    cells[at] = v;
+}
+
+// Whether a value of type `t` is an object: a struct, an array or a tuple.
+static Bool is_aggregate_type(types::TypeRef t) {
+    if (t == nullptr) return false;
+    return t->kind == .array || t->kind == .tuple || (t->kind == .record && !t->kind.record.is_union);
+}
+
+static Usize cell_count(types::TypeRef t) {
+    if (t->kind == .array) return (Usize)types::count_of(t);
+    return countof(types::slots_of(t).items);
+}
+
+static types::TypeRef cell_type(types::TypeRef t, Usize i) {
+    if (t->kind == .array) return types::element_of(t);
+    return types::slots_of(t).items[i].type;
+}
+
+// A new object of `count` cells that nothing has written.
+static Usize new_object(Run *run, ast::Span at, types::TypeRef type, Usize count) {
+    if (heap.cells + count > memory_limit()) {
+        failed(run, at,
+               msg(format::push("compile-time code holds more than ", memory_limit(),
+                                " values at once; the work belongs at run time")));
+        return 0;
+    }
+    if (heap.count == countof(heap.items)) {
+        Usize capacity = countof(heap.items) * 2;
+        if (capacity < 32) capacity = 32;
+        heap.items = mem::realloc(heap.items, capacity);
+    }
+    Value cells[:] = mem::alloc_slice(Value, count);
+    for (Usize i = 0; i < count; i++) {
+        cells[i] = unset_value();
+    }
+    heap.items[heap.count] = (Object){.type = type, .cells = cells};
+    heap.cells += count;
+    heap.count += 1;
+    return heap.count - 1;
+}
+
+// A list of objects still to visit: the copies, comparisons and fills below walk nested objects with one of these, as
+// nothing here recurses.
+struct Queue {
+    Usize items[:];
+    Usize count;
+};
+
+static void queue_push(Queue *q, Usize object) {
+    if (q->count == countof(q->items)) {
+        Usize capacity = countof(q->items) * 2;
+        if (capacity < 16) capacity = 16;
+        q->items = mem::realloc(q->items, capacity);
+    }
+    q->items[q->count] = object;
+    q->count += 1;
+}
+
+// A value of the type `t` that nothing has written: an object whose cells are unwritten too (`mut xs: [5]i32 =
+// undefined`), or `unset` for a type that is not one.
+static Value unset_of(Run *run, ast::Span at, types::TypeRef t) {
+    if (!is_aggregate_type(t) || is_open(run, t)) return unset_value();
+    Usize root = new_object(run, at, t, cell_count(t));
+    Queue todo = {};
+    queue_push(&todo, root);
+    for (Usize next = 0; next < todo.count && !run->stopped; next++) {
+        Usize at_object = todo.items[next];
+        types::TypeRef type = heap.items[at_object].type;
+        for (Usize i = 0; i < cells_in(at_object) && !run->stopped; i++) {
+            types::TypeRef inner = cell_type(type, i);
+            if (!is_aggregate_type(inner)) continue;
+            Usize child = new_object(run, at, inner, cell_count(inner));
+            cell_set(at_object, i, aggregate_value(child, inner));
+            queue_push(&todo, child);
+        }
+    }
+    return aggregate_value(root, t);
+}
+
+// A copy of an object and of every object inside it.
+static Value copied(Run *run, ast::Span at, Value v) {
+    if (v != .aggregate) return v;
+    Usize from = v.aggregate.object;
+    Usize root = new_object(run, at, heap.items[from].type, cells_in(from));
+    for (Usize i = 0; i < cells_in(from) && !run->stopped; i++)
+        cell_set(root, i, cell_get(from, i));
+    Queue todo = {};
+    queue_push(&todo, root);
+    for (Usize next = 0; next < todo.count && !run->stopped; next++) {
+        Usize here = todo.items[next];
+        for (Usize i = 0; i < cells_in(here) && !run->stopped; i++) {
+            Value cell = cell_get(here, i);
+            if (cell != .aggregate) continue;
+            Usize original = cell.aggregate.object;
+            Usize child = new_object(run, at, heap.items[original].type, cells_in(original));
+            for (Usize k = 0; k < cells_in(original) && !run->stopped; k++)
+                cell_set(child, k, cell_get(original, k));
+            cell_set(here, i, aggregate_value(child, cell.aggregate.type));
+            queue_push(&todo, child);
+        }
+    }
+    return aggregate_value(root, v.aggregate.type);
+}
+
+// Defined with the values with memory, below.
+static Bool base_is_value(Run *run, const ast::Expr *e);
+static void field_step(Run *run, Step s);
+static void aggregate_equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r);
+static types::TypeRef constructed_type(Run *run, const ast::Expr *callee);
+static void construct_step(Run *run, Step s, types::TypeRef t);
+
+// ---------------------------------------------------------------------------------------------------------------
 // Locals, frames and loops
 
 // Ends the locals and the scopes above the marks: a block, a loop or a call is left.
@@ -427,7 +609,11 @@ static void add_local(Run *run, Str name, Value value, Bool is_mut, types::TypeR
         if (capacity < 32) capacity = 32;
         run->locals = mem::realloc(run->locals, capacity);
     }
-    run->locals[run->local_count] = (Local){.name = name, .value = value, .is_mut = is_mut, .type = type};
+    Value kept = value;
+    if (value == .aggregate) {
+        kept = copied(run, (ast::Span){}, value); // a local is its own copy
+    }
+    run->locals[run->local_count] = (Local){.name = name, .value = kept, .is_mut = is_mut, .type = type};
     run->local_count += 1;
     if (value == .type_value) declare_type(run, name, value.type_value.type);
 }
@@ -520,6 +706,8 @@ static types::TypeRef value_type(Run *run, Value v) {
     if (v == .type_value) return v.type_value.type;
     if (v == .boolean) return table->bool_type;
     if (v == .enumerator) return v.enumerator.type;
+    if (v == .aggregate) return v.aggregate.type;
+    if (v == .slice) return v.slice.type;
     if (v == .integer) {
         if (v.integer.type != nullptr) return v.integer.type;
         return types::builtin(table, "I32");
@@ -730,7 +918,7 @@ static void name_step(Run *run, Step s, ast::Path path) {
 
 // `v` as a value of the declared type: an integer must fit it, a number becomes a float, and a `type` holds a type.
 // False, and the run is stopped, when it does not.
-static Bool coerced(Run *run, ast::Span at, Value v, types::TypeRef declared, Value *out) {
+static Bool coerced_scalar(Run *run, ast::Span at, Value v, types::TypeRef declared, Value *out) {
     *out = v;
     if (declared == nullptr || is_open(run, declared)) return true;
     if (declared->kind == .type_type && v != .type_value) {
@@ -751,6 +939,43 @@ static Bool coerced(Run *run, ast::Span at, Value v, types::TypeRef declared, Va
     } else if (v == .floating && declared->kind == .floating) {
         *out = floating_value(v.floating.value, declared);
     }
+    return true;
+}
+
+// As `coerced_scalar`, and a value with memory: `undefined` becomes an object of the declared type whose cells nothing
+// has written, an array or a struct is fitted cell by cell to the declared one, and an array handed to a slice
+// parameter becomes a slice of it.
+static Bool coerced(Run *run, ast::Span at, Value v, types::TypeRef declared, Value *out) {
+    *out = v;
+    if (declared == nullptr || is_open(run, declared)) return true;
+    if (v == .unset) {
+        *out = unset_of(run, at, declared);
+        return !run->stopped;
+    }
+    if (v == .aggregate && (declared->kind == .slice || declared->kind == .text) && v.aggregate.type->kind == .array) {
+        Usize count = cells_in(v.aggregate.object);
+        *out = slice_value(v.aggregate.object, 0, count, declared);
+        return true;
+    }
+    if (v != .aggregate || !is_aggregate_type(declared)) return coerced_scalar(run, at, v, declared, out);
+    if (v.aggregate.type == declared) return true;
+    Usize count = cells_in(v.aggregate.object);
+    Bool same_shape = (v.aggregate.type->kind == .array && declared->kind == .array) ||
+                      (v.aggregate.type->kind == .tuple && declared->kind == .tuple) ||
+                      (v.aggregate.type->kind == .record && declared->kind == .record);
+    if (!same_shape || count != cell_count(declared)) {
+        unknown(run, at, msg(format::push(show(v), " does not fit `", types::show(declared), "` at compile time")));
+        return false;
+    }
+    for (Usize i = 0; i < count; i++) {
+        Value cell = cell_get(v.aggregate.object, i);
+        if (cell == .aggregate || cell == .slice || cell == .unset) continue;
+        Value fitted = cell;
+        if (!coerced_scalar(run, at, cell, cell_type(declared, i), &fitted)) return false;
+        cell_set(v.aggregate.object, i, fitted);
+    }
+    heap.items[v.aggregate.object].type = declared;
+    *out = aggregate_value(v.aggregate.object, declared);
     return true;
 }
 
@@ -788,6 +1013,10 @@ static Bool enumerator_index(types::TypeRef t, Str name, Usize *index) {
 static void member_step(Run *run, Step s) {
     const ast::Expr *e = s.expr;
     types::Checked *r = run->r;
+    if (base_is_value(run, e)) {
+        field_step(run, s); // a field of a struct
+        return;
+    }
     types::Names names = types::member_names(e);
     if (names.count < 2) {
         unknown(run, e->span, "a member of a value is not read at compile time");
@@ -984,6 +1213,9 @@ static void equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Va
         equal = l.enumerator.index == r.enumerator.index;
     } else if (l == .fact && r == .fact && same(l.fact.family, r.fact.family)) {
         equal = same(l.fact.name, r.fact.name);
+    } else if ((l == .aggregate && r == .aggregate) || (l == .slice && r == .slice)) {
+        aggregate_equality(run, e, op, l, r);
+        return;
     } else if (l == .fact && r == .integer) {
         equal = !r.integer.negative && fact_number(l.fact.family, l.fact.name) == r.integer.magnitude;
     } else if (l == .integer && r == .fact) {
@@ -996,7 +1228,9 @@ static void equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Va
 }
 
 static void binary_values(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
-    if (l == .integer && r == .integer) {
+    if (l == .unset || r == .unset) {
+        unknown(run, e->span, "this reads a value that nothing has written");
+    } else if (l == .integer && r == .integer) {
         integer_binary(run, e, op, l, r);
     } else if ((l == .floating || l == .integer) && (r == .floating || r == .integer)) {
         floating_binary(run, e, op, l, r);
@@ -1227,6 +1461,12 @@ static void query_step(Run *run, Step s) {
         t = operand_type(run, reflected);
     } else {
         t = operand_type(run, operand);
+        if (op == .count_of && operand != nullptr && s.phase == 0 &&
+            (t == nullptr || t->kind == .slice || t->kind == .text)) {
+            push_step(run, later(s, 15)); // a slice or a string: its length is in the value
+            push_step(run, expr_step(operand, s));
+            return;
+        }
     }
     if (is_open(run, t)) {
         unknown(run, e->span, "the type this asks about is not known yet");
@@ -1379,7 +1619,10 @@ static void call_step(Run *run, Step s) {
     const ast::Decl *decl = function_of(symbol);
     Str name = callee_name(callee);
     Str contract = contract_of(callee);
-    if (decl == nullptr && countof(args) == 1 && (is_question(name) || is_concept(name))) {
+    types::TypeRef made = decl == nullptr ? constructed_type(run, callee) : nullptr;
+    if (made != nullptr) {
+        construct_step(run, s, made);
+    } else if (decl == nullptr && countof(args) == 1 && (is_question(name) || is_concept(name))) {
         push_step(run, later(s, 1));
         push_step(run, expr_step(args[0], s));
     } else if (countof(contract) > 0) {
@@ -1520,6 +1763,339 @@ static void call_leave(Run *run, Step s) {
     run->loop_count = f.loops;
     run->frame_count -= 1;
     push_value(run, kept);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Values with memory (step 3): arrays, strings, structs, fields and elements
+
+// `[a, b, c]`: the items are read, then the array is made.
+static void array_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .array_lit) return;
+    ast::ExprRef items[:] = e->kind.array_lit.items;
+    push_step(run, later(s, 11));
+    for (Usize i = countof(items); i > 0; i--)
+        push_step(run, expr_step(items[i - 1], s));
+}
+
+static void array_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .array_lit) return;
+    Usize count = countof(e->kind.array_lit.items);
+    types::TypeRef written = types::type_of(run->r, e);
+    types::TypeRef element = nullptr;
+    if (written != nullptr && written->kind == .array && types::count_of(written) == count) {
+        element = types::element_of(written);
+    } else if (count > 0) {
+        element = value_type(run, run->values[run->have - count]);
+    }
+    if (element == nullptr) {
+        unknown(run, e->span, "the type of this array is not known at compile time");
+        return;
+    }
+    types::TypeRef type = types::array_of(&run->r->table, element, count, false);
+    Usize object = new_object(run, e->span, type, count);
+    if (run->stopped) return;
+    for (Usize i = count; i > 0; i--) {
+        Value fitted = pop_value(run);
+        if (!coerced(run, e->span, fitted, element, &fitted)) return;
+        cell_set(object, i - 1, copied(run, e->span, fitted));
+    }
+    push_value(run, aggregate_value(object, type));
+}
+
+// A string: a slice of `Char` cells (`str`).
+static void string_step(Run *run, const ast::Expr *e) {
+    if (e->kind != .string) return;
+    types::Table *table = &run->r->table;
+    Str bytes = e->kind.string.bytes;
+    types::TypeRef chars = types::builtin(table, "Char");
+    Usize count = countof(bytes);
+    Usize object = new_object(run, e->span, types::array_of(table, chars, count, true), count);
+    if (run->stopped) return;
+    for (Usize i = 0; i < count; i++)
+        cell_set(object, i, integer_value((U64)(U8)bytes[i], false, chars));
+    push_value(run, slice_value(object, 0, count, table->text));
+}
+
+// The record a call constructs (`Point(x = 1, y = 2)`): the callee names a struct. Null for any other call.
+static types::TypeRef constructed_type(Run *run, const ast::Expr *callee) {
+    types::TypeRef t = nullptr;
+    ast::Path path = {};
+    if (callee->kind == .type_value) {
+        t = resolve_quiet(run, callee->kind.type_value.type);
+    } else if (types::name_path(callee, &path)) {
+        const types::Symbol *symbol = types::type_through_modules(run->r, path);
+        if (symbol != nullptr && symbol->kind == .type_name) t = symbol->type;
+    }
+    if (t == nullptr || is_open(run, t) || t->kind != .record || t->kind.record.is_union) return nullptr;
+    return t;
+}
+
+// The field argument `i` fills: by its name (`y = 2`), else by its place. The field count when there is none.
+static Usize argument_slot(types::Slot slots[:], ast::ExprRef args[:], Usize i) {
+    const ast::Expr *given = args[i];
+    if (given->kind != .named_arg) return i < countof(slots) ? i : countof(slots);
+    for (Usize k = 0; k < countof(slots); k++) {
+        if (same(slots[k].name, given->kind.named_arg.name)) return k;
+    }
+    return countof(slots);
+}
+
+static const ast::Expr *argument_value(const ast::Expr *given) {
+    return given->kind == .named_arg ? given->kind.named_arg.value : given;
+}
+
+// Which fields the arguments fill; false, and the run is stopped, when one names no field or fills one twice.
+static Bool fills(Run *run, const ast::Expr *e, types::TypeRef t, Bool filled[:]) {
+    if (e->kind != .call) return false;
+    ast::ExprRef args[:] = e->kind.call.args;
+    types::Slot slots[:] = types::slots_of(t).items;
+    for (Usize i = 0; i < countof(args); i++) {
+        Usize at = argument_slot(slots, args, i);
+        if (at == countof(slots) || filled[at]) {
+            unknown(run, args[i]->span,
+                    msg(format::push("`", types::show(t), "` has no field here for this argument")));
+            return false;
+        }
+        filled[at] = true;
+    }
+    return true;
+}
+
+// `Point(x = n, y = n * 2)`: the arguments are read, then the defaults of the fields they leave out.
+static void construct_step(Run *run, Step s, types::TypeRef t) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .call) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    types::Slot slots[:] = types::slots_of(t).items;
+    Bool filled[:] = mem::alloc_slice(Bool, countof(slots));
+    if (!fills(run, e, t, filled)) return;
+    push_step(run, later(s, 12));
+    for (Usize k = 0; k < countof(slots); k++) {
+        if (filled[k]) continue;
+        if (slots[k].default_value == nullptr) {
+            unknown(run, e->span, msg(format::push("`", types::show(t), "` needs a value for `", slots[k].name, "`")));
+            return;
+        }
+    }
+    for (Usize k = countof(slots); k > 0; k--) {
+        if (!filled[k - 1]) push_step(run, expr_step(slots[k - 1].default_value, s));
+    }
+    for (Usize i = countof(args); i > 0; i--)
+        push_step(run, expr_step(argument_value(args[i - 1]), s));
+}
+
+static void construct_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .call) return;
+    types::TypeRef t = constructed_type(run, e->kind.call.callee);
+    if (t == nullptr) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    types::Slot slots[:] = types::slots_of(t).items;
+    Bool filled[:] = mem::alloc_slice(Bool, countof(slots));
+    if (!fills(run, e, t, filled)) return;
+    Usize object = new_object(run, e->span, t, countof(slots));
+    if (run->stopped) return;
+    for (Usize k = countof(slots); k > 0; k--) {
+        if (filled[k - 1]) continue;
+        Value fitted = pop_value(run);
+        if (!coerced(run, e->span, fitted, slots[k - 1].type, &fitted)) return;
+        cell_set(object, k - 1, copied(run, e->span, fitted));
+    }
+    for (Usize i = countof(args); i > 0; i--) {
+        Usize at = argument_slot(slots, args, i - 1);
+        Value fitted = pop_value(run);
+        if (!coerced(run, args[i - 1]->span, fitted, slots[at].type, &fitted)) return;
+        cell_set(object, at, copied(run, args[i - 1]->span, fitted));
+    }
+    push_value(run, aggregate_value(object, t));
+}
+
+// Whether the base of the member `e` is a value (a local, a variable, a call, an element) and not a module, a type or
+// a C header: `p.x` reads a field, `std.math.pi` a name.
+static Bool base_is_value(Run *run, const ast::Expr *e) {
+    if (e->kind != .member) return false;
+    const ast::Expr *base = e->kind.member.base;
+    while (base->kind == .member) {
+        base = base->kind.member.base;
+    }
+    ast::Path path = {};
+    if (!types::name_path(base, &path)) return base->kind != .type_value && base->kind != .name;
+    Value held = nothing_value();
+    if (countof(path.segments) == 1 && local_value(run, path.segments[0].text, &held)) return true;
+    const types::Symbol *symbol = types::type_through_modules(run->r, path);
+    return symbol != nullptr && symbol->kind == .variable;
+}
+
+static void field_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .member) return;
+    push_step(run, later(s, 13));
+    push_step(run, expr_step(e->kind.member.base, s));
+}
+
+// The field `name` of the struct `v`: its object and the cell. False, and the run is stopped, when there is none.
+static Bool field_cell(Run *run, ast::Span at, Value v, Str name, Usize *cell) {
+    if (v == .unset) {
+        unknown(run, at, "this reads a value that nothing has written");
+        return false;
+    }
+    if (v != .aggregate || v.aggregate.type->kind == .array) {
+        unknown(run, at, msg(format::push("`.", name, "` reads a field of a struct, and this is not one")));
+        return false;
+    }
+    types::Slot slots[:] = types::slots_of(v.aggregate.type).items;
+    for (Usize k = 0; k < countof(slots); k++) {
+        if (same(slots[k].name, name)) {
+            *cell = k;
+            return true;
+        }
+    }
+    unknown(run, at, msg(format::push("`", types::show(v.aggregate.type), "` has no field `", name, "`")));
+    return false;
+}
+
+static void field_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .member) return;
+    Value v = pop_value(run);
+    Usize cell = 0;
+    if (!field_cell(run, e->span, v, e->kind.member.name, &cell)) return;
+    if (v == .aggregate) push_value(run, cell_get(v.aggregate.object, cell));
+}
+
+static void index_step(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    if (e->kind != .index) return;
+    push_step(run, later(s, 14));
+    push_step(run, expr_step(e->kind.index.index, s));
+    push_step(run, expr_step(e->kind.index.base, s));
+}
+
+// The element `index` of the array or slice `v`: its object and cell. False, and the run is stopped, when `index` is
+// not one of its places.
+static Bool element_cell(Run *run, ast::Span at, Value v, Value index, Usize *object, Usize *cell) {
+    if (v == .unset) {
+        unknown(run, at, "this reads a value that nothing has written");
+        return false;
+    }
+    Bool array = v == .aggregate && v.aggregate.type->kind == .array;
+    if (!array && v != .slice) {
+        unknown(run, at, "this indexes something that is not an array, a slice or a string known at compile time");
+        return false;
+    }
+    if (index != .integer || index.integer.negative) {
+        if (index == .integer) {
+            failed(run, at, msg(format::push("the index ", show(index), " is out of range at compile time")));
+        } else {
+            unknown(run, at, "this index is not a whole number known at compile time");
+        }
+        return false;
+    }
+    Usize holder = 0;
+    Usize begin = 0;
+    Usize end = 0;
+    if (v == .aggregate) {
+        holder = v.aggregate.object;
+        end = cells_in(holder);
+    } else if (v == .slice) {
+        holder = v.slice.object;
+        begin = v.slice.begin;
+        end = v.slice.end;
+    }
+    if (index.integer.magnitude >= end - begin) {
+        failed(run, at,
+               msg(format::push("the index ", index.integer.magnitude, " is out of range for ", end - begin,
+                                " elements at compile time")));
+        return false;
+    }
+    *object = holder;
+    *cell = begin + (Usize)index.integer.magnitude;
+    return true;
+}
+
+static void index_resume(Run *run, Step s) {
+    Value index = pop_value(run);
+    Value base = pop_value(run);
+    Usize object = 0;
+    Usize cell = 0;
+    if (!element_cell(run, s.expr->span, base, index, &object, &cell)) return;
+    push_value(run, cell_get(object, cell));
+}
+
+// `countof(x)` of a value: the cells of an array, the range of a slice or a string.
+static void count_resume(Run *run, Step s) {
+    Value v = pop_value(run);
+    types::TypeRef size = types::builtin(&run->r->table, "Usize");
+    if (v == .aggregate && v.aggregate.type->kind == .array) {
+        push_value(run, integer_value((U64)cells_in(v.aggregate.object), false, size));
+    } else if (v == .slice) {
+        push_value(run, integer_value((U64)(v.slice.end - v.slice.begin), false, size));
+    } else {
+        unknown(run, s.expr->span, "this count is known only at run time");
+    }
+}
+
+// A pair of values still to compare.
+struct Pairs {
+    Value left[:];
+    Value right[:];
+    Usize count;
+};
+
+static void pairs_push(Pairs *p, Value a, Value b) {
+    if (p->count == countof(p->left)) {
+        Usize capacity = countof(p->left) * 2;
+        if (capacity < 16) capacity = 16;
+        p->left = mem::realloc(p->left, capacity);
+        p->right = mem::realloc(p->right, capacity);
+    }
+    p->left[p->count] = a;
+    p->right[p->count] = b;
+    p->count += 1;
+}
+
+// Two values that are not objects, compared: 1 equal, 0 not, 2 not comparable at compile time.
+static U32 scalar_equal(Value a, Value b) {
+    if (a == .integer && b == .integer)
+        return a.integer.magnitude == b.integer.magnitude && a.integer.negative == b.integer.negative ? 1 : 0;
+    if (a == .boolean && b == .boolean) return a.boolean.value == b.boolean.value ? 1 : 0;
+    if (a == .enumerator && b == .enumerator) return a.enumerator.index == b.enumerator.index ? 1 : 0;
+    if (a == .floating && b == .floating) return a.floating.value == b.floating.value ? 1 : 0;
+    return 2;
+}
+
+// `==` on structs, arrays and strings: cell by cell, nested objects included. The cells the two hold are compared in
+// order and the first that differs ends it.
+static void aggregate_equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
+    Pairs todo = {};
+    pairs_push(&todo, l, r);
+    Bool equal = true;
+    for (Usize next = 0; next < todo.count && equal; next++) {
+        Value a = todo.left[next];
+        Value b = todo.right[next];
+        if (a == .aggregate && b == .aggregate) {
+            Usize n = cells_in(a.aggregate.object);
+            equal = n == cells_in(b.aggregate.object);
+            for (Usize i = 0; i < n && equal; i++)
+                pairs_push(&todo, cell_get(a.aggregate.object, i), cell_get(b.aggregate.object, i));
+        } else if (a == .slice && b == .slice) {
+            Usize n = a.slice.end - a.slice.begin;
+            equal = n == b.slice.end - b.slice.begin;
+            for (Usize i = 0; i < n && equal; i++)
+                pairs_push(&todo, cell_get(a.slice.object, a.slice.begin + i),
+                           cell_get(b.slice.object, b.slice.begin + i));
+        } else {
+            U32 same_cells = scalar_equal(a, b);
+            if (same_cells == 2) {
+                unknown(run, e->span, "these two are not compared at compile time");
+                return;
+            }
+            equal = same_cells == 1;
+        }
+    }
+    push_value(run, boolean_value(equal == (op == .equal)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1934,52 +2510,134 @@ static Bool binary_of(ast::AssignOp op, ast::BinaryOp *out) {
     return op != .plain;
 }
 
-// The local an assignment writes, one more than its index; 0, and the run is stopped, when the target is no `mut`
-// local of the call being run.
-static Usize assigned_local(Run *run, const ast::Expr *target) {
-    ast::Path path = {};
-    Usize found = 0;
-    if (types::names_a_constant(target, &path) && countof(path.segments) == 1)
-        found = own_local(run, path.segments[0].text);
-    if (found == 0) {
-        unknown(run, target->span, "it writes something that is not one of its locals");
-    } else if (!run->locals[found - 1].is_mut) {
-        unknown(run, target->span, msg(format::push("`", run->locals[found - 1].name, "` is not `mut`")));
-        return 0;
+// An assignment's place: the local at its root and the member and index expressions from the root out, nearest the
+// root last.
+struct Place {
+    Usize root; // one more than the index of the local; 0 when the target is none
+    Usize depth;
+    const ast::Expr *steps[8];
+};
+
+static Place place_of(Run *run, const ast::Expr *target) {
+    Place place = {};
+    const ast::Expr *at = target;
+    while (at->kind == .member || at->kind == .index) {
+        if (place.depth == 8) {
+            unknown(run, target->span, "this place is more than 8 members and elements deep");
+            return place;
+        }
+        place.steps[place.depth] = at;
+        place.depth += 1;
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else if (at->kind == .index) {
+            at = at->kind.index.base;
+        }
     }
-    return found;
+    ast::Path path = {};
+    if (types::names_a_constant(at, &path) && countof(path.segments) == 1)
+        place.root = own_local(run, path.segments[0].text);
+    return place;
 }
 
-// `x = v`, `x += v` on a `mut` local.
+// The cell of the struct or array `from` that the step `at` of a place names (`.x`, `[i]`), and the type its value has.
+static Bool place_cell(Run *run, const ast::Expr *at, Value from, Value index, Usize *object, Usize *cell,
+                       types::TypeRef *type) {
+    if (at->kind == .member) {
+        if (!field_cell(run, at->span, from, at->kind.member.name, cell)) return false;
+        if (from != .aggregate) return false;
+        *object = from.aggregate.object;
+        *type = cell_type(from.aggregate.type, *cell);
+        return true;
+    }
+    if (!element_cell(run, at->span, from, index, object, cell)) return false;
+    if (from == .slice) {
+        *type = types::element_of(from.slice.type);
+    } else if (from == .aggregate) {
+        *type = types::element_of(from.aggregate.type);
+    }
+    return true;
+}
+
+// The write of `v` (with `op`) into the place: the steps from the root are followed through the cells, and the last
+// cell is written.
+static void assign_into(Run *run, const ast::Expr *e, Place place, Value indexes[:], ast::AssignOp op, Value v) {
+    if (e->kind != .assign) return;
+    const ast::Expr *rhs = e->kind.assign.value;
+    Value at = run->locals[place.root - 1].value;
+    Usize object = 0;
+    Usize cell = 0;
+    types::TypeRef type = nullptr;
+    for (Usize i = place.depth; i > 0; i--) {
+        const ast::Expr *step = place.steps[i - 1];
+        if (!place_cell(run, step, at, indexes[i - 1], &object, &cell, &type)) return;
+        if (i > 1) at = cell_get(object, cell);
+    }
+    Value now = cell_get(object, cell);
+    ast::BinaryOp joined = .add;
+    Value written = v;
+    if (binary_of(op, &joined)) {
+        binary_values(run, e, joined, now, v);
+        if (run->stopped) return;
+        written = pop_value(run);
+    }
+    if (!coerced(run, rhs->span, written, type, &written)) return;
+    cell_set(object, cell, copied(run, e->span, written));
+    push_value(run, nothing_value());
+}
+
+// `x = v`, `x += v`, `p.x = v`, `xs[i] = v` on a `mut` local, or on the cells of a slice a local holds.
 static void assign_step(Run *run, Step s) {
     const ast::Expr *e = s.expr;
     if (e->kind != .assign) return;
     ast::AssignOp op = e->kind.assign.op;
     const ast::Expr *target = e->kind.assign.target;
     const ast::Expr *value = e->kind.assign.value;
-    Usize found = assigned_local(run, target);
-    if (found == 0) return;
+    Place place = place_of(run, target);
+    if (run->stopped) return;
+    if (place.root == 0) {
+        unknown(run, target->span, "it writes something that is not one of its locals");
+        return;
+    }
+    Local *local = &run->locals[place.root - 1];
+    Bool through_slice = place.depth > 0 && local->value == .slice;
+    if (!local->is_mut && !through_slice) {
+        unknown(run, target->span, msg(format::push("`", local->name, "` is not `mut`")));
+        return;
+    }
     if (s.phase == 0) {
         push_step(run, later(s, 1));
+        for (Usize i = 0; i < place.depth; i++) {
+            const ast::Expr *step = place.steps[i];
+            if (step->kind == .index) push_step(run, expr_step(step->kind.index.index, s));
+        }
         push_step(run, expr_step(value, s));
         return;
     }
+    Value indexes[8] = {};
+    for (Usize i = 0; i < place.depth; i++) {
+        if (place.steps[i]->kind == .index) indexes[i] = pop_value(run);
+    }
     Value v = pop_value(run);
+    if (place.depth > 0) {
+        assign_into(run, e, place, indexes[0:8], op, v);
+        return;
+    }
     ast::BinaryOp joined = .add;
     if (binary_of(op, &joined)) {
-        binary_values(run, e, joined, run->locals[found - 1].value, v);
+        binary_values(run, e, joined, local->value, v);
         if (run->stopped) return;
         v = pop_value(run);
     }
     Value kept = v;
-    Bool fitted = coerced(run, value->span, v, run->locals[found - 1].type, &kept);
+    Bool fitted = coerced(run, value->span, v, local->type, &kept);
     if (!fitted) {
         return;
     }
-    run->locals[found - 1].value = kept;
+    local->value = copied(run, value->span, kept);
     if (kept == .type_value) {
         // the name is a type name where the local was declared: that one changes, whatever block the write is in
-        const types::Symbol *named = types::lookup(&run->r->scopes, run->locals[found - 1].name);
+        const types::Symbol *named = types::lookup(&run->r->scopes, local->name);
         if (named != nullptr && named->kind == .type_name) ((types::Symbol *)(Usize)named)->type = kept.type_value.type;
     }
     push_value(run, nothing_value());
@@ -2017,6 +2675,16 @@ static void resume(Run *run, Step s) {
         call_enter(run, s);
     } else if (e->kind == .call && s.phase == 5) {
         with_dims_resume(run, s);
+    } else if (e->kind == .call && s.phase == 12) {
+        construct_resume(run, s);
+    } else if (e->kind == .array_lit) {
+        array_resume(run, s);
+    } else if (e->kind == .member && s.phase == 13) {
+        field_resume(run, s);
+    } else if (e->kind == .index) {
+        index_resume(run, s);
+    } else if (e->kind == .query && s.phase == 15) {
+        count_resume(run, s);
     } else if (e->kind == .call) {
         call_leave(run, s);
     } else if (e->kind == .assign) {
@@ -2049,8 +2717,12 @@ static void enter(Run *run, Step s) {
     if (is_local) {
         is_local = local_value(run, path.segments[0].text, &held);
     }
+    Bool unwritten = types::name_path(e, &path) && countof(path.segments) == 1 &&
+                     same(path.segments[0].text, "undefined") && !local_value(run, "undefined", &held);
     if (e->kind == .integer || e->kind == .character || e->kind == .boolean || e->kind == .floating) {
         literal_step(run, e);
+    } else if (unwritten) {
+        push_value(run, unset_value()); // `x: [5]i32 = undefined`
     } else if (types::name_path(e, &path) || (e->kind == .type_value && names_variable(run, e, &path))) {
         name_step(run, s, path); // also `N` of `[N]u8`: the parser reads a capitalized name as a type
     } else if (e->kind == .member) {
@@ -2079,6 +2751,12 @@ static void enter(Run *run, Step s) {
         push_step(run, expr_step(e->kind.conditional.condition, s));
     } else if (e->kind == .query) {
         query_step(run, s);
+    } else if (e->kind == .array_lit) {
+        array_step(run, s);
+    } else if (e->kind == .string) {
+        string_step(run, e);
+    } else if (e->kind == .index) {
+        index_step(run, s);
     } else if (e->kind == .call) {
         call_step(run, s);
     } else if (e->kind == .assign) {
@@ -2115,6 +2793,7 @@ static Str endless(const Run *run) {
 // The value of `e` at compile time, in the scopes `r` is in. See the top of the file for what is read.
 static Outcome compute(types::Checked *r, const ast::Expr *e, Bool typed_only, Bool lenient) {
     Run run = {.r = r, .typed_only = typed_only, .lenient = lenient, .outer = current};
+    if (current == nullptr) heap = (Heap){}; // the heap belongs to the outermost evaluation
     Str outside = r->prefix;
     if (e == nullptr) return (Outcome){.known = false, .value = boolean_value(false), .why = "there is no value here"};
     current = &run;
@@ -2319,6 +2998,8 @@ export types::TypeRef type_for(types::Checked *r, const ast::Expr *init) {
     Value v = found.value;
     if (v == .boolean) return r->table.bool_type;
     if (v == .enumerator) return v.enumerator.type;
+    if (v == .aggregate) return v.aggregate.type;
+    if (v == .slice) return v.slice.type;
     if (v == .floating) {
         if (v.floating.type != nullptr) return v.floating.type;
         return types::builtin(&r->table, "F64");
