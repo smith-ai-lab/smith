@@ -12,3 +12,7 @@ uint32_t smith_stepcache_graph_deps(SmithExec *exec, const SmithEdge *edge, cons
 void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job, int64_t now);
 
 void smith_stepcache_prune(SmithExec *exec);
+
+bool smith_stepcache_answer_get(const char *hex, char *out, size_t capacity, size_t *size);
+
+void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size);

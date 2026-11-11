@@ -58,16 +58,23 @@ runs:
         else
           echo "import cache: no identity in the log, no folder dropped ($(ls "$imports" | wc -l) identities)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
+        # the solvers' answers of the smiths run inside the tests (#3174): the step store's folder `a`, in the tarball of
+        # the test-result store (restored by ./.github/actions/test-cache)
+        answers="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
         [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
+        [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
         n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f | wc -l || echo 0)
+        a=$( [ -d "$answers/a" ] && [ "$TESTS" = true ] && find "$answers/a" -type f | wc -l || echo 0)
+        n=$((n + a))
         # the import cache prunes itself (other identities unused for 14 days, then SMITH_IMPORT_CACHE_MAX)
         m=$( [ -d "$imports" ] && find "$imports" -type f -path '*/[hm]/*' | wc -l || echo 0)
         if [ "$n" -eq 0 ] && [ "$m" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
         assets=("$out/smith-tests.sha")
         if [ "$n" -gt 0 ]; then
-          tar -C "$dir" -c . | gzip -1 >"$out/smith-tests-$OS.tar.gz"; assets+=("$out/smith-tests-$OS.tar.gz")
+          mkdir -p "$dir"; extra=(); [ "$a" -gt 0 ] && extra=(-C "$answers" steps/a)
+          tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/smith-tests-$OS.tar.gz"; assets+=("$out/smith-tests-$OS.tar.gz")
         fi
         if [ "$m" -gt 0 ]; then
           tar -C "$imports" -c . | gzip -1 >"$out/smith-imports-$OS.tar.gz"; assets+=("$out/smith-imports-$OS.tar.gz")

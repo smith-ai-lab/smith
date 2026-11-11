@@ -78,7 +78,7 @@ struct Arguments {
         "  --memory=GB       the memory one function may use (default 8)\n"
         "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
         "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
-        "  --no-cache        prove again what a cached proof already proved\n"
+        "  --no-cache        ask the solver again, not the step store\n"
         "  --induction       prove every loop that has a smith_invariant by induction (one pass)\n"
         "  --unroll          unroll every loop that has a bound, its invariant checked on each pass\n"
         "  --induction-from=N  by default a loop with an invariant is unrolled up to N passes (16)\n"
@@ -360,15 +360,11 @@ void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
     }
 }
 
-// ---- the cache: a proof is kept by the content of what was proved ----
+// ---- the folder of the group's records ----
 
-// A function whose prepared IR (see prove::program_proof_key) is the same as one proved before is proved: the proof
-// depends on nothing else. Only a proof that succeeded is kept, as the time it took, so that -v can say what a cached
-// proof cost. An entry unused for 31 days is removed, checked at most once a week.
-struct Recorded {
-    double wall = 0, cpu = 0, charged = 0;
-};
-
+// The group's records (below) are files of this folder, named by a hash of what the group is a function of; the
+// solver's answers are not (#3174: they are entries of the step store). An entry unused for 31 days is removed, checked
+// at most once a week.
 std::string cache_directory() {
     const char *base = std::getenv("XDG_CACHE_HOME");
     std::string root = base != nullptr && *base != '\0' ? base : "";
@@ -386,7 +382,7 @@ std::string cache_path(const std::string &key) {
     llvm::SHA256 hash;
     hash.update(key);
     // The build time is not part of the prover's identity, so a rebuild of smith with the same prover keeps every
-    // cached proof.
+    // record.
     hash.update(prove::prover_identity());
     std::array<uint8_t, 32> digest = hash.final();
     static const char *const hex = "0123456789abcdef";
@@ -396,15 +392,6 @@ std::string cache_path(const std::string &key) {
         name += hex[byte & 15];
     }
     return directory + "/" + name;
-}
-
-bool cache_lookup(const std::string &path, Recorded &recorded) {
-    if (path.empty()) return false;
-    std::ifstream file(path);
-    std::string word;
-    if (!(file >> word >> recorded.wall >> recorded.cpu >> recorded.charged) || word != "proved") return false;
-    utimes(path.c_str(), nullptr); // used now
-    return true;
 }
 
 void cache_prune(const std::string &directory) {
@@ -422,31 +409,15 @@ void cache_prune(const std::string &directory) {
     std::ofstream(stamp) << "pruned\n";
 }
 
-void cache_store(const std::string &path, const prove::Outcome &outcome) {
-    if (path.empty()) return;
-    std::string directory = path.substr(0, path.rfind('/'));
-    std::error_code ignored;
-    std::filesystem::create_directories(directory, ignored);
-    std::string temporary = path + ".tmp" + std::to_string(getpid());
-    {
-        std::ofstream file(temporary);
-        file << "proved " << outcome.seconds << " " << outcome.cpu_seconds << " " << outcome.charged << "\n";
-    }
-    std::filesystem::rename(temporary, path, ignored);
-    cache_prune(directory);
-}
-
-// ---- the group's record: a group whose every function was proved by a cached proof is not compiled again ----
-
-// Asking the cache for a function needs its IR, so a group that proves nothing new still paid for compiling every
-// source to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run of a
-// group ends with every function reused from the cache, the group keeps a record: the files its compiles read (as the
-// compilers' depfiles name them) with the digest of each, and the lines it printed. The next run of the same group
-// (the same sources, libraries, flags and options, the same prover, the same compiler: smith_import_identity hashes the
-// front end, the runtime, lib/std and the LLVM pack) reads the files named, and when every digest holds, the compile
-// would read the same bytes and prove the same: the lines are printed again. Any other case runs as it did. A compile
-// with no depfile (`--front-end=new`), a file that cannot be read or named, and one that names a macro for the time
-// keep no record.
+// ---- the group's record: a group whose every function was proved from the step store alone is not compiled again ----
+// Asking the store for a function's answers needs its IR, so a group that solves nothing new still paid for compiling
+// every source to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run
+// of a group ends with every function proved by answers of the step store alone (no query ran), the group keeps a
+// record: the files its compiles read (as the compilers' depfiles name them) with the digest of each, and the lines it
+// printed. The next run of the same group (the same sources, libraries, flags and options, the same prover, the same
+// compiler: smith_import_identity hashes the front end, the runtime, lib/std and the LLVM pack) reads the files named,
+// and when every digest holds, the compile would read the same bytes and prove the same: the lines are printed again.
+// Any other case runs as it did; a compile with no depfile, an unreadable file or a macro for the time keeps no record.
 extern "C" const char smith_import_identity[];
 
 struct GroupRecord {
@@ -517,7 +488,8 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
     unsigned proved = static_cast<unsigned>(std::strtoul(line.c_str() + 7, &rest, 10));
     if (*rest != ' ') return false;
     unsigned trusted = static_cast<unsigned>(std::strtoul(rest + 1, &rest, 10));
-    if (*rest != '\0') return false;
+    if (*rest != ' ' || (rest[1] != '0' && rest[1] != '1') || rest[2] != '\0') return false;
+    if (rest[1] == '1' && access(".smith/proved", F_OK) != 0) return false; // a replay writes no .pts
     std::string text, tail;
     bool replaying = false, in_tail = false;
     std::set<std::string> named;
@@ -586,7 +558,8 @@ void group_keep(const GroupRecord &record, const std::vector<std::string> &depfi
     for (const std::vector<std::string> *list : {&arguments.files, &arguments.libraries})
         dependencies.insert(list->begin(), list->end());
     std::string out = "smith-prove-group 1\n";
-    out += "counts " + std::to_string(record.proved) + " " + std::to_string(record.trusted) + "\n";
+    out += "counts " + std::to_string(record.proved) + " " + std::to_string(record.trusted) +
+           (access(".smith/proved", F_OK) == 0 ? " 1\n" : " 0\n");
     for (const std::string &path : dependencies) {
         std::string hex;
         if (path.find('\n') != std::string::npos || !file_digest(path, hex)) return;
@@ -602,6 +575,7 @@ void group_keep(const GroupRecord &record, const std::vector<std::string> &depfi
         file << out;
     }
     std::filesystem::rename(temporary, record.path, ignored);
+    cache_prune(directory);
 }
 
 // ---- the proof file: what a release build leaves out (issue #221, shim/proved.hpp) ----
@@ -793,7 +767,7 @@ void emit_ir(const prove::Prepared &prepared, const prove::Options &options) {
 }
 
 // Proves a prepared function and prints what there is to say about it. Returns 0 when it is proved, 1 when it is not,
-// and 2 when it is proved by a cached proof.
+// and 2 when it is proved with no query to the solver run now (every answer was in the step store).
 int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
     std::string label = prepared.unit.name + "  (" + at(prepared.unit.file, prepared.unit.line) + ")";
     emit_ir(prepared, options);
@@ -809,22 +783,11 @@ int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
         std::fprintf(stderr, "ir of %s: %u instructions, %u loads, %u stores\n", prepared.unit.name.c_str(),
                      prepared.unit.instructions, prepared.unit.loads, prepared.unit.stores);
     }
-    std::string path = options.no_cache ? "" : cache_path(prove::program_proof_key(prepared));
-    Recorded recorded;
-    // a proof that took longer than this run's budget allows is proved again, to see whether it still fits
-    if (cache_lookup(path, recorded) && recorded.charged <= options.budget_seconds) {
-        record_checks(prepared.unit);
-        if (options.verbose)
-            std::printf("ok    %s  cached: proved before in %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(),
-                        recorded.wall, recorded.cpu, recorded.charged);
-        return 2;
-    }
     prove::Outcome outcome = prove::alive_prove(prepared, options);
     int status = 1;
     switch (outcome.status) {
     case prove::Outcome::Proved:
-        status = 0;
-        cache_store(path, outcome);
+        status = outcome.solved_now == 0 ? 2 : 0; // 2: no query ran, every answer was in the step store
         record_checks(prepared.unit);
         if (options.verbose)
             std::printf("ok    %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
@@ -1003,7 +966,7 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
 
 // Proves each function in a process of its own, so that a crash or a function that will not finish is a failure of that
 // function and nothing more, and the budget is a clock the prover cannot overrun. Returns 0 for a proof, 1 for a
-// failure, 2 for a proof that was cached.
+// failure, 2 for a proof that asked the solver nothing.
 int prove_in_child(prove::Program &loaded, const std::string &name, const std::string &label,
                    const prove::Options &options) {
     std::fflush(nullptr);
@@ -1014,7 +977,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
         end_with_parent_or_budget(parent, options);
         int status = prove_unit(loaded, name, options);
         std::fflush(nullptr);
-        _exit(status == 2 ? 4 : status); // 4: proved, by a cached proof
+        _exit(status == 2 ? 4 : status); // 4: proved, from the step store alone
     }
     Clock::time_point begin = Clock::now();
     double allowed = wall_backstop(options);
@@ -1067,7 +1030,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 
 // SMITH_PROVER_IDENTITY, the macro, is the hash `smith build` made (build_prover_identity in build.c). The environment
 // variable of the same name replaces it, for the test that a proof follows the identity and not the binary
-// (tests/prove_misc_test.smith): it can only make a cached proof unreachable or name a cache of its own.
+// (tests/prove_misc_test.smith): it can only make a group's record unreachable or name a record of its own.
 std::string prove::prover_identity() {
     const char *replaced = std::getenv("SMITH_PROVER_IDENTITY");
     if (replaced != nullptr && *replaced != '\0') return std::string("smith-prove-cache-as ") + replaced;
