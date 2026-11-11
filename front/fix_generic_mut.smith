@@ -16,10 +16,11 @@
 //
 // A local handed to a `*mut` parameter or field of this module in such a body is mended the same way (#2992): a
 // pointer local `memory: *char = ..` passed whole is `*mut char`, and a value local whose address `&writer` is passed
-// is `mut writer`.
+// is `mut writer`. It also returns `fix_slice_mut`'s fixes for every function (#3073).
 module front::fix_generic_mut;
 
 import front::ast;
+import front::fix_slice_mut;
 import front::parse as core;
 import front::types;
 import std::format;
@@ -654,6 +655,13 @@ export core::Errors edits(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(loops); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = loops[i];
+    }
+    // A slice local or parameter std.mem writes is `[]mut T` (#3073), in any function: the run of fixes reaches it
+    // through this pass, since front::fix's table of imported names is full.
+    core::Errors slices = fix_slice_mut::edits(source);
+    for (Usize i = 0; i < countof(slices); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = slices[i];
     }
     return out;
 }
