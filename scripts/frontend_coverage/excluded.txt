@@ -80,7 +80,6 @@ tests/smith-lang/cases/error-type-value-runtime/src/main.smith	error-fixture
 tests/smith-lang/cases/error-type-value-slice-bounds/src/main.smith	error-fixture
 tests/smith-lang/cases/error-typetag-collision-reverse/src/main.smith	error-fixture
 tests/smith-lang/cases/error-typetag-collision/src/main.smith	error-fixture
-tests/smith-lang/cases/error-unused-discard-braces/src/main.smith	error-fixture
 tests/smith-lang/cases/error-unused-read-underscore/src/main.smith	error-fixture
 tests/smith-lang/cases/error-value-query/src/main.smith	error-fixture
 tests/smith-lang/cases/error-void-pointer/src/main.smith	error-fixture
