@@ -3541,6 +3541,49 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
+// The step cache of main, unpacked into the user's (#3079): CI's `warm` job publishes the steps of every push to main
+// as the prerelease `step-cache-<sha7>` (smith-steps-<os>.tar.gz.NN, parts of one gzip, and smith-steps-<os>.sha), and
+// with them the first `smith build` of a clone compiles only what the branch changed: 9 s where it was 50 (4 cores).
+// The newest of the last 20 first-parent commits of HEAD that has one is taken, over plain HTTPS as the release is. It
+// only fills a cache: a commit without one, a platform without one, a failed download or no git leaves the build cold
+// and says so, and never fails the task. `-Dsteps=0` skips it.
+static void build_stage0_steps(SmithBuild *b, const char *os) {
+    const char *base = "https://github.com/smith-ai-lab/smith/releases/download";
+    const char *commits =
+        smith_capture_or(b, (const char *[]){"git", "rev-list", "--first-parent", "-n", "20", "HEAD", nullptr}, "");
+    const char *joined = ".smith/step-cache.tar.gz";
+    const char *tag = nullptr;
+    for (const char *at = commits; tag == nullptr && strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) {
+        const char *candidate = smith_fmt(b, "step-cache-%.7s", at); // each line is one 40-digit commit
+        const char *url = smith_fmt(b, "%s/%s/smith-steps-%s.sha", base, candidate, os);
+        const char *const *probe = smith_list(b, "curl", "-fsL", "-o", ".smith/step-cache.sha", url, nullptr);
+        if (build_exec(probe) == 0) tag = candidate;
+    }
+    const char *home = getenv("HOME");
+    const char *cache = getenv("XDG_CACHE_HOME");
+    if (tag == nullptr || (home == nullptr && cache == nullptr)) {
+        fprintf(stderr, "smith: step cache: none (no published one for the last 20 commits of HEAD)\n");
+        return;
+    }
+    const char *folder = cache != nullptr && cache[0] != '\0' ? smith_fmt(b, "%s/smith/steps", cache)
+                                                              : smith_fmt(b, "%s/.cache/smith/steps", home);
+    (void)build_remove(b, joined);
+    size_t parts = 0;
+    for (; parts < 100; parts++) { // the parts in order, until the first that is not there
+        const char *url = smith_fmt(b, "%s/%s/smith-steps-%s.tar.gz.%02zu", base, tag, os, parts);
+        const char *const *fetch = smith_list(b, "curl", "-fsL", "--retry", "3", url, nullptr);
+        if (build_spawn(&(BuildSpawn){.argv = fetch, .log = joined, .append = true, .stdout_only = true}) != 0) break;
+    }
+    int status = parts == 0 ? 1 : build_make_folder(b, folder);
+    if (status == 0) status = build_exec(smith_list(b, "tar", "-C", folder, "-xzf", joined, nullptr));
+    (void)build_remove(b, joined);
+    if (status == 0) {
+        fprintf(stderr, "smith: step cache: %s, unpacked into %s\n", tag, folder);
+    } else {
+        fprintf(stderr, "smith: step cache: none (%s could not be downloaded and unpacked)\n", tag);
+    }
+}
+
 // `smith build stage0` (#2719): downloads the newest release into .smith/stage0/ and checks its .sha256, as the
 // README's Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C
 // and uses no `.smith` module of the tree: the tree builds only with the newest release (smith-dev-build, the lag
@@ -3577,6 +3620,7 @@ static int build_stage0(SmithRun *run) {
             build_exec(smith_list(b, "tar", "-C", ".smith/stage0", "-xJf", smith_fmt(b, ".smith/%s", name), nullptr));
     if (status == 0)
         fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    if (status == 0 && strcmp(run->args[0], "0") != 0) build_stage0_steps(b, os);
     return status;
 }
 
@@ -3729,7 +3773,12 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);
-    SmithStep stage0 = {.run = build_stage0, .description = "downloading the newest release into .smith/stage0"};
+    SmithStep stage0 = {
+        .run = build_stage0,
+        .args = smith_list(b, smith_option_value(b, "steps", "1", "stage0: also unpack main's step cache (0: no)"),
+                           nullptr),
+        .description = "downloading the newest release into .smith/stage0",
+    };
     smith_task(b, "stage0", &stage0);
     SmithStep bench = {
         .run = build_bench,
