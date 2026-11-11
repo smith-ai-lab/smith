@@ -310,9 +310,9 @@ static void *system_raw(void *block, Usize size) {
     return result;
 }
 
-// What one file of `run` parses and checks (#2888, #3112): blocks bumped from chunks, so that the file's memory is freed
-// by dropping the chunks. A chunk is 1 MB, and each new one doubles up to 64 MB; a block larger than a chunk gets a
-// chunk of its own. A block is a header of `file_header` bytes that holds its size, then the block. `realloc` of the
+// What one file of `run` parses and checks (#2888, #3112): blocks bumped from chunks, so that the file's memory is
+// freed by dropping the chunks. A chunk is 1 MB, and each new one doubles up to 64 MB; a block larger than a chunk gets
+// a chunk of its own. A block is a header of `file_header` bytes that holds its size, then the block. `realloc` of the
 // last block of the chunk in force grows it in place (the parser grows its lists one element at a time, and the list
 // it is growing is the last block); any other grows by copy, and the old block stays until the chunks go. `free` of the
 // last block takes it back; any other is not freed one by one.
@@ -408,6 +408,7 @@ static void file_free(mem::Allocator *self, void *block) {
 }
 
 static void *file_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
+    contract::trusted(); // the allocator is the edge: it copies a block of the size its header holds
     if (block == nullptr) return file_alloc(self, size, align);
     if (align > file_header || !file_owns(self, block)) return nullptr;
     if ((U8 *)block == file_last && size <= ((Usize)-1) / 2) { // the last block grows where it is
