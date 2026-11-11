@@ -341,6 +341,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     }
     types::TypeRef bound = nullptr;
     if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
+    if (state::local_made(e, name) != nullptr) return state::type_of(e, base); // `*W` after `W := widen(T)`
     if (countof(e->import_scope) > 0 && e->scoped_leaf != base) {           // a record of the imported module (`*Tap`)
         // `type_of` sends a name it does not find back here: the second visit of the same name ends as an unknown
         // type instead of a loop that overflows the stack (#2984).

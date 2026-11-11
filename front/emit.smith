@@ -170,8 +170,8 @@ static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) 
         written->span = s->decl->span;
         return state::type_of(e, written);
     }
-    if (init != nullptr && (init->kind == .member || init->kind == .name))
-        return type_of_checked(e, s->type, s->decl->span);
+    if (init != nullptr && (init->kind == .member || init->kind == .name || init->kind == .call))
+        return type_of_checked(e, s->type, s->decl->span); // also `IntPair := Pair(i32)`
     if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
     // `Edits := []mut Edit` of front::parse, used from another module: `Edit` is read in front::parse's scope, as an
     // imported record's fields are (#2984; read in the user's scope it was unknown, and before that a loop).
@@ -297,6 +297,10 @@ static state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
         const ast::TypeArg *only = &args[0];
         if (*only == .type && only->type.type->kind == .function) return lambdas::type_function(e, only->type.type);
     }
+    // a type function's (`Pair(i32)`, `widen(T)`): the type the checker computed for this place
+    types::TypeRef held = nullptr;
+    if (e->options.checked != nullptr) held = types::applied_type(e->options.checked, t, state::instance_number(e));
+    if (held != nullptr) return type_of_checked(e, held, t->span);
     if (countof(applied.segments) != 1 || !state::same_text(applied.segments[0].text, "vec"))
         return state::ty_fail_with(t->span, "not emitted yet: the applied type `",
                                    applied.segments[countof(applied.segments) - 1].text, "`");
@@ -318,6 +322,9 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         types::TypeRef bound = nullptr;
         if (countof(path.segments) == 1 && state::bound_type(e, path.segments[0].text, &bound))
             return type_of_checked(e, bound, t->span);
+        types::TypeRef made = nullptr;
+        if (countof(path.segments) == 1) made = state::local_made(e, path.segments[0].text);
+        if (made != nullptr) return type_of_checked(e, made, t->span); // `x: W` after `W := widen(T)`
         const ast::TypeExpr *held = nullptr;
         if (countof(path.segments) == 1) held = state::local_type(e, path.segments[0].text);
         if (held != nullptr) return state::type_of(e, held); // `x: Element` after `const Element = typeof(xs[0])`
@@ -1845,6 +1852,14 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     }
     known = known || (base->kind == .record && find_record_by_name(e, types::name_of(base), &ty));
     known = known || (base->kind == .enumeration && matching::type_enum(e, types::name_of(base), &ty));
+    if (!known && e->options.checked != nullptr && types::is_made(e->options.checked, base)) {
+        // the `struct:` or `enum:` of a type function (`Pair(i32)`): built from the checker's type
+        state::TyResult made = base->kind == .record ? records::from_made(e, base, span)
+                                                     : matching::enum_from_checked(e, base, span);
+        if (made == .error) return made;
+        ty = made.ok;
+        known = true;
+    }
     known = known ||
             (base->kind == .enumeration && matching::type_enum(e, bare_name(types::name_of(base)), &ty)); // imported
     // A C enumeration is its integer: the header's names are constants of it (`c::red`), never a type of the module.
@@ -2216,7 +2231,8 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
 static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     if (d->kind.variable.init == nullptr) return false;
-    if (d->kind.variable.init->kind != .tuple_lit && d->kind.variable.init->kind != .name) return false;
+    const ast::Expr *init = d->kind.variable.init;
+    if (init->kind != .tuple_lit && init->kind != .name && init->kind != .call) return false;
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
     return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
 }

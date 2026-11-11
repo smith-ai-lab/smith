@@ -1589,6 +1589,15 @@ export typedef Bool (*LengthFolder)(Checked *r, const ast::Expr *e, Str what, U6
 // none. J1d sets it to `front::eval`'s.
 export typedef TypeRef (*ConstantTyper)(Checked *r, const ast::Expr *init);
 
+// Gives the type an applied type is when its name is a function that returns a type (`Pair(i32)`, `widen(T)`,
+// #3039): the function is run with the arguments. Null when the name is no function; an error is reported by the
+// typer, which then gives the invalid type. J1d sets it to `front::eval`'s.
+export typedef TypeRef (*AppliedTyper)(Checked *r, const ast::TypeExpr *applied);
+
+// Gives the type a call is when it calls a function that returns a type (`IntPair := Pair(i32)`); null when `e` is
+// no such call. An error is reported by the holder, which then gives the invalid type.
+export typedef TypeRef (*TypeHolder)(Checked *r, const ast::Expr *e);
+
 // Why the last `ModuleLoader` call returned null although the module exists: "<file>:<line>: <first parse error>", or
 // "" when the module is not there. The loader sets it on each call; `collect_imports` reads it (#2224).
 static Str load_failure_text = "";
@@ -1603,6 +1612,8 @@ export struct Options {
     ExprTyper expression;   // null: `typeof` of an expression that is not a name is refused
     LengthFolder length;    // null: only an integer literal is a length
     ConstantTyper constant; // null: a constant written without a type takes one only from a literal
+    AppliedTyper applied;   // null: an applied type is only a built-in one (`Option(T)`)
+    TypeHolder held;        // null: a call is never a type
     ModuleLoader load;      // null: imports are not read
     HeaderLoader headers;   // null: C headers are not read
 };
@@ -1627,6 +1638,12 @@ export struct Instance {
 };
 
 export const Usize max_instances = 256;
+
+// A type a type function made (`Pair(i32)`): one type for one name, however many times the call is written.
+export struct MadeType {
+    Str name;
+    TypeRef type;
+};
 
 // The name `import c <stdio.h>` binds (`stdio`, or the `as` name) and the header's declarations, which are also
 // declared as `c::name` (one entity however many bindings reach it, #1678).
@@ -1667,6 +1684,8 @@ export struct Checked {
     Usize error_count;
     Guard guards[:]; // the variant tests of the function being checked (#2494)
     Usize guard_count;
+    MadeType made[:]; // the types the type functions made so far
+    Usize made_count;
     const ast::Module *module; // the module as checked for the system smith runs on (`when::live_module`), null when
                                // it is the one given (#2277): the emitter emits this one
 };
@@ -1842,6 +1861,32 @@ export void set_decided(Checked *r, const ast::Expr *condition, Bool keeps_then)
 
 // Records the value the compiler computed for an expression that has no run-time form (a question about a type, a
 // call of a concept), as the 64 bits of its type: the emitter writes the constant (#3039).
+// The type a type function gave the applied type `node` (`Pair(i32)`), null when none did.
+export TypeRef applied_type(const Checked *r, const ast::TypeExpr *node, Usize instance) {
+    const NodeType *entry = find_in(r, (const ast::Expr *)(Usize)node, instance);
+    if (entry == nullptr && instance != max_instances)
+        entry = find_in(r, (const ast::Expr *)(Usize)node, max_instances);
+    return entry == nullptr ? nullptr : entry->type;
+}
+
+// Records the type a constant that holds one stands for when a call makes it (`W := widen(T)`), under its
+// declaration; `held_type` reads it back for the instance.
+export void set_held(Checked *r, const ast::Decl *d, TypeRef type) {
+    set_type(r, (const ast::Expr *)(Usize)d, type);
+}
+
+export TypeRef held_type(const Checked *r, const ast::Decl *d, Usize instance) {
+    return applied_type(r, (const ast::TypeExpr *)(Usize)d, instance);
+}
+
+// Whether a type function made the type `t` (`Pair(i32)`).
+export Bool is_made(const Checked *r, TypeRef t) {
+    for (Usize i = 0; i < r->made_count; i++) {
+        if (r->made[i].type == t) return true;
+    }
+    return false;
+}
+
 export void set_value(Checked *r, const ast::Expr *node, U64 value) {
     NodeType *entry = entry_in(r, node, r->current);
     entry->has_value = true;
@@ -2450,6 +2495,12 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
             return r->table.invalid;
         }
         return fn_value_of(&r->table, w->values[base].type);
+    }
+    if (r->options.applied != nullptr) {
+        TypeRef made = r->options.applied(r, node);
+        // recorded under the node, as an expression's type is: the emitter asks `applied_type` for it
+        if (made != nullptr) set_type(r, (const ast::Expr *)(Usize)node, made);
+        if (made != nullptr) return made;
     }
     failf(r, span, "not yet typed: the applied type `", name, "` with these arguments");
     return r->table.invalid;
@@ -3177,7 +3228,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
         fields[i].doc = f->doc;
         fields[i].attributes = f->attributes;
         fields[i].written = f->is_new ? f->type : nullptr;
-        if (f->is_pub && !(d->is_pub || d->exported)) {
+        if (f->is_pub && !(d->is_pub || d->exported) && countof(d->kind.record.name) > 0) {
             failf(r, f->span, "the field `", f->name, "` is `pub`, but `", name,
                   "` is not; nothing outside the module can see the type, so mark the struct `pub` or drop the `pub`");
         }
@@ -4275,6 +4326,36 @@ static void type_constants(Checked *r, const ast::Module *m) {
     }
 }
 
+// The type the unnamed `struct:` or `enum:` `d` is under the name `name` (`m::Pair(i32)`): made the first time, in
+// the scopes `r` is in, where the parameters of the type function that holds it are type names; the same type after.
+export TypeRef unnamed_type(Checked *r, const ast::Decl *d, Str name) {
+    for (Usize i = 0; i < r->made_count; i++) {
+        if (same_text(r->made[i].name, name)) return r->made[i].type;
+    }
+    Ty *made = nullptr;
+    if (d->kind == .record) {
+        made = new_record(&r->table, name, d->kind.record.is_union);
+    } else {
+        made = new_enumeration(&r->table, name, builtin(&r->table, "I32"));
+    }
+    if (r->made_count == countof(r->made)) {
+        Usize capacity = countof(r->made) * 2;
+        if (capacity < 8) capacity = 8;
+        r->made = mem::realloc(r->made, capacity);
+    }
+    r->made[r->made_count] = (MadeType){.name = name, .type = made}; // first, so a type that names itself ends
+    r->made_count += 1;
+    push_scope(&r->scopes);
+    (void)declare(&r->scopes, type_symbol(name, made, d, true));
+    if (d->kind == .record) {
+        fill_record(r, d, name);
+    } else if (d->kind == .enumeration) {
+        fill_enumeration(r, name, d->kind.enumeration.items);
+    }
+    pop_scope(&r->scopes);
+    return made;
+}
+
 static Bool declare_module_alias(Checked *r, const ast::Decl *d);
 
 // Pass 3 for one declaration.
@@ -4297,6 +4378,13 @@ static void declare_member(Checked *r, const ast::Decl *d) {
         Bool is_new = d->kind.variable.is_new;
         const ast::Expr *init = d->kind.variable.init;
         if (own_alias_type(r, d) != nullptr || declare_module_alias(r, d)) return;
+        TypeRef held = nullptr;
+        if (is_new && init != nullptr && r->options.held != nullptr) held = r->options.held(r, init);
+        if (held != nullptr) {
+            // `IntPair := Pair(i32)`: a name of the type the call makes, as `Line := []u8` is of the one written
+            declare_in_module(r, type_symbol(name, held, d, d->exported), span);
+            return;
+        }
         declare_variable(r, d, name, written, is_constexpr, is_new, init);
     } else if (d->kind == .if_constexpr) {
         failf(r, span, "not yet typed: if constexpr");
