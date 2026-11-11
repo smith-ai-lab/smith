@@ -138,6 +138,72 @@ static core::Errors parameter_fixes(Str source, Usize at, Usize end, core::Error
     return out;
 }
 
+// The offset of `pattern` in `text` from `from`, or the length of `text` when there is none.
+static Usize find(Str text, Str pattern, Usize from) {
+    for (Usize i = from; i + countof(pattern) <= countof(text); i++)
+        if (starts_with(text[i:countof(text)], pattern)) return i;
+    return countof(text);
+}
+
+// The text of `source[a:b]` followed by `tail` is not built; these are the pieces searched one after the other.
+static Bool followed_by(Str text, Usize at, Str word, Str tail) {
+    if (!starts_with(text[at:countof(text)], word)) return false;
+    return starts_with(text[at + countof(word):countof(text)], tail);
+}
+
+// The offset of the `[]` of the local `mut name: []T = undefined` in `body`, or the length of `body`.
+static Usize local_slice(Str body, Str element) {
+    for (Usize i = 0; i + 4 < countof(body); i++) {
+        if (!starts_with(body[i:countof(body)], "mut ")) continue;
+        if (i > 0 && body[i - 1] != '\n' && body[i - 1] != ' ') continue;
+        Usize n = i + 4;
+        while (n < countof(body) && word_char(body[n]))
+            n += 1;
+        if (!followed_by(body, n, ": []", element)) continue;
+        if (starts_with(body[n + 4 + countof(element):countof(body)], " = undefined")) return n + 2;
+    }
+    return countof(body);
+}
+
+// A function that returns the slice it views over bytes, today's `struct smith_array_T_n result` (#3078,
+// `std.mem.view`): the slice is writable in C, so its result, its local, the bytes it takes and the cast of the pointer
+// are all `mut`.
+//
+//   pub fn view(data: []u8, T: type) -> []T:          pub fn view(data: []mut u8, T: type) -> []mut T:
+//       mut result: []T = undefined                       mut result: []mut T = undefined
+//       result.data = data.data.cast(*T)                  result.data = data.data.cast(*mut T)
+static core::Errors view_fixes(Str source, Usize at, Usize end, core::Errors out) {
+    Usize k = at;
+    if (starts_with(source[k:end], "pub ")) k += 4;
+    if (!starts_with(source[k:end], "fn ")) return out;
+    Usize arrow = find(source[at:end], ") -> []", 0);
+    if (arrow == end - at) return out;
+    Usize result = at + arrow + 5; // the `[]` of the result
+    Usize type_start = result + 2;
+    Usize type_end = type_start;
+    while (type_end < end && word_char(source[type_end]))
+        type_end += 1;
+    if (type_end == type_start || source[type_end] != ':') return out;
+    Str element = source[type_start:type_end];
+    Str body = source[end:function_end(source, end)];
+    Usize declared = local_slice(body, element);
+    if (declared == countof(body)) return out;
+    Usize casted = find(body, ".data.cast(*", 0);
+    if (casted == countof(body) || !followed_by(body, casted + 12, element, ")")) return out;
+    Usize name_start = casted;
+    while (name_start > 0 && word_char(body[name_start - 1]))
+        name_start -= 1;
+    Str bytes = body[name_start:casted];
+    Usize taken = find(source[at:end], ": []u8", 0);
+    Usize bytes_at = find(source[at:end], bytes, 0);
+    if (taken == end - at || bytes_at + countof(bytes) != taken) return out;
+    out = push(out, mut_fix(at + taken + 2));
+    out = push(out, mut_fix(result));
+    out = push(out, mut_fix(end + declared));
+    out = push(out, mut_fix(end + casted + 10)); // `.data.cast(` is 11 bytes: the `*` is at +11, `mut ` goes after it
+    return out;
+}
+
 export core::Errors edits(Str source) {
     core::Errors out = {};
     Usize at = 0;
@@ -145,6 +211,7 @@ export core::Errors edits(Str source) {
         Usize end = line_end(source, at);
         out = local_fix(source, at, end, out);
         out = parameter_fixes(source, at, end, out);
+        out = view_fixes(source, at, end, out);
         at = end + 1;
     }
     return out;

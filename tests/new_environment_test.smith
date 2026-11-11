@@ -1,0 +1,40 @@
+// smith_core_new's child after a setenv made under a test's arena allocator (#3066): glibc keeps the names of setenv in
+// malloc memory, the runner gives the arena back for the next test, and a setenv in the fork walked those stale nodes
+// (tfind SEGV, intermittent in new_test). The child builds its own environment and never calls setenv. The test does
+// it in a process of its own, so the worker's environment is left as it was.
+module new_environment_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import <smith_core_new.h>;
+import <stdlib.h>;
+import <sys/wait.h>;
+import <unistd.h>;
+
+// In the forked process: a variable set in the arena, the arena overwritten, then `smith new` in a child of its own.
+[[noreturn]] static void new_after_the_arena_is_overwritten() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    c::setenv("NEW_ENVIRONMENT_TEST_A", "one", 1);
+    c::setenv("NEW_ENVIRONMENT_TEST_B", "two", 1);
+    arena::reset(&memory); // what the runner does between tests: the nodes setenv made are now free space
+    U8 *block = mem::alloc_slice(U8, 1U << 16).data;
+    mem::zero(block[0:1U << 16]);
+    mem::set_allocator(outside);
+    char folder[64] = "/tmp/new_environment_XXXXXX";
+    if (c::mkdtemp(folder) == nullptr) c::_exit(2);
+    const char *environment[3] = {"HOME=/tmp", "GIT_CONFIG_NOSYSTEM=1", nullptr};
+    char said[4096];
+    I32 status = c::smith_core_new(folder, "p", "c", environment, said, sizeof said);
+    c::_exit(status == 0 ? 0 : 1);
+}
+
+export void test_new_environment_a_child_after_the_arena_is_overwritten_does_not_crash() {
+    c::pid_t pid = c::fork();
+    if (pid == 0) new_after_the_arena_is_overwritten();
+    I32 wait_status = 0;
+    test::check_condition(pid > 0 && c::waitpid(pid, &wait_status, 0) == pid);
+    test::check_condition(wait_status == 0); // exited normally with status 0
+}

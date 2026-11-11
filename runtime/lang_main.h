@@ -97,7 +97,7 @@ constexpr size_t smith_lang_cuses_max = 512; // the C names (`c::X`) that export
 
 constexpr size_t smith_lang_cond_lines_max = 32; // lines of one chain: #if, #elif..., #else
 
-constexpr size_t smith_lang_cnames_max = 8192; // exports of imported modules that have a C name of their own
+constexpr size_t smith_lang_cnames_max = 16384; // exports of imported modules that have a C name of their own
 
 constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and of the calls being read
 

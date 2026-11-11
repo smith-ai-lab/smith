@@ -9,7 +9,7 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 
 | To | Load |
 | --- | --- |
-| follow the habits every change shares (the smith under test, scratch folders, one `smith check`, the friction report) | [smith-dev-rules](../smith-dev-rules/SKILL.md) |
+| follow the habits every change shares (the smith under test, scratch folders, one `smith check`) | [smith-dev-rules](../smith-dev-rules/SKILL.md) |
 | build, check, install or recover smith, from the previous release, and the lag rule | [smith-dev-build](../smith-dev-build/SKILL.md) |
 | change LLVM, patches, the embedded files, lld, the tool shims or Enzyme | [smith-dev-llvm](../smith-dev-llvm/SKILL.md) |
 | add, run or port a test of smith | [smith-dev-tests](../smith-dev-tests/SKILL.md) |
@@ -20,6 +20,6 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 | add a library or port one to `.smith` | [smith-dev-library](../smith-dev-library/SKILL.md) |
 | write smith's own C | [smith-dev-c](../smith-dev-c/SKILL.md) |
 | change a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
-| be the owner's one point of contact: the backlog, the pool, decisions, the factory's rules, writing tickets | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
-| run one ticket end to end as a runner in a chain | [smith-dev-runner](../smith-dev-runner/SKILL.md) |
-| write, merge, rewrite or close a ticket | [smith-dev-tickets](../smith-dev-tickets/SKILL.md) |
+| be the lead: write tickets, keep them in order, start workers | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
+| do one ticket end to end as a worker | [smith-dev-runner](../smith-dev-runner/SKILL.md) |
+| write a ticket | [smith-dev-tickets](../smith-dev-tickets/SKILL.md) |
