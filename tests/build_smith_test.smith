@@ -321,8 +321,9 @@ export void test_build_smith_check_names_the_parts_that_did_not_run_and_require_
     scratch::expect_contains("check: ... that says what it needs", lonely.err, "--base needs --changed");
     // On Linux the macOS parts cannot run: they are named, and `--require all` fails the check for them.
     scratch::Run linux = scratch::sh(
-        &p, "[ \"$(uname -s)\" = Linux ] || { echo 'smith check: not run here: macos-lint, macos-tests' >&2; exit 1; }; "
-            "env SMITH_OUTPUT=full smith check --require macos-tests");
+        &p,
+        "[ \"$(uname -s)\" = Linux ] || { echo 'smith check: not run here: macos-lint, macos-tests' >&2; exit 1; }; "
+        "env SMITH_OUTPUT=full smith check --require macos-tests");
     scratch::expect_status("check: a required part that did not run fails the check", 1, &linux);
     scratch::expect_contains("check: ... and the last lines name it", linux.err,
                              "smith check: not run here: macos-lint, macos-tests");

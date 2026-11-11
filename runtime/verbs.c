@@ -1814,8 +1814,10 @@ static bool smith_check_require(const char *list, bool *required) {
             if (strcmp(item, smith_check_parts[i]) == 0) found = i;
         }
         if (found == smith_check_part_count) {
-            fprintf(stderr, "smith check: --require: '%s' is no part (fmt, docs, lint, test, prove, macos-lint, "
-                            "macos-tests, or all)\n", item);
+            fprintf(stderr,
+                    "smith check: --require: '%s' is no part (fmt, docs, lint, test, prove, macos-lint, "
+                    "macos-tests, or all)\n",
+                    item);
             return false;
         }
         required[found] = true;
@@ -1835,8 +1837,10 @@ static bool smith_check_args(const SmithVerbArgs *split, SmithCheckArgs *found) 
         } else if (strcmp(arg, "--require") == 0 && i + 1 < split->own_count) {
             if (!smith_check_require(split->own[++i], found->required)) return false;
         } else {
-            smith_die(smith_exit_usage, "takes no arguments but -D options, -v, --changed [--base <ref>] and "
-                                        "--require <parts>", "check");
+            smith_die(smith_exit_usage,
+                      "takes no arguments but -D options, -v, --changed [--base <ref>] and "
+                      "--require <parts>",
+                      "check");
         }
     }
     if (found->base != nullptr && !found->changed) smith_die(smith_exit_usage, "--base needs --changed", "check");
@@ -1935,8 +1939,7 @@ int smith_check_project(int count, char **args, const char *self) {
         if (given.required[i]) failed[failed_count++] = smith_check_parts[i];
     }
     if (skipped > 0) fprintf(stderr, "smith check: not run here: %s\n", names);
-    fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, failed_count,
-            skipped);
+    fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, failed_count, skipped);
     if (failed_count == 0) {
         fprintf(stderr, "smith check: ok\n");
         return 0;

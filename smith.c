@@ -3950,11 +3950,13 @@ static const SmithVerb smith_verbs[] = {
      (const char *const[]){"smith test", "smith test --test parse --changed", nullptr}, nullptr},
     {"check", SmithVerb_ProjectBare, smith_check_project, "run all the project's checks",
      "smith check [-v] [--changed [--base <ref>]] [--require <parts>|all] [-D<name>=<value>...]",
-     (const SmithFlag[]){{"-v", "show every part's output and every task's time"},
-                         {"--changed", "lint and test only what the change reaches; --base <ref> is what it is compared with"},
-                         {"--require <parts>", "fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all"},
-                         {"-D<name>=<value>", "an option the project's build.c reads"},
-                         {nullptr, nullptr}},
+     (const SmithFlag[]){
+         {"-v", "show every part's output and every task's time"},
+         {"--changed", "lint and test only what the change reaches; --base <ref> is what it is compared with"},
+         {"--require <parts>",
+          "fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all"},
+         {"-D<name>=<value>", "an option the project's build.c reads"},
+         {nullptr, nullptr}},
      (const char *const[]){"smith check", "smith check -v", "smith check --changed --require all", nullptr}, nullptr},
     {"prove", SmithVerb_ToolOrProject, smith_prove_project, "prove the project's contracts",
      "smith prove [-v] [--budget=<s>] [--emit-ir=<file>] [--function=<name>] [--no-cache] [--induction] [--unroll]\n"
