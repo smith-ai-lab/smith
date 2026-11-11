@@ -1,0 +1,2 @@
+<dir>/src/result_guard_affine.smith:20:20: error: smith-affine: 'full' is used again; it was already used at line 19
+<dir>/src/result_guard_affine.smith:19:19: note: 'full' was first used here

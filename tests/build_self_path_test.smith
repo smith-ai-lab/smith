@@ -1,0 +1,34 @@
+// A build by the same smith at another path (#3079): the commands that compile the build file name the smith that runs
+// the build, and a command line that changed runs its step again, so a copy of the smith, a worktree's stage0 or
+// another mount compiled and linked `.smith/program` again, and every function step after it. The executor reads the
+// running smith's path in a command as the word `smith`.
+// smith-covers: smith.c runtime/executor*.c
+module build_self_path_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// A copy of the smith under test in `other/`, with its links, first on PATH for the command.
+static const char *const copied_smith =
+    "mkdir -p other && cp \"$(command -v smith)\" other/smith && ln -sf smith other/smith-cc && "
+    "ln -sf smith other/smith-c++ && touch marker && PATH=\"$PWD/other:$PATH\" smith build 2>&1";
+
+export void test_build_by_the_same_smith_at_another_path_keeps_the_build_program() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = scratch::make("p", "lines_one");
+    defer scratch::clean(&p);
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("self path: the first build passes", 0, &first);
+    scratch::Run second = scratch::sh(&p, copied_smith);
+    scratch::expect_status("self path: the copy's build passes", 0, &second);
+    scratch::expect_contains("self path: and has nothing to do", second.out, "no work to do");
+    scratch::expect_text("self path: the build program is not linked again", "0",
+                         scratch::capture(&p, "find .smith/program -newer marker | wc -l | tr -d ' \\n'"));
+    scratch::expect_contains("self path: the program's manifest names the copy",
+                             scratch::read(&p, ".smith/build-program/build.ninja"), "/other/smith");
+}

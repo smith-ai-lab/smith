@@ -4,7 +4,7 @@
 # (seconds, one small runner) starts `ci.yml` with `workflow_dispatch` on the PR's head branch for the PRs that wait
 # longest, while
 #   - no merge queue job waits for a runner, and
-#   - the Linux jobs of the running PR checks plus the new one stay within the budget: 20, minus the live Linux jobs
+#   - the hosted jobs of the running PR checks plus the new one stay within the budget: 20, minus the live hosted jobs
 #     of merge_group runs and of push runs on main, minus a reserve of 4 for the queue's next group, never below
 #     PER_RUN (computed on every pass, #2952).
 # A PR that cannot start now is not running and holds no runner: the next pass starts it. A pass runs on every pull
@@ -41,7 +41,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      # the org's Linux runners, and the ones kept free for the merge queue's next group to start (#2952)
+      # the org's hosted job slots (Linux and macOS share them, #3069), and the ones kept free for the merge queue's
+      # next group to start (#2952)
       TOTAL: "20"
       RESERVE: "4"
       # the most Linux jobs of one PR check at once (the build-and-test job and the checks job; `changes` and `ci` are
@@ -68,14 +69,16 @@ jobs:
           # reads use the read-only app's token; the cancels and dispatches below stay on GITHUB_TOKEN
           api() { GH_TOKEN=$READ_TOKEN gh api -X GET "$@"; }
           log() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
-          # live (not completed) Linux jobs of the ci.yml runs of one event; 0 when a call fails
+          # live (not completed) hosted jobs of the ci.yml runs of one event, Linux and macOS: a hosted macOS job takes
+          # one of the same 20 slots (#3069: at 01:56Z on 2026-11-11 the budget said 9 while 5 macOS jobs left 3 free);
+          # the owner's Mac (self-hosted) takes none. 0 when a call fails
           linux_jobs() {
             local total=0 id n
             for status in queued in_progress waiting pending requested; do
               for id in $(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event="$1" -f status="$status" \
                   -f per_page=100 --jq '.workflow_runs[].id' 2>/dev/null); do
                 n=$(api "repos/$REPO/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
-                  --jq '[.jobs[] | select(.status != "completed") | select(.labels | index("ubuntu-latest"))] | length' \
+                  --jq '[.jobs[] | select(.status != "completed") | select(.labels | any(test("^(ubuntu|macos)-")))] | length' \
                   2>/dev/null || echo 0)
                 total=$((total + ${n:-0}))
               done
@@ -96,7 +99,7 @@ jobs:
             [ "${n:-0}" -gt 0 ] && { queue_waits=1; break; }
           done
 
-          # The live PR checks: each counts as its live Linux jobs, and at least PER_RUN until it ends, so a run whose
+          # The live PR checks: each counts as its live hosted jobs, and at least PER_RUN until it ends, so a run whose
           # heavy jobs have not been created yet keeps its slots.
           used=0; live=" "
           # (`pull_request` runs too: the checks started before #2856 merged, until they end)
@@ -108,7 +111,7 @@ jobs:
               case "$live" in *" $id:"*) continue ;; esac
               live="$live$id:$sha "
               n=$(api "repos/$REPO/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
-                --jq '[.jobs[] | select(.status != "completed") | select(.labels | index("ubuntu-latest"))] | length' \
+                --jq '[.jobs[] | select(.status != "completed") | select(.labels | any(test("^(ubuntu|macos)-")))] | length' \
                 2>/dev/null || echo "$PER_RUN")
               [ "${n:-0}" -lt "$PER_RUN" ] && n=$PER_RUN
               used=$((used + n))

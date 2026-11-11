@@ -1,0 +1,127 @@
+// A function step with `.content_hash` is served from the step cache (#3079): for the build program, the step's
+// arguments and paths, and the bytes of the inputs it declares. The fixture's function also appends a line to `runs`,
+// which it does not declare, so each test counts the runs; a folder the cache served has no such file. Each test has a
+// cache of its own, shared by its two folders.
+// smith-covers: runtime/build_runtime.c runtime/executor*.c tests/build_fixtures/function_cache/
+module build_function_cache_test;
+
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import scratch;
+
+static scratch::Project made(const char *name) {
+    scratch::Project p = scratch::make(name, "function_cache");
+    scratch::own_cache(&p);
+    return p;
+}
+
+// Another folder of the fixture next to `a`, with a's cache; `a` removes both.
+static scratch::Project sibling(const scratch::Project *a, const char *name) {
+    scratch::Project p = *a;
+    p.root = nullptr;
+    p.dir = format::push(a->root, "/", name).data;
+    scratch::copy_tree(&p, "tests/build_fixtures/function_cache", "");
+    return p;
+}
+
+static scratch::Run built(const scratch::Project *p, const char *arguments) {
+    return scratch::sh(p, format::push("SMITH_STEP_CACHE=1 smith build ", arguments, " 2>&1").data);
+}
+
+// How many times the function ran in the folder.
+static const char *runs(const scratch::Project *p) {
+    return scratch::capture(p, "cat runs 2>/dev/null | wc -l | tr -d ' \\n'");
+}
+
+export void test_build_function_cache_a_second_folder_is_served() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    scratch::Project b = sibling(&a, "b");
+    scratch::Run first = built(&a, "");
+    scratch::expect_status("served: the first folder builds", 0, &first);
+    scratch::expect_text("served: its function ran once", "1", runs(&a));
+    scratch::Run second = built(&b, "");
+    scratch::expect_status("served: the second folder builds", 0, &second);
+    scratch::expect_text("served: its function did not run", "0", runs(&b));
+    scratch::expect_text("served: the first output is the function's", "HELLO\n", scratch::read(&b, "build/loud.txt"));
+    scratch::expect_text("served: and so is the second", "again: HELLO\n", scratch::read(&b, "build/louder.txt"));
+}
+
+export void test_build_function_cache_an_edited_input_runs_the_function() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    scratch::Project b = sibling(&a, "b");
+    (void)built(&a, "");
+    (void)scratch::sh(&b, "echo world > word.txt");
+    (void)built(&b, "");
+    scratch::expect_text("edited: other bytes run the function", "1", runs(&b));
+    scratch::expect_text("edited: on the new input", "WORLD\n", scratch::read(&b, "build/loud.txt"));
+    (void)scratch::sh(&b, "echo hello > word.txt");
+    (void)built(&b, "");
+    scratch::expect_text("edited: the first bytes again are served", "1", runs(&b));
+    scratch::expect_text("edited: with the first output", "HELLO\n", scratch::read(&b, "build/loud.txt"));
+}
+
+export void test_build_function_cache_another_argument_runs_the_function() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    scratch::Project b = sibling(&a, "b");
+    (void)built(&a, "");
+    (void)built(&b, "-Dprefix=oh-");
+    scratch::expect_text("argument: another argument runs the function", "1", runs(&b));
+    scratch::expect_text("argument: with it", "oh-HELLO\n", scratch::read(&b, "build/loud.txt"));
+}
+
+export void test_build_function_cache_a_step_without_the_field_is_never_served() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    scratch::Project b = sibling(&a, "b");
+    (void)built(&a, "-Dhash=0");
+    (void)built(&b, "-Dhash=0");
+    scratch::expect_text("no field: the second folder runs the function", "1", runs(&b));
+}
+
+export void test_build_function_cache_a_function_that_prints_is_not_stored() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    scratch::Project b = sibling(&a, "b");
+    (void)built(&a, "-Dsay=1");
+    scratch::Run second = built(&b, "-Dsay=1");
+    scratch::expect_text("prints: the second folder runs the function", "1", runs(&b));
+    scratch::expect_contains("prints: and shows what it printed", second.out, "shouting");
+}
+
+export void test_build_function_cache_an_always_step_cannot_have_the_field() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = made("a");
+    defer scratch::clean(&a);
+    scratch::Run run = built(&a, "-Dalways=1");
+    scratch::expect_status("always: the build file is refused", 2, &run);
+    scratch::expect_contains("always: with the reason", run.out,
+                             ".content_hash serves a step by its inputs; an .always step runs every time");
+}

@@ -497,6 +497,9 @@ export struct Emitter {
     const ast::TypeExpr *scoped_leaf; // the name `leaf_type` handed back to `type_of` in an import scope: a second
                                       // visit is an unknown type, not a loop (the 19 crashes of #2984)
     const types::Instance *instance;  // while a generic's instance is emitted: its bindings (`T` of `sizeof(T)`)
+    const ast::Decl
+        *local_types[16]; // the constants of the body being emitted that hold a type (`const T = typeof(x)`)
+    Usize local_type_count;
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
@@ -717,6 +720,34 @@ export Bool bound_type(const Emitter *e, Str name, types::TypeRef *found) {
         }
     }
     return false;
+}
+
+// Whether a local declaration is a constant that holds a type (`const Element = typeof(xs[0])`, #3039): the checker
+// made its name a name of that type, and nothing is stored for it.
+export Bool is_local_type(const ast::Decl *d) {
+    if (d->kind != .variable || !d->kind.variable.is_new || d->kind.variable.is_mut) return false;
+    const ast::Expr *init = d->kind.variable.init;
+    if (init == nullptr) return false;
+    if (init->kind == .name) return true; // `wide: type = u16`
+    return init->kind == .type_value && init->kind.type_value.type != nullptr;
+}
+
+// The type a constant of the body being emitted holds, as it is written; null when `name` is not one.
+export const ast::TypeExpr *local_type(const Emitter *e, Str name) {
+    for (Usize i = e->local_type_count; i > 0; i--) {
+        const ast::Decl *d = e->local_types[i - 1];
+        if (d->kind == .variable && same_text(d->kind.variable.name, name)) {
+            const ast::Expr *init = d->kind.variable.init;
+            if (init != nullptr && init->kind == .type_value) return init->kind.type_value.type;
+            if (init != nullptr && init->kind == .name) {
+                ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
+                written->span = init->span;
+                written->kind = (ast::TypeKind){.named = {.path = init->kind.name.path}};
+                return written;
+            }
+        }
+    }
+    return nullptr;
 }
 
 // Whether a number is signed: a signed integer or a floating-point number; false for any other type.
