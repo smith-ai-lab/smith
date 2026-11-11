@@ -178,8 +178,7 @@ export void test_frontend_coverage_excluded_files_leave_the_total() {
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
     scratch::write(&p, "table.tsv", table);
-    scratch::write(&p, "excluded.txt",
-                   "# a comment\n\nc.smith\told-form: #pragma\nd.smith\terror-fixture\n");
+    scratch::write(&p, "excluded.txt", "# a comment\n\nc.smith\told-form: #pragma\nd.smith\terror-fixture\n");
     scratch::Run run = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- summarize table.tsv");
     scratch::expect_status("frontend_coverage: the summary is made", 0, &run);
     scratch::expect_contains("frontend_coverage: the total leaves out the listed files, the numerator is the same",
