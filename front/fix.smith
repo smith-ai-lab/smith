@@ -1341,6 +1341,8 @@ export Fixed fix_text(Str file, Str source) {
     // indentation replace them (#2253). A text with another gap left is converted too: `fix_blocks` leaves alone a
     // body it cannot read, so the file then fails only on its own gap, not also on the braces.
     if (total.applied > 0) total.text = fix_blocks::convert(total.text);
+    // `return {.some = v}` in a function whose result is an option (#3027): the result is known only now.
+    if (total.applied > 0) total.text = fix_variants::option_returns(total.text);
     // The checker mends a local only once it is declared in smith's own syntax (`mut sum`, `&xs[0]`), which the blocks
     // pass has just finished writing: one more round, so that a second run of the fixer has nothing left (#2386).
     // A round can make the next one possible (a variant `lex.string` becomes `.string` only once the pointer types
@@ -1349,7 +1351,7 @@ export Fixed fix_text(Str file, Str source) {
         Fixed more = {.text = total.text};
         mend_passes(file, &more, true);
         if (more.applied == 0) break;
-        total.text = fix_blocks::convert(hash_comments(more.text));
+        total.text = fix_variants::option_returns(fix_blocks::convert(hash_comments(more.text)));
         total.applied += more.applied;
         total.skipped = more.skipped;
     }

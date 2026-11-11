@@ -341,8 +341,9 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         return ty;
     }
     types::TypeRef bound = nullptr;
-    if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
-    if (countof(e->import_scope) > 0 && e->scoped_leaf != base) {           // a record of the imported module (`*Tap`)
+    if (state::bound_type(e, name, &bound)) return state::type_of(e, base);    // `*T` in an instance
+    if (state::local_made(e, name) != nullptr) return state::type_of(e, base); // `*W` after `W := widen(T)`
+    if (countof(e->import_scope) > 0 && e->scoped_leaf != base) { // a record of the imported module (`*Tap`)
         // `type_of` sends a name it does not find back here: the second visit of the same name ends as an unknown
         // type instead of a loop that overflows the stack (#2984).
         const ast::TypeExpr *outer = e->scoped_leaf;
@@ -1119,6 +1120,12 @@ static const ast::Expr *inner_of(const ast::Expr *x) {
 static state::Status root_type(state::Emitter *e, const ast::Expr *x, state::Ty *out) {
     if (x->kind == .integer) {
         state::scalar_type(e, "I32", out);
+        return state::success();
+    }
+    if (x->kind == .call) { // `sizeof(keep(f64, 1.0))`: the type the checker gave the call
+        state::TyResult typed = state::type_of_node(e, x);
+        if (typed == .error) return {.error = typed.error};
+        *out = typed.ok;
         return state::success();
     }
     if (x->kind != .name) return state::not_emitted("sizeof of this expression", x->span);

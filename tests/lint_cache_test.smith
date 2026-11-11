@@ -426,3 +426,27 @@ export void test_lint_results_follow_the_lint_identity_not_the_binary() {
     Lint binary = run(p.dir, p.cache, nullptr, 0, "");
     expect_counts("a smith with no identity keys on its binary: another key", 4, &binary);
 }
+
+// A lint by a smith that is not the first `smith` on PATH builds with that one (#3081): the build program and the
+// module cache folder are then the ones a `smith build` there made, so nothing is rebuilt. It still lints with itself.
+// Here the smith on PATH is a script that writes down what it was asked and runs the smith under test.
+export void test_lint_builds_with_the_smith_on_path_and_lints_with_itself() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run folder = scratch::sh(&p, "mkdir other");
+    scratch::expect_status("the folder of the smith on PATH is made", 0, &folder);
+    scratch::write(&p, "other/smith", "#!/bin/sh\necho \"$*\" >>\"$PWD/asked\"\nexec \"$SMITH_SELF\" \"$@\"\n");
+    scratch::Run made = scratch::sh(&p, "chmod +x other/smith");
+    scratch::expect_status("the smith on PATH is made", 0, &made);
+    scratch::Run linted = scratch::sh(&p, "PATH=\"$PWD/other:$PATH\" SMITH_OUTPUT=full \"$SMITH_SELF\" lint 2>&1");
+    scratch::expect_status("the lint passes", 0, &linted);
+    scratch::expect_contains("... and runs clang-tidy on every file", linted.out, "4 run, 0 cached");
+    scratch::expect_contains("the smith on PATH built what the lint reads", scratch::capture(&p, "cat asked"),
+                             "build smith_info");
+    scratch::Run own = scratch::sh(&p, "rm asked; SMITH_OUTPUT=full smith lint 2>&1; test -e asked || echo none");
+    scratch::expect_contains("the smith on PATH that is this one builds in process", own.out, "none");
+}

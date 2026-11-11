@@ -1,0 +1,73 @@
+# A function runs at compile time where a constant is required (#3039, step 2): a module-level value, an array
+# length, a `static_assert`. Nothing marks the function; the same one is called when the program runs.
+
+fn fib(n: i32) -> i32:
+    if n < 2: n else: fib(n - 1) + fib(n - 2)
+
+fn clamp(x: i32, low: i32, high: i32) -> i32:
+    if x < low: low else if x > high: high else: x
+
+fn sum_to(n: u32) -> u32:
+    mut total: u32 = 0
+    for i in range(0, n + 1):
+        total += i
+    total
+
+fn odd_sum(n: u32) -> u32:
+    mut total: u32 = 0
+    mut i: u32 = 0
+    while i < 1000:
+        i += 1
+        if i > n:
+            break
+        if i % 2 == 0:
+            continue
+        total += i
+    total
+
+fn is_even(n: u32) -> bool:
+    if n == 0: true else: is_odd(n - 1)
+
+fn is_odd(n: u32) -> bool:
+    if n == 0: false else: is_even(n - 1)
+
+fn bytes(T: type) -> i32:
+    match sizeof(T):
+        1: 1
+        2, 4: 4
+        _: 8
+
+fn first_bit(n: u64) -> i32:
+    mut at := 0
+    mut rest := n
+    while rest > 1:
+        rest >>= 1
+        at += 1
+    return at
+
+limit := clamp(300, 0, 255)
+tenth := fib(10)
+
+static_assert(tenth == 55);
+static_assert(sum_to(100) == 5050 and odd_sum(9) == 25);
+static_assert(is_even(10) and not is_even(7));
+static_assert(bytes(u8) == 1 and bytes(i32) == 4 and bytes(f64) == 8);
+static_assert(first_bit(4096) == 12);
+
+pub fn check() -> i32:
+    table: [fib(6)]u8 = undefined
+    if countof(table) != 8:
+        return 1
+    if limit != 255 or tenth != 55:
+        return 2
+    # the same functions at run time, on values the compiler does not know
+    mut n := 0
+    for i in range(0, 10):
+        n += 1
+    if fib(n) != tenth:
+        return 3
+    if clamp(n - 20, 0, 255) != 0:
+        return 4
+    if sum_to(n.to(u32)) != 55:
+        return 5
+    0

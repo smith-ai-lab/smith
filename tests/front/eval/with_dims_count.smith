@@ -1,0 +1,12 @@
+# The count of `slice.with_dims` is 1 or more and known at compile time.
+import std.slice
+
+fn of(T: type, n: usize) -> i32:
+    xs: slice.with_dims(T, n) = undefined
+    0
+
+Zero := slice.with_dims(i32, 0)
+
+pub fn check() -> i32:
+    flat: slice.with_dims(i32, 0) = undefined
+    of(i32, 2)
