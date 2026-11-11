@@ -129,8 +129,25 @@ export void test_front_fix_method_a_tuple_index_is_written_as_an_element() {
     parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
     test::check_equal(countof(parsed.errors), (Usize)0);
     types::Checked checked = types_decl::check_module_with(&parsed.module, types::lp64(), nullptr);
-    core::Errors found = fix_method::tuple_edits(&checked);
+    core::Errors found = fix_method::tuple_edits(source, &checked);
     test::check_equal(countof(found), (Usize)2);
     test::check(same(found[0].fix[0].text, ".1"));
     test::check(same(found[1].fix[0].text, ".0"));
+}
+
+// An index in parentheses has the span of the parentheses (`countof(n[1])`): the edit ends at the `]` and the `)`
+// stays (#3027; the cast around it then lost its `)`, and the file's blocks were left in braces).
+export void test_front_fix_method_a_parenthesized_tuple_index_keeps_the_parenthesis() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn f(t: (i32, (f32, f32))) -> usize:\n    countof(t[1])\n";
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module_with(&parsed.module, types::lp64(), nullptr);
+    core::Errors found = fix_method::tuple_edits(source, &checked);
+    test::check_equal(countof(found), (Usize)1);
+    test::check(same(found[0].fix[0].text, ".1"));
+    test::check_equal((Usize)found[0].fix[0].span.end, (Usize)53);
 }

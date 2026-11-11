@@ -26,3 +26,27 @@ export void test_front_fix_payload_nested_designator_of_a_payload_enum_is_a_vari
                  "struct Ty:\n    kind: Kind\n    n: i32\n"
                  "fn make(c: i32) -> Ty:\n    t := Ty(kind = .vector((count = c)), n = 1)\n    return t\n");
 }
+
+// A braced list of one variant with no type, in a `return` or a declaration, is `.variant(payload)` (#3027): the
+// checker types the list from where it stands.
+export void test_front_fix_payload_a_list_of_one_variant_is_the_variant() {
+    expect_fixed("typedef enum {\n    I32 some;\n    none;\n} M;\nM f(I32 v) {\n    M x = {.some = v};\n"
+                 "    if (v) return {.some = 1};\n    return x;\n}\n",
+                 "enum M:\n    some: i32\n    none\nfn f(v: i32) -> M:\n    x: M = .some(v)\n    if v != 0:\n"
+                 "        return .some(1)\n    return x\n");
+}
+
+// A list of a struct's field stays for the other passes: only a payload enumeration's variant is written so.
+export void test_front_fix_payload_a_list_of_a_struct_field_is_no_variant() {
+    expect_fixed("typedef struct {\n    I32 some;\n} S;\nS f(I32 v) {\n    S x = {.some = v};\n    return x;\n}\n",
+                 "struct S:\n    some: i32\nfn f(v: i32) -> S:\n    x := S(some = v)\n    return x\n");
+}
+
+// A list that is the whole value of a variable of an applied type builds it as `Pair(i32)(...)` (#3027), as a named
+// type's list is `P(...)`.
+export void test_front_fix_payload_a_list_of_an_applied_type_is_its_construction() {
+    expect_fixed("Type Pair(Type T) {\n    return struct {\n        T a;\n        T b;\n    };\n}\n"
+                 "I32 f() {\n    Pair(I32) p = {.a = 1, .b = 2};\n    return p.a;\n}\n",
+                 "fn Pair(T: type) -> type:\n    struct:\n        a: T\n        b: T\n"
+                 "fn f() -> i32:\n    p := Pair(i32)(a = 1, b = 2)\n    return p.a\n");
+}
