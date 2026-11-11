@@ -5,7 +5,7 @@ description: >
   job waits for the others to merge them: the restore extracts every store of the newest commit. With `delta` a
   job publishes only the entries it added (#3061). Releases are
   immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 10 newest
-  commits are kept (a merge queue's groups are newer than main's commit, #2938). Only a merge queue run and the nightly save (what they ran is the tree
+  commits are kept (a merge queue's groups are newer than main's commit, #2938). Only a merge queue run, the nightly and a push to main (the count, #3052) save (what they ran is the tree
   that lands); a pull request only reads. A failure here never fails the job. The job needs `contents: write`.
   The release also holds the job's import cache (`~/.cache/smith/imports`, #2891) as `smith-imports-<os>.tar.gz`, even
   when the job ran no test, and the job's import-cache hits are printed first (`./.github/actions/test-cache/report`),
@@ -33,7 +33,7 @@ runs:
   steps:
     - uses: ./.github/actions/test-cache/report
     - name: Publish the test-result store
-      if: github.event_name == 'merge_group' || github.event_name == 'schedule'
+      if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'push'
       continue-on-error: true
       shell: bash
       env:
