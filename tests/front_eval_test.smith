@@ -135,8 +135,7 @@ export void test_front_eval_a_concept_function_is_answered_by_its_body() {
     expect(source, "a", "true");
     expect(source, "b", "false");
     expect(source, "c", "true");
-    expect(source, "d",
-           "unknown: `sq(...)` is a call, and a function is not run at compile time yet; write the value");
+    expect(source, "d", "unknown: `sq(...)` is a call, and a function is not run at compile time yet; write the value");
 }
 
 export void test_front_eval_target_facts() {
@@ -147,6 +146,7 @@ export void test_front_eval_target_facts() {
                  "other := .linux != target.os\n"
                  "known := target.os == .linux or target.os == .macos\n"
                  "arch := target.arch == .aarch64 or target.arch == .x86_64\n"
+                 "number := target.os == 0 or target.os != 0\n"
                  "analyzer := target.static_analyzer\n"
                  "wrong := target.os == .windows\n"
                  "none := target.colour\n";
@@ -156,6 +156,7 @@ export void test_front_eval_target_facts() {
     expect(source, "other", os);
     expect(source, "known", "true");
     expect(source, "arch", "true");
+    expect(source, "number", "true"); // today's sources compare the fact with its number
     expect(source, "analyzer", "false");
     expect(source, "wrong", "unknown: `.windows` is not a name of `target.os`; write `.macos` or `.linux`");
     expect(source, "none", "unknown: `target` has no fact `colour`");

@@ -387,12 +387,30 @@ static Bool question_answer(Str name, types::TypeRef t) {
 // ---------------------------------------------------------------------------------------------------------------
 // The target
 
+static Bool set_flag(Bool value, Bool *out) {
+    *out = value;
+    return true;
+}
+
+// A fact of `target` that is a Bool, false when `fact` is not one.
+static Bool flag_fact(Str fact, Bool *out) {
+    if (same(fact, "static_analyzer"))
+        return set_flag(false, out); // the new front end never runs under clang's analyzer
+    if (same(fact, "address_sanitizer")) return set_flag(target::address_sanitizer, out);
+    if (same(fact, "undefined_sanitizer")) return set_flag(target::undefined_sanitizer, out);
+    if (same(fact, "thread_sanitizer")) return set_flag(target::thread_sanitizer, out);
+    if (same(fact, "assertions")) return set_flag(target::assertions, out);
+    if (same(fact, "fast_math")) return set_flag(__FINITE_MATH_ONLY__ != 0, out);
+    return false;
+}
+
 // The value of `target.<fact>`, false when `target` has no such fact (#3039: which facts exist is the owner's
 // question; these are the ones the checker read before). The system and the processor are the ones smith runs on
 // (`when::host`), as `@when` reads them, until a compile names another target; the sanitizers and `assertions` are
 // those of the build smith itself was made with, which is what the checker folded before (#2461).
 export Bool target_fact(const types::Checked *r, Str fact, Value *out) {
     types::TypeRef number = types::builtin(&r->table, "I32");
+    Bool flag = false;
     if (same(fact, "os")) {
         *out = fact_value("os", when::host() == when::os_macos ? "macos" : "linux");
     } else if (same(fact, "arch")) {
@@ -405,18 +423,8 @@ export Bool target_fact(const types::Checked *r, Str fact, Value *out) {
         *out = integer_value(53, false, number);
     } else if (same(fact, "float_eval_method")) {
         *out = integer_value(0, false, number);
-    } else if (same(fact, "static_analyzer")) {
-        *out = boolean_value(false); // the new front end never runs under clang's analyzer
-    } else if (same(fact, "address_sanitizer")) {
-        *out = boolean_value(target::address_sanitizer);
-    } else if (same(fact, "undefined_sanitizer")) {
-        *out = boolean_value(target::undefined_sanitizer);
-    } else if (same(fact, "thread_sanitizer")) {
-        *out = boolean_value(target::thread_sanitizer);
-    } else if (same(fact, "assertions")) {
-        *out = boolean_value(target::assertions);
-    } else if (same(fact, "fast_math")) {
-        *out = boolean_value(__FINITE_MATH_ONLY__ != 0);
+    } else if (flag_fact(fact, &flag)) {
+        *out = boolean_value(flag);
     } else {
         return false;
     }
@@ -744,6 +752,13 @@ static void floating_binary(Run *run, const ast::Expr *e, ast::BinaryOp op, Valu
     }
 }
 
+// The number today's sources compare a named fact with (`target::os == target::linux`, `target::arch == 0`): the
+// one `types_expr::fold_target_system` writes for the bare fact.
+static U64 fact_number(Str family, Str name) {
+    if (same(family, "os")) return (U64)(same(name, "macos") ? when::os_macos : when::os_linux);
+    return (U64)(same(name, "aarch64") ? when::arch_aarch64 : when::arch_x86_64);
+}
+
 // `==` and `!=` of two values that are not numbers: booleans, types, enumerators, facts.
 static void equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Value r) {
     Bool equal = false;
@@ -755,6 +770,10 @@ static void equality(Run *run, const ast::Expr *e, ast::BinaryOp op, Value l, Va
         equal = l.enumerator.index == r.enumerator.index;
     } else if (l == .fact && r == .fact && same(l.fact.family, r.fact.family)) {
         equal = same(l.fact.name, r.fact.name);
+    } else if (l == .fact && r == .integer) {
+        equal = !r.integer.negative && fact_number(l.fact.family, l.fact.name) == r.integer.magnitude;
+    } else if (l == .integer && r == .fact) {
+        equal = !l.integer.negative && fact_number(r.fact.family, r.fact.name) == l.integer.magnitude;
     } else {
         unknown(run, e->span, "these two are not compared at compile time");
         return;
@@ -1202,14 +1221,12 @@ static void enter(Run *run, Step s) {
     ast::Path path = {};
     if (e->kind == .integer || e->kind == .character || e->kind == .boolean || e->kind == .floating) {
         literal_step(run, e);
-    } else if (types::name_path(e, &path)) {
-        name_step(run, s, path);
+    } else if (types::name_path(e, &path) || (e->kind == .type_value && names_variable(run, e, &path))) {
+        name_step(run, s, path); // also `N` of `[N]u8`: the parser reads a capitalized name as a type
     } else if (e->kind == .member) {
         member_step(run, s);
     } else if (e->kind == .variant) {
         variant_step(run, s);
-    } else if (e->kind == .type_value && names_variable(run, e, &path)) {
-        name_step(run, s, path); // `N` of `[N]u8`: the parser reads a capitalized name as a type
     } else if (e->kind == .type_value) {
         types::TypeRef t = resolve_quiet(run, e->kind.type_value.type);
         if (is_open(run, t)) {
@@ -1276,12 +1293,13 @@ export Outcome value(types::Checked *r, const ast::Expr *e) {
     return (Outcome){.known = true, .value = run.values[0], .failed = false, .at = e->span, .why = ""};
 }
 
-// Whether `e` is a type known at compile time (`typeof(xs[0])`, `u32`, `Pair(i32)`), and not a value that only
-// reads like one (`Pair(n, n)`).
-export Bool is_type(types::Checked *r, const ast::Expr *e) {
+// The type `e` is when it is one known at compile time (`typeof(xs[0])`, `u32`, `Pair(i32)`); null for a value,
+// one that only reads like a type (`Pair(n, n)`) included.
+export types::TypeRef type_held(types::Checked *r, const ast::Expr *e) {
     Outcome found = value(r, e);
     Value v = found.value;
-    return found.known && v == .type_value;
+    if (!found.known || v != .type_value) return nullptr;
+    return v.type_value.type;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

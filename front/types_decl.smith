@@ -848,16 +848,15 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (is_new) {
         r->new_body = true;
     }
-    Bool is_type = is_new && !is_mut && init != nullptr && holds_type(written) && eval::is_type(r, init);
-    if (is_type && init->kind == .type_value) {
-        // `Element := typeof(xs[0])`: a constant that holds a type is a name of that type (#3039), as at module
-        // level; nothing is stored for it, and the mark on its value tells the emitter. `p := Pair(n, n)` reads as
-        // a type too, and is not one.
-        const ast::TypeExpr *holds = init->kind.type_value.type;
+    types::TypeRef held = nullptr;
+    if (is_new && !is_mut && init != nullptr && holds_type(written) &&
+        (init->kind == .type_value || init->kind == .name))
+        held = eval::type_held(r, init);
+    if (held != nullptr) {
+        // `Element := typeof(xs[0])`, `wide: type = u16`: a constant that holds a type is a name of that type
+        // (#3039), as at module level; nothing is stored for it, and the mark on its value tells the emitter.
+        // `p := Pair(n, n)` reads as a type too, and is not one.
         types::set_value(r, init, 1);
-        r->new_syntax = true;
-        types::TypeRef held = types::resolve(r, holds);
-        r->new_syntax = false;
         types::Symbol alias = {.name = name, .kind = .type_name, .type = held, .decl = d};
         (void)types::declare(&r->scopes, alias);
         return;
@@ -2358,14 +2357,12 @@ export void uninstall() {
 
 export types::Options options(types::Target target) {
     install();
-    return (types::Options){
-        .target = target,
-        .bodies = check_body,
-        .expression = types_expr::infer,
-        .length = eval::length_for,
-        .constant = eval::type_for};
+    return (types::Options){.target = target,
+                            .bodies = check_body,
+                            .expression = types_expr::infer,
+                            .length = eval::length_for,
+                            .constant = eval::type_for};
 }
-
 
 // A module-level variable's initializer, against its declared type.
 static void check_initializer(types::Checked *r, const ast::Decl *d) {
@@ -2423,8 +2420,8 @@ static types::Checked check_once(const ast::Module *m, types::Target target, typ
         const ast::Decl *asserted = m->decls[i];
         if (asserted->kind == .static_assert_decl) {
             state.function = "static_assert";
-            static_assertion(&r, asserted->kind.static_assert_decl.condition,
-                             asserted->kind.static_assert_decl.message, asserted->span);
+            static_assertion(&r, asserted->kind.static_assert_decl.condition, asserted->kind.static_assert_decl.message,
+                             asserted->span);
         }
     }
     check_instances(&r);

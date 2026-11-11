@@ -1149,7 +1149,8 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
         finish(c, e, types::builtin(&c->table, "I32"), f.expected);
         return true;
     }
-    if (fact != .boolean) return false; // `os`, `arch`: one of a set of names, compared with `==` (`computed_comparison`)
+    if (fact != .boolean)
+        return false; // `os`, `arch`: one of a set of names, compared with `==` (`computed_comparison`)
     ast::ExprKind folded = {.boolean = {.value = fact.boolean.value}};
     node->kind = folded;
     finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
@@ -6656,7 +6657,8 @@ static Bool computed_comparison(types::Checked *c, Frame f) {
     if (e->kind != .binary || !is_equality(e->kind.binary.op)) return false;
     const ast::Expr *left = e->kind.binary.left;
     const ast::Expr *right = e->kind.binary.right;
-    Bool fact = (is_named_fact(c, left) && right->kind == .variant) || (is_named_fact(c, right) && left->kind == .variant);
+    Bool fact =
+        (is_named_fact(c, left) && right->kind == .variant) || (is_named_fact(c, right) && left->kind == .variant);
     if (!fact && !is_written_type(c, left) && !is_written_type(c, right)) return false;
     computed(c, f, fact ? "a comparison with a fact of the target" : "a comparison of types");
     return true;

@@ -1541,7 +1541,7 @@ export struct NodeType {
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
     Bool decided;            // the condition of an `if` that asks about types: one branch is kept (#1902)
     Bool keeps_then;         // when `decided`: the `then` branch is the one kept, else the `else` branch
-    Bool has_value;          // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
+    Bool has_value; // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
     U64 value;
 };
 
@@ -1599,12 +1599,12 @@ export void set_load_failure(Str text) {
 
 export struct Options {
     Target target;
-    BodyChecker bodies;   // null: bodies are not checked
-    ExprTyper expression; // null: `typeof` of an expression that is not a name is refused
-    LengthFolder length;  // null: only an integer literal is a length
+    BodyChecker bodies;     // null: bodies are not checked
+    ExprTyper expression;   // null: `typeof` of an expression that is not a name is refused
+    LengthFolder length;    // null: only an integer literal is a length
     ConstantTyper constant; // null: a constant written without a type takes one only from a literal
-    ModuleLoader load;    // null: imports are not read
-    HeaderLoader headers; // null: C headers are not read
+    ModuleLoader load;      // null: imports are not read
+    HeaderLoader headers;   // null: C headers are not read
 };
 
 // What a call passed for one compile-time parameter of a generic function (#1908, part of #1700): a type, or a value.

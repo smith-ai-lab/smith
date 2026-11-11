@@ -10,8 +10,14 @@ pub fn check() -> i32:
     static_assert(sizeof(plain_type) == 2)
     wide: big = 5
     copy: plain_type = plain
+    byte: type = u8
+    small := byte
+    low: small = 200
+    static_assert(small == u8 and sizeof(byte) == 1)
     if sizeof(big) != 4:
         return 1
     if wide.to(i32) + copy.to(i32) != 12:
         return 2
+    if low.to(i32) != 200:
+        return 3
     0
