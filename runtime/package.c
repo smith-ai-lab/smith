@@ -31,6 +31,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#if defined(__x86_64__)
+#include <cpuid.h>
+#include <immintrin.h>
+#elif defined(__aarch64__) && defined(__ARM_FEATURE_SHA2)
+#include <arm_neon.h>
+#endif
+
 // The libraries are .smith modules, compiled by the smith that builds this file and linked beside it (smith.c's
 // program, the build program's manifest): only their headers are seen here.
 #include <smith/inflate.h>
@@ -80,7 +87,8 @@ void smith_sha256_init(SmithSha256 *sha) {
     sha->used = 0;
 }
 
-static void smith_sha256_block(SmithSha256 *sha, const uint8_t *block) {
+// One 64-byte block, in portable C: the path of a processor without SHA instructions.
+static void smith_sha256_block(uint32_t state[8], const uint8_t *block) {
     uint32_t w[64];
     for (size_t i = 0; i < 16; i++) {
         w[i] = ((uint32_t)block[i * 4] << 24) | ((uint32_t)block[i * 4 + 1] << 16) | ((uint32_t)block[i * 4 + 2] << 8) |
@@ -92,7 +100,7 @@ static void smith_sha256_block(SmithSha256 *sha, const uint8_t *block) {
         w[i] = w[i - 16] + s0 + w[i - 7] + s1;
     }
     uint32_t v[8];
-    memcpy(v, sha->state, sizeof v);
+    memcpy(v, state, sizeof v);
     for (size_t i = 0; i < 64; i++) {
         uint32_t s1 = smith_sha256_rotate(v[4], 6) ^ smith_sha256_rotate(v[4], 11) ^ smith_sha256_rotate(v[4], 25);
         uint32_t choose = (v[4] & v[5]) ^ (~v[4] & v[6]);
@@ -105,23 +113,146 @@ static void smith_sha256_block(SmithSha256 *sha, const uint8_t *block) {
         v[0] = first + second;
     }
     for (size_t i = 0; i < 8; i++)
-        sha->state[i] += v[i];
+        state[i] += v[i];
+}
+
+// The processor's own SHA-256 instructions (#3079): the step cache hashes every input of every step, a linked smith of
+// 437 MB among them, and the portable block above does 140 MB a second where these do over 1 GB. Both give the same
+// digest (tests/build_packages_sha_test.smith); which one runs is decided once, by what the processor says it has.
+#if defined(__x86_64__)
+[[gnu::target("sha,sse4.1,ssse3")]] static void smith_sha256_blocks_fast(uint32_t state[8], const uint8_t *data,
+                                                                         size_t blocks) {
+    const __m128i bytes = _mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL);
+    __m128i low = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)(const void *)&state[0]), 0xB1);  // CDAB
+    __m128i high = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)(const void *)&state[4]), 0x1B); // EFGH
+    __m128i s0 = _mm_alignr_epi8(low, high, 8);                                                        // ABEF
+    __m128i s1 = _mm_blend_epi16(high, low, 0xF0);                                                     // CDGH
+    for (; blocks > 0; blocks--, data += 64) {
+        __m128i start0 = s0;
+        __m128i start1 = s1;
+        __m128i m[4]; // the last four groups of four words of the schedule
+        for (size_t i = 0; i < 4; i++)
+            m[i] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(const void *)(data + 16 * i)), bytes);
+        for (size_t group = 0; group < 16; group++) {
+            if (group >= 4) {
+                __m128i next = _mm_sha256msg1_epu32(m[group & 3], m[(group + 1) & 3]);
+                next = _mm_add_epi32(next, _mm_alignr_epi8(m[(group + 3) & 3], m[(group + 2) & 3], 4));
+                m[group & 3] = _mm_sha256msg2_epu32(next, m[(group + 3) & 3]);
+            }
+            __m128i k = _mm_loadu_si128((const __m128i *)(const void *)&smith_sha256_k[group * 4]);
+            k = _mm_add_epi32(k, m[group & 3]);
+            s1 = _mm_sha256rnds2_epu32(s1, s0, k);
+            s0 = _mm_sha256rnds2_epu32(s0, s1, _mm_shuffle_epi32(k, 0x0E));
+        }
+        s0 = _mm_add_epi32(s0, start0);
+        s1 = _mm_add_epi32(s1, start1);
+    }
+    low = _mm_shuffle_epi32(s0, 0x1B);  // FEBA
+    high = _mm_shuffle_epi32(s1, 0xB1); // DCHG
+    _mm_storeu_si128((__m128i *)(void *)&state[0], _mm_blend_epi16(low, high, 0xF0));
+    _mm_storeu_si128((__m128i *)(void *)&state[4], _mm_alignr_epi8(high, low, 8));
+}
+
+// Whether this processor has the SHA extensions and the two SSE levels the block above uses.
+static bool smith_sha256_processor_has(void) {
+    unsigned a = 0;
+    unsigned b = 0;
+    unsigned c = 0;
+    unsigned d = 0;
+    bool sse = __get_cpuid(1, &a, &b, &c, &d) != 0 && (c & (1U << 9)) != 0 && (c & (1U << 19)) != 0;
+    return sse && __get_cpuid_count(7, 0, &a, &b, &c, &d) != 0 && (b & (1U << 29)) != 0;
+}
+#elif defined(__aarch64__) && defined(__ARM_FEATURE_SHA2) // every Apple arm64 processor; elsewhere when compiled for it
+static void smith_sha256_blocks_fast(uint32_t state[8], const uint8_t *data, size_t blocks) {
+    uint32x4_t s0 = vld1q_u32(&state[0]);
+    uint32x4_t s1 = vld1q_u32(&state[4]);
+    for (; blocks > 0; blocks--, data += 64) {
+        uint32x4_t start0 = s0;
+        uint32x4_t start1 = s1;
+        uint32x4_t m[4]; // the last four groups of four words of the schedule
+        for (size_t i = 0; i < 4; i++)
+            m[i] = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(data + 16 * i)));
+        for (size_t group = 0; group < 16; group++) {
+            if (group >= 4) {
+                uint32x4_t next = vsha256su0q_u32(m[group & 3], m[(group + 1) & 3]);
+                m[group & 3] = vsha256su1q_u32(next, m[(group + 2) & 3], m[(group + 3) & 3]);
+            }
+            uint32x4_t k = vaddq_u32(m[group & 3], vld1q_u32(&smith_sha256_k[group * 4]));
+            uint32x4_t before = s0;
+            s0 = vsha256hq_u32(s0, s1, k);
+            s1 = vsha256h2q_u32(s1, before, k);
+        }
+        s0 = vaddq_u32(s0, start0);
+        s1 = vaddq_u32(s1, start1);
+    }
+    vst1q_u32(&state[0], s0);
+    vst1q_u32(&state[4], s1);
+}
+
+static bool smith_sha256_processor_has(void) {
+    return true;
+}
+#else
+static void smith_sha256_blocks_fast(uint32_t state[8], const uint8_t *data, size_t blocks) {
+    (void)state;
+    (void)data;
+    (void)blocks;
+    SMITH_ASSERT(false);
+}
+
+static bool smith_sha256_processor_has(void) {
+    return false;
+}
+#endif
+
+// Whether the fast block is used: the processor has it, and it agrees with the portable one on a block (asked once; a
+// machine that reports instructions it runs wrongly keeps the portable path instead of wrong digests).
+static bool smith_sha256_has_fast(void) {
+    static int known = 0; // 0 not asked, 1 yes, 2 no; two threads that both ask write the same answer
+    if (known == 0) {
+        uint8_t block[64];
+        for (size_t i = 0; i < sizeof block; i++)
+            block[i] = (uint8_t)(i * 7 + 1);
+        uint32_t fast[8];
+        uint32_t portable[8];
+        memcpy(fast, smith_sha256_k, sizeof fast);
+        memcpy(portable, smith_sha256_k, sizeof portable);
+        bool has = smith_sha256_processor_has();
+        if (has) smith_sha256_blocks_fast(fast, block, 1);
+        smith_sha256_block(portable, block);
+        known = has && memcmp(fast, portable, sizeof fast) == 0 ? 1 : 2;
+    }
+    return known == 1;
+}
+
+static void smith_sha256_blocks(uint32_t state[8], const uint8_t *data, size_t blocks) {
+    if (smith_sha256_has_fast()) {
+        smith_sha256_blocks_fast(state, data, blocks);
+        return;
+    }
+    for (size_t i = 0; i < blocks; i++)
+        smith_sha256_block(state, data + i * 64);
 }
 
 void smith_sha256_update(SmithSha256 *sha, const uint8_t *data, size_t size) {
     SMITH_ASSERT(data != nullptr || size == 0);
     sha->bytes += size;
-    for (size_t at = 0; at < size;) {
+    size_t at = 0;
+    if (sha->used > 0) { // fill the block an earlier call left part full
         size_t take = sizeof sha->block - sha->used;
-        if (take > size - at) take = size - at;
-        memcpy(sha->block + sha->used, data + at, take);
+        if (take > size) take = size;
+        memcpy(sha->block + sha->used, data, take);
         sha->used += take;
-        at += take;
-        if (sha->used == sizeof sha->block) {
-            smith_sha256_block(sha, sha->block);
-            sha->used = 0;
-        }
+        at = take;
+        if (sha->used < sizeof sha->block) return;
+        smith_sha256_blocks(sha->state, sha->block, 1);
+        sha->used = 0;
     }
+    size_t whole = (size - at) / sizeof sha->block; // whole blocks are hashed where they are, not copied
+    if (whole > 0) smith_sha256_blocks(sha->state, data + at, whole);
+    at += whole * sizeof sha->block;
+    if (at < size) memcpy(sha->block, data + at, size - at);
+    sha->used = size - at;
 }
 
 // The digest as 64 lowercase hex digits and a terminator.
