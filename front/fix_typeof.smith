@@ -634,7 +634,7 @@ static core::ParseError readonly_data_cast(Str source, Usize i, Str param, Str r
         if (at(source, k, declared) && (k == floor || !word_char(source[k - 1]))) found = true;
     }
     if (!found) return none;
-    Usize star = line_end - countof(tail) + countof(".cast(*");
+    Usize star = line_end - countof(tail) + 7; // `.cast(*` is 7 bytes
     core::ParseError out = {};
     out.span = (ast::Span){.start = (U32)star, .end = (U32)(star + 4)};
     out.message = "the pointer of a read-only `[]T` the function returns is `*T`: a cast to `*mut` drops const";
