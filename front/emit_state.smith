@@ -729,7 +729,32 @@ export Bool is_local_type(const ast::Decl *d) {
     const ast::Expr *init = d->kind.variable.init;
     if (init == nullptr) return false;
     if (init->kind == .name) return true; // `wide: type = u16`
+    if (init->kind == .call) return true; // `W := widen(T)`: the checker marked it when the call makes a type
     return init->kind == .type_value && init->kind.type_value.type != nullptr;
+}
+
+// The checker's number of the instance being emitted (`types::max_instances` outside one): what it recorded for a
+// node of a generic's body is kept per instance.
+export Usize instance_number(const Emitter *e) {
+    Usize index = types::max_instances;
+    if (e->options.checked == nullptr) return index;
+    for (Usize i = 0; e->instance != nullptr && i < e->options.checked->instance_count; i++) {
+        if (&e->options.checked->instances[i] == e->instance) index = i;
+    }
+    return index;
+}
+
+// The type a constant of the body being emitted holds when a call made it (`W := widen(T)`): the checker's. Null
+// when `name` is not one.
+export types::TypeRef local_made(const Emitter *e, Str name) {
+    for (Usize i = e->local_type_count; i > 0; i--) {
+        const ast::Decl *d = e->local_types[i - 1];
+        if (d->kind != .variable || !same_text(d->kind.variable.name, name)) continue;
+        const ast::Expr *init = d->kind.variable.init;
+        if (init == nullptr || init->kind != .call) return nullptr;
+        return types::held_type(e->options.checked, d, instance_number(e));
+    }
+    return nullptr;
 }
 
 // The type a constant of the body being emitted holds, as it is written; null when `name` is not one.

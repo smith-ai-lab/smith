@@ -1,0 +1,6 @@
+<dir>/src/eval_call_errors.smith:31:15: error: `deep(0)` is 512 calls deep at compile time; the recursion does not end
+<dir>/src/eval_call_errors.smith:32:15: error: `spin(1)` ran 1048576 steps at compile time without finishing; a loop here does not end, or the work belongs at run time
+<dir>/src/eval_call_errors.smith:33:15: error: this divides by zero at compile time (in `divide(0)`, called from `through(2)`)
+<dir>/src/eval_call_errors.smith:34:1: error: static_assert needs a condition known at compile time: `length()` cannot run at compile time: `rand` is a C function; only smith functions run at compile time
+<dir>/src/eval_call_errors.smith:35:1: error: static_assert needs a condition known at compile time: `next()` cannot run at compile time: `count` is a variable that can change
+<dir>/src/eval_call_errors.smith:36:1: error: static_assert needs a condition known at compile time: `third(1)` cannot run at compile time: this is a value with memory (an array, a slice, a string, a struct or a pointer), and compile-time code holds only numbers, bools, enumerators and types

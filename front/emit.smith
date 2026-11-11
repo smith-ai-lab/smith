@@ -171,8 +171,8 @@ static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) 
         written->span = s->decl->span;
         return state::type_of(e, written);
     }
-    if (init != nullptr && (init->kind == .member || init->kind == .name))
-        return type_of_checked(e, s->type, s->decl->span);
+    if (init != nullptr && (init->kind == .member || init->kind == .name || init->kind == .call))
+        return type_of_checked(e, s->type, s->decl->span); // also `IntPair := Pair(i32)`
     if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
     // `Edits := []mut Edit` of front::parse, used from another module: `Edit` is read in front::parse's scope, as an
     // imported record's fields are (#2984; read in the user's scope it was unknown, and before that a loop).
@@ -298,10 +298,33 @@ static state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
         const ast::TypeArg *only = &args[0];
         if (*only == .type && only->type.type->kind == .function) return lambdas::type_function(e, only->type.type);
     }
+    // a type function's (`Pair(i32)`, `widen(T)`): the type the checker computed for this place
+    types::TypeRef held = nullptr;
+    if (e->options.checked != nullptr) held = types::applied_type(e->options.checked, t, state::instance_number(e));
+    if (held != nullptr) return type_of_checked(e, held, t->span);
     if (countof(applied.segments) != 1 || !state::same_text(applied.segments[0].text, "vec"))
         return state::ty_fail_with(t->span, "not emitted yet: the applied type `",
                                    applied.segments[countof(applied.segments) - 1].text, "`");
     return vectors::type_vector(e, t);
+}
+
+// A one-name type that a name in force stands for: a bound type parameter, `W` after `W := widen(T)`, or `Element`
+// after `const Element = typeof(xs[0])`.
+static Bool type_of_local(state::Emitter *e, const ast::TypeExpr *t, Str name, state::TyResult *out) {
+    types::TypeRef bound = nullptr;
+    if (state::bound_type(e, name, &bound)) {
+        *out = type_of_checked(e, bound, t->span);
+        return true;
+    }
+    types::TypeRef made = state::local_made(e, name);
+    if (made != nullptr) {
+        *out = type_of_checked(e, made, t->span);
+        return true;
+    }
+    const ast::TypeExpr *held = state::local_type(e, name);
+    if (held == nullptr) return false;
+    *out = state::type_of(e, held);
+    return true;
 }
 
 // The LLVM type of a type expression.
@@ -316,12 +339,8 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
             types::header_binding_in(e->options.checked, path.segments[0].text, e->instance_scope) != nullptr)
             return type_of_header(e, t); // `stdio.size_t` is the header's `c::size_t`
         if (countof(path.segments) == 2) return type_of_imported(e, t);
-        types::TypeRef bound = nullptr;
-        if (countof(path.segments) == 1 && state::bound_type(e, path.segments[0].text, &bound))
-            return type_of_checked(e, bound, t->span);
-        const ast::TypeExpr *held = nullptr;
-        if (countof(path.segments) == 1) held = state::local_type(e, path.segments[0].text);
-        if (held != nullptr) return state::type_of(e, held); // `x: Element` after `const Element = typeof(xs[0])`
+        state::TyResult local = {};
+        if (countof(path.segments) == 1 && type_of_local(e, t, path.segments[0].text, &local)) return local;
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
@@ -1825,6 +1844,28 @@ static state::TyResult result_from_checked(state::Emitter *e, types::TypeRef bas
     return optional::build_result(e, ok.ok, bad.ok);
 }
 
+// The kinds of checked type that are not a scalar, a record or an enumeration: a vector (alone, not in a chain), an
+// option, a result, a tuple, a function value or pointer; the error for the rest.
+static state::TyResult other_from_checked(state::Emitter *e, types::TypeRef base, Bool alone, ast::Span span) {
+    if (base->kind == .vector && alone) {
+        state::Ty lane = {};
+        types::TypeRef lane_type = types::element_of(base);
+        if (scalar_of_checked(e, lane_type, &lane)) return vectors::make(e, lane, types::count_of(base));
+    }
+    if (base->kind == .option) {
+        ensure_enum(e, types::element_of(base));
+        return optional::from_checked(e, base);
+    }
+    if (base->kind == .result_type) return result_from_checked(e, base);
+    if (base->kind == .tuple) return tupled::from_checked(e, base);
+    if (base->kind == .fn_value) return lambdas::from_checked(e, base);
+    if (base->kind == .function) return lambdas::pointer_from_checked(e, base); // a C function pointer
+    Str shown = types::show(base);
+    state::Error error = {.message = state::msg(format::push("not emitted yet: ", shown)), .span = span};
+    state::free_text(shown);
+    return {.error = error};
+}
+
 static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
     types::TypeRef chain[16];
     Usize depth = 0;
@@ -1846,6 +1887,14 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     }
     known = known || (base->kind == .record && find_record_by_name(e, types::name_of(base), &ty));
     known = known || (base->kind == .enumeration && matching::type_enum(e, types::name_of(base), &ty));
+    if (!known && e->options.checked != nullptr && types::is_made(e->options.checked, base)) {
+        // the `struct:` or `enum:` of a type function (`Pair(i32)`): built from the checker's type
+        state::TyResult made =
+            base->kind == .record ? records::from_made(e, base, span) : matching::enum_from_checked(e, base, span);
+        if (made == .error) return made;
+        ty = made.ok;
+        known = true;
+    }
     known = known ||
             (base->kind == .enumeration && matching::type_enum(e, bare_name(types::name_of(base)), &ty)); // imported
     // A C enumeration is its integer: the header's names are constants of it (`c::red`), never a type of the module.
@@ -1856,25 +1905,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         ty = void_type(e);
         known = true;
     }
-    if (!known) {
-        if (base->kind == .vector && depth == 0) {
-            state::Ty lane = {};
-            types::TypeRef lane_type = types::element_of(base);
-            if (scalar_of_checked(e, lane_type, &lane)) return vectors::make(e, lane, types::count_of(base));
-        }
-        if (base->kind == .option) {
-            ensure_enum(e, types::element_of(base));
-            return optional::from_checked(e, base);
-        }
-        if (base->kind == .result_type) return result_from_checked(e, base);
-        if (base->kind == .tuple) return tupled::from_checked(e, base);
-        if (base->kind == .fn_value) return lambdas::from_checked(e, base);
-        if (base->kind == .function) return lambdas::pointer_from_checked(e, base); // a C function pointer
-        Str shown = types::show(base);
-        state::Error error = {.message = state::msg(format::push("not emitted yet: ", shown)), .span = span};
-        state::free_text(shown);
-        return {.error = error};
-    }
+    if (!known) return other_from_checked(e, base, depth == 0, span);
     for (Usize i = depth; i > 0; i--) {
         types::TypeRef node = chain[i - 1];
         state::Ty *inner = own_type(e, ty);
@@ -2217,7 +2248,8 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
 static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     if (d->kind.variable.init == nullptr) return false;
-    if (d->kind.variable.init->kind != .tuple_lit && d->kind.variable.init->kind != .name) return false;
+    const ast::Expr *init = d->kind.variable.init;
+    if (init->kind != .tuple_lit && init->kind != .name && init->kind != .call) return false;
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
     return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
 }

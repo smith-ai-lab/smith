@@ -169,6 +169,36 @@ export void test_front_e2e_every_case_of_the_corpus() {
     test::check_equal(failed_cases, 0);
 }
 
+// One case of tests/front/eval/ that imports std.slice, compiled against a library folder holding only the declaration
+// of `with_dims` (the real std.slice imports std.contract, which this path does not read yet).
+static Str with_dims_case(Str name) {
+    Str dir = "tests/front/eval/";
+    Str folder = folder_for(name);
+    Str src = as_str(format::push(folder, "/src"));
+    c::mkdir(src.data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/lib/std")).data, 0o700);
+    write_text(as_str(format::push(folder, "/lib/std/slice.smith")),
+               "pub fn with_dims(element: type, count: usize) -> type:\n    element\n");
+    Str path = as_str(format::push(src, "/", name, ".smith"));
+    write_text(path, text_of(as_str(format::push(dir, name, ".smith"))));
+    roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
+    Str failure = case_failure(name, folder, report, as_str(format::push(dir, name, ".error")));
+    remove_all(folder);
+    return failure;
+}
+
+// `slice.with_dims(T, k)` is the type written with k empty sizes, as a parameter's, a result's and an alias's type; a
+// count of 0, or one not known at compile time, is an error that says so (#3039).
+export void test_front_e2e_slice_with_dims_is_built_in() {
+    Str built = with_dims_case("with_dims");
+    Str refused = with_dims_case("with_dims_count");
+    fail_with(built);
+    fail_with(refused);
+    test::check_equal(countof(built) + countof(refused), 0);
+}
+
 // A cast to a narrower type is checked on the driver path (today's syntax, which has a `module` line): the object
 // calls std.contract's `smith_contract_fail_cast`, which stops the program with smith's report.
 export void test_front_e2e_a_narrowing_cast_calls_the_check() {

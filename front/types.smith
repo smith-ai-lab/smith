@@ -1589,6 +1589,15 @@ export typedef Bool (*LengthFolder)(Checked *r, const ast::Expr *e, Str what, U6
 // none. J1d sets it to `front::eval`'s.
 export typedef TypeRef (*ConstantTyper)(Checked *r, const ast::Expr *init);
 
+// Gives the type an applied type is when its name is a function that returns a type (`Pair(i32)`, `widen(T)`,
+// #3039): the function is run with the arguments. Null when the name is no function; an error is reported by the
+// typer, which then gives the invalid type. J1d sets it to `front::eval`'s.
+export typedef TypeRef (*AppliedTyper)(Checked *r, const ast::TypeExpr *applied);
+
+// Gives the type a call is when it calls a function that returns a type (`IntPair := Pair(i32)`); null when `e` is
+// no such call. An error is reported by the holder, which then gives the invalid type.
+export typedef TypeRef (*TypeHolder)(Checked *r, const ast::Expr *e);
+
 // Why the last `ModuleLoader` call returned null although the module exists: "<file>:<line>: <first parse error>", or
 // "" when the module is not there. The loader sets it on each call; `collect_imports` reads it (#2224).
 static Str load_failure_text = "";
@@ -1603,6 +1612,8 @@ export struct Options {
     ExprTyper expression;   // null: `typeof` of an expression that is not a name is refused
     LengthFolder length;    // null: only an integer literal is a length
     ConstantTyper constant; // null: a constant written without a type takes one only from a literal
+    AppliedTyper applied;   // null: an applied type is only a built-in one (`Option(T)`)
+    TypeHolder held;        // null: a call is never a type
     ModuleLoader load;      // null: imports are not read
     HeaderLoader headers;   // null: C headers are not read
 };
@@ -1627,6 +1638,12 @@ export struct Instance {
 };
 
 export const Usize max_instances = 256;
+
+// A type a type function made (`Pair(i32)`): one type for one name, however many times the call is written.
+export struct MadeType {
+    Str name;
+    TypeRef type;
+};
 
 // The name `import c <stdio.h>` binds (`stdio`, or the `as` name) and the header's declarations, which are also
 // declared as `c::name` (one entity however many bindings reach it, #1678).
@@ -1667,6 +1684,8 @@ export struct Checked {
     Usize error_count;
     Guard guards[:]; // the variant tests of the function being checked (#2494)
     Usize guard_count;
+    MadeType made[:]; // the types the type functions made so far
+    Usize made_count;
     const ast::Module *module; // the module as checked for the system smith runs on (`when::live_module`), null when
                                // it is the one given (#2277): the emitter emits this one
 };
@@ -1842,6 +1861,32 @@ export void set_decided(Checked *r, const ast::Expr *condition, Bool keeps_then)
 
 // Records the value the compiler computed for an expression that has no run-time form (a question about a type, a
 // call of a concept), as the 64 bits of its type: the emitter writes the constant (#3039).
+// The type a type function gave the applied type `node` (`Pair(i32)`), null when none did.
+export TypeRef applied_type(const Checked *r, const ast::TypeExpr *node, Usize instance) {
+    const NodeType *entry = find_in(r, (const ast::Expr *)(Usize)node, instance);
+    if (entry == nullptr && instance != max_instances)
+        entry = find_in(r, (const ast::Expr *)(Usize)node, max_instances);
+    return entry == nullptr ? nullptr : entry->type;
+}
+
+// Records the type a constant that holds one stands for when a call makes it (`W := widen(T)`), under its
+// declaration; `held_type` reads it back for the instance.
+export void set_held(Checked *r, const ast::Decl *d, TypeRef type) {
+    set_type(r, (const ast::Expr *)(Usize)d, type);
+}
+
+export TypeRef held_type(const Checked *r, const ast::Decl *d, Usize instance) {
+    return applied_type(r, (const ast::TypeExpr *)(Usize)d, instance);
+}
+
+// Whether a type function made the type `t` (`Pair(i32)`).
+export Bool is_made(const Checked *r, TypeRef t) {
+    for (Usize i = 0; i < r->made_count; i++) {
+        if (r->made[i].type == t) return true;
+    }
+    return false;
+}
+
 export void set_value(Checked *r, const ast::Expr *node, U64 value) {
     NodeType *entry = entry_in(r, node, r->current);
     entry->has_value = true;
@@ -2411,28 +2456,55 @@ static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef eleme
 
 static Bool constant_length(Checked *r, const ast::Expr *root, Str what, U64 *out);
 
-// `arena::slice_of(T, count)`: `count` nested slices of `T` (a block when 2 or more), where `count` is a literal, a
-// constant, or `countof` of a pack.
-static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef element) {
+// Whether a function's full name is `slice.with_dims` of std.slice, or std.arena's `slice_of`, the same function
+// under its old name, which std.arena and std.mem keep until the old front end can read the new one from them.
+export Bool is_with_dims(Str name) {
+    return same_text(name, "std::slice::with_dims") || same_text(name, "std::arena::slice_of");
+}
+
+// Whether `path` names `slice.with_dims` of std.slice, however the module is imported (`from std.slice import
+// with_dims` too). It is built in: a function over types cannot write `[,]T`.
+export Bool names_with_dims(const Checked *r, ast::Path path) {
+    const Symbol *named = type_through_modules(r, path);
+    return named != nullptr && named->kind == .function_symbol && is_with_dims(named->name);
+}
+
+// `slice.with_dims(T, k)`: the slice of `k` dimensions known at run time over `T`. `slice.with_dims(f32, 1)` is
+// `[]f32`, `slice.with_dims(f32, 2)` is `[,]f32`.
+export TypeRef with_dims(Checked *r, TypeRef element, U64 count) {
+    if (count == 1) return slice_of(&r->table, element, false);
+    return block_of(&r->table, element, count);
+}
+
+static TypeRef build_with_dims(Checked *r, const ast::TypeExpr *node, TypeRef element) {
     if (node->kind != .applied) return r->table.invalid;
     ast::TypeArg args[:] = node->kind.applied.args;
     U64 count = 0;
     const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
     const ast::Expr *count_expr = value_argument(second);
-    if (count_expr == nullptr || !constant_length(r, count_expr, "", &count) || count < 1) {
-        failf(r, node->span, "`slice_of` takes an element type and a count known at compile time, of 1 or more");
+    if (count_expr == nullptr || !constant_length(r, count_expr, "", &count)) {
+        failf(r, node->span, "the count of `slice.with_dims` is not known at compile time; write a constant, for ",
+              "example `slice.with_dims(f32, 2)`");
         return r->table.invalid;
     }
-    if (count == 1) return slice_of(&r->table, element, false);
-    return block_of(&r->table, element, count);
+    if (count < 1) {
+        failf(r, node->span, "`slice.with_dims` makes a slice of 1 or more dimensions, not 0; write the element ",
+              "type itself");
+        return r->table.invalid;
+    }
+    return with_dims(r, element, count);
 }
 
 static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path applied_name, Usize args, const Walk *w,
                              Usize base, Usize n) {
     ast::Span span = node->span;
     Str name = path_text(applied_name);
-    if ((same_text(name, "slice_of") || same_text(name, "arena::slice_of")) && args == 2 && n == 1)
-        return build_slice_of(r, node, w->values[base].type);
+    if (names_with_dims(r, applied_name) && args == 2 && n == 1) {
+        TypeRef dims = build_with_dims(r, node, w->values[base].type);
+        set_type(r, (const ast::Expr *)(Usize)node, dims); // the emitter asks `applied_type` for it
+        return dims;
+    }
+    // (an element the parser read as a value, `with_dims(T, 2)` with `T` a parameter, is run as the call it is)
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     // `iter(T)`, the result of a generator in smith's own syntax (#1428), is the stream of `T`
@@ -2450,6 +2522,12 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
             return r->table.invalid;
         }
         return fn_value_of(&r->table, w->values[base].type);
+    }
+    if (r->options.applied != nullptr) {
+        TypeRef made = r->options.applied(r, node);
+        // recorded under the node, as an expression's type is: the emitter asks `applied_type` for it
+        if (made != nullptr) set_type(r, (const ast::Expr *)(Usize)node, made);
+        if (made != nullptr) return made;
     }
     failf(r, span, "not yet typed: the applied type `", name, "` with these arguments");
     return r->table.invalid;
@@ -2746,6 +2824,47 @@ export ast::Path member_path(const ast::Expr *e) {
     return made;
 }
 
+// The call `value` as an applied type when it calls a function over types (`Option(arena.slice_of(T, 2))`: the
+// parser reads the argument as a value); null when it is no such call.
+static ast::TypeExpr *call_as_type(const Checked *r, const ast::Expr *value) {
+    if (value->kind != .call) return nullptr;
+    ast::ExprRef given[:] = value->kind.call.args;
+    const ast::Expr *callee = value->kind.call.callee;
+    ast::Path path = member_path(callee);
+    if (callee->kind == .name) path = callee->kind.name.path;
+    if (countof(path.segments) == 0) return nullptr;
+    const Symbol *found = type_through_modules(r, path);
+    if (found == nullptr || found->kind != .function_symbol) return nullptr;
+    const ast::Decl *d = found->decl;
+    Bool over_types = is_with_dims(found->name);
+    if (!over_types && d != nullptr && d->kind == .function) {
+        const ast::TypeExpr *result = d->kind.function.result;
+        ast::Path written = {};
+        over_types = result != nullptr && written_path(result, &written) && countof(written.segments) == 1 &&
+                     same_text(written.segments[0].text, "type");
+    }
+    if (!over_types) return nullptr;
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, countof(given));
+    for (Usize i = 0; i < countof(given); i++) {
+        ast::TypeArg one = {.value = {.value = given[i]}};
+        const ast::Expr *written = given[i];
+        ast::Path name = member_path(written);
+        if (written->kind == .name) name = written->kind.name.path;
+        const Symbol *type = countof(name.segments) > 0 ? type_through_modules(r, name) : nullptr;
+        if (type != nullptr && type->kind == .type_name) { // `T` of `slice_of(T, 2)`
+            ast::TypeExpr *named = ast::make_type({.named = {.path = name}});
+            named->span = given[i]->span;
+            ast::TypeArg as_type = {.type = {.type = named}};
+            one = as_type;
+        }
+        args[i] = one;
+    }
+    ast::TypeKind kind = {.applied = {.name = path, .args = args}};
+    ast::TypeExpr *applied = ast::make_type(kind);
+    applied->span = value->span;
+    return applied;
+}
+
 // An applied type whose value arguments that name a type (`Result(c.LLVMModuleRef, state.Error)`: the parser reads a
 // lower-case first name as a value) are its type arguments: a copy where each is the named type. `node` itself when
 // none is.
@@ -2756,17 +2875,20 @@ static const ast::TypeExpr *typed_arguments(const Checked *r, const ast::TypeExp
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *value = value_argument(&args[i]);
         if (value == nullptr) continue;
-        ast::Path path = member_path(value);
-        if (countof(path.segments) == 0) continue;
-        const Symbol *found = type_through_modules(r, path);
-        if (found == nullptr || found->kind != .type_name) continue;
+        ast::TypeExpr *named = call_as_type(r, value);
+        if (named == nullptr) {
+            ast::Path path = member_path(value);
+            if (countof(path.segments) == 0) continue;
+            const Symbol *found = type_through_modules(r, path);
+            if (found == nullptr || found->kind != .type_name) continue;
+            named = ast::make_type({.named = {.path = path}});
+            named->span = value->span;
+        }
         if (countof(made) == 0) {
             made = mem::alloc_slice(ast::TypeArg, countof(args));
             for (Usize k = 0; k < countof(args); k++)
                 made[k] = args[k];
         }
-        ast::TypeExpr *named = ast::make_type({.named = {.path = path}});
-        named->span = value->span;
         ast::TypeArg as_type = {.type = {.type = named}};
         made[i] = as_type;
     }
@@ -3177,7 +3299,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
         fields[i].doc = f->doc;
         fields[i].attributes = f->attributes;
         fields[i].written = f->is_new ? f->type : nullptr;
-        if (f->is_pub && !(d->is_pub || d->exported)) {
+        if (f->is_pub && !(d->is_pub || d->exported) && countof(d->kind.record.name) > 0) {
             failf(r, f->span, "the field `", f->name, "` is `pub`, but `", name,
                   "` is not; nothing outside the module can see the type, so mark the struct `pub` or drop the `pub`");
         }
@@ -4309,6 +4431,36 @@ static void type_constants(Checked *r, const ast::Module *m) {
     }
 }
 
+// The type the unnamed `struct:` or `enum:` `d` is under the name `name` (`m::Pair(i32)`): made the first time, in
+// the scopes `r` is in, where the parameters of the type function that holds it are type names; the same type after.
+export TypeRef unnamed_type(Checked *r, const ast::Decl *d, Str name) {
+    for (Usize i = 0; i < r->made_count; i++) {
+        if (same_text(r->made[i].name, name)) return r->made[i].type;
+    }
+    Ty *made = nullptr;
+    if (d->kind == .record) {
+        made = new_record(&r->table, name, d->kind.record.is_union);
+    } else {
+        made = new_enumeration(&r->table, name, builtin(&r->table, "I32"));
+    }
+    if (r->made_count == countof(r->made)) {
+        Usize capacity = countof(r->made) * 2;
+        if (capacity < 8) capacity = 8;
+        r->made = mem::realloc(r->made, capacity);
+    }
+    r->made[r->made_count] = (MadeType){.name = name, .type = made}; // first, so a type that names itself ends
+    r->made_count += 1;
+    push_scope(&r->scopes);
+    (void)declare(&r->scopes, type_symbol(name, made, d, true));
+    if (d->kind == .record) {
+        fill_record(r, d, name);
+    } else if (d->kind == .enumeration) {
+        fill_enumeration(r, name, d->kind.enumeration.items);
+    }
+    pop_scope(&r->scopes);
+    return made;
+}
+
 static Bool declare_module_alias(Checked *r, const ast::Decl *d);
 
 // Pass 3 for one declaration.
@@ -4331,6 +4483,13 @@ static void declare_member(Checked *r, const ast::Decl *d) {
         Bool is_new = d->kind.variable.is_new;
         const ast::Expr *init = d->kind.variable.init;
         if (own_alias_type(r, d) != nullptr || declare_module_alias(r, d)) return;
+        TypeRef held = nullptr;
+        if (is_new && init != nullptr && r->options.held != nullptr) held = r->options.held(r, init);
+        if (held != nullptr) {
+            // `IntPair := Pair(i32)`: a name of the type the call makes, as `Line := []u8` is of the one written
+            declare_in_module(r, type_symbol(name, held, d, d->exported), span);
+            return;
+        }
         declare_variable(r, d, name, written, is_constexpr, is_new, init);
     } else if (d->kind == .if_constexpr) {
         failf(r, span, "not yet typed: if constexpr");

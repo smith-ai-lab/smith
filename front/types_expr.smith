@@ -6737,6 +6737,17 @@ static Bool computed_call(types::Checked *c, Frame f) {
     if (types::name_path(e->kind.call.callee, &path)) callee = types::type_through_modules(c, path);
     if (callee == nullptr && names.count >= 2) callee = types::through_modules(c, &names).symbol;
     if (callee == nullptr || callee->kind != .function_symbol || callee->decl == nullptr) return false;
+    if (eval::returns_type(callee->decl)) {
+        // a type function (`widen(T)`): the call is the type it makes, and has no run-time form
+        types::TypeRef held = eval::held_for(c, e);
+        if (held == nullptr || held == c->table.invalid) {
+            poison(c, e);
+            return true;
+        }
+        types::set_value(c, e, 1);
+        finish(c, e, types::builtin(&c->table, "type"), f.expected);
+        return true;
+    }
     if (!eval::may_run(callee->decl)) return false;
     computed(c, f, "a call of a concept");
     return true;
