@@ -1823,6 +1823,7 @@ jobs:
               echo '```'
             fi
           } >>"$GITHUB_STEP_SUMMARY"
+          [ -n "$line" ] || tail -n 40 "$out" 2>/dev/null
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
           if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
