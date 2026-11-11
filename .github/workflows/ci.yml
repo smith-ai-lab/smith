@@ -343,6 +343,8 @@ jobs:
         # fully tested, 74 of 100 failed queue builds failed in `test-linux`, and each failure fails the builds behind
         # it. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
         # cache.
+        env:
+          BASE: ${{ steps.pr.outputs.base }}
         run: |
           flags="--skip-macos"
           macflags="--macos-only --shard 1/1"
@@ -350,7 +352,13 @@ jobs:
           # A pull request runs the tests `smith test --changed` reaches, in one part (#2822, #2856: a PR check is at most
           # 2 Linux jobs at once, this part and `check-fmt-prove`); the queue runs all of them in 8. A wide selection
           # (smith's core, the test runner) is still wide: the queue is the gate.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then flags="--skip-macos --changed"; count=1; fi
+          # The base is named: the PR check runs on the branch, whose upstream is the branch itself, so `--changed` with
+          # no base compared HEAD with HEAD and ran 0 tests in every PR check from #2857 on (#3059). The merge-base of
+          # the PR's base and the head is in the history this job fetched (fetch-depth 0); no base fails the step.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            mb=$(git merge-base "$BASE" HEAD) || { echo "::error::no merge-base of the PR's base $BASE and HEAD"; exit 1; }
+            flags="--skip-macos --changed --base $mb"; count=1
+          fi
           linux=
           for i in $(seq 1 "$count"); do
             linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
@@ -1336,7 +1344,11 @@ jobs:
         shell: bash
         run: |
           rm -f ~/.cache/smith/steps/prune.timestamp
-          echo "step cache saved: $(du -sm ~/.cache/smith/steps | cut -f1) MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
+          saved=$(du -sm ~/.cache/smith/steps | cut -f1)
+          echo "step cache saved: $saved MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
+          # one warm build leaves 650 to 670 MB (the Mac 669, Linux 650, 2026-11-11): a folder under 400 MB means a cap or
+          # a prune emptied it, and every job after would miss all 329 steps (#3045)
+          if [ "$saved" -lt 400 ]; then echo "::error::the step cache to save is $saved MB, under one warm build (650 MB): a cap emptied it"; exit 1; fi
       - name: Save the step cache
         if: env.DRY_RUN != '1'
         uses: actions/cache/save@v4
