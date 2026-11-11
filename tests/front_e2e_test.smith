@@ -179,8 +179,7 @@ static Str with_dims_case(Str name) {
     c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
     c::mkdir(as_str(format::push(folder, "/lib/std")).data, 0o700);
     write_text(as_str(format::push(folder, "/lib/std/slice.smith")),
-               "module std::slice;\n\nexport Type with_dims(Type element, Usize count) {\n"
-               "    Type t = element;\n    for (Usize i = 0; i < count; i++)\n        t = t[:];\n    return t;\n}\n");
+               "pub fn with_dims(element: type, count: usize) -> type:\n    element\n");
     Str path = as_str(format::push(src, "/", name, ".smith"));
     write_text(path, text_of(as_str(format::push(dir, name, ".smith"))));
     roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};

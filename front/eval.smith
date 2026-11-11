@@ -1474,7 +1474,7 @@ static void call_enter(Run *run, Step s) {
     run->have = base;
     if (run->frame_count > depth_limit()) {
         Str outermost = shown_call(run, 0);
-        run->frame_count = 0; // the message names the first call; the 512 that follow say nothing more
+        run->frame_count = 1; // the message names the first call; the 512 that follow say nothing more
         failed(run, e->span,
                msg(format::push("`", outermost, "` is ", depth_limit(),
                                 " calls deep at compile time; the recursion does not end")));
