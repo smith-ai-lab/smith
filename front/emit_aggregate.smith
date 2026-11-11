@@ -29,7 +29,6 @@ import std::mem;
 import <llvm-c/Comdat.h>;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
-import <string.h>;
 
 export constexpr U64 big_bytes = 64;
 
@@ -79,8 +78,8 @@ static Bool is_big(Lowering *l, c::LLVMTypeRef type) {
     return c::LLVMABISizeOfType(l->layout, type) > big_bytes;
 }
 
-static U32 kind_of(const char *name) {
-    return c::LLVMGetEnumAttributeKindForName(name, c::strlen(name));
+static U32 kind_of(Str name) {
+    return c::LLVMGetEnumAttributeKindForName(name.data, countof(name));
 }
 
 static c::LLVMTypeRef ptr_type(Lowering *l) {
@@ -256,7 +255,7 @@ static void copy_attributes(c::LLVMValueRef from, U32 from_index, c::LLVMValueRe
 }
 
 // The attributes of a big parameter at `index` (1-based) of a function or a call, and of the result pointer.
-static c::LLVMAttributeRef type_attribute(Lowering *l, const char *name, c::LLVMTypeRef type) {
+static c::LLVMAttributeRef type_attribute(Lowering *l, Str name, c::LLVMTypeRef type) {
     return c::LLVMCreateTypeAttribute(l->context, kind_of(name), type);
 }
 
@@ -563,11 +562,23 @@ static void lower_function(Lowering *l, c::LLVMValueRef function) {
 }
 
 // Whether `module` is for x86-64 with the System V ABI, where a big parameter is `byval`.
+// Whether `word` occurs in `text` at `at` (no <string.h>: its `index` would reach every importer, #3064).
+static Bool word_at(const char *text, Usize at, Str word) {
+    for (Usize i = 0; i < countof(word); i++)
+        if (text[at + i] == 0 || text[at + i] != word.data[i]) return false;
+    return true;
+}
+
+static Bool has_word(const char *text, Str word) {
+    for (Usize at = 0; text[at] != 0; at++)
+        if (word_at(text, at, word)) return true;
+    return false;
+}
+
 static Bool byval_target(c::LLVMModuleRef module) {
     const char *triple = c::LLVMGetTarget(module);
-    if (triple == nullptr || c::strncmp(triple, "x86_64", 6) != 0) return false;
-    return c::strstr(triple, "windows") == nullptr && c::strstr(triple, "mingw") == nullptr &&
-           c::strstr(triple, "win32") == nullptr;
+    if (triple == nullptr || !word_at(triple, 0, "x86_64")) return false;
+    return !has_word(triple, "windows") && !has_word(triple, "mingw") && !has_word(triple, "win32");
 }
 
 static Values functions_of(c::LLVMModuleRef module) {
