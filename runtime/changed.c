@@ -1129,9 +1129,25 @@ static void smith_changed_default_ref(char *ref, size_t size) {
     if (!smith_changed_first(head, ref, size)) snprintf(ref, size, "origin/main");
 }
 
-// The base: the given ref, else (1) the merge-base with the branch's upstream, (2) the merge-base with
-// origin/<default branch> (origin/HEAD, else origin/main); a local main is not used (it may be stale).
-// `smith_changed_label` names the one chosen. False when none exists.
+// Whether `ref` names the commit `head` names (HEAD when null): a base that is the head itself compares nothing.
+static bool smith_changed_is_head(const char *ref, const char *head) {
+    char want[300];
+    char have[256];
+    char wanted[256];
+    snprintf(want, sizeof want, "%s^{commit}", ref);
+    snprintf(have, sizeof have, "%s^{commit}", head != nullptr ? head : "HEAD");
+    const char *const of_ref[] = {"rev-parse", "--verify", "-q", want, nullptr};
+    const char *const of_head[] = {"rev-parse", "--verify", "-q", have, nullptr};
+    if (!smith_changed_first(of_ref, wanted, sizeof wanted)) return false;
+    char named[256];
+    if (!smith_changed_first(of_head, named, sizeof named)) return false;
+    return strcmp(wanted, named) == 0;
+}
+
+// The base: the given ref, else (1) the merge-base with the branch's upstream, unless that is HEAD itself (a branch
+// checked out from its own remote, as CI's checkout does, #3059), (2) the merge-base with origin/<default branch>
+// (origin/HEAD, else origin/main); a local main is not used (it may be stale). `smith_changed_label` names the one
+// chosen. False when none exists.
 static bool smith_changed_base(const char *given, char *base, size_t size) {
     smith_changed_label[0] = '\0';
     if (given != nullptr) {
@@ -1142,7 +1158,7 @@ static bool smith_changed_base(const char *given, char *base, size_t size) {
     }
     char ref[256];
     static const char *const upstream[] = {"merge-base", "HEAD", "@{upstream}", nullptr};
-    if (smith_changed_first(upstream, base, size)) {
+    if (smith_changed_first(upstream, base, size) && !smith_changed_is_head(base, nullptr)) {
         snprintf(smith_changed_label, sizeof smith_changed_label, "upstream");
         return true;
     }
@@ -1303,7 +1319,18 @@ SmithChangedResult smith_changed_select(const char *base_name, const char *head,
     char base[256];
     if (!smith_changed_collect(base_name, head, false, "smith test --changed", base, sizeof base))
         return SmithChanged_Failed;
-    return smith_changed_decide(base, head, filter, true);
+    SmithChangedResult result = smith_changed_decide(base, head, filter, true);
+    // Nothing differs and the base is the head itself: there was nothing to compare, which is not "no test is
+    // affected". Selecting nothing here let every PR check run 0 tests (#3059), so it fails and names the fix. (A first
+    // run with no records still runs every test: that is SmithChanged_Full, not None.)
+    if (result == SmithChanged_None && smith_changed_path_count == 0 && smith_changed_is_head(base, head)) {
+        fprintf(smith_changed_out(),
+                "smith test --changed: the base %.12s is the head itself and nothing differs: pass --base <ref> (a "
+                "pull request's base)\n",
+                base);
+        return SmithChanged_Failed;
+    }
+    return result;
 }
 
 // ---- `smith lint --changed`
