@@ -49,7 +49,7 @@ static scratch::Run wait_as(const scratch::Project *p, const char *states, const
         command, sizeof command,
         "printf '%%b' '%s' > q && rm -f q.n && "
         "Q=$PWD/q G=$PWD/g BATCH_WAIT_GH=\"sh $PWD/fake_gh\" BATCH_WAIT_LS_REMOTE=\"sh $PWD/fake_ls\" "
-        "BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 BATCH_WAIT_NOW=1000000 BATCH_WAIT_TICK=1 "
+        "BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 BATCH_WAIT_NOW=1000000 BATCH_WAIT_TICK=1 BATCH_WAIT_SETTLE=2 "
         "BATCH_WAIT_CAP=%s BATCH_WAIT_WINDOW=%s ./batch_wait refs/heads/gh-readonly-queue/main/%s %s url",
         states, cap, window, branch, head);
     return scratch::sh(p, command);
@@ -193,10 +193,17 @@ export void test_batch_wait_builds_at_once_when_a_later_group_has_a_failed_job()
     scratch::expect_status("batch_wait: the failed job is made", 0, &made);
     scratch::Run failed = wait(&p, states, "60");
     scratch::expect_status("batch_wait: a failed later group, it builds", 0, &failed);
-    scratch::expect_text("batch_wait: as waited", "batch=waited\n", failed.out);
+    scratch::expect_text("batch_wait: as a split", "batch=split\n", failed.out);
     scratch::expect_contains(
         "batch_wait: it names the group and the job", failed.err,
         "later group refs/heads/gh-readonly-queue/main/pr-2-A failed (job test-linux (3, 6)), building now");
+    // the later group has no failed job but its split step ran (a group behind it failed, #3057): this one splits too
+    made = scratch::sh(&p, "echo split > g.jobs");
+    scratch::Run split = wait(&p, states, "60");
+    scratch::expect_text("batch_wait: a later group that splits, it splits too", "batch=split\n", split.out);
+    scratch::expect_contains(
+        "batch_wait: it says why", split.err,
+        "later group refs/heads/gh-readonly-queue/main/pr-2-A is splitting (a group behind it failed), building now");
     // a run that cannot be read is no failure
     made = scratch::sh(&p, "rm g.run");
     scratch::Run unread = wait(&p, states, "2");
@@ -257,11 +264,15 @@ export void test_batch_wait_has_one_deadline_per_batch_that_never_restarts() {
                              "batch: deadline 13:47:00Z (batch from refs/heads/gh-readonly-queue/main/pr-1-M)");
     scratch::expect_contains("batch_wait: it waited for it", first.err, "last for now; waiting 20 s for later groups");
     scratch::expect_contains("batch_wait: and built at it", first.err, "batch: deadline reached, building");
-    // a group ahead whose full build started is not in the batch: the batch starts after it, at pr-2-A (999995)
+    // a group ahead whose full build started is not in the batch: the batch starts after it, at pr-2-A (999995), and
+    // this group waits for that build to end (#3057); here it never ends, so the wait is capped
     made = scratch::sh(&p, "echo 2 > g.b.11");
-    scratch::Run later = wait_as(&p, chain, "60", "30", "pr-3-B", "C");
+    scratch::Run later = wait_as(&p, chain, "3", "30", "pr-3-B", "C");
     scratch::expect_contains("batch_wait: the batch starts after a group that is building", later.err,
                              "batch: deadline 13:47:05Z (batch from refs/heads/gh-readonly-queue/main/pr-2-A)");
+    scratch::expect_contains("batch_wait: and it waits for that build", later.err,
+                             "group ahead refs/heads/gh-readonly-queue/main/pr-1-M is building; waiting for it");
+    scratch::expect_text("batch_wait: to the cap", "batch=capped\n", later.out);
     // a deadline already past builds at once, with no wait
     made = scratch::sh(&p, "printf '11\\t999000\\n' > g.at.pr-1-M; echo 0 > g.b.11");
     scratch::Run past = wait_as(&p, chain, "60", "30", "pr-3-B", "C");
@@ -278,4 +289,46 @@ export void test_batch_wait_has_one_deadline_per_batch_that_never_restarts() {
     scratch::expect_status("batch_wait: a group that came and went, it still builds", 0, &kept);
     scratch::expect_text("batch_wait: as waited", "batch=waited\n", kept.out);
     scratch::expect_contains("batch_wait: at the same deadline", kept.err, "batch: deadline 13:47:00Z");
+}
+
+export void test_batch_wait_waits_for_the_full_build_ahead_then_holds_every_waiting_entry() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    queue(&p);
+    // #3057: entry 1's group (pr-1-M, head A, run 11) is in its full build; entries 2 and 3 queued behind it minutes
+    // apart (pr-2-A head B run 12, pr-3-B head C). Entry 3 is last: it waits while pr-1-M is there, and when that
+    // group merges (its branch goes) it builds after the settle time, with entry 2 in its tree.
+    const char *one = "refs/heads/gh-readonly-queue/main/pr-1-M@A";
+    const char *rest = "refs/heads/gh-readonly-queue/main/pr-2-A@B refs/heads/gh-readonly-queue/main/pr-3-B@C";
+    scratch::Run made = scratch::sh(&p, "printf '11\\t999000\\n' > g.at.pr-1-M; printf '12\\t999500\\n' > g.at.pr-2-A; "
+                                        "echo 2 > g.b.11; echo 0 > g.b.12");
+    scratch::expect_status("batch_wait: the fake runs are made", 0, &made);
+    char states[1024];
+    __builtin_snprintf(states, sizeof states, "%s %s\n%s %s\n%s %s\n%s", one, rest, one, rest, one, rest, rest);
+    scratch::Run train = wait_as(&p, states, "60", "30", "pr-3-B", "C");
+    scratch::expect_status("batch_wait: the build ahead ended, it builds", 0, &train);
+    scratch::expect_text("batch_wait: as waited", "batch=waited\n", train.out);
+    scratch::expect_contains("batch_wait: it waited for the build ahead", train.err,
+                             "group ahead refs/heads/gh-readonly-queue/main/pr-1-M is building; waiting for it");
+    scratch::expect_contains("batch_wait: until its branch went", train.err,
+                             "refs/heads/gh-readonly-queue/main/pr-1-M is gone; no group ahead is building");
+    scratch::expect_contains("batch_wait: then the settle time", train.err, "last for now; waiting 2 s for later groups");
+    // entry 2 has a later group, so it waits on it whatever is ahead, and is merged by it (its branch goes)
+    __builtin_snprintf(states, sizeof states, "%s %s\n%s\n-\n-", one, rest, rest);
+    scratch::Run second = wait_as(&p, states, "60", "30", "pr-2-A", "B");
+    scratch::expect_status("batch_wait: the entry in the middle is merged by the last one", 3, &second);
+    // a split does not wait for the build ahead: entry 2's later group failed while pr-1-M builds
+    made = scratch::sh(&p, "echo 4242 > g.run; echo 'test-linux (3, 6)' > g.jobs");
+    __builtin_snprintf(states, sizeof states, "%s %s", one, rest);
+    scratch::Run split = wait_as(&p, states, "60", "30", "pr-2-A", "B");
+    scratch::expect_text("batch_wait: a split builds beside the build ahead", "batch=split\n", split.out);
+    // nothing ahead is building: entry 3 builds at its batch's deadline, as before
+    made = scratch::sh(&p, "echo 0 > g.b.11");
+    __builtin_snprintf(states, sizeof states, "%s %s", one, rest);
+    scratch::Run none = wait_as(&p, states, "60", "30", "pr-3-B", "C");
+    scratch::expect_text("batch_wait: no build ahead, no wait", "batch=alone\n", none.out);
 }

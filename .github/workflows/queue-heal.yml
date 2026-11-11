@@ -159,6 +159,42 @@ jobs:
             [ "$n" = 0 ] && log "queue-heal: none ready"
             return 0
           }
+          # sixth pass (#3057): an entry that failed behind a failed group goes back in. One full run holds a whole batch
+          # (batch-wait), so when a bad entry fails it the groups ahead build their own trees (the split) and GitHub
+          # removes, with the bad entry, the good entries queued behind it. A removed PR is one of those when the newest
+          # merge_group run of ci for it failed in the last hour and the group it was built on (the sha that ends its
+          # branch `pr-<N>-<sha>`) is the head of a merge_group run that failed too: the failure was in its tree before
+          # it. It gets the label `ready`, and the fifth pass enqueues it. An entry whose base passed, or was main,
+          # failed by itself and is left to its runner. It runs before the fifth pass.
+          inherited() {
+            local runs cutoff pr run base n=0
+            runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 \
+              --jq '.workflow_runs[] | "\(.head_branch) \(.head_sha) \(.conclusion // .status) \(.id) \(.updated_at)"') \
+              || { log "queue-heal: merge_group runs unreadable, none re-queued behind a failed group"; return 0; }
+            cutoff=$(date -u -d '-60 minutes' +%Y-%m-%dT%H:%M:%SZ)
+            # newest first, so the first line of a PR is its newest run; ISO times in UTC compare as text
+            while read -r pr run base; do
+              [ -n "$pr" ] || continue
+              case "$queued" in *" $pr "*) continue ;; esac
+              # `open` holds the open PRs without the label `dequeued`
+              case " $(echo $open) " in *" $pr "*) ;; *) continue ;; esac
+              n=$((n + 1))
+              if dry; then
+                log "dry-run: would label #$pr ready (run $run failed behind failed run $base)"
+                continue
+              fi
+              gh api -X POST "repos/$REPO/issues/$pr/labels" -f "labels[]=ready" --silent \
+                && log "queue-heal: #$pr failed behind a failed group (run $run on run $base), labelled ready" \
+                || log "queue-heal: #$pr failed behind a failed group (run $run on run $base), label refused"
+            done < <(echo "$runs" | awk -v cutoff="$cutoff" '
+              { k = split($1, part, "/"); split(part[k], name, "-"); pr[NR] = name[2]; base[NR] = name[3]
+                concl[NR] = $3; id[NR] = $4; at[NR] = $5; if ($3 == "failure") failed[$2] = $4 }
+              END { for (i = 1; i <= NR; i++) { if (pr[i] in seen) continue; seen[pr[i]] = 1
+                      if (concl[i] == "failure" && at[i] >= cutoff && (base[i] in failed)) print pr[i], id[i], failed[base[i]] } }')
+            [ "$n" = 0 ] && log "queue-heal: none failed behind a failed group"
+            return 0
+          }
+          inherited
           ready_pass
           # what it enqueued joins the list the later passes read
           dry || { list=$(entries) || true; q=$(echo "$list" | grep -c . || true); }
