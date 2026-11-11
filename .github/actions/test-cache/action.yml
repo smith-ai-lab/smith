@@ -3,7 +3,8 @@ description: >
   Restores the test-result store (`~/.cache/smith/tests`, #2686) from the `test-cache-<sha7>-*` prereleases of the
   newest commit that has them (the commit under test and its first parents, #2938), which every job that runs tests in
   a merge queue run publishes with `./.github/actions/test-cache/save` (#2833, #2870): each Linux part and the macOS
-  job its own, and this action extracts all of that commit's stores of the OS. `smith test` then leaves out every test whose key (its code, what it read, the smith under test) matches an
+  job its own (one Linux part the whole store, the others only the entries they added, #3061), and this action
+  extracts all of that commit's stores of the OS. `smith test` then leaves out every test whose key (its code, what it read, the smith under test) matches an
   entry that passed. A missing or unreadable release only leaves the store empty: every test runs. A cache entry never
   changes a result and a failure is never stored. `fresh: true` (the nightly full run) restores nothing, so every test
   runs and the run stores them all.
@@ -121,6 +122,10 @@ runs:
         else
           echo "test store: none, every test runs ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
+        # what this job adds is newer than this file: a part that publishes only its own entries (`delta` of
+        # ./.github/actions/test-cache/save, #3061) finds them by it. A second older, so that no entry written in the
+        # same second is missed
+        touch -d '1 second ago' "$RUNNER_TEMP/test-store.restored"
     - name: Restore the import cache
       shell: bash
       env:

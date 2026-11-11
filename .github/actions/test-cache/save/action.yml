@@ -2,7 +2,8 @@ name: test-cache-save
 description: >
   Publishes this job's test-result store (`~/.cache/smith/tests`, #2686) as the prerelease `test-cache-<sha7>-<name>`
   (#2833, #2870), for `./.github/actions/test-cache` to restore. Each job that runs tests publishes its own, so no
-  job waits for the others to merge them: the restore extracts every store of the newest commit. Releases are
+  job waits for the others to merge them: the restore extracts every store of the newest commit. With `delta` a
+  job publishes only the entries it added (#3061). Releases are
   immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 10 newest
   commits are kept (a merge queue's groups are newer than main's commit, #2938). Only a merge queue run and the nightly save (what they ran is the tree
   that lands); a pull request only reads. A failure here never fails the job. The job needs `contents: write`.
@@ -20,6 +21,12 @@ inputs:
   tests:
     description: '"false" publishes only the import cache (a job that runs no test, the count)'
     default: "true"
+  delta:
+    description: >
+      "true" publishes only the test entries this job added since `./.github/actions/test-cache` restored the store, no
+      import cache, and prunes nothing (#3061): 12 of the 13 Linux parts, so a restore downloads one whole store and 12
+      small ones, not 13 copies of the whole. The one part without it carries what it restored on to the next commit
+    default: "false"
 
 runs:
   using: composite
@@ -34,9 +41,25 @@ runs:
         OS: ${{ inputs.os }}
         NAME: ${{ inputs.name }}
         TESTS: ${{ inputs.tests }}
+        DELTA: ${{ inputs.delta }}
       run: |
         set -eu
         dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"
+        if [ "$DELTA" = true ]; then
+          # only the entries newer than the restore; with no restore (the nightly) every entry is this job's
+          since=(); [ -f "$RUNNER_TEMP/test-store.restored" ] && since=(-newer "$RUNNER_TEMP/test-store.restored")
+          n=$( [ -d "$dir" ] && find "$dir" -type f "${since[@]}" | wc -l || echo 0)
+          if [ "$n" -eq 0 ]; then echo "test store: no new entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
+          (cd "$dir" && find . -type f "${since[@]}" -print0 | tar -c --null -T - | gzip -1) >"$out/smith-tests-$OS.tar.gz"
+          echo "$GITHUB_SHA" >"$out/smith-tests.sha"
+          tag="test-cache-${GITHUB_SHA:0:7}-$NAME"
+          gh release create "$tag" "$out/smith-tests.sha" "$out/smith-tests-$OS.tar.gz" --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "test cache $tag" \
+            --notes "The test-result store entries (#2686) $NAME added in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#3061). Not a release of smith."
+          echo "test store: published $tag, $n new test entries, $(du -h "$out/smith-tests-$OS.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
         # the import cache of smith run by hand and of smith run inside a test (a scratch project's XDG_CACHE_HOME,
         # tests/scratch.smith), merged: identities keep them apart, and one key is the same bytes in both
         imports="$RUNNER_TEMP/imports"; mkdir -p "$imports"

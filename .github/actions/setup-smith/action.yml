@@ -21,8 +21,8 @@ inputs:
 
   artifact:
     description: >
-      the name of an artifact holding `build/` and `.smith/` of this run's `build-linux` job (#1758): restore it and
-      set SMITH instead of fetching the previous smith and building (empty: build here)
+      the name of an artifact holding `build/`, `.smith/` and `tree-sitter/src/` of this run's `build-linux` job
+      (#1758, #3061): restore it and set SMITH instead of fetching the previous smith and building (empty: build here)
     default: ""
 
   profile:
@@ -215,6 +215,14 @@ runs:
         # commit's, get an old time so that they are not newer than the build (#2833)
         tar -x --zstd -f "$RUNNER_TEMP/smith-build/build.tar.zst"
         git ls-files -z | xargs -0 touch -c -h -d '2001-01-01 00:00:00'
+        # the shims' precompiled header is made from a copy of shim/pch.h in the cache folder (build.c,
+        # build_shim_pch_source); the build's copy comes with it, with its time: one written here would be newer than
+        # the build, and with the generated parser (`tree-sitter/src`, in the artifact too) missing, every job that
+        # took the build compiled the parser and the shims and linked smith again, 27 to 52 s each (#3061)
+        if [ -d .smith/shim-pch ]; then
+          mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}/smith/shim-pch"
+          cp -a .smith/shim-pch/. "${XDG_CACHE_HOME:-$HOME/.cache}/smith/shim-pch/"
+        fi
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         # the pack, when the cache above missed it (the first run of a configuration)

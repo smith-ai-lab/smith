@@ -52,6 +52,7 @@ typedef struct {
     bool hook;         // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
     const char
         *enzyme; // the folder with libEnzymeStatic-23.a (build_enzyme_make): smith differentiates at link time, else ""
+    const char *runner; // -Drunner=units|front: `smith test` runs that runner only (a CI part, #3061), else ""
 } BuildConfig;
 
 // What smith's own link differs in, macOS and Linux (issue #305, knowledge/platform-layer.md): the one table of it.
@@ -1528,7 +1529,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
                                     "sh", folder, nullptr},
         .inputs = ask_front ? (const char *[]){"units-build", "front-build", nullptr}
                             : (const char *[]){"units-build", nullptr},
-        .test = true,
+        .test = strcmp(config->runner, "front") != 0,
     };
     smith_task(b, "test-units", &run);
     return smith_fmt(b, "%s/units-project/build/tests", folder);
@@ -1574,7 +1575,7 @@ static void build_front_units(SmithBuild *b, const BuildConfig *config, const ch
                                               smith_join(b, quoted, " ")),
                                     "sh", folder, nullptr},
         .inputs = (const char *[]){"front-build", nullptr},
-        .test = true,
+        .test = strcmp(config->runner, "units") != 0,
     };
     smith_task(b, "test-front", &run);
 }
@@ -1605,7 +1606,9 @@ static int build_prove_sound_full(SmithRun *run) {
 // The tests of smith (`smith test` runs them): the units runner's `test-units`; returns the list, which the install
 // waits for. The runner's steps get SMITH_OUTPUT=full from `smith check` and `smith test` beneath them (#78), so
 // `smith build install` (which sets nothing) runs the same tests as `smith check`. The quiet form is tested with the
-// variable unset (tests/run_routing_test.smith).
+// variable unset (tests/run_routing_test.smith). `smith test -Drunner=units` (or `front`) runs one runner's tests and
+// builds only that runner: a CI part is one or the other (#3061), since the front runner's build is the same minute
+// for any shard.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     const char *units = config->hook ? build_units(b, config, binary, folder) : "";
     if (config->hook) build_front_units(b, config, binary, folder);
@@ -3822,6 +3825,7 @@ void build(SmithBuild *b) {
     config.prove = build_prove_folder(b, config.llvm);
     config.hook = build_has_hook(b, config.llvm);
     config.enzyme = build_enzyme_install(b);
+    config.runner = smith_option_value(b, "runner", "", "test: only this runner's tests, units or front (#3061)");
     config.coverage =
         build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the check that records)")[0] != '\0';
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;

@@ -1,6 +1,6 @@
 name: ci
 
-# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards that restore the one build `build-linux` made, #1758)
+# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (13 hosted parts that restore the smith `build-linux` built, #1758, #3061)
 # and the checks (`check-fmt-prove`: fmt, docs, prove; `check-lint`: lint; same build, beside the shards, #2234), on pull
 # requests too; one macOS job (`macos`) builds and runs what only macOS can (lint of the code only the Mac sees, the
 # `--macos-only` tests; a documents-only change: docs and their tests);
@@ -661,18 +661,19 @@ jobs:
           echo "ok lint"
 
   build-linux:
-    # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
-    # plan's 20 slots were full most hours on 2026-11-02), so one job builds, and each shard restores it as an artifact
-    # instead of spending about 2.5 min of its own on it (knowledge/ci.md)
+    # builds smith once for the Linux jobs (#1758, #3061): one job builds, and each test part and check restores it as
+    # an artifact. It builds no test: the parts wait for this job, and the tests' build was 76 to 142 s of its 222 to
+    # 274 s; each part builds the tests it runs (a twelfth of the units runner is 11 to 17 s; the front runner's build
+    # is the same minute for any shard, so it has a part of its own), on 4 cores that waited idle before
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    # the build, then one test part when the sizing asks for one in a queue run (#2870)
     timeout-minutes: 30
     outputs:
-      # the outcome of the test part this job ran (`success`, `failure`), or empty when the parts are `test-linux`'s
-      tests: ${{ steps.tests.outcome != 'skipped' && steps.tests.outcome || '' }}
-      # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
+      # always empty since #3061 (until then the outcome of the one test part this job ran itself, #2870): the parts
+      # are `test-linux`'s, and `ci` reads its result
+      tests: ""
+      # where the Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
       runner-fmt-prove: ${{ steps.runners.outputs.fmt-prove }}
@@ -680,11 +681,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
-      # in every test key (an environment variable of SMITH_ is): the test jobs set it, so the sizing step must too,
-      # or `smith test --misses` finds nothing of the store and asks for 7 parts (#2833)
-      SMITH_TEST_STATS: "1"
     permissions:
-      contents: write # test-cache/save: `gh release create` of the test store of the part it runs (#2870)
+      contents: read
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - uses: actions/checkout@v4
@@ -701,75 +699,74 @@ jobs:
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
-        with:
-          tests: "true"
+      - name: The costs the parts split by
+        # every part of a run must split by the same file, so it travels in the build: the newest the nightly
+        # published (`shard-costs`, a release `shard-costs-<date>-<run>`; a plain download, no API call), else the
+        # repository's `.github/shard-costs.tsv`, which each part falls back to (#3061)
+        continue-on-error: true
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          tag=$(git ls-remote --tags origin 'refs/tags/shard-costs-*' 2>/dev/null | sed 's#.*refs/tags/##' | grep -v '\^' | LC_ALL=C sort | tail -n 1 || true)
+          from=".github/shard-costs.tsv (no nightly release)"
+          if [ -n "$tag" ] && curl -fsSL --retry 3 "https://github.com/$REPO/releases/download/$tag/shard-costs.tsv" >"$RUNNER_TEMP/shard-costs.tsv" 2>/dev/null &&
+            [ "$(grep -c "$(printf '^cpu\t')" "$RUNNER_TEMP/shard-costs.tsv")" -ge 4000 ]; then
+            cp "$RUNNER_TEMP/shard-costs.tsv" .smith/shard-costs.tsv; from="$tag"
+          fi
+          echo "shard costs: $from" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pack the build
         shell: bash
         run: |
           start=$(date +%s)
-          tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+          # with the two things a build needs that are neither in `build/` nor in `.smith/`: the generated parser
+          # (`tree-sitter/src`, gitignored) and the cache folder's copy of shim/pch.h. Without them every job that took
+          # the build generated the parser, compiled the shims and linked smith again (27 to 52 s a job, #3061)
+          pch="${XDG_CACHE_HOME:-$HOME/.cache}/smith/shim-pch"
+          rm -rf .smith/shim-pch; [ -d "$pch" ] && cp -a "$pch" .smith/shim-pch
+          tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith tree-sitter/src
           ls -l "$RUNNER_TEMP/build.tar.zst"
           echo "pack: $(( $(date +%s) - start )) s ($(du -h "$RUNNER_TEMP/build.tar.zst" | cut -f1))" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Save the build for the shards
+      - name: Save the build for the parts
         uses: actions/upload-artifact@v4
         with:
           name: build-linux
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
-      - name: API budget (before test-cache)
-        uses: ./.github/actions/api-budget
-        with:
-          label: ${{ github.workflow }}/${{ github.job }} before test-cache
-      - uses: ./.github/actions/test-cache
-        with:
-          os: linux
-          fresh: ${{ github.event_name == 'schedule' }}
-          imports-from: linux-* # the test parts' import caches, not the count's (#2939)
-      - name: API budget (after test-cache)
-        uses: ./.github/actions/api-budget
-        with:
-          label: ${{ github.workflow }}/${{ github.job }} after test-cache
-      - name: Size the test parts
-        # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
-        # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
-        # pays about 4 minutes of setup whatever it runs, so a part gets about 500 CPU seconds (2 minutes on 4 cores),
-        # at most 8 parts and at least 1. Any failure keeps the 8 parts of `changes`.
+      - name: The test parts
+        # A queue run and the nightly: 12 parts of the units runner and 1 of the front runner (#3061). The count is
+        # fixed: sizing it by what the test store leaves (#2833) needs the tests built, the 76 to 142 s this job no
+        # longer spends; a part whose tests the store holds builds its runner, asks the store and ends. 12 is from the
+        # budget of #3061: balanced by `.github/shard-costs.tsv`, the heaviest of 12 is 253 CPU seconds (110 s of
+        # tests), of 16 it is 225 (one file); the front runner's tests are about 200 CPU seconds behind a 66 s build.
+        # A pull request's check runs its tests (`--changed`, both runners) in one part (#2856).
         id: size
-        continue-on-error: true
         shell: bash
         env:
-          SMITH_OUTPUT: full
+          FLAGS: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+          UNITS: "12"
         run: |
-          count=8
-          # a PR check runs its tests in one part whatever they cost (#2856: at most 2 Linux jobs at once)
+          part() { printf '{"shard":%s,"count":%s,"flags":"%s","name":"%s","delta":"%s"}' "$@"; }
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            echo "count=1" >>"$GITHUB_OUTPUT"; echo "jobs=2" >>"$GITHUB_OUTPUT"
-            echo "test parts: 1 (a pull request's check)" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+            parts=$(part 1 1 "$FLAGS" 1of1 false)
+            count=1
+          else
+            # the front part is the one that carries the whole test store and the import cache on (test-cache/save)
+            parts=$(part 1 1 "$FLAGS -Drunner=front" front false)
+            for i in $(seq 1 "$UNITS"); do
+              parts="$parts,$(part "$i" "$UNITS" "$FLAGS -Drunner=units" "units-${i}of$UNITS" true)"
+            done
+            count=$(( UNITS + 1 ))
           fi
-          # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
-          "$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
-          line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
-          if [ -n "$line" ]; then
-            secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
-            count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
-          fi
+          echo "parts=[$parts]" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
-          # one part in a queue run is run by this job, which holds its runner already (#2870)
-          jobs=$(( count + 2 )); [ "$count" = 1 ] && [ "$GITHUB_EVENT_NAME" = merge_group ] && jobs=2
+          # with check-fmt-prove and check-lint; a pull request's check has no check-lint (#2856)
+          jobs=$(( count + 2 )); [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && jobs=2
           echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
-          echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Report the test-store hit rate (sizing)
-        # one line per cache with its hit rate; the first misses say which input differs (#2876)
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/cache-report
-        with:
-          name: test-store
-          log: ${{ runner.temp }}/misses.out
-          inputs: '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
+          echo "test parts: $count ($FLAGS)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pick the Mac's Linux runners
-        # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
+        # the choice is made here, when the jobs that need this build (the test parts, check-fmt-prove, check-lint) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
         # ran hosted while parts waited 5 minutes for a slot). In this job, so no job and no slot is added.
         id: pick
@@ -779,58 +776,42 @@ jobs:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
           fork: false
-          linux-jobs: ${{ steps.size.outputs.jobs || '10' }}
+          linux-jobs: ${{ steps.size.outputs.jobs || '15' }}
       - name: Give each job its runner
         id: runners
         if: ${{ always() }}
         shell: bash
         env:
-          MATRIX: ${{ needs.changes.outputs.linux }}
+          PARTS: ${{ steps.size.outputs.parts }}
+          FALLBACK: ${{ needs.changes.outputs.linux }}
           MAC: ${{ steps.pick.outputs.linux-mac }}
-          COUNT: ${{ steps.size.outputs.count }}
         run: |
-          # fewer parts than `changes` planned: the same matrix cut to the count sized above (#2833)
-          # no answer keeps the parts `changes` made (8 in the queue, 1 in a PR check)
-          case "$COUNT" in ''|*[!0-9]*) COUNT=$(printf '%s' "$MATRIX" | jq '.include | length') ;; esac
-          MATRIX=$(printf '%s' "$MATRIX" | jq -c --argjson n "$COUNT" \
-            '.include |= (map(select(.shard <= $n)) | map(.count = $n))')
-          [ "$COUNT" -gt 8 ] && COUNT=8
-          # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then lint, then fmt-prove. An empty
+          # the parts sized above; if that step gave none, the parts `changes` planned (whole shards, both runners)
+          [ -n "$PARTS" ] || PARTS=$(printf '%s' "$FALLBACK" | jq -c '[.include[] | . + {name: "\(.shard)of\(.count)", delta: "false"}]')
+          COUNT=$(printf '%s' "$PARTS" | jq 'length')
+          # hosted first; the Mac takes the last jobs in this order: the last parts, then lint, then fmt-prove. An empty
           # or failed pick is 0: everything hosted.
           hosted='"ubuntu-latest"'; mac='["self-hosted","Linux","X64"]'
           n=${MAC:-0}; case "$n" in *[!0-9]*) n=0 ;; esac
-          [ "$n" -gt 10 ] && n=10
+          [ "$n" -gt $(( COUNT + 2 )) ] && n=$(( COUNT + 2 ))
           parts=$(( n > COUNT ? COUNT : n )); rest=$(( n - parts ))
           lint=$hosted; fmt=$hosted
           [ "$rest" -ge 1 ] && lint=$mac
           [ "$rest" -ge 2 ] && fmt=$mac
-          matrix=$(printf '%s' "$MATRIX" | jq -c --argjson parts "$parts" --argjson hosted "$hosted" --argjson mac "$mac" \
-            '.include |= map(. + {runner: (if .shard > (.count - $parts) then ($mac | tojson) else ($hosted | tojson) end)})') \
-            || matrix=$(printf '%s' "$MATRIX" | jq -c --argjson hosted "$hosted" '.include |= map(. + {runner: ($hosted | tojson)})')
+          matrix=$(printf '%s' "$PARTS" | jq -c --argjson parts "$parts" --argjson hosted "$hosted" --argjson mac "$mac" \
+            'length as $n | {include: (to_entries | map(.value + {runner: (if .key >= ($n - $parts) then ($mac | tojson) else ($hosted | tojson) end)}))}')
           { echo "matrix=$matrix"; echo "lint=$lint"; echo "fmt-prove=$fmt"; } >>"$GITHUB_OUTPUT"
           echo "Linux jobs on the Mac: $n (parts $parts, lint $([ "$lint" = "$mac" ] && echo yes || echo no), fmt-prove $([ "$fmt" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
-
-      - name: The one test part, in this job
-        # A queue run whose misses fit in one part runs it here, on the tree just built, not in a `test-linux` job
-        # (#2870): the part is no job of its own, restores and rebuilds nothing, and its test time replaces a job's
-        # setup. The jobs that need this build start once it ends, which is off the critical path in the queue (the
-        # count is longer). A pull request keeps its part in `test-linux`, beside `check-fmt-prove`. A failing test
-        # fails the step, not the job, so the checks and the count still run on this build; `ci` reads the outcome.
-        id: tests
-        if: steps.size.outputs.count == '1' && github.event_name == 'merge_group'
-        continue-on-error: true
-        uses: ./.github/actions/test-part
-        with:
-          restore: "false"
-          flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
 
   test-linux:
-    # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
+    # Linux carries the tests (required): hosted parts of `--skip-macos`, each restoring the smith `build-linux` built
+    # (#1758) and building the tests it runs (#3061)
     needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.build-linux.outputs.tests == '' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    name: test-linux (${{ matrix.name }})
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 20
     strategy:
@@ -866,9 +847,53 @@ jobs:
           part: ${{ matrix.shard }}
           count: ${{ matrix.count }}
           flags: ${{ matrix.flags }}
+          name: ${{ matrix.name }}
+          delta: ${{ matrix.delta }}
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
+
+  shard-costs:
+    # The nightly runs every test (its store starts empty), so its parts' `cpu` lines are the whole suite's costs:
+    # this job joins them and publishes the file the next runs' parts split by (#3061; `build-linux` puts the newest
+    # into the build). Rows of tests no Linux part ran (the macOS-only ones) are kept from the repository's file.
+    needs: [changes, test-linux]
+    if: ${{ !cancelled() && github.event_name == 'schedule' && needs.test-linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # `gh release create`
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: test-log-linux-*
+          path: ${{ runner.temp }}/logs
+      - name: Publish the costs
+        shell: bash
+        run: |
+          set -eu
+          tab=$(printf '\t')
+          cat "$RUNNER_TEMP"/logs/*/test.log | tr -d '\r' | grep "^cpu$tab" >"$RUNNER_TEMP/new.tsv" || true
+          n=$(LC_ALL=C sort -t"$tab" -k3,3 -u "$RUNNER_TEMP/new.tsv" | wc -l)
+          # a nightly that ran less than the suite (a part missing, a store that was not empty) publishes nothing
+          if [ "$n" -lt 4000 ]; then echo "shard costs: only $n tests in the logs, nothing published" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          # the run's lines first: `sort -u -s` keeps the first row of a name
+          cat "$RUNNER_TEMP/new.tsv" .github/shard-costs.tsv | LC_ALL=C sort -t"$tab" -k3,3 -u -s >"$RUNNER_TEMP/shard-costs.tsv"
+          tag="shard-costs-$(date -u +%Y%m%d)-$GITHUB_RUN_ID"
+          gh release create "$tag" "$RUNNER_TEMP/shard-costs.tsv" --prerelease --latest=false --target "$GITHUB_SHA" \
+            --title "shard costs $tag" \
+            --notes "The CPU seconds of every test in the nightly run $GITHUB_RUN_ID at $GITHUB_SHA: what the test parts split by (#3061). Not a release of smith."
+          # the 3 newest stay
+          git ls-remote --tags origin 'refs/tags/shard-costs-*' | sed 's#.*refs/tags/##' | grep -v '\^' | LC_ALL=C sort | head -n -3 |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"
+            done
+          echo "shard costs: published $tag, $n tests, $(awk -F"$tab" '{s += $2} END {printf "%.0f", s}' "$RUNNER_TEMP/new.tsv") CPU s" | tee -a "$GITHUB_STEP_SUMMARY"
+
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
     # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
