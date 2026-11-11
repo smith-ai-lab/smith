@@ -59,3 +59,14 @@ export void test_type_expr_a_concept_call_is_not_an_old_type() {
     check_clean("signed(T)");
     check_clean("float(T) and signed(U)");
 }
+
+// Gap 1: a pointer or option type written where an expression is read is the type, not a dereference or an error.
+export void test_type_expr_a_pointer_type_is_an_argument() {
+    check_clean("is_ptr(*u8)");
+    check_clean("is_ptr(*mut u8)");
+}
+
+export void test_type_expr_an_option_type_is_an_expression() {
+    check_clean("is_option(?i32)");
+    check_clean("is_option(?*u8)");
+}
