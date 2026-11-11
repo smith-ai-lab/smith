@@ -563,7 +563,10 @@ export typedef enum {
         Stmt *body;
         Bool variadic;
         Bool is_new; // written `fn name(...) -> R:` (smith's own syntax): its result type is read as one (`-> bool`)
-    } function;      // a null body: a prototype
+        // the parser found no `target` in its text, so no `if` of its body is about the target and `front::when` need
+        // not copy it to find out (#3080); false when nobody looked (a function built by hand)
+        Bool no_target;
+    } function; // a null body: a prototype
     struct {
         Text name;
         Bool is_union;

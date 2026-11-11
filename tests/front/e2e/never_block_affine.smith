@@ -1,0 +1,24 @@
+# A value moved in a block that always leaves: the affine check sees the block as before (#3096).
+
+@affine
+struct Token:
+    id: u64
+
+fn take(token: Token) -> u64:
+    token.id
+
+fn route(o: ?u64, token: Token) -> u64:
+    n := match o:
+        .some(x): x
+        .none:
+            spent := take(token)
+            return spent
+    n + 1
+
+pub fn check() -> i32:
+    if route(.none, Token(id = 7)) != 7:
+        return 1
+    some: ?u64 = .some(3)
+    if route(some, Token(id = 4)) != 4:
+        return 2
+    0

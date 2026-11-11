@@ -1,0 +1,130 @@
+// `smith build stage0` (#2719, #3079): which release it asks for, and which step cache. The project is a copy of
+// smith's build.c in a git repository of two commits; a curl, a tar and a checksum tool of its own, first on PATH,
+// answer and record every request, so no test touches the network. Each test's texts are in an arena of its own.
+// smith-covers: build.c
+module build_stage0_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// The fake tools. curl records its arguments and answers by the URL, the last of them: the step cache's .sha only for
+// $FAKE_CACHE (the first 7 digits of a commit), the .stage0 asset with $FAKE_STAGE0 when set, one part of the cache,
+// and any other file as a line in the file `-o` names.
+static const char *const fake_tools =
+    "mkdir -p fake && cat > fake/curl <<'EOF'\n"
+    "#!/bin/sh\n"
+    "echo \"curl $*\" >> \"$FAKE/calls\"\n"
+    "for url; do :; done\n"
+    "out=\n"
+    "while [ $# -gt 0 ]; do [ \"$1\" = -o ] && out=$2; shift; done\n"
+    "case $url in\n"
+    "*.stage0) [ -n \"$FAKE_STAGE0\" ] || exit 22; printf %s \"$FAKE_STAGE0\" ;;\n"
+    "*/step-cache-$FAKE_CACHE/*.sha) echo x > \"$out\" ;;\n"
+    "*.sha) exit 22 ;;\n"
+    "*.tar.gz.00) echo part ;;\n"
+    "*.tar.gz.*) exit 22 ;;\n"
+    "*) echo x > \"$out\" ;;\n"
+    "esac\n"
+    "EOF\n"
+    "printf '#!/bin/sh\\necho \"tar $*\" >> \"$FAKE/calls\"\\n' > fake/tar && "
+    "printf '#!/bin/sh\\nexit 0\\n' > fake/sha256sum && cp fake/sha256sum fake/shasum && chmod +x fake/*";
+
+static const char *const two_commits =
+    "git init -q . && git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m one && "
+    "git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m two";
+
+static scratch::Project stage0_project() {
+    scratch::Project p = scratch::make("p", nullptr);
+    scratch::own_cache(&p);
+    scratch::copy_tree(&p, "build.c", "build.c");
+    scratch::Run tools = scratch::sh(&p, fake_tools);
+    scratch::expect_status("stage0: the fake tools are written", 0, &tools);
+    scratch::Run commits = scratch::sh(&p, two_commits);
+    scratch::expect_status("stage0: the repository has two commits", 0, &commits);
+    return p;
+}
+
+// `smith build stage0 <arguments>` with the fake tools, a step cache published for `cache` ("" for none) that names
+// the release of `named` ("" when it names none). The output and the error are one text.
+static scratch::Run stage0(const scratch::Project *p, const char *cache, const char *named, const char *arguments) {
+    char command[1024];
+    __builtin_snprintf(command, sizeof command,
+                       "rm -f calls; FAKE=\"$PWD\" FAKE_CACHE=%.7s FAKE_STAGE0=%s PATH=\"$PWD/fake:$PATH\" "
+                       "smith build stage0 %s 2>&1",
+                       cache[0] != '\0' ? cache : "none", named, arguments);
+    return scratch::sh(p, command);
+}
+
+export void test_build_stage0_takes_the_release_the_step_cache_names() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = stage0_project();
+    defer scratch::clean(&p);
+    const char *head = scratch::capture(&p, "git rev-parse HEAD | tr -d '\\n'");
+    scratch::Run run = stage0(&p, head, "0123456789abcdef0123456789abcdef01234567", "");
+    scratch::expect_status("named: the task passes", 0, &run);
+    const char *calls = scratch::read(&p, "calls");
+    scratch::expect_contains("named: the release is the one the cache names", calls,
+                             "/releases/download/stage0-0123456789abcdef0123456789abcdef01234567/smith-");
+    scratch::expect_lacks("named: and not the newest", calls, "/releases/latest/download/");
+    char part[128];
+    __builtin_snprintf(part, sizeof part, "/step-cache-%.7s/smith-steps-", head);
+    scratch::expect_contains("named: the cache of HEAD is downloaded", calls, part);
+    scratch::expect_contains("named: and unpacked into the user's step cache", calls, "/smith/steps -xzf");
+    scratch::expect_contains("named: the task says which release and why", run.out,
+                             "the release of 0123456, which filled main's step cache of");
+    scratch::expect_contains("named: and that the cache is unpacked", run.out, "smith: step cache: step-cache-");
+}
+
+export void test_build_stage0_takes_the_release_before_a_step_cache_that_names_none() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = stage0_project();
+    defer scratch::clean(&p);
+    const char *head = scratch::capture(&p, "git rev-parse HEAD | tr -d '\\n'");
+    const char *parent = scratch::capture(&p, "git rev-parse HEAD^ | tr -d '\\n'");
+    scratch::Run run = stage0(&p, head, "", "");
+    scratch::expect_status("parent: the task passes", 0, &run);
+    char release[128];
+    __builtin_snprintf(release, sizeof release, "/releases/download/stage0-%s/smith-", parent);
+    scratch::expect_contains("parent: the release is the one of the commit before the cache's",
+                             scratch::read(&p, "calls"), release);
+}
+
+export void test_build_stage0_takes_the_newest_release_with_no_step_cache() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = stage0_project();
+    defer scratch::clean(&p);
+    scratch::Run run = stage0(&p, "", "", "");
+    scratch::expect_status("none: the task passes", 0, &run);
+    const char *calls = scratch::read(&p, "calls");
+    scratch::expect_contains("none: the release is the newest", calls, "/releases/latest/download/smith-");
+    scratch::expect_lacks("none: nothing is unpacked", calls, "-xzf");
+    scratch::expect_contains("none: the task says there is no cache", run.out,
+                             "smith: step cache: none (no published one for the last 20 commits of HEAD)");
+}
+
+export void test_build_stage0_steps_0_takes_the_newest_release_and_no_step_cache() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = stage0_project();
+    defer scratch::clean(&p);
+    const char *head = scratch::capture(&p, "git rev-parse HEAD | tr -d '\\n'");
+    scratch::Run run = stage0(&p, head, "0123456789abcdef0123456789abcdef01234567", "-Dsteps=0");
+    scratch::expect_status("steps=0: the task passes", 0, &run);
+    const char *calls = scratch::read(&p, "calls");
+    scratch::expect_contains("steps=0: the release is the newest", calls, "/releases/latest/download/smith-");
+    scratch::expect_lacks("steps=0: no step cache is asked for", calls, "step-cache-");
+    scratch::expect_lacks("steps=0: and the task says nothing of one", run.out, "step cache:");
+}

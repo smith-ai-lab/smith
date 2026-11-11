@@ -225,8 +225,10 @@ static bool smith_sha256_has_fast(void) {
     return known == 1;
 }
 
+static bool smith_sha256_portable_only; // a test compares the two ways (smith_core_sha256)
+
 static void smith_sha256_blocks(uint32_t state[8], const uint8_t *data, size_t blocks) {
-    if (smith_sha256_has_fast()) {
+    if (!smith_sha256_portable_only && smith_sha256_has_fast()) {
         smith_sha256_blocks_fast(state, data, blocks);
         return;
     }
@@ -271,6 +273,23 @@ void smith_sha256_final(SmithSha256 *sha, char hex[smith_sha256_hex_size]) {
         SMITH_ASSERT(written == 8);
     }
 }
+
+#ifdef SMITH_CORE
+// The digest of `size` bytes, fed in pieces of `piece` bytes (0: all at once), by the portable loop alone when
+// `portable`. *fast says whether this processor's instructions were used. See include/smith_core.h.
+void smith_core_sha256(const uint8_t *data, size_t size, size_t piece, bool portable, char hex[smith_sha256_hex_size],
+                       bool *fast) {
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    smith_sha256_portable_only = portable;
+    *fast = !portable && smith_sha256_has_fast();
+    size_t step = piece == 0 ? size : piece;
+    for (size_t at = 0; at < size; at += step) // bounded by the size: step is 0 only when size is
+        smith_sha256_update(&sha, data + at, size - at < step ? size - at : step);
+    smith_sha256_final(&sha, hex);
+    smith_sha256_portable_only = false;
+}
+#endif
 
 // The SHA-256 of a file's bytes. False when it cannot be read.
 bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size]) {
