@@ -3625,6 +3625,7 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     for (int i = 2; i < argc && strcmp(tool->command, "lint") == 0; i++) // bounded by the arguments
         by_project = by_project || strcmp(argv[i], "-p") == 0;
     if (strcmp(tool->command, "lint") == 0 && !by_project) (void)smith_lint_expand_dirs(&argc, &argv);
+    if (strcmp(tool->command, "lint") == 0 && !by_project) argc = smith_lint_drop_ignored(argc, argv);
     if (strcmp(tool->command, "lint") == 0) smith_lint_needs_build(argc, argv);
     if (strcmp(tool->command, "lsp") == 0) smith_lsp_needs_build(argc, argv);
     if (strcmp(tool->command, "lint") == 0 && !by_project) {
