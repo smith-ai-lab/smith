@@ -114,9 +114,51 @@ static SmithVerbArgs *smith_verb_split(int count, char **args) {
     return split;
 }
 
+static pid_t smith_verbs_start(char *const *argv, FILE *log);
+static int smith_verbs_wait(pid_t pid);
+
+// The first `smith` on PATH, as a real path, when it is another binary than the running one; false when it is this one
+// or there is none. `smith lint` and `smith prove` build with it (#3081): a build is the build program compiled by the
+// smith that runs it (`.smith/program`, an input of every function step) and compiles whose module cache folder is that
+// smith's (SMITH_BUILD_ID), so a lint by `build/<OS>-<arch>/smith` after a `smith build` by the smith on PATH re-ran
+// about 97 steps and relinked smith (21 to 24 s with nothing to lint). They still lint and prove with themselves.
+static bool smith_verb_path_smith(const char *self, char *out) {
+    char own[PATH_MAX];
+    if (realpath(self, own) == nullptr) return false;
+    const char *path = getenv("PATH");
+    for (const char *start = path; start != nullptr && *start != '\0';) { // each pass moves past one folder of PATH
+        const char *end = strchr(start, ':');
+        size_t length = end != nullptr ? (size_t)(end - start) : strlen(start);
+        char found[PATH_MAX];
+        int written = snprintf(found, sizeof found, "%.*s/smith", (int)length, length > 0 ? start : ".");
+        if (written > 0 && (size_t)written < sizeof found && access(found, X_OK) == 0 &&
+            realpath(found, out) != nullptr)
+            return strcmp(out, own) != 0;
+        start = end != nullptr ? end + 1 : nullptr;
+    }
+    return false;
+}
+
+// Builds with the smith on PATH, as `smith build` there would (smith_verb_path_smith); its status.
+static int smith_verb_build_with(const char *smith, char **build_args, size_t used) {
+    static char *argv[smith_build_args_max + smith_verbs_targets_max + 8];
+    argv[0] = (char *)smith;
+    argv[1] = (char *)"build";
+    for (size_t i = 0; i < used; i++) // bounded by the caller's list
+        argv[i + 2] = build_args[i];
+    argv[used + 2] = nullptr;
+    const char *verbose = getenv("SMITH_VERBOSE");
+    if (verbose != nullptr && verbose[0] != '\0')
+        fprintf(stderr, "smith: building with %s, the smith on PATH\n", smith);
+    return smith_verbs_wait(smith_verbs_start(argv, nullptr));
+}
+
 // Builds `targets` (none: the build's default), the verb's -D options as the build's. With pass_args the verb's own
-// arguments go to build.c as -DSMITH_ARGS, which smith_args reads (the test runner's options).
-static int smith_verb_build(const char *self, const SmithVerbArgs *split, const char *const *targets, bool pass_args) {
+// arguments go to build.c as -DSMITH_ARGS, which smith_args reads (the test runner's options). With path_smith the
+// build is the PATH smith's when that is another binary (smith_verb_path_smith); `smith test` and `smith run` build
+// with themselves, since the tests and the program are what they run.
+static int smith_verb_build(const char *self, const SmithVerbArgs *split, const char *const *targets, bool pass_args,
+                            bool path_smith) {
     static char *build_args[smith_build_args_max + smith_verbs_targets_max + 4];
     static char joined[smith_verb_args_max] = "-DSMITH_ARGS=";
     constexpr size_t prefix = sizeof "-DSMITH_ARGS=" - 1;
@@ -130,6 +172,8 @@ static int smith_verb_build(const char *self, const SmithVerbArgs *split, const 
     if (joined_used > prefix) build_args[used++] = joined;
     for (size_t i = 0; targets[i] != nullptr && i < smith_verbs_targets_max; i++) // bounded: a verb names few targets
         build_args[used++] = (char *)targets[i];
+    char smith[PATH_MAX];
+    if (path_smith && smith_verb_path_smith(self, smith)) return smith_verb_build_with(smith, build_args, used);
     return smith_build_main((int)used, build_args, self, nullptr);
 }
 
@@ -817,7 +861,7 @@ static int smith_lint_build_needs(const char *self, const SmithVerbArgs *split, 
         needs->wanted = 1;
     }
     needs->targets[needs->wanted] = nullptr;
-    return needs->wanted == 0 ? 0 : smith_verb_build(self, split, needs->targets, false);
+    return needs->wanted == 0 ? 0 : smith_verb_build(self, split, needs->targets, false, true);
 }
 
 // Whether this run is CI's, which has the network: there a parser that cannot be made is a failure.
@@ -924,6 +968,41 @@ bool smith_lint_expand_dirs(int *argc, char ***argv) {
     return true;
 }
 
+// `smith lint FILE ...` (#3151): a file among the arguments (before any `--`) that `.clang-format-ignore` names is left
+// out, as `smith fmt` leaves it out and as the project lint never walks it, so naming it (the pre-push hook names every
+// changed file) cannot lint a test input that CI's lint skips. When that leaves no file, there is nothing to lint: the
+// line says so and the status is 0. Returns the new argument count.
+int smith_lint_drop_ignored(int argc, char **argv) {
+    static char *kept[smith_defaults_args_max];
+    int out = 0;
+    int dropped = 0;
+    int files = 0;
+    bool flags = false;
+    for (int i = 0; i < argc && i < smith_defaults_args_max - 1; i++) { // bounded by the arguments
+        const char *name = argv[i];
+        struct stat info;
+        flags = flags || (i >= 2 && strcmp(name, "--") == 0);
+        bool file = i >= 2 && !flags && name[0] != '-' && stat(name, &info) == 0 && S_ISREG(info.st_mode);
+        while (file && name[0] == '.' && name[1] == '/')
+            name += 2; // bounded by the name
+        if (file && smith_lint_ignored(name)) {
+            dropped++;
+            continue;
+        }
+        files += file ? 1 : 0;
+        kept[out++] = argv[i];
+    }
+    if (dropped == 0) return argc;
+    if (files == 0) {
+        fprintf(stderr, "smith lint: linted 0 files (%d named by .clang-format-ignore)\n", dropped);
+        exit(0);
+    }
+    for (int i = 0; i < out; i++)
+        argv[i] = kept[i];
+    argv[out] = nullptr;
+    return out;
+}
+
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
 // on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
 // `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook, the way `smith lint
@@ -941,7 +1020,7 @@ int smith_lint_project(int count, char **args, const char *self) {
     // First the build writes .smith/build.info and nothing else: lint then builds only what the files it chooses wait
     // for, once it knows which they are.
     const char *const targets[] = {"smith_info", nullptr};
-    int status = smith_verb_build(self, split, targets, false);
+    int status = smith_verb_build(self, split, targets, false, true);
     if (status != 0) return status;
     smith_lint_info_ms = smith_account_now_ms();
     const SmithInfo *info = smith_info_read("smith lint");
@@ -1234,7 +1313,7 @@ int smith_prove_project(int count, char **args, const char *self) {
     smith_prove_options = split;
     const char *const targets[] = {"smith_needs", nullptr};
     uint64_t began = smith_account_now_ms();
-    int status = smith_verb_build(self, split, targets, false);
+    int status = smith_verb_build(self, split, targets, false, true);
     if (status != 0) return status;
     uint64_t built = smith_account_now_ms();
     const SmithInfo *info = smith_info_read("smith prove");
@@ -1543,7 +1622,7 @@ int smith_test_project(int count, char **args, const char *self) {
              (int)getpid());
     (void)unlink(account);
     if (accounted) setenv("SMITH_ACCOUNT_FILE", account, 1);
-    int status = smith_verb_build(self, split, targets, true);
+    int status = smith_verb_build(self, split, targets, true, false);
     if (accounted) {
         smith_account_report(account, "smith test", mode != nullptr && strcmp(mode, "all") == 0);
         (void)unlink(account);
@@ -1559,7 +1638,7 @@ int smith_test_project(int count, char **args, const char *self) {
 int smith_run_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *const targets[] = {nullptr};
-    int status = smith_verb_build(self, split, targets, false);
+    int status = smith_verb_build(self, split, targets, false, false);
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith run");
     static const char *named[smith_verbs_lines_max];

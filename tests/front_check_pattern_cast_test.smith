@@ -1,0 +1,138 @@
+// A conversion `.to(T)` of a name bound by a payload pattern is checked like one of a local with a written type
+// (#3121): the same rule and the same message, for an `if` binding, an `else` binding, a `match` arm, an option, and a
+// payload that is a type parameter.
+// Each scenario is source text in smith's own syntax, read by front::parser's hooks and checked by front::types_decl,
+// and builds in an arena it sets as the current allocator.
+module front_check_pattern_cast_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_condition(has(errors, ""));
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+static Str no_cast() {
+    return "there is no cast between these types";
+}
+
+// The control: a local with a written type.
+export void test_front_check_pattern_cast_local_is_refused() {
+    fails("Run := fn() -> i32\n\nfn run(v: f64) -> i32:\n    return (v.to(Run))()\n", no_cast(), "F64");
+}
+
+export void test_front_check_pattern_cast_if_binding_is_refused() {
+    fails("Run := fn() -> i32\n\nfn run(r: Result(f64, i32)) -> i32:\n    if .ok(v) := r:\n        return "
+          "(v.to(Run))()\n    0\n",
+          no_cast(), "F64");
+}
+
+export void test_front_check_pattern_cast_else_binding_is_refused() {
+    fails("Run := fn() -> i32\n\nfn run(r: Result(f64, i32)) -> i32:\n    .ok(v) := r else:\n        return 1\n    "
+          "return (v.to(Run))()\n",
+          no_cast(), "F64");
+}
+
+export void test_front_check_pattern_cast_option_binding_is_refused() {
+    fails("Run := fn() -> i32\n\nfn run(r: Option(f64)) -> i32:\n    if .some(v) := r:\n        return (v.to(Run))()\n "
+          "   0\n",
+          no_cast(), "F64");
+}
+
+export void test_front_check_pattern_cast_match_arm_is_refused() {
+    fails(
+        "Run := fn() -> i32\n\nenum Shape:\n    circle: f64\n    empty\n\n"
+        "fn run(s: Shape) -> i32:\n    match s:\n        .circle(r): return (r.to(Run))()\n        .empty: return 0\n",
+        no_cast(), "F64");
+}
+
+export void test_front_check_pattern_cast_struct_payload_to_integer_is_refused() {
+    fails("struct Pair:\n    a: i32\n    b: i32\n\nfn run(r: Result(Pair, i32)) -> i32:\n    if .ok(v) := r:\n        "
+          "return v.to(i32)\n    0\n",
+          no_cast(), "Pair");
+}
+
+export void test_front_check_pattern_cast_generic_payload_is_refused() {
+    fails("struct Pair:\n    a: i32\n    b: i32\n\nfn pick(T: type, x: Result(T, i32)) -> i32:\n    if .ok(v) := x:\n  "
+          "      return v.to(i32)\n    0\n\n"
+          "fn run(r: Result(Pair, i32)) -> i32:\n    pick(Pair, r)\n",
+          no_cast(), "Pair");
+}
+
+// A conversion that has a cast stays legal for a bound name: a pointer-wide integer as a function (#3110).
+export void test_front_check_pattern_cast_allowed_conversion_is_accepted() {
+    clean("Run := fn() -> i32\n\nfn run(r: Result(usize, i32)) -> i32:\n    if .ok(v) := r:\n        return "
+          "(v.to(Run))()\n    0\n");
+}

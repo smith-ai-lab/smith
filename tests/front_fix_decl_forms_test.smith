@@ -269,3 +269,22 @@ export void test_front_fix_a_generic_pointer_parameter_is_writable() {
                  "pub fn push(arena: *mut Arena, seen: *Arena, T: type) -> *mut T:\n"
                  "    return raw(arena).cast(*mut T)\n");
 }
+
+// A pointer type as an argument keeps its stars in front, built-in or named (#3027, type-function-pointee): read as
+// dereferences in the next pass, `F64 *` became `f64.*` and `Pair **` became `*Pair.*`.
+export void test_front_fix_a_pointer_type_argument_is_a_type() {
+    expect_fixed("module m;\nstruct Pair { I32 a; };\nconstexpr Type id(constexpr Type T) { return T; }\n"
+                 "Usize f(void) { return sizeof(id(F64 *)) + sizeof(id(Pair **)) + sizeof(id(Pair *)); }\n",
+                 "struct Pair:\n    a: i32\nfn id(T: type) -> type:\n    return T\n"
+                 "fn f() -> usize:\n    return sizeof(id(*f64)) + sizeof(id(**Pair)) + sizeof(id(*Pair))\n");
+}
+
+// `return {.some = v}` in a generic function whose result is an option is `.some(v)` (#3027, generic-option-slice-of):
+// the checker's fix comes from an instance in an importer, which the function's own file never sees.
+export void test_front_fix_an_option_list_in_a_generic_is_the_variant() {
+    expect_fixed(
+        "module m;\nexport Option(T *) first(constexpr Type T, T *xs, Usize n) {\n    if (n == 0) return .none;\n"
+        "    return {.some = xs};\n}\n",
+        "pub fn first(T: type, xs: *mut T, n: usize) -> Option(*T):\n    if n == 0:\n        return .none\n"
+        "    return .some(xs)\n");
+}

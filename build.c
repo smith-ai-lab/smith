@@ -1582,6 +1582,14 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
     return encoded;
 }
 
+// The folder that holds the smith under test and its smith-cc. With no LLVM install to link smith from (a
+// documents-only pull request's `docs-linux`, #3160) the smith under test is the smith that runs this build, named by
+// its absolute path.
+static const char *build_smith_home(SmithBuild *b, const char *binary, const char *folder) {
+    if (binary[0] != '/') return smith_fmt(b, "$repo/%s", folder);
+    return smith_fmt(b, "%.*s", (int)(strrchr(binary, '/') - binary), binary);
+}
+
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
 // workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
@@ -1592,13 +1600,14 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
 // `.smith` (the stage0 has none). A test that needs a build or a process of its own (a stop, a sanitizer's catch) stays
 // in its script. Returns the runner's path.
 static const char *build_units(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
+    const bool running = binary[0] == '/';
+    const char *home = build_smith_home(b, binary, folder);
     static const char setup[] =
         "repo=$PWD; p=$1/units-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && ln -sfn "
         "\"$repo/lib\" \"$p/lib\" && "
         "{ cmp -s tests/units/build.c \"$p/build.c\" || cp tests/units/build.c \"$p/build.c\"; } && cd \"$p\" && ";
-    const char *self = smith_fmt(b, "$repo/%s", binary);
-    const char *environment =
-        smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", folder, self);
+    const char *self = running ? binary : smith_fmt(b, "$repo/%s", binary);
+    const char *environment = smith_fmt(b, "PATH=\"%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", home, self);
     // A run with COVERAGE=1 (#456): the runner gives every test a folder of profiles, merges them as the test
     // ends, and the records are joined into .smith/coverage/coverage.tsv when the run is over, red or green.
     const char *measure =
@@ -1607,7 +1616,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
                                  "; rc=$?; cd \"$repo\" && \"%s\" test --coverage join .smith/coverage "
                                  "\"$(git rev-parse HEAD)\" .smith/coverage/coverage.tsv; exit $rc",
                                  self);
-    const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", running ? home : folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
     // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
@@ -1734,9 +1743,11 @@ static int build_prove_sound_full(SmithRun *run) {
 // `smith build install` (which sets nothing) runs the same tests as `smith check`. The quiet form is tested with the
 // variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
-    const char *units = config->hook ? build_units(b, config, binary, folder) : "";
+    const char *units = build_units(b, config, config->hook ? binary : smith_env(b, "SMITH_SELF", ""), folder);
     if (config->hook) build_front_units(b, config, binary, folder);
-    const char *const *tasks = smith_when(b, units[0] != '\0', smith_list(b, "test-units", "test-front", nullptr));
+    const char *const *tasks = smith_when(b, units[0] != '\0',
+                                          config->hook ? smith_list(b, "test-units", "test-front", nullptr)
+                                                       : smith_list(b, "test-units", nullptr));
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command =
@@ -1924,7 +1935,25 @@ typedef struct {
 
 constexpr size_t build_environment_max = 2048;
 
+// git sets GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and the like for a hook, and every git started below would then act
+// on the pusher's own repository and not on the folder it is pointed at (a scratch repository's `git init` and commits
+// landed in the worktree, #3151). The build removes them from its environment before it starts anything, so a git
+// finds its repository from its folder alone.
+static void build_clear_git_environment(void) {
+    static const char *const names[] = {"GIT_DIR",
+                                        "GIT_WORK_TREE",
+                                        "GIT_INDEX_FILE",
+                                        "GIT_COMMON_DIR",
+                                        "GIT_PREFIX",
+                                        "GIT_OBJECT_DIRECTORY",
+                                        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                                        "GIT_NAMESPACE"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        unsetenv(names[i]);
+}
+
 static const char *const *build_merged_environment(const char *const *extra) {
+    build_clear_git_environment();
     static const char *merged[build_environment_max];
     size_t extra_count = 0;
     while (extra != nullptr && extra[extra_count] != nullptr)
@@ -3453,6 +3482,7 @@ static const char *const build_gate_message = "feat commits need their skill and
 
 // The lines `git -C dir args...` prints, or nullptr when git fails.
 static const char *const *build_gate_git(SmithRun *run, const char *dir, const char *const *args) {
+    build_clear_git_environment();
     const char *argv[16] = {"git", "-C", dir};
     size_t count = 3;
     for (size_t i = 0; args[i] != nullptr && count < 15; i++)
@@ -3554,6 +3584,31 @@ static int build_gate_commit(const char *dir, const char *path, const char *subj
     return status != 0 ? status : build_gate_scratch(dir, (const char *[]){"commit", "-q", "-m", subject, nullptr});
 }
 
+// The environment a hook gives (#3151): a second repository `other` (committed once, its HEAD in `before`) is named by
+// GIT_DIR and GIT_WORK_TREE, and must stay as it is while the gate's scratch repository `dir` is built. 0 on success.
+static int build_gate_hook_environment(SmithRun *run, const char *dir, char *other, char *before) {
+    snprintf(other, PATH_MAX, "%s-other", dir);
+    before[0] = '\0';
+    int status =
+        mkdir(other, 0700) != 0 ? 1 : build_gate_scratch(other, (const char *[]){"init", "-q", "-b", "main", nullptr});
+    status = status != 0 ? status : build_gate_commit(other, "keep.txt", "chore: other");
+    const char *const *head =
+        status != 0 ? nullptr : build_gate_git(run, other, (const char *[]){"rev-parse", "HEAD", nullptr});
+    if (head != nullptr && head[0] != nullptr) snprintf(before, 64, "%s", head[0]);
+    char other_git[PATH_MAX];
+    snprintf(other_git, sizeof other_git, "%s/.git", other);
+    setenv("GIT_DIR", other_git, 1);
+    setenv("GIT_WORK_TREE", other, 1);
+    return before[0] == '\0' ? 1 : status;
+}
+
+static bool build_gate_other_untouched(SmithRun *run, const char *other, const char *before) {
+    const char *const *after = build_gate_git(run, other, (const char *[]){"rev-parse", "HEAD", nullptr});
+    const char *const *dirty = build_gate_git(run, other, (const char *[]){"status", "--porcelain", nullptr});
+    return after != nullptr && after[0] != nullptr && strcmp(after[0], before) == 0 &&
+           (dirty == nullptr || dirty[0] == nullptr);
+}
+
 // The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill or concept change
 // makes it pass, a base that cannot be resolved passes.
 static int build_docs_gate_test(SmithRun *run) {
@@ -3561,7 +3616,10 @@ static int build_docs_gate_test(SmithRun *run) {
     snprintf(dir, sizeof dir, "%s/smith-gate-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
              (int)getpid());
     if (mkdir(dir, 0700) != 0) return 1;
-    int status = build_gate_scratch(dir, (const char *[]){"init", "-q", "-b", "main", nullptr});
+    char other[PATH_MAX];
+    char before[64];
+    int status = build_gate_hook_environment(run, dir, other, before);
+    status = status != 0 ? status : build_gate_scratch(dir, (const char *[]){"init", "-q", "-b", "main", nullptr});
     status = status != 0 ? status : build_gate_commit(dir, "a.txt", "chore: start");
     status = status != 0 ? status : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "-b", "work", nullptr});
     status = status != 0 ? status : build_gate_commit(dir, "runtime/a.c", "fix: a bug");
@@ -3613,7 +3671,9 @@ static int build_docs_gate_test(SmithRun *run) {
     }
     if (failed == 0 && strstr(build_gate_uncommitted(run, dir), "knowledge/new.md") == nullptr)
         failed = build_gate_fail("gate: an untracked concept must be named as uncommitted\n");
-    build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
+    if (failed == 0 && !build_gate_other_untouched(run, other, before))
+        failed = build_gate_fail("gate: a repository named by GIT_DIR must not be touched\n");
+    build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, other, nullptr}});
     return failed;
 }
 

@@ -1,0 +1,18 @@
+name: ci-pr
+
+# A pull request runs no check of its own (#3170, owner, 2026-11-11). The checks are the pre-push hook on the runner's
+# machine (fmt, lint and the changed files' tests, #3132) and the merge queue's run of ci.yml on top of current main (the
+# whole suite). The `main` ruleset requires the context `ci` from GitHub Actions, so this one job, also named `ci`,
+# succeeds at once and lets the pull request enter the queue. It reads nothing and builds nothing.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "no pull request check - the pre-push hook and the merge queue are the checks"
