@@ -8,10 +8,10 @@ tags: [ci, process]
 
 **One branch and one pull request per change.** An agent works on its own branch, pushes it and opens a pull request
 (`gh pr create`, `Closes #N`). Locally it may run `smith fmt`, `smith lint`, `smith docs` and `smith test --changed`
-for what it changed, never the full check; no git hook runs anything on a push, everything runs in CI (owner,
+for what it changed, never the full check; the pre-push hook (`.smith/hooks/pre-push`, written by `smith build`, #3132) runs fmt, lint and the changed files' tests on a push, and everything else runs in the merge queue (owner,
 2026-10-29).
 
-**CI is GitHub's.** `.github/workflows/ci.yml` runs a light check on the pull request (the build, fmt/docs/prove/lint, the tests the change reaches, a build of smith on the Mac (its lint and tests only for Mac-only files, #2832); started by ci-dispatch.yml under a budget, never ahead of the queue, [ci-hosted](ci-hosted.md)) and the full suite in the merge queue, on hosted runners
+**CI is GitHub's.** A pull request runs no check of its own (#3170): `.github/workflows/ci-pr.yml` has one job, `ci`, that succeeds at once so the pull request can enter the merge queue. The two checks are the pre-push hook on the runner's machine (fmt, lint and the changed files' tests) and the full suite in the merge queue (`.github/workflows/ci.yml`, on `merge_group`, on hosted runners; [ci-hosted](ci-hosted.md)). The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
 ([ci-hosted](ci-hosted.md), #2822): a green pull request is not a green queue run; the one required check is `ci`. The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue

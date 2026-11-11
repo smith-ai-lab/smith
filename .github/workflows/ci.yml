@@ -1,33 +1,20 @@
 name: ci
 
-# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards that restore the one build `build-linux` made, #1758)
-# and the checks (`check-fmt-prove`: fmt, docs, prove; `check-lint`: lint; same build, beside the shards, #2234), on pull
-# requests too; one macOS job (`macos`) builds and runs what only macOS can (lint of the code only the Mac sees, the
-# `--macos-only` tests; a documents-only change: docs and their tests);
-# the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
-# fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
-# A pull request's check is a run of this workflow that ci-dispatch.yml starts with `workflow_dispatch` on the PR's
-# head branch, under a budget of Linux jobs and never while a merge queue job waits for a runner (#2856): its `ci`
-# lands on the PR's head sha, where the ruleset reads it. It is a light check (#2822): the build, one job of fmt, docs,
-# prove and lint, and one of only the tests `smith test --changed` reaches; the Mac only when the diff touches what
-# only the Mac sees. The merge queue runs everything. There is no `pull_request` trigger: a run whose jobs were all
-# skipped would leave a skipped `ci`, which the ruleset counts as passing.
+# The full check (#798, knowledge/ci-hosted.md), run by the merge queue only (#3170): Linux carries the tests (8 hosted
+# shards that restore the one build `build-linux` made, #1758) and the checks (`check-fmt-prove`: fmt, docs, prove;
+# `check-lint`: lint; same build, beside the shards, #2234); one macOS job (`macos`) builds and runs what only macOS can
+# (lint of the code only the Mac sees, the `--macos-only` tests; a documents-only change: docs and their tests); the one
+# job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that fails
+# cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
+# A pull request runs nothing here: its check is the one job `ci` of ci-pr.yml, which passes at once so the PR can enter
+# the queue. The pre-push hook is the check before the merge, the queue run the test.
 on:
   workflow_dispatch:
-    inputs:
-      pr:
-        description: "The pull request this run checks (ci-dispatch.yml starts it on the PR's head branch)"
-        required: true
-        type: string
       mac:
         description: "Only by hand, to test the Mac watchdog (#2835): `mac` runs the macOS job on the owner's Mac, `dead` on a Mac that does not answer (the watchdog must fall back to hosted macos-26); `auto` is the rule of pick-mac"
         type: choice
         options: [auto, mac, dead]
         default: auto
-      no_yield:
-        description: "Only by hand, for a check that must finish while the queue is never idle: skip yield-to-queue's self-cancel"
-        type: boolean
-        default: false
       uncached:
         description: "Only by hand (#2955): run the count as the nightly does, with no cache, and compare it row by row with the cached count of the same commit"
         type: boolean
@@ -40,14 +27,14 @@ on:
     # test that fails here while the cache said it passed is a p0 bug in a key (knowledge/ci-hosted.md)
     - cron: "17 3 * * *"
 
-# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other. A push
+# The merge queue's runs and main's never cancel each other. A push
 # to main has a group of its own per commit: with one group for the branch, GitHub keeps only the newest *pending* run,
 # so while the queue landed a PR every ~30 min and a run took longer, each pending run was cancelled by the next push
 # with no job started, and `warm` (the step cache) never ran (#2792). The jobs that must run once at a time keep their
 # own groups (`release-macos`, `release-linux`).
 concurrency:
-  group: ci-${{ inputs.pr && format('pr-{0}', inputs.pr) || github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -62,11 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     # 3 minutes of work: a queue run waits for nothing (one queue run at a time, #3131)
     timeout-minutes: 10
-    # `yield-to-queue` force-cancels a PR check's own run
     permissions:
       contents: read
-      actions: write
-      pull-requests: read
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       # whether `macos` runs: always where the scope is full or docs; a PR check builds smith on the Mac even when its diff
@@ -85,8 +69,6 @@ jobs:
       count: ${{ steps.scope.outputs.count }}
       # the count is run with no cache and compared with the cached one (#2955): the nightly run, or a dispatch by hand
       uncached: ${{ steps.scope.outputs.uncached }}
-      # the base a PR check is compared against
-      base: ${{ steps.pr.outputs.base }}
       # a queue entry: the PRs its tree holds that main does not
       prs: ${{ steps.prs.outputs.prs }}
       matrix: ${{ steps.linux.outputs.matrix }}
@@ -95,8 +77,7 @@ jobs:
       # hosted pool is saturated; picked per run by the step `Pick the macOS runner`
       pack: ${{ steps.pack.outputs.build }}
       mac: ${{ steps.mac.outputs.mac }}
-      # whether `warm` runs, and on which OSes: a push to main runs it for real on both; a pull request that changes the
-      # job (or the setup action it runs) runs it as a dry run on Linux only (#2769, knowledge/ci-hosted.md)
+      # whether `warm` runs, and on which OSes: a push to main runs it on both
       warm: ${{ steps.scope.outputs.docs_push == 'true' && 'false' || steps.warm.outputs.warm }}
       # a docs-only diff (#3044): what `docs-linux` also runs
       docs_tests: ${{ steps.scope.outputs.docs_tests }}
@@ -117,19 +98,6 @@ jobs:
         with:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
-      - uses: ./.github/actions/yield-to-queue
-      - name: The pull request
-        # a PR check is a `workflow_dispatch` run (#2856): what a `pull_request` event carried (the base, the body) is
-        # read from the PR the dispatcher named
-        id: pr
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          PR: ${{ inputs.pr }}
-        run: |
-          gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
-          echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
-          jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
-          echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
@@ -147,9 +115,14 @@ jobs:
         run: |
           name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
           build=false
-          if [ "$FORK" != true ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          # A queue run never builds the pack: an LLVM build would hold the one queue run for its whole length (#3170).
+          # An asset a pull request needs is made before it enters the queue, by a hand-started run.
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
             for tag in "llvm-$name-darwin-arm64" "llvm-$name-linux-x86_64"; do
-              gh release view "$tag" >/dev/null 2>&1 || build=true
+              gh release view "$tag" >/dev/null 2>&1 || {
+                echo "::error::no LLVM pack $tag: start llvm.yml with workflow_dispatch on the pull request's branch, and queue the PR once it is published"
+                exit 1
+              }
             done
           fi
           echo "build=$build" >>"$GITHUB_OUTPUT"
@@ -157,7 +130,7 @@ jobs:
       - name: Scope
         id: scope
         env:
-          BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
+          BASE: ${{ github.event.merge_group.base_sha }}
           UNCACHED_INPUT: ${{ inputs.uncached }}
           BEFORE: ${{ github.event.before }}
         run: |
@@ -208,11 +181,6 @@ jobs:
           if [ "$scope" = docs ]; then
             mac_run=false
             if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then docs_tests=true; fi
-          fi
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
-            mac_tests=false
-            if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_tests=true; fi
-            if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_tests=true; fi
           fi
           # The count (#2914) runs after the merge, on the push to main, and in the nightly run (#3052, owner,
           # 2026-11-11: "Do we need the count job? ... We mostly need to figure out what to work on with translation
@@ -279,22 +247,14 @@ jobs:
           echo "prs=$prs" >>"$GITHUB_OUTPUT"
           echo "tests: $prs" >>"$GITHUB_STEP_SUMMARY"
 
-      - name: Does the change touch the warm job
+      - name: Does this run save the cache
         id: warm
-        # `warm` writes (the cache, the release, #2751) and only runs on main, so a change to it could not be seen
-        # working before it merged (#2761). A pull request whose `warm` job, or the setup action it uses, differs from
-        # the base's runs it as a dry run: every write is skipped and printed to the step summary instead (#2769).
-        env:
-          BASE: ${{ steps.pr.outputs.base }}
+        # `warm` writes (the cache, the release, #2751) and runs only on a push to main (#3170: a pull request runs no
+        # dry run of it any more)
         run: |
           warm=false; os='["ubuntu-latest"]'
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             warm=true; os='["macos-26","ubuntu-latest"]'
-          elif [ -n "$BASE" ]; then
-            new=$(yq -o=json '.jobs.warm' .github/workflows/ci.yml)
-            old=$(git show "$BASE:.github/workflows/ci.yml" | yq -o=json '.jobs.warm' || true)
-            [ "$new" != "$old" ] && warm=true
-            if ! git diff --quiet "$BASE" HEAD -- .github/actions/setup-smith; then warm=true; fi
           fi
           echo "warm=$warm" >>"$GITHUB_OUTPUT"
           echo "os=$os" >>"$GITHUB_OUTPUT"
@@ -304,41 +264,23 @@ jobs:
         # a stale working tree squashed onto a moved main deletes merged work with every test green (#1455, #1473):
         # scripts/revert_check.c fails a change that removes the lines of a recent commit; `Reverts #N` or
         # `Rewrites #N` in the body (or the queue entry's commit message) says a revert or a rewrite is meant
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group'
         env:
-          BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
+          BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           cc -std=gnu2x -O1 scripts/revert_check.c -o "$RUNNER_TEMP/revert_check"
-          # a PR check's body was saved by the step `The pull request`
-          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || git log -1 --format=%B HEAD >"$RUNNER_TEMP/body"
+          git log -1 --format=%B HEAD >"$RUNNER_TEMP/body"
           "$RUNNER_TEMP/revert_check" "$(git merge-base "$BASE" HEAD)" HEAD "$RUNNER_TEMP/body"
 
       - name: Test matrix
         id: linux
         # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
-        # runs the few tests only macOS can run (`--macos-only`, one part). A pull request runs everything in 8 parts,
-        # as the queue does (owner, 2026-11-04, #2234): from 2026-11-03 the queue was the first place a change was
-        # fully tested, 74 of 100 failed queue builds failed in `test-linux`, and each failure fails the builds behind
-        # it. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
+        # runs the few tests only macOS can run (`--macos-only`, one part). The queue runs everything in 8 parts. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
         # cache.
-        env:
-          BASE: ${{ steps.pr.outputs.base }}
         run: |
           flags="--skip-macos"
           macflags="--macos-only --shard 1/1"
           count=8
-          # A pull request runs the tests `smith test --changed` reaches (#2822, #2856: a PR check is at most 2 Linux jobs
-          # at once, this part and `check-fmt-prove`), in one part; the queue runs all of them in 8. A wide selection
-          # (smith's core, the test runner, build.c: every test runs) needs about 30 minutes of one part, so three PR
-          # checks were cancelled at the 20 minute limit with the units runner still at work (#3127). So the matrix is
-          # planned in 8 parts and `build-linux` ("Size the test parts") cuts it to the one part a narrow selection needs.
-          # The base is named: the PR check runs on the branch, whose upstream is the branch itself, so `--changed` with
-          # no base compared HEAD with HEAD and ran 0 tests in every PR check from #2857 on (#3059). The merge-base of
-          # the PR's base and the head is in the history this job fetched (fetch-depth 0); no base fails the step.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            mb=$(git merge-base "$BASE" HEAD) || { echo "::error::no merge-base of the PR's base $BASE and HEAD"; exit 1; }
-            flags="--skip-macos --changed --base $mb"
-          fi
           linux=
           for i in $(seq 1 "$count"); do
             linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
@@ -536,12 +478,8 @@ jobs:
     # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
     # so one run names all failures.
     needs: [changes, pack, watch]
-    # The queue runs it always; a pull request runs it only when its diff reaches what only the Mac sees, or when the
-    # change is documents (where the docs check runs) (#2822): the free plan runs about 20 jobs at once, and a pull
-    # request that cannot reach the Mac's code leaves it to the queue. Before #2822 it ran on every pull request so that
-    # a green PR meant a green queue run (owner, 2026-11-04: "We have the 20 Linux runners and the 5 Mac runners. We
-    # should be prioritizing that. But then absolutely leverage my Mac as well."): when the 5 hosted macOS slots are
-    # full, `pick-mac` sends the job to the owner's Mac, if the Mac starts the probe job within 3 minutes (`watch`, #2835).
+    # When the hosted macOS slots are full, `pick-mac` sends the job to the owner's Mac, if the Mac starts the probe job
+    # within 3 minutes (`watch`, #2835).
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.watch.result == 'success' && needs.changes.outputs.mac_run == 'true' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.watch.outputs.runner) }}
     # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
@@ -773,7 +711,6 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
-      - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -814,28 +751,19 @@ jobs:
         shell: bash
         env:
           SMITH_OUTPUT: full
-          MATRIX: ${{ needs.changes.outputs.linux }}
         run: |
           count=8
-          # a PR check runs the tests `--changed` reaches (the flags `changes` planned) in one part, at most 2 Linux jobs at
-          # once (#2856), unless they need more than 12 minutes of CPU: smith's core, the test runner or build.c reach
-          # every test, about 30 minutes in one part, which the 20 minute limit cuts off (#3127). Then it gets the
-          # queue's parts. Any failure of the sizing keeps the one part.
           flags=--skip-macos
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then flags=$(printf '%s' "$MATRIX" | jq -r '.include[0].flags'); fi
           # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
           "$SMITH" test $flags --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
           line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
           if [ -n "$line" ]; then
             secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
             count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
-            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$secs" -le 720 ]; then count=1; fi
-          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            count=1
           fi
           echo "count=$count" >>"$GITHUB_OUTPUT"
           # one part in a queue run is run by this job, which holds its runner already (#2870)
-          jobs=$(( count + 2 )); [ "$count" = 1 ] && jobs=2 # one part: this job's (queue) or `test-linux` beside `check-fmt-prove` (PR)
+          jobs=$(( count + 2 )); [ "$count" = 1 ] && jobs=2
           echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
           echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Report the test-store hit rate (sizing)
@@ -938,7 +866,6 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
-      - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
@@ -982,7 +909,6 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
-      - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
@@ -1002,9 +928,6 @@ jobs:
         run: |
           failed=0
           stages=("fmt fmt --dry-run --Werror" "docs docs" "prove prove")
-          # a PR check is at most 2 Linux jobs at once (#2856): lint runs here after the others, not in `check-lint`.
-          # The queue keeps the two jobs side by side, the shorter critical path (lead, 2026-11-08, #2833)
-          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && stages+=("lint lint")
           for stage in "${stages[@]}"; do
             set -- $stage
             name=$1
@@ -1045,9 +968,8 @@ jobs:
 
   check-lint:
     # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't.
-    # Not in a PR check, where `check-fmt-prove` lints (#2856)
     needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && github.event_name != 'workflow_dispatch' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-lint) }}
     timeout-minutes: 20
     env:
@@ -1135,7 +1057,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
-      statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
       actions: write # a failed queue run deletes the release tarballs it kept (#2832)
     steps:
       - uses: actions/checkout@v4 # only the shared shell function and the budget action (git, not REST)
@@ -1198,13 +1119,10 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
-          # `macos` is owed wherever it runs; a PR check whose diff cannot reach the Mac's code runs it as a build only
-          # (#2822, #2832), which is still owed
+          # `macos` is owed wherever it runs
           if [ "$MAC_RUN" = false ]; then owed=${owed/MACOS/}; fi
           # `macos-lint` runs only where the Mac's tests run (#3045)
           if [ "$MAC_RUN" = false ] || [ "$MAC_TESTS" != true ]; then owed=${owed/MACOS_LINT/}; fi
-          # a PR check lints in `check-fmt-prove`, so it owes no `check-lint` (#2856)
-          if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group builds the release main will publish (#2832): one that does not build fails the entry
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_MACOS RELEASE_PACK_LINUX"; fi
           for name in $owed; do
@@ -1214,23 +1132,6 @@ jobs:
               exit 1
             fi
           done
-      # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
-      # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
-      # Only once every job before it ran: a cancelled or abandoned job (a lost job, #2965) posts nothing, and the next pass restarts
-      # the check; the verdict above already fails a run in which a job that was owed was skipped.
-      - name: Post the verdict as the commit status `ci`
-        if: >-
-          always() && github.event_name == 'workflow_dispatch' && !cancelled()
-          && !contains(join(needs.*.result, ' '), 'cancelled') && !contains(join(needs.*.result, ' '), 'abandoned')
-          && (steps.verdict.outcome == 'success' || steps.verdict.outcome == 'failure')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STATE: ${{ steps.verdict.outcome }}
-          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          gh_retry gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
-            -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
-          echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: A failed queue run keeps no release
         # its tarballs (`stage0-<commit>-*` artifacts) are deleted, so nothing that looks like a release of a commit that
         # failed is left; the push to main also takes them only from a run whose `ci` passed (#2832)
@@ -1257,10 +1158,8 @@ jobs:
     # (knowledge/smith-bootstrap.md): a commit using a feature of the one before would be built by a release without it.
     # Waiting was not enough by itself: fetch-smith's release list left the newest out (run 42601821786 got
     # stage0-d6bcd6c 2 s after stage0-78a4f9a was published), so the setup names the tag.
-    # `always()`: a pull request's dry run (no release) warms with the newest published stage0; on a push, a release
-    # that never publishes fails this job rather than save a cache built with another smith
+    # `always()`: a release that never publishes fails this job rather than save a cache built with another smith
     needs: [changes, release, release-linux, publish]
-    # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'
     strategy:
       # one OS failing must not cancel the other: a Mac step that failed cancelled the Linux job, so main saved no
@@ -1273,7 +1172,7 @@ jobs:
     # One warm per OS at a time on main (#3069): a running warm always finishes, and a warm still waiting is replaced
     # by the one of a newer push, whose stage0 every later job fetches; the older commit's cache would be keyed by a
     # stage0 no job uses any more. At 10 merges an hour and warms of about 14 minutes this skips about half of them;
-    # the replaced push run ends `cancelled` (no required check reads a push run). A pull request's dry run is alone.
+    # the replaced push run ends `cancelled` (no required check reads a push run).
     concurrency:
       group: warm-${{ github.event_name == 'push' && 'main' || github.run_id }}-${{ matrix.os }}
       cancel-in-progress: false
