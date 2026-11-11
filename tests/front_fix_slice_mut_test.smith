@@ -1,0 +1,58 @@
+// Tests of the fix-it for a slice that std.mem writes (#3073): a local or a parameter `name: []T` handed to
+// `mem.realloc`, `mem.try_realloc`, `mem.copy` or `mem.move` as the slice they write is `[]mut T`.
+module front_fix_slice_mut_test;
+
+import front::fix_slice_mut;
+import front::parse as core;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_inserts(Str source, Usize count, Usize at) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    core::Errors found = fix_slice_mut::edits(source);
+    test::check_equal(countof(found), count);
+    if (count > 0 && countof(found) > 0) {
+        test::check_equal((Usize)found[0].span.start, at);
+        Str word = "mut ";
+        test::check_equal(found[0].fix[0].text, word);
+    }
+}
+
+export void test_front_fix_slice_mut_a_reallocated_local_is_mut() {
+    expect_inserts("fn f(n: usize):\n    mut parts: []str = []\n    parts = mem.realloc(parts, n)\n", 1, 33);
+}
+
+export void test_front_fix_slice_mut_a_copied_into_local_is_mut() {
+    expect_inserts("fn put(to: *mut u8, from: *u8, n: usize):\n    destination: []u8 = to[0:n]\n"
+                   "    source: []u8 = from[0:n]\n    mem.copy(destination, source)\n",
+                   1, 61);
+}
+
+export void test_front_fix_slice_mut_a_sub_slice_copied_into_is_mut() {
+    expect_inserts("fn f(path: str):\n    named: []char = mem.alloc(char, 4)\n    mem.copy(named[0:2], path)\n", 1, 30);
+}
+
+export void test_front_fix_slice_mut_a_parameter_std_writes_is_mut() {
+    expect_inserts("fn grow(xs: []i32, n: usize) -> usize:\n    xs2 := mem.realloc(xs, n)\n    return countof(xs2)\n",
+                   1, 14);
+}
+
+export void test_front_fix_slice_mut_a_slice_only_read_stays() {
+    // the source of a copy is read, and a local of another function is another name
+    expect_inserts("fn f(to: []mut u8):\n    source: []u8 = g()\n    mem.copy(to, source)\nfn h():\n"
+                   "    parts: []str = []\n    use(parts)\nfn k():\n    parts = mem.realloc(parts, 1)\n",
+                   0, 0);
+}
+
+export void test_front_fix_slice_mut_a_longer_name_and_a_field_are_not_the_local() {
+    expect_inserts(
+        "fn f(w: *mut W):\n    item: []u8 = []\n    mem.copy(items, x)\n    w.item = mem.realloc(w.item, 2)\n", 0, 0);
+}
+
+export void test_front_fix_slice_mut_a_writable_slice_is_left() {
+    expect_inserts("fn f():\n    mut xs: []mut i32 = []\n    xs = mem.realloc(xs, 2)\n", 0, 0);
+}

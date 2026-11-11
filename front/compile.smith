@@ -425,13 +425,19 @@ static mem::Allocator *file_memory() {
     return &file_allocator;
 }
 
-// Frees every block the file's allocator still holds.
+// Frees every block the file's allocator still holds. `run` calls it before a file, for the file before it: the last
+// file of a process is never freed block by block, which took 19% of a whole-tree pass (10.7 of 57 s, #3080).
 static void file_memory_release() {
+    contract::trusted();                                  // the system's allocator is the edge
+    mem::Allocator *before = mem::set_allocator(nullptr); // once, not around each block
     for (Usize i = 0; i < file_capacity; i++) {
         void *block = file_live[i];
-        if (block != nullptr && block != (void *)&file_gone_mark) system_release((U8 *)block - file_header);
+        if (block != nullptr && block != (void *)&file_gone_mark) {
+            c::free((U8 *)block - file_header); // NOLINT(smith-effects): the edge
+        }
         file_live[i] = nullptr;
     }
+    mem::set_allocator(before);
     file_used = 0;
     file_count = 0;
 }
@@ -1741,6 +1747,7 @@ static BeforeFile before_file_hook = nullptr;
     header_table::next_generation();
     I32 status = 0;
     for (Usize i = 0; i < count; i++) {
+        file_memory_release(); // what the file before this one left (of this call or an earlier one)
         Str output = as_str(format::push((const char *)outputs[i]));
         roots::Roots beside = folders;
         beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
@@ -1755,7 +1762,6 @@ static BeforeFile before_file_hook = nullptr;
         if (!done.ok && c::getenv("SMITH_FRONT_STAGE") != nullptr) {
             report(as_str(format::push(paths[i].path, ": stage: ", stage_of(done.times), "\n")));
         }
-        file_memory_release();
     }
     within_command = false;
     if (time_requested()) {

@@ -5,8 +5,8 @@ page: usize = if target.f32_mantissa_bits == 24: 4096 else: 16384
 words := page / sizeof(usize)
 mask: u8 = (words - 1).wrap(u8)
 exact := words.to(u16)
-static_assert(words == 512 and mask == 255);
-static_assert(typeof(exact) == u16);
+static_assert(words == 512 and mask == 255)
+static_assert(typeof(exact) == u16)
 
 fn buffer(const n: usize) -> usize:
     mut data: [n * 2]u8 = undefined

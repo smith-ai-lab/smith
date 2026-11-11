@@ -85,6 +85,7 @@
 module front::emit;
 
 import front::ast;
+import front::emit_aggregate as aggregates;
 import front::eval;
 import front::emit_arith as arith;
 import front::emit_call as call;
@@ -2412,6 +2413,7 @@ static state::Status emit_all(state::Emitter *e) {
     append_module_asm(e);
     try debug::finish(e);
     try call::check_recursion(e->module);
+    aggregates::lower(e->module); // a big struct or array lives in memory (#3058)
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {
         ast::Span nowhere = {};

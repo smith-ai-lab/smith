@@ -3446,6 +3446,38 @@ static Bool type_uses(const ast::TypeExpr *t, Str name) {
     return false;
 }
 
+// Whether the written type names `name` as a type, anywhere inside it: `T`, `T *`, `T[:]`, `Option(T)`.
+static Bool type_names(const ast::TypeExpr *t, Str name) {
+    const ast::TypeExpr *todo[32];
+    Usize n = 0;
+    if (t != nullptr) todo[n++] = t;
+    while (n > 0) {
+        const ast::TypeExpr *x = todo[--n];
+        if (x == nullptr) continue;
+        if (x->kind == .named && countof(x->kind.named.path.segments) == 1 &&
+            same_text(x->kind.named.path.segments[0].text, name))
+            return true;
+        Usize children = 1;
+        if (x->kind == .function) children = countof(x->kind.function.params) + 1;
+        if (x->kind == .tuple) children = countof(x->kind.tuple.elements);
+        if (x->kind == .applied) children = countof(x->kind.applied.args);
+        for (Usize i = 0; i < children && n < countof(todo); i++) {
+            const ast::TypeExpr *inner = child(x, i);
+            if (inner != nullptr) todo[n++] = inner;
+        }
+    }
+    return false;
+}
+
+// Whether the result of a function names one of its own type parameters (`T *push(Pool *p, constexpr Type T)`): the
+// call site says what the result is, as it says what the argument `T` is (#3101).
+static Bool result_names_type_parameter(ast::Param list[:], const ast::TypeExpr *result_type) {
+    for (Usize i = 0; i < countof(list); i++) {
+        if (is_type_name(list[i].type) && type_names(result_type, list[i].name)) return true;
+    }
+    return false;
+}
+
 // Marks the value parameters of a function in smith's own syntax that a type of its signature uses: they are known at
 // compile time, with one instance per value (owner, 2026-11-08: "Yeah, drop const from parameters").
 static void mark_used_in_types(ast::Param list[:], const ast::TypeExpr *result_type) {
@@ -3587,7 +3619,9 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
                 .name = p->name, .kind = .variable, .type = params[i].type, .is_new = p->is_new, .written = p->type});
     }
     TypeRef result = r->table.void_type;
-    if (result_type != nullptr && !is_type_name(result_type)) {
+    if (result_names_type_parameter(list, result_type)) {
+        result = r->table.invalid; // its type is the argument's: `T` is not a type here (#3101)
+    } else if (result_type != nullptr && !is_type_name(result_type)) {
         r->new_syntax = (countof(list) > 0 && list[0].is_new) || is_new_function(d);
         result = resolve(r, result_type); // (`Type`: a type function)
         r->new_syntax = false;
