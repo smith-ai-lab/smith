@@ -1,9 +1,9 @@
 // `smith prove`'s boundaries, reports and loops, from sections 12 to 18 of tests/prove.sh (issue #292): trusted
-// functions and the default set, an error at its cause, --emit-ir, the cache of proofs (with a cache of its own: the
-// cache key is the prover's identity), functions with only an assert, the gate that skips flattening, a contract
-// library in the program, loops with an invariant (induction), a requires that bounded an unrolling, smith_modifies and
-// the coverage line. The programs are tests/prove/*.c and tests/prove/geometry/*.smith ($c); the helpers are in
-// tests/prove_cases.smith. See tests/prove_test.smith for the proofs' cache and budget.
+// functions and the default set, an error at its cause, --emit-ir, the solver's answers kept in the step store,
+// functions with only an assert, the gate that skips flattening, a contract library in the program, loops with an
+// invariant (induction), a requires that bounded an unrolling, smith_modifies and the coverage line. The programs are
+// tests/prove/*.c and tests/prove/geometry/*.smith ($c); the helpers are in tests/prove_cases.smith. See
+// tests/prove_test.smith for the budget.
 module prove_misc_test;
 
 import std::arena;
@@ -207,9 +207,10 @@ export void test_prove_emit_ir_writes_the_ir_with_the_proof_points_listed() {
     scratch::expect_contains("emit-ir: ... with the contracts as points", ir, "call void @smith_point(i32 ");
 }
 
-// 15. -v lists every function, and a function proved before is cached, with the time it took then. The cache is the
-// case's own: the first run proves.
-export void test_prove_cached_a_function_proved_before_is_cached_with_the_time_it_took_then() {
+// 15. The solver's answers are entries of the step store (#3174), keyed by the query and Bitwuzla's version: a second
+// run finds them, and gives the same verdicts, proved or refuted, with the same text but for the times. A run that does
+// not read the store (--no-cache) gives them too, and finds nothing new to keep. The store is the case's own.
+export void test_prove_answers_a_second_run_finds_the_answers_of_the_first_and_says_the_same() {
     scratch::Project p = fresh();
     defer scratch::clean(&p);
     scratch::own_cache(&p); // before the arena: clean frees the path
@@ -217,29 +218,28 @@ export void test_prove_cached_a_function_proved_before_is_cached_with_the_time_i
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run first = proved(&p, "cached: the first run proves", "-v \"$c/clamp.c\"");
-    has("cached: the first run proves clamp", &first, "ok    clamp  (");
-    lacks("cached: the first run is not cached", &first, "cached");
-    scratch::Run second = proved(&p, "cached: the second run proves", "-v \"$c/clamp.c\"");
-    has("cached: the second run lists clamp, marked cached", &second, "ok    clamp  (");
-    has("cached: ... with the time it took when it was proved", &second, "cached: proved before in ");
-    has("cached: ... and draw_health, which uses its contract", &second, "ok    draw_health  (");
-    has("cached: ... and the count", &second, "2 proved, 0 failed, 2 cached");
-    scratch::Run again = proved(&p, "cached: --no-cache runs", "-v --no-cache \"$c/clamp.c\"");
-    lacks("cached: --no-cache proves again", &again, "cached");
-}
-
-export void test_prove_cached_a_function_that_fails_is_never_cached() {
-    scratch::Project p = fresh();
-    defer scratch::clean(&p);
-    scratch::own_cache(&p); // before the arena: clean frees the path
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    scratch::Run run = prove(&p, "\"$c/bad_caller.c\" \"$c/clamp.c\"");
-    has("cached: a function that fails is never cached", &run,
-        "bad_caller.c:10: the call of clamp may break smith_requires(low <= high)");
+    const char *script =
+        "c=cases; r=\"$XDG_CACHE_HOME/smith/steps/a\"; "
+        "run() { smith prove -v \"$@\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1 | "
+        "grep -E '^(ok|FAIL) |counterexample|may break|proved' | sed 's/[0-9][0-9]*\\.[0-9][0-9]* s/T s/g'; }; "
+        "run \"$c/clamp.c\" >one.txt; a=$(find \"$r\" -type f | wc -l); "
+        "run \"$c/clamp.c\" >two.txt; b=$(find \"$r\" -type f | wc -l); "
+        "run --no-cache \"$c/clamp.c\" >three.txt; d=$(find \"$r\" -type f | wc -l); "
+        "run \"$c/bad_caller.c\" \"$c/clamp.c\" >bad_one.txt; e=$(find \"$r\" -type f | wc -l); "
+        "run \"$c/bad_caller.c\" \"$c/clamp.c\" >bad_two.txt; f=$(find \"$r\" -type f | wc -l); "
+        "[ \"$a\" -gt 0 ] && echo \"kept\"; [ \"$a\" = \"$b\" ] && [ \"$a\" = \"$d\" ] && echo \"nothing new\"; "
+        "[ \"$e\" -gt \"$d\" ] && echo \"refuted kept\"; [ \"$e\" = \"$f\" ] && echo \"refuted nothing new\"; "
+        "cmp -s one.txt two.txt && cmp -s one.txt three.txt && echo \"proved same\"; "
+        "cmp -s bad_one.txt bad_two.txt && echo \"refuted same\"; grep -c 'may break smith_requires' bad_two.txt";
+    scratch::Run run = scratch::sh(&p, script);
+    scratch::expect_status("answers: the runs", 0, &run);
+    has("answers: the first run keeps the answers it found", &run, "kept");
+    has("answers: ... the second finds them and keeps nothing new", &run, "nothing new");
+    has("answers: ... a refutation is kept too", &run, "refuted kept");
+    has("answers: ... and found again", &run, "refuted nothing new");
+    has("answers: ... the same text, proved", &run, "proved same");
+    has("answers: ... and refuted", &run, "refuted same");
+    has("answers: ... with its counterexample", &run, "1");
 }
 
 // 16. A function with a smith_assert is in the default set (issue #53), as one with requires, ensures or invariant is:
@@ -736,70 +736,4 @@ export void test_prove_coverage_smith_check_with_nothing_to_prove_says_0_of_n() 
         &p, "cd coverage && git init -q . && printf 'int main(void) { return 0; }\\n' >main.c && env -u SMITH_OUTPUT "
             "smith check 2>&1");
     has("coverage: nothing to prove is a success that says 0 of N", &run, "smith check: prove ok (0 of 1 functions)");
-}
-
-// 17. The cache key is the prover's identity (prove::prover_identity, tests 18 and 19), never the build time: a rebuild
-// of smith with the same prover keeps the proofs.
-export void test_prove_cache_key_has_no_build_time_in_it() {
-    scratch::Project p = fresh();
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    scratch::copy_tree(&p, "shim/prove.cpp", "prove.cpp");
-    scratch::expect_text("cache key: no build time in it", "0",
-                         scratch::capture(&p, "grep -c '__DATE__\\|__TIME__' prove.cpp"));
-}
-
-// 18. A proof follows the prover's identity, not the binary (#3076): the same identity finds the proof whatever else
-// of smith was rebuilt, another identity (a change to the prover, the LLVM pack or a solver) proves again, and the
-// first one's proofs are still there on a return to it. SMITH_PROVER_IDENTITY stands in for a smith built from another
-// prover.
-export void test_prove_cache_follows_the_provers_identity() {
-    scratch::Project p = fresh();
-    defer scratch::clean(&p);
-    scratch::own_cache(&p); // before the arena: clean frees the path
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    const char *as_built = "c=cases; smith prove -v \"$c/clamp.c\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1";
-    const char *as_other = "c=cases; SMITH_PROVER_IDENTITY=another-prover smith prove -v \"$c/clamp.c\" -- -I "
-                           "\"$SMITH_REPO/.smith/include\" 2>&1";
-    scratch::Run first = scratch::sh(&p, as_built);
-    scratch::expect_status("identity: the first run proves", 0, &first);
-    lacks("identity: ... from nothing", &first, "cached");
-    scratch::Run same = scratch::sh(&p, as_built);
-    has("identity: the same prover finds its proofs", &same, "2 proved, 0 failed, 2 cached");
-    scratch::Run other = scratch::sh(&p, as_other);
-    scratch::expect_status("identity: another prover proves", 0, &other);
-    lacks("identity: ... again, not from the first one's proofs", &other, "cached");
-    scratch::Run other_again = scratch::sh(&p, as_other);
-    has("identity: ... and then finds its own", &other_again, "2 proved, 0 failed, 2 cached");
-    scratch::Run back = scratch::sh(&p, as_built);
-    has("identity: a return to the first prover finds its proofs", &back, "2 proved, 0 failed, 2 cached");
-}
-
-// 19. The identity `smith build` makes (build_prover_identity in build.c) hashes every file of smith the prover is
-// compiled from: a file of shim/ that a source of the prover includes is one the list in build.c names. (Headers with a
-// folder in their name are LLVM's, Alive2's and the solvers', which the pack's part of the identity covers.)
-export void test_prove_identity_names_every_file_the_prover_includes() {
-    scratch::Project p = fresh();
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    scratch::copy_tree(&p, "shim", "shim");
-    scratch::copy_tree(&p, "build.c", "build.c.txt");
-    scratch::expect_text("identity: build.c hashes these files", "1",
-                         scratch::capture(&p, "grep -c 'ls shim/prove\\*.cpp shim/prove\\*.hpp shim/proved.hpp "
-                                              "shim/platform\\*.h' build.c.txt"));
-    scratch::expect_text(
-        "identity: every file of shim/ they include is one of them", "missing:",
-        scratch::capture(&p, "cd shim && missing= && for n in $(cat prove*.cpp prove*.hpp proved.hpp platform*.h | "
-                             "sed -n 's/^ *# *include \"\\([^\"]*\\)\".*/\\1/p' | sort -u); do [ -e \"$n\" ] || "
-                             "continue; case $n in prove*.cpp|prove*.hpp|proved.hpp|platform*.h) ;; *) "
-                             "missing=\"$missing $n\" ;; esac; done; echo \"missing:$missing\""));
 }

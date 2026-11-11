@@ -116,6 +116,12 @@ runs:
           curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
             tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$dir" && got=$((got + 1))
         done
+        # the solvers' answers (#3174) are where smith run inside a test looks (a scratch project's XDG_CACHE_HOME,
+        # tests/scratch.smith), as the import cache is below
+        if [ -d "$dir/steps/a" ]; then
+          tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"; mkdir -p "$tests"
+          cp -a "$dir/steps/." "$tests/" && rm -rf "$dir/steps"
+        fi
         if [ "$got" -gt 0 ]; then
           echo "test store: restored $(find "$dir" -type f | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         else

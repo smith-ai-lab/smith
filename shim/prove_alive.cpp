@@ -633,8 +633,10 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 for (size_t i = next++; i < jobs.size(); i = next++) {
                     if (jobs[i]->text.empty()) continue;
                     double before = thread_cpu_seconds();
-                    jobs[i]->verdict = bitwuzla_check(jobs[i]->text, left, process_start, Options::solver_threads);
-                    jobs[i]->cpu = thread_cpu_seconds() - before;
+                    double kept = 0;
+                    jobs[i]->verdict = bitwuzla_check(jobs[i]->text, left, process_start, Options::solver_threads,
+                                                      !options.no_cache, kept);
+                    jobs[i]->cpu = kept >= 0 ? kept : thread_cpu_seconds() - before;
                 }
             };
             std::vector<std::thread> threads;

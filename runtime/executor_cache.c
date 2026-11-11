@@ -1384,11 +1384,13 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
     smith_cache_ages_reset();
     smith_stepcache_tally = (typeof(smith_stepcache_tally)){};
     smith_stepcache_pass("r", now, -1, true);
+    smith_stepcache_pass("a", now, -1, true);
     uint64_t before = smith_cache_ages.total;
     long cutoff = smith_cache_cutoff(before > cap ? before - cap : 0);
     uint64_t spare = smith_cache_spare(cutoff, before > cap ? before - cap : 0);
     smith_stepcache_spare = spare;
     smith_stepcache_pass("r", now, cutoff, false);
+    smith_stepcache_pass("a", now, cutoff, false);
     bool kept_edge = smith_stepcache_spare != spare; // some result of the cutoff's step stays
     size_t seen = smith_stepcache_tally.seen;
     size_t dropped = smith_stepcache_tally.dropped;
@@ -1410,6 +1412,50 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
 void smith_stepcache_prune(SmithExec *exec) {
     if (!smith_stepcache_open(exec) || exec->options.dry_run) return;
     smith_stepcache_prune_at(time(nullptr), smith_cache_limit());
+}
+
+// ---------------------------------------------------------------- answers
+// A step that is not a compile (a query to a solver, #3174) keeps its answer as one file, a/<xx>/<hex>, beside the
+// results of the compiles (r/): the same folder, prune and cap, and a folder of their own, so that a job that proves
+// carries them without the objects. The caller hashes what the step read into `hex` (64 hex
+// digits); the bytes are the caller's. No build is needed, and any thread may call these.
+
+static bool smith_stepcache_answer_path(char *out, const char *hex) {
+    char base[PATH_MAX];
+    SmithPackageFault fault;
+    const char *setting = getenv("SMITH_STEP_CACHE"); // off for the build is off for its answers
+    if (setting != nullptr && (strcmp(setting, "0") == 0 || strcmp(setting, "off") == 0)) return false;
+    if (strlen(hex) != 64 || !smith_cache_base(base, &fault)) return false;
+    int written = snprintf(out, PATH_MAX, "%s/steps/a/%.2s/%s", base, hex, hex);
+    return written > 0 && written < PATH_MAX;
+}
+
+bool smith_stepcache_answer_get(const char *hex, char *out, size_t capacity, size_t *size) {
+    char path[PATH_MAX];
+    if (!smith_stepcache_answer_path(path, hex)) return false;
+    int file = open(path, O_RDONLY | O_CLOEXEC);
+    if (file < 0) return false;
+    size_t used = 0;
+    for (size_t rounds = 0; rounds <= capacity; rounds++) {
+        ssize_t got = read(file, out + used, capacity - used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) break;
+        used += (size_t)got;
+    }
+    close(file);
+    *size = used;
+    smith_stepcache_touch(path);
+    return used < capacity;
+}
+
+void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size) {
+    char path[PATH_MAX];
+    char temporary[PATH_MAX];
+    if (!smith_stepcache_answer_path(path, hex)) return;
+    int written =
+        snprintf(temporary, sizeof temporary, "%s.%d.%lx", path, (int)getpid(), (unsigned long)(uintptr_t)temporary);
+    if (written <= 0 || written >= (int)sizeof temporary || !smith_stepcache_make_parent(path)) return;
+    if (smith_stepcache_write(temporary, bytes, size) && rename(temporary, path) != 0) unlink(temporary);
 }
 
 #ifdef SMITH_CORE
