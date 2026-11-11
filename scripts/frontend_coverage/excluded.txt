@@ -1,0 +1,118 @@
+# Files the front-end count does not measure (#3037): each line is `path TAB reason`.
+# reason is `error-fixture` (a test expects a diagnostic for the file) or `old-form: <form>` (a form the language
+# dropped, decided in knowledge/decisions.md or a smith-dev-syntax skill). A listed file must still fail with a
+# diagnostic: one that compiles, or whose compile crashes, fails the count job. How to add to it, and when not to:
+# knowledge/front-end.md, "The count's excluded files".
+tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
+tests/smith-lang/cases/error-array-empty/src/main.smith	error-fixture
+tests/smith-lang/cases/error-array-infer/src/main.smith	error-fixture
+tests/smith-lang/cases/error-array-param-index/src/main.smith	error-fixture
+tests/smith-lang/cases/error-array-param-modify/src/main.smith	error-fixture
+tests/smith-lang/cases/error-array-param-shape/src/main.smith	error-fixture
+tests/smith-lang/cases/error-c-name-macro/src/uses/macro.smith	error-fixture
+tests/smith-lang/cases/error-c-name/src/std/names.smith	error-fixture
+tests/smith-lang/cases/error-concept-notes/src/main.smith	error-fixture
+tests/smith-lang/cases/error-constexpr-c-asm/src/main.smith	error-fixture
+tests/smith-lang/cases/error-constexpr-c/src/main.smith	error-fixture
+tests/smith-lang/cases/error-constexpr-contract-deep/src/main.smith	error-fixture
+tests/smith-lang/cases/error-constexpr-contract/src/main.smith	error-fixture
+tests/smith-lang/cases/error-constexpr-import-state/src/main.smith	error-fixture
+tests/smith-lang/cases/error-constexpr-pointers/src/main.smith	error-fixture
+tests/smith-lang/cases/error-countof-pointer/src/main.smith	error-fixture
+tests/smith-lang/cases/error-defer-name/src/main.smith	error-fixture
+tests/smith-lang/cases/error-enum-convert/src/main.smith	error-fixture
+tests/smith-lang/cases/error-enum-payload/src/main.smith	error-fixture
+tests/smith-lang/cases/error-enum-type-function-export/src/main.smith	error-fixture
+tests/smith-lang/cases/error-enum-type-function-generic/src/main.smith	error-fixture
+tests/smith-lang/cases/error-enum-type-function/src/main.smith	error-fixture
+tests/smith-lang/cases/error-export-two-names/src/two.smith	error-fixture
+tests/smith-lang/cases/error-fields-enum-member/src/main.smith	error-fixture
+tests/smith-lang/cases/error-filescope-if/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-auto-element/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-concept-element/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-concept-local/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-concept-param/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-element-convert/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-number-parameter/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-private-generic/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-private-name/src/main.smith	error-fixture
+tests/smith-lang/cases/error-generic-return-type/src/main.smith	error-fixture
+tests/smith-lang/cases/error-if-constexpr/src/main.smith	error-fixture
+tests/smith-lang/cases/error-import-broken-module/src/main.smith	error-fixture
+tests/smith-lang/cases/error-import-eof/src/main.smith	error-fixture
+tests/smith-lang/cases/error-keyword-after-type/src/shapes.smith	error-fixture
+tests/smith-lang/cases/error-keyword-module/src/shapes.smith	error-fixture
+tests/smith-lang/cases/error-keyword-plain/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-capture-no-module/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-captures-local/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-generic-runtime-capture/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-param-count/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-param-untyped/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-returns-disagree/src/main.smith	error-fixture
+tests/smith-lang/cases/error-lambda-wrong-signature/src/main.smith	error-fixture
+tests/smith-lang/cases/error-module-first/src/late.smith	error-fixture
+tests/smith-lang/cases/error-module-missing/src/main.smith	error-fixture
+tests/smith-lang/cases/error-plain-c-macro/src/main.smith	error-fixture
+tests/smith-lang/cases/error-private-prototype-exported/src/p.smith	error-fixture
+tests/smith-lang/cases/error-range-for/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-const-write/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-dims-group/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-dims-shape/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-initializer-unread/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-initializer/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-not-sliceable/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-pointer-argument/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-pointer-bounds/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-qualifier-bracket/src/main.smith	error-fixture
+tests/smith-lang/cases/error-slice-step/src/main.smith	error-fixture
+tests/smith-lang/cases/error-stale-header/src/main.smith	error-fixture
+tests/smith-lang/cases/error-str-name/src/main.smith	error-fixture
+tests/smith-lang/cases/error-target-fact/src/bad.smith	error-fixture
+tests/smith-lang/cases/error-try-error-type/src/main.smith	error-fixture
+tests/smith-lang/cases/error-try-generic-kind/src/main.smith	error-fixture
+tests/smith-lang/cases/error-try-kind/src/main.smith	error-fixture
+tests/smith-lang/cases/error-try-plain-function/src/main.smith	error-fixture
+tests/smith-lang/cases/error-tuple-index/src/main.smith	error-fixture
+tests/smith-lang/cases/error-type-function-pointee/src/main.smith	error-fixture
+tests/smith-lang/cases/error-type-value-import/src/main.smith	error-fixture
+tests/smith-lang/cases/error-type-value-runtime/src/main.smith	error-fixture
+tests/smith-lang/cases/error-type-value-slice-bounds/src/main.smith	error-fixture
+tests/smith-lang/cases/error-typetag-collision-reverse/src/main.smith	error-fixture
+tests/smith-lang/cases/error-typetag-collision/src/main.smith	error-fixture
+tests/smith-lang/cases/error-unused-discard-braces/src/main.smith	error-fixture
+tests/smith-lang/cases/error-unused-read-underscore/src/main.smith	error-fixture
+tests/smith-lang/cases/error-value-query/src/main.smith	error-fixture
+tests/smith-lang/cases/error-void-pointer/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-auto-arguments/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-auto-constants-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-auto-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-auto-written/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-bare-type-then-code/src/num.smith	error-fixture
+tests/smith-lang/cases/generic-built-list-error/src/plain.smith	error-fixture
+tests/smith-lang/cases/generic-call-unclosed-statement/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-call-unclosed/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-fields-doc/src/docs.smith	old-form: imports a module with a preprocessor directive
+tests/smith-lang/cases/generic-fields-doc/src/main.smith	old-form: imports a module with a preprocessor directive
+tests/smith-lang/cases/generic-for-constexpr-error/src/bad.smith	error-fixture
+tests/smith-lang/cases/generic-for-range-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-function-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-function-generic-error/src/order.smith	error-fixture
+tests/smith-lang/cases/generic-pack-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-rest-error/src/bad.smith	error-fixture
+tests/smith-lang/cases/generic-rest-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-two-keyword-params/src/num.smith	error-fixture
+tests/smith-lang/cases/header-conditional-define/src/cfg/mode.smith	old-form: #if on a macro
+tests/smith-lang/cases/header-conditional/src/cfg/mode.smith	old-form: #if on a macro
+tests/smith-lang/cases/header-in-memory/src/lib.smith	old-form: #if on a macro
+tests/smith-lang/cases/header-in-memory/src/main.smith	old-form: imports a module with a preprocessor directive
+tests/smith-lang/cases/header-include-chain/src/inc/chain.smith	old-form: #if on a macro
+tests/smith-lang/cases/header-include-chain/src/main.smith	old-form: imports a module with a preprocessor directive
+tests/smith-lang/cases/lowered-directives/src/demo/dir.smith	old-form: #pragma
+tests/smith-lang/cases/module-c-features/src/kit/things.smith	old-form: function-like #define
+tests/smith-lang/cases/module-c-features/src/main.smith	old-form: function-like #define
+tests/smith-lang/cases/session-keyword-name/src/main.smith	error-fixture
+tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
+tests/smith-lang/cases/sized-error-message/src/main.smith	error-fixture
+tests/smith-lang/cases/sized-own-typedef/src/main.smith	error-fixture
+tests/smith-lang/cases/sized-types/src/main.smith	old-form: _Generic

@@ -174,3 +174,99 @@ export void test_frontend_coverage_a_generics_fix_does_not_depend_on_the_order_o
     scratch::release(run.out);
     scratch::release(run.err);
 }
+
+// #3037: the files of the excluded list leave the denominator, and the list cannot hide progress or rot.
+export void test_frontend_coverage_excluded_files_leave_the_total() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "table.tsv", table);
+    scratch::write(&p, "excluded.txt", "# a comment\n\nc.smith\told-form: #pragma\nd.smith\terror-fixture\n");
+    scratch::Run run = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- summarize table.tsv");
+    scratch::expect_status("frontend_coverage: the summary is made", 0, &run);
+    scratch::expect_contains("frontend_coverage: the total leaves out the listed files, the numerator is the same",
+                             run.out, "frontend-coverage: 1 of 3 files pass\n");
+    scratch::expect_contains("frontend_coverage: the count of listed files, to rebuild the old total", run.out,
+                             "frontend-excluded: 2\n");
+    scratch::expect_contains("frontend_coverage: a listed file is one line with its reason", run.out,
+                             "excluded  c.smith [old-form: #pragma]\n");
+    scratch::expect_lacks("frontend_coverage: a listed file is not a failure", run.out, "FAIL  c.smith");
+    scratch::expect_contains("frontend_coverage: its cause is not counted", run.out, "frontend-errors: 5 2\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
+
+// #3037: a listed file that compiles, a listed fixture whose compile crashed and a bad line are errors of the job.
+export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "table.tsv", table);
+    scratch::write(&p, "crash.tsv", "x.smith\tcheck\tcompile ended with status 139 (signal)\t\n");
+    scratch::write(&p, "passes.txt", "a.smith\terror-fixture\n");
+    scratch::write(&p, "crash.txt", "x.smith\terror-fixture\n");
+    scratch::write(&p, "old.txt", "a.smith\told-form: #pragma\n");
+    scratch::write(&p, "bad.txt", "b.smith\tbecause\n");
+    scratch::write(&p, "twice.txt", "b.smith\terror-fixture\nb.smith\terror-fixture\n");
+    scratch::Run passes = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=passes.txt smith run -- summarize table.tsv");
+    scratch::expect_failure("frontend_coverage: a listed file that compiles fails the job", &passes);
+    scratch::expect_contains("frontend_coverage: and says which one", passes.err,
+                             "a.smith is on the excluded list as an error fixture but compiles");
+    scratch::Run crash = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=crash.txt smith run -- summarize crash.tsv");
+    scratch::expect_failure("frontend_coverage: an error fixture that crashed fails the job", &crash);
+    scratch::expect_contains("frontend_coverage: and says it had no diagnostic", crash.err,
+                             "ended without a diagnostic");
+    scratch::Run old = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=old.txt smith run -- summarize table.tsv");
+    scratch::expect_status("frontend_coverage: an old form that compiles is a warning, not a failure", 0, &old);
+    scratch::expect_contains("frontend_coverage: the warning names the line to delete", old.err,
+                             "a.smith compiles but is on the excluded list (old-form: #pragma): delete its line");
+    scratch::expect_contains("frontend_coverage: and the file stays in the total as a pass", old.out, "pass  a.smith");
+    scratch::Run bad = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=bad.txt smith run -- summarize table.tsv");
+    scratch::expect_failure("frontend_coverage: a reason outside the fixed set fails the job", &bad);
+    scratch::Run twice = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=twice.txt smith run -- summarize table.tsv");
+    scratch::expect_failure("frontend_coverage: a path listed twice fails the job", &twice);
+    scratch::release(passes.out);
+    scratch::release(passes.err);
+    scratch::release(crash.out);
+    scratch::release(crash.err);
+    scratch::release(old.out);
+    scratch::release(old.err);
+    scratch::release(bad.out);
+    scratch::release(bad.err);
+    scratch::release(twice.out);
+    scratch::release(twice.err);
+}
+
+// #3037: `import game.util` in `game/main.smith` is the file `game/util.smith` of the folder above, so a row of main
+// has util in its closure: its key covers util, and a run that names main alone measures util too (a row made without
+// it once failed and was reused when util was named).
+export void test_frontend_coverage_import_resolves_from_the_folder_above_the_file() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir -p repo/game");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/game/main.smith", "import game.util\n\nfn main() -> i32:\n    return util.one() - 1\n");
+    scratch::write(&p, "repo/game/util.smith", "pub fn one() -> i32:\n    return 1\n");
+    scratch::Run run =
+        scratch::sh(&p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+                        "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/some\" game/main.smith > some.tsv; "
+                        "smith run -- chain some.tsv \"$PWD/repo\" game/main.smith");
+    scratch::expect_contains("frontend_coverage: the file main imports is in its closure", run.out,
+                             " of 2 files pass (the files named and what they import)");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
