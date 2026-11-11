@@ -1,0 +1,31 @@
+# An `if` whose condition is known at compile time keeps one branch (#3039): a number of the target compared with a
+# number, a fact compared with a name, and `sizeof` of a type parameter beside them. The branch not kept is neither
+# checked nor emitted, so it may name what does not exist.
+
+fn mantissa() -> i32:
+    if target.f32_mantissa_bits == 24:
+        return 24
+    else:
+        return no_such_function()
+
+fn lanes[T](x: T) -> i32:
+    if target.arch == .aarch64 and sizeof(T) == 4:
+        return 4
+    else if target.arch == .x86_64 and sizeof(T) == 4:
+        return 8
+    else if sizeof(T) == 8:
+        return 2
+    else:
+        return no_such_function(x)
+
+pub fn check() -> i32:
+    if mantissa() != 24:
+        return 1
+    a: f32 = 1.0
+    b: f64 = 1.0
+    n := lanes(a)
+    if n != 4 and n != 8:
+        return 2
+    if lanes(b) != 2:
+        return 3
+    0

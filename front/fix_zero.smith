@@ -134,6 +134,61 @@ static Str flat_zero(types::TypeRef t) {
     return types::message_of(format::push(out, "]"));
 }
 
+// The checker and the module of the file being fixed, for `nested_name`; set while `edits` runs.
+static types::Checked *naming = nullptr;
+static const ast::Module *naming_module = nullptr;
+
+// Whether `binding.name` names the type that `types::show` writes as `whole`.
+static Bool names_the_type(Str binding, Str name, Str whole) {
+    if (countof(binding) == 0) return false;
+    Str path = types::message_of(format::push(binding, "::", name));
+    Usize errors_before = naming->error_count;
+    Bool was_new = naming->new_syntax;
+    naming->new_syntax = true;
+    types::TypeRef found = types::resolve(naming, ast::named(path));
+    naming->new_syntax = was_new;
+    naming->error_count = errors_before;
+    return found != nullptr && same(types::show(found), whole); // an alias is another ref of the type
+}
+
+// How the file names the struct `t` of a field of the struct it wrote as `outer`: `types::show` gives the module's
+// whole path (`front.emit_state.Target`), which the file may not import, so a struct of another module is named
+// through a module the file imports when that name is the same type: the outer's own module first (`emit.Target`, an
+// alias `emit` exports), then each import (#3027).
+static Str nested_name(Str outer, types::TypeRef t) {
+    Str whole = types::show(t);
+    if (naming == nullptr || countof(types::owner_of(t)) == 0 || same(types::owner_of(t), "c::")) return whole;
+    Str own = types::name_of(t); // `front::emit_state::Target`: the last segment is the name an alias would give
+    for (Usize i = countof(own); i > 1; i--) {
+        if (own[i - 1] == ':' && own[i - 2] == ':') {
+            own = own[i:countof(own)];
+            break;
+        }
+    }
+    // the outer's module: the text before its one `.` or `::` (`emit.Options`, `emit::Options`)
+    Usize cut = countof(outer);
+    Usize separators = 0;
+    for (Usize i = 0; i < countof(outer); i++) {
+        if (outer[i] == '.' || (outer[i] == ':' && i + 1 < countof(outer) && outer[i + 1] == ':')) {
+            if (cut == countof(outer)) cut = i;
+            separators += 1;
+        }
+    }
+    if (separators == 1 && names_the_type(outer[0:cut], own, whole))
+        return types::message_of(format::push(outer[0:cut], ".", own));
+    if (naming_module == nullptr) return whole;
+    for (Usize i = 0; i < countof(naming_module->decls); i++) {
+        const ast::Decl *d = naming_module->decls[i];
+        if (d->kind != .import_module) continue;
+        ast::Path path = d->kind.import_module.path;
+        if (countof(path.segments) == 0) continue;
+        Str binding = countof(d->kind.import_module.alias) > 0 ? d->kind.import_module.alias
+                                                               : path.segments[countof(path.segments) - 1].text;
+        if (names_the_type(binding, own, whole)) return types::message_of(format::push(binding, ".", own));
+    }
+    return whole;
+}
+
 // `T(a = 0, inner = U(x = 0))`: a struct whose fields are numbers, `Bool`s, pointers, arrays of those and structs of
 // the same, one, two or three structs deep (a C struct such as `LLVMOrcCSymbolMapPair` is three). No recursion is
 // allowed, so each level is a function that calls the one below it.
@@ -160,7 +215,7 @@ static Str construct_two(Str name, types::TypeRef t) {
     for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
         types::TypeRef field = types::slots_of(t).items[i].type;
         Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_one(types::show(field), field);
+        if (countof(zero) == 0) zero = construct_one(nested_name(name, field), field);
         if (countof(zero) == 0 || !nameable(types::slots_of(t).items[i].name)) return "";
         out = types::message_of(format::push(out, i > 0 ? ", " : "", types::slots_of(t).items[i].name, " = ", zero));
     }
@@ -175,7 +230,7 @@ static Str construct_three(Str name, types::TypeRef t) {
     for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
         types::TypeRef field = types::slots_of(t).items[i].type;
         Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_two(types::show(field), field);
+        if (countof(zero) == 0) zero = construct_two(nested_name(name, field), field);
         if (countof(zero) == 0 || !nameable(types::slots_of(t).items[i].name)) return "";
         out = types::message_of(format::push(out, i > 0 ? ", " : "", types::slots_of(t).items[i].name, " = ", zero));
     }
@@ -226,14 +281,14 @@ static Str construct_array(Str element, types::TypeRef t) {
 
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
 // each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
-static Str omitted(types::TypeRef record, U64 given) {
+static Str omitted(types::TypeRef record, U64 given, Str outer) {
     if (record->kind != .record || types::is_union_record(record) || !types::is_complete(record)) return "";
     Str out = "";
     for (Usize k = 0; k < countof(types::slots_of(record).items); k++) {
         if ((given & ((U64)1 << k)) != 0 || types::slots_of(record).items[k].default_value != nullptr) continue;
         types::TypeRef field = types::slots_of(record).items[k].type;
         Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_one(types::show(field), field);
+        if (countof(zero) == 0) zero = construct_one(nested_name(outer, field), field);
         if (countof(zero) == 0 || !nameable(types::slots_of(record).items[k].name)) return "";
         out = types::message_of(format::push(out, ", ", types::slots_of(record).items[k].name, " = ", zero));
     }
@@ -243,10 +298,15 @@ static Str omitted(types::TypeRef record, U64 given) {
 // The fix of the construction `e` that leaves fields out: their zero values after the last argument. Only for a
 // struct this module cannot give defaults, one a C header declares (#2530: a smith struct gets them in its
 // declaration).
-static core::ParseError left_out_fix(const ast::Expr *e, types::TypeRef record, U64 given) {
+static core::ParseError left_out_fix(Str source, const ast::Expr *e, types::TypeRef record, U64 given) {
     core::ParseError none = {};
-    Str text = omitted(record, given);
-    if (countof(text) == 0 || !(e->kind == .call)) return none;
+    if (!(e->kind == .call)) return none;
+    const ast::Expr *callee = e->kind.call.callee;
+    Str outer = "";
+    if (callee->span.end > callee->span.start && callee->span.end <= countof(source))
+        outer = source[callee->span.start:callee->span.end];
+    Str text = omitted(record, given, outer);
+    if (countof(text) == 0) return none;
     ast::ExprRef args[:] = e->kind.call.args;
     U32 at = e->span.end - 1; // before the `)`
     if (countof(args) > 0) {
@@ -1594,7 +1654,7 @@ static core::Errors option_param_edits(core::Errors out, Str source, const ast::
     return out;
 }
 
-export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
+static core::Errors module_edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
     Bool filled = false;
     out = defaults(source, module, c, out, &filled);
@@ -1623,7 +1683,7 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         }
         if (!from_header && (countof(types::owner_of(record)) > 0 || own < local.count)) continue;
         last = error.left_out_call;
-        core::ParseError given_zero = left_out_fix(error.left_out_call, record, error.left_out_given);
+        core::ParseError given_zero = left_out_fix(source, error.left_out_call, record, error.left_out_given);
         if (countof(given_zero.fix) == 0 && global_zero(module, error.left_out_call)) {
             out = add(out, undefined_fix(error.left_out_call)); // a C union or struct of a global: C's zeroed storage
             continue;
@@ -1663,5 +1723,14 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
     zeroed_written = false;
     out = option_param_edits(out, source, module, c);
     localize(module, out);
+    return out;
+}
+
+export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
+    naming = c; // what `nested_name` resolves through: the file's checker and its imports
+    naming_module = module;
+    core::Errors out = module_edits(source, module, c);
+    naming = nullptr;
+    naming_module = nullptr;
     return out;
 }

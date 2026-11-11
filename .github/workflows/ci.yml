@@ -99,7 +99,9 @@ jobs:
       mac: ${{ steps.mac.outputs.mac }}
       # whether `warm` runs, and on which OSes: a push to main runs it for real on both; a pull request that changes the
       # job (or the setup action it runs) runs it as a dry run on Linux only (#2769, knowledge/ci-hosted.md)
-      warm: ${{ steps.warm.outputs.warm }}
+      warm: ${{ steps.scope.outputs.docs_push == 'true' && 'false' || steps.warm.outputs.warm }}
+      # a docs-only diff (#3044): what `docs-linux` also runs
+      docs_tests: ${{ steps.scope.outputs.docs_tests }}
       warm_os: ${{ steps.warm.outputs.os }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
@@ -137,8 +139,18 @@ jobs:
         # of it, so an entry with a later group built on it waits here, on this one runner, and every heavy job (they
         # all need `changes`) waits with it; it is cancelled when its group merges. Once it is the last entry built, it
         # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
+        # One full build at a time (#3057): the last entry also waits while a group ahead of it is in its full build,
+        # so the next full run holds every entry that queued during the one before it.
         id: batch
         uses: ./.github/actions/batch-wait
+      - name: "Split: a later queue group failed"
+        # #3057: the full build of a later group failed, and that run held this entry, so this group builds its own
+        # tree now, beside the other groups ahead of the failed one. `scripts/batch_wait.c` in the group ahead of this
+        # one reads this step (a name that starts with `Split:`, concluded success) in this run's jobs and splits too:
+        # do not rename it without that query.
+        if: steps.batch.outputs.batch == 'split'
+        run: |
+          echo "batch: split (a later group's full build failed; every group ahead of it builds its own tree)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
@@ -168,17 +180,31 @@ jobs:
         env:
           BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
           UNCACHED_INPUT: ${{ inputs.uncached }}
+          BEFORE: ${{ github.event.before }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
           # Other workflows (llvm.yml) change nothing this one runs; ci.yml itself and the actions it uses do.
           documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
           workflows='^[.]github/workflows/'
-          gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
+          # the one list of documentation paths (#3044): a diff of only these builds nothing on any platform. Markdown
+          # elsewhere (templates/new, plugin/knowledge, tests/docs/fixtures) is read by tests, so it stays code.
+          gated='^([^/]+[.]md|knowledge/.*|[.]agents/.*|[.]claude/skills/.*)$'
+          docs_push=false
           scope=full
           changed=
           # a push to main is a commit the merge queue already checked: it only publishes the release
-          if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            scope=release; BASE=
+            # a push of only documentation (#3044): the compiler did not change, so there is no release and no warm
+            # build; the scope is none. A push whose range cannot be read stays release.
+            if [ -n "$BEFORE" ] && ! printf '%s' "$BEFORE" | grep -qE '^0+$' && pushed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" 2>/dev/null) && [ -n "$pushed" ]; then
+              if [ -z "$(printf '%s\n' "$pushed" | grep -vE "$documents|$gated|$workflows" || true)" ] \
+                && [ -z "$(printf '%s\n' "$pushed" | grep -E '^([.]github/workflows/ci[.]yml|[.]github/actions/.*)$' || true)" ]; then
+                scope=none; docs_push=true
+              fi
+            fi
+          fi
           # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
           # everything not yet on main. Scoped by its own diff, a docs-only entry behind a code change ran no tests,
           # passed, and carried the failing code onto main (#1539 behind #1541, 2026-11-02)
@@ -196,6 +222,14 @@ jobs:
           # in the queue. A docs scope keeps the whole job (it is where the docs check runs); the queue runs it always.
           mac_run=true
           mac_tests=true
+          # docs-only (#3044): no macOS job at all, in a PR check and in a queue run; the checks that read documents run
+          # on Linux in `docs-linux` with the published release. `docs_tests`: the diff reaches what readme_test and
+          # skills_test read (README.md, the skills): they build a test runner (about 2 minutes cold), `smith docs` does not.
+          docs_tests=false
+          if [ "$scope" = docs ]; then
+            mac_run=false
+            if printf '%s\n' "$changed" | grep -E '^(README[.]md|[.]agents/|[.]claude/skills/)' >/dev/null; then docs_tests=true; fi
+          fi
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
             mac_tests=false
             if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_tests=true; fi
@@ -218,6 +252,8 @@ jobs:
           fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
+          echo "docs_tests=$docs_tests" >>"$GITHUB_OUTPUT"
+          echo "docs_push=$docs_push" >>"$GITHUB_OUTPUT"
           echo "mac_tests=$mac_tests" >>"$GITHUB_OUTPUT"
           echo "count=$count" >>"$GITHUB_OUTPUT"
           echo "uncached=$uncached" >>"$GITHUB_OUTPUT"
@@ -321,6 +357,57 @@ jobs:
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
           echo "tests: $count Linux parts ($flags), one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
+      - name: The queue's last 24 hours
+        # the standing number of #3051 and #3057 (owner, 2026-11-11: "if the PR queue is growing over time, that's bad"):
+        # the nightly run prints entries against merges and pull requests per passing queue run. The queue holds its
+        # load when merged is at least entered and the depth does not grow over three days. Entered counts every
+        # `added_to_merge_queue` event of the pull requests updated in the window (a re-queue counts again); batched is
+        # a cancelled queue run whose pull request merged (a later group's run merged it, #2851). About 100 reads, with
+        # the reader's token; a failed read prints `unreadable` and fails nothing.
+        if: github.event_name == 'schedule'
+        run: |
+          r="repos/$GITHUB_REPOSITORY"
+          cutoff=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ)
+          api() { GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api -X GET "$@"; }
+          line() {
+            local runs= prs= page p pr n entered=0 merged ok failed batched=0 total depth per
+            for p in 1 2 3 4 5; do
+              page=$(api "$r/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 -f page="$p" -f created=">=$cutoff" \
+                --jq '.workflow_runs[] | "\(.head_branch | capture("/pr-(?<n>[0-9]+)-").n) \(.conclusion // .status)"') || return 1
+              [ -n "$page" ] || break
+              runs="$runs$page"$'\n'
+            done
+            for p in 1 2 3 4 5; do
+              page=$(api "$r/pulls" -f state=all -f base=main -f sort=updated -f direction=desc -f per_page=100 -f page="$p" \
+                --jq ".[] | select(.updated_at >= \"$cutoff\") | \"\(.number) \(.merged_at // \"-\")\"") || return 1
+              [ -n "$page" ] || break
+              prs="$prs$page"$'\n'
+            done
+            for pr in $(echo "$prs" | cut -d' ' -f1); do
+              for p in 1 2 3; do
+                page=$(api "$r/issues/$pr/timeline" -f per_page=100 -f page="$p" \
+                  --jq ".[] | if .event == \"added_to_merge_queue\" and .created_at >= \"$cutoff\" then \"entered\" else \"other\" end") || return 1
+                n=$(echo "$page" | grep -c entered || true)
+                entered=$((entered + n))
+                [ "$(echo "$page" | grep -c .)" = 100 ] || break
+              done
+            done
+            merged=$(echo "$prs" | awk -v c="$cutoff" '$2 != "-" && $2 >= c' | grep -c . || true)
+            total=$(echo "$runs" | grep -c . || true)
+            ok=$(echo "$runs" | grep -c ' success$' || true)
+            failed=$(echo "$runs" | grep -c ' failure$' || true)
+            # batched: a cancelled run whose pull request merged (a later group's run merged it, #2851)
+            for pr in $(echo "$runs" | awk '$2 == "cancelled" { print $1 }'); do
+              echo "$prs" | grep -q "^$pr [^-]" && batched=$((batched + 1))
+            done
+            depth=$(gh api graphql -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f query='
+              query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
+                mergeQueue(branch: "main") { entries { totalCount } } } }' \
+              --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null) || depth=unknown
+            per=$(awk -v m="$merged" -v s="$ok" 'BEGIN { if (s > 0) printf "%.1f", m / s; else printf "none" }')
+            echo "queue: last 24 h entered $entered, merged $merged, depth now $depth, runs $total ($ok ok, $batched batched, $failed failed), PRs per ok run $per"
+          }
+          { line || echo "queue: last 24 h unreadable"; } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
@@ -1013,10 +1100,32 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  docs-linux:
+    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
+    # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
+    # One small Linux job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+      DOCS_TESTS: ${{ needs.changes.outputs.docs_tests }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/fetch-smith
+      - name: Documentation checks
+        run: |
+          smith docs
+          if [ "$DOCS_TESTS" = true ]; then smith test --test readme_test,skills_test; fi
+
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, macos-lint, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1037,6 +1146,7 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
+          DOCS_LINUX: ${{ needs.docs-linux.result }}
           MACOS_LINT: ${{ needs.macos-lint.result }}
           MAC_TESTS: ${{ needs.changes.outputs.mac_tests }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
@@ -1076,12 +1186,12 @@ jobs:
             exit 1
           fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes macos, `release` (a push to main,
+          # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes docs-linux (#3044), `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
           # macOS jobs for hours) fails the check.
           case "$SCOPE" in
           full) owed="MACOS MACOS_LINT TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
-          docs) owed="MACOS" ;;
+          docs) owed="DOCS_LINUX" ;;
           release) owed="" ;;
           *) owed="" ;;
           esac
@@ -1804,7 +1914,7 @@ jobs:
     needs: [changes, frontend-coverage-fix]
     if: ${{ !cancelled() && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.count == 'true' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -1860,8 +1970,13 @@ jobs:
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
           touch "$RUNNER_TEMP/before-count"
-          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
-          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
+          # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
+          # from the diff is deterministic, so there is no retry: the command is bounded to 7 minutes and fails the entry.
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          status=$?
+          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 7 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           # the rows this shard measured (#2832): the save job adds them to the cache main starts from
           mkdir -p "$RUNNER_TEMP/rows"
@@ -2054,7 +2169,12 @@ jobs:
           # ahead, whose run may have failed or not finished: its count is not main's (2026-11-07: #2660 fell to 551,
           # failed, and still merged because #2670 behind it compared against that 551 and passed)
           before=
-          for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
+          # A PR check runs on the PR's head, not merged with main (#2856): its count is compared with the count of the
+          # commit it branched from, else every merge that raised main's count since then reads as a loss here (#3052)
+          start=$BASE
+          # (a warm count of one part is not sampled and still a PR check: #3060's own check compared its head with main's tip)
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && mb=$(git merge-base HEAD "$BASE" 2>/dev/null) && [ -n "$mb" ]; then start=$mb; fi
+          for sha in $(git rev-list --first-parent --max-count=20 "$start"); do
             id=
             for a in $(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
               ok=$(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
@@ -2072,9 +2192,11 @@ jobs:
             exit 1
           fi
           if [ -z "$before" ]; then
-            echo "no count on main's last 20 commits: nothing to compare with"
-            echo "count: no main results to compare (no passing count on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+            # a gate that finds nothing to compare with fails: it passed silently for a day while every download of main's
+            # count was corrupt (#3052), and a merge that lowered the count would have gone in
+            echo "::error::no count on main's last 20 commits to compare with: the gate cannot tell whether this merge lowers the count. Look at the downloads above (a 404, a corrupt zip) and ask the lead"
+            echo "count: no main results to compare (no passing count found on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           if [ "$UNCACHED" = true ]; then
             # The nightly count (#2955) has no cache: it must equal the cached count of the same commit, row by row. The
@@ -2128,13 +2250,15 @@ jobs:
           fi
           if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
             # a table has one or more rows per file (path, stage); a file's stage is its first row's, `pass` or the stage
-            # that failed; a file one table lacks counts as failing there
+            # that failed; a file only one table has (it left the total or is new, #3037) is not listed
             { awk -F'\t' -v base="${sha:0:7}" '
                 FNR == 1 { f++ }
+                /^[ \t]/ { next }
                 !((f, $1) in st) { st[f, $1] = ($2 == "pass") ? "pass" : "fail"; all[$1] = 1 }
                 END {
                   for (p in all) {
-                    a = ((1, p) in st) ? st[1, p] : "fail"; b = ((2, p) in st) ? st[2, p] : "fail"
+                    if (!((1, p) in st) || !((2, p) in st)) continue
+                    a = st[1, p]; b = st[2, p]
                     if (a == b) continue
                     if (a == "pass") { print "count: pass->fail " p; down++ } else { print "count: fail->pass " p; up++ }
                   }
@@ -2145,11 +2269,23 @@ jobs:
           else
             echo "count: no main results to compare (no results.tsv in the count of ${sha:0:7} or in this run)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
+          # like with like (#3052): when both tables are there, the passes are counted on the files both counts measured,
+          # so a change to the total (files that leave it, #3037, or new files) neither lowers nor raises the comparison;
+          # without a table, the two totals' passes
+          now_c=$now; before_c=$before; like=
+          if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
+            read -r before_c now_c common < <(awk -F'\t' 'FNR == 1 { f++ } /^[ \t]/ { next }
+              !((f, $1) in st) { st[f, $1] = ($2 == "pass") ? 1 : 0; if (f == 2) seen[$1] = 1 }
+              END { for (p in seen) if ((1, p) in st) { n++; a += st[1, p]; b += st[2, p] } print a + 0, b + 0, n + 0 }' \
+              "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv")
+            like=" on the $common files both measured"
+          fi
+          echo "count: main's last count $before files pass at ${sha:0:7}, this one $now; $now_c against $before_c$like"
+          if [ "$now_c" -ge "$before_c" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
-          why=$([ -n "$pr" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
-          if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
-          echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
+          why=$([ -n "$pr" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ') || why=
+          if [ -n "$why" ]; then echo "::warning::the count fell from $before_c to $now_c files$like; the PR says: ${why#Count drop: }"; exit 0; fi
+          echo "::error::the count fell from $before_c to $now_c files pass$like. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
       - name: API budget (last)
         if: always()
