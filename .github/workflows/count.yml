@@ -251,8 +251,8 @@ jobs:
           name: count-fixed-${{ github.sha }}
           path: .smith/frontend-coverage/fixed
       - name: Count the shard
-        # never fails the job: the status is read by the merge job, whatever happened here
-        continue-on-error: true
+        # the shard fails when its count ends with a status other than 0, so it is seen; the merge job still reads the
+        # status file it saves (the steps after this one run always)
         shell: bash
         run: |
           set +e
@@ -267,7 +267,7 @@ jobs:
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
           grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit 0
+          exit "$status"
       - name: Save the shard
         if: always()
         uses: actions/upload-artifact@v4
