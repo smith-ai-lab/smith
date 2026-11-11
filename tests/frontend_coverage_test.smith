@@ -206,15 +206,22 @@ export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
     scratch::write(&p, "crash.tsv", "x.smith\tcheck\tcompile ended with status 139 (signal)\t\n");
     scratch::write(&p, "passes.txt", "a.smith\terror-fixture\n");
     scratch::write(&p, "crash.txt", "x.smith\terror-fixture\n");
+    scratch::write(&p, "old.txt", "a.smith\told-form: #pragma\n");
     scratch::write(&p, "bad.txt", "b.smith\tbecause\n");
     scratch::write(&p, "twice.txt", "b.smith\terror-fixture\nb.smith\terror-fixture\n");
     scratch::Run passes = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=passes.txt smith run -- summarize table.tsv");
     scratch::expect_failure("frontend_coverage: a listed file that compiles fails the job", &passes);
-    scratch::expect_contains("frontend_coverage: and says which one", passes.err, "a.smith compiles, but");
+    scratch::expect_contains("frontend_coverage: and says which one", passes.err,
+                             "a.smith is on the excluded list as an error fixture but compiles");
     scratch::Run crash = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=crash.txt smith run -- summarize crash.tsv");
     scratch::expect_failure("frontend_coverage: an error fixture that crashed fails the job", &crash);
     scratch::expect_contains("frontend_coverage: and says it had no diagnostic", crash.err,
                              "ended without a diagnostic");
+    scratch::Run old = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=old.txt smith run -- summarize table.tsv");
+    scratch::expect_status("frontend_coverage: an old form that compiles is a warning, not a failure", 0, &old);
+    scratch::expect_contains("frontend_coverage: the warning names the line to delete", old.err,
+                             "a.smith compiles but is on the excluded list (old-form: #pragma): delete its line");
+    scratch::expect_contains("frontend_coverage: and the file stays in the total as a pass", old.out, "pass  a.smith");
     scratch::Run bad = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=bad.txt smith run -- summarize table.tsv");
     scratch::expect_failure("frontend_coverage: a reason outside the fixed set fails the job", &bad);
     scratch::Run twice = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=twice.txt smith run -- summarize table.tsv");
@@ -223,6 +230,8 @@ export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
     scratch::release(passes.err);
     scratch::release(crash.out);
     scratch::release(crash.err);
+    scratch::release(old.out);
+    scratch::release(old.err);
     scratch::release(bad.out);
     scratch::release(bad.err);
     scratch::release(twice.out);

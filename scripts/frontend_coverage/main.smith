@@ -686,8 +686,9 @@ static Usize excluded_find(const char path[:]) {
 }
 
 // Takes the rows of the listed files out of the table, so the totals and the causes do not see them. A listed file
-// that passes is an error (the list may not hide progress or rot), and so is an error fixture whose compile ended
-// without a diagnostic, killed or crashed. Returns how many listed files the table had, or `excluded_count + 1`.
+// that is an error fixture and passes is an error (the front end no longer rejects it), and so is one whose compile
+// ended without a diagnostic, killed or crashed. An old-form file that passes is a warning that names the line to
+// delete, and the file stays in the total. Returns how many listed files the table had, or `excluded_count + 1`.
 static Usize apply_exclusions() {
     Usize kept = 0;
     Usize found = 0;
@@ -698,16 +699,28 @@ static Usize apply_exclusions() {
             kept += 1;
             continue;
         }
+        Bool fixture = same(text_of(excluded_reason[k][0:reason_size]), "error-fixture");
         if (is_pass(&entries[i])) {
-            console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
-                                 " compiles, but the excluded list has it (", (const char *)excluded_reason[k],
-                                 "): take it out of ", excluded_default, "\n");
-            return excluded_count + 1;
+            if (fixture) {
+                console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
+                                     " is on the excluded list as an error fixture but compiles: the front end no "
+                                     "longer rejects it, which is a bug; fix the front end, and only if the file is "
+                                     "no longer a fixture take it out of ",
+                                     excluded_default, "\n");
+                return excluded_count + 1;
+            }
+            // An old form that now compiles is progress, not a failure: the file stays in the total, as a pass.
+            console::print_error("frontend_coverage: warning: ", (const char *)entries[i].path,
+                                 " compiles but is on the excluded list (", (const char *)excluded_reason[k],
+                                 "): delete its line from ", excluded_default, "\n");
+            if (kept != i) entries[kept] = entries[i];
+            kept += 1;
+            continue;
         }
-        if (same(text_of(excluded_reason[k][0:reason_size]), "error-fixture") &&
-            begins_with(text_of(entries[i].message[0:message_size]), "compile ended with status ")) {
+        if (fixture && begins_with(text_of(entries[i].message[0:message_size]), "compile ended with status ")) {
             console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
-                                 " is an error fixture but its compile ended without a diagnostic: ",
+                                 " is on the excluded list as an error fixture but its compile ended without a "
+                                 "diagnostic (killed or crashed): ",
                                  (const char *)entries[i].message, "\n");
             return excluded_count + 1;
         }

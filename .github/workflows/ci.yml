@@ -2018,6 +2018,9 @@ jobs:
           if [ -n "$sample" ]; then echo "count (PR check): measured ${sample% *} of ${sample#* } rows; the queue run measures all"
           elif [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
+          # what the count says about its own list (#3037): the file and what to do, as the job's error or warning line
+          grep -E '^frontend_coverage: (error|warning): ' "$out" 2>/dev/null |
+            sed -e 's/^frontend_coverage: error: /::error::/' -e 's/^frontend_coverage: warning: /::warning::/' || true
           # the total errors (#2731): frontend-errors: <sha> <errors> <files failing>
           errs=$(grep '^frontend-errors: ' "$out" 2>/dev/null | tail -n 1 || true)
           if [ -n "$errs" ]; then echo "frontend-errors: $GITHUB_SHA ${errs#frontend-errors: }"; fi
