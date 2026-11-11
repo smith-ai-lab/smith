@@ -430,8 +430,7 @@ typedef struct {
     char prefix[smith_lang_name_max]; // a_b_
     const char *file;                 // the body file's text, from the host
     uint32_t length;
-    char path[PATH_MAX]; // the file to include for the depfile (empty: made in memory)
-    uint32_t first;      // its entries
+    uint32_t first; // its entries
     uint32_t count;
     bool loaded;
     bool include; // its header is included for the names a copy uses
@@ -521,7 +520,6 @@ static bool smith_body_load(const SmithHost *host, uint32_t index) {
         module->file = nullptr;
         return false;
     }
-    snprintf(module->path, sizeof module->path, "%s", path != nullptr ? path : "");
     module->loaded = false;
     smith_body_parse(module, index);
     return true;
@@ -764,20 +762,17 @@ static bool smith_body_import(const SmithHost *host, const SmithLangBinding *bin
 
 // What the compile read of a module, named for the depfile. The copies are a system buffer, and everything included
 // from a system file is a system header, which `-MMD` leaves out of the depfile; a `__has_include` is recorded by what
-// it finds (an `-I` folder is a user one), so each file is named by one, and then included when there is a body file:
-// the body file, the module's source (the second line of a body, which a body made in memory has too) and the C
-// headers its text includes.
+// it finds (an `-I` folder is a user one), so each file is named by one: the module's source (the second line of a
+// body) and the C headers its text includes. The body file itself is not named (#3079): it is made from that source by
+// whichever importer's compile needs it first, so a neighbour that wrote it again made it newer than a compile that
+// had already read it, and that compile's result was never stored and ran again in the next build.
 static size_t smith_body_depend(size_t used, const SmithBodyModule *module) {
     static const char guard[] = "#if __has_include(";
     const char *file = module->file;
     char *out = smith_body_out;
     size_t capacity = sizeof smith_body_out - sizeof "#endif\n#include \"\"\n" - PATH_MAX;
-    if (module->path[0] != 0 && used < capacity) {
-        used += (size_t)snprintf(out + used, sizeof smith_body_out - used,
-                                 "#if __has_include(\"%s\")\n#endif\n#include \"%s\"\n", module->path, module->path);
-    }
     const char *source = file != nullptr ? memmem(file, module->length, guard, sizeof guard - 1) : nullptr;
-    if (module->path[0] == 0 && source != nullptr) { // the line of the module's source
+    if (source != nullptr) { // the line of the module's source
         const char *end = memchr(source, '\n', (size_t)(file + module->length - source));
         if (end != nullptr && (size_t)(end - source) < PATH_MAX && used < capacity) {
             used += (size_t)snprintf(out + used, sizeof smith_body_out - used, "%.*s\n#endif\n", (int)(end - source),

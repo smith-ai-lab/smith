@@ -67,6 +67,7 @@
 module front::types_expr;
 
 import front::ast;
+import front::eval;
 import front::parse as syntax;
 import front::types;
 import front::types_builtin as builtins;
@@ -1138,39 +1139,19 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     const ast::Expr *e = f.node;
     if (names.count != 2 || !same_text(names.items[0], "target")) return false;
     if (types::scoped(c, "target") != nullptr) return false;
-    Str fact = names.items[1];
+    // Which facts there are, and their values, is `eval::target_fact`'s to say (#3039).
+    eval::Value fact = eval::boolean_value(false);
+    if (!eval::target_fact(c, names.items[1], &fact)) return false;
     ast::Expr *node = (ast::Expr *)(Usize)e; // the checker settles the node's meaning in place
-    Bool asan = same_text(fact, "address_sanitizer");
-    Bool ubsan = same_text(fact, "undefined_sanitizer");
-    Bool tsan = same_text(fact, "thread_sanitizer");
-    Bool checks = same_text(fact, "assertions");
-    // The floating-point facts are numbers (IEEE binary32 and binary64, evaluated in their own type) on every target.
-    U64 number = 0;
-    Bool numeric = true;
-    if (same_text(fact, "float_radix")) {
-        number = 2;
-    } else if (same_text(fact, "f32_mantissa_bits")) {
-        number = 24;
-    } else if (same_text(fact, "f64_mantissa_bits")) {
-        number = 53;
-    } else if (same_text(fact, "float_eval_method")) {
-        number = 0;
-    } else {
-        numeric = false;
-    }
-    if (numeric) {
-        ast::ExprKind folded = {.integer = {.value = number}};
+    if (fact == .integer) {
+        ast::ExprKind folded = {.integer = {.value = fact.integer.magnitude}};
         node->kind = folded;
         finish(c, e, types::builtin(&c->table, "I32"), f.expected);
         return true;
     }
-    // `static_analyzer` is never true: the new front end does not run under clang's analyzer, as in `when`.
-    Bool fast = same_text(fact, "fast_math");
-    if (!asan && !ubsan && !tsan && !checks && !fast && !same_text(fact, "static_analyzer")) return false;
-    Bool value = (asan && target::address_sanitizer) || (ubsan && target::undefined_sanitizer) ||
-                 (tsan && target::thread_sanitizer) || (checks && target::assertions) ||
-                 (fast && __FINITE_MATH_ONLY__ != 0);
-    ast::ExprKind folded = {.boolean = {.value = value}};
+    if (fact != .boolean)
+        return false; // `os`, `arch`: one of a set of names, compared with `==` (`computed_comparison`)
+    ast::ExprKind folded = {.boolean = {.value = fact.boolean.value}};
     node->kind = folded;
     finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
     return true;
@@ -4089,6 +4070,16 @@ static void query_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     const ast::Expr *operand = e->kind.query.operand;
+    ast::Path named = {};
+    if (types::name_path(operand, &named)) {
+        const types::Symbol *held = types::type_through_modules(c, named);
+        if (held != nullptr && held->kind == .type_name) { // `sizeof(Word)` with `const Word = u32` (#3039)
+            types::set_type(c, operand, held->type);
+            if (e->kind.query.op == .count_of) count_check(c, e, held->type);
+            finish(c, e, size, f.expected);
+            return;
+        }
+    }
     push(w, e, f.expected, 1);
     push(w, operand, nullptr, 0);
 }
@@ -4721,6 +4712,64 @@ static Bool leaves_early(const ast::Stmt *s) {
     return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
 }
 
+// Whether the statement always leaves: a `return`, `break` or `continue`, a block whose last statement does, an `if`
+// with an `else` whose branches all do, or a `match` whose arms all do. Such a value has no type (#3096): the one-line
+// `return` arm is no leaf, and neither is the block arm.
+static Bool always_leaves(const ast::Stmt *root) {
+    const ast::Stmt *todo[:] = {};
+    todo = mem::realloc(todo, 16);
+    Usize count = 0;
+    todo[count] = root;
+    count += 1;
+    Bool all = true;
+    while (all && count > 0) {
+        count -= 1;
+        const ast::Stmt *s = todo[count];
+        if (leaves_early(s)) {
+            continue;
+        }
+        Usize room = 2;
+        if (s->kind == .match_stmt) {
+            room = countof(s->kind.match_stmt.arms);
+        }
+        if (count + room > countof(todo)) {
+            Usize capacity = (count + room) * 2;
+            todo = mem::realloc(todo, capacity);
+        }
+        if (s->kind == .block) {
+            ast::StmtRef items[:] = s->kind.block.items;
+            all = countof(items) > 0;
+            if (all) {
+                todo[count] = items[countof(items) - 1];
+                count += 1;
+            }
+        } else if (s->kind == .if_stmt && s->kind.if_stmt.else_branch != nullptr) {
+            todo[count] = s->kind.if_stmt.then_branch;
+            todo[count + 1] = s->kind.if_stmt.else_branch;
+            count += 2;
+        } else if (s->kind == .match_stmt && countof(s->kind.match_stmt.arms) > 0) {
+            ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+            for (Usize a = 0; a < countof(arms) && all; a++) {
+                const ast::Expr *value = arms[a].value;
+                if (value != nullptr && value->kind == .stmt_expr) {
+                    todo[count] = value->kind.stmt_expr.stmt;
+                    count += 1;
+                } else {
+                    all = false;
+                }
+            }
+        } else {
+            all = false;
+        }
+    }
+    return all;
+}
+
+// Whether a leaf is a block (or `if`, or `match`) that always leaves: it gives the value no type.
+static Bool leaf_leaves(const ast::Expr *e) {
+    return e->kind == .stmt_expr && always_leaves(e->kind.stmt_expr.stmt);
+}
+
 static void read_block(Plan *p, const ast::Stmt *s) {
     if (!(s->kind == .block)) {
         return;
@@ -5113,7 +5162,7 @@ static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern p
     U64 value = 0;
     const types::Symbol *named = types::lookup_path(&c->scopes, pat.constant->kind.name.path);
     if (named != nullptr && named->kind == .variable && named->decl != nullptr &&
-        !types::constant_case(c, pat.constant, &value)) {
+        !eval::bits(c, pat.constant, &value)) {
         types::failf(c, pat.span, "`", named->name, "` is a variable, but a pattern compares with a constant; ",
                      "declare it `const`, or test it with `if`");
     }
@@ -5228,7 +5277,7 @@ static void scalar_coverage(types::Checked *c, const ast::Stmt *s, types::TypeRe
                 clean = false;
                 continue;
             }
-            if (!types::constant_case(c, pats[k].constant, &value)) {
+            if (!eval::bits(c, pats[k].constant, &value)) {
                 continue;
             }
             if (t->kind == .bool_type) {
@@ -5390,6 +5439,9 @@ static void value_join(types::Checked *c, Frame f) {
             poison(c, e);
             return;
         }
+        if (t->kind == .void_type && leaf_leaves(p.leaves[i])) {
+            continue; // a block that always leaves: the value is joined from the other branches (#3096)
+        }
         if (t->kind == .void_type) {
             no_value = true;
         } else if (first == nullptr) {
@@ -5407,6 +5459,8 @@ static void value_join(types::Checked *c, Frame f) {
     }
     if (c->error_count > f.index) {
         poison(c, e);
+    } else if (!no_value && first == nullptr && leaf_leaves(e)) {
+        types::set_type(c, e, c->table.void_type); // every branch leaves: no value and no error (#3096)
     } else if (no_value || first == nullptr) {
         finish_void(c, e, f.expected);
     } else if (f.expected != nullptr) {
@@ -6507,12 +6561,15 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
     }
 }
 
+static Bool computed_call(types::Checked *c, Frame f);
+
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
         return;
     }
     const ast::Expr *callee = e->kind.call.callee;
+    if (computed_call(c, f)) return;
     // `mem.alloc(T, n)` is the builtin, `mem.alloc(T)` the generic of std.mem (#2527)
     const types::Symbol *template =
         builtins::names_alloc(c, callee, countof(e->kind.call.args)) ? nullptr : generic_callee(c, callee);
@@ -6626,6 +6683,65 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
     push(w, dotted, want, 0);
 }
 
+// Whether `x` is `target.os` or `target.arch`: a fact of the target that is one of a set of names.
+static Bool is_named_fact(const types::Checked *c, const ast::Expr *x) {
+    types::Names names = types::member_names(x);
+    if (names.count != 2 || !same_text(names.items[0], "target") || types::scoped(c, "target") != nullptr) return false;
+    return same_text(names.items[1], "os") || same_text(names.items[1], "arch");
+}
+
+// Whether `x` is written as a type: `typeof(y)`, `[]u8`, or a name of a type.
+static Bool is_written_type(const types::Checked *c, const ast::Expr *x) {
+    if (x->kind == .type_value) return true;
+    ast::Path path = {};
+    if (!types::name_path(x, &path)) return false;
+    const types::Symbol *s = types::type_through_modules(c, path);
+    return s != nullptr && s->kind == .type_name;
+}
+
+// Records the Bool the compiler computed for `f.node`, which has no run-time form (#3039); what is not known is an
+// error that says why.
+static void computed(types::Checked *c, Frame f, Str what) {
+    const ast::Expr *e = f.node;
+    eval::Outcome found = eval::value(c, e);
+    if (!found.known || found.value != .boolean) {
+        eval::report(c, found, e, what);
+        poison(c, e);
+        return;
+    }
+    types::set_value(c, e, found.value.boolean.value ? 1 : 0);
+    finish(c, e, c->table.bool_type, f.expected);
+}
+
+// A comparison the compiler computes whole (#3039): a fact of the target with one of its names
+// (`target.os == .linux`), or two types (`typeof(x) != u8`). True when `f.node` is one.
+static Bool computed_comparison(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .binary || !is_equality(e->kind.binary.op)) return false;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    Bool fact =
+        (is_named_fact(c, left) && right->kind == .variant) || (is_named_fact(c, right) && left->kind == .variant);
+    if (!fact && !is_written_type(c, left) && !is_written_type(c, right)) return false;
+    computed(c, f, fact ? "a comparison with a fact of the target" : "a comparison of types");
+    return true;
+}
+
+// A call of a concept, a function over types the compiler answers (`small(u32)`, #3039). True when `f.node` is one.
+static Bool computed_call(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .call) return false;
+    ast::Path path = {};
+    types::Names names = types::member_names(e->kind.call.callee);
+    const types::Symbol *callee = nullptr;
+    if (types::name_path(e->kind.call.callee, &path)) callee = types::type_through_modules(c, path);
+    if (callee == nullptr && names.count >= 2) callee = types::through_modules(c, &names).symbol;
+    if (callee == nullptr || callee->kind != .function_symbol || callee->decl == nullptr) return false;
+    if (!eval::may_run(callee->decl)) return false;
+    computed(c, f, "a call of a concept");
+    return true;
+}
+
 // The operands of a binary operator are typed first; a comparison with a leading-dot side types the other side first.
 static void binary_before(Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -6684,6 +6800,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_before(c, w, f);
     } else if (e->kind == .binary) {
+        if (computed_comparison(c, f)) return;
         if (hooks.value_logic != nullptr && is_logical(e->kind.binary.op)) hooks.value_logic(c, e);
         binary_before(w, f);
     } else if (e->kind == .assign) {

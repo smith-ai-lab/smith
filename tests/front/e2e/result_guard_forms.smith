@@ -1,0 +1,103 @@
+# The forms the fixer writes for a Result read after a test (#3083), as `smith lint --fix` leaves them: a guard that
+# leaves in an `or` chain, a test that starts an `and` chain, the `else` that binds the other variant, a generic
+# function's Result, a guard with a `defer` before it, a test after the first conjunct of an `and` chain, and the
+# `match` for an error that is handled where it is tested.
+
+struct Failure:
+    code: i32
+
+fn half(n: i32) -> Result(i32, Failure):
+    if n < 0:
+        return .error(Failure(code = n))
+    .ok(n / 2)
+
+fn wrap(T: type, value: T, fails: bool) -> Result(T, Failure):
+    if fails:
+        return .error(Failure(code = -1))
+    .ok(value)
+
+# was `if r == .error or r.ok > 100: return 0`
+fn small(n: i32) -> i32:
+    r := half(n)
+    .ok(ok) := r else:
+        return 0
+    if ok > 100:
+        return 0
+    ok
+
+# was `if r != .error and r.ok > 3: return r.ok`
+fn big(n: i32) -> i32:
+    r := half(n)
+    if .ok(ok) := r and ok > 3:
+        return ok
+    -1
+
+# was `if r == .error: ... r.error ... else: ... r.ok ...`
+fn either(n: i32) -> i32:
+    r := half(n)
+    mut total := 0
+    if .error(error) := r:
+        total = error.code
+    else if .ok(ok) := r:
+        total = ok + 1
+    total
+
+# was `if w != .error and w.ok == 9: ...` over a generic function's Result
+fn generic_read() -> i32:
+    w := wrap(i64, 9, false)
+    if .ok(ok) := w and ok == 9:
+        return 0
+    1
+
+fn count_up(seen: *mut i32):
+    seen.* += 1
+
+# was `defer ...` then `if r == .error or r.ok == 0: return 0`: the defer runs on both ways out
+fn guarded(n: i32, seen: *mut i32) -> i32:
+    defer count_up(seen)
+    r := half(n)
+    .ok(ok) := r else:
+        return 0
+    if ok == 0:
+        return 0
+    ok
+
+# was `if note(n, seen) and r == .ok: return r.ok`: the conjunct before the pattern still runs first, every time
+fn note(n: i32, seen: *mut i32) -> bool:
+    seen.* += 1
+    n != 1
+
+fn ordered(n: i32, seen: *mut i32) -> i32:
+    r := half(n)
+    if note(n, seen) and .ok(ok) := r:
+        return ok
+    -1
+
+# was `if r == .error: return r.error.code * 2` then `r.ok + 1`
+fn handled(n: i32) -> i32:
+    r := half(n)
+    ok := match r:
+        .ok(value): value
+        .error(error): return error.code * 2
+    ok + 1
+
+pub fn check() -> i32:
+    if small(10) != 5 or small(-4) != 0 or small(400) != 0:
+        return 1
+    if big(10) != 5 or big(4) != -1 or big(-2) != -1:
+        return 2
+    if either(6) != 4 or either(-3) != -3:
+        return 3
+    if generic_read() != 0:
+        return 4
+    mut seen: i32 = 0
+    if guarded(8, &seen) != 4 or guarded(-1, &seen) != 0 or guarded(1, &seen) != 0:
+        return 5
+    if seen != 3:
+        return 6
+    mut noted: i32 = 0
+    if ordered(6, &noted) != 3 or ordered(-2, &noted) != -1 or ordered(1, &noted) != -1 or noted != 3:
+        return 7
+    if handled(8) != 5 or handled(-3) != -6:
+        return 8
+    0

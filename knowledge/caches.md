@@ -95,9 +95,13 @@ runs it only on a file whose lint could differ. It is in two levels, like a comp
 key* is the SHA-256 of the *lint identity* (#2236: the LLVM pack, which fixes clang-tidy, and the sources of smith's own
 checks), the environment that moves a compile (`SDKROOT`, `CPATH`, ...), the file's name, its compile command (the
 root of the project replaced by a fixed word, so a clone elsewhere shares entries; a `.smith` file the build does not
-compile has the whole `compile_commands.json` there) and the content of every `.clang-tidy` from its folder up to `/`; a `.smith` file's key also holds every generated header
-under `.smith/include`, since its imports read those without the preprocessor and clang-tidy's dependency file never names
-them (#1180).
+compile has the whole `compile_commands.json` there; either way without `-fmodules-cache-path=`'s folder, which names the
+compiler's build and not what it compiles, #3062) and the content of every `.clang-tidy` from its folder up to `/`; a
+`.smith` file's key also holds the generated headers (and `.body` files) of the modules its imports reach under
+`.smith/include`, since its imports read those without the preprocessor and clang-tidy's dependency file never names
+them (#1180). The modules are those the file's own header lists after `// smith-imports:` and, transitively, the ones
+their headers list, as the lowering walks them (#3062: an export added to one module reran every `.smith` file); a file
+with no header of its own, or an import with none, keys on every header there.
 Under it, `m/<xx>/<key>` is the *manifest* of the last run: the files clang-tidy read, which a miss collects through
 `-Wp,-MMD` (so no build or object is needed, and a `.smith` file's imports are in it). The *second key* adds the
 content of those files, and `r/<xx>/<key>` is the *result*: the exit status and the output with the root replaced. A hit
@@ -114,3 +118,14 @@ smith built without an LLVM install has no identity and keys on its own build-id
 a hit touches its entries when a day old, and once a week (`lint/prune.timestamp`) entries unused for 31 days and
 stale `t/` files go. `SMITH_LINT_CACHE=0` turns it off and `=why` prints why each file ran. `smith cache` counts the
 files and `smith cache clean lint` removes them.
+
+**The fmt cache** (#3081, `runtime/fmt_cache.c`) keeps that a file was formatted, so `smith fmt` (and its `--dry-run`)
+with no arguments leaves it out. An entry is an empty file `<cache>/smith/fmt/<xx>/<key>`; the key is the SHA-256 of
+the *fmt identity* (`build_fmt_identity` in `build.c`, compiled into `runtime/lint_identity.c`: the LLVM pack, `front/`,
+`runtime/`, `smith.c`, `shim/format.cpp` and the shim's headers, and `templates/defaults`; a smith without one keys on its
+build-id), `SMITH_CLANG_FORMAT`, the file's path and content, and every `.clang-format`, `_clang-format` and
+`.clang-format-ignore` from its folder up to `/`. An entry is written only after the batch that held the file exited 0
+(after `-i` rewrote it), so a file that is not formatted is never kept and fails every run. The files the cache does not
+answer go in batches side by side, one a core. `SMITH_FMT_CACHE=0` turns it off and `=why` prints how many files ran
+and how many were cached; the prune is the other caches' (a day's touch, 31 days, checked weekly). Tests:
+`tests/fmt_cache_test.smith`.
