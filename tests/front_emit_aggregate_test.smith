@@ -1,0 +1,188 @@
+// Tests of front::emit_aggregate (#3058): a struct of more than 64 bytes is returned through a hidden `sret` pointer,
+// passed by memory (`byval` on x86-64) and copied with memcpy, never loaded or stored as one first-class value; a
+// small struct keeps its value. This file is compiled by clang, so its calls of the JIT's functions are the C ABI: a
+// C caller passes and receives the big struct by value, and the emitted code calls a C function through a `fn` value.
+module front_emit_aggregate_test;
+
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import target;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+};
+
+static void begin(Scenario *s, Str source) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+    test::check_equal(s->checked.error_count, (Usize)0);
+    Str none = "no error";
+    if (s->checked.error_count > 0) test::check_equal(s->checked.errors[0].message, none);
+    mem::set_allocator(outside);
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, const char *needle) {
+    return text != nullptr && c::strstr(text, needle) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` with the checker's types, returns its IR text (LLVMDisposeMessage) and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::Options options = {.target = host->target, .checked = &s->checked};
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options);
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str none = "no error";
+        test::check_equal(emitted.error.message, none);
+        emit::free_error(emitted.error);
+    }
+    return text;
+}
+
+// Two structs: a big one (16 KB) and a small one (16 bytes).
+static Str source() {
+    return "struct Big:\n"
+           "    data: [16384]u8\n"
+           "    size: usize\n"
+           "struct Small:\n"
+           "    a: i64\n"
+           "    b: i64\n"
+           "pub fn make(v: u8) -> Big:\n"
+           "    mut b: Big = undefined\n"
+           "    for i in range(0, 16384):\n"
+           "        b.data[i] = v\n"
+           "    b.size = 16384\n"
+           "    b\n"
+           "pub fn total(b: Big) -> usize:\n"
+           "    mut sum: usize = 0\n"
+           "    for x in b.data:\n"
+           "        sum += x.to(usize)\n"
+           "    sum + b.size\n"
+           "pub fn through(f: fn(Big) -> usize, v: u8) -> usize:\n"
+           "    f(make(v))\n"
+           "pub fn copied(v: u8) -> u8:\n"
+           "    mut a := make(v)\n"
+           "    kept := a\n"
+           "    a.data[0] = v + 1\n"
+           "    kept.data[0]\n"
+           "pub fn pair(n: i64) -> Small:\n"
+           "    Small(a = n, b = n + 1)\n";
+}
+
+// The struct of `source`, as C lays it out.
+struct BigC {
+    U8 data[16384];
+    Usize size;
+};
+
+struct SmallC {
+    I64 a;
+    I64 b;
+};
+
+typedef struct BigC (*Make)(U8);
+typedef Usize (*Total)(struct BigC);
+// A `fn` value is a pair: the function, which takes the environment first, and the environment.
+struct Closure {
+    Usize (*call)(void *, struct BigC);
+    void *environment;
+};
+
+typedef Usize (*Through)(struct Closure, U8);
+typedef U8 (*Copied)(U8);
+typedef struct SmallC (*Pair)(I64);
+
+static Usize c_first_and_last(void *environment, struct BigC b) {
+    (void)environment;
+    return (Usize)b.data[0] * 1000 + (Usize)b.data[16383] + b.size;
+}
+
+// No whole-value load, store or return of the big struct is left; the small one keeps its value.
+export void test_front_emit_aggregate_a_big_struct_is_never_a_first_class_value() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(source(), &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "sret(%Big)"), true);
+    test::check_equal(contains(ir, "@llvm.memcpy"), true);
+    test::check_equal(contains(ir, "load %Big"), false);
+    test::check_equal(contains(ir, "store %Big"), false);
+    test::check_equal(contains(ir, "ret %Big"), false);
+    test::check_equal(contains(ir, "ret %Small"), true);
+    if constexpr (target::arch == target::x86_64) {
+        test::check_equal(contains(ir, "byval(%Big)"), true);
+    }
+    c::LLVMDisposeMessage(ir);
+    emit_jit::stop(&host);
+}
+
+// C passes the big struct to the emitted code and gets it back by value, and the emitted code calls C with it.
+export void test_front_emit_aggregate_a_big_struct_crosses_the_c_abi_both_ways() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(source(), &host, &s);
+    c::LLVMDisposeMessage(ir);
+    Make make = (Make)symbol_of(&host, "make");
+    Total total = (Total)symbol_of(&host, "total");
+    Through through = (Through)symbol_of(&host, "through");
+    Pair pair = (Pair)symbol_of(&host, "pair");
+    struct BigC *made = (struct BigC *)mem::alloc(struct BigC);
+    *made = make(2);
+    test::check_equal((Usize)made->data[0] + made->data[16383], (Usize)4);
+    test::check_equal(made->size, (Usize)16384);
+    made->data[5] = 3;
+    test::check_equal(total(*made), (Usize)(2 * 16384 + 1 + 16384));
+    test::check_equal(through((struct Closure){.call = c_first_and_last}, 7), (Usize)(7000 + 7 + 16384));
+    struct SmallC small = pair(40);
+    test::check_equal(small.a + small.b, (I64)81);
+    mem::free(made);
+    emit_jit::stop(&host);
+}
+
+// A copy is a value of its own: writing the source after the copy leaves the copy as it was.
+export void test_front_emit_aggregate_a_copy_does_not_follow_its_source() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(source(), &host, &s);
+    c::LLVMDisposeMessage(ir);
+    Copied copied = (Copied)symbol_of(&host, "copied");
+    test::check_equal(copied(4), (U8)4);
+    emit_jit::stop(&host);
+}
