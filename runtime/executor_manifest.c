@@ -427,6 +427,31 @@ static uint32_t smith_manifest_pool_number(SmithExec *exec, const SmithLexer *le
     smith_manifest_fail(exec, lexer, "an unknown pool", name);
 }
 
+// The hash of a command, by which the plan finds a command line that changed. The path of the smith that runs the build
+// (options.self) is read as the word `smith`: the commands that compile the build file name it, and the same smith at
+// another path (a copy, a worktree's stage0, a container's other mount) would otherwise compile and link
+// `.smith/program` again, and every function step after it (#3079). A smith replaced where it is never changed a
+// command either; what a compile's result depends on is in the step cache's key.
+static uint64_t smith_manifest_command_hash(const SmithExec *exec, const char *command) {
+    const char *self = exec->options.self;
+    size_t length = strlen(command);
+    size_t self_length = self != nullptr ? strlen(self) : 0;
+    if (self_length == 0 || strstr(command, self) == nullptr) return smith_exec_hash(command, length);
+    uint64_t hash = 0xcbf29ce484222325ULL; // smith_exec_hash's FNV-1a, fed in pieces
+    static const char word[] = "smith";
+    for (size_t i = 0; i < length;) {
+        bool here = length - i >= self_length && memcmp(command + i, self, self_length) == 0;
+        const char *piece = here ? word : command + i;
+        size_t count = here ? sizeof word - 1 : 1;
+        for (size_t k = 0; k < count; k++) {
+            hash ^= (unsigned char)piece[k];
+            hash *= 0x100000001b3ULL;
+        }
+        i += here ? self_length : 1;
+    }
+    return hash;
+}
+
 // The end of an edge's block: the command, the description and the rest, evaluated.
 static void smith_manifest_finish_edge(SmithExec *exec, const SmithLexer *lexer, const SmithBlock *block) {
     SmithEdge *edge = &exec->graph.edges[block->edge];
@@ -448,7 +473,7 @@ static void smith_manifest_finish_edge(SmithExec *exec, const SmithLexer *lexer,
     edge->generator = smith_manifest_is_set(smith_manifest_edge_variable(exec, block, "generator"));
     const char *pool = smith_manifest_edge_variable(exec, block, "pool");
     if (smith_manifest_is_set(pool)) edge->pool = smith_manifest_pool_number(exec, lexer, pool);
-    edge->command_hash = smith_exec_hash(edge->command, strlen(edge->command));
+    edge->command_hash = smith_manifest_command_hash(exec, edge->command);
 }
 
 // A `name = value` line inside the block that is open.
