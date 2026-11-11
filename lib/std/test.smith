@@ -747,6 +747,8 @@ U64 explain_cpu_ns(c::pid_t pid) {
 
 // Reads the debugger's answer until it ends, it has spent explain_seconds of CPU time, or explain_hang_seconds of wall
 // time have passed. Returns explain_read_ok, explain_read_cpu or explain_read_hung.
+export Bool bounded_wait(c::pid_t pid, const char *what, const char *name, F64 grace, I32 *status);
+
 U64 explain_read(I32 from, char *text, Usize *used, U64 began, c::pid_t child) {
     U64 cpu = 0;
     for (Usize slice = 0; slice < explain_slices_max; slice++) { // each slice reads bytes, waits or ends
@@ -808,7 +810,7 @@ void explain_join(const char *text, Usize used, U64 ended, I32 status) {
         c::kill(child, sig_term); // it lets the test go, then ends: a test left stopped cannot run
     c::close(from);
     I32 status = 0;
-    c::waitpid(child, &status, 0);
+    bounded_wait(child, "the explain process", "explain", 120.0, &status);
     explain_join(text, used, ended, status);
     __atomic_fetch_add(explained + explain_stat_nanoseconds, explain_now_ns() - began, __ATOMIC_RELAXED);
 }
@@ -2006,7 +2008,7 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
         c::_exit(127);
     }
     I32 status = 0;
-    if (merger > 0) c::waitpid(merger, &status, 0);
+    if (merger > 0) bounded_wait(merger, "smith test --coverage merge", test->name, wait_grace, &status);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2242,6 +2244,9 @@ typedef struct {
 
 Process processes[jobs_max + 1];
 constexpr Usize shrink_slot = jobs_max;
+const char *job_names[jobs_max + 1]; // the test each slot was last given: what a wait on its worker names
+Usize waits_fired = 0;               // waits that hit their grace (bounded_wait): each fails the run
+constexpr F64 wait_grace = 120.0;    // seconds the runner waits for a process of its own, a test not counted
 
 // Every worker, and every --isolate child, leads a process group of its own (setpgid, in the child and in the runner,
 // so neither waits for the other): the processes a test starts are in it and nowhere else. The runner shares its group
@@ -2275,13 +2280,36 @@ void close_process(Process *process) {
     process->output = -1;
 }
 
+// Waits for a process the runner started, for at most `grace` seconds (#3127): twice a CI job sat silent for 17
+// minutes, past every limit a test has, so the wait that ended it was one of the runner's own. When the grace runs out
+// the process and its group are killed and reaped, the wait is counted (waits_fired, which fails the run) and a line
+// names `what` it waited for and for whom, so a repeat gives its own root cause. Returns true when the process ended by
+// itself, with its wait status in *status.
+export Bool bounded_wait(c::pid_t pid, const char *what, const char *name, F64 grace, I32 *status) {
+    if (pid <= 0) return true;
+    F64 began = seconds();
+    for (Usize polls = 0; polls < rounds_max; polls++) { // the process ends, or the grace does
+        c::pid_t got = c::waitpid(pid, status, wait_no_hang);
+        if (got == pid) return true;
+        if (got < 0 && *errno_place() != interrupted) return true; // nothing of the runner's to wait for
+        if (seconds() - began >= grace) break;
+        clock::sleep(10 * clock::millisecond);
+    }
+    kill_group(pid);
+    c::waitpid(pid, status, 0); // killed by SIGKILL: it ends
+    waits_fired += 1;
+    complain("smith test: the runner's wait for %s (%s) exceeded %.0f s: killed it and its processes\n", what, name,
+             grace);
+    return false;
+}
+
 // Ends a worker that is idle, or is of no use: its process is killed and reaped.
 void discard(Process *process) {
     if (process->pid == 0) return;
     kill_group(process->pid);
     close_process(process);
     I32 status = 0;
-    c::waitpid(process->pid, &status, 0);
+    bounded_wait(process->pid, "a killed worker", "discard", wait_grace, &status);
     process->pid = 0;
 }
 
@@ -2364,6 +2392,7 @@ Bool explain_wanted(const Options *options, const Test *test) {
 // Starts the test in the slot: a command to its worker (forked first if it has none), or its own child with --isolate.
 void dispatch(const Options *options, Usize slot, const Test *test, Run *run) {
     __builtin_memset(&shared_slots[slot], 0, sizeof(Shared));
+    job_names[slot] = test->name;
     Command command = {.test = (U32)(test - table),
                        .seed_given = options->seed_given,
                        .seed = options->seed,
@@ -2495,8 +2524,8 @@ void finish(Usize slot, Run *run, const Reply *reply) {
         close_process(process);
         if (process->reaped)
             status = process->status;
-        else if (c::waitpid(process->pid, &status, 0) != process->pid)
-            die("waitpid");
+        else
+            bounded_wait(process->pid, "a worker that closed its socket", job_names[slot], wait_grace, &status);
         process->pid = 0;
         run->outcome = judge(status, run->output.total >= output_limit);
         if (run->idle) run->outcome = (Outcome){.end = End_Timeout, .number = sig_alrm}; // the runner killed it
@@ -2557,7 +2586,7 @@ void stop_workers() {
         if (process->pid == 0) continue;
         close_process(process);
         I32 status = 0;
-        c::waitpid(process->pid, &status, 0);
+        bounded_wait(process->pid, "an idle worker to end", job_names[slot], wait_grace, &status);
         process->pid = 0;
     }
 }
@@ -3164,6 +3193,8 @@ F64 parse_ps_time(const char *text) {
 }
 
 // The processes of the machine into ps_rows: pid, parent, CPU seconds and command.
+I32 ps_status = 0;
+
 void list_processes() {
     ps_count = 0;
     I32 ends[2];
@@ -3184,7 +3215,7 @@ void list_processes() {
     c::FILE *listing = c::fdopen(ends[0], "r");
     if (child < 0 || listing == nullptr) {
         c::close(ends[0]);
-        if (child > 0) c::waitpid(child, nullptr, 0);
+        if (child > 0) bounded_wait(child, "ps", "the idle watchdog", wait_grace, &ps_status);
         return;
     }
     char text[512];
@@ -3210,7 +3241,7 @@ void list_processes() {
         }
     }
     c::fclose(listing);
-    c::waitpid(child, nullptr, 0);
+    bounded_wait(child, "ps", "the idle watchdog", wait_grace, &ps_status);
 }
 
 // Marks the rows below `root` (the worker, which is one) with their depth; returns how many there are.
@@ -3409,6 +3440,25 @@ Bool failed_so_far(const Plan *plan, Usize next) {
     return false;
 }
 
+constexpr F64 beat_every = 60.0; // seconds between the lines that say what the runner is waiting for
+
+// Every minute, what is running and for how long (#3127): a run that goes quiet names its tests in the log.
+void heartbeat(const Plan *plan, F64 now) {
+    static F64 beat_at = 0;
+    if (beat_at == 0) beat_at = now;
+    if (now - beat_at < beat_every) return;
+    beat_at = now;
+    char line[1024] = "";
+    Usize used = 0;
+    for (Usize job = 0; job < plan->options->jobs; job++) {
+        if (plan->running[job] == idle || used + 128 >= sizeof line) continue;
+        const Run *run = &plan->runs[plan->running[job]];
+        used += (Usize)__builtin_snprintf(line + used, sizeof line - used, "%s%s (%.0f s)", used > 0 ? ", " : "",
+                                          job_names[job], now - run->start);
+    }
+    say("running: %s\n", used > 0 ? &line[0] : "no test, the runner is between tests");
+}
+
 // Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it (in table order) has
 // finished. A failure that is to be shrunk is held, with everything after it, until every test has finished: shrinking
 // takes seconds, and while it ran nothing would read the other workers' pipes or judge their timeouts, so a result
@@ -3424,6 +3474,7 @@ void run_all(Plan *plan) {
         while (next < plan->count && launch(plan, &next)) {
         }
         if (any_running(plan)) pump(plan);
+        heartbeat(plan, seconds());
         if (plan->options->fail_fast && next < plan->count && failed_so_far(plan, next)) {
             for (Usize i = next; i < plan->count; i++)
                 plan->runs[plan->order[i]].skipped = true;
@@ -4037,7 +4088,7 @@ Bool other_runner_matches(const Options *options) {
     Bool found = c::read(ends[0], &byte, 1) == 1;
     c::close(ends[0]);
     I32 status = 0;
-    c::waitpid(child, &status, 0);
+    bounded_wait(child, "the test finder", "the test finder", wait_grace, &status);
     return found;
 }
 
@@ -4195,7 +4246,7 @@ void cache_call(const char *action) {
         c::_exit(127);
     }
     I32 status = 0;
-    if (child > 0) c::waitpid(child, &status, 0);
+    if (child > 0) bounded_wait(child, "smith test --cache", action, wait_grace, &status);
 }
 
 // What changes a test's result besides its code: the options of the run, and the runner's own place in the build.
@@ -4469,6 +4520,8 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     print_slowest(plan);
     say_written();
     cache_store(plan);
+    if (waits_fired > 0) // a wait that hit its grace was a hang the run survived: it fails, never passes (#3127)
+        say("\n%zu waits of the runner exceeded their grace and were killed (named above)\n", waits_fired);
     say("\n%zu passed, %zu failed in %.2f s\n", plan->count + cached_total - failed - skipped, failed,
         seconds() - start);
     if (cached_total > 0)
@@ -4478,7 +4531,7 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     say_explained(options);
     if (options->stats) say("forks: %zu\n", (Usize)*forks);
     if (options->stats) print_cpu(plan);
-    return failed;
+    return failed + waits_fired;
 }
 
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
