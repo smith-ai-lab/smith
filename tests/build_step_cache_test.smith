@@ -17,7 +17,7 @@ import std::test;
 import scratch;
 import <smith_core_step_cache.h>;
 import <stdio.h>;
-import <stdlib.h>;
+import <string.h>;
 import <sys/stat.h>;
 import <time.h>;
 
@@ -454,12 +454,19 @@ export void test_build_step_cache_serves_the_build_program_to_a_second_folder() 
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Project b = sibling(&a, "b");
-    (void)scratch::sh(&a, built(""));
+    // both builds log why a step was not stored or missed (#3050): the test once saw 13 then 17 results on a loaded
+    // runner, and the log names the steps the first folder left for the second
+    (void)scratch::sh(&a, built("SMITH_STEP_CACHE_LOG=../steps.log "));
     const char *first = scratch::capture(&a, results);
     scratch::expect_text("program: the first folder stores the program's compiles and the project's", "yes",
                          scratch::capture(&a, format::push("[ ", first, " -ge 10 ] && echo yes").data));
-    (void)scratch::sh(&b, built(""));
-    scratch::expect_text("program: the second folder stores nothing of its own", first, scratch::capture(&b, results));
+    (void)scratch::sh(&b, built("SMITH_STEP_CACHE_LOG=../steps.log "));
+    const char *second = scratch::capture(&b, results);
+    if (c::strcmp(first, second) != 0) {
+        scratch::expect_text("program: what the first folder did not store and the second missed", "",
+                             scratch::capture(&a, "grep -E '^a: not stored |^b: (miss|not stored) ' ../steps.log"));
+    }
+    scratch::expect_text("program: the second folder stores nothing of its own", first, second);
     scratch::Run same = scratch::sh(&b, "cmp .smith/build-program/runtime.o ../a/.smith/build-program/runtime.o");
     scratch::expect_status("program: and its objects are the first's", 0, &same);
 }
