@@ -129,7 +129,13 @@ runs:
         # the release's `smith build llvm` takes the pack of the
         # identity this tree wants from the cache above or downloads it (a hosted runner has no LLVM, and building it
         # takes hours)
-        smith build llvm
+        smith build llvm 2>&1 | tee "$RUNNER_TEMP/fetch.out"
+        # a cap that empties the cache is the one failure that stays silent (#3045: at 300M every build missed 329 of
+        # 329 steps for hours); the prune prints `kept 0 entries` then, and the cap is below one warm build: fail loudly
+        if grep -qE '^cache: kept 0 entries \(0 MB\), dropped [1-9]' "$RUNNER_TEMP/fetch.out"; then
+          echo "::error::the step cache cap (${{ inputs.step-cache-max }}) dropped every result: it must stay above one warm build (650 to 670 MB, knowledge/ci/caches.md)"
+          exit 1
+        fi
         echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build smith
