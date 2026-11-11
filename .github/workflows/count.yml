@@ -1,0 +1,438 @@
+name: count
+
+# The front-end coverage count (#2073, #3196): how many original-syntax `.smith` files the new front end compiles after the
+# fixer. It runs after every push to `main` that changes code (the paths below are the `Scope` step of ci.yml's `none`
+# and `docs` scopes, inverted), never in the merge queue, and gates nothing. One count at a time: a newer merge cancels
+# the count that runs or waits and the newer commit is counted. It is a workflow of its own so that the cancelling
+# reaches only the count, not the post-merge jobs of ci.yml (publish, warm, release, macos). `workflow_dispatch` runs it
+# by hand. knowledge/ci/count.md.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      # documents no build reads, and the documentation paths (ci.yml's `documents` and `gated`)
+      - "!LICENSE*"
+      - "!CONTRIBUTING.md"
+      - "!*.png"
+      - "!*.jpg"
+      - "!*.jpeg"
+      - "!*.gif"
+      - "!*.svg"
+      - "!*.webp"
+      - "!*.md"
+      - "!knowledge/**"
+      - "!.agents/**"
+      - "!.claude/skills/**"
+      # other workflows change nothing the count runs; this one, ci.yml and the actions do
+      - "!.github/workflows/**"
+      - ".github/workflows/count.yml"
+      - ".github/workflows/ci.yml"
+
+concurrency:
+  group: count
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  frontend-coverage-fix:
+    # the fixing of the count, done once (#2832). Each of the shards used to fix every tracked file (a file reads
+    # modules that must already be in the new syntax), so the whole tree was fixed once per shard and the fix phase was
+    # most of a shard's 15 to 26 minutes. This job fixes the tree once, from nothing (every count starts from nothing:
+    # no push saves the fixed files of a count to start from), and hands the folder to the
+    # shards as an artifact.
+    # It builds the release profile (-O2, #2684) of smith itself, which `build-linux-release` did in a job of its own: the
+    # count runs the smith it measures, and the dev build of `build-linux` (-O0) made six of eight shards  hit their
+    # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
+    # count is this job and the merge (2 jobs); a cold one also runs the shards on the build it packs. It runs after each code merge to main (#3196): see `frontend-coverage`.
+    runs-on: ubuntu-latest
+    # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
+    # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
+    timeout-minutes: 60
+    outputs:
+      # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
+    permissions:
+      contents: write # test-cache/save: `gh release create` of the import cache this job made (#2891)
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
+      - uses: ./.github/actions/setup-smith
+        with:
+          profile: release
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
+      - uses: ./.github/actions/test-cache
+        # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
+        # count's jobs publish; its own set (#2939)
+        with:
+          tests: "false"
+          fresh: "true"
+          imports-from: count
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
+      - name: Check the objects the count's key leaves out
+        # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
+        shell: bash
+        run: |
+          # the objects `unrelated_object` in scripts/frontend_coverage/main.smith leaves out of the key hold only another
+          # verb's code: nothing outside them and the two dispatchers (smith.o, rt_runtime_verbs.o) calls a symbol they define,
+          # and the list here is the list there
+          source="$PWD/scripts/frontend_coverage/main.smith"
+          cd "$(dirname "$SMITH")"
+          exact="rt_runtime_docs.o rt_smith_protocol_dap.o rt_smith_protocol_mcp.o lldb_dap_shim.o lldb_server_shim.o"
+          listed=$(sed -n '/static Bool unrelated_object/,/^}/p' "$source" | grep -o '"[a-z_]*\.o"' | tr -d '"' | sort | tr '\n' ' ')
+          want=$(echo $exact | tr ' ' '\n' | sort | tr '\n' ' ')
+          [ "$listed" = "$want" ] || { echo "::error::the excluded objects here ($want) differ from unrelated_object ($listed)"; exit 1; }
+          excluded=$(for o in $exact rt_runtime_mcp*.o front_lsp_*.o; do [ -f "$o" ] && echo "$o"; done | tr '\n' ' ')
+          defined=$(mktemp)
+          nm -g --defined-only $excluded | awk 'NF == 3 && $2 ~ /^[TDRBSVW]$/ {print $3}' | sort -u >"$defined"
+          status=0
+          for o in *.o; do
+            case " $excluded " in *" $o "*) continue ;; esac
+            case "$o" in smith.o | rt_runtime_verbs.o) continue ;; esac
+            hits=$(nm -u "$o" 2>/dev/null | awk 'NF == 2 {print $2}' | sort -u | comm -12 - "$defined" | head -n 5 | tr '\n' ' ')
+            if [ -n "$hits" ]; then echo "::error::$o calls $hits(defined in an object left out of the count's key)"; status=1; fi
+          done
+          [ "$status" = 0 ] && echo "$(echo $excluded | wc -w) objects left out of the key, no caller outside the verbs' own code"
+          exit $status
+      - name: Fix the tree
+        shell: bash
+        run: |
+          "$SMITH" build frontend-coverage -Dfix_only=1 -Dsmith="$SMITH" 2>&1 | tee "$RUNNER_TEMP/fix.txt"
+          {
+            echo "### Count: fixed files"
+            echo '```'
+            grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure)' "$RUNNER_TEMP/fix.txt"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Size the shards
+        id: plan
+        shell: bash
+        run: |
+          # a part measures at most an eighth of the tree: a cold count is 8 parts, a warm one is 1 or 2
+          read -r missing total < <(sed -n 's/^frontend_coverage: rows to measure: \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$RUNNER_TEMP/fix.txt" | tail -n 1)
+          n=8
+          if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (8 * missing + total - 1) / total )); fi
+          [ "$n" -lt 1 ] && n=1
+          [ "$n" -gt 8 ] && n=8
+          echo "count=$n" >>"$GITHUB_OUTPUT"
+          echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
+          echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Count the rows left, here
+        # one part or none left (a warm run): measured in this job, as part 1 of 1, so no shard job runs
+        if: ${{ steps.plan.outputs.count == '1' }}
+        # never fails the job: the status is read by the merge job, whatever happened here
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          "$SMITH" build frontend-coverage -Dshard=1/1 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
+          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+      - name: Save the part counted here
+        if: ${{ steps.plan.outputs.count == '1' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-shard-${{ github.sha }}-1
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Pack the build for the shards
+        # and for the merge job `frontend-coverage`
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - name: Save the build for the shards
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
+      - name: Save the fixed files
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-fixed-${{ github.sha }}
+          path: .smith/frontend-coverage/fixed
+          compression-level: 1
+          retention-days: 3
+      - name: Publish the import cache
+        # `test-cache-<sha7>-count` (a push to main), and the hits of the fix and of a count done here
+        if: always()
+        uses: ./.github/actions/test-cache/save
+        with:
+          name: count
+          tests: "false"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
+  frontend-coverage-shard:
+    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
+    # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
+    # count. The job `frontend-coverage` below joins the eight tables. The count was one job of 27
+    # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
+    # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
+    needs: frontend-coverage-fix
+    if: ${{ !cancelled() && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.frontend-coverage-fix.outputs.shards) }}
+    permissions:
+      contents: write # test-cache/save: `gh release create` of the import cache this shard made (#2891)
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux-release
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
+      - uses: ./.github/actions/test-cache
+        # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
+        with:
+          tests: "false"
+          fresh: "true"
+          imports-from: count count-${{ matrix.shard }}
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
+      - name: Fetch the fixed files
+        # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
+        uses: actions/download-artifact@v4
+        with:
+          name: count-fixed-${{ github.sha }}
+          path: .smith/frontend-coverage/fixed
+      - name: Count the shard
+        # the shard fails when its count ends with a status other than 0, so it is seen; the merge job still reads the
+        # status file it saves (the steps after this one run always)
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
+          # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
+          # from the diff is deterministic, so there is no retry: the command is bounded to 7 minutes and fails the entry.
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          status=$?
+          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 7 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
+          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
+          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Save the shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-shard-${{ github.sha }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Publish the import cache
+        # `test-cache-<sha7>-count-<k>`, and the shard's hits
+        if: always()
+        uses: ./.github/actions/test-cache/save
+        with:
+          name: count-${{ matrix.shard }}
+          tests: "false"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
+  frontend-coverage:
+    # the merge of the parts of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files (a
+    # file in no part, or in two, is an error), and the summary is the single job's. A part that failed or did not
+    # finish leaves the count unmeasured. The count of how many .smith files the new front end handles (#2073, #1885,
+    # #2433), measured on Linux, on the release smith `frontend-coverage-fix` built for that very commit, which this job
+    # restores (`build-linux-release`).
+    # It runs after each code merge to main and by hand (#3196) and gates nothing: the line `frontend-coverage:` it prints is the
+    # number the lead reads. It was in every queue run (11 to 13 minutes, #3052) and then on every push to main.
+    # `timeout-minutes` counts queue time too (knowledge/ci-hosted.md).
+    needs: [frontend-coverage-fix, frontend-coverage-shard]
+    if: ${{ !cancelled() && (needs.frontend-coverage-fix.result == 'success' || needs.frontend-coverage-fix.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux-release
+      - name: Fetch the shards
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frontend-coverage-shard-${{ github.sha }}-*
+          path: ${{ runner.temp }}/shards
+      - name: Count
+        id: count
+        # never fails the job: the output is read afterwards, whatever happened
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          out="$RUNNER_TEMP/coverage/output.txt"
+          tables=
+          parts=${{ needs.frontend-coverage-fix.outputs.count || 8 }}
+          for k in $(seq 1 "$parts"); do
+            d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
+            if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
+              tables="${tables:+$tables,}$d/results.tsv"
+            else
+              echo "frontend-coverage: shard $k of $parts did not finish, so the count is not measured" >>"$out"
+              tail -n 20 "$d/output.txt" 2>/dev/null >>"$out"
+            fi
+          done
+          if [ -n "$tables" ] && [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = $((parts - 1)) ]; then
+            "$SMITH" build frontend-coverage -Dmerge="$tables" -Dsmith="$SMITH" >>"$out" 2>&1
+            echo "status: $?" >>"$out"
+            cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          fi
+          exit 0
+      - name: Publish the number
+        if: always()
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/coverage/output.txt"
+          line=$(sed -n 's/^frontend-coverage: \([0-9][0-9]*\) of \([0-9][0-9]*\) files pass$/\1 \2/p' "$out" 2>/dev/null | tail -n 1)
+          {
+            if [ -n "$line" ]; then
+              echo "### Front-end coverage: ${line% *} of ${line#* } files pass"
+              echo
+              echo '```'
+              grep -E '^  failed at ' "$out"
+              echo '```'
+              echo
+              echo "Total errors and files failing: $(grep '^frontend-errors: ' "$out" | tail -n 1 | sed 's/^frontend-errors: //' || true)"
+              echo
+              echo 'Top 20 causes, by the files each alone blocks, then the files each stops first (count, first, files, cause):'
+              echo '```'
+              awk '/^failures by cause/ {on=1; next} on && /^ *[0-9]+ +[0-9]+ +[0-9]+  / {print; n++} n==20 {exit}' "$out"
+              echo '```'
+            else
+              echo "### Front-end coverage: not measured"
+              echo '```'
+              tail -n 40 "$out" 2>/dev/null
+              echo '```'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+          [ -n "$line" ] || tail -n 40 "$out" 2>/dev/null
+          # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
+          if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
+          else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
+          # what the count says about its own list (#3037): the file and what to do, as the job's error or warning line
+          grep -E '^frontend_coverage: (error|warning): ' "$out" 2>/dev/null |
+            sed -e 's/^frontend_coverage: error: /::error::/' -e 's/^frontend_coverage: warning: /::warning::/' || true
+          # the total errors (#2731): frontend-errors: <sha> <errors> <files failing>
+          errs=$(grep '^frontend-errors: ' "$out" 2>/dev/null | tail -n 1 || true)
+          if [ -n "$errs" ]; then echo "frontend-errors: $GITHUB_SHA ${errs#frontend-errors: }"; fi
+          # the files the count leaves out of its total (#3037): frontend-excluded: <sha> <n>, so the old total is the sum
+          left=$(grep '^frontend-excluded: ' "$out" 2>/dev/null | tail -n 1 || true)
+          if [ -n "$left" ]; then echo "frontend-excluded: $GITHUB_SHA ${left#frontend-excluded: }"; fi
+          # the top 20 causes, one fixed line each (#2247, #2731): frontend-cause: <alone> <first> <files> <count> <cause>
+          grep '^frontend-cause: ' "$out" 2>/dev/null || true
+          # the top 10 pairs of causes that are a file's only two (#2731): frontend-pair: <files> <cause a> | <cause b>
+          grep '^frontend-pair: ' "$out" 2>/dev/null || true
+          # the top 15 names behind `unknown name` and `unknown type` (#2413): frontend-name: <first> <files> <count> <kind> <name>
+          grep '^frontend-name: ' "$out" 2>/dev/null || true
+      - name: Files that passed in the last finished count and fail now
+        # a warning: the job stays green (#3196). The last finished count on main is the newest successful run of this
+        # workflow before this one; its stored table is the artifact `frontend-coverage-<its sha>`. Not found: unknown.
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          dir="$RUNNER_TEMP/coverage"
+          now="$dir/results.tsv"
+          prev=unknown
+          if [ -s "$now" ]; then
+            run=$(gh api "repos/$GH_REPO/actions/workflows/count.yml/runs?branch=main&status=success&per_page=10" \
+              --jq '[.workflow_runs[]|select(.head_sha!="'"$GITHUB_SHA"'")][0]|"\(.id) \(.head_sha)"' 2>/dev/null)
+            case "$run" in
+              [0-9]*)
+                mkdir -p "$RUNNER_TEMP/previous"
+                if gh run download "${run% *}" -n "frontend-coverage-${run#* }" -D "$RUNNER_TEMP/previous" >/dev/null 2>&1 && [ -s "$RUNNER_TEMP/previous/results.tsv" ]; then
+                  prev="$RUNNER_TEMP/previous/results.tsv"
+                fi ;;
+            esac
+          fi
+          if [ "$prev" = unknown ]; then
+            echo "frontend-regressed-count: unknown"
+          else
+            # a file passed there (stage `pass`) and has a row here with another stage; a file gone from the tree is not a regression
+            awk -F'\t' 'NR==FNR { if ($2 == "pass") was[$1] = 1; next } ($2 != "pass") && ($1 in was) && !($1 in seen) { seen[$1] = 1; print $1 }' \
+              "$prev" "$now" | LC_ALL=C sort >"$RUNNER_TEMP/regressed.txt"
+            while IFS= read -r f; do echo "frontend-regressed: $f"; done <"$RUNNER_TEMP/regressed.txt"
+            n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
+            echo "frontend-regressed-count: $n"
+            if [ "$n" != 0 ]; then echo "::warning::$n files passed in the last finished count and fail now (frontend-regressed lines)"; fi
+          fi
+      - name: Save the table
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
