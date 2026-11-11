@@ -1,0 +1,38 @@
+var trace: i32 = 0
+
+fn guarded(o: ?i32) -> i32:
+    defer trace = trace + 100
+    let v = match o:
+        .some(n): n
+        .none:
+            trace = trace + 1
+            return 5
+    v
+
+fn lambda_leaves(n: i32) -> i32:
+    let f = fn(o: ?i32) -> i32:
+        let v = match o:
+            .some(x): x
+            .none:
+                return 7
+        v + 1
+    let r = f(.none)
+    r + n
+
+fn generic[T](o: ?T, d: T) -> T:
+    let v = match o:
+        .some(x): x
+        .none:
+            return d
+    v
+
+pub fn check() -> i32:
+    if guarded(.none) != 5 or trace != 101:
+        return 1
+    if guarded(.some(2)) != 2 or trace != 201:
+        return 2
+    if lambda_leaves(1) != 8:
+        return 3
+    if generic[i32](.none, 9) != 9 or generic[i32](.some(3), 9) != 3:
+        return 4
+    0
