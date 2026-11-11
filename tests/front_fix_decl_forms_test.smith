@@ -260,3 +260,12 @@ export void test_front_fix_a_field_that_holds_a_type() {
     expect_fixed("module m;\ntypedef struct {\n    char name[16];\n    constexpr Type of;\n} Field;\n",
                  "struct Field:\n    name: [16]char\n    of: type\n");
 }
+
+// A generic function's pointer parameter with no `const` is `*mut T`: its body is checked only in an instance, so the
+// checker's `*mut` fix never reaches its own file (#3027: std.arena's `push` handed `arena` on to `push_raw`).
+export void test_front_fix_a_generic_pointer_parameter_is_writable() {
+    expect_fixed("module m;\nexport T *push(Arena *arena, const Arena *seen, constexpr Type T) {\n"
+                 "    return (T *)raw(arena);\n}\n",
+                 "pub fn push(arena: *mut Arena, seen: *Arena, T: type) -> *mut T:\n"
+                 "    return raw(arena).cast(*mut T)\n");
+}

@@ -1367,7 +1367,7 @@ static Bool mentions_const(Str raw) {
 // One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
 // `rest: ...`, an attribute first. An array suffix moves in front of the type (`I32 xs[3]` is `xs: [3]I32`). Empty when
 // it has no mechanical fix (no name, `auto x`, a qualified slice).
-static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
+static Str new_parameter(const parse::Parser *p, Usize from, Usize to, Bool generic) {
     Usize at = from;
     Str prefix = "";
     Bool unused = false;
@@ -1405,7 +1405,25 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
     if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
+    // A generic function's body is checked only in another module's instance, so the checker's `*mut` fix never reaches
+    // its own file: a pointer with no `const` is writable here, as a result is (#3027, std.arena's `push`).
+    if (generic && countof(type) > 1 && type[0] == '*' && !mentions_const(raw) && !starts_with(type, "*mut ") &&
+        !starts_with(type, "*void"))
+        type = as_str(format::push("*mut ", type[1:countof(type)]));
     return as_str(format::push(prefix, name, ": ", type));
+}
+
+// Whether a parameter list, the tokens after `open` up to `close`, makes the function generic: a `constexpr Type`, an
+// `auto` or a pack.
+static Bool generic_parameters(const parse::Parser *p, Usize open, Usize close) {
+    for (Usize i = open + 1; i < close; i++) {
+        lex::TokenKind kind = p->tokens[i].kind;
+        if (kind == lex::kw_auto) return true;
+        if (kind == lex::kw_constexpr && i + 1 < close && p->tokens[i + 1].kind == lex::type_name &&
+            same_text(parse::text(p, p->tokens[i + 1]), "Type"))
+            return true;
+    }
+    return false;
 }
 
 // The parameters, the tokens after `open` up to `close`, as `a: T, b: U`. False when one has no mechanical fix.
@@ -1413,6 +1431,7 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
     Str none = "";
     *out = none;
     if (close == open + 1 || (close == open + 2 && p->tokens[open + 1].kind == lex::kw_void)) return true;
+    Bool generic = generic_parameters(p, open, close);
     Usize depth = 0;
     Usize from = open + 1;
     for (Usize i = open + 1; i <= close; i++) {
@@ -1424,7 +1443,7 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
             // A C-variadic definition keeps its `...` last (`fn f(format: *char, ...)`, #2333).
             Bool dots = i == close && i == from + 1 && p->tokens[from].kind == lex::ellipsis;
             Str one = "...";
-            if (!dots) one = new_parameter(p, from, i);
+            if (!dots) one = new_parameter(p, from, i, generic);
             if (countof(one) == 0) return false;
             if (countof(*out) > 0)
                 *out = as_str(format::push(*out, ", ", one));
