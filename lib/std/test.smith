@@ -747,7 +747,7 @@ U64 explain_cpu_ns(c::pid_t pid) {
 
 // Reads the debugger's answer until it ends, it has spent explain_seconds of CPU time, or explain_hang_seconds of wall
 // time have passed. Returns explain_read_ok, explain_read_cpu or explain_read_hung.
-export Bool bounded_wait(c::pid_t pid, const char *what, const char *name, F64 grace, I32 *status);
+export Bool bounded_wait(I32 pid, const char *what, const char *name, F64 grace, I32 *status);
 
 U64 explain_read(I32 from, char *text, Usize *used, U64 began, c::pid_t child) {
     U64 cpu = 0;
@@ -2285,7 +2285,7 @@ void close_process(Process *process) {
 // the process and its group are killed and reaped, the wait is counted (waits_fired, which fails the run) and a line
 // names `what` it waited for and for whom, so a repeat gives its own root cause. Returns true when the process ended by
 // itself, with its wait status in *status.
-export Bool bounded_wait(c::pid_t pid, const char *what, const char *name, F64 grace, I32 *status) {
+export Bool bounded_wait(I32 pid, const char *what, const char *name, F64 grace, I32 *status) {
     if (pid <= 0) return true;
     F64 began = seconds();
     for (Usize polls = 0; polls < rounds_max; polls++) { // the process ends, or the grace does
