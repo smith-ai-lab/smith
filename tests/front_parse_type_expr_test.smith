@@ -1,0 +1,52 @@
+// A type written where an expression is read, and an expression where a type is read (#3122): in smith's own syntax
+// the argument of `.to`, `.wrap` and `.cast` is any expression that evaluates to a type, and the built-in concepts
+// `float(T)` and `signed(T)` are calls, not types to write as `f32` and `i32`.
+module front_parse_type_expr_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import front::lex;
+import front::parse;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+
+// A parser over the tokens of source in smith's own syntax with the real hooks; a lexing error fails the test.
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.new_syntax = true;
+    p.hooks.expression = parse_expr::expression;
+    p.hooks.type = parse_type::type;
+    return p;
+}
+
+// Reads one expression: no error, no warning, and nothing left unread.
+static void check_clean(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser p = parser_of(source);
+    _ = parse::expression(&p);
+    test::check_equal(countof(p.errors), (Usize)0);
+    test::check_equal(countof(p.warnings), (Usize)0);
+    test::check_condition(parse::peek(&p).kind == lex::end_of_file);
+}
+
+// Gap 3: a built-in concept called with a type is a call, with no warning to write the type.
+export void test_type_expr_a_concept_call_is_not_an_old_type() {
+    check_clean("float(T)");
+    check_clean("signed(T)");
+    check_clean("float(T) and signed(U)");
+}
