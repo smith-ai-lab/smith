@@ -1415,8 +1415,9 @@ void smith_stepcache_prune(SmithExec *exec) {
 }
 
 // ---------------------------------------------------------------- answers
-// A step that is not a compile (a solver's query, #3174) keeps its answer as a/<xx>/<hex>, beside the results (r/), with
-// the same prune and cap in a folder of its own. The caller hashes what the step read into `hex`; the bytes are its.
+// A step that is not a compile (a solver's query, #3174) keeps its answer as a/<xx>/<hex>, beside the results (r/),
+// with the same prune and cap in a folder of its own. The caller hashes what the step read into `hex`; the bytes are
+// its.
 
 static bool smith_stepcache_answer_path(char *out, const char *hex) {
     char base[PATH_MAX];

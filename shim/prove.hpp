@@ -232,9 +232,9 @@ enum class Verdict { Unsat, Sat, Unknown, Timeout };
 // Asks Bitwuzla whether a query in SMT-LIB 2 is satisfiable. It stops when the calling thread has used `seconds` of CPU
 // time, or when the process has used `threads * seconds` since it was at `process_start` (the queries that run side by
 // side share a budget).
-// Reads the answer from the step store (#3174, unless `read_store` is false) and keeps a Sat or Unsat there, keyed by the
-// query and Bitwuzla's version. A hit sets `cpu` to the time the query took when solved (charged as a run is); `cpu` is
-// negative when the query ran now. A hit over `seconds` is a Timeout; a Timeout and an Unknown are never kept.
+// Reads the answer from the step store (#3174, unless `read_store` is false) and keeps a Sat or Unsat there, keyed by
+// the query and Bitwuzla's version. A hit sets `cpu` to the time the query took when solved (charged as a run is);
+// `cpu` is negative when the query ran now. A hit over `seconds` is a Timeout; a Timeout and an Unknown are never kept.
 Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads,
                        bool read_store, double &cpu);
 
