@@ -3570,15 +3570,33 @@ static int build_pre_push(SmithRun *run) {
         name = name != nullptr ? name + 1 : sources[i];
         size_t length = strcspn(name, ".");
         if ((length == 5 && strncmp(name, "build", 5) == 0) || strlen(names) + length + 2 >= sizeof names) continue;
-        snprintf(names + strlen(names), sizeof names - strlen(names), "%s%.*s", names[0] != '\0' ? "," : "",
+        snprintf(names + strlen(names), sizeof names - strlen(names), "%s*%.*s*", names[0] != '\0' ? "," : "",
                  (int)length, name);
     }
+    // `--test` fails when no test matches; a change with no test of its own is not a failure of the push.
     if (names[0] == '\0') {
-        puts("pre-push: no test file of its own among the changes");
+        puts("pre-push: no test of its own among the changes");
         return 0;
     }
-    return pre_push_step("tests of the changed files",
-                         (const char *[]){smith, "test", "--skip-macos", "--test", names, nullptr});
+    const char *const test[] = {smith, "test", "--skip-macos", "--test", names, nullptr};
+    const char *log = ".smith/pre-push-test.log";
+    printf("pre-push: tests of the changed files\n");
+    int status = build_spawn(&(BuildSpawn){.argv = test, .log = log, .tail = 30});
+    if (status == 0) return 0;
+    FILE *file = fopen(log, "rb");
+    char text[65536] = "";
+    size_t used = file != nullptr ? fread(text, 1, sizeof text - 1, file) : 0;
+    if (file != nullptr) fclose(file);
+    text[used] = '\0';
+    if (strstr(text, "no test matches") != nullptr && strstr(text, "FAIL ") == nullptr) {
+        puts("pre-push: no test of its own among the changes");
+        return 0;
+    }
+    fprintf(stderr,
+            "\npre-push: FAILED at the step \"tests of the changed files\"; run it again with:\n  %s test --skip-macos "
+            "--test '%s'\n(`git push --no-verify` skips the check, only on the lead's word.)\n",
+            smith, names);
+    return status;
 }
 
 static int build_pre_push_test(SmithRun *run) {
