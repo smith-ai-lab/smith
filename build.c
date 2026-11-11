@@ -3219,7 +3219,9 @@ static int build_tree_sitter_run(SmithRun *run) {
         if (access(before, F_OK) == 0 && build_exec(smith_list(b, "/usr/bin/cmp", "-s", before, after, nullptr)) == 0)
             status = build_exec(smith_list(b, "/usr/bin/touch", "-r", before, after, nullptr));
     }
-    return status;
+    // The copy goes once the times are kept: its parser.c is 12 MB of C in the tree, and a tool that walks the tree for
+    // .c files (tests/smith_fmt_test.smith) formatted it, 13 GB in one clang-format (#3061).
+    return status != 0 ? status : build_remove(b, old);
 }
 
 // The steps of the parser and the object that embeds it in smith (into *data, which smith links).
