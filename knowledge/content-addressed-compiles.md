@@ -37,23 +37,16 @@ so a summary stays valid whatever happens to the rest of the build. It lives in 
 build's one pass ([effect-inference](effect-inference.md)). Because the line of every instruction is in the hash, a
 line added above a function changes that function's summary key.
 
-**The proof cache** (`~/.cache/smith/proofs`, `shim/prove.cpp`, [CI caches](ci/caches.md)). The unit is one function
-with a contract. The key is the IR the prover checks, plus the prover's identity (`prove::prover_identity`: a hash of the prover's
-sources, the LLVM pack and the solvers' archives, made by `build_prover_identity` in `build.c`); not the smith binary. A
-callee with `smith_ensures` is used through its contract, any other callee is inlined, so the IR the prover checks
-already holds what the proof depends on.
-
-**The group's record** (#2994). Asking for a function's key needs its IR, so a group whose proofs were all reused still
-paid for compiling every source and loading the IR (49.9 s of a warm `smith prove` of smith itself). A group that ends
-with every function reused (so from its second run) keeps `group-<hash>` in the same folder: the files its compiles read (the depfiles of
-`-MD`) with a SHA-256 of each, and the lines it printed. The name is a hash of the sources, libraries, flags, budget,
-memory and loop options, the prover and LLVM versions, and `smith_import_identity` (the front end, runtime, `lib/std`
-and the LLVM pack: the compiler, by content, so a rebuild with the same sources keeps it). The next run reads the files
-named, and when every digest holds it prints the record's lines and the summary with `(not compiled)`. A group with
-`-v`, `--function`, `--dump`, `--emit-ir`, `--no-cache` or `--front-end=new` (no depfile), one with a failure or a
-function proved afresh, and a file that names a macro for the time keep no record and run as
-before. The one input a depfile cannot name is a header that a new `-I` folder would now find first; the flags are in
-the name.
+**The solver's answers** (#3174, `shim/prove_bitwuzla.cpp`, [CI caches](ci/caches.md)). The unit is one query to the solver,
+the SMT-LIB text of a point's condition. The key is the SHA-256 of the query and Bitwuzla's version: not the smith binary, not the
+source's path or the prover. A Sat or an Unsat is the entry `steps/a/<xx>/<hex>` of the step store (`smith_stepcache_answer_get`
+and `_put` in `runtime/executor_cache.c`): the answer and the CPU seconds the query took, which a hit charges as a run would, so the
+budget and the report do not depend on what the store held. A Timeout, an Unknown and a crash are not kept. A refuted point is
+two Sat answers (the small query, then the full one), kept like a proof; Z3 finds the values of the counterexample again each
+time (3 s of CPU at most). The prune and the cap of the step store hold them; `--no-cache` asks the solver again. The group's record (#2994) stays as it was
+(a record of the files the group's compile read, under `proofs/group-<hash>`, which skips the compile of a group whose functions were
+all proved with no query run); it is written when the store answered every query. Making it an entry of the store, keyed by the
+digests of the files, the flags and the identity, is #3177. Compiling to IR and Alive2's walk are paid on every run until then.
 
 **The lint cache** (`runtime/lint_cache.c`, [caches](caches.md)). Per file, keyed by the lint identity, the compile
 command and the content of the files clang-tidy read.

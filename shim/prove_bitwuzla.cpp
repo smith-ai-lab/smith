@@ -5,10 +5,15 @@
 
 #include "bitwuzla/cpp/bitwuzla.h"
 #include "bitwuzla/cpp/parser.h"
+#include "llvm/Support/SHA256.h"
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
+
+extern "C" bool smith_stepcache_answer_get(const char *hex, char *out, size_t capacity, size_t *size);
+extern "C" void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size);
 
 namespace prove {
 namespace {
@@ -34,7 +39,53 @@ class Deadline final : public bitwuzla::Terminator {
 
 } // namespace
 
-Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads) {
+std::string answer_key(const char *kind, const std::string &text) {
+    llvm::SHA256 hash;
+    hash.update(std::string("smith-answer ") + kind + "\n");
+    hash.update(text);
+    std::array<uint8_t, 32> digest = hash.final();
+    static const char *const hex = "0123456789abcdef";
+    std::string name;
+    for (uint8_t byte : digest) {
+        name += hex[byte >> 4];
+        name += hex[byte & 15];
+    }
+    return name;
+}
+
+bool answer_get(const std::string &key, std::string &bytes) {
+    static constexpr size_t capacity = 1 << 16;
+    char buffer[capacity];
+    size_t size = 0;
+    if (!smith_stepcache_answer_get(key.c_str(), buffer, capacity, &size)) return false;
+    bytes.assign(buffer, size);
+    return true;
+}
+
+void answer_put(const std::string &key, const std::string &bytes) {
+    smith_stepcache_answer_put(key.c_str(), bytes.data(), bytes.size());
+}
+
+Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads,
+                       bool read_store, double &cpu) {
+    cpu = -1;
+    // Sat and Unsat depend on the query and Bitwuzla's version alone; a Timeout or an Unknown is no answer.
+    const std::string key = answer_key((std::string("bitwuzla ") + bitwuzla::version()).c_str(), query);
+    std::string kept;
+    if (read_store && answer_get(key, kept)) {
+        const bool unsat = kept.compare(0, 6, "unsat ") == 0;
+        if (unsat || kept.compare(0, 4, "sat ") == 0) {
+            char *end = nullptr;
+            const double took = std::strtod(kept.c_str() + (unsat ? 6 : 4), &end);
+            if (end != kept.c_str() + (unsat ? 6 : 4)) {
+                if (took > seconds) return Verdict::Timeout;
+                cpu = took;
+                return unsat ? Verdict::Unsat : Verdict::Sat;
+            }
+        }
+    }
+    const double before = thread_cpu_seconds();
+    Verdict verdict = Verdict::Unknown;
     try {
         bitwuzla::TermManager manager;
         bitwuzla::Options options;
@@ -43,17 +94,25 @@ Verdict bitwuzla_check(const std::string &query, double seconds, double process_
         Deadline deadline(seconds, process_start, threads);
         parser.configure_terminator(&deadline);
         parser.parse(query, false, false);
-        if (deadline.expired) return Verdict::Timeout;
         std::string text = answer.str();
-        if (text.find("unsat") != std::string::npos) return Verdict::Unsat;
-        if (text.find("sat") != std::string::npos) return Verdict::Sat;
-        return Verdict::Unknown;
+        if (deadline.expired)
+            verdict = Verdict::Timeout;
+        else if (text.find("unsat") != std::string::npos)
+            verdict = Verdict::Unsat;
+        else if (text.find("sat") != std::string::npos)
+            verdict = Verdict::Sat;
     } catch (const std::exception &failure) {
         if (std::getenv("SMITH_PROVE_DUMP") != nullptr) std::fprintf(stderr, "bitwuzla: %s\n", failure.what());
-        return Verdict::Unknown;
     } catch (...) {
-        return Verdict::Unknown;
+        verdict = Verdict::Unknown;
     }
+    if (verdict == Verdict::Unsat || verdict == Verdict::Sat) {
+        char line[64];
+        std::snprintf(line, sizeof line, "%s %.6f\n", verdict == Verdict::Unsat ? "unsat" : "sat",
+                      thread_cpu_seconds() - before);
+        answer_put(key, line);
+    }
+    return verdict;
 }
 
 } // namespace prove

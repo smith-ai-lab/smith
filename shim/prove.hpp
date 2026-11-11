@@ -137,7 +137,7 @@ struct Options {
     bool dump = false;           // print the IR each function is proved from
     std::string emit_ir;         // a file that gets the IR of each function, as it is checked (--emit-ir)
     bool emit_ir_append = false; // the file is not emptied first (the project verb proves several groups)
-    bool no_cache = false;       // prove again what a cached proof has proved
+    bool no_cache = false;       // ask the solver again, not the step store (the answers are still kept)
     // A loop with a smith_invariant that has a bound can be unrolled (the invariant is proved on each pass) or proved
     // by induction (once, for any pass). Auto: by induction when it has more than `induction_from_passes` passes or no
     // count. --induction and --unroll say it for every loop.
@@ -215,11 +215,6 @@ std::set<const llvm::Instruction *> data_cone(const llvm::Instruction *root);
 // The IR of a prepared function as the prover checks it, with the proof points listed in comments.
 std::string program_ir_text(const Prepared &prepared);
 
-// A key for a proof of the prepared function: the text of its IR without debug information or the numbering of
-// attribute groups, the globals and declarations it uses, and the proof points. Two functions with the same key have
-// the same proof.
-std::string program_proof_key(const Prepared &prepared);
-
 // ---- shim/prove.cpp ----
 
 // The prover's identity (#3076): what every cache of proofs puts in its key beside what was proved, so a proof made by
@@ -237,7 +232,16 @@ enum class Verdict { Unsat, Sat, Unknown, Timeout };
 // Asks Bitwuzla whether a query in SMT-LIB 2 is satisfiable. It stops when the calling thread has used `seconds` of CPU
 // time, or when the process has used `threads * seconds` since it was at `process_start` (the queries that run side by
 // side share a budget).
-Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads);
+// Reads the answer from the step store (#3174, unless `read_store` is false) and keeps a Sat or Unsat there, keyed by
+// the query and Bitwuzla's version. A hit sets `cpu` to the time the query took when solved (charged as a run is);
+// `cpu` is negative when the query ran now. A hit over `seconds` is a Timeout; a Timeout and an Unknown are never kept.
+Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads,
+                       bool read_store, double &cpu);
+
+// The step store's entry for a step that is not a compile, keyed by the SHA-256 of the kind and the text it read.
+std::string answer_key(const char *kind, const std::string &text);
+bool answer_get(const std::string &key, std::string &bytes);
+void answer_put(const std::string &key, const std::string &bytes);
 
 // CPU time (user and system) the calling thread has used.
 double thread_cpu_seconds();
@@ -270,10 +274,11 @@ struct Outcome {
     unsigned queries_written = 0;
     std::vector<std::pair<std::string, double>> phases; // where the charged time went, in order
     std::vector<Finding> findings;
-    std::string error;      // for Error
-    double seconds = 0;     // wall time
-    double cpu_seconds = 0; // CPU time of the process, every thread, since the proof began
-    double charged = 0;     // what the budget counts: the time on solver_threads idle cores (see Options)
+    std::string error;       // for Error
+    double seconds = 0;      // wall time
+    double cpu_seconds = 0;  // CPU time of the process, every thread, since the proof began
+    unsigned solved_now = 0; // the queries that ran in this process: the rest were found in the step store
+    double charged = 0;      // what the budget counts: the time on solver_threads idle cores (see Options)
 };
 
 // CPU time (user and system, every thread) the process has used.

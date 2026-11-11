@@ -1,13 +1,13 @@
 // `smith prove` on its basic cases, from sections 1 to 7b of tests/prove.sh (issue #292): the issue's clamp, a caller
 // that breaks it, undefined behaviour, a column one past a row, a callee known by its contract alone, one program for
 // each construct that is an error and never an assumption, the memory limit, the budget and a proof's process ending
-// with its parent. The programs are tests/prove/*.c ($c below). The proofs are cached by content in the tests' own
-// cache (never the real one), so a run with an unchanged prover reuses them and `smith check` spends its CPU on what
-// changed (issue #31). The budget of a proof is CPU time, so a loaded machine slows a test and never fails it. The
-// cases are in tests/prove_test.smith (basic), prove_memory_test.smith (what calls promise, pointers, restrict),
-// prove_smith_test.smith (modules and projects in .smith) and prove_misc_test.smith (trusted, the IR, the cache, loops,
-// modifies, coverage). Each test makes its project with scratch::make and has a test::memory arena as the current
-// allocator, so what scratch returns goes back with the arena.
+// with its parent. The programs are tests/prove/*.c ($c below). The solver's answers are kept by the query in the
+// tests' own step store (never the real one), so a run reuses them and `smith check` spends its CPU on what changed
+// (#3174). The budget of a proof is CPU time, so a loaded machine slows a test and never fails it. The cases are in
+// tests/prove_test.smith (basic), prove_memory_test.smith (what calls promise, pointers, restrict),
+// prove_smith_test.smith (modules and projects in .smith) and prove_misc_test.smith (trusted, the IR, the answers kept,
+// loops, modifies, coverage). Each test makes its project with scratch::make and has a test::memory arena as the
+// current allocator, so what scratch returns goes back with the arena.
 module prove_test;
 
 import std::arena;

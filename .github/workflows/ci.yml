@@ -863,7 +863,7 @@ jobs:
         with:
           path: |
             ~/.cache/smith/lint
-            ~/.cache/smith/proofs
+            ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
@@ -944,7 +944,7 @@ jobs:
         with:
           path: |
             ~/.cache/smith/lint
-            ~/.cache/smith/proofs
+            ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Lint
@@ -1293,7 +1293,7 @@ jobs:
         with:
           path: |
             ~/.cache/smith/lint
-            ~/.cache/smith/proofs
+            ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Fill the lint and proof caches
@@ -1307,14 +1307,14 @@ jobs:
           grep 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
           "$SMITH" prove >"$RUNNER_TEMP/prove.log" 2>&1 || true
           tail -n 3 "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY"
-          du -sh ~/.cache/smith/lint ~/.cache/smith/proofs | tee -a "$GITHUB_STEP_SUMMARY"
+          du -sh ~/.cache/smith/lint ~/.cache/smith/steps/a | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the lint and proof caches
         if: runner.os == 'Linux' && env.DRY_RUN != '1' && always()
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/smith/lint
-            ~/.cache/smith/proofs
+            ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
       - name: Time the build (tracked on #2751)
         # Linux only, after every cache is saved, so the timing never changes what is saved or delays it. It records
@@ -1848,6 +1848,7 @@ jobs:
               echo '```'
             fi
           } >>"$GITHUB_STEP_SUMMARY"
+          [ -n "$line" ] || tail -n 40 "$out" 2>/dev/null
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
           if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
