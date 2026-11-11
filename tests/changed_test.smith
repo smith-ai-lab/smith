@@ -412,6 +412,43 @@ export void test_dry_run_without_changed_is_refused() {
     scratch::expect_failure("exit status", &run);
 }
 
+// (Scratch tests: what the base is and whether anything differs is git's answer.) A base that is the head itself with
+// nothing changed compared nothing: it fails and names the fix, where it once printed `0 of 384` (#3059). A project
+// that makes its records by convention still runs every test once on its first run (record_test).
+export void test_an_empty_diff_against_the_head_itself_fails_naming_the_fix() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    // a build.c that makes its tests another way, as smith's own does, so a first run is not "every test, for records"
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "printf 'void build(void) {}\\n' > build.c && git add build.c && "
+                                                 "git -c user.name=t -c user.email=t@t commit -q -m build && "
+                                                 "smith test --changed --base HEAD --dry-run 2>&1")
+                            .data);
+    scratch::expect_contains("the message", run.out, "is the head itself and nothing differs: pass --base <ref>");
+    scratch::expect_failure("exit status", &run);
+}
+
+// The PR check's checkout (#3059): a branch checked out from its own remote, `git checkout -B dev origin/dev` as
+// actions/checkout does it, has itself as its upstream. With no base, `--changed` compares with origin/main.
+export void test_a_branch_whose_upstream_is_itself_compares_with_origin_main() {
+    enter();
+    defer leave();
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p, format::push(repository, "git remote add origin \"$PWD\" && git checkout -q -b dev && "
+                                     "printf 'module c_test;\\nexport void test_four() {}\\n' > lib/c_test.smith && "
+                                     "git -c user.name=t -c user.email=t@t commit -q -am dev && "
+                                     "git update-ref refs/remotes/origin/dev HEAD && git branch -q -u origin/dev && "
+                                     "smith test --changed --dry-run 2>&1")
+                .data);
+    scratch::expect_status("the dry run ends", 0, &run);
+    scratch::expect_contains("the base", run.out, "1 changed file since origin/main (");
+    scratch::expect_contains("the test", run.out, "lib/c_test.smith: it changed");
+}
+
 // What `smith lint --changed` chooses (issue #1076), in process through `smith_core_changed_lint`: the files that
 // changed and those that import one that did. Called twice in one process, the second forgets the first.
 export void test_lint_chooses_the_changed_files_and_their_importers_twice() {
@@ -463,8 +500,19 @@ static const char *base_of(const char *setup, const char *folder) {
 export void test_base_is_the_upstreams_merge_base_when_the_branch_has_an_upstream() {
     enter();
     defer leave();
-    const char *out = base_of("git clone -q o a && cd a && git checkout -q -b feat origin/dev", "a");
+    const char *out = base_of("git clone -q o a && cd a && git checkout -q -b feat origin/dev && echo 3 > f && "
+                              "git commit -q -am three",
+                              "a");
     scratch::expect_contains("the upstream", out, "upstream (");
+}
+
+// An upstream whose merge-base is HEAD itself (the branch is its own remote's, as in CI's checkout) is no base: the
+// next is origin/main (#3059).
+export void test_base_is_origin_main_when_the_upstream_is_the_head_itself() {
+    enter();
+    defer leave();
+    const char *out = base_of("git clone -q o a && cd a && git checkout -q -B dev origin/dev", "a");
+    scratch::expect_contains("origin/main", out, "origin/main (");
 }
 
 export void test_base_is_origin_head_in_a_detached_clone() {

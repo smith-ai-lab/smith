@@ -37,6 +37,7 @@ One page per area, so two front-end tickets edit two files (#3082: this page was
 - [Fix-its and `smith lint --fix` (`front/fix.smith`, #1442, #1516)](front-end/fix.md)
 - [The checker](front-end/check.md)
 - [front::types (`front/types.smith`, #1220 J1a)](front-end/types.md)
+- [front::eval (`front/eval.smith`, #3039)](front-end/eval.md)
 - [front::types_expr (`front/types_expr.smith`, #1220 J1b)](front-end/types-expr.md)
 - [front::types_convert (`front/types_convert.smith`, #1220 J1c)](front-end/types-convert.md)
 - [front::types_decl (`front/types_decl.smith`, #1220 J1d)](front-end/types-decl.md)
