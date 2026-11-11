@@ -43,7 +43,6 @@ tests/smith-lang/cases/error-import-eof/src/main.smith	error-fixture
 tests/smith-lang/cases/error-keyword-after-type/src/shapes.smith	error-fixture
 tests/smith-lang/cases/error-keyword-module/src/shapes.smith	error-fixture
 tests/smith-lang/cases/error-keyword-plain/src/main.smith	error-fixture
-tests/smith-lang/cases/error-lambda-capture-generic/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-capture-no-module/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-captures-local/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	error-fixture
