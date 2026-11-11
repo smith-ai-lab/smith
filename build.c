@@ -3492,10 +3492,11 @@ static int build_docs_gate_test(SmithRun *run) {
     return failed;
 }
 
-// ---- The pre-push check (#3132): `.githooks/pre-push` runs `smith build pre-push` before a push leaves the machine,
-// so format, lint and the tests the change reaches fail on the worker's machine and not first on a CI runner. The
-// files are those of base...HEAD. A push that changes only docs (knowledge/, .agents/, *.md) runs nothing; a push with
-// no C, C++ or smith source runs no formatter or linter. `git push --no-verify` skips it; the merge queue decides.
+// ---- The pre-push check (#3132): the hook (`.smith/hooks/pre-push`, written by `smith build`) runs `smith build
+// pre-push` before a push leaves the machine, so format, lint and the tests the change reaches fail on the worker's
+// machine and not first on a CI runner. The files are those of base...HEAD. A push that changes only docs (knowledge/,
+// .agents/, *.md) runs nothing; a push with no C, C++ or smith source runs no formatter or linter. `git push
+// --no-verify` skips it; the merge queue decides.
 
 typedef enum { PrePushKind_Docs, PrePushKind_Source, PrePushKind_Other } PrePushKind;
 
@@ -3822,13 +3823,38 @@ static int build_frontend_coverage(SmithRun *run) {
                : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
-// The first `smith build` in a clone makes git use .githooks (#3132), so the pre-push check is active before the first
-// push with nothing for the agent or the owner to do. A hooksPath someone already set is left alone.
+// The first `smith build` in a clone makes git use .smith/hooks (#3132), so the pre-push check is active before the
+// first push with nothing for the agent or the owner to do. A hooksPath someone already set is left alone. The hook
+// itself is written here, into the untracked .smith/hooks, and not kept in the repository: git runs a hook only as an
+// executable file, and no shell file is tracked (owner, 2026-10-25). It only finds a smith built from the tree; the
+// check is `smith build pre-push`.
+static const char *const build_pre_push_hook =
+    "#!/bin/sh\n"
+    "# Written by `smith build` (build.c, #3132). `git push --no-verify` skips it, only on the lead's word.\n"
+    "root=$(git rev-parse --show-toplevel) || exit 0\n"
+    "cd \"$root\" || exit 0\n"
+    "bin=\"build/$(uname -s)-$(uname -m)/smith\"\n"
+    "if [ ! -x \"$bin\" ]; then\n"
+    "  echo \"pre-push: no smith built from this tree yet; building one first\"\n"
+    "  if [ -x .smith/stage0/bin/smith ]; then PATH=\"$root/.smith/stage0/bin:$PATH\"; fi\n"
+    "  smith build || exit 1\n"
+    "else\n"
+    "  \"$bin\" build || exit 1\n"
+    "fi\n"
+    "exec \"$bin\" build pre-push -Dsmith=\"$bin\"\n";
+
 static void build_install_hooks(void) {
-    if (access(".githooks/pre-push", X_OK) != 0 || access(".git", F_OK) != 0) return;
+    if (access(".git", F_OK) != 0) return;
+    mkdir(".smith", 0755);
+    mkdir(".smith/hooks", 0755);
+    FILE *file = fopen(".smith/hooks/pre-push", "wb");
+    if (file == nullptr) return;
+    fputs(build_pre_push_hook, file);
+    fclose(file);
+    chmod(".smith/hooks/pre-push", 0755);
     const char *const get[] = {"git", "config", "--get", "core.hooksPath", nullptr};
     if (build_spawn(&(BuildSpawn){.argv = get, .log = "/dev/null"}) == 0) return;
-    const char *const set[] = {"git", "config", "core.hooksPath", ".githooks", nullptr};
+    const char *const set[] = {"git", "config", "core.hooksPath", ".smith/hooks", nullptr};
     build_spawn(&(BuildSpawn){.argv = set, .log = "/dev/null"});
 }
 
