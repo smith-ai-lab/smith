@@ -1278,6 +1278,7 @@ static bool smith_stepcache_goes(const char *path, const struct stat *info, time
     if (!smith_cache_goes(info->st_mtime, now, cutoff)) return false;
     if (!smith_cache_edge(info->st_mtime, now, cutoff)) return true;
     if (smith_stepcache_spare == UINT64_MAX) return false;
+    if (smith_stepcache_spare == 0) return true;
     uint64_t bytes = 0;
     time_t newest = 0;
     smith_cache_measure(path, &bytes, &newest);
@@ -1348,15 +1349,18 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
     smith_stepcache_pass("r", now, -1, true);
     uint64_t before = smith_cache_ages.total;
     long cutoff = smith_cache_cutoff(before > cap ? before - cap : 0);
-    smith_stepcache_spare = smith_cache_spare(cutoff, before > cap ? before - cap : 0);
+    uint64_t spare = smith_cache_spare(cutoff, before > cap ? before - cap : 0);
+    smith_stepcache_spare = spare;
     smith_stepcache_pass("r", now, cutoff, false);
+    bool kept_edge = smith_stepcache_spare != spare; // some result of the cutoff's step stays
     size_t seen = smith_stepcache_tally.seen;
     size_t dropped = smith_stepcache_tally.dropped;
     uint64_t gone = smith_stepcache_tally.dropped_bytes;
     // a manifest is used when its results are (a hit touches both), so the cutoff that drops the oldest results drops
     // the manifests as old: they were 122,000 files that the cap left (#2833)
-    // the manifests of the cutoff's step stay: they are small, and a manifest is not worth a pass of its own
-    smith_stepcache_spare = UINT64_MAX;
+    // the manifests of the cutoff's step stay when some of its results do (they are small, and a manifest is not worth
+    // a pass of its own), else they go with their results
+    smith_stepcache_spare = kept_edge ? UINT64_MAX : 0;
     smith_stepcache_pass("m", now, cutoff, false);
     char temporary[PATH_MAX];
     if (snprintf(temporary, sizeof temporary, "%s/tmp", smith_stepcache.folder) < (int)sizeof temporary)
