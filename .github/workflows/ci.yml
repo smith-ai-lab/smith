@@ -1104,16 +1104,20 @@ jobs:
         uses: ./.github/actions/api-budget
 
   check-new:
-    # The whole check as one command (#3163): `smith check`, the verb a runner runs before a push, on the tree just built.
-    # It runs BESIDE the old jobs and decides nothing: `continue-on-error` keeps its result out of `ci`'s verdict, and
-    # `ci` prints whether it agrees with the old jobs (`compare:` line) so the two can be compared for 20 runs before
-    # an old job is deleted. A PR check passes `--changed --base <merge-base>`, the queue the whole suite; both require
-    # every Linux part to have run (the macOS parts are the Mac jobs').
-    needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    # The whole check as one command (#3163): `smith check` on a runner of its own, after the merge. It runs on main's
+    # push run, off the queue's path (lead, 2026-11-11: nothing joins the queue without its cost), and decides nothing:
+    # `continue-on-error` keeps its result out of every verdict. Its `compare:` line sets its pass or fail against the
+    # queue run of the same commit (`changes` found the run whose `ci` passed: only those are kept), so 20 pushes show
+    # whether the one command and the old jobs agree before an old job is deleted. It builds smith and the tests itself
+    # (no `build-linux` on a push) and prints each stage's seconds: the distance to "one command on one runner".
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && github.event_name == 'push' && needs.changes.outputs.scope == 'release' }}
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 45
+    timeout-minutes: 60
+    concurrency:
+      group: check-new-main
+      cancel-in-progress: false
     outputs:
       result: ${{ steps.check.outputs.result }}
     env:
@@ -1123,15 +1127,13 @@ jobs:
       SMITH_TEST_STATS: "1"
     permissions:
       contents: read
-      actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/setup-smith
         with:
-          artifact: build-linux
+          tests: "true"
       - name: Restore the lint and proof caches
         uses: actions/cache/restore@v4
         with:
@@ -1151,19 +1153,20 @@ jobs:
         id: check
         shell: bash
         env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ needs.changes.outputs.base }}
+          QUEUE_RUN: ${{ needs.changes.outputs.queue_run }}
         run: |
-          flags=
-          if [ "$EVENT" = workflow_dispatch ]; then
-            mb=$(git merge-base "$BASE" HEAD) || { echo "::error::no merge-base of $BASE and HEAD"; exit 1; }
-            flags="--changed --base $mb"
-          fi
           code=0
           start=$SECONDS
-          "$SMITH" check $flags --require fmt,docs,lint,test,prove 2>&1 | tee "$RUNNER_TEMP/check.log" || code=${PIPESTATUS[0]}
-          echo "result=$([ "$code" = 0 ] && echo pass || echo fail)" >>"$GITHUB_OUTPUT"
-          { echo "### smith check ($((SECONDS - start)) s, exit $code)"; echo '```'; grep '^smith check: ' "$RUNNER_TEMP/check.log" | tail -n 12; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          "$SMITH" check --require fmt,docs,lint,test,prove 2>&1 | tee "$RUNNER_TEMP/check.log" || code=${PIPESTATUS[0]}
+          result=$([ "$code" = 0 ] && echo pass || echo fail)
+          echo "result=$result" >>"$GITHUB_OUTPUT"
+          # the queue run of this commit is kept only when its `ci` passed, so no run means no verdict to compare with
+          if [ -n "$QUEUE_RUN" ]; then queue=pass; verdict=$([ "$result" = pass ] && echo agree || echo DISAGREE); else queue=none; verdict="no queue run to compare with"; fi
+          {
+            echo "### smith check on one runner: $((SECONDS - start)) s, exit $code"
+            echo '```'; grep '^smith check: ' "$RUNNER_TEMP/check.log" | tail -n 14; echo '```'
+            echo "compare: smith check $result, queue run ${QUEUE_RUN:-none} $queue: $verdict"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
 
   docs-linux:
@@ -1193,7 +1196,7 @@ jobs:
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The count (`frontend-coverage`) is not here (#3052): it runs on the push to main, after the merge, and its own
     # job fails (the push run is red) when the count falls.
-    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, check-new, release-pack-macos, release-pack-linux]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, release-pack-macos, release-pack-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1277,17 +1280,6 @@ jobs:
               exit 1
             fi
           done
-      - name: Compare the new check with the old jobs (#3163)
-        # `check-new` decides nothing yet: this line is the data of the 20 runs that precede deleting an old job
-        if: always() && needs.changes.outputs.scope == 'full'
-        env:
-          NEW: ${{ needs.check-new.outputs.result }}
-          OLD: ${{ steps.verdict.outcome }}
-        run: |
-          old=$([ "$OLD" = success ] && echo pass || echo fail)
-          new=${NEW:-none}
-          if [ "$new" = none ]; then verdict="no answer from check-new"; elif [ "$new" = "$old" ]; then verdict=agree; else verdict=DISAGREE; fi
-          echo "compare: smith check $new, old jobs $old: $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
       # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
       # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
       # Only once every job before it ran: a cancelled or abandoned job (a lost job, #2965) posts nothing, and the next pass restarts
