@@ -144,7 +144,7 @@ export void test_front_fix_typeof_the_magic_slice_of_a_type_parameter_is_the_res
                  "    struct smith_array_T_n result = {};\n    result.data = (T *)data;\n"
                  "    result.count[0] = n / sizeof(T);\n    return result;\n}\n",
                  "pub fn view(data: *u8, n: usize, T: type) -> []T:\n    mut result: []T = undefined\n"
-                 "    result.data = data.cast(*mut T)\n    result.count[0] = n / sizeof(T)\n    return result\n");
+                 "    result.data = data.cast(*T)\n    result.count[0] = n / sizeof(T)\n    return result\n");
 }
 
 // A C pointer type compared with a `typeof` keeps its pointee's writability when the parser's old-type warning writes

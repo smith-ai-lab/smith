@@ -614,6 +614,50 @@ static core::ParseError magic_slice_local(Str source, Usize i, Str param, Str re
     return out;
 }
 
+// The line at `i` (its first non-blank character) is `name.data = x.cast(*mut P)` and the body declares
+// `name: <result>`, a read-only `[]P`: the cast that today's `(P *)x` became is `*P` (#3078, `std.mem.view`), since the
+// slice's pointer is read-only and the bytes it views may be too (a cast to `*mut` of a read-only pointer is refused).
+static core::ParseError readonly_data_cast(Str source, Usize i, Str param, Str result, Usize floor, Usize end) {
+    core::ParseError none = {};
+    Usize name_end = i;
+    while (name_end < end && word_char(source[name_end]))
+        name_end += 1;
+    if (name_end == i || !at(source, name_end, ".data = ")) return none;
+    Usize line_end = name_end;
+    while (line_end < end && source[line_end] != '\n')
+        line_end += 1;
+    Str tail = types::message_of(format::push(".cast(*mut ", param, ")"));
+    if (line_end < countof(tail) || !at(source, line_end - countof(tail), tail)) return none;
+    Str declared = types::message_of(format::push(source[i:name_end], ": ", result));
+    Bool found = false;
+    for (Usize k = floor; k + countof(declared) <= end && !found; k++) {
+        if (at(source, k, declared) && (k == floor || !word_char(source[k - 1]))) found = true;
+    }
+    if (!found) return none;
+    Usize star = line_end - countof(tail) + countof(".cast(*");
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)star, .end = (U32)(star + 4)};
+    out.message = "the pointer of a read-only `[]T` the function returns is `*T`: a cast to `*mut` drops const";
+    out.fix = push(out.fix, star, star + 4, "");
+    return out;
+}
+
+// The fixes of `readonly_data_cast` in the body of `d` for type parameter `param`, a line at a time.
+static core::Errors readonly_data_casts(Str source, Str param, Str result, Usize body, Usize end, core::Errors out) {
+    if (countof(result) < 3 || !at(result, 0, "[]") || at(result, 0, "[]mut ")) return out;
+    for (Usize i = body; i < end; i++) {
+        if (source[i] != '\n') continue;
+        Usize first = i + 1;
+        while (first < end && source[first] == ' ')
+            first += 1;
+        core::ParseError found = readonly_data_cast(source, first, param, result, body, end);
+        if (countof(found.fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = found;
+    }
+    return out;
+}
+
 // The fixes of `magic_slice_local` in the body of `d`, one for each such local of each type parameter.
 static core::Errors magic_slice_locals(Str source, const ast::Decl *d, core::Errors out) {
     if (d->kind != .function || d->kind.function.body == nullptr || d->kind.function.result == nullptr) return out;
@@ -627,6 +671,7 @@ static core::Errors magic_slice_locals(Str source, const ast::Decl *d, core::Err
         const ast::TypeExpr *type = params[k].type;
         if (type == nullptr || type->span.end > countof(source) || type->span.start >= type->span.end) continue;
         if (!same(source[type->span.start:type->span.end], "type")) continue;
+        out = readonly_data_casts(source, params[k].name, written, body, end, out);
         for (Usize i = body; i < end; i++) {
             core::ParseError found = magic_slice_local(source, i, params[k].name, written, body);
             if (countof(found.fix) == 0) continue;

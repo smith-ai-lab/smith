@@ -25,9 +25,9 @@ fn try_at(memory: *void, T: type) -> Option(*T):
         return .none
     return .some(memory.cast(*mut T))
 
-fn view(data: []mut u8, T: type) -> []T:
+fn view(data: []u8, T: type) -> []T:
     mut result: []T = undefined
-    result.data = data.data.cast(*mut T)
+    result.data = data.data.cast(*T)
     result.count[0] = data.count[0] / sizeof(T)
     return result
 

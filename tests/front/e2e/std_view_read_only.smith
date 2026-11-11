@@ -1,14 +1,14 @@
-# The fixed form of mem.view (#3078, with #3073's `[]mut u8`) writes through its bytes' pointer: a read-only slice
-# handed to it is refused, so the view never writes to bytes its caller may only read.
-fn view(data: []mut u8, T: type) -> []T:
+# The fixed form of mem.view (#3078) makes a read-only slice, `[]T`, whose pointer is `*T`: a write through it is
+# refused, so the view never writes to bytes its caller may only read.
+fn view(data: []u8, T: type) -> []T:
     mut result: []T = undefined
-    result.data = data.data.cast(*mut T)
+    result.data = data.data.cast(*T)
     result.count[0] = data.count[0] / sizeof(T)
     return result
 
-fn words_of(text: []u8) -> usize:
+fn clear(text: []u8):
     words := view(text, u32)
-    countof(words)
+    words.data[0] = 0
 
 pub fn check() -> i32:
     0
