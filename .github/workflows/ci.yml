@@ -979,7 +979,7 @@ jobs:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The count (`frontend-coverage`) is not here (#3052): it runs on the push to main, after the merge, and its own
-    # job fails (and opens the count alarm) when the count falls.
+    # job fails (the push run is red) when the count falls.
     needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, release-pack-macos, release-pack-linux]
     if: always()
     runs-on: ubuntu-latest
@@ -1874,8 +1874,8 @@ jobs:
     # #2433), measured on Linux, on the release smith `frontend-coverage-fix` built for that very commit, which this job
     # restores (`build-linux-release`).
     # It runs on the push to main, after the merge (#3052): it gated the merge from 2026-11-06 and was 11 to 13 minutes
-    # of every queue run, the end of its critical path. Now it gates nothing; the step `Gate` is the alarm (an issue
-    # labelled `count-alarm`) when the count falls below main's last one. A batch of the queue is one push, so the count
+    # of every queue run, the end of its critical path. Now it gates nothing; the step `Gate` is the alarm: it fails
+    # the job when the count falls below main's last one and writes one line `frontend-coverage-change:` the lead reads. A batch of the queue is one push, so the count
     # names the batch. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md).
     needs: [changes, frontend-coverage-fix, frontend-coverage-shard]
     if: ${{ !cancelled() && needs.changes.outputs.count == 'true' && needs.frontend-coverage-fix.result != 'skipped' }}
@@ -1885,7 +1885,6 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-      issues: write # the count alarm (#3052)
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -1977,60 +1976,42 @@ jobs:
           grep '^frontend-pair: ' "$out" 2>/dev/null || true
           # the top 15 names behind `unknown name` and `unknown type` (#2413): frontend-name: <first> <files> <count> <kind> <name>
           grep '^frontend-name: ' "$out" 2>/dev/null || true
-      - name: Save the table
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-coverage-${{ github.sha }}
-          path: ${{ runner.temp }}/coverage
-          if-no-files-found: ignore
-          retention-days: 30
       - name: Gate
         # The alarm (#3052): the count runs after the merge, so it can no longer stop one. When the count of this push
-        # is lower than main's last count on the files both measured, this step fails the job and opens (or rewrites) the
-        # issue labelled `count-alarm` (and `p0`): nothing watches main's push runs, a red job alone would go unseen. The
-        # issue names the merges since that count and the files that went from pass to fail. A merge that means to lower
-        # the count says so in its PR body with a line `Count drop: <why>`: the step then warns instead. The nightly run
-        # (#2955) compares its uncached count with the cached one of the same commit, row by row.
+        # is lower than main's last count on the files both measured, this step fails the job (the push run is red) and
+        # lists the merges since that count and the files that went from pass to fail; the lead reads its one line
+        # `frontend-coverage-change:` on an hourly check (owner, 2026-11-11: "Can you somewhat just subscribe to that
+        # job automatically? So every time we get a new count you find out?"). A merge that means to lower the count
+        # says so in its PR body with a line `Count drop: <why>`: the step then warns instead. The nightly run (#2955)
+        # compares its uncached count with the cached one of the same commit, row by row.
         if: always()
         shell: bash
         env:
           # a push's commit before it (main's tip before the merge; a batch of the queue is one push of several commits)
           BASE: ${{ (needs.changes.outputs.uncached == 'true' && github.sha) || github.event.before || needs.changes.outputs.base }}
           UNCACHED: ${{ needs.changes.outputs.uncached }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           pass='s/^frontend-coverage: \([0-9][0-9]*\) of [0-9][0-9]* files pass$/\1/p'
           now=$(sed -n "$pass" "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null | tail -n 1)
-          # alarm <title> <body file>: opens the one open `count-alarm` issue, or rewrites its title and body. A push
-          # run only; never fails the step by itself (the step's status is the alarm too)
-          alarm() {
-            [ "$GITHUB_EVENT_NAME" = push ] || return 0
-            local n
-            gh_retry gh api "repos/$GH_REPO/labels" -f name=count-alarm -f color=b60205 \
-              -f description="The count fell on main (#3052): opened by ci.yml's count" >/dev/null 2>&1 || true
-            n=$(gh_retry gh api "repos/$GH_REPO/issues?state=open&labels=count-alarm&per_page=1" --jq '.[0].number // empty') || n=
-            if [ -n "$n" ]; then
-              gh_retry gh api -X PATCH "repos/$GH_REPO/issues/$n" -f title="$1" -F body=@"$2" >/dev/null &&
-                echo "count alarm: rewrote #$n" | tee -a "$GITHUB_STEP_SUMMARY"
-            else
-              n=$(gh_retry gh api "repos/$GH_REPO/issues" -f title="$1" -F body=@"$2" -f 'labels[]=count-alarm' -f 'labels[]=p0' --jq .number) &&
-                echo "count alarm: opened #$n" | tee -a "$GITHUB_STEP_SUMMARY"
-            fi
-            return 0
+          # the result, one fixed line (#3052), in the log, the job summary and the table (`change.txt`, published in
+          # frontend-coverage.tar.gz of the release count-fixed-<sha7>), followed there by the pass->fail files:
+          #   frontend-coverage-change: <sha> <state> <main's passes> <this count's passes> <files both have> <main's sha>
+          # state: up, same, fell, fell-meant (a merge says `Count drop:`), unmeasured, no-base
+          change() {
+            echo "frontend-coverage-change: $GITHUB_SHA $*" | tee -a "$GITHUB_STEP_SUMMARY" | tee "$RUNNER_TEMP/coverage/change.txt"
+            grep -h '^count: \(pass->fail\|fail->pass\|merge since\) ' "$RUNNER_TEMP/changed.txt" "$RUNNER_TEMP/merges.txt" 2>/dev/null >>"$RUNNER_TEMP/coverage/change.txt" || true
           }
+          mkdir -p "$RUNNER_TEMP/coverage"
           if [ -z "$now" ]; then
             echo "::error::the count was not measured: see the Count step's output above (the tail is in the job summary)"
             echo "count: no main results to compare (this run's count was not measured)" | tee -a "$GITHUB_STEP_SUMMARY"
-            printf 'The count of %s was not measured: %s\n\nThe Count step of the job `frontend-coverage` says why. Opened by ci.yml (#3052); close it when a later count is measured.\n' \
-              "$GITHUB_SHA" "$RUN_URL" >"$RUNNER_TEMP/alarm.md"
-            alarm "Count alarm: the count of ${GITHUB_SHA:0:7} was not measured" "$RUNNER_TEMP/alarm.md"
+            change unmeasured - - - -
             exit 1
           fi
           # main's last count: the artifact of the newest commit on main's first-parent line before this push that has
           # one (a merge of documents only runs no count) from a run whose own count job passed: a count that fell is no
-          # base, so the alarm stays up, naming every merge since the last count that did not fall, until the count is
-          # back or a merge says `Count drop:`
+          # base, so every later push stays red, naming every merge since the last count that did not fall, until the
+          # count is back or a merge says `Count drop:`
           before=
           for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
             id=
@@ -2054,9 +2035,7 @@ jobs:
             # corrupt (#3052)
             echo "::error::no count on main's last 20 commits to compare with: the alarm cannot tell whether the count fell. Look at the downloads above (a 404, a corrupt zip) and ask the lead"
             echo "count: no main results to compare (no passing count found on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
-            printf 'The count of %s (%s files pass) found no count on main'"'"'s last 20 commits to compare with: %s\n\nThe Gate step lists the downloads it tried. Opened by ci.yml (#3052).\n' \
-              "$GITHUB_SHA" "$now" "$RUN_URL" >"$RUNNER_TEMP/alarm.md"
-            alarm "Count alarm: no count on main to compare ${GITHUB_SHA:0:7} with" "$RUNNER_TEMP/alarm.md"
+            change no-base - "$now" - -
             exit 1
           fi
           if [ "$UNCACHED" = true ]; then
@@ -2123,37 +2102,35 @@ jobs:
             like=" on the $common files both measured"
           fi
           echo "count: main's last count $before files pass at ${sha:0:7}, this one $now; $now_c against $before_c$like"
-          if [ "$now_c" -ge "$before_c" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
+          state=same; [ "$now_c" -gt "$before_c" ] && state=up
+          if [ "$now_c" -ge "$before_c" ]; then echo "count: $now files pass (main: $before)"; change "$state" "$before_c" "$now_c" "${common:--}" "$sha"; exit 0; fi
           # the merges since that count, oldest first: a squash commit's subject ends in (#N)
           merges=$(git log --reverse --first-parent --format='%h %s' "$sha..HEAD")
+          printf '%s\n' "$merges" | sed 's/^/count: merge since /' >"$RUNNER_TEMP/merges.txt"
           prs=$(printf '%s\n' "$merges" | grep -oE '[(]#[0-9]+[)]$' | tr -d '()#' || true)
           why=
           for pr in $prs; do
             w=$(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ') || w=
             [ -n "$w" ] && why="$why #$pr: ${w#Count drop: }"
           done
-          if [ -n "$why" ]; then echo "::warning::the count fell from $before_c to $now_c files$like; the merges say:$why"; exit 0; fi
-          echo "::error::the count fell from $before_c to $now_c files pass$like, since ${sha:0:7}. The merges since then and the files lost are listed above and in the count-alarm issue"
-          printf '%s\n' "$merges" | sed 's/^/count: merge since /'
-          {
-            echo "The count fell on main from $before_c to $now_c files pass$like: the count of ${GITHUB_SHA:0:7} against main's last count, at ${sha:0:7} ($before of its total then, $now now)."
-            echo
-            echo "Run: $RUN_URL"
-            echo
-            echo "The merges since that count (one of them, or two together, lowered it):"
-            echo
-            printf '%s\n' "$merges" | sed 's/^/- /'
-            echo
-            echo "The files that went from pass to fail:"
-            echo
-            echo '```'
-            grep '^count: pass->fail ' "$changed" | sed 's/^count: pass->fail //' | head -n 200
-            echo '```'
-            echo
-            echo "Fix the files (\`smith build frontend-coverage -Dfiles=<path>\` shows each one's error), or, when the drop is meant, merge a PR whose body has a line \`Count drop: <why>\`. Each later push counts again and rewrites this issue while the count stays below; close it when the count is back. Opened by ci.yml's count (#3052)."
-          } >"$RUNNER_TEMP/alarm.md"
-          alarm "Count alarm: the count fell from $before_c to $now_c on main (since ${sha:0:7})" "$RUNNER_TEMP/alarm.md"
+          cat "$RUNNER_TEMP/merges.txt"
+          if [ -n "$why" ]; then
+            echo "::warning::the count fell from $before_c to $now_c files$like; the merges say:$why"
+            change fell-meant "$before_c" "$now_c" "${common:--}" "$sha"
+            exit 0
+          fi
+          echo "::error::the count fell from $before_c to $now_c files pass$like, since ${sha:0:7}. The merges since then and the files lost are listed above"
+          change fell "$before_c" "$now_c" "${common:--}" "$sha"
           exit 1
+      - name: Save the table
+        # after the Gate, which adds change.txt (#3052)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
