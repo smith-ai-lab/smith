@@ -2499,15 +2499,12 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
                              Usize base, Usize n) {
     ast::Span span = node->span;
     Str name = path_text(applied_name);
-    if (names_with_dims(r, applied_name)) {
-        if (args == 2 && n == 1) {
-            TypeRef dims = build_with_dims(r, node, w->values[base].type);
-            set_type(r, (const ast::Expr *)(Usize)node, dims); // the emitter asks `applied_type` for it
-            return dims;
-        }
-        failf(r, span, "`slice.with_dims` takes an element type and a count; write `slice.with_dims(f32, 2)`");
-        return r->table.invalid;
+    if (names_with_dims(r, applied_name) && args == 2 && n == 1) {
+        TypeRef dims = build_with_dims(r, node, w->values[base].type);
+        set_type(r, (const ast::Expr *)(Usize)node, dims); // the emitter asks `applied_type` for it
+        return dims;
     }
+    // (an element the parser read as a value, `with_dims(T, 2)` with `T` a parameter, is run as the call it is)
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     // `iter(T)`, the result of a generator in smith's own syntax (#1428), is the stream of `T`
@@ -2827,6 +2824,47 @@ export ast::Path member_path(const ast::Expr *e) {
     return made;
 }
 
+// The call `value` as an applied type when it calls a function over types (`Option(arena.slice_of(T, 2))`: the
+// parser reads the argument as a value); null when it is no such call.
+static ast::TypeExpr *call_as_type(const Checked *r, const ast::Expr *value) {
+    if (value->kind != .call) return nullptr;
+    ast::ExprRef given[:] = value->kind.call.args;
+    const ast::Expr *callee = value->kind.call.callee;
+    ast::Path path = member_path(callee);
+    if (callee->kind == .name) path = callee->kind.name.path;
+    if (countof(path.segments) == 0) return nullptr;
+    const Symbol *found = type_through_modules(r, path);
+    if (found == nullptr || found->kind != .function_symbol) return nullptr;
+    const ast::Decl *d = found->decl;
+    Bool over_types = is_with_dims(found->name);
+    if (!over_types && d != nullptr && d->kind == .function) {
+        const ast::TypeExpr *result = d->kind.function.result;
+        ast::Path written = {};
+        over_types = result != nullptr && written_path(result, &written) && countof(written.segments) == 1 &&
+                     same_text(written.segments[0].text, "type");
+    }
+    if (!over_types) return nullptr;
+    ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, countof(given));
+    for (Usize i = 0; i < countof(given); i++) {
+        ast::TypeArg one = {.value = {.value = given[i]}};
+        const ast::Expr *written = given[i];
+        ast::Path name = member_path(written);
+        if (written->kind == .name) name = written->kind.name.path;
+        const Symbol *type = countof(name.segments) > 0 ? type_through_modules(r, name) : nullptr;
+        if (type != nullptr && type->kind == .type_name) { // `T` of `slice_of(T, 2)`
+            ast::TypeExpr *named = ast::make_type({.named = {.path = name}});
+            named->span = given[i]->span;
+            ast::TypeArg as_type = {.type = {.type = named}};
+            one = as_type;
+        }
+        args[i] = one;
+    }
+    ast::TypeKind kind = {.applied = {.name = path, .args = args}};
+    ast::TypeExpr *applied = ast::make_type(kind);
+    applied->span = value->span;
+    return applied;
+}
+
 // An applied type whose value arguments that name a type (`Result(c.LLVMModuleRef, state.Error)`: the parser reads a
 // lower-case first name as a value) are its type arguments: a copy where each is the named type. `node` itself when
 // none is.
@@ -2837,17 +2875,20 @@ static const ast::TypeExpr *typed_arguments(const Checked *r, const ast::TypeExp
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *value = value_argument(&args[i]);
         if (value == nullptr) continue;
-        ast::Path path = member_path(value);
-        if (countof(path.segments) == 0) continue;
-        const Symbol *found = type_through_modules(r, path);
-        if (found == nullptr || found->kind != .type_name) continue;
+        ast::TypeExpr *named = call_as_type(r, value);
+        if (named == nullptr) {
+            ast::Path path = member_path(value);
+            if (countof(path.segments) == 0) continue;
+            const Symbol *found = type_through_modules(r, path);
+            if (found == nullptr || found->kind != .type_name) continue;
+            named = ast::make_type({.named = {.path = path}});
+            named->span = value->span;
+        }
         if (countof(made) == 0) {
             made = mem::alloc_slice(ast::TypeArg, countof(args));
             for (Usize k = 0; k < countof(args); k++)
                 made[k] = args[k];
         }
-        ast::TypeExpr *named = ast::make_type({.named = {.path = path}});
-        named->span = value->span;
         ast::TypeArg as_type = {.type = {.type = named}};
         made[i] = as_type;
     }

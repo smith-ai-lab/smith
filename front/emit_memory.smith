@@ -1119,6 +1119,12 @@ static state::Status root_type(state::Emitter *e, const ast::Expr *x, state::Ty 
         state::scalar_type(e, "I32", out);
         return state::success();
     }
+    if (x->kind == .call) { // `sizeof(keep(f64, 1.0))`: the type the checker gave the call
+        state::TyResult typed = state::type_of_node(e, x);
+        if (typed == .error) return {.error = typed.error};
+        *out = typed.ok;
+        return state::success();
+    }
     if (x->kind != .name) return state::not_emitted("sizeof of this expression", x->span);
     ast::Path path = x->kind.name.path;
     if (countof(path.segments) != 1) return state::not_emitted("qualified name", x->span);
