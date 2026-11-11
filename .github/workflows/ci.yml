@@ -225,7 +225,7 @@ jobs:
 
       - name: The tarballs the queue run of this commit built
         # a push to main is the commit the merge queue tested: its run built the release profile on both platforms and
-        # kept the tarballs as artifacts named after the commit (`release-pack-macos`, `frontend-coverage-fix`, #2832).
+        # kept the tarballs as artifacts named after the commit (`release-pack-macos`, `release-pack-linux`, #2832).
         # They count only from a merge_group run whose `ci` passed; one missing (a push that did not come through the
         # queue, an expired artifact) is built by `release` or `release-linux` as before. The Linux artifact carries
         # the release tool `publish` runs, so without it both are built.
@@ -972,7 +972,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos]
+    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage, release-pack-macos, release-pack-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1000,6 +1000,7 @@ jobs:
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
           RELEASE_PACK_MACOS: ${{ needs.release-pack-macos.result }}
+          RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}
           COUNT: ${{ needs.changes.outputs.count }}
           BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
@@ -1048,7 +1049,7 @@ jobs:
           # so does the nightly run (#2955), whose count is compared with the cached one
           if [ "$SCOPE" = full ] && { [ "$EVENT" = merge_group ] || [ "$EVENT" = schedule ]; }; then owed="$owed FRONTEND_COVERAGE"; fi
           # a full merge group builds the release main will publish (#2832): one that does not build fails the entry
-          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_MACOS"; fi
+          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_MACOS RELEASE_PACK_LINUX"; fi
           # a PR check owes it when its diff reaches what the count reads (#2914)
           if [ "$SCOPE" = full ] && [ "$EVENT" = workflow_dispatch ] && [ "$COUNT" = true ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
@@ -1160,6 +1161,32 @@ jobs:
         run: |
           "$SMITH" build nvim | tail -n 1
           du -sh ~/.cache/smith/packages ~/.cache/smith/tools | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Build the release profile into the step cache (#3052)
+        # the count's fix job and `release-pack-linux` build the release profile (-O2) of each queue commit; this save had
+        # only the dev profile's compiles, so their builds had 13 of 329 steps cached and took 1.5 to 2.6 minutes in
+        # every queue run (build-linux, dev: 303 of 329 in 28 s). Built by the same stage0 as the dev build above, so
+        # the steps' keys are theirs, from a tree as the fix job has it (build/ and .smith/ but stage0 moved aside, as
+        # the timing below does): the steps after this one use the dev smith and its tree, which go back unchanged.
+        # A failure only leaves the release steps uncached
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        env:
+          SMITH_CACHE_MAX: 300M
+        run: |
+          keep="$RUNNER_TEMP/dev-tree"; mkdir -p "$keep/smith-dir"
+          mv build "$keep/build"
+          for f in .smith/* .smith/.[!.]*; do [ -e "$f" ] && [ "$f" != .smith/stage0 ] && mv "$f" "$keep/smith-dir/"; done
+          back() {
+            rm -rf build
+            for f in .smith/* .smith/.[!.]*; do [ -e "$f" ] && [ "$f" != .smith/stage0 ] && rm -rf "$f"; done
+            mv "$keep/build" build
+            for f in "$keep/smith-dir"/* "$keep/smith-dir"/.[!.]*; do [ -e "$f" ] && mv "$f" .smith/; done
+          }
+          trap back EXIT
+          start=$(date +%s)
+          smith build -DPROFILE=release 2>&1 | tee "$RUNNER_TEMP/release-build.out" | tail -n 3
+          echo "release build: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/release-build.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/release-build.out" || true) cached" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the packages and tools
         # about 60 MB: every job that restores a build rather than making it reads this, so no job reaches github.com
         # for a package the cache holds (a 504 hour kept #2798 out of the queue for hours, #2825)
@@ -1401,6 +1428,57 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  release-pack-linux:
+    # the Linux release of the commit a queue run tests (#2832), as `release-pack-macos` builds the macOS one: the
+    # tarball, its checksum and the release tool `publish` and `prune` run, in this run's artifact
+    # `stage0-<commit>-linux-x86_64` (3 days). It was packed in the background of `frontend-coverage-fix`, whose warm
+    # runs then waited 1.6 to 1.8 minutes for it (#3052); here it is beside the tests and off the count's path. Its
+    # release build is served by the release steps main's `warm` saves. `ci` owes it, so a release that does not build
+    # fails the queue run.
+    needs: [changes, pack]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - name: Install lld
+        run: sudo apt-get install -y -q lld
+      - uses: ./.github/actions/setup-smith
+        with:
+          profile: release
+      - name: Package the release
+        run: |
+          start=$SECONDS
+          "$SMITH" version | grep -q "commit $GITHUB_SHA\$" || { echo "::error::$SMITH is not the smith of $GITHUB_SHA"; "$SMITH" version; exit 1; }
+          out="$RUNNER_TEMP/stage0"; mkdir -p "$out"
+          # the release tool (build.c's `release-tool`, compiled by the smith just built, as there); it stays in the
+          # artifact: `publish` runs it to add the tarballs to the draft, `prune` to prune the old releases
+          "$SMITH" cc -w -I include -I .smith/include release/publish.smith lib/std/files.smith lib/std/console.smith \
+              lib/std/format.smith lib/std/mem.smith lib/std/arena.smith lib/std/contract.smith lib/std/env.smith \
+              lib/std/text.smith lib/std/process.smith lib/std/clock.smith lib/handlers.c lib/trace.c lib/optimize_asm.c \
+              -o "$out/release"
+          "$out/release" package "$SMITH" "$out"
+          [ -s "$out/smith-linux-x86_64.tar.xz.sha256" ] && [ -x "$out/release" ] \
+            || { echo "::error::the Linux release of $GITHUB_SHA was not packaged"; exit 1; }
+          ls -l "$out"
+          echo "took package $((SECONDS - start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep the tarball for the push to main
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage0-${{ github.sha }}-linux-x86_64
+          path: ${{ runner.temp }}/stage0
+          compression-level: 0
+          retention-days: 3
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
     # (knowledge/release.md), which the next jobs' setup builds from. The queue run of this commit built its tarball
@@ -1444,7 +1522,7 @@ jobs:
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
     # job's tarball when it fails, so `install` never waits for Linux. Only when the queue run of this commit left no
-    # Linux tarball (`frontend-coverage-fix` packs it, #2832): the fallback, built the same way.
+    # Linux tarball (`release-pack-linux` packs it, #2832, #3052): the fallback, built the same way.
     needs: changes
     if: needs.changes.outputs.scope == 'release' && needs.changes.outputs.linux_packed != 'true'
     runs-on: ubuntu-latest
@@ -1529,22 +1607,6 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
-      - name: Package the release of this commit, in the background
-        # a queue run's Linux release (#2832): this build is the release profile, so it is packed as the push to main
-        # would build it (`release-linux`), and `publish` publishes it with the macOS one. In the background, so the
-        # count does not wait: `smith cc` and tar, no `smith build` (two in one tree collide on .smith/build.ninja)
-        if: github.event_name == 'merge_group'
-        run: |
-          "$SMITH" version | grep -q "commit $GITHUB_SHA\$" || { echo "::error::$SMITH is not the smith of $GITHUB_SHA"; "$SMITH" version; exit 1; }
-          out="$RUNNER_TEMP/stage0"; mkdir -p "$out"
-          export out
-          nohup bash -c 'set -e; start=$SECONDS
-            # the release tool (the task `release-tool` of build.c, compiled by the smith just built, as there); it stays
-            # in the artifact: `publish` runs it to add the tarballs to the draft
-            "$SMITH" cc -w -I include -I .smith/include release/publish.smith lib/std/files.smith lib/std/console.smith lib/std/format.smith lib/std/mem.smith lib/std/arena.smith lib/std/contract.smith lib/std/env.smith lib/std/text.smith lib/std/process.smith lib/std/clock.smith lib/handlers.c lib/trace.c lib/optimize_asm.c -o "$out/release"
-            "$out/release" package "$SMITH" "$out"
-            echo "took package $((SECONDS - start))s"' >"$RUNNER_TEMP/pack.log" 2>&1 &
-          echo $! >"$RUNNER_TEMP/pack.pid"
       - name: API budget (before test-cache)
         uses: ./.github/actions/api-budget
         with:
@@ -1682,24 +1744,6 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
-      - name: Wait for the release package
-        # the background step above; a package that failed fails the job, and with it the queue run (#2832)
-        if: github.event_name == 'merge_group'
-        run: |
-          pid=$(cat "$RUNNER_TEMP/pack.pid")
-          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
-          cat "$RUNNER_TEMP/pack.log"
-          [ -s "$RUNNER_TEMP/stage0/smith-linux-x86_64.tar.xz.sha256" ] && [ -x "$RUNNER_TEMP/stage0/release" ] \
-            || { echo "::error::the Linux release of $GITHUB_SHA was not packaged"; exit 1; }
-          grep 'took package' "$RUNNER_TEMP/pack.log" >>"$GITHUB_STEP_SUMMARY" || true
-      - name: Keep the tarball for the push to main
-        if: github.event_name == 'merge_group'
-        uses: actions/upload-artifact@v4
-        with:
-          name: stage0-${{ github.sha }}-linux-x86_64
-          path: ${{ runner.temp }}/stage0
-          compression-level: 0
-          retention-days: 3
       - name: Pack the build for the shards
         if: ${{ steps.plan.outputs.count != '1' }}
         shell: bash
