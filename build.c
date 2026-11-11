@@ -1331,12 +1331,39 @@ static const char *build_test_header(SmithBuild *b, const char *source) {
     return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, root_less, ""));
 }
 
+// What the header pass (`smith-cc --smith-header` and `--smith-headers`) is made of: the lowering's lexer and passes
+// (runtime/lang*), the flag parsing in front of it, smith.c, which dispatches it, and the LLVM pack's identity (a C
+// header a module imports is read by clang). The steps that run the pass with the smith this build links take these as
+// inputs and that smith as order-only: they run after it is linked, and again only when the pass can have changed.
+// With the binary itself as an input every edit of any file of smith ran them again, and the executor read all of the
+// new binary to key each (437 MB, 3.1 s, twice: 6.3 s of an 8.6 s edit rebuild, #3079).
+//
+// The pass also reads the headers of the modules a source imports, so the headers this build makes of the libraries
+// and of the front end's linked modules are inputs too, with the hand-written ones of include/: the binary used to
+// stand for them (a library that changes relinks it). Their steps write a header only when its bytes change, so an
+// edit that keeps a module's interface runs nothing here.
+static const char *const *build_header_pass_inputs(SmithBuild *b, const BuildConfig *config) {
+    const char *const *front = smith_list(b, nullptr);
+    const char *const *modules = build_front_modules(b);
+    for (size_t i = 0; modules[i] != nullptr; i++) { // bounded by the tree
+        if (!build_front_linked(smith_fmt(b, "front/%s.smith", modules[i]))) continue;
+        front =
+            smith_cat(b, front, smith_list(b, smith_fmt(b, ".smith/include/front/%s.h", modules[i]), nullptr), nullptr);
+    }
+    return smith_cat(
+        b,
+        smith_glob(b, smith_list(b, "runtime/lang*.c", "runtime/lang*.h", "include/*.h", "include/smith/*.h", nullptr)),
+        smith_list(b, "smith.c", "runtime/front_flag.c", "runtime/front_flag.h", nullptr),
+        smith_when(b, config->linkable, smith_list(b, smith_fmt(b, "%s/lib/smith-clang.id", config->llvm), nullptr)),
+        config->headers, build_linked_headers(b), front, nullptr);
+}
+
 // The headers of all the tests are one step, `smith-cc --smith-headers`: each is a few ms of work but a process costs
 // about 10 ms to start, so a step per header made a build that changed the smith (all of them run again, to find
 // their bytes the same) cost 2 s of CPU (#639). It is restat: a header whose bytes did not change leaves its compile
 // alone.
-static const char *const *build_test_header_step(SmithBuild *b, const char *smith_cc, const char *const *flags,
-                                                 const char *const *tests) {
+static const char *const *build_test_header_step(SmithBuild *b, const BuildConfig *config, const char *smith_cc,
+                                                 const char *const *flags, const char *const *tests) {
     const char *const *pairs = smith_list(b, nullptr);
     const char *const *outputs = smith_list(b, nullptr);
     const char *const *headers = smith_list(b, nullptr); // one per test, in order
@@ -1351,7 +1378,8 @@ static const char *const *build_test_header_step(SmithBuild *b, const char *smit
         .command = smith_cat(b, smith_list(b, smith_cc, "--smith-headers", nullptr), flags,
                              smith_list(b, "--", nullptr), pairs, nullptr),
         .inputs = tests,
-        .implicit_inputs = smith_list(b, smith_cc, nullptr),
+        .implicit_inputs = build_header_pass_inputs(b, config),
+        .order_only_inputs = smith_list(b, smith_cc, nullptr),
         .outputs = outputs,
         .description = "headers of the tests",
         .restat = true, // written only when its bytes change
@@ -1373,7 +1401,7 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *const *tests =
         smith_glob(b, smith_list(b, "tests/*.smith", "front/*.smith", "lib/*_test.smith",
                                  smith_fmt(b, "%s/*_test.smith", build_library_folder), nullptr));
-    const char *const *headers = build_test_header_step(b, smith_cc, flags, tests);
+    const char *const *headers = build_test_header_step(b, config, smith_cc, flags, tests);
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = headers[i];
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
@@ -1416,7 +1444,8 @@ static const char *const *build_template_modules(SmithBuild *b, const BuildConfi
             .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", modules[i], "-o", header, nullptr), flags,
                                  smith_list(b, "-I", ".smith/template-new", "-MD", "-MF", depfile, nullptr), nullptr),
             .inputs = smith_list(b, modules[i], nullptr),
-            .implicit_inputs = smith_list(b, smith_cc, nullptr),
+            .implicit_inputs = build_header_pass_inputs(b, config),
+            .order_only_inputs = smith_list(b, smith_cc, nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", modules[i]),
             .depfile = depfile, // served from the step cache for the files the pass read (#2959)
@@ -1446,12 +1475,20 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
             smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr}, nullptr),
     };
     smith_object(b, &runtime);
+    // The smith this build links is left out of what the stub waits for: the headers wait for it already (order-only),
+    // and as an input here every relink compiled the stub again and had the executor hash the whole binary (#3079).
+    const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
+    const char *const *waits = smith_list(b, nullptr);
+    for (size_t i = 0; lint_needs[i] != nullptr; i++) {
+        if (strcmp(lint_needs[i], smith_cc) != 0)
+            waits = smith_cat(b, waits, smith_list(b, lint_needs[i], nullptr), nullptr);
+    }
     SmithObject stub = {
         .compiler = config->cc,
         .source = "tests/stub.c",
         .output = smith_fmt(b, "%s/stub.o", folder),
         .flags = smith_cat(b, config->cflags, (const char *[]){"-DNAME=\"stub\"", nullptr}, nullptr),
-        .implicit_inputs = lint_needs, // not read by the compile: `smith lint` builds what a source's compile waits for
+        .implicit_inputs = waits, // not read by the compile: `smith lint` builds what a source's compile waits for
     };
     smith_object(b, &stub);
     smith_default(b, smith_cat(b, runtime.step.outputs, stub.step.outputs, nullptr));
