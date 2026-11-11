@@ -1787,41 +1787,137 @@ static void smith_check_promises(bool list) {
         fprintf(stderr, "smith check:   %s\n", smith_promise_list[i]);
 }
 
+// The parts `smith check` names, in the order it runs them; `--require` takes these (or `all`).
+static const char *const smith_check_parts[] = {"fmt", "docs", "lint", "test", "prove", "macos-lint", "macos-tests"};
+constexpr size_t smith_check_part_count = sizeof smith_check_parts / sizeof smith_check_parts[0];
+
+// What `smith check` was asked: `-v`, `--changed [--base <ref>]`, `--require <parts>|all`.
+typedef struct {
+    bool every_task;
+    bool changed;
+    const char *base;
+    bool required[smith_check_part_count];
+} SmithCheckArgs;
+
+// Marks the parts of a comma list (or `all`) as required. False, after the message, for a name that is no part.
+static bool smith_check_require(const char *list, bool *required) {
+    char text[256];
+    snprintf(text, sizeof text, "%s", list);
+    for (char *item = strtok(text, ","); item != nullptr; item = strtok(nullptr, ",")) { // bounded by the list
+        if (strcmp(item, "all") == 0) {
+            for (size_t i = 0; i < smith_check_part_count; i++)
+                required[i] = true;
+            continue;
+        }
+        size_t found = smith_check_part_count;
+        for (size_t i = 0; i < smith_check_part_count; i++) {
+            if (strcmp(item, smith_check_parts[i]) == 0) found = i;
+        }
+        if (found == smith_check_part_count) {
+            fprintf(stderr, "smith check: --require: '%s' is no part (fmt, docs, lint, test, prove, macos-lint, "
+                            "macos-tests, or all)\n", item);
+            return false;
+        }
+        required[found] = true;
+    }
+    return true;
+}
+
+static bool smith_check_args(const SmithVerbArgs *split, SmithCheckArgs *found) {
+    for (size_t i = 0; i < split->own_count; i++) {
+        const char *arg = split->own[i];
+        if (strcmp(arg, "-v") == 0) {
+            found->every_task = true;
+        } else if (strcmp(arg, "--changed") == 0) {
+            found->changed = true;
+        } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
+            found->base = split->own[++i];
+        } else if (strcmp(arg, "--require") == 0 && i + 1 < split->own_count) {
+            if (!smith_check_require(split->own[++i], found->required)) return false;
+        } else {
+            smith_die(smith_exit_usage, "takes no arguments but -D options, -v, --changed [--base <ref>] and "
+                                        "--require <parts>", "check");
+        }
+    }
+    if (found->base != nullptr && !found->changed) smith_die(smith_exit_usage, "--base needs --changed", "check");
+    return true;
+}
+
+// `--changed` for lint (`--changed[=<ref>]`) and for test (`--changed [--base <ref>]`), added to the part's options.
+static void smith_check_select(SmithVerbArgs *split, const char *verb, const SmithCheckArgs *given) {
+    if (!given->changed) return;
+    static char lint_flag[PATH_MAX + 16];
+    smith_verb_room(split->option_count, 3, "the selection of the check");
+    if (strcmp(verb, "lint") == 0) {
+        snprintf(lint_flag, sizeof lint_flag, given->base != nullptr ? "--changed=%s" : "--changed", given->base);
+        split->options[split->option_count++] = lint_flag;
+        return;
+    }
+    split->options[split->option_count++] = (char *)"--changed";
+    if (given->base != nullptr) {
+        split->options[split->option_count++] = (char *)"--base";
+        split->options[split->option_count++] = (char *)given->base;
+    }
+}
+
+static size_t smith_check_index(const char *name) {
+    for (size_t i = 0; i < smith_check_part_count; i++) {
+        if (strcmp(smith_check_parts[i], name) == 0) return i;
+    }
+    return smith_check_part_count;
+}
+
 // `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
+// A part this host cannot run (the macOS lint and tests on Linux, the proofs without a prover, lint, test and prove
+// without a build file) is never a silent pass: the last lines name it as "not run here". It does not fail the check
+// unless `--require` names it (or `all`), which is how CI says a platform must run it (#3163).
 int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
-    bool every_task = split->own_count == 1 && strcmp(split->own[0], "-v") == 0;
-    if (split->own_count > (every_task ? 1U : 0U))
-        smith_die(smith_exit_usage, "takes no arguments but -D options and -v", "check");
+    SmithCheckArgs given = {};
+    if (!smith_check_args(split, &given)) return smith_exit_usage;
+    bool every_task = given.every_task;
     if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
     bool loud = every_task || smith_quiet_full();      // otherwise each part's output goes to its log
     SmithCheckClock since = {};
-    const char *failed[8];
+    const char *failed[16];
     size_t failed_count = 0;
+    bool not_run[smith_check_part_count] = {};
+    size_t ran = 0;
     since = smith_check_clock();
     smith_check_part("fmt", smith_fmt_project(self, true), since, failed, &failed_count, nullptr);
     since = smith_check_clock();
     smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count, nullptr);
+    ran = 2;
     if (access("build.c", R_OK) != 0 && access("build.smith", R_OK) != 0 && access("main.smith", R_OK) != 0 &&
         access("main.c", R_OK) != 0) {
         fprintf(stderr, "smith check: no build file and no main, so lint, test and prove are skipped\n");
+        not_run[smith_check_index("lint")] = not_run[smith_check_index("test")] = not_run[smith_check_index("prove")] =
+            true;
     } else {
-        smith_check_run(self, "lint", split, loud, failed, &failed_count);
+        static SmithVerbArgs lint_split, test_split;
+        lint_split = *split;
+        smith_check_select(&lint_split, "lint", &given);
+        smith_check_run(self, "lint", &lint_split, loud, failed, &failed_count);
+        ran++;
+        test_split = *split;
+        smith_check_select(&test_split, "test", &given);
 #ifdef __APPLE__
-        smith_check_run(self, "test", split, loud, failed, &failed_count);
+        smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
 #else
         // The tests that need macOS cannot run here: the runner's `--skip-macos`, as CI's test shards pass it.
-        static SmithVerbArgs test_split;
-        test_split = *split;
         test_split.options[test_split.option_count++] = (char *)"--skip-macos";
+        not_run[smith_check_index("macos-lint")] = not_run[smith_check_index("macos-tests")] = true;
         fprintf(stderr, "smith check: the macOS-only tests do not run on this host\n");
         smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
 #endif
+        ran++;
         if (smith_has_prover()) {
             smith_check_run(self, "prove", split, loud, failed, &failed_count);
+            ran++;
         } else {
             fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
+            not_run[smith_check_index("prove")] = true;
         }
         // The promises are read from the summaries of the project's own compiles, which lint, test and prove need not
         // have made (a project never built): the default build, a no-op when fresh, makes them.
@@ -1829,6 +1925,18 @@ int smith_check_project(int count, char **args, const char *self) {
         (void)smith_check_child(self, "build", split, loud, build_log);
     }
     smith_check_promises(every_task);
+    size_t skipped = 0, ran_failed = failed_count;
+    char names[256] = "";
+    for (size_t i = 0; i < smith_check_part_count; i++) {
+        if (!not_run[i]) continue;
+        skipped++;
+        snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s", names[0] != '\0' ? ", " : "",
+                 smith_check_parts[i]);
+        if (given.required[i]) failed[failed_count++] = smith_check_parts[i];
+    }
+    if (skipped > 0) fprintf(stderr, "smith check: not run here: %s\n", names);
+    fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, failed_count,
+            skipped);
     if (failed_count == 0) {
         fprintf(stderr, "smith check: ok\n");
         return 0;
