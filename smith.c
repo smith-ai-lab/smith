@@ -4073,8 +4073,9 @@ static void smith_stale_hint(const char *self, const char *target) {
     }
     if (!smith_newest_release_commit(newest) || strcmp(newest, smith_commit) == 0) return;
     fprintf(stderr,
-            "smith: this smith (%s) is older than the newest release (%s); run `smith build stage0` and put "
-            ".smith/stage0/bin first on PATH\n",
+            "smith: this smith (%s) is older than the newest release (%s); run `smith build stage0` (with -Dsteps=0 "
+            "when this smith is .smith/stage0 already: it is then the release main's step cache fits, not the newest) "
+            "and put .smith/stage0/bin first on PATH\n",
             smith_commit, newest);
 }
 

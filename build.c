@@ -3541,36 +3541,53 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
-// The step cache of main, unpacked into the user's (#3079): CI's `warm` job publishes the steps of every push to main
-// as the prerelease `step-cache-<sha7>` (smith-steps-<os>.tar.gz.NN, parts of one gzip, and smith-steps-<os>.sha), and
-// with them the first `smith build` of a clone compiles only what the branch changed: 9 s where it was 50 (4 cores).
-// The newest of the last 20 first-parent commits of HEAD that has one is taken, over plain HTTPS as the release is. It
-// only fills a cache: a commit without one, a platform without one, a failed download or no git leaves the build cold
-// and says so, and never fails the task. `-Dsteps=0` skips it.
-static void build_stage0_steps(SmithBuild *b, const char *os) {
+// The step cache of main (#3079): CI's `warm` job publishes the steps of every push to main as the prerelease
+// `step-cache-<sha7>` (smith-steps-<os>.tar.gz.NN, parts of one gzip, and smith-steps-<os>.sha), and with them the
+// first `smith build` of a clone compiles only what the branch changed. The commit of the newest one among the last 20
+// first-parent commits of HEAD, over plain HTTPS as the release is; nullptr when there is none, or no git.
+static const char *build_stage0_cache_commit(SmithBuild *b, const char *os) {
     const char *base = "https://github.com/smith-ai-lab/smith/releases/download";
     const char *commits =
         smith_capture_or(b, (const char *[]){"git", "rev-list", "--first-parent", "-n", "20", "HEAD", nullptr}, "");
-    const char *joined = ".smith/step-cache.tar.gz";
-    const char *tag = nullptr;
-    for (const char *at = commits; tag == nullptr && strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) {
-        const char *candidate = smith_fmt(b, "step-cache-%.7s", at); // each line is one 40-digit commit
-        const char *url = smith_fmt(b, "%s/%s/smith-steps-%s.sha", base, candidate, os);
+    for (const char *at = commits; strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) { // one 40-digit commit a line
+        const char *url = smith_fmt(b, "%s/step-cache-%.7s/smith-steps-%s.sha", base, at, os);
         const char *const *probe = smith_list(b, "curl", "-fsL", "-o", ".smith/step-cache.sha", url, nullptr);
-        if (build_exec(probe) == 0) tag = candidate;
+        if (build_exec(probe) == 0) return smith_fmt(b, "%.40s", at);
     }
+    return nullptr;
+}
+
+// The release a step cache fits. Every key of the cache holds the identity of the compiler that filled it, so the
+// cache of a commit serves only the smith that built that commit in CI: a newer release, after any commit that changed
+// code linked into smith, gets no hit at all (measured: 0 of 331 steps and 52 s, against 22 s with the right one). The
+// cache names that release's commit in the asset smith-steps-<os>.stage0 when it has one; otherwise it is the release
+// of the commit before the cache's, which is what CI had when that push was built. nullptr when neither is known.
+static const char *build_stage0_cache_release(SmithBuild *b, const char *os, const char *commit) {
+    const char *url = smith_fmt(b,
+                                "https://github.com/smith-ai-lab/smith/releases/download/step-cache-%.7s/"
+                                "smith-steps-%s.stage0",
+                                commit, os);
+    const char *named = smith_capture_or(b, (const char *[]){"curl", "-fsL", url, nullptr}, "");
+    if (strlen(named) == 40 && strspn(named, "0123456789abcdef") == 40) return named;
+    const char *parent =
+        smith_capture_or(b, (const char *[]){"git", "rev-parse", smith_fmt(b, "%s^", commit), nullptr}, "");
+    return strlen(parent) == 40 ? parent : nullptr;
+}
+
+// Unpacks the step cache of `commit` into the user's. It only fills a cache: a failed download leaves the build cold
+// and says so, and never fails the task.
+static void build_stage0_steps(SmithBuild *b, const char *os, const char *commit) {
+    const char *base = "https://github.com/smith-ai-lab/smith/releases/download";
+    const char *joined = ".smith/step-cache.tar.gz";
     const char *home = getenv("HOME");
     const char *cache = getenv("XDG_CACHE_HOME");
-    if (tag == nullptr || (home == nullptr && cache == nullptr)) {
-        fprintf(stderr, "smith: step cache: none (no published one for the last 20 commits of HEAD)\n");
-        return;
-    }
+    if (home == nullptr && cache == nullptr) return;
     const char *folder = cache != nullptr && cache[0] != '\0' ? smith_fmt(b, "%s/smith/steps", cache)
                                                               : smith_fmt(b, "%s/.cache/smith/steps", home);
     (void)build_remove(b, joined);
     size_t parts = 0;
     for (; parts < 100; parts++) { // the parts in order, until the first that is not there
-        const char *url = smith_fmt(b, "%s/%s/smith-steps-%s.tar.gz.%02zu", base, tag, os, parts);
+        const char *url = smith_fmt(b, "%s/step-cache-%.7s/smith-steps-%s.tar.gz.%02zu", base, commit, os, parts);
         const char *const *fetch = smith_list(b, "curl", "-fsL", "--retry", "3", url, nullptr);
         if (build_spawn(&(BuildSpawn){.argv = fetch, .log = joined, .append = true, .stdout_only = true}) != 0) break;
     }
@@ -3578,28 +3595,15 @@ static void build_stage0_steps(SmithBuild *b, const char *os) {
     if (status == 0) status = build_exec(smith_list(b, "tar", "-C", folder, "-xzf", joined, nullptr));
     (void)build_remove(b, joined);
     if (status == 0) {
-        fprintf(stderr, "smith: step cache: %s, unpacked into %s\n", tag, folder);
+        fprintf(stderr, "smith: step cache: step-cache-%.7s, unpacked into %s\n", commit, folder);
     } else {
-        fprintf(stderr, "smith: step cache: none (%s could not be downloaded and unpacked)\n", tag);
+        fprintf(stderr, "smith: step cache: none (step-cache-%.7s could not be downloaded and unpacked)\n", commit);
     }
 }
 
-// `smith build stage0` (#2719): downloads the newest release into .smith/stage0/ and checks its .sha256, as the
-// README's Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C
-// and uses no `.smith` module of the tree: the tree builds only with the newest release (smith-dev-build, the lag
-// rule), so a clone with an older smith runs this first and cannot build anything else. Running it again replaces the
-// folder.
-static int build_stage0(SmithRun *run) {
-    SmithBuild *b = run->b;
-    struct utsname system = {};
-    if (uname(&system) != 0) return 1;
-    char os[sizeof system.sysname];
-    size_t length = strlen(system.sysname);
-    for (size_t i = 0; i <= length; i++)
-        os[i] = (char)tolower((unsigned char)system.sysname[i]);
-    const char *name = smith_fmt(b, "smith-%s-%s.tar.xz", os, system.machine);
-    const char *base = "https://github.com/smith-ai-lab/smith/releases/latest/download";
-    if (build_make_folder(b, ".smith") != 0) return 1;
+// Downloads the release under `base` into .smith/stage0/ and checks its .sha256. Both files are saved under their
+// published names, because the checksum tool finds the tarball only under the name its .sha256 lists (#2232).
+static int build_stage0_install(SmithBuild *b, const char *base, const char *name) {
     for (int which = 0; which < 2; which++) {
         const char *file = which == 0 ? name : smith_fmt(b, "%s.sha256", name);
         int status = build_exec(smith_list(b, "curl", "-fsSL", "--retry", "3", "-o", smith_fmt(b, ".smith/%s", file),
@@ -3618,10 +3622,48 @@ static int build_stage0(SmithRun *run) {
     if (status == 0)
         status =
             build_exec(smith_list(b, "tar", "-C", ".smith/stage0", "-xJf", smith_fmt(b, ".smith/%s", name), nullptr));
-    if (status == 0)
-        fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
-    if (status == 0 && strcmp(run->args[0], "0") != 0) build_stage0_steps(b, os);
     return status;
+}
+
+// `smith build stage0` (#2719): downloads a release into .smith/stage0/ and checks its .sha256, as the README's
+// Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C and uses
+// no `.smith` module of the tree: the tree builds only with a recent release (smith-dev-build, the lag rule), so a
+// clone with an older smith runs this first and cannot build anything else. Running it again replaces the folder.
+// The release is the one main's newest step cache was filled by, and that cache is unpacked with it (#3079), so the
+// first build is served from it; with no cache for HEAD's last 20 commits, no such release, or `-Dsteps=0`, it is the
+// newest release and no cache.
+static int build_stage0(SmithRun *run) {
+    SmithBuild *b = run->b;
+    struct utsname system = {};
+    if (uname(&system) != 0) return 1;
+    char os[sizeof system.sysname];
+    size_t length = strlen(system.sysname);
+    for (size_t i = 0; i <= length; i++)
+        os[i] = (char)tolower((unsigned char)system.sysname[i]);
+    const char *name = smith_fmt(b, "smith-%s-%s.tar.xz", os, system.machine);
+    const char *site = "https://github.com/smith-ai-lab/smith/releases";
+    if (build_make_folder(b, ".smith") != 0) return 1;
+    const char *cache = strcmp(run->args[0], "0") != 0 ? build_stage0_cache_commit(b, os) : nullptr;
+    const char *release = cache != nullptr ? build_stage0_cache_release(b, os, cache) : nullptr;
+    int status =
+        release != nullptr ? build_stage0_install(b, smith_fmt(b, "%s/download/stage0-%s", site, release), name) : 1;
+    if (status == 0) {
+        fprintf(stderr,
+                "smith: the release of %.7s, which filled main's step cache of %.7s, is in .smith/stage0 (`-Dsteps=0` "
+                "takes the newest release and no cache); put .smith/stage0/bin first on PATH\n",
+                release, cache);
+        build_stage0_steps(b, os, cache);
+        return 0;
+    }
+    status = build_stage0_install(b, smith_fmt(b, "%s/latest/download", site), name);
+    if (status != 0) return status;
+    fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    if (strcmp(run->args[0], "0") != 0) {
+        fprintf(stderr, "smith: step cache: none (%s)\n",
+                cache == nullptr ? "no published one for the last 20 commits of HEAD"
+                                 : "the release that filled the newest one is not published any more");
+    }
+    return 0;
 }
 
 // `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
@@ -3775,9 +3817,12 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     smith_task(b, "frontend-coverage", &frontend_coverage);
     SmithStep stage0 = {
         .run = build_stage0,
-        .args = smith_list(b, smith_option_value(b, "steps", "1", "stage0: also unpack main's step cache (0: no)"),
+        .args = smith_list(b,
+                           smith_option_value(b, "steps", "1",
+                                              "stage0: 1 takes the release main's step cache fits and unpacks the "
+                                              "cache, 0 the newest release and no cache"),
                            nullptr),
-        .description = "downloading the newest release into .smith/stage0",
+        .description = "downloading a release into .smith/stage0",
     };
     smith_task(b, "stage0", &stage0);
     SmithStep bench = {
