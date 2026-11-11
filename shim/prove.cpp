@@ -488,7 +488,8 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
     unsigned proved = static_cast<unsigned>(std::strtoul(line.c_str() + 7, &rest, 10));
     if (*rest != ' ') return false;
     unsigned trusted = static_cast<unsigned>(std::strtoul(rest + 1, &rest, 10));
-    if (*rest != '\0') return false;
+    if (*rest != ' ' || (rest[1] != '0' && rest[1] != '1') || rest[2] != '\0') return false;
+    if (rest[1] == '1' && access(".smith/proved", F_OK) != 0) return false; // a replay writes no .pts
     std::string text, tail;
     bool replaying = false, in_tail = false;
     std::set<std::string> named;
@@ -516,8 +517,7 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
             if (named.count(source) == 0) return false;
         }
     }
-    if (access(".smith/proved", F_OK) != 0) return false; // a replay writes no .pts: prove again to write them
-    utimes(record.path.c_str(), nullptr);                 // used now
+    utimes(record.path.c_str(), nullptr); // used now
     std::fputs(text.c_str(), stdout);
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
     std::printf("%u proved, 0 failed", proved);
@@ -558,7 +558,8 @@ void group_keep(const GroupRecord &record, const std::vector<std::string> &depfi
     for (const std::vector<std::string> *list : {&arguments.files, &arguments.libraries})
         dependencies.insert(list->begin(), list->end());
     std::string out = "smith-prove-group 1\n";
-    out += "counts " + std::to_string(record.proved) + " " + std::to_string(record.trusted) + "\n";
+    out += "counts " + std::to_string(record.proved) + " " + std::to_string(record.trusted) +
+           (access(".smith/proved", F_OK) == 0 ? " 1\n" : " 0\n");
     for (const std::string &path : dependencies) {
         std::string hex;
         if (path.find('\n') != std::string::npos || !file_digest(path, hex)) return;
