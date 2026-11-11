@@ -11,6 +11,7 @@ name: ci
 # the queue. The pre-push hook is the check before the merge, the queue run the test.
 on:
   workflow_dispatch:
+    inputs:
       mac:
         description: "Only by hand, to test the Mac watchdog (#2835): `mac` runs the macOS job on the owner's Mac, `dead` on a Mac that does not answer (the watchdog must fall back to hosted macos-26); `auto` is the rule of pick-mac"
         type: choice
