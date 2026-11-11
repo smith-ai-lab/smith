@@ -12,7 +12,6 @@
 #include <cstdlib>
 #include <sstream>
 
-// The step store (runtime/executor_cache.c): the answers of the solver are entries in it, beside the compiles (#3174).
 extern "C" bool smith_stepcache_answer_get(const char *hex, char *out, size_t capacity, size_t *size);
 extern "C" void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size);
 
@@ -67,12 +66,10 @@ void answer_put(const std::string &key, const std::string &bytes) {
     smith_stepcache_answer_put(key.c_str(), bytes.data(), bytes.size());
 }
 
-// "unsat <cpu>" or "sat <cpu>": the answer and the CPU seconds the query took.
 Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads,
                        bool read_store, double &cpu) {
     cpu = -1;
-    // Bitwuzla's version is what decides the answer besides the query (Sat and Unsat do not depend on the options that
-    // only change how long it takes); a Timeout or an Unknown is no answer and is not kept.
+    // Sat and Unsat depend on the query and Bitwuzla's version alone; a Timeout or an Unknown is no answer.
     const std::string key = answer_key((std::string("bitwuzla ") + bitwuzla::version()).c_str(), query);
     std::string kept;
     if (read_store && answer_get(key, kept)) {

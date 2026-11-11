@@ -232,15 +232,13 @@ enum class Verdict { Unsat, Sat, Unknown, Timeout };
 // Asks Bitwuzla whether a query in SMT-LIB 2 is satisfiable. It stops when the calling thread has used `seconds` of CPU
 // time, or when the process has used `threads * seconds` since it was at `process_start` (the queries that run side by
 // side share a budget).
-// An answer already found is read from the step store (#3174, unless `read_store` is false) and a Sat or Unsat is kept
-// there, under the hash of the query and Bitwuzla's version; a hit gives the CPU time the query took when it was solved
-// in `cpu`, which the caller charges as it would a run, so the budget and the report do not depend on what the store
-// held. A hit that took more than `seconds` is a Timeout. A Timeout and an Unknown are never kept. `cpu` is negative
-// when the query ran now.
+// Reads the answer from the step store (#3174, unless `read_store` is false) and keeps a Sat or Unsat there, keyed by the
+// query and Bitwuzla's version. A hit sets `cpu` to the time the query took when solved (charged as a run is); `cpu` is
+// negative when the query ran now. A hit over `seconds` is a Timeout; a Timeout and an Unknown are never kept.
 Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads,
                        bool read_store, double &cpu);
 
-// The step store's entry for a step that is not a compile: the key is the SHA-256 of the kind and the text it read.
+// The step store's entry for a step that is not a compile, keyed by the SHA-256 of the kind and the text it read.
 std::string answer_key(const char *kind, const std::string &text);
 bool answer_get(const std::string &key, std::string &bytes);
 void answer_put(const std::string &key, const std::string &bytes);

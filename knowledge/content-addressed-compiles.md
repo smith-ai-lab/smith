@@ -43,9 +43,10 @@ source's path or the prover. A Sat or an Unsat is the entry `steps/a/<xx>/<hex>`
 and `_put` in `runtime/executor_cache.c`): the answer and the CPU seconds the query took, which a hit charges as a run would, so the
 budget and the report do not depend on what the store held. A Timeout, an Unknown and a crash are not kept. A refuted point is
 two Sat answers (the small query, then the full one), kept like a proof; Z3 finds the values of the counterexample again each
-time (3 s of CPU at most). The prune and the cap of the step store hold them; `--no-cache` asks the solver again. The
-earlier cache (a proof by the IR, and the group's record that skipped the compile of a group whose proofs were all reused,
-#2994) is gone; compiling to IR and Alive2's walk are paid on every run until they are steps of the store too.
+time (3 s of CPU at most). The prune and the cap of the step store hold them; `--no-cache` asks the solver again. The group's record (#2994) stays as it was
+(a record of the files the group's compile read, under `proofs/group-<hash>`, which skips the compile of a group whose functions were
+all proved with no query run); it is written when the store answered every query. Making it an entry of the store, keyed by the
+digests of the files, the flags and the identity, is #3177. Compiling to IR and Alive2's walk are paid on every run until then.
 
 **The lint cache** (`runtime/lint_cache.c`, [caches](caches.md)). Per file, keyed by the lint identity, the compile
 command and the content of the files clang-tidy read.
