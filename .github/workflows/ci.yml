@@ -1386,6 +1386,13 @@ jobs:
         if: env.DRY_RUN != '1'
         shell: bash
         run: |
+          # the folder is pruned once more here, after the builds: the prune of a job runs at its first build, so the
+          # results the dev and release builds just made (about 1.4 GB on Linux, all new keys when the compiler
+          # changed) were saved on top of the survivors and the saved folder grew with every merge: 1,397 MB, then
+          # 2,045 MB (#3045). The cap is the one of setup-smith, read from there so that it is written once
+          cap=$(awk '/^  step-cache-max:/{f=1} f && /default:/{print $2; exit}' .github/actions/setup-smith/action.yml)
+          rm -f ~/.cache/smith/steps/prune.timestamp
+          SMITH_CACHE_MAX="$cap" "$SMITH" build 2>&1 | grep -E '^cache:|no work to do' | tee -a "$GITHUB_STEP_SUMMARY" || echo "::warning::the prune before the save did not run"
           rm -f ~/.cache/smith/steps/prune.timestamp
           saved=$(du -sm ~/.cache/smith/steps | cut -f1)
           echo "step cache saved: $saved MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
