@@ -254,6 +254,14 @@ jobs:
             --jq "[.workflow_runs[] | select(.head_branch | startswith(\"gh-readonly-queue/main/pr-$front-\"))][0] | \"\(.id) \(.status) \(.conclusion)\"") \
             || { log "queue-heal: front #$front run unreadable, left alone"; exit 0; }
           set -- $run
+          # a run that just completed can still read `null` for its conclusion: read it again, up to 6 times 10 s apart,
+          # so the eviction does not wait for the next pass (#3051)
+          for _ in 1 2 3 4 5 6; do
+            [ "${2:-}" = completed ] && [ "${3:-null}" = null ] || break
+            sleep 10
+            run=$(gh api -X GET "repos/$REPO/actions/runs/$1" --jq '"\(.id) \(.status) \(.conclusion)"') || break
+            set -- $run
+          done
           # a job that hits its timeout ends the run `cancelled` though the `ci` check fails: GitHub kept such an entry
           # (#3040: shard 5 hung 30 minutes, `ci` failed at 00:21:31Z, the run was `cancelled`, the entry stayed 58 minutes
           # and the group behind it was built on it, #3051). A completed `cancelled` run whose `ci` job failed is a
