@@ -261,6 +261,27 @@ export void test_build_step_cache_the_cap_drops_the_least_recently_used_first() 
     expect_counts("lru: the old header's results are gone", 2, 1, &old);
 }
 
+// 5c. The cap drops only what has to go from the age step it cuts in (#3045). After a restore every entry has about
+// one time, so one 30-minute step held the whole cache, and a prune 45 MB over the cap dropped all 2 GB of it (CI job
+// 130425411590: "kept 0 entries (0 MB), dropped 5107"). Three results made now, all in one step, a cap of two: one
+// goes.
+export void test_build_step_cache_a_cap_inside_one_age_step_drops_only_the_excess() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = project("a");
+    defer scratch::clean(&a);
+    scratch::own_cache(&a);
+    (void)build(a, a.cache, 1000);
+    I64 now = (I64)c::time(nullptr);
+    test::check_equal(c::smith_core_step_cache_prune(a.cache, two_results, now), true);
+    scratch::Project b = project("b");
+    defer scratch::clean(&b);
+    Build after = build(b, a.cache, 1000);
+    expect_counts("step: two of the three results stay, one is compiled again", 1, 2, &after);
+}
+
 // 6. A precompiled header is served only when it is made and read with -fvalidate-ast-input-files-content: it records
 // the time of each file it read, so one served after a checkout rewrote its header with the same text (a new time)
 // is rejected by every compile that includes it (#728) unless the hash of each input is stored (#1415).
