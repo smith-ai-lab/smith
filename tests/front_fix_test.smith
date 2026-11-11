@@ -260,6 +260,32 @@ export void test_an_if_around_declarations_becomes_when() {
     check_count(countof(again.errors), 0);
 }
 
+// `#if 0` and `#if 1` hold for every target (#3027): the dead branch goes with the directive lines, nested directives
+// and all, and the live branch stays as it is, in a function body too.
+export void test_an_if_zero_or_one_keeps_the_live_branch() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "#if 0\nint never();\n#include <never.h>\n#ifdef X\nint x;\n#endif\n#endif\n"
+                                 "int one() {\n#if 1\n    return 1;\n#else\n    return 2;\n#endif\n}\n"
+                                 "#if 0\nint a = 1;\n#else\nint a = 2;\n#endif\n");
+    check_text(fixed.text, "fn one() -> i32:\n    return 1\nmut a: i32 = 2\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
+
+// A branch of `#if 0` whose braces do not balance cuts a declaration in two: it is left as it is.
+export void test_an_if_zero_that_cuts_a_declaration_is_left() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "#if 0\nint f() {\n#else\nint g() {\n#endif\n    return 1;\n}\n");
+    check_text(fixed.text, "#if 0\nint f() {\n#else\nint g() {\n#endif\n    return 1;\n}\n");
+}
+
 // A top-level `if constexpr` is `@when` on each declaration of its branches (#2142).
 export void test_a_top_level_if_constexpr_becomes_when() {
     arena::Arena memory = test::memory(1U << 22);
@@ -485,10 +511,22 @@ export void test_other_directives_stay_errors_without_a_fix() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse_file(file_name, "#if 1\n#define F(x) x\n#include \"h.h\"\n");
+    parser::Parsed parsed = parser::parse_file(file_name, "#if 1\n#define F(x) x\n#pragma once\n");
     check_count(countof(parsed.errors), 1);
     syntax::Edits none = parsed.errors[0].fix;
     check_count(countof(none), 0);
+}
+
+// `#include "h"` is `import c "h"` (#3027), which the parser reads; the `as` rule is the angled include's.
+export void test_a_quoted_include_becomes_a_quoted_c_import() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "#include \"defs.h\"\n#include \"my-defs.h\"\nconst X = 1\n");
+    check_text(fixed.text, "import c \"defs.h\"\nimport c \"my-defs.h\" as my_defs\nconst X = 1\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
 }
 
 // `(P){}` is `P()`, with the fields C zeroes given their zero values (#2329): an empty compound literal of a named type
@@ -595,7 +633,23 @@ export void test_comments_are_written_when_another_form_stays() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nStr a[3];\n/* two\n   lines */\n");
-    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\nstr a[3];\n# two\n#   lines \n");
+    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\nstr a[3];\n# two\n   # lines\n");
+}
+
+// `///` and `/** */` are doc comments, `##` (#3027): a `/**` was written `#*`, which the lexer reads as an old
+// directive. A continued line keeps its indentation and loses its ` *` frame; `////` stays a plain comment.
+export void test_doc_comments_become_double_hash_lines() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "/// The point.\nstruct P {\n    ///x\n    I32 x;\n    /** a\n     * b */\n"
+                                 "    I32 y;\n};\n/** One. */\nI32 one() {\n    return 1; ////\n}\n");
+    check_text(fixed.text, "## The point.\nstruct P:\n    ## x\n    x: i32\n    ## a\n    ## b\n    y: i32\n"
+                           "## One.\nfn one() -> i32:\n    return 1 # //\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
 }
 
 // A function type written with the names of its parameters (`Fn(void (Key key))`) is `fn(Key)`: the names are dropped,
@@ -731,6 +785,25 @@ export void test_a_for_over_a_pointer_with_an_unbraced_body_becomes_while() {
     check_count(countof(fixed.text) > 0 ? 1 : 0, 1);
 }
 
+// A C `for` over `struct c::dirent *` in a file the checker does not read: once the comments are `#`, the next pass
+// reads `*c::dirent entry = v` with smith's own parser, which takes it for a declaration, not the dereference
+// `c.dirent.*` (#3027).
+export void test_a_for_over_a_qualified_c_pointer_is_no_dereference() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "Usize f(c::DIR *folder) {\n    Usize count = 0;\n"
+                                                "    for (struct c::dirent *entry = c::readdir(folder); entry != "
+                                                "nullptr; entry = c::readdir(folder)) {\n        count += 1;\n    }\n"
+                                                "    return count;\n}\n\nUsize g() {\n"
+                                                "    return (Usize)c::sysconf(unknown); // not known\n}\n");
+    check_text(fixed.text, "fn f(folder: *c.DIR) -> usize:\n    mut count: usize = 0\n"
+                           "    mut entry: *c.dirent = c.readdir(folder)\n    while entry != nullptr:\n"
+                           "        count += 1\n        entry = c.readdir(folder)\n    return count\n\n"
+                           "fn g() -> usize:\n    return c.sysconf(unknown).to(usize) # not known\n");
+}
+
 // `struct tag name = v` of a C tag is mended with the rest of the function, not by an error that stops it (#2224).
 export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
     arena::Arena memory = test::memory(1U << 22);
@@ -857,6 +930,24 @@ export void test_a_top_level_block_whose_condition_did_not_read_does_not_crash()
                                  "        if (m.value > (m.negative ? half : half - 1)) return {.error = Range};\n"
                                  "        if (m.value > high) return {.error = Range};\n    }\n}\n");
     test::check_condition(countof(fixed.text) > 0);
+}
+
+// An array of tuples is a list of tuples (#3027): `struct { I32, F32 } xs[2] = {{1, 1.5f}, {2, 2.5f}};` is
+// `xs: [2](i32, f32) = [(1, 1.5f), (2, 2.5f)]`, and `(I32)countof(n[1])` keeps the `)` after the tuple index.
+export void test_an_array_of_tuples_is_a_list_of_tuples() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith",
+        "typedef struct { I32, struct { F32, F32 } } Nested;\nI32 f(Nested n) {\n"
+        "    struct { I32, F32 } xs[2] = {{1, 1.5f}, {2, 2.5f}};\n    return xs[1][0] + (I32)countof(n[1]);\n}\n");
+    check_text(fixed.text,
+               "Nested := (i32, (f32, f32))\nfn f(n: Nested) -> i32:\n"
+               "    xs: [2](i32, f32) = [(1, 1.5f), (2, 2.5f)]\n    return xs[1].0 + (countof(n.1)).to(i32)\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
 }
 
 // `t[0]` over a tuple is `t.0` in a file the checker also rejects elsewhere (#2648): `tuple_edits` runs on any module.

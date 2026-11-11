@@ -3,12 +3,14 @@ description: >
   The light wait of a merge-queue run (#2851): while a later queue group is built on this one, the run waits on this
   one runner and builds nothing; with HEADGREEN the later group's passing run merges this entry with it, and this
   run is cancelled when its branch goes. Once no later group is built on it (the later ones failed or left), it
-  returns and the run builds the full checks of its own tree. It never makes `ci` pass by itself. The logic is
+  returns and the run builds the full checks of its own tree. The last entry also waits while a group ahead of it is
+  in its full build (#3057), so one full run builds at a time and holds every entry that queued during the one before.
+  It never makes `ci` pass by itself. The logic is
   scripts/batch_wait.c, tested by tests/batch_wait_test.smith against made-up queue branches. Needs `actions: write`; does nothing on other events.
 
 outputs:
   batch:
-    description: "alone (no wait), waited (waited, now the last entry), capped (waited an hour, builds anyway); empty on other events"
+    description: "alone (no wait), waited (waited, now the last entry), split (a later group's full build failed, #3057), capped (waited an hour, builds anyway); empty on other events"
     value: ${{ steps.wait.outputs.batch }}
 
 runs:

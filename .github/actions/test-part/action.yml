@@ -69,6 +69,8 @@ runs:
         cp "$RUNNER_TEMP/test.log" .smith/log/test.log
         {
           echo "### tests linux $PART/$COUNT: $took s"
+          # a PR check's selection and the base it was made against (#3059: it once said 0 of 384 for every PR)
+          grep -E '^smith test --changed: ([0-9]+ changed files? since|.*every test runs|.*whole suite)' "$RUNNER_TEMP/test.log" | head -n 2 || true
           grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
         } >>"$GITHUB_STEP_SUMMARY"
         if [ "$rc" -ne 0 ]; then

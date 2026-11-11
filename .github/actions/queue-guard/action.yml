@@ -26,7 +26,7 @@ runs:
           [ "$try" = 1 ] && [ "$misses" = 1 ] && sleep 5
         done
         if [ "$misses" = 2 ]; then
-          echo "group $GITHUB_REF left the queue: cancelling run $GITHUB_RUN_ID"
+          echo "group $GITHUB_REF left the queue: cancelling run $GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
           gh run cancel "$GITHUB_RUN_ID"
           sleep 60
           exit 1
