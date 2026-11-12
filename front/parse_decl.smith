@@ -958,7 +958,9 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type, Bool
         }
         parse::advance(p);
         // `I32 xs[]` as a parameter is C's pointer: the head's fix writes `xs: []i32`
-        if (parse::accept(p, lex::colon) || (parameter && parse::at(p, lex::right_bracket))) {
+        // `I32 xs[] = {..}` takes its length from the list (#3316): the declaration's fix writes it
+        Bool sized_by_value = parse::at(p, lex::right_bracket) && parse::peek_at(p, 1).kind == lex::equal;
+        if (parse::accept(p, lex::colon) || ((parameter || sized_by_value) && parse::at(p, lex::right_bracket))) {
             suffix.is_slice = true;
         } else if (parse::at(p, lex::right_bracket)) {
             Str message = "an array needs a size: write `[N]`, or `[:]` for a slice";
@@ -1347,6 +1349,7 @@ struct Dims {
     Str text;
     U32 end;
     Bool blocked;
+    Bool unsized; // `xs[] = {..}`: the length is the initializer's (#3316), `text` is `[_]`
 };
 
 // The suffixes in the tokens `first` to `last` (not taken), which follow a type and a name (so `first` is at least 2).
@@ -1356,6 +1359,14 @@ static Dims read_dims(const parse::Parser *p, Usize first, Usize last) {
     dims.end = p->tokens[last - 1].span.end;
     Str text = "";
     dims.blocked = first < 2 || strip_suffixes(p, first - 2, last, &text, false) != first;
+    // `I32 xs[] = {..}`: one empty pair of brackets before `=` is `[_]`, the list's length; `[][2]` has no fix
+    Bool before_value = last < countof(p->tokens) && p->tokens[last].kind == lex::equal;
+    if (dims.blocked && before_value && first >= 2 && strip_suffixes(p, first - 2, last, &text, true) == first &&
+        same_text(text, "[]")) {
+        dims.blocked = false;
+        dims.unsized = true;
+        text = "[_]";
+    }
     if (!dims.blocked) dims.text = text;
     return dims;
 }
@@ -2010,6 +2021,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         !array_list(p, type, equal_end, last.span.start, written, &dims, &item_edits, &zero_later))
         fixable = false;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
+    // `char s[] = "text"` (a string's length and type are not settled) and any value but a list have no fix (#3316)
+    if (dims.unsized && !(countof(value) > 0 && value[0] == '{')) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
         warn_by_hand(p, head, name, written);
