@@ -1064,11 +1064,12 @@ static Bool name_taken(types::Checked *r, Str name) {
 }
 
 // The name a variant test binds the payload to: the variant's own name; for a Result's `ok`, `ok_value` where a
-// variable named `ok` is in scope (a second `.ok(ok) := r` in one function). Empty when the name is taken (#3205).
+// variable named `ok` is in scope (a second `.ok(ok) := r` in one function), and `error_value` for an `error` (#3211).
+// Empty when the name is taken (#3205).
 static Str binding_name(types::Checked *r, Str variant) {
     if (!name_taken(r, variant)) return variant;
     Str none = "";
-    if (!types::same_text(variant, "ok")) return none;
+    if (!types::same_text(variant, "ok") && !types::same_text(variant, "error")) return none;
     Str other = msg(format::push(variant, "_value"));
     if (name_taken(r, other)) return none;
     return other;
