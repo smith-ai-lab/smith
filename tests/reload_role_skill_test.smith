@@ -10,20 +10,28 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr const char *build = "set -e; "
-                              "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
-                              "$c -x c reload_role_skill.c -o reload_role_skill; "
-                              "mkdir -p skills/smith-dev-lead skills/smith-dev-runner; "
-                              "printf 'LEAD RULES\\nsecond line\\n' > skills/smith-dev-lead/SKILL.md; "
-                              "printf 'RUNNER RULES\\n' > skills/smith-dev-runner/SKILL.md; "
-                              "printf '%s\\n' "
-                              "'{\"type\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Skill\","
-                              "\"input\":{\"skill\":\"smith-dev-lead\"}}]}' > lead.jsonl; "
-                              "printf '%s\\n' "
-                              "'{\"type\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Skill\","
-                              "\"input\":{\"skill\":\"smith-dev-runner\"}}]}' > runner.jsonl; "
-                              "printf '%s\\n' '{\"type\":\"user\",\"text\":\"about smith-dev-lead and "
-                              "\\\"skill\\\":\\\"smith-dev-runner\\\"\"}' > neither.jsonl";
+constexpr const char *build =
+    "set -e; "
+    "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
+    "$c -x c reload_role_skill.c -o reload_role_skill; "
+    "mkdir -p skills/smith-dev-lead skills/smith-dev-runner; "
+    "printf 'LEAD RULES\\nsecond line\\n' > skills/smith-dev-lead/SKILL.md; "
+    "printf 'RUNNER RULES\\n' > skills/smith-dev-runner/SKILL.md; "
+    "printf '%s\\n' "
+    "'{\"type\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Skill\","
+    "\"input\":{\"skill\":\"smith-dev-lead\"}}]}' > lead.jsonl; "
+    "printf '%s\\n' "
+    "'{\"type\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Skill\","
+    "\"input\":{\"skill\":\"smith-dev-runner\"}}]}' > runner.jsonl; "
+    "printf '%s\\n' '{\"type\":\"user\",\"text\":\"about smith-dev-lead and "
+    "\\\"skill\\\":\\\"smith-dev-runner\\\"\"}' > neither.jsonl; "
+    "printf '%s\\n' "
+    "'{\"type\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\","
+    "\"input\":{\"file_path\":\"/x/.claude/skills/smith-dev-lead/SKILL.md\"}}]}' > read.jsonl; "
+    "printf '%s\\n' "
+    "'{\"type\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\","
+    "\"input\":{\"file_path\":\"/x/.claude/skills/smith-dev-runner/SKILL.md\"}}]}' > both.jsonl; "
+    "cat read.jsonl >> both.jsonl";
 
 static scratch::Run hook(const scratch::Project *p, const char *transcript) {
     char command[512];
@@ -79,4 +87,28 @@ export void test_reload_role_skill_prints_nothing_without_a_role_skill() {
     scratch::Run missing = hook(&p, "no-such-file.jsonl");
     scratch::expect_status("reload_role_skill: a missing transcript exits 0", 0, &missing);
     scratch::expect_text("reload_role_skill: and prints nothing", "", missing.out);
+}
+
+export void test_reload_role_skill_reads_a_role_skill_read_as_a_file() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = made();
+    defer scratch::clean(&p);
+    scratch::Run run = hook(&p, "read.jsonl");
+    scratch::expect_text("reload_role_skill: the lead skill, read with Read",
+                         "Your role skill, reloaded after compaction:\nLEAD RULES\nsecond line\n", run.out);
+}
+
+export void test_reload_role_skill_first_role_seen_wins() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = made();
+    defer scratch::clean(&p);
+    scratch::Run run = hook(&p, "both.jsonl");
+    scratch::expect_text("reload_role_skill: the runner skill was read first",
+                         "Your role skill, reloaded after compaction:\nRUNNER RULES\n", run.out);
 }
