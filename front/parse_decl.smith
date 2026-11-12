@@ -1991,6 +1991,15 @@ static U32 value_end(const parse::Parser *p, U32 semi) {
     return end;
 }
 
+// Whether a variable's value has no mechanical fix: a `constexpr` declared apart or with no value, `auto` with no
+// value, and `char s[] = "text"` or any value but a list for an array whose length is the value's (a string's length
+// and type are not settled, #3316).
+static Bool no_fix_for_value(const Prefixes *pre, Head head, Dims dims, Str value, Bool has_init, Bool automatic) {
+    if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) return true;
+    if (automatic && !has_init) return true;
+    return dims.unsized && !(countof(value) > 0 && (value[0] == '{' || value[0] == '['));
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
@@ -2020,11 +2029,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (suffixed && countof(zeros) == 0 && countof(value) > 0 && value[0] == '{' &&
         !array_list(p, type, equal_end, last.span.start, written, &dims, &item_edits, &zero_later))
         fixable = false;
-    if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
-    // `char s[] = "text"` (a string's length and type are not settled) and any value but a list have no fix (#3316)
-    if (dims.unsized && !(countof(value) > 0 && (value[0] == '{' || value[0] == '['))) fixable = false;
-    if (automatic && !has_init) fixable = false;
-    if (!fixable) {
+    if (!fixable || no_fix_for_value(pre, head, dims, value, has_init, automatic)) {
         warn_by_hand(p, head, name, written);
         return;
     }
