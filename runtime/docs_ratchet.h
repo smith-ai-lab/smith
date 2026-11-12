@@ -117,7 +117,7 @@ static const struct {
     {"build-tests.md", 37788},
     {"build-times.md", 14002},
     {"c-header-import.md", 5530},
-    {"caches.md", 15992},
+    {"caches.md", 16333},
     {"changed-tests.md", 8990},
     {"checked-allocator.md", 7831},
     {"ci.md", 11065},
