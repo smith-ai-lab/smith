@@ -62,3 +62,40 @@ export void test_front_fix_function_pointer_locals_set_to_lambdas() {
     test::check_condition(!contains(fixed.text, "[]("));
     test::check_condition(!contains(fixed.text, "Fn("));
 }
+
+// A typedef of a tag declared elsewhere is an alias of the tag (#3318): `typedef enum Color Paint;` is `Paint :=
+// Color`, `typedef struct S T;` (another name than the tag, no attribute to carry the C name) is `T := S`, and a
+// function pointer that returns a tag, `typedef struct BigC (*Make)(U8);`, is `Make := fn(u8) -> BigC`.
+export void test_front_fix_typedef_of_a_tag_is_an_alias() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nstruct BigC { U8 data; };\nstruct S { U8 a; };\n"
+                 "typedef enum Color Paint;\ntypedef struct S T;\ntypedef struct BigC (*Make)(U8);\n";
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_condition(contains(second.text, "Paint := Color\n"));
+    test::check_condition(contains(second.text, "T := S\n"));
+    test::check_condition(contains(second.text, "Make := fn(u8) -> BigC\n"));
+    test::check_condition(!contains(second.text, "typedef"));
+}
+
+// `constexpr Type Handler = Response (*)(Request *, I32);` is the alias `Handler := fn(*mut Request, i32) -> Response`
+// (#3318): the first round writes the function type and the word `type`, and the second reads that declaration again.
+export void test_front_fix_type_value_of_a_function_pointer_is_an_alias() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nstruct Request { I32 id; };\nstruct Response { I32 code; };\n"
+                 "constexpr Type Handler = Response (*)(Request *, I32);\nconstexpr Type Callback = void (*)(void);\n";
+    fix::Fixed text = fix::fix_text("t.smith", before);
+    for (Usize round = 0; round < 3; round += 1)
+        text = fix::fix_text("t.smith", text.text);
+    test::check_condition(contains(text.text, "Handler := fn("));
+    test::check_condition(contains(text.text, "Callback := fn()"));
+    test::check_condition(!contains(text.text, "constexpr"));
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", text.text);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+}
