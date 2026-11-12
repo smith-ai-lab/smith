@@ -511,7 +511,7 @@ export void test_front_types_expr_casts_and_queries() {
     expect(r.error_count, 0);
     types_expr::infer(&r, query(.count_of, ast::name("x")));
     test::check_condition(
-        says(last(&r), "countof takes an array or a slice, found `U8`; write the name of an array or a slice"));
+        says(last(&r), "countof takes an array, a slice or a pack, found `U8`; write the name of an array or a slice"));
     types_expr::infer(&r, cast_expr("Nope", ast::name("x")));
     test::check_condition(says(
         last(&r), "unknown type `Nope`; declare it before it is used, and write a type name with a capital letter"));

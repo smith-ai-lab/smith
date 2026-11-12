@@ -387,6 +387,26 @@ export void test_front_check_types_static_assert_refuses_a_pack_parameter() {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Bracketed generics with a pack (#3257): the generics are bound from the other parameters, the pack takes the rest.
+
+export void test_front_check_types_a_pack_after_bracketed_generics_takes_none_one_or_three() {
+    Str f = "fn sum[T](first: T, nums: T...) -> T:\n    first\n\n";
+    clean(join(f, "fn g(a: i32) -> i32:\n    sum(a)\n"));
+    clean(join(f, "fn g(a: i32) -> i32:\n    sum(a, a)\n"));
+    clean(join(f, "fn g(a: i32) -> i32:\n    sum(a, a, a, a)\n"));
+}
+
+export void test_front_check_types_a_pack_of_the_generic_type_refuses_another_type() {
+    fails("fn sum[T](first: T, nums: T...) -> T:\n    first\n\nfn g(a: i32) -> i32:\n    sum(a, a, \"x\")\n",
+          "argument 3 is", "collects `I32`");
+}
+
+export void test_front_check_types_countof_of_a_pack_is_a_count() {
+    clean("fn many[T](first: T, rest...) -> usize:\n    countof(rest)\n\nfn g(a: i32) -> usize:\n    many(a, 1, "
+          "\"x\")\n");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Array and record shapes (#3255). `[n, m]T` is `[n][m]T`, `[,]T` a block with sizes known at run time.
 
 static Str shapes() {
