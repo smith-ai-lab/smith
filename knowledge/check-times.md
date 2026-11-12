@@ -39,3 +39,5 @@ Keep the release smith first on `PATH` (smith-dev-build), copy the binary under 
   (`smith_prefer_own_links`), so it rebuilds smith's tree with itself, and the next `smith build` with the release smith
   rebuilds it back. Each switch relinks smith (21 to 27 s of "needs") and changes the objects prove's group record is
   keyed on. Open: a decision for the lead in #3081.
+
+`smith check` ends with `smith check: not run here: <parts>` and a count line (#3163): the parts the host cannot run, so a short time never hides a part that did not run; `--require` turns one into a failure.

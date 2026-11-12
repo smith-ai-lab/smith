@@ -1063,6 +1063,72 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  check-new:
+    # `smith check`, the one command that is the whole check (#3163), run beside the old jobs so its result can be
+    # compared with theirs before any old job goes. Where it runs and why (the lead's three limits): (a) ONE Linux job,
+    # on main's push run only (the push run holds 2 Linux jobs, the queue 9, the count 8: 19 of 20 runners; this is
+    # the 20th and `concurrency` keeps it to one at a time); (b) after the merge, so the queue run's critical path
+    # gains nothing; (c) a push to main is a commit the queue run already tested, so `compare:` sets the two results
+    # for the same commit side by side. `continue-on-error`: it gates nothing and no verdict reads it. The 20 compared
+    # pushes are written into the body of #3163.
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.scope == 'release'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # one at a time; a push waiting behind it is replaced by a newer one (that commit is simply not compared)
+    concurrency:
+      group: check-new
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+      SMITH_TEST_STATS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - name: Neovim 0.11+ for the editor tests
+        run: |
+          bin=$("$SMITH" build nvim | tail -n 1)
+          echo "$bin" >>"$GITHUB_PATH"
+      - uses: ./.github/actions/test-cache
+        with:
+          os: linux
+          imports-from: linux-*
+      - name: smith check
+        id: check
+        env:
+          SMITH_OUTPUT: full
+        run: |
+          start=$SECONDS
+          rc=0
+          "$SMITH" check --require fmt,docs,lint,test,prove 2>&1 | tee "$RUNNER_TEMP/check.log" || rc=${PIPESTATUS[0]}
+          {
+            echo "smith check: exit $rc, $((SECONDS - start)) s"
+            grep -E '^smith check: (fmt|docs|lint|test|prove) |^smith check: (not run here|[0-9]+ ok|ok|failed)' "$RUNNER_TEMP/check.log"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+          exit "$rc"
+      - name: Compare with the queue run of this commit
+        if: always() && steps.check.outcome != 'skipped'
+        env:
+          QUEUE_RUN: ${{ needs.changes.outputs.queue_run }}
+          CHECK: ${{ steps.check.outcome }}
+        run: |
+          mine=pass; [ "$CHECK" = success ] || mine=fail
+          if [ -z "$QUEUE_RUN" ]; then
+            echo "compare: smith check $mine, no queue run found for $GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          theirs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUEUE_RUN" --jq '.conclusion' 2>/dev/null || echo unknown)
+          old=fail; [ "$theirs" = success ] && old=pass
+          verdict=agree; [ "$mine" = "$old" ] || verdict=DISAGREE
+          echo "compare: smith check $mine, queue run $QUEUE_RUN $old ($theirs): $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
+
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
