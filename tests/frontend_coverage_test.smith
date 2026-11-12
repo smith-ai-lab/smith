@@ -139,6 +139,38 @@ export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_t
     scratch::release(run.err);
 }
 
+// #3369: a shard fixes the files it owns and what they import, not the whole tree (the fix used to be a serial job of 6
+// to 9 minutes before the shards). a imports b imports c, and d stands alone: a shard owning only d fixes one file.
+export void test_frontend_coverage_a_shard_fixes_only_its_files_and_what_they_import() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir repo");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/a.smith", "import b\n\nfn main() -> i32:\n    return b.one()\n");
+    scratch::write(&p, "repo/b.smith", "import c\n\npub fn one() -> i32:\n    return c.two() - 1\n");
+    scratch::write(&p, "repo/c.smith", "pub fn two() -> i32:\n    return 2\n");
+    scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
+    scratch::Run run = scratch::sh(
+        &p, "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+            "chmod +x $S && git -C repo init -q && git -C repo add -A && "
+            "for k in 1 2 3 4; do smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/s$k\" shard:$k/4 2>&1 >/dev/null | "
+            "sed -n 's/^frontend_coverage: fixer cache: \\([0-9]*\\) files reused, \\([0-9]*\\) fixed.*/\\1 \\2/p' | "
+            "awk '{print $1 + $2}'; done | "
+            "sort -n | tr '\\n' ' '; echo");
+    // four shards of four files: the numbers are the files each shard handled (fixed or served from the cache the
+    // shards share): d alone is 1, c is 1, b with c is 2, a with b and c is 3; the whole tree would be "4 4 4 4"
+    scratch::expect_contains("frontend_coverage: each shard fixes its files and their imports only", run.out,
+                             "1 1 2 3 ");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
+
 // #2924: a fix the checker finds in an instance of a generic belongs to the module that holds it, keyed by the text the
 // importer's fixer read (#2669). That text was read from the scratch tree, where the module's own fixer may already
 // have rewritten it or not, so the same files passed or failed with the order and timing of the fixers (one fixer at a
