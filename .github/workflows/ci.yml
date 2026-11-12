@@ -1094,9 +1094,12 @@ jobs:
             exit 0
           fi
           echo "frontend-base: $base"
-          # a file passed there (stage `pass`) and has a row here with another stage; a file gone from the tree is not a regression
-          awk -F'\t' 'NR==FNR { if ($2 == "pass") was[$1] = 1; next } ($2 != "pass") && ($1 in was) && !($1 in seen) { seen[$1] = 1; print $1 "\t" $2 "\t" $3 }' \
-            "$prev" "$now" | LC_ALL=C sort >"$RUNNER_TEMP/regressed.txt"
+          # a file passed there and has a row here with another stage; a file gone from the tree or listed in excluded.txt
+          # has no row here (`regressed` of the count's tool, with its test)
+          # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
+          gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
+          (cd "$gate" && SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt" \
+            "$SMITH" run -- regressed "$prev" "$now") >"$RUNNER_TEMP/regressed.txt"
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
           while IFS=$'\t' read -r f stage cause; do
             echo "frontend-regressed: $f ($stage: $cause)"
