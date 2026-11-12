@@ -493,6 +493,8 @@ export void test_front_types_convert_a_pointer_to_pointers_may_add_const_at_each
     types::TypeRef write_write = types::pointer_to(&t, inner_write, false);
     types::TypeRef read_read = types::pointer_to(&t, inner_read, true);
     test::check_condition(is(conv(&t, write_write, read_read), types_convert::add_const));
+    // Under a mutable pointer the inner const is not added (`*mut *mut char` to `*mut *char`): the fixer widens it.
+    test::check_condition(!conv(&t, write_write, types::pointer_to(&t, inner_read, false)).ok);
     // Taking const away at the inner level is still a different type.
     test::check_condition(!conv(&t, read_read, write_write).ok);
 }
