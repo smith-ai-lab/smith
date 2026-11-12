@@ -379,6 +379,11 @@ static Bool same_text(Str a, Str b) {
     return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
 }
 
+// Whether a type is written `Type`, or `type` as the type fix of a first round writes it (#3318).
+static Bool is_type_word(Str text) {
+    return same_text(text, "Type") || same_text(text, "type");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Fixes: each form of today's syntax that parses keeps its node and records a warning with the edits that write
 // smith's own form (`smith lint --fix`). Only the declarations of a file carry them (`Prefixes.top`).
@@ -1988,7 +1993,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str name = named(p, pre, parse::text(p, head.name));
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
-    Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
+    Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && is_type_word(raw);
     Bool suffixed = countof(dims.text) > 0;
     // `extern char **environ;` is `extern environ: **char`: the linker provides the value, so no `mut`, no `=
     // undefined`.
@@ -2182,8 +2187,10 @@ static ast::Decl *parse_typed(parse::Parser *p, const Prefixes *pre, U32 start) 
     // `constexpr Type Meters = F64;`: a type value is named like a type. So is a type function, `Type Option(Type T)`.
     Str type_word = "Type";
     Bool type_function = parse::peek_at(p, 1).kind == lex::left_paren;
+    Str lower_word = "type"; // the type fix of a first round writes `type`, and the declaration is read again (#3318)
     Bool type_value = (pre->is_constexpr || type_function) && parse::at(p, lex::type_name) &&
-                      mem::equal(type_text(p, type), type_word);
+                      (mem::equal(type_text(p, type), type_word) ||
+                       (pre->is_constexpr && mem::equal(type_text(p, type), lower_word)));
     lex::Token name_token = type_value ? parse::advance(p) : parse::expect(p, lex::name, "a name");
     if (name_token.kind != lex::name && !type_value) {
         recover(p);
@@ -2884,11 +2891,25 @@ static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_i
     warn(p, typedef_token.span.start, semi.span.end, message, edits);
 }
 
-// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091).
-static Bool opaque_typedef_ahead(parse::Parser *p) {
+// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091). With
+// another name than the tag and no attribute to carry the C name, the typedef is an alias of the tag (`T := S`, #3318),
+// as `enum Tag Name;` always is: the generic path of `parse_typedef` writes it.
+static Bool opaque_typedef_ahead(parse::Parser *p, const Prefixes *pre) {
     if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union)) return false;
-    return parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
-           parse::peek_at(p, 3).kind == lex::semicolon;
+    Bool shape = parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
+                 parse::peek_at(p, 3).kind == lex::semicolon;
+    if (!shape) return false;
+    Bool same = same_text(parse::text(p, parse::peek_at(p, 1)), parse::text(p, parse::peek_at(p, 2)));
+    return same || countof(pre->attributes) > 0;
+}
+
+// Whether the next tokens name a tag declared elsewhere, not define one: `enum Color Paint;`, `struct S *P;` or
+// `struct BigC (*Make)(U8);` (#3318).
+static Bool tag_reference_ahead(parse::Parser *p) {
+    if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union) && !parse::at(p, lex::kw_enum)) return false;
+    if (parse::peek_at(p, 1).kind != lex::type_name) return false;
+    lex::TokenKind after = parse::peek_at(p, 2).kind;
+    return after == lex::type_name || after == lex::star || after == lex::left_paren;
 }
 
 // `typedef struct Tag Name;` (a tag declared elsewhere, as `@c_name("Tag") typedef struct Tag Name;` does for an
@@ -2921,8 +2942,8 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     Usize typedef_index = p->position;
     parse::advance(p);
     Usize errors_before = countof(p->errors);
-    if (opaque_typedef_ahead(p)) return parse_opaque_typedef(p, pre, start, typedef_index);
-    if (!parse_type::tuple_ahead(p) &&
+    if (opaque_typedef_ahead(p, pre)) return parse_opaque_typedef(p, pre, start, typedef_index);
+    if (!parse_type::tuple_ahead(p) && !tag_reference_ahead(p) &&
         (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
         Style style = {.top = pre->top, .is_public = pre->exported || pre->is_pub};
         ast::DeclKind kind = tag_kind(p, &style);
