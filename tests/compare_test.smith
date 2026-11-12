@@ -107,6 +107,7 @@ constexpr char compare_case[_] =
     "    for kind in out err; do\n"
     "        sed -e \"s|$prefix|LLVM|g\" -e \"s|$runtime|LLVM|g\" -e 's|^Homebrew clang version|clang version|' \\\n"
     "            -e 's| -stack-usage-file [^ ]*||' \\\n"
+    "            -e 's| \"\\{0,1\\}-f[a-z]*-prefix-map=[^ ]*=/smith-[a-z]*\"\\{0,1\\}||g' \\\n"
     "            -e 's|LLVM/bin/clang-[0-9]*|LLVM/bin/clang|g' \"log/$kind.$1\" >\"log/$kind.$1.n\"\n"
     "        mv \"log/$kind.$1.n\" \"log/$kind.$1\"\n"
     "    done\n"
