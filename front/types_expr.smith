@@ -1211,8 +1211,8 @@ static Bool module_value(types::Checked *c, Frame f, types::Names names) {
                      names.items[names.count - 1], ".name`");
         poison(c, e);
     } else if (t.symbol->kind == .type_name) {
-        types::failf(c, e->span, "`", names.items[names.count - 1], "` is a type, not a value; write a variable, a ",
-                     "function or a constant here");
+        types::failf(c, e->span, "`", names.items[names.count - 1], "` is a type; a type has no run-time form: use it ",
+                     "where a type is written, or in a compile-time value");
         poison(c, e);
     } else {
         finish(c, e, t.symbol->type, f.expected);
@@ -1250,8 +1250,8 @@ static void name_expr(types::Checked *c, Frame f) {
         return;
     }
     if (s->kind == .type_name) {
-        types::failf(c, e->span, "`", path_str(path), "` is a type, not a value; write a variable, a function or a ",
-                     "constant here");
+        types::failf(c, e->span, "`", path_str(path), "` is a type; a type has no run-time form: use it where a ",
+                     "type is written, or in a compile-time value");
         poison(c, e);
         return;
     }
@@ -3753,7 +3753,7 @@ static void vector_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     const ast::Expr *callee = e->kind.call.callee;
-    types::TypeRef made = vector_type(c, callee);
+    types::TypeRef made = is_vector_callee(c, callee) ? vector_type(c, callee) : named_type(c, callee);
     types::set_type(c, callee, made);
     if (made == invalid(c)) {
         poison(c, e);
@@ -3764,6 +3764,33 @@ static void vector_before(types::Checked *c, Work *w, Frame f) {
     for (Usize i = countof(args); i > 0; i--) {
         push(w, argument_value(args[i - 1]), types::element_of(made), 0);
     }
+}
+
+// Whether a call's callee names a vector (built from its lanes) or a slice (the empty one, no arguments): a type
+// written as a callee is not a value, the call builds one (#3238).
+static Bool calls_type_name(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
+    if (calls_header_function(c, callee, args)) return false;
+    types::TypeRef t = named_type(c, callee);
+    if (t == nullptr) return false;
+    return t->kind == .vector || (t->kind == .slice && countof(args) == 0);
+}
+
+// Stage 0 of such a call: a vector takes its lanes as `vec(T, N)(...)` does; the empty slice is the node `[]` of that
+// type, which the checker settles in place as it does a fact of the target.
+static void type_call_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    types::TypeRef made = named_type(c, e->kind.call.callee);
+    if (made->kind == .vector) {
+        vector_before(c, w, f);
+        return;
+    }
+    ast::Expr *node = (ast::Expr *)(Usize)e;
+    ast::ExprRef none[1] = {};
+    node->kind = ast::array_literal(none[0:0])->kind; // the list owns its (empty) items
+    finish(c, e, made, f.expected);
 }
 
 static void vector_after(types::Checked *c, Frame f) {
@@ -6906,6 +6933,10 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
     if (record != nullptr) {
         construct_before(w, f, record);
+        return;
+    }
+    if (calls_type_name(c, callee, e->kind.call.args)) { // `c::F4(1, 2, 3, 4)`, `Words()`: a type named as a callee
+        type_call_before(c, w, f);
         return;
     }
     types::TypeRef enumeration = nullptr;
