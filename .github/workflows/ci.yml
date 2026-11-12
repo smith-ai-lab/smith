@@ -1022,7 +1022,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 25
+          fetch-depth: 0
       - uses: ./.github/actions/test-cache/whole
   check-new:
     # `smith check`, the one command that is the whole check (#3163), run beside the old jobs so its result can be

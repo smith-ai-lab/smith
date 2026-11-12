@@ -80,14 +80,17 @@ runs:
         if [ "$n" -gt 0 ]; then
           mkdir -p "$dir"
           if [ "${#newer[@]}" -gt 0 ]; then
+            # their own asset name (#3281): a release of additions is never read as a whole store
+            file="smith-tests-added-$OS.tar.gz"
             (cd "$dir" && find . -type f -newer "$mark" | sed 's#^\./##') >"$out/list-tests"
             (cd "${answers%/steps}" && [ -d steps/a ] && find steps/a -type f -newer "$mark") >"$out/list-steps" || : >"$out/list-steps"
-            tar -C "$dir" -c -T "$out/list-tests" -C "${answers%/steps}" -T "$out/list-steps" | gzip -1 >"$out/smith-tests-$OS.tar.gz"
+            tar -C "$dir" -c -T "$out/list-tests" -C "${answers%/steps}" -T "$out/list-steps" | gzip -1 >"$out/$file"
           else
+            file="smith-tests-$OS.tar.gz"
             extra=(); [ "$a" -gt 0 ] && extra=(-C "${answers%/steps}" steps/a)
-            tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/smith-tests-$OS.tar.gz"
+            tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/$file"
           fi
-          assets+=("$out/smith-tests-$OS.tar.gz")
+          assets+=("$out/$file")
         fi
         if [ "$m" -gt 0 ]; then
           tar -C "$imports" -c . | gzip -1 >"$out/smith-imports-$OS.tar.gz"; assets+=("$out/smith-imports-$OS.tar.gz")
