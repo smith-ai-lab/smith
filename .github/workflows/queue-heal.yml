@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. When it dequeues the front PR it also sets a failing check `queue` on the PR's head naming the run, the failed jobs and their first FAIL lines (#3243). It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -367,6 +367,28 @@ jobs:
           job=$(gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 \
             --jq '[.jobs[] | select(.conclusion == "failure")][0].name // "unknown"') || job=unknown
           id=$(gh api "repos/$REPO/pulls/$front" --jq .node_id) || { log "queue-heal: front #$front unreadable, left alone"; exit 0; }
+          # says why (#3243): a failing check `queue` on the PR's head with the run's URL, each job that failed (not the
+          # ones fail-fast cancelled) and the first 20 `^FAIL ` / `##[error]` lines of their logs. The worker that follows
+          # the PR reads it instead of asking what "removed from the merge queue by (manual)" meant. GITHUB_TOKEN with
+          # checks: write creates it (a personal token cannot, as for `conflict`).
+          explain() {
+            local sha url jobs ids body
+            sha=$(gh api "repos/$REPO/pulls/$front" --jq .head.sha) || return 1
+            url="https://github.com/$REPO/actions/runs/$1"
+            jobs=$(gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 \
+              --jq '.jobs[] | select(.conclusion == "failure") | "\(.id)\t\(.name)"') || jobs=
+            body=$(printf '%s\n' "$jobs" | while IFS="$(printf '\t')" read -r jid jname; do
+              [ -n "$jid" ] || continue
+              echo "### $jname"
+              gh api "repos/$REPO/actions/jobs/$jid/logs" 2>/dev/null | grep -E '^([0-9T:.Z-]+ )?(FAIL |##\[error\])' | head -20 || true
+            done | head -c 60000)
+            [ -n "$jobs" ] || body="no failed job was listed (the run may have timed out)"
+            if dry; then log "dry-run: would create check queue on #$front ($sha)"; return 0; fi
+            GH_TOKEN="$BASE_TOKEN" gh api -X POST "repos/$REPO/check-runs" -f name=queue -f head_sha="$sha" \
+              -f status=completed -f conclusion=failure -f "output[title]=removed from the merge queue: its own group failed" \
+              -f "output[summary]=Run: $url"$'\n\n'"Failed jobs and their first FAIL / error lines:"$'\n\n'"$body" --silent
+          }
+          if explain "$1"; then log "queue-heal: #$front check queue set red"; else log "queue-heal: #$front check queue refused"; fi
           if dry; then
             log "dry-run: would dequeue #$front"
             log "dry-run: would label #$front dequeued"
