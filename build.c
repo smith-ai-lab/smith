@@ -1626,8 +1626,10 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
             fprintf(stderr, "smith test: an argument is longer than %zu bytes\n", sizeof buffer);
             exit(1);
         }
-        if (piece != nullptr) memcpy(buffer + used, piece, size);
-        else buffer[used] = *at;
+        if (piece != nullptr)
+            memcpy(buffer + used, piece, size);
+        else
+            buffer[used] = *at;
         used += size;
     }
     buffer[used] = '\0';

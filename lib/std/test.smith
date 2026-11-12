@@ -4604,6 +4604,16 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     return failed + waits_fired;
 }
 
+// Names what the runner was built for when a run asks for something else.
+void say_built_for() {
+    Usize items = 0;
+    while (built_filter != nullptr && built_filter[items] != nullptr)
+        items++;
+    say("this runner was built only for %zu --test values (or its macOS choice): run it with the same options, or "
+        "build every test\n",
+        items);
+}
+
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
 // test passed. main makes the Runner.
 [[std::c_name("smith_test_run")]] export I32 run_tests(Runner *runner) {
@@ -4625,11 +4635,7 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
         return 1;
     }
     if (selection_differs(&options)) {
-        Usize items = 0;
-        while (built_filter != nullptr && built_filter[items] != nullptr)
-            items++;
-        say("this runner was built only for %zu --test values (or its macOS choice): run it with the same options, or build every test\n",
-            items);
+        say_built_for();
         return 1;
     }
     prepare_run(&options);
