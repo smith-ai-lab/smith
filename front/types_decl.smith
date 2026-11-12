@@ -1849,8 +1849,13 @@ static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
                          "error, choose another name");
         } else if (!is_discard(names[i].text)) {
             (void)hides_module(r, names[i].span, names[i].text);
-            types::Symbol symbol = {
-                .name = names[i].text, .kind = .variable, .type = bound, .is_const = true, .is_new = true};
+            types::Symbol symbol = {.name = names[i].text,
+                                    .kind = .variable,
+                                    .type = bound,
+                                    .is_const = !names[i].is_mut,
+                                    .is_new = true,
+                                    .at = names[i].span,
+                                    .loop_name = true};
             (void)types::declare(&r->scopes, symbol);
             r->new_body = true;
             note_local(names[i].text, bound);
