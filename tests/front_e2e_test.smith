@@ -190,13 +190,16 @@ static Str with_dims_case(Str name) {
 }
 
 // `slice.with_dims(T, k)` is the type written with k empty sizes, as a parameter's, a result's and an alias's type; a
-// count of 0, or one not known at compile time, is an error that says so (#3039).
+// count of 0, or one not known at compile time, is an error that says so (#3039). Types are values of the evaluator:
+// `==` between two, and `t[:]` in a function over types (#3239).
 export void test_front_e2e_slice_with_dims_is_built_in() {
     Str built = with_dims_case("with_dims");
     Str refused = with_dims_case("with_dims_count");
+    Str typed = with_dims_case("type_values");
     fail_with(built);
     fail_with(refused);
-    test::check_equal(countof(built) + countof(refused), 0);
+    fail_with(typed);
+    test::check_equal(countof(built) + countof(refused) + countof(typed), 0);
 }
 
 // A cast to a narrower type is checked on the driver path (today's syntax, which has a `module` line): the object
