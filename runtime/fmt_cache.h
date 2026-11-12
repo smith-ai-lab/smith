@@ -1,4 +1,4 @@
-// What runtime/fmt_cache.c, the cache of `smith fmt` (#3081), shares with runtime/verbs.c.
+// What runtime/fmt_cache.c, the format answers of the one store (#3081, #3177), shares with runtime/verbs.c.
 #pragma once
 
 #include "core.h"
