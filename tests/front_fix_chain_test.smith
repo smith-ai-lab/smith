@@ -1,5 +1,5 @@
-// Tests of the fix-it for a payload read after its variant test in a value (D16, #2648): the test becomes a pattern
-// conjunct and the reads become the binding.
+// Tests of the fix-it for a payload read after its variant test in a value (D16, #2648): the test becomes `is` and the
+// reads become the narrowed name (a field is named first).
 module front_fix_chain_test;
 
 import front::fix_chain;
@@ -42,14 +42,51 @@ static void expect(Str before, Str want) {
     test::check_equal(applied(before), want);
 }
 
-export void test_front_fix_chain_a_return_of_a_test_and_a_read_is_a_pattern() {
+export void test_front_fix_chain_a_field_is_named_first_and_tested_with_is() {
     expect("fn f(e: *Expr) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n",
-           "fn f(e: *Expr) -> bool:\n    return .binary(binary) := e.kind && binary.op == .add\n");
+           "fn f(e: *Expr) -> bool:\n    kind := e.kind\n    return kind is .binary && kind.op == .add\n");
 }
 
-export void test_front_fix_chain_every_read_to_the_right_is_the_binding() {
+export void test_front_fix_chain_a_name_is_tested_with_is_and_narrowed() {
+    expect("fn f(s: Shape) -> bool:\n    return s == .circle && s.circle.r > 1\n",
+           "fn f(s: Shape) -> bool:\n    return s is .circle && s.r > 1\n");
+}
+
+export void test_front_fix_chain_every_read_to_the_right_is_the_narrowed_name() {
     expect("    z := a.kind == .v && a.kind.v.f == 1 && (a.kind.v.g || b)\n",
-           "    z := .v(v) := a.kind && v.f == 1 && (v.g || b)\n");
+           "    kind := a.kind\n    z := kind is .v && kind.f == 1 && (kind.g || b)\n");
+}
+
+export void test_front_fix_chain_a_declaration_with_a_type_keeps_its_indent() {
+    expect("    if c:\n        equal: bool = w.expr.kind == .binary and w.expr.kind.binary.op == .equal\n",
+           "    if c:\n        kind := w.expr.kind\n        equal: bool = kind is .binary and kind.op == .equal\n");
+}
+
+export void test_front_fix_chain_the_field_name_is_suffixed_when_taken() {
+    expect("fn f(e: *Expr, kind: i32) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n",
+           "fn f(e: *Expr, kind: i32) -> bool:\n    kind_value := e.kind\n"
+           "    return kind_value is .binary && kind_value.op == .add\n");
+}
+
+export void test_front_fix_chain_two_chains_of_a_function_do_not_name_the_field_twice() {
+    expect("fn f(a: *E, b: *E) -> bool:\n    x := a.kind == .v and a.kind.v.n == 1\n"
+           "    return b.kind == .w and b.kind.w.n == 2\n",
+           "fn f(a: *E, b: *E) -> bool:\n    kind := a.kind\n    x := kind is .v and kind.n == 1\n"
+           "    kind_value := b.kind\n    return kind_value is .w and kind_value.n == 2\n");
+}
+
+export void test_front_fix_chain_a_mut_name_is_left() {
+    expect("fn f(mut s: Shape) -> bool:\n    return s == .circle && s.circle.r > 1\n",
+           "fn f(mut s: Shape) -> bool:\n    return s == .circle && s.circle.r > 1\n");
+}
+
+export void test_front_fix_chain_a_field_test_after_another_conjunct_is_left() {
+    expect("    return p != nullptr && p.kind == .v && p.kind.v.n == 1\n",
+           "    return p != nullptr && p.kind == .v && p.kind.v.n == 1\n");
+}
+
+export void test_front_fix_chain_a_name_test_after_another_conjunct_is_written() {
+    expect("    return ok && s == .circle && s.circle.r > 1\n", "    return ok && s is .circle && s.r > 1\n");
 }
 
 export void test_front_fix_chain_an_or_at_the_top_level_is_left() {
@@ -72,11 +109,6 @@ export void test_front_fix_chain_a_longer_variant_is_not_the_read() {
            "    return e.kind == .binary && e.kind.binary_op.x\n");
 }
 
-export void test_front_fix_chain_a_local_of_the_variants_name_keeps_the_chain() {
-    expect("fn f(e: *Expr, binary: i32) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n",
-           "fn f(e: *Expr, binary: i32) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n");
-}
-
 export void test_front_fix_chain_a_test_after_another_conjunct_of_an_if_stays() {
     expect("    if a.present && a.ty.kind == .tuple && a.ty.kind.tuple.n == c:\n",
            "    if a.present && a.ty.kind == .tuple && a.ty.kind.tuple.n == c:\n");
@@ -90,7 +122,7 @@ export void test_front_fix_chain_the_first_test_of_an_if_is_the_checkers() {
 
 export void test_front_fix_chain_a_chain_written_with_and_is_read_too() {
     expect("    return e.kind == .binary and e.kind.binary.op == .add\n",
-           "    return .binary(binary) := e.kind and binary.op == .add\n");
+           "    kind := e.kind\n    return kind is .binary and kind.op == .add\n");
     expect("    return e.kind == .binary and e.kind.binary.op == .add or other\n",
            "    return e.kind == .binary and e.kind.binary.op == .add or other\n");
 }
