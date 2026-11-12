@@ -1,15 +1,18 @@
 // front::fix_chain, the fix-it for a payload read after its variant test in a value (D16, #2648).
 //
-//   return e.kind == .binary && e.kind.binary.op == .add    return .binary(binary) := e.kind && binary.op == .add
-//   z := a.kind == .v && a.kind.v.f == 1 && a.kind.v.g      z := .v(v) := a.kind && v.f == 1 && v.g
+//   return s == .circle && s.circle.r > 1                   return s is .circle and s.r > 1
+//   return e.kind == .binary && e.kind.binary.op == .add    kind := e.kind
+//                                                           return kind is .binary and kind.op == .add
 //
-// A pattern is a conjunct of an `and` chain wherever a bool is wanted (D12 for `if` and `while`, D16 for `return` or an
-// initializer); its names are in scope to its right in the chain and nowhere else. The `if` and `while` forms are the
-// checker's; this pass reads the text of the statements the checker has no fix for: a `return` or a `name := ...` /
-// `name: bool = ...` of one line, whose chain at the top level has `A == .v` followed by reads of `A.v`. A chain
-// with an `or` at the top level is left (the pattern would not hold for the other side), and so is a
-// read to the left of the test. The binding is named after its variant, as everywhere else. Tests:
-// `tests/front_fix_chain_test.smith`.
+// `s is .v` is an ordinary bool that narrows the name `s` to the payload of `v` to its right in the chain (#3190 items
+// 27 and 28), so a read `s.v` is `s` and `s.v.f` is `s.f`; no name is bound. Only a name that cannot change narrows, so
+// a field (`e.kind`) is named first, in a line of its own before the statement, after the field (`kind`; `kind_value`
+// where `kind` is taken); that moves the read of the field before the whole chain, so it is done only where the test
+// is the first conjunct. A name declared `mut` stays, and so does a test after another conjunct on a field.
+//
+// A chain is a `return` or a `name := ...` / `name: bool = ...` of one line, whose chain at the top level has `A == .v`
+// followed by reads of `A.v`. A chain with an `or` at the top level is left, and so is a read to the left of the test.
+// The `if` and `while` forms are the checker's. Tests: `tests/front_fix_chain_test.smith`.
 //
 //   fix_chain::edits(source)   the fixes for the statements of `source`
 module front::fix_chain;
@@ -127,9 +130,8 @@ static Usize read_at(Str text, Usize from, Str subject, Str variant) {
     return countof(text);
 }
 
-// Whether `name` is a word in the function that has the byte `at`, other than as a variant (`.name`): a local, a
-// parameter or a call of that name would be shadowed by the binding, so the chain stays as it is (as the `if` rule's).
-static Bool function_uses(Str source, Usize at, Str name) {
+// The first byte of the function that has the byte `at` and the end of it: the lines at column 0 around it.
+static Usize function_start(Str source, Usize at) {
     Usize start = at;
     while (start > 0) {
         Usize prev = start - 1;
@@ -138,16 +140,54 @@ static Bool function_uses(Str source, Usize at, Str name) {
         start = prev;
         if (source[start] != ' ' && source[start] != '\n') break;
     }
+    return start;
+}
+
+static Usize function_stop(Str source, Usize at) {
     Usize stop = line_end(source, at) + 1;
     while (stop < countof(source) && (source[stop] == ' ' || source[stop] == '\n'))
         stop = line_end(source, stop) + 1;
     if (stop > countof(source)) stop = countof(source);
+    return stop;
+}
+
+// Whether `name` is a word in the function that has the byte `at`, other than as a variant or a field (`.name`): a
+// local, a parameter or a call of that name would be hidden by a new name, so the chain stays as it is.
+static Bool function_uses(Str source, Usize at, Str name) {
+    Usize start = function_start(source, at);
+    Usize stop = function_stop(source, at);
     for (Usize i = start; i + countof(name) <= stop; i++) {
         if (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.')) continue;
         if (!starts_with(source[i:stop], name)) continue;
         if (i + countof(name) < stop && word_char(source[i + countof(name)])) continue;
         return true;
     }
+    return false;
+}
+
+// Whether a fix already in `out` for the function that has the byte `at` writes the name `name` (`name := ...`).
+static Bool named_in(core::Errors out, Str source, Usize at, Str name) {
+    Usize start = function_start(source, at);
+    Usize stop = function_stop(source, at);
+    Str written = types::message_of(format::push(name, " := "));
+    for (Usize i = 0; i < countof(out); i++) {
+        if (out[i].span.start < start || out[i].span.start >= stop) continue;
+        if (starts_with(out[i].fix[0].text, written)) return true;
+    }
+    return false;
+}
+
+// The part of the field chain `subject` after its last dot: `kind` for `w.expr.kind`.
+static Str last_part(Str subject) {
+    Usize k = countof(subject);
+    while (k > 0 && subject[k - 1] != '.')
+        k -= 1;
+    return subject[k:countof(subject)];
+}
+
+static Bool has_dot(Str subject) {
+    for (Usize i = 0; i < countof(subject); i++)
+        if (subject[i] == '.') return true;
     return false;
 }
 
@@ -166,7 +206,7 @@ static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
     return out;
 }
 
-// The fixes for one chain whose line starts at `base` in the source.
+// The fixes for one chain whose line starts at `base` in the source; the first test that can be written, one per chain.
 static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Usize from) {
     Piece parts[8];
     Usize count = 0;
@@ -185,16 +225,31 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
         if (read_at(line[from:a], 0, subject, variant) < countof(line[from:a])) continue;
         Usize first = read_at(line, parts[i].stop, subject, variant);
         if (first >= countof(line)) continue;
-        if (function_uses(source, base + a, variant)) continue;
-        Str head = types::message_of(format::push(".", variant, "(", variant, ") := ", subject));
-        out = add(out, base + a, base + b, head);
+        // a name that can change does not narrow
+        if (function_uses(source, base + a, types::message_of(format::push("mut ", subject)))) continue;
+        // a field is named first, which reads it before the whole chain: only where the test is the first conjunct
+        Str name = subject;
+        Usize indent = 0;
+        if (has_dot(subject)) {
+            if (i != 0) continue;
+            name = last_part(subject);
+            if (function_uses(source, base + a, name) || named_in(out, source, base + a, name))
+                name = types::message_of(format::push(name, "_value"));
+            if (function_uses(source, base + a, name) || named_in(out, source, base + a, name)) continue;
+            while (indent < countof(line) && line[indent] == ' ')
+                indent += 1;
+            Str naming = types::message_of(format::push(name, " := ", subject, "\n", line[0:indent]));
+            out = add(out, base + indent, base + indent, naming);
+        }
+        out = add(out, base + a, base + b, types::message_of(format::push(name, " is .", variant)));
         Usize at = parts[i].stop;
         Usize found = read_at(line, at, subject, variant);
         while (found < countof(line)) {
-            out = add(out, base + found, base + found + countof(subject) + 1 + countof(variant), variant);
+            out = add(out, base + found, base + found + countof(subject) + 1 + countof(variant), name);
             at = found + countof(subject) + 1 + countof(variant);
             found = read_at(line, at, subject, variant);
         }
+        return out;
     }
     return out;
 }
