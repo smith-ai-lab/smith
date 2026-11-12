@@ -1,0 +1,3 @@
+.claude-plugin/plugin.json: lists gone, which is not a skill on disk
+.claude-plugin/plugin.json: does not list the skill z
+smith docs: 0 concepts, 2 problems

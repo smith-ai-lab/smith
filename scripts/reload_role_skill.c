@@ -4,9 +4,11 @@
 //
 // Usage: reload_role_skill [SKILLS_DIR]      (the hook's JSON input on standard input)
 //
-// Reads `transcript_path` from the input, scans that transcript for a `Skill` tool call naming a role skill (the last
-// one wins), and prints "Your role skill, reloaded after compaction:" and the whole SKILL.md of it from SKILLS_DIR
-// (default `$CLAUDE_PROJECT_DIR/.claude/skills`, else `.claude/skills`). A session that loaded neither prints nothing.
+// Reads `transcript_path` from the input, scans that transcript for a `Skill` tool call naming a role skill, or a
+// `Read` tool call of its SKILL.md (a lead gets its role from its prompt and reads the skill), and prints "Your role
+// skill, reloaded after compaction:" and the whole SKILL.md of it from SKILLS_DIR (default
+// `$CLAUDE_PROJECT_DIR/.claude/skills`, else `.claude/skills`). The role seen first wins: a lead reads the runner skill
+// to write worker prompts, a worker does not read the lead's. A session that loaded neither prints nothing.
 // It never fails a session: every error prints nothing and exits 0. Plain C23, libc only, no allocation, no network.
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +16,7 @@
 
 constexpr int input_size = 65536;
 constexpr int chunk_size = 65536;
-constexpr int overlap = 128;
+constexpr int overlap = 8192;
 constexpr int path_size = 4096;
 
 static const char *const roles[] = {"smith-dev-lead", "smith-dev-runner"};
@@ -39,42 +41,57 @@ static bool transcript_path(const char *input, char *out, int size) {
     return *p == '"' && n > 0;
 }
 
-// The offset of the last of `needle` in `buf`, or -1.
-static long last_match(const char *buf, long len, const char *needle) {
-    long best = -1;
+// The offset of the first of `needle` in `buf`, or -1.
+static long first_match(const char *buf, long len, const char *needle) {
     long m = (long)strlen(needle);
     for (long i = 0; i + m <= len; i++)
-        if (buf[i] == needle[0] && memcmp(buf + i, needle, (size_t)m) == 0) best = i;
-    return best;
+        if (buf[i] == needle[0] && memcmp(buf + i, needle, (size_t)m) == 0) return i;
+    return -1;
 }
 
-// Which role skill the transcript loaded last, as an index into `roles`, or -1.
+// The offset of the first Read tool call in `buf` whose "file_path" value ends in `suffix` (a quote closes it), or -1.
+static long first_read(const char *buf, long len, const char *suffix) {
+    static const char key[] = "\"file_path\":\"";
+    long m = (long)strlen(suffix);
+    for (long i = 0; i + m <= len; i++) {
+        if (buf[i] != suffix[0] || memcmp(buf + i, suffix, (size_t)m) != 0) continue;
+        long j = i;
+        while (j > 0 && i - j < path_size && buf[j - 1] != '"')
+            j--;
+        if (j >= (long)sizeof key - 1 && memcmp(buf + j - (long)sizeof key + 1, key, sizeof key - 1) == 0)
+            return j - (long)sizeof key + 1;
+    }
+    return -1;
+}
+
+// Which role skill the transcript loaded first (a Skill call, or a Read of its SKILL.md), as an index into `roles`, or
+// -1.
 static int loaded_role(FILE *file) {
     static char buf[chunk_size + overlap];
-    long base = 0, kept = 0;
-    long best_at = -1;
-    int best = -1;
+    long kept = 0;
     for (;;) {
         size_t got = fread(buf + kept, 1, chunk_size, file);
         if (got == 0) break;
         long len = kept + (long)got;
+        long best_at = -1;
+        int best = -1;
         for (int r = 0; r < role_count; r++) {
-            char a[96], b[96];
+            char a[96], b[96], c[96];
             snprintf(a, sizeof a, "\"input\":{\"skill\":\"%s\"", roles[r]);
             snprintf(b, sizeof b, "Launching skill: %s", roles[r]);
-            long at = last_match(buf, len, a);
-            long at2 = last_match(buf, len, b);
-            if (at2 > at) at = at2;
-            if (at >= 0 && base + at >= best_at) {
-                best_at = base + at;
-                best = r;
-            }
+            snprintf(c, sizeof c, "%s/SKILL.md\"", roles[r]);
+            long at[3] = {first_match(buf, len, a), first_match(buf, len, b), first_read(buf, len, c)};
+            for (int k = 0; k < 3; k++)
+                if (at[k] >= 0 && (best_at < 0 || at[k] < best_at)) {
+                    best_at = at[k];
+                    best = r;
+                }
         }
+        if (best >= 0) return best;
         kept = len < overlap ? len : overlap;
         memmove(buf, buf + len - kept, (size_t)kept);
-        base += len - kept;
     }
-    return best;
+    return -1;
 }
 
 int main(int argc, char **argv) {

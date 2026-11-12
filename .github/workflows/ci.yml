@@ -1,9 +1,8 @@
 name: ci
 
 # The full check (#798, knowledge/ci-hosted.md), run by the merge queue only (#3170): Linux carries the tests (8 hosted
-# shards that restore the one build `build-linux` made, #1758) and the checks (`check-fmt-prove`: fmt, docs, prove;
-# `check-lint`: lint; same build, beside the shards, #2234); the one job `ci` gathers them, so the ruleset and the merge
-# queue name a single required check. The first job that fails cancels the run. A push to main (a commit the queue
+# shards that restore the one build `build-linux` made, #1758) and the checks (`check`: fmt, docs, lint, prove; same
+# build, beside the shards, #2234); the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that fails cancels the run. A push to main (a commit the queue
 # checked) re-tests nothing (#3172): it builds the macOS release (`release`) and publishes it with the Linux one the queue
 # run packed, saves the cache (`warm`), and runs the macOS build, lint and tests (`macos`, `macos-lint`), which gate
 # nothing: a failure there is the lead's to file. The front-end count runs in the queue run and refuses a regression (`count-shard`, `count`, #3369).
@@ -395,7 +394,7 @@ jobs:
   macos:
     # everything macOS tests in a run, in one job (#1709): build smith and the tests, then the macOS-only tests. It runs
     # after the merge, on the push to main, and gates nothing (#3172): a failure is the lead's to file. fmt, docs and prove run on Linux beside the test
-    # parts (`check-fmt-prove`, #2234), and lint on both (`check-lint` too): each platform lints code the other can't see.
+    # parts (`check`, #2234), and lint on both: each platform lints code the other can't see.
     # It was five jobs
     # (build, mechanical, prove, test, docs) handing the build over as an artifact; four of them filled four of the five
     # hosted macOS slots the free plan allows, so a second run's jobs queued behind the first, and a job that waited
@@ -473,7 +472,7 @@ jobs:
             # shellcheck disable=SC2086
             "$SMITH" test $MACFLAGS --weigh "$RUNNER_TEMP/weights.tsv"
           }
-          # fmt, docs and prove run on Linux (`check-fmt-prove`, #2234); lint runs on both platforms, since each sees
+          # fmt, docs, lint and prove run on Linux (`check`, #2234); lint runs on the Mac too, since each sees
           # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
           # on the Mac it is the job `macos-lint`, beside this one (#3045), so the two take their minutes together
           names="test"
@@ -587,8 +586,7 @@ jobs:
       # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
-      runner-fmt-prove: ${{ steps.runners.outputs.fmt-prove }}
-      runner-lint: ${{ steps.runners.outputs.lint }}
+      runner-check: ${{ steps.runners.outputs.check }}
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -625,7 +623,7 @@ jobs:
           compression-level: 0
           retention-days: 1
       - name: Pick the Mac's Linux runners
-        # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
+        # the choice is made here, when the 9 jobs that need this build (8 test parts, check) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
         # ran hosted while parts waited 5 minutes for a slot). In this job, so no job and no slot is added.
         id: pick
@@ -635,7 +633,7 @@ jobs:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
           fork: false
-          linux-jobs: "10"
+          linux-jobs: "9"
       - name: Give each job its runner
         id: runners
         if: ${{ always() }}
@@ -646,20 +644,19 @@ jobs:
           # the 8 fixed parts of the run (#3279)
           MATRIX='{"include":[{"shard":1,"count":8,"flags":"--skip-macos"},{"shard":2,"count":8,"flags":"--skip-macos"},{"shard":3,"count":8,"flags":"--skip-macos"},{"shard":4,"count":8,"flags":"--skip-macos"},{"shard":5,"count":8,"flags":"--skip-macos"},{"shard":6,"count":8,"flags":"--skip-macos"},{"shard":7,"count":8,"flags":"--skip-macos"},{"shard":8,"count":8,"flags":"--skip-macos"}]}'
           COUNT=8
-          # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then lint, then fmt-prove. An empty
+          # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then check. An empty
           # or failed pick is 0: everything hosted.
           hosted='"ubuntu-latest"'; mac='["self-hosted","Linux","X64"]'
           n=${MAC:-0}; case "$n" in *[!0-9]*) n=0 ;; esac
-          [ "$n" -gt 10 ] && n=10
+          [ "$n" -gt 9 ] && n=9
           parts=$(( n > COUNT ? COUNT : n )); rest=$(( n - parts ))
-          lint=$hosted; fmt=$hosted
-          [ "$rest" -ge 1 ] && lint=$mac
-          [ "$rest" -ge 2 ] && fmt=$mac
+          check=$hosted
+          [ "$rest" -ge 1 ] && check=$mac
           matrix=$(printf '%s' "$MATRIX" | jq -c --argjson parts "$parts" --argjson hosted "$hosted" --argjson mac "$mac" \
             '.include |= map(. + {runner: (if .shard > (.count - $parts) then ($mac | tojson) else ($hosted | tojson) end)})') \
             || matrix=$(printf '%s' "$MATRIX" | jq -c --argjson hosted "$hosted" '.include |= map(. + {runner: ($hosted | tojson)})')
-          { echo "matrix=$matrix"; echo "lint=$lint"; echo "fmt-prove=$fmt"; } >>"$GITHUB_OUTPUT"
-          echo "Linux jobs on the Mac: $n (parts $parts, lint $([ "$lint" = "$mac" ] && echo yes || echo no), fmt-prove $([ "$fmt" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
+          { echo "matrix=$matrix"; echo "check=$check"; } >>"$GITHUB_OUTPUT"
+          echo "Linux jobs on the Mac: $n (parts $parts, check $([ "$check" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Fail fast
         if: failure()
@@ -712,14 +709,16 @@ jobs:
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
-  check-fmt-prove:
-    # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
-    # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
-    # (`check-lint` has the other) so neither is longer than a test part. Stages run one after another (two verbs
-    # cannot share one tree) and each runs even when an earlier one failed.
+  check:
+    # fmt, docs, lint and the proofs on Linux (#2234), beside the test parts: `smith check --part fmt,docs,prove,lint`
+    # (#3163), the command the pre-push hook runs, on the build of `build-linux` restored like a shard. Parts run one
+    # after another (two verbs cannot share one tree) and each runs even when an earlier one failed. It was two jobs
+    # (`check-fmt-prove` 135 s and `check-lint` 114 s, run 43214535651) so neither would be longer than a test part;
+    # one job takes one restore of the build (22 to 31 s each) and one runner, and stays under the slowest part (284 s).
+    # The Mac lints too, since each platform sees code the other can't.
     needs: [changes, pack, build-linux]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-fmt-prove) }}
+    runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-check) }}
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
@@ -756,96 +755,28 @@ jobs:
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
         shell: bash
-        run: |
-          failed=0
-          stages=("fmt fmt --dry-run --Werror" "docs docs" "prove prove")
-          for stage in "${stages[@]}"; do
-            set -- $stage
-            name=$1
-            shift
-            start=$SECONDS
-            code=0
-            SMITH_LINT_CACHE=why "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
-            echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
-            # where a stage's time went (#2985): lint's own line (files run and cached, run and setup seconds), and
-            # prove's (build and proof seconds, groups) with the sum of its groups' `N proved, M failed, K cached`
-            case $name in
-              lint)
-                grep 'smith lint: linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
-                # why each file ran (`SMITH_LINT_CACHE=why`), counted by reason
-                grep -o 'runs: .*' "$RUNNER_TEMP/lint.log" | sort | uniq -c | tee -a "$GITHUB_STEP_SUMMARY" || true ;;
-              prove)
-                grep 'smith prove: [0-9]* groups' "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
-                awk '/^[0-9]+ proved, [0-9]+ failed/ { p += $1; f += $3; for (i = 1; i <= NF; i++) if ($i == "cached") c += $(i - 1) }
-                     END { printf "prove: %d functions proved (%d reused from the cache, %d failed)\n", p, c, f }' \
-                  "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" ;;
-            esac
-            if [ "$code" != 0 ]; then
-              tail -n 60 "$RUNNER_TEMP/$name.log"
-              echo "FAIL $name"
-              echo "::error::smith $name failed"
-              failed=1
-            else
-              echo "ok $name"
-            fi
-          done
-          exit $failed
-      - name: Fail fast
-        if: failure()
-        uses: ./.github/actions/fail-fast
-      - name: API budget (last)
-        if: always()
-        uses: ./.github/actions/api-budget
-
-  check-lint:
-    # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't.
-    needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-lint) }}
-    timeout-minutes: 20
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: "4"
-      SMITH_OUTPUT: full
-    permissions:
-      contents: read
-      actions: write # queue-guard: `gh run cancel` (#2256)
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: API budget (first)
-        uses: ./.github/actions/api-budget
-      - name: Token for the reads (the app's, #2986)
-        id: reader
-        uses: ./.github/actions/ci-reader
-        with:
-          app-id: ${{ vars.CI_READER_APP_ID }}
-          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
-      - uses: ./.github/actions/queue-guard
-      - uses: ./.github/actions/setup-smith
-        with:
-          artifact: build-linux
-      - name: Restore the lint and proof caches
-        # the same two paths as `warm`'s save: the path list is part of the cache version (#2954)
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/smith/steps/a
-          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
-          restore-keys: smith-lintprove-${{ runner.os }}-
-      - name: Lint
-        shell: bash
+        env:
+          # lint says why each file ran, counted below
+          SMITH_LINT_CACHE: why
         run: |
           start=$SECONDS
           code=0
-          "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
-          echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
-          grep 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          "$SMITH" check --part fmt,docs,prove,lint >"$RUNNER_TEMP/check.log" 2>&1 || code=$?
+          echo "took check $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          # each part's line, with its wall and CPU seconds
+          grep -E '^smith check: (fmt|docs|lint|prove|[0-9]+ ok)' "$RUNNER_TEMP/check.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          # where the time went (#2985): lint's own line (files run and cached, run and setup seconds) and why each file
+          # ran, and prove's (build and proof seconds, groups) with the sum of its groups' `N proved, M failed, K cached`
+          grep 'smith lint: linted [0-9]* files' "$RUNNER_TEMP/check.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          grep -o 'runs: .*' "$RUNNER_TEMP/check.log" | sort | uniq -c | tee -a "$GITHUB_STEP_SUMMARY" || true
+          grep 'smith prove: [0-9]* groups' "$RUNNER_TEMP/check.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          awk '/^[0-9]+ proved, [0-9]+ failed/ { p += $1; f += $3; for (i = 1; i <= NF; i++) if ($i == "cached") c += $(i - 1) }
+               END { printf "prove: %d functions proved (%d reused from the cache, %d failed)\n", p, c, f }' \
+            "$RUNNER_TEMP/check.log" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$code" != 0 ]; then
-            tail -n 60 "$RUNNER_TEMP/lint.log"
-            echo "FAIL lint"
-            echo "::error::smith lint failed"
+            tail -n 80 "$RUNNER_TEMP/check.log"
+            grep -E '^smith check: .* FAILED' "$RUNNER_TEMP/check.log" | sed 's/^smith check: \([a-z-]*\) FAILED.*/FAIL \1/' || true
+            echo "::error::smith check failed"
           fi
           exit $code
       - name: Fail fast
@@ -1094,9 +1025,13 @@ jobs:
             exit 0
           fi
           echo "frontend-base: $base"
-          # a file passed there (stage `pass`) and has a row here with another stage; a file gone from the tree is not a regression
-          awk -F'\t' 'NR==FNR { if ($2 == "pass") was[$1] = 1; next } ($2 != "pass") && ($1 in was) && !($1 in seen) { seen[$1] = 1; print $1 "\t" $2 "\t" $3 }' \
-            "$prev" "$now" | LC_ALL=C sort >"$RUNNER_TEMP/regressed.txt"
+          # a file passed there and has a row here with another stage; a file gone from the tree or listed in excluded.txt
+          # has no row here (`regressed` of the count's tool, with its test)
+          # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
+          gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
+          (cd "$gate" && SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt" \
+            "$SMITH" run -- regressed "$prev" "$now") | awk -F'\t' 'NF >= 3' >"$RUNNER_TEMP/regressed.txt"
+          # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields)
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
           while IFS=$'\t' read -r f stage cause; do
             echo "frontend-regressed: $f ($stage: $cause)"
@@ -1147,7 +1082,7 @@ jobs:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The front-end count is here (#3369): `count-shard` and `count` are owed by a full queue run, and `count` refuses a regression.
-    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check-fmt-prove, check-lint, release-pack-linux, count-shard, count]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check, release-pack-linux, count-shard, count]
     # not on a push to main (#3172): no required check reads that run, whose own jobs fail it when they fail
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
@@ -1173,8 +1108,7 @@ jobs:
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
           TEST_LINUX: ${{ needs.test-linux.result }}
-          CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
-          CHECK_LINT: ${{ needs.check-lint.result }}
+          CHECK: ${{ needs.check.result }}
           RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}
           COUNT_SHARD: ${{ needs.count-shard.result }}
           COUNT: ${{ needs.count.result }}
@@ -1206,11 +1140,11 @@ jobs:
             exit 1
           fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes test-linux, check-fmt-prove and check-lint, and the two macOS jobs where they run (the
+          # the run owes: `full` owes test-linux and check, and the two macOS jobs where they run (the
           # nightly run, not a queue run, #3172), `docs` owes docs-linux (#3044), `none` owes nothing. A job that was owed
           # and skipped (a skipped `pack` skipped the three macOS jobs for hours) fails the check.
           case "$SCOPE" in
-          full) owed="TEST_LINUX CHECK_FMT_PROVE CHECK_LINT" ;;
+          full) owed="TEST_LINUX CHECK" ;;
           docs) owed="DOCS_LINUX" ;;
           *) owed="" ;;
           esac
@@ -1425,7 +1359,7 @@ jobs:
           echo "tools: made $tag with ${#files[@]} files" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Fetch what the test jobs download (#2825)
         # Linux only: `smith build nvim` fetches Neovim for Linux x86_64 and fails on a Mac, and the jobs that restore
-        # this cache (the test parts, check-fmt-prove, check-lint, release-linux) are all Linux
+        # this cache (the test parts, check, release-linux) are all Linux
         if: runner.os == 'Linux'
         # the test parts take the build of `build-linux` and so restore no step cache; they restore the small
         # `smith-tools-` cache saved below instead, which must hold every package they would fetch from github.com:
@@ -1510,7 +1444,7 @@ jobs:
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
       - name: Restore the lint and proof caches
-        # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
+        # Linux only: the checks that restore them run on Linux (`check`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
         if: runner.os == 'Linux'
         uses: actions/cache/restore@v4

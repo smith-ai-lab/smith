@@ -1,0 +1,8 @@
+{
+  "name": "p",
+  "skills": [
+    "./.agents/skills/a/",
+    "./plugin/skills/p/",
+    "./plugin/skills/gone/"
+  ]
+}

@@ -7,7 +7,7 @@ description: "Adopting smith, steps 5 and 6: add contracts and smith prove, then
 
 ## 5. Contracts and proofs
 
-For code whose correctness matters (parsers, move generators, bounds), write `smith_requires`, `smith_ensures` and `smith_invariant` (`#include <smith/contract.h>`) and run `smith prove` (load `smith-contract`). In build.c the program links smith's contract library (trace comes with it), and its compiles take `-I .smith/include`:
+For code whose correctness matters (parsers, move generators, bounds), write `smith_requires`, `smith_ensures` and `smith_invariant` (`#include <smith/contract.h>`) and run `smith prove` (load [smith-prove](../../../plugin/skills/smith-prove/SKILL.md)). In build.c the program links smith's contract library (trace comes with it), and its compiles take `-I .smith/include`:
 
 ```c
 const char *const *flags = smith_cat(b, project_flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr);
