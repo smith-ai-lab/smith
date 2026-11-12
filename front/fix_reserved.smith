@@ -23,6 +23,7 @@ module front::fix_reserved;
 
 import front::lex;
 import front::parse_type;
+import std::arena;
 import std::format;
 import std::mem;
 
@@ -153,7 +154,8 @@ static Str without_directives(Str source) {
     for (Usize k = 0; k < countof(source); k++)
         if (source[k] == '#') any = true;
     if (!any) return source;
-    Str out = "";
+    // One block, written in place: a text of a few hundred thousand bytes must not be copied once a line.
+    char text[:] = mem::alloc_slice(char, countof(source));
     Usize at = 0;
     Bool continued = false;
     while (at < countof(source)) {
@@ -165,18 +167,13 @@ static Str without_directives(Str source) {
             first += 1;
         Bool directive = continued || (first < end && source[first] == '#');
         continued = directive && end > at && source[end - 1] == '\\';
-        if (directive) {
-            Str blank = "";
-            for (Usize k = at; k < end; k++)
-                blank = as_str(format::push(blank, " "));
-            out = as_str(format::push(out, blank));
-        } else {
-            out = as_str(format::push(out, source[at:end]));
-        }
-        if (end < countof(source)) out = as_str(format::push(out, "\n"));
+        for (Usize k = at; k < end; k++)
+            text[k] = directive ? ' ' : source[k];
+        if (end < countof(source)) text[end] = '\n';
         at = end + 1;
     }
-    return out;
+    Str masked = text;
+    return masked;
 }
 
 // Whether the text is in smith's own syntax already: a `fn name` or a `mut` in front of a name. Its types stand after a
