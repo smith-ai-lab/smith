@@ -224,3 +224,54 @@ export void test_front_emit_value_a_narrower_branch_widens_to_the_slot() {
     test::check_equal(mixed(false, 4), (I64)101);
     emit_jit::stop(&host);
 }
+
+typedef U64 (*Sum32)(Bool, U32, U64);
+typedef U64 (*Sum16)(Bool, U16, U64);
+
+// The sum of a `u32` and an `if` whose branches are `usize` is a `usize`: the other operand widens, the value is not
+// narrowed to the `u32` (#3215).
+export void test_front_emit_value_a_u32_plus_an_if_of_usize_widens_the_u32() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn sum(c: bool, start: u32, wide: u64) -> u64:\n"
+                     "    start + (if c:\n"
+                     "        wide\n"
+                     "    else:\n"
+                     "        wide + 1)\n",
+                     &host, &s);
+    test::check_equal(contains(ir, "zext i32"), true);
+    Sum32 sum = (Sum32)symbol_of(&host, "sum");
+    test::check_equal(sum(true, 4, 5000000000), (U64)5000000004);
+    test::check_equal(sum(false, 4, 5000000000), (U64)5000000005);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_value_an_if_of_u64_plus_a_u32_widens_the_u32() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn sum(c: bool, start: u32, wide: u64) -> u64:\n"
+                     "    (if c:\n"
+                     "        wide\n"
+                     "    else:\n"
+                     "        wide + 1) + start\n",
+                     &host, &s);
+    Sum32 sum = (Sum32)symbol_of(&host, "sum");
+    test::check_equal(sum(true, 4, 5000000000), (U64)5000000004);
+    test::check_equal(sum(false, 4, 5000000000), (U64)5000000005);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_value_a_u16_plus_an_if_of_u64_widens_the_u16() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn sum(c: bool, start: u16, wide: u64) -> u64:\n"
+                     "    start + (if c:\n"
+                     "        wide\n"
+                     "    else:\n"
+                     "        wide + 1)\n",
+                     &host, &s);
+    Sum16 sum = (Sum16)symbol_of(&host, "sum");
+    test::check_equal(sum(true, 4, 5000000000), (U64)5000000004);
+    test::check_equal(sum(false, 4, 5000000000), (U64)5000000005);
+    emit_jit::stop(&host);
+}
