@@ -43,6 +43,8 @@ tests/front/corpus/session-keyword-name/src/main.smith	error-fixture
 tests/front/corpus/session-missing-module/src/main.smith	error-fixture
 tests/front/corpus/sized-error-message/src/main.smith	error-fixture
 tests/front/e2e/result_guard_affine.smith	error-fixture
+tests/smith-lang/cases/attribute-c-names/src/log/fmt.smith	old-form: [[gnu::x]] and __attribute__ (#3221 dropped table: every attribute, item 47)
+tests/smith-lang/cases/attribute-c-names/src/main.smith	old-form: [[gnu::x]] and __attribute__ (#3221 dropped table: every attribute, item 47)
 tests/smith-lang/cases/error-array-empty/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-infer/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-param-index/src/main.smith	error-fixture
@@ -130,6 +132,14 @@ tests/smith-lang/cases/generic-call-unclosed-statement/src/main.smith	error-fixt
 tests/smith-lang/cases/generic-call-unclosed/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-fields-doc/src/docs.smith	old-form: imports a module with a preprocessor directive
 tests/smith-lang/cases/generic-fields-doc/src/main.smith	old-form: imports a module with a preprocessor directive
+tests/smith-lang/cases/generic-fields-error/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields-helper/src/lib.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields-helper/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields-import/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields-index/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields-star/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields-values/src/walk.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
+tests/smith-lang/cases/generic-fields/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
 tests/smith-lang/cases/generic-for-constexpr-error/src/bad.smith	error-fixture
 tests/smith-lang/cases/generic-for-range-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-function-error/src/main.smith	error-fixture
@@ -137,6 +147,10 @@ tests/smith-lang/cases/generic-function-generic-error/src/order.smith	error-fixt
 tests/smith-lang/cases/generic-pack-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-rest-error/src/bad.smith	error-fixture
 tests/smith-lang/cases/generic-rest-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-slice-const/src/main.smith	old-form: restrict on slices (#3221 dropped table: restrict and const on slices, item 41)
+tests/smith-lang/cases/generic-slice-qualifiers-auto/src/copy.smith	old-form: restrict on slices (#3221 dropped table: restrict and const on slices, item 41)
+tests/smith-lang/cases/generic-slice-qualifiers-auto/src/main.smith	old-form: restrict on slices (#3221 dropped table: restrict and const on slices, item 41)
+tests/smith-lang/cases/generic-slice-restrict/src/main.smith	old-form: restrict on slices (#3221 dropped table: restrict and const on slices, item 41)
 tests/smith-lang/cases/generic-two-keyword-params/src/num.smith	error-fixture
 tests/smith-lang/cases/header-conditional-define/src/cfg/mode.smith	old-form: #if on a macro
 tests/smith-lang/cases/header-conditional/src/cfg/mode.smith	old-form: #if on a macro
@@ -147,6 +161,7 @@ tests/smith-lang/cases/header-include-chain/src/main.smith	old-form: imports a m
 tests/smith-lang/cases/lowered-directives/src/demo/dir.smith	old-form: #pragma
 tests/smith-lang/cases/module-c-features/src/kit/things.smith	old-form: function-like #define
 tests/smith-lang/cases/module-c-features/src/main.smith	old-form: function-like #define
+tests/smith-lang/cases/reflection-doc-if-constexpr/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
 tests/smith-lang/cases/session-keyword-name/src/foo.smith	error-fixture
 tests/smith-lang/cases/session-keyword-name/src/main.smith	error-fixture
 tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
