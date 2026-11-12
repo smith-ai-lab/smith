@@ -444,11 +444,16 @@ static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfi
 }
 
 // The flags of the shims that read clang's AST and of their precompiled header, which must be the same ones. The LLVM
-// headers are system headers, so the build's warnings stay smith's own.
+// headers are system headers, so the build's warnings stay smith's own. These compiles run the LLVM pack's own clang++,
+// not smith's in-process clang (which maps the machine's folders itself, shim/clang.cpp), so the cache folder, where
+// the pack's headers are, gets its map here: the objects then hold /smith-cache, and the step store can serve them to
+// a machine with another home (#3176, #3300).
 static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *config) {
+    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     return smith_cat(
         b,
         (const char *[]){"-std=c++17", config->optimize, "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+                         smith_fmt(b, "-ffile-prefix-map=%s/smith=/smith-cache", cache),
                          "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
                          smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
         smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
