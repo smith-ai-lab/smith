@@ -1,0 +1,27 @@
+# A table built at compile time and read at run time (#3039, step 3): a module-level value computed by a function is written
+# into the program as constant data.
+
+struct Point:
+    x: i32
+    y: i32
+
+fn squares() -> [5]i32:
+    mut out: [5]i32 = undefined
+    for i in range(0, 5):
+        out[i] = (i * i).to(i32)
+    out
+
+fn corner(n: i32) -> Point:
+    Point(x = n, y = n * 2)
+
+table := squares()
+origin := corner(7)
+
+pub fn check() -> i32:
+    if table[3] != 9:
+        return 1
+    if table[4] != 16:
+        return 2
+    if origin.y != 14:
+        return 3
+    0
