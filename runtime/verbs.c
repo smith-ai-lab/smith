@@ -1917,6 +1917,14 @@ static int smith_check_by_plan(SmithCheckScope scope) {
     return failed_count == 0 ? 0 : 1;
 }
 
+// The status of `smith check --changed` when the plan leaves stages out, or -1 when every stage runs.
+static int smith_check_planned(const SmithCheckArgs *given) {
+    SmithCheckPlan plan = {};
+    if (!given->changed || !smith_check_plan_read(given->base, &plan)) return -1;
+    SmithCheckScope scope = smith_check_plan_scope(&plan);
+    return scope == SmithCheckScope_Full ? -1 : smith_check_by_plan(scope);
+}
+
 int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     SmithCheckArgs given = {};
@@ -1925,11 +1933,8 @@ int smith_check_project(int count, char **args, const char *self) {
         return smith_check_plan_print(given.base, given.event != nullptr
                                                       ? given.event
                                                       : ""); // only the plan: what the change touches, nothing run
-    if (given.changed) {
-        SmithCheckPlan plan = {};
-        if (smith_check_plan_read(given.base, &plan) && smith_check_plan_scope(&plan) != SmithCheckScope_Full)
-            return smith_check_by_plan(smith_check_plan_scope(&plan));
-    }
+    int planned = smith_check_planned(&given);
+    if (planned >= 0) return planned;
     bool every_task = given.every_task;
     if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
     bool loud = every_task || smith_quiet_full();      // otherwise each part's output goes to its log
