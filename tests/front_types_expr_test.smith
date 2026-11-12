@@ -884,7 +884,7 @@ export void test_front_types_expr_an_if_value_needs_a_bool_and_branches_of_one_t
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
     var(&r, "x", "U8");
-    var(&r, "f", "F32");
+    var(&r, "f", "I8");
     test::check_condition(types_expr::infer(&r, as_value(branch(ast::name("x"), braces(num(1)), braces(num(2))))) ==
                           r.table.invalid);
     test::check_condition(says(last(&r), "expected `Bool`, found `U8`; write a value of type `Bool`, or convert it "
