@@ -1,0 +1,66 @@
+# The nightly assertion of #3178: the whole check, run twice on smith itself with one store, does no work the second time.
+# Not part of ci.yml: that file has no `schedule` trigger, and adding one would start all of it (macOS, the 8 test parts,
+# the release jobs) every night. This is the one job, on its own, and it gates nothing: the failure message is the list
+# of the steps that ran the second time, one for each line, and a failure opens nothing but this run's red mark.
+name: nightly-second-run
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: nightly-second-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  second-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+      SMITH_OUTPUT: full
+      SMITH_RESULT_CACHE: "on"
+      SMITH_FMT_CACHE: why
+      SMITH_LINT_CACHE: why
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - name: Neovim 0.11+ for the editor tests
+        run: |
+          bin=$("$SMITH" build nvim | tail -n 1)
+          echo "$bin" >>"$GITHUB_PATH"
+      - name: The check, twice, on one store
+        run: |
+          # the awk program of tests/check_second_run_test.smith: `ran: <step>` for each step that did work
+          cat >"$RUNNER_TEMP/ran.awk" <<'AWK'
+          /^smith fmt: [0-9]+ files:/ { n = $0; sub(/.* files: /, "", n); if (n + 0 > 0) print "ran: fmt " n + 0 " run" }
+          /^smith lint: linted / { n = $0; sub(/.*files \(/, "", n); if (n + 0 > 0) print "ran: lint " n + 0 " run" }
+          /^\[[0-9]+\/[0-9]+\] / { if ($0 !~ /\(cached\)/ && $0 !~ /[.]smith[/]program --run/) { s = $0; sub(/^\[[0-9]+\/[0-9]+\] /, "", s); print "ran: " s } }
+          /^[0-9]+ passed, [0-9]+ failed/ { passed = $1 + 0 }
+          /^[0-9]+ cached: / { cached = $1 + 0 }
+          /^[0-9]+ proved, [0-9]+ failed/ { n = $1 + 0; k = 0; if (match($0, /, [0-9]+ cached/)) k = substr($0, RSTART + 2, RLENGTH - 2) + 0; if (n > k) print "ran: prove " n - k " run" }
+          END { if (passed > cached) print "ran: tests " passed - cached " run" }
+          AWK
+          rc1=0
+          "$SMITH" check 2>&1 | tee "$RUNNER_TEMP/first.log" || rc1=${PIPESTATUS[0]}
+          rc2=0
+          "$SMITH" check 2>&1 | tee "$RUNNER_TEMP/second.log" || rc2=${PIPESTATUS[0]}
+          awk -f "$RUNNER_TEMP/ran.awk" "$RUNNER_TEMP/second.log" | sort >"$RUNNER_TEMP/ran.txt"
+          {
+            echo "first run: exit $rc1; second run: exit $rc2"
+            echo "steps that ran the second time: $(wc -l <"$RUNNER_TEMP/ran.txt")"
+            sed 's/^ran: /  /' "$RUNNER_TEMP/ran.txt"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$rc1" != 0 ] || [ "$rc2" != 0 ] || [ -s "$RUNNER_TEMP/ran.txt" ]; then
+            echo "::error::the second check was not free: $(wc -l <"$RUNNER_TEMP/ran.txt") steps ran (first exit $rc1, second exit $rc2); the list is in the run's summary"
+            exit 1
+          fi
