@@ -126,6 +126,29 @@ runs:
             echo "$(cat "$t/tests-from"), plus $n additions of the newer commits" >"$t/tests-from"
           fi
         fi
+    - name: Restore the execution records
+      if: inputs.fresh != 'true' && inputs.tests == 'true' && inputs.os == 'linux'
+      continue-on-error: true
+      shell: bash
+      env:
+        REPO: ${{ github.repository }}
+      run: |
+        # #3434: the records a nightly COVERAGE=1 run on main published (`test-records-<sha7>`, asset
+        # `smith-test-records.tar.gz`), the newest one among the last 200 first-parent commits, unpacked into
+        # `.smith/records`, where the test key reads them (#3387). A plain run never writes one. None found: the key
+        # falls back to the whole smith, as before.
+        tags=$(git ls-remote --tags origin 'refs/tags/test-records-*' 2>/dev/null | sed 's#.*refs/tags/##' || true)
+        [ -n "$tags" ] || { echo "records: none published" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
+        for sha in $(git rev-list --first-parent -n 200 "$GITHUB_SHA" 2>/dev/null); do
+          printf '%s\n' "$tags" | grep -qx "test-records-${sha:0:7}" || continue
+          url="https://github.com/$REPO/releases/download/test-records-${sha:0:7}/smith-test-records.tar.gz"
+          if curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/records.tar.gz" 2>/dev/null; then
+            mkdir -p .smith && tar -xzf "$RUNNER_TEMP/records.tar.gz" -C .smith &&
+              echo "records: $(find .smith/records -name '*.rec' | wc -l) from test-records-${sha:0:7}" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+        done
+        echo "records: none among the last 200 commits" | tee -a "$GITHUB_STEP_SUMMARY"
     - name: Restore the test-result store
       if: inputs.tests == 'true'
       shell: bash
