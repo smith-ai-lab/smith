@@ -3,7 +3,9 @@
 // green) and with an ordinary hour of green runs. The workflow queue-stall.yml opens the issue on the first `stalled`
 // verdict, edits its body on each later one and closes it on `green`, so the verdicts after each run are the issue's
 // life. Never touches the network. The tool is built with the system's compiler, as CI builds it: clang on macOS, cc as
-// gnu2x on Linux. smith-covers: scripts/queue_stall.c
+// gnu2x on Linux.
+//
+// smith-covers: scripts/queue_stall.c
 module queue_stall_test;
 
 import std::arena;
