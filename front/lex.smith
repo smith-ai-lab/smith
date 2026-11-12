@@ -1073,6 +1073,31 @@ static Bool continues_line(TokenKind kind) {
     case caret_equal:
     case pipe_equal:
     case colon_equal:
+    case comma:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether a token that starts a line makes it continue the line above (#3240, #3235 item 42): an operator that cannot
+// begin a statement. `-`, `+`, `*`, `&` and `(` can begin one (`-x`, `*p = 1`, `(a, b) := f()`), so they do not count.
+static Bool starts_continuation(TokenKind kind) {
+    switch (kind) {
+    case slash:
+    case percent:
+    case less_less:
+    case greater_greater:
+    case less:
+    case greater:
+    case less_equal:
+    case greater_equal:
+    case equal_equal:
+    case bang_equal:
+    case caret:
+    case pipe:
+    case ampersand_ampersand:
+    case pipe_pipe:
         return true;
     default:
         return false;
@@ -1166,7 +1191,7 @@ export Lexed layout(Str source, Tokens tokens) {
                 put(&l, dedent, token.span.start);
                 l.level -= 1;
             }
-        } else if (first && l.depth == 0 && !continues_line(before)) {
+        } else if (first && l.depth == 0 && !continues_line(before) && !(before != end_of_file && starts_continuation(token.kind))) {
             Result(Bool, LexError) started = line_start(&l, source, token, before);
             if (started == .error) {
                 mem::free(l.out.data);
