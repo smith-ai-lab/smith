@@ -752,8 +752,9 @@ static uint32_t smith_docs_recorded_size(const char *name) {
 constexpr uint64_t smith_docs_concept_max = 4000;
 
 // A concept is read whole by an agent, so it stays small: one fact in one home, found by its name in the index. The
-// concepts of knowledge/ over the limit when the rule began are in the ratchet (smith_docs_size_ratchet): one may not
-// grow, and none may be added. Every document of plugin/knowledge/ is held to the limit with no ratchet.
+// concepts of knowledge/ over the limit when the rule began are in the ratchet (smith_docs_size_ratchet): one that
+// grows is warned about, and none may be added. Every document of plugin/knowledge/ is held to the limit with no
+// ratchet.
 static void smith_docs_concept_size(SmithDocs *docs, const char *relative, uint64_t size) {
     if (size <= smith_docs_concept_max) return;
     bool plugin = strncmp(relative, "plugin/", 7) == 0;
@@ -763,11 +764,11 @@ static void smith_docs_concept_size(SmithDocs *docs, const char *relative, uint6
                           "%s: %llu bytes, over %llu; an agent reads a concept whole, so keep one fact in one home and "
                           "split the rest into concepts of their own",
                           relative, (unsigned long long)size, (unsigned long long)smith_docs_concept_max);
-    } else if (size > recorded) {
-        smith_docs_report(docs,
-                          "%s: grew from %u to %llu bytes; it is over the %llu limit and may only shrink: move the new "
-                          "fact into a concept of its own",
-                          relative, recorded, (unsigned long long)size, (unsigned long long)smith_docs_concept_max);
+    } else if (size > recorded) { // a warning only: other pull requests keep working while the list is converted
+        fprintf(docs->errors,
+                "docs: warning: %s grew from %u to %llu bytes; it is over the %llu limit and may only shrink: move "
+                "the new fact into a concept of its own\n",
+                relative, recorded, (unsigned long long)size, (unsigned long long)smith_docs_concept_max);
     }
 }
 

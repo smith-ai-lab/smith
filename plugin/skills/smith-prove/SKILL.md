@@ -1,6 +1,6 @@
 ---
 name: smith-prove
-description: Prove C or .smith code with smith prove. Use for contracts (requires, ensures, invariant, modifies, trusted), a failing proof, loop bounds and invariants, slice or array indexing, restrict at a call, a proof over budget or memory, and proved checks in release.
+description: Prove C or .smith code with smith prove. Load for contracts (requires, ensures, invariant, modifies, trusted), a failing proof, loop bounds and invariants, slice or array indexing, restrict at a call, a proof over budget or memory, and proved checks in release.
 ---
 
 # Prove a function

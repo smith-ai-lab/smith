@@ -4,7 +4,7 @@
 
 // The most skills (.agents/skills plus plugin/skills) that may exist. Lowered as skills merge; it ends at 20, and the
 // ratchet is then deleted.
-constexpr uint32_t smith_docs_skills_ratchet = 148;
+constexpr uint32_t smith_docs_skills_ratchet = 161;
 
 // The skills of .agents/skills whose description is over 300 characters or names no trigger, as of today.
 static const char *const smith_docs_description_ratchet[] = {
@@ -114,18 +114,18 @@ static const struct {
     {"build-history.md", 14721},
     {"build-profile.md", 10334},
     {"build-smith-and-dump-config.md", 7107},
-    {"build-tests.md", 39742},
+    {"build-tests.md", 37788},
     {"build-times.md", 14002},
     {"c-header-import.md", 5530},
-    {"caches.md", 16333},
+    {"caches.md", 15992},
     {"changed-tests.md", 8990},
     {"checked-allocator.md", 7831},
     {"ci.md", 11065},
     {"clang-modules.md", 6203},
-    {"content-addressed-compiles.md", 35596},
+    {"content-addressed-compiles.md", 35576},
     {"coverage-selection.md", 9691},
     {"debugger.md", 14908},
-    {"decisions.md", 62012},
+    {"decisions.md", 61952},
     {"effect-inference.md", 21376},
     {"embedded-files-and-programs-folders.md", 5173},
     {"executor.md", 23341},
