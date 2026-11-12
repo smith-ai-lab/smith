@@ -4099,6 +4099,8 @@ static Str unchanging_hint() {
 static syntax::Edits arm_value_fix(types::Checked *c, const ast::Expr *e, types::TypeRef base) {
     syntax::Edits none = {};
     if (base->kind != .option || e->kind != .member || !same_text(e->kind.member.name, "some")) return none;
+    types::Guard *g = guard_of(c, e);
+    if (g == nullptr || countof(g->head) != 1) return none; // only a `match` arm's binding; a test is the fixer's
     return guarded_read(c, e, false);
 }
 
