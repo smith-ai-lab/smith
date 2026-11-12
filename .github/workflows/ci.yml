@@ -823,7 +823,7 @@ jobs:
     needs: [changes, release-pack-linux]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.release-pack-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -872,7 +872,7 @@ jobs:
           # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
           # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
           # from the diff is deterministic, so there is no retry: the command is bounded to 10 minutes and fails the entry.
-          timeout -k 10 600 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
           [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 10 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
