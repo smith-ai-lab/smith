@@ -112,7 +112,7 @@ How each verb uses it:
 - **run** builds the default, then starts the program, replacing smith, so it has the terminal. The default must name
   exactly one program (the others in it, such as links, are built but not run); otherwise `smith run` says how many it
   names and lists them.
-- **check** runs fmt, docs, lint, test and prove in that order, cheapest first, and does not stop at a failure: each part
+- **check** runs fmt, docs, prove, lint and test in that order (the proofs first: lint and the compiles read the proof files, #3178), and does not stop at a failure: each part
   prints `smith check: <part> ok: <detail> (<n> s wall, <n> s cpu)` or `FAILED (status N)` and the excerpt of its log (Quiet output, below), and the last line is `smith check: ok` or
   `smith check: failed: <parts>`. The exit status is 1 if any part failed. prove is skipped (and says so) by a smith
   without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c, main.smith or main.c.

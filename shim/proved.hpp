@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <sstream>
 #include <string>
@@ -118,22 +119,30 @@ inline std::set<unsigned> read(const std::string &path, const std::string &text)
 }
 
 // Writes the proof file of a source (the bytes make the same file for the same lines and dependencies); false when it
-// cannot, or when a dependency cannot be read: a proof that cannot be keyed is not written.
+// cannot, or when a dependency cannot be read: a proof that cannot be keyed is not written. A file that already holds
+// these bytes is left as it is, with its time: the compiles and the lint that read it are keyed on its content, and a
+// new time would make the build think they are out of date (#3178).
 inline bool write(const std::string &path, const std::string &text, const std::set<unsigned> &lines,
                   const std::set<std::string> &dependencies) {
     std::vector<std::string> sorted(dependencies.begin(), dependencies.end());
     std::string texts;
     if (!read_dependencies(sorted, texts)) return false;
+    std::string content = "smith-proved " + key_of(text, texts) + "\n";
+    for (const std::string &dependency : sorted)
+        content += "dep " + dependency + "\n";
+    for (unsigned line : lines)
+        content += std::to_string(line) + "\n";
+    {
+        std::ifstream existing(path, std::ios::binary);
+        std::string held((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
+        if (existing && held == content) return true;
+    }
     std::error_code ignored;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ignored);
     std::string temporary = path + ".tmp" + std::to_string(getpid());
     {
         std::ofstream file(temporary);
-        file << "smith-proved " << key_of(text, texts) << "\n";
-        for (const std::string &dependency : sorted)
-            file << "dep " << dependency << "\n";
-        for (unsigned line : lines)
-            file << line << "\n";
+        file << content;
         if (!file) return false;
     }
     std::filesystem::rename(temporary, path, ignored);
