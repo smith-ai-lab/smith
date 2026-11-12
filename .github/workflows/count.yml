@@ -40,7 +40,7 @@ on:
 concurrency:
   # workflow level: one run in progress, one pending; a newer pending run replaces the older pending one, a running one
   # is never cancelled. No job has a group of its own, so no shard is cancelled by itself.
-  group: count
+  group: count-3369-determinism
   cancel-in-progress: false
 
 permissions:
