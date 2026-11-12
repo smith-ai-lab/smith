@@ -1007,6 +1007,25 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
 
+  test-store:
+    # The whole Linux test store of this commit (#3281): the previous whole file plus what the parts of the queue run
+    # added, one release asset, which a part restores with one download. After the merge, on main's push run, and in
+    # no job's `needs`, so the gate never waits for it; a failure here only leaves the next runs with the older file
+    # and the additions, never a wrong result.
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.scope == 'release'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # test-cache/whole: `gh release create` of the whole store
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 25
+      - uses: ./.github/actions/test-cache/whole
   check-new:
     # `smith check`, the one command that is the whole check (#3163), run beside the old jobs so its result can be
     # compared with theirs before any old job goes. Where it runs and why (the lead's three limits): (a) ONE Linux job,
