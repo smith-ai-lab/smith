@@ -1100,6 +1100,8 @@ static Usize chain_end(Str source, Usize from, Usize indent, Usize least) {
 static Str join_value_ifs(Str source) {
     Str out = "";
     Usize at = 0;
+    // The lines from `kept` to `at` are unchanged: one push when a rewrite comes, not one per line (each copies `out`).
+    Usize kept = 0;
     Bool changed = false;
     while (at < countof(source)) {
         Usize end = line_end(source, at);
@@ -1113,11 +1115,11 @@ static Str join_value_ifs(Str source) {
             stop = chain_end(source, next, indent, indent + step);
         }
         if (stop == next) {
-            out = as_str(format::push(out, source[at:next]));
             at = next;
             continue;
         }
         changed = true;
+        out = as_str(format::push(out, source[kept:at]));
         Usize trimmed = end;
         while (source[trimmed - 1] == ' ')
             trimmed -= 1;
@@ -1129,8 +1131,10 @@ static Str join_value_ifs(Str source) {
             out = as_str(format::push(out, source[at + step:after]));
             at = after;
         }
+        kept = at;
     }
-    return changed ? out : source;
+    if (!changed) return source;
+    return as_str(format::push(out, source[kept:at]));
 }
 
 static Str convert_once(Str source) {
