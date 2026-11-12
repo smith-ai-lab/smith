@@ -1,17 +1,24 @@
-# Files the front-end count does not measure (#3037): each line is `path TAB reason`.
-# reason is `error-fixture` (a test expects a diagnostic for the file) or `old-form: <form>` (a form the language
-# dropped, decided in knowledge/decisions.md or a smith-dev-syntax skill). A listed file must still fail with a
-# diagnostic: one that compiles, or whose compile crashes, fails the count job. How to add to it, and when not to:
-# knowledge/front-end.md, "The count's excluded files".
+# Files the front-end count does not measure (#3037, #3371): each line is `path TAB reason`.
+# reason is `error-fixture` (a test expects a diagnostic for the file and the front end gives it), `tool-fixture` (a tool
+# test reads the file as data and no test compiles it as a program) or `old-form: <form>` (the file tests a form the
+# language removed, named in knowledge/decisions.md or a smith-dev-syntax skill). A listed file must still fail with a
+# diagnostic: an error-fixture that compiles, or whose compile crashes, fails the count job.
+# How to add to it, and when not to: knowledge/front-end/driver.md, "The count's excluded files".
 # A tests/affine/ file whose `<file>.smith.expected` holds the `smith-affine:` error that names it is an error-fixture
 # (#3234, decided in #3190 item 33): the linear and affine rules are checked at compile time, and these files must fail.
 tests/affine/affine_address_of.smith	error-fixture
 tests/affine/affine_bad_index.smith	error-fixture
 tests/affine/affine_branch_join.smith	error-fixture
 tests/affine/affine_defer.smith	error-fixture
+tests/affine/affine_elements.smith	error-fixture
 tests/affine/affine_loop_counter_changed.smith	error-fixture
+tests/affine/affine_member.smith	error-fixture
+tests/affine/affine_plain_loop_two_uses.smith	error-fixture
+tests/affine/affine_range_for.smith	error-fixture
 tests/affine/affine_second_use.smith	error-fixture
 tests/affine/affine_slice_bad_index.smith	error-fixture
+tests/affine/affine_slice_elements.smith	error-fixture
+tests/affine/affine_slice_two_uses.smith	error-fixture
 tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
 tests/build_fixtures/std_scope/affine_twice.smith	error-fixture
 tests/front/corpus/error-array-length/src/main.smith	error-fixture
@@ -35,6 +42,7 @@ tests/front/corpus/error-void-pointer/src/main.smith	error-fixture
 tests/front/corpus/session-keyword-name/src/main.smith	error-fixture
 tests/front/corpus/session-missing-module/src/main.smith	error-fixture
 tests/front/corpus/sized-error-message/src/main.smith	error-fixture
+tests/front/e2e/result_guard_affine.smith	error-fixture
 tests/smith-lang/cases/error-array-empty/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-infer/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-param-index/src/main.smith	error-fixture
@@ -143,3 +151,50 @@ tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-error-message/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-own-typedef/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-types/src/main.smith	old-form: _Generic
+tests/front/e2e/array_filled_length.smith	error-fixture
+tests/front/e2e/array_filled_shape_length.smith	error-fixture
+tests/front/e2e/array_filled_value.smith	error-fixture
+tests/front/e2e/bad_dedent.smith	error-fixture
+tests/front/e2e/eval_call_errors.smith	error-fixture
+tests/front/e2e/eval_overflow.smith	error-fixture
+tests/front/e2e/eval_static_assert_false.smith	error-fixture
+tests/front/e2e/extern_variadic_str.smith	error-fixture
+tests/front/e2e/extern_variadic_struct.smith	error-fixture
+tests/front/e2e/recursion_no_exit.smith	error-fixture
+tests/front/e2e/shadow.smith	error-fixture
+tests/front/e2e/static_assert_bad.smith	error-fixture
+tests/front/e2e/static_assert_unknown.smith	error-fixture
+tests/front/e2e/unclosed.smith	error-fixture
+tests/build_fixtures/lsp/p/bad.smith	error-fixture
+tests/build_fixtures/lsp/p/typo.smith	error-fixture
+tests/build_fixtures/lsp/p/qualified.smith	error-fixture
+tests/build_fixtures/lsp/modules/qualified.smith	error-fixture
+tests/build_fixtures/unit_private/geometry/box_test.smith	error-fixture
+tests/front/format/comments_blank.smith	tool-fixture
+tests/front/format/continued.smith	tool-fixture
+tests/front/format/dedent_comments.smith	tool-fixture
+tests/smith-fmt/payload_enum.smith	tool-fixture
+tests/smith-fmt/tuples-slices.smith	tool-fixture
+tests/tree_sitter_cases/error-import-without-semicolon.smith	tool-fixture
+tests/tree_sitter_cases/plain.smith	tool-fixture
+tests/tree_sitter_cases/replay.smith	tool-fixture
+tests/tree_sitter_cases/slices.smith	tool-fixture
+tests/tree_sitter_cases/types.smith	tool-fixture
+tests/build_fixtures/lint_smith/defer/cleanup.smith	tool-fixture
+tests/build_fixtures/lint_smith/geometry/box.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/c23.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/c23_ok.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/consts.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/library.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/loops.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/realloc_pointers.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/unsafe.smith	tool-fixture
+tests/build_fixtures/lint_smith/idiom/unsafe_plain.smith	tool-fixture
+tests/build_fixtures/lint_smith/kinds.smith	tool-fixture
+tests/build_fixtures/lint_smith/main.smith	tool-fixture
+tests/build_fixtures/lint_smith/tuples/user.smith	tool-fixture
+tests/build_fixtures/lsp/p/complete.smith	tool-fixture
+tests/build_fixtures/lsp/p/geometry/dims.smith	tool-fixture
+tests/build_fixtures/lsp/editor-enum/shapes.smith	tool-fixture
+tests/build_fixtures/lsp/editor-smith/m.smith	tool-fixture
+tests/smith-lang/cases/defer-run/src/main.smith	old-form: goto
