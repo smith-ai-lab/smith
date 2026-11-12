@@ -551,11 +551,14 @@ static bool smith_rec_check_file(const char *path) {
     }
     if (strncmp(text, "smith-record 2\n", 15) != 0) return false;
     SmithRecResult *result = &smith_rec_results[smith_rec_result_count];
-    *result = (SmithRecResult){.named_first = smith_rec_named_used};
+    *result = (SmithRecResult){.named_first = smith_rec_named_used, .digest = smith_rec_seed};
     char *line = text + 15;
     for (size_t guard = 0; *line != '\0' && guard < (size_t)1 << 20; guard++) { // bounded by the lines
         char *end = strchr(line, '\n');
         if (end != nullptr) *end = '\0';
+        if (strncmp(line, "fn\t", 3) == 0) result->functions++;
+        if (strncmp(line, "fn\t", 3) == 0 || strncmp(line, "outside\t", 8) == 0 || strncmp(line, "input\t", 6) == 0)
+            result->digest = smith_rec_fnv(line, strlen(line) + 1, result->digest);
         smith_rec_record_line(line, result);
         if (end == nullptr) break;
         line = end + 1;
@@ -563,6 +566,14 @@ static bool smith_rec_check_file(const char *path) {
     if (result->name == nullptr) return false;
     smith_rec_result_count++;
     return true;
+}
+
+const SmithRecResult *smith_rec_result_of(const char *name) {
+    for (size_t i = 0; i < smith_rec_result_count; i++) { // bounded by the records
+        if (smith_rec_results[i].name != nullptr && strcmp(smith_rec_results[i].name, name) == 0)
+            return &smith_rec_results[i];
+    }
+    return nullptr;
 }
 
 // Reads every record of a folder (smith_cov_root is the project). The count of records read.

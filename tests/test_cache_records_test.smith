@@ -1,0 +1,80 @@
+// A test that runs smith is keyed by the smith functions its record names, not by the whole smith (#3387,
+// runtime/test_cache.c, runtime/record.c). The record is written by hand (`smith_core_coverage_record`, as a run with
+// COVERAGE=1 would) for the one test of the fixture `runner_records`, which says SMITH_SELF so that it counts as a test
+// that runs smith, and names the function `first` of data/prog.c. The cases: the test is cached while `first` is as
+// recorded, an edit to the other function changes nothing, an edit to `first` runs it again (the record is stale, so
+// the key is the whole smith's, which no earlier run stored), and a deleted record runs it again.
+// smith-covers: runtime/test_cache.c runtime/verbs.c runtime/changed.c runtime/record.c runtime/coverage.c
+// smith-covers: lib/std/test.smith tests/runner.smith tests/build_fixtures/runner_records/
+module test_cache_records_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import runner;
+import scratch;
+import <smith_core_coverage.h>;
+import <string.h>;
+
+constexpr char run_cached[_] = "env SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test 2>&1";
+constexpr char program[_] =
+    "static int first(int x) {\n    return x + 1;\n}\nstatic int second(int x) {\n    return x * 2;\n}\n"
+    "int main(void) {\n    return first(1) + second(1) > 100;\n}\n";
+constexpr char test_name[_] = "rec_runs";
+
+// A project of the fixture with a cache of its own and a record of the test that names `first`.
+static scratch::Project recorded_project() {
+    scratch::Project p = runner::project("runner_base", "runner_records");
+    scratch::own_cache(&p);
+    scratch::Run made = scratch::sh(&p, "mkdir -p data");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "data/prog.c", program);
+    const c::SmithCoreFunction ran[_] = {{.path = "data/prog.c", .name = "first", .first = 1, .last = 3}};
+    test::check_equal(c::smith_core_coverage_record(p.dir, test_name, true, ran, countof(ran)), true);
+    return p;
+}
+
+export void test_test_cache_records_an_edit_to_a_function_the_record_names_runs_the_test_and_another_does_not() {
+    scratch::Project p = recorded_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("records: the first run passes", 0, &first);
+    scratch::expect_lacks("records: ... and caches nothing", first.out, " cached:");
+    scratch::Run second = scratch::sh(&p, run_cached);
+    scratch::expect_contains("records: the second run has the test cached", second.out, "1 cached:");
+    scratch::write(&p, "data/prog.c",
+                   "static int first(int x) {\n    return x + 1;\n}\nstatic int second(int x) {\n    return x * 3;\n}\n"
+                   "int main(void) {\n    return first(1) + second(1) > 100;\n}\n");
+    scratch::Run other = scratch::sh(&p, run_cached);
+    scratch::expect_contains("records: a function it did not execute changed: still cached", other.out, "1 cached:");
+    scratch::write(&p, "data/prog.c",
+                   "static int first(int x) {\n    return x + 2;\n}\nstatic int second(int x) {\n    return x * 3;\n}\n"
+                   "int main(void) {\n    return first(1) + second(1) > 100;\n}\n");
+    scratch::Run named = scratch::sh(&p, run_cached);
+    scratch::expect_status("records: ... the function it executed changed: it passes", 0, &named);
+    scratch::expect_lacks("records: ... and runs again", named.out, " cached:");
+}
+
+export void test_test_cache_records_without_its_record_the_test_runs_again() {
+    scratch::Project p = recorded_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("no record: the first run passes", 0, &first);
+    scratch::Run second = scratch::sh(&p, run_cached);
+    scratch::expect_contains("no record: the second run has it cached", second.out, "1 cached:");
+    scratch::Run removed = scratch::sh(&p, "rm -rf .smith/records");
+    scratch::release(removed.out);
+    scratch::release(removed.err);
+    scratch::Run third = scratch::sh(&p, run_cached);
+    scratch::expect_status("no record: without the record it passes", 0, &third);
+    scratch::expect_lacks("no record: ... and runs again (the key is the whole smith's)", third.out, " cached:");
+}

@@ -514,7 +514,7 @@ I32 main() {
 ```
 -->
 
-[smith-contract](.agents/skills/smith-contract/SKILL.md), [smith-prove](.agents/skills/smith-prove/SKILL.md).
+[smith-prove](plugin/skills/smith-prove/SKILL.md).
 
 #### A proof removes the check
 
@@ -534,7 +534,7 @@ export I32 head(const I32 xs[:]) {
 }
 ```
 
-[smith-prove](.agents/skills/smith-prove/SKILL.md), [smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md).
+[smith-prove](plugin/skills/smith-prove/SKILL.md), [smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md).
 
 ### Tests whose signature says what they touch
 
@@ -751,7 +751,7 @@ I32 main() {
 | `smith build` | builds by convention, or runs `build.c` / `build.smith` | [smith-build](.agents/skills/smith-build/SKILL.md) |
 | `smith check` | formatting, lint, docs, tests and proofs before a commit | [smith-check](.agents/skills/smith-check/SKILL.md) |
 | `smith fmt`, `smith lint` | clang-format and clang-tidy, with smith's defaults | [smith-check](.agents/skills/smith-check/SKILL.md) |
-| `smith prove` | proves contracts with Alive2, Bitwuzla and Z3 | [smith-prove](.agents/skills/smith-prove/SKILL.md) |
+| `smith prove` | proves contracts with Alive2, Bitwuzla and Z3 | [smith-prove](plugin/skills/smith-prove/SKILL.md) |
 | `smith cc`, `smith c++` | clang, in smith's process; `smith-cc` is the link for `CC=` | [smith-cc](.agents/skills/smith-cc/SKILL.md) |
 | `smith dbg`, `smith dap` | lldb, and lldb-dap for editors | [smith-debug](.agents/skills/smith-debug/SKILL.md) |
 | `smith mcp` | the debugger as tools for an agent | [smith-mcp](.agents/skills/smith-mcp/SKILL.md) |
@@ -763,7 +763,7 @@ The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [format](.agents
 [slice](.agents/skills/smith-slice/SKILL.md), [ascii](.agents/skills/smith-ascii/SKILL.md),
 [json](.agents/skills/smith-json/SKILL.md), [random](.agents/skills/smith-random/SKILL.md),
 [math](.agents/skills/smith-math/SKILL.md), [test](.agents/skills/smith-test/SKILL.md),
-[contract](.agents/skills/smith-contract/SKILL.md) and [autodiff](.agents/skills/smith-autodiff/SKILL.md): no malloc, no
+[contract](plugin/knowledge/contracts.md) and [autodiff](.agents/skills/smith-autodiff/SKILL.md): no malloc, no
 global state, and a project compiles the ones it uses from source. Start with the [smith skill](.agents/skills/smith/SKILL.md),
 the map.
 
