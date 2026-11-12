@@ -361,6 +361,7 @@ export void test_front_emit_call_of_an_unknown_function_is_an_error() {
     tree_end(&trees);
     emit::Error error = failure_of(&m);
     test::check_equal(contains(error.message.data, "unknown function missing"), true);
+    test::check_equal(contains(error.message.data, "no instance of it in this module"), true);
     test::check_equal(error.span.start, 12U);
     emit::free_error(error);
 }
