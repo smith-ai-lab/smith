@@ -473,7 +473,7 @@ jobs:
           tests: "true"
           # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
           # them (#2242)
-          test-flags: ${{ format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) }}
+          test-flags: ${{ format('{0} --shard 1/1 --weigh {1}/weights.tsv', env.MACFLAGS, runner.temp) }}
       - name: API budget (before test-cache)
         uses: ./.github/actions/api-budget
         with:
@@ -503,7 +503,7 @@ jobs:
           }
           macos_tests() {
             # shellcheck disable=SC2086
-            "$SMITH" test $MACFLAGS --costs "$PWD/.github/shard-costs.tsv"
+            "$SMITH" test $MACFLAGS --weigh "$RUNNER_TEMP/weights.tsv"
           }
           # fmt, docs and prove run on Linux (`check-fmt-prove`, #2234); lint runs on both platforms, since each sees
           # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
@@ -988,6 +988,13 @@ jobs:
               exit 1
             fi
           done
+      - name: Every test is run or served by exactly one part
+        # #3283: each part dealt the tests by itself; a split that lost a test, ran one twice or differs between the
+        # parts is a red run
+        if: needs.changes.outputs.scope == 'full' && needs.test-linux.result == 'success'
+        uses: ./.github/actions/split-guard
+        with:
+          count: ${{ fromJSON(needs.build-linux.outputs.matrix).include[0].count }}
       - name: A failed queue run keeps no release
         # its tarballs (`stage0-<commit>-*` artifacts) are deleted, so nothing that looks like a release of a commit that
         # failed is left; the push to main also takes them only from a run whose `ci` passed (#2832)
@@ -1153,7 +1160,7 @@ jobs:
           tests: "true"
           # its own commit's release by name, not whatever the release list calls the newest (#2833)
           stage0: ${{ github.event_name == 'push' && format('stage0-{0}', github.sha) || '' }}
-          test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
+          test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --weigh {0}/weights.tsv', runner.temp) || '' }}
       - name: Make the release of the pinned tools (#3161)
         # the one place that reaches the upstream hosts: `smith build nvim` and the tree-sitter fetch read the release
         # `tools-<id>` of this repository (knowledge/ci/caches.md). Releases are immutable, so all assets at once; a

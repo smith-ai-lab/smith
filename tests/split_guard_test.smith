@@ -1,0 +1,105 @@
+// The guard of the test split (#3283, .github/actions/split-guard/guard.awk): the `ci` job fails the run unless every
+// test of the suite is run or served by exactly one part, and every part saw the same suite. Each case feeds the awk
+// program the lists of three parts and reads its verdict: one good split, and a deliberately broken one of each kind
+// (a test in no part, in two, in a part and not in the suite, a part that sees another suite, a part that sent no
+// list), which the `ci` job turns into a red run.
+// smith-covers: .github/actions/split-guard/
+module split_guard_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// The guard's lines for three parts that all dealt from the suite a, b, c, d, e; `parts` is what each ran or served.
+constexpr char suite_lines[_] = "suite\t1\ta\nsuite\t1\tb\nsuite\t1\tc\nsuite\t1\td\nsuite\t1\te\n"
+                                "suite\t2\ta\nsuite\t2\tb\nsuite\t2\tc\nsuite\t2\td\nsuite\t2\te\n"
+                                "suite\t3\ta\nsuite\t3\tb\nsuite\t3\tc\nsuite\t3\td\nsuite\t3\te\n";
+
+constexpr char guard_command[_] =
+    "awk -v parts=3 -f \"$SMITH_REPO/.github/actions/split-guard/guard.awk\" lists.tsv 2>&1";
+
+// Writes the lists (the suite of every part, then `parts`) and runs the guard.
+static scratch::Run guard(const scratch::Project *p, const char *parts) {
+    scratch::write(p, "suite.tsv", suite_lines);
+    scratch::write(p, "parts.tsv", parts);
+    scratch::Run joined = scratch::sh(p, "cat suite.tsv parts.tsv >lists.tsv");
+    test::check_equal(joined.status, 0);
+    return scratch::sh(p, guard_command);
+}
+
+export void test_split_guard_a_split_with_every_test_once_passes() {
+    scratch::Project p = scratch::make("guard", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = guard(&p, "part\t1\ta\npart\t1\td\npart\t2\tb\npart\t2\te\npart\t3\tc\n");
+    scratch::expect_status("guard: every test once passes", 0, &run);
+    scratch::expect_contains("guard: ... and says so", run.out, "5 tests, each in exactly one of 3 parts");
+}
+
+export void test_split_guard_a_test_in_no_part_fails() {
+    scratch::Project p = scratch::make("guard", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = guard(&p, "part\t1\ta\npart\t1\td\npart\t2\tb\npart\t2\te\n");
+    scratch::expect_failure("guard: a lost test fails", &run);
+    scratch::expect_contains("guard: ... and is named", run.out, "c was dealt to no part");
+}
+
+export void test_split_guard_a_test_in_two_parts_fails() {
+    scratch::Project p = scratch::make("guard", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = guard(&p, "part\t1\ta\npart\t1\td\npart\t2\tb\npart\t2\te\npart\t3\tc\npart\t3\ta\n");
+    scratch::expect_failure("guard: a test run twice fails", &run);
+    scratch::expect_contains("guard: ... and names both parts", run.out, "a was dealt to 2 parts (1 3)");
+}
+
+export void test_split_guard_a_test_outside_the_suite_fails() {
+    scratch::Project p = scratch::make("guard", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = guard(&p, "part\t1\ta\npart\t1\td\npart\t2\tb\npart\t2\te\npart\t3\tc\npart\t3\tstray\n");
+    scratch::expect_failure("guard: a test the suite does not hold fails", &run);
+    scratch::expect_contains("guard: ... and is named", run.out, "stray is in a part and not in the suite");
+}
+
+export void test_split_guard_parts_that_see_another_suite_fail() {
+    scratch::Project p = scratch::make("guard", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "lists.tsv",
+                   "suite\t1\ta\nsuite\t1\tb\nsuite\t2\ta\nsuite\t2\tb\nsuite\t3\ta\n"
+                   "part\t1\ta\npart\t2\tb\n");
+    scratch::Run run = scratch::sh(&p, guard_command);
+    scratch::expect_failure("guard: a part that dealt from another suite fails", &run);
+    scratch::expect_contains("guard: ... and the test is named", run.out, "b is in the suite of 2 of 3 parts");
+}
+
+export void test_split_guard_a_part_with_no_list_fails() {
+    scratch::Project p = scratch::make("guard", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "lists.tsv", "suite\t1\ta\nsuite\t2\ta\npart\t1\ta\n");
+    scratch::Run run = scratch::sh(&p, guard_command);
+    scratch::expect_failure("guard: a run with a part missing fails", &run);
+    scratch::expect_contains("guard: ... and counts the parts", run.out, "2 parts listed the suite, the run has 3");
+}
