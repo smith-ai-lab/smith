@@ -3779,13 +3779,17 @@ static int build_docs_gate_test(SmithRun *run) {
     return failed;
 }
 
-// ---- The pre-push check (#3132): the hook (`.smith/hooks/pre-push`, written by `smith build`) runs `smith build
-// pre-push` before a push leaves the machine, so format, lint and the tests the change reaches fail on the worker's
-// machine and not first on a CI runner. The files are those of base...HEAD. A push that changes only docs (knowledge/,
-// .agents/, *.md) runs nothing; a push with no C, C++ or smith source runs no formatter or linter. `git push
-// --no-verify` skips it; the merge queue decides.
-
-typedef enum { PrePushKind_Docs, PrePushKind_Source, PrePushKind_Other } PrePushKind;
+// ---- The pre-push check (#3132, #3163): the hook (`.smith/hooks/pre-push`, written by `smith build`) runs `smith
+// build pre-push` before a push leaves the machine, and that runs `smith check`, the one command that is the whole
+// check (fmt, docs, lint, test, prove), with the change as its selection. No list of stages or files lives here: the
+// command has the plan. A push that changes only docs (knowledge/, .agents/, *.md) runs nothing, and a base that cannot
+// be resolved here (a shallow clone, no remote) is not checked. `git push --no-verify` skips it; the merge queue
+// decides.
+//
+// The owner's end state (2026-11-12) is the queue's exact command with no selection (#3294); it waits for the store to
+// serve a worker's machine (#3300). Until then the selection is the one argument below: set it to false and the hook
+// runs `smith check` whole.
+constexpr bool pre_push_changed_only = true;
 
 static bool pre_push_ends(const char *path, const char *suffix) {
     size_t length = strlen(path);
@@ -3793,28 +3797,24 @@ static bool pre_push_ends(const char *path, const char *suffix) {
     return length >= tail && strcmp(path + length - tail, suffix) == 0;
 }
 
-static PrePushKind pre_push_kind(const char *path) {
-    if (strncmp(path, "knowledge/", 10) == 0 || strncmp(path, ".agents/", 8) == 0 || pre_push_ends(path, ".md"))
-        return PrePushKind_Docs;
-    const char *const sources[] = {".c", ".h", ".cpp", ".hpp", ".smith", ".m"};
-    for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++)
-        if (pre_push_ends(path, sources[i]) && strncmp(path, "tree-sitter/src/", 16) != 0) return PrePushKind_Source;
-    return PrePushKind_Other;
+// Whether a changed file is a document no build reads.
+static bool pre_push_is_doc(const char *path) {
+    return strncmp(path, "knowledge/", 10) == 0 || strncmp(path, ".agents/", 8) == 0 || pre_push_ends(path, ".md");
 }
 
-// One step of the check; on failure prints the step and the command that runs it again.
-static int pre_push_step(const char *name, const char *const *argv) {
-    printf("pre-push: %s\n", name);
-    int status = build_exec(argv);
-    if (status == 0) return 0;
-    fprintf(stderr, "\npre-push: FAILED at the step \"%s\"; run it again with:\n ", name);
-    for (size_t i = 0; argv[i] != nullptr; i++)
-        fprintf(stderr, " %s", argv[i]);
-    fputs("\n(`git push --no-verify` skips the check, only on the lead's word.)\n", stderr);
-    return status;
+// The command of the push: `smith check`, with the change since `base` as its selection unless the hook runs it whole.
+// `argv` takes the room of 8 words.
+static void pre_push_command(const char *smith, const char *base, const char **argv) {
+    size_t used = 0;
+    argv[used++] = smith;
+    argv[used++] = "check";
+    if (pre_push_changed_only) {
+        argv[used++] = "--changed";
+        argv[used++] = "--base";
+        argv[used++] = base;
+    }
+    argv[used] = nullptr;
 }
-
-static int pre_push_tests(const char *smith, const char *const *sources, size_t count);
 
 // args: the smith to use (built from this tree), the base ref.
 static int build_pre_push(SmithRun *run) {
@@ -3828,80 +3828,42 @@ static int build_pre_push(SmithRun *run) {
     const char *const *changed = build_gate_git(
         run, ".",
         (const char *[]){"diff", "--name-only", "--diff-filter=d", smith_fmt(run->b, "%s...HEAD", base), nullptr});
-    const char *sources[4096] = {};
-    size_t count = 0;
     bool other = false;
-    for (size_t i = 0; changed != nullptr && changed[i] != nullptr && count < 4000; i++) {
-        PrePushKind kind = pre_push_kind(changed[i]);
-        other = other || kind != PrePushKind_Docs;
-        if (kind == PrePushKind_Source) sources[count++] = changed[i];
-    }
+    for (size_t i = 0; changed != nullptr && changed[i] != nullptr && !other; i++)
+        other = !pre_push_is_doc(changed[i]);
     if (!other) {
         puts("pre-push: only docs changed: nothing to run");
         return 0;
     }
-    if (count > 0) {
-        const char *fmt[4100] = {smith, "fmt", "--dry-run", "--Werror"};
-        const char *lint[4100] = {smith, "lint", "--quiet"};
-        size_t f = 4, l = 3;
-        for (size_t i = 0; i < count; i++) {
-            fmt[f++] = sources[i];
-            lint[l++] = sources[i];
-        }
-        int status = pre_push_step("format", fmt);
-        status = status != 0 ? status : pre_push_step("lint", lint);
-        if (status != 0) return status;
-    }
-    return pre_push_tests(smith, sources, count);
-}
-
-static int pre_push_tests(const char *smith, const char *const *sources, size_t count) {
-    // The tests of the changed files themselves, without the ones only macOS runs (CI's Linux shards pass the same
-    // flag); the wider `--changed` selection stays in CI until it fits the budget (lead, 2026-11-11).
-    char names[4096] = "";
-    for (size_t i = 0; i < count; i++) {
-        const char *name = strrchr(sources[i], '/');
-        name = name != nullptr ? name + 1 : sources[i];
-        size_t length = strcspn(name, ".");
-        if ((length == 5 && strncmp(name, "build", 5) == 0) || strlen(names) + length + 2 >= sizeof names) continue;
-        snprintf(names + strlen(names), sizeof names - strlen(names), "%s*%.*s*", names[0] != '\0' ? "," : "",
-                 (int)length, name);
-    }
-    // `--test` fails when no test matches; a change with no test of its own is not a failure of the push.
-    if (names[0] == '\0') {
-        puts("pre-push: no test of its own among the changes");
-        return 0;
-    }
-    const char *const test[] = {smith, "test", "--skip-macos", "--test", names, nullptr};
-    const char *log = ".smith/pre-push-test.log";
-    printf("pre-push: tests of the changed files\n");
-    int status = build_spawn(&(BuildSpawn){.argv = test, .log = log, .tail = 30});
+    const char *command[8] = {};
+    pre_push_command(smith, mergebase[0], command);
+    const char *log = ".smith/pre-push-check.log";
+    puts("pre-push: smith check (fmt, docs, lint, test, prove)");
+    int status = build_spawn(&(BuildSpawn){.argv = command, .log = log, .tail = 30});
     if (status == 0) return 0;
-    FILE *file = fopen(log, "rb");
-    char text[65536] = "";
-    size_t used = file != nullptr ? fread(text, 1, sizeof text - 1, file) : 0;
-    if (file != nullptr) fclose(file);
-    text[used] = '\0';
-    if (strstr(text, "no test matches") != nullptr && strstr(text, "FAIL ") == nullptr) {
-        puts("pre-push: no test of its own among the changes");
-        return 0;
-    }
-    fprintf(stderr,
-            "\npre-push: FAILED at the step \"tests of the changed files\"; run it again with:\n  %s test --skip-macos "
-            "--test '%s'\n(`git push --no-verify` skips the check, only on the lead's word.)\n",
-            smith, names);
+    fputs("\npre-push: FAILED at smith check; run it again with:\n ", stderr);
+    for (size_t i = 0; command[i] != nullptr; i++)
+        fprintf(stderr, " %s", command[i]);
+    fprintf(stderr, "\n(the whole output is in %s; `git push --no-verify` skips the check, only on the lead's word.)\n",
+            log);
     return status;
 }
 
 static int build_pre_push_test(SmithRun *run) {
     (void)run;
-    bool ok =
-        pre_push_kind("knowledge/a.smith") == PrePushKind_Docs && pre_push_kind("README.md") == PrePushKind_Docs &&
-        pre_push_kind(".agents/skills/x/SKILL.md") == PrePushKind_Docs &&
-        pre_push_kind("runtime/a.c") == PrePushKind_Source && pre_push_kind("lib/a.smith") == PrePushKind_Source &&
-        pre_push_kind("build.c") == PrePushKind_Source && pre_push_kind(".github/ci.yml") == PrePushKind_Other &&
-        pre_push_kind("tree-sitter/src/parser.c") == PrePushKind_Other;
-    if (!ok) fputs("pre-push: a file is classified wrongly\n", stderr);
+    const char *command[8] = {};
+    pre_push_command("smith", "abc123", command);
+    // the selection is an argument of the one command: `--changed --base <sha>`, or nothing at all
+    bool shape = command[0] != nullptr && strcmp(command[1], "check") == 0 &&
+                 (pre_push_changed_only ? command[2] != nullptr && strcmp(command[2], "--changed") == 0 &&
+                                              strcmp(command[3], "--base") == 0 && strcmp(command[4], "abc123") == 0 &&
+                                              command[5] == nullptr
+                                        : command[2] == nullptr);
+    bool ok = pre_push_is_doc("knowledge/a.smith") && pre_push_is_doc("README.md") &&
+              pre_push_is_doc(".agents/skills/x/SKILL.md") && !pre_push_is_doc("runtime/a.c") &&
+              !pre_push_is_doc("lib/a.smith") && !pre_push_is_doc("build.c") && !pre_push_is_doc(".github/ci.yml") &&
+              !pre_push_is_doc("tree-sitter/src/parser.c") && shape;
+    if (!ok) fputs("pre-push: a file is classified wrongly or the command is not smith check\n", stderr);
     return ok ? 0 : 1;
 }
 
@@ -4200,7 +4162,7 @@ static int build_frontend_coverage(SmithRun *run) {
 // first push with nothing for the agent or the owner to do. A hooksPath someone already set is left alone. The hook
 // itself is written here, into the untracked .smith/hooks, and not kept in the repository: git runs a hook only as an
 // executable file, and no shell file is tracked (owner, 2026-10-25). It only finds a smith built from the tree; the
-// check is `smith build pre-push`.
+// check is `smith build pre-push`, which runs `smith check`.
 static const char *const build_pre_push_hook =
     "#!/bin/sh\n"
     "# Written by `smith build` (build.c, #3132). `git push --no-verify` skips it, only on the lead's word.\n"
@@ -4236,12 +4198,12 @@ static void build_pre_push_tasks(SmithBuild *b, const char *binary) {
         .run = build_pre_push,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "pre-push: the smith built from this tree"),
                            smith_option_value(b, "base", "origin/main", "pre-push: the base ref"), nullptr),
-        .description = "checking format, lint and the tests a push reaches (the pre-push hook, #3132)",
+        .description = "checking the push with smith check (the pre-push hook, #3132, #3163)",
     };
     smith_task(b, "pre-push", &pre_push);
     SmithStep pre_push_test = {
         .run = build_pre_push_test,
-        .description = "testing the pre-push check's file classes",
+        .description = "testing the pre-push check's docs rule and its command",
         .test = true,
     };
     smith_task(b, "test-pre-push", &pre_push_test);
