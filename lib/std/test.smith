@@ -369,8 +369,6 @@ export [[nodiscard]] Value value_of(auto v) {
         } else {
             return value_unsigned((U64)v, sizeof(typeof(v)));
         }
-    } else if constexpr (is_array(typeof(v))) { // an array is the address of its first element
-        return value_pointer(&v[0]);
     } else {
         return value_pointer(v);
     }
@@ -1078,20 +1076,12 @@ F64 distance_f64(F64 a, F64 b) {
 // |a - b| <= tolerance, for f32 or f64: the type is a's, and b and tolerance convert to it (`0.1` is not an f32: write
 // `0.1f`).
 export void check_near(auto a, typeof(a) b, typeof(a) tolerance) {
-    if constexpr (typeof(a) == F32) {
-        check_near_f32(a, b, tolerance);
-    } else {
-        check_near_f64(a, b, tolerance);
-    }
+    _Generic(a, F32: check_near_f32, F64: check_near_f64)(a, b, tolerance);
 }
 
 // a and b are f32 or f64 with the same bits.
 export void check_same_bits(auto a, typeof(a) b) {
-    if constexpr (typeof(a) == F32) {
-        check_same_bits_f32(a, b);
-    } else {
-        check_same_bits_f64(a, b);
-    }
+    _Generic(a, F32: check_same_bits_f32, F64: check_same_bits_f64)(a, b);
 }
 
 [[std::c_name("smith_check_equal_bool")]] export void check_equal_bool(Bool a, Bool b) {
@@ -3472,11 +3462,7 @@ void heartbeat(const Plan *plan, F64 now) {
         used += (Usize)__builtin_snprintf(line + used, sizeof line - used, "%s%s (%.0f s)", used > 0 ? ", " : "",
                                           job_names[job], now - run->start);
     }
-    if (used > 0) {
-        say("running: %s\n", &line[0]);
-    } else {
-        say("running: no test, the runner is between tests\n");
-    }
+    say("running: %s\n", used > 0 ? &line[0] : "no test, the runner is between tests");
 }
 
 // Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it (in table order) has
