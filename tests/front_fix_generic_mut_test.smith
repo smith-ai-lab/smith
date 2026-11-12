@@ -109,6 +109,31 @@ export void test_front_fix_generic_mut_an_index_loop_over_fields_that_uses_the_i
                  "            put(\", \")\n        put(f.name)\n");
 }
 
+// The ticket's example (#3322): the element bound without a type (`constexpr const f = fields(T)[i]`) names the loop,
+// and `fields(T)[i]` in the body is that name.
+export void test_front_fix_generic_mut_an_index_loop_over_fields_with_an_untyped_element_names_the_loop() {
+    expect_fixed("module m;\nvoid show(constexpr Type T, T *x) {\n"
+                 "    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {\n"
+                 "        constexpr auto f = fields(T)[i];\n        put(fields(T)[i].name);\n    }\n}\n",
+                 "fn show(T: type, x: *mut T):\n    for f in fields(T):\n        put(f.name)\n");
+}
+
+export void test_front_fix_generic_mut_an_index_loop_over_fields_with_an_untyped_element_and_the_index_enumerates() {
+    expect_fixed(
+        "module m;\nvoid names(constexpr Type T) {\n"
+        "    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {\n"
+        "        constexpr auto f = fields(T)[i];\n        if (i > 0) put(\", \");\n        put(f.name);\n    }\n}\n",
+        "fn names(T: type):\n    for (i, f) in enumerate(fields(T)):\n        if i > 0:\n"
+        "            put(\", \")\n        put(f.name)\n");
+}
+
+export void test_front_fix_generic_mut_an_index_loop_over_parameters_names_each_parameter() {
+    expect_fixed("module m;\nvoid show(constexpr Type F) {\n"
+                 "    for constexpr (Usize i = 0; i < countof(parameters(F)); i++) {\n"
+                 "        constexpr auto p = parameters(F)[i];\n        put(p.name);\n    }\n}\n",
+                 "fn show(F: type):\n    for p in parameters(F):\n        put(p.name)\n");
+}
+
 // A pointer parameter whose name is longer than the rest of the body is not a slice past the end of the source.
 export void test_front_fix_generic_mut_a_long_pointer_name_in_a_short_body_does_not_overrun() {
     expect_fixed("module m;\nexport I32 view(auto xs, void *memory, Usize n) {\n    return xs;\n}\n",
