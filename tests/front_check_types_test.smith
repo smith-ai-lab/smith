@@ -246,6 +246,30 @@ export void test_front_check_types_type_function_ends_in_an_unnamed_struct() {
     clean("pub fn Pair(T: type) -> type:\n    struct:\n        first: T\n        second: T\n");
 }
 
+// #3229: a call whose callee is the result of a type function builds a value of that type.
+export void test_front_check_types_calling_a_type_function_result_builds_an_enum_value() {
+    clean("pub fn Maybe(T: type) -> type:\n    enum:\n        some: T\n        none\n\n"
+          "fn wrap(v: usize) -> Maybe(usize):\n    Maybe(usize)(some = v)\n");
+}
+
+export void test_front_check_types_calling_a_type_function_result_builds_a_struct_value() {
+    clean("pub fn Pair(T: type) -> type:\n    struct:\n        first: T\n        second: T\n\n"
+          "fn both(a: i32, b: i32) -> Pair(i32):\n    Pair(i32)(first = a, second = b)\n\n"
+          "fn again(a: i32) -> Pair(i32):\n    Pair(i32)(a, a)\n");
+}
+
+export void test_front_check_types_a_type_function_applied_twice_gives_one_type() {
+    clean("pub fn Pair(T: type) -> type:\n    struct:\n        first: T\n        second: T\n\n"
+          "fn one(a: i32) -> Pair(i32):\n    Pair(i32)(a, a)\n\n"
+          "fn two(a: i32) -> Pair(i32):\n    p: Pair(i32) = Pair(i32)(a, a)\n    p\n");
+}
+
+export void test_front_check_types_a_built_value_checks_its_arguments_against_the_fields() {
+    fails("pub fn Pair(T: type) -> type:\n    struct:\n        first: T\n        second: T\n\n"
+          "fn bad(a: i32) -> Pair(i32):\n    Pair(i32)(first = a, second = a, third = a)\n",
+          "no field `third`", "");
+}
+
 export void test_front_check_types_other_declaration_in_a_function_is_not_yet_typed() {
     fails("fn f():\n    enum:\n        a\n        b\n", "not yet typed: a type or function declared inside a function",
           "");
