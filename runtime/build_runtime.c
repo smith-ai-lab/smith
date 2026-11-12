@@ -3591,7 +3591,10 @@ static size_t smith_shard_file_length(const char *name) {
 }
 
 // The CPU seconds the --costs file gives each test of `chosen` (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does
-// not name (read_costs in lib/std/test.smith).
+// not name (read_costs in lib/std/test.smith). The first line of a name wins: --weigh adds the answers of every process
+// that deals (the build's planner chooses the files, the step that finds the tests writes the table, each in a process
+// of its own) to the one file, and the store changes between them as tests pass, so a later answer must not move a test
+// to another part (#3350: a part's table named a file its build had not compiled).
 static void smith_shard_costs(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
                               size_t chosen_count, double *cost) {
     for (size_t i = 0; i < chosen_count; i++)
@@ -3606,7 +3609,7 @@ static void smith_shard_costs(const SmithTestShard *shard, const SmithTestFound 
         name += 1;
         name[strcspn(name, "\n")] = '\0';
         for (size_t i = 0; i < chosen_count; i++)
-            if (strcmp(found[chosen[i]].name, name) == 0) cost[i] = strtod(seconds + 1, nullptr);
+            if (cost[i] < 0 && strcmp(found[chosen[i]].name, name) == 0) cost[i] = strtod(seconds + 1, nullptr);
     }
     fclose(file);
 }
