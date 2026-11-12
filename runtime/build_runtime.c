@@ -3595,6 +3595,20 @@ static size_t smith_shard_file_length(const char *name) {
 static int smith_run_capture(const char *const *argv, const char *const **lines, bool combined);
 static const char *smith_shard_weighed; // the --weigh file this process has made: the split is asked for twice (below)
 
+// Adds the text of `from` to the end of `to` in one write, so that the builds of the test programs of a part, which run
+// together, do not cut each other's lines.
+static void smith_shard_append(const char *to, const char *from) {
+    FILE *in = fopen(from, "r");
+    FILE *out = fopen(to, "a");
+    if (in == nullptr || out == nullptr) smith_fail("--weigh: cannot add %s to %s", from, to);
+    setvbuf(out, nullptr, _IOFBF, (size_t)1 << 22);
+    char line[1024];
+    for (size_t guard = 0; guard < ((size_t)1 << 24) && fgets(line, sizeof line, in) != nullptr; guard++)
+        fputs(line, out);
+    fclose(in);
+    fclose(out);
+}
+
 // --weigh <file> (#3283): writes the tests of `chosen` to `<file>.suite`, one a line (the whole suite of this run: the
 // guard of the CI run compares it with what the parts did), and `<file>` is made by `smith test --cache weights`, the
 // weight of each test by what the store holds: next to nothing for one it will serve, the seconds of its last run for
@@ -3607,28 +3621,30 @@ static void smith_shard_weigh(const SmithTestShard *shard, const SmithTestFound 
     if (smith_shard_weighed != nullptr && strcmp(smith_shard_weighed, shard->weigh) == 0) return;
     smith_shard_weighed = shard->weigh;
     const char *self = getenv("SMITH_SELF");
+    // A part has a build for each test program and each deals its own tests: they ask the store about their own names
+    // (`names`, theirs alone) and add them to the files of the part, which only grow (one write each).
+    const char *names = smith_text("%s.names.%ld", shard->weigh, (long)getpid());
     const char *suite = smith_text("%s.suite", shard->weigh);
-    FILE *names = fopen(suite, "w");
-    if (names == nullptr) smith_fail("--weigh: cannot write %s", suite);
+    FILE *list = fopen(names, "w");
+    if (list == nullptr) smith_fail("--weigh: cannot write %s", names);
     for (size_t i = 0; i < chosen_count; i++)
-        fprintf(names, "%s\n", found[chosen[i]].name);
-    fclose(names);
-    FILE *out = fopen(shard->weigh, "w");
-    if (out == nullptr) smith_fail("--weigh: cannot write %s", shard->weigh);
+        fprintf(list, "%s\n", found[chosen[i]].name);
+    fclose(list);
+    smith_shard_append(suite, names);
     const char *const *lines = nullptr;
     if (self != nullptr) {
-        const char *const argv[] = {self,
-                                    "test",
-                                    "--cache",
-                                    "weights",
-                                    smith_text("%s", suite),
-                                    shard->macos == 2 ? "2" : (shard->macos == 1 ? "1" : "0"),
+        const char *const argv[] = {self,      "test", "--cache",
+                                    "weights", names,  shard->macos == 2 ? "2" : (shard->macos == 1 ? "1" : "0"),
                                     nullptr};
         (void)smith_run_capture(argv, &lines, false);
     }
+    FILE *out = fopen(shard->weigh, "a");
+    if (out == nullptr) smith_fail("--weigh: cannot write %s", shard->weigh);
+    setvbuf(out, nullptr, _IOFBF, (size_t)1 << 22);
     for (size_t i = 0; lines != nullptr && lines[i] != nullptr; i++)
         fprintf(out, "%s\n", lines[i]);
     fclose(out);
+    remove(names);
 }
 
 // The CPU seconds the --costs file gives each test of `chosen` (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does

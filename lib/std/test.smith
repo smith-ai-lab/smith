@@ -4376,14 +4376,16 @@ void say_misses(Plan *plan, const Options *options) {
     cache_store(plan);
 }
 
-// --weigh <file> (#3283): `<file>.part` lists the tests of this part, the ones it runs and the ones the store serves,
-// one a line, as they are before the store takes any out. The CI run compares the eight with the `<file>.suite` the
-// build wrote.
+// --weigh <file> (#3283): `<file>.part` is added the tests of this runner in this part, the ones it runs and the ones
+// the store serves, one a line, as they are before the store takes any out. A part has several runners (one a test
+// program), each adds its own in one write; the CI run compares the eight parts with the `<file>.suite` the builds
+// wrote.
 void write_part(const Plan *plan, const Options *options) {
     char path[path_capacity];
     __builtin_snprintf(path, sizeof path, "%s.part", options->costs);
-    c::FILE *part = c::fopen(path, "w");
+    c::FILE *part = c::fopen(path, "a");
     if (part == nullptr) return;
+    c::setvbuf(part, nullptr, 0, 1U << 22);
     for (Usize i = 0; i < plan->count; i++) {
         c::fputs(plan->tests[i]->name, part);
         c::fputs("\n", part);

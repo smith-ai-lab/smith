@@ -33,7 +33,7 @@ runs:
             echo "::error::split guard: part $part of $COUNT uploaded no list of its tests"
             exit 1
           fi
-          awk -v p="$part" '{ print "suite\t" p "\t" $0 }' "$folder/weights.tsv.suite" >>"$RUNNER_TEMP/split.tsv"
+          sort -u "$folder/weights.tsv.suite" | awk -v p="$part" '{ print "suite\t" p "\t" $0 }' >>"$RUNNER_TEMP/split.tsv"
           awk -v p="$part" '{ print "part\t" p "\t" $0 }' "$folder/weights.tsv.part" >>"$RUNNER_TEMP/split.tsv"
         done
         rc=0

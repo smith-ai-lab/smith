@@ -50,7 +50,7 @@ runs:
         mkdir -p .smith/log
         # --weigh (#3283): the build deals the tests by what the test store holds (the ones it will serve weigh next to
         # nothing, the others the seconds of their last run), every part by itself, and writes the weights, the whole
-        # suite (.suite) and this part's tests (.part) beside the logs; the `ci` job checks every test is in one part
+        # suite (.suite) and this part's tests (.part), a build and a runner for each test program adding theirs beside the logs; the `ci` job checks every test is in one part
         if [ "$COUNT" -gt 1 ]; then shard="--shard $PART/$COUNT --weigh $PWD/.smith/log/weights.tsv"; fi
         # shellcheck disable=SC2086
         "$SMITH" test $shard $FLAGS 2>&1 |
@@ -64,7 +64,7 @@ runs:
           echo "### tests linux $PART/$COUNT: $took s"
           # how the split was made: the tests the store was expected to serve, and the size of the part
           if [ -s .smith/log/weights.tsv ]; then
-            echo "split: $(head -n 1 .smith/log/weights.tsv | cut -c3-); this part $(wc -l <.smith/log/weights.tsv.part) tests"
+            echo "split: $(grep -h '^#' .smith/log/weights.tsv | cut -c3- | paste -sd';' -); this part $(wc -l <.smith/log/weights.tsv.part) tests"
           fi
           # a PR check's selection and the base it was made against (#3059: it once said 0 of 384 for every PR)
           grep -E '^smith test --changed: ([0-9]+ changed files? since|.*every test runs|.*whole suite)' "$RUNNER_TEMP/test.log" | head -n 2 || true
