@@ -1623,6 +1623,25 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
     return encoded;
 }
 
+// With a --shard or a selection (--test, --macos-only, --skip-macos), a project's build compiles only the test files of
+// the part or the chosen tests (#1200, #2998, #3179): the build there reads the arguments as `smith test` does, as the
+// option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A). Empty for neither.
+static const char *build_units_selection(SmithBuild *b, const char *const *given) {
+    const char *option = "";
+    for (size_t i = 0; given[i] != nullptr; i++) {
+        bool selects = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                       strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+        if (!selects) continue;
+        const char *encoded = "";
+        for (size_t k = 0; given[k] != nullptr; k++) {
+            const char *argument = build_encode_argument(b, given[k]);
+            encoded = smith_fmt(b, "%s;%s", encoded, argument);
+        }
+        option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
+    }
+    return option;
+}
+
 // The folder that holds the smith under test and its smith-cc. With no LLVM install to link smith from (a
 // documents-only pull request's `docs-linux`, #3160) the smith under test is the smith that runs this build, named by
 // its absolute path.
@@ -1660,19 +1679,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", running ? home : folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
-    // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
-    // `smith test` does, as the option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B
-    // and %0A).
-    const char *shard_option = "";
-    for (size_t i = 0; given[i] != nullptr; i++) {
-        if (strcmp(given[i], "--shard") != 0) continue;
-        const char *encoded = "";
-        for (size_t k = 0; given[k] != nullptr; k++) {
-            const char *argument = build_encode_argument(b, given[k]);
-            encoded = smith_fmt(b, "%s;%s", encoded, argument);
-        }
-        shard_option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
-    }
+    const char *shard_option = build_units_selection(b, given);
     SmithStep build_step = {
         .command = (const char *[]){"sh", "-c",
                                     smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
@@ -1728,14 +1735,15 @@ static void build_front_units(SmithBuild *b, const BuildConfig *config, const ch
         smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\" SMITH_LLVM=\"%s\"", folder, self,
                   config->llvm);
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    const char *const *given = smith_args(b);
     SmithStep build_step = {
-        .command =
-            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
-                             "sh", folder, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
+                                              build_units_selection(b, given)),
+                                    "sh", folder, nullptr},
         .inputs = inputs,
     };
     smith_task(b, "front-build", &build_step);
-    const char *const *given = smith_args(b);
     const char *quoted[256];
     size_t quoted_count = 0;
     if (getenv("SMITH_TEST_STATS") != nullptr) quoted[quoted_count++] = "'--stats'";
