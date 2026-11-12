@@ -3749,7 +3749,12 @@ static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e, Bool op
     }
     syntax::Edits fix = {};
     fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head));
-    fix[0] = (syntax::Edit){.span = e->span, .text = g->variant};
+    Str bound = g->variant;
+    Str named = g->bound;
+    if (countof(named) > 0) {
+        bound = named;
+    }
+    fix[0] = (syntax::Edit){.span = e->span, .text = bound};
     if (!g->head_sent) {
         for (Usize k = 0; k < countof(g->head); k++) {
             fix[1 + k] = g->head[k];
@@ -3809,6 +3814,39 @@ static void spoil_written(types::Checked *c, const ast::Expr *place) {
             place = place->kind.index.base;
         }
     }
+}
+
+// The first place of `needle` in `text`, or `countof(text)`.
+static Usize text_at(Str text, Str needle) {
+    Usize n = countof(needle);
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (same_text(text[i:i + n], needle)) return i;
+    }
+    return countof(text);
+}
+
+// A guard whose binding `v` is declared by a local further down the function binds `other` instead (#3205): the fixes
+// of its reads, from the error `from` on, are written again with the new name, the reads and the pattern of the test.
+export void rebind_guard(types::Checked *c, types::Guard *g, Usize from, Str other) {
+    Str old = msg(format::push(".", g->variant, "(", g->variant, ")"));
+    Str now = msg(format::push(".", g->variant, "(", other, ")"));
+    for (Usize k = from; k < c->error_count; k++) {
+        types::Error *e = &c->errors[k];
+        Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+        if (!inside || countof(e->fix) == 0 || !same_text(e->fix[0].text, g->variant)) {
+            continue;
+        }
+        e->fix[0].text = other;
+        for (Usize j = 1; j < countof(e->fix); j++) {
+            Str text = e->fix[j].text;
+            Usize at = text_at(text, old);
+            if (at == countof(text)) {
+                continue;
+            }
+            e->fix[j].text = msg(format::push(text[0:at], now, text[at + countof(old):countof(text)]));
+        }
+    }
+    g->bound = other;
 }
 
 // The fixes of the reads of a spoiled test, from the error `from` on, are taken back: the site stays as it is.

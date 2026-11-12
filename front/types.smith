@@ -1549,7 +1549,8 @@ export struct NodeType {
 // it guards: `if .v(v) := k:` or `.v(v) := k else: return`, and each read is `v` (#2494).
 export struct Guard {
     const ast::Expr *base; // `k`
-    Str variant;           // `v`, which is also the name the fix binds
+    Str variant;           // `v`, which is also the name the fix binds unless `bound` is set
+    Str bound;             // the name the fix binds when `v` is taken in the function: `v_value` (empty: `v`)
     ast::Span reads;       // the reads inside this span are the test's
     ast::Span skip;        // except those in this one: the `else` of `k != .v: return`, which runs without `v`
     syntax::Edits head;    // the edits that write the test itself

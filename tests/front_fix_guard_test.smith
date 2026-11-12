@@ -147,7 +147,10 @@ export void test_front_fix_guard_try_match_and_a_taken_name_keep_their_forms() {
                            "        .error(error): error\n"));
     Str taken = with_half("fn taken(n: i32) -> i32:\n    ok := 3\n    r := half(n)\n    if r == .error or r.ok > 9:\n"
                           "        return ok\n    r.ok\n");
-    expect_fixed(taken, taken);
+    // `ok` is a name of the function, so the binding is `ok_value` (#3205)
+    expect_fixed(taken, with_half("fn taken(n: i32) -> i32:\n    ok := 3\n    r := half(n)\n"
+                                  "    .ok(ok_value) := r else:\n        return ok\n    \n"
+                                  "    if ok_value > 9:\n        return ok\n    ok_value\n"));
 }
 
 // A variant test after the first conjunct of an `and` chain is a pattern where it stands (#3083; the lead, Q1 (b)): the

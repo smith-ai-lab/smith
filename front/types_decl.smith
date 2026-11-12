@@ -1062,6 +1062,25 @@ static Bool name_taken(types::Checked *r, Str name) {
     return taken != nullptr && taken->kind == .variable;
 }
 
+// The name a variant test binds the payload to: the variant's own name; for a Result's `ok`, `ok_value` where a
+// variable named `ok` is in scope (a second `.ok(ok) := r` in one function). Empty when the name is taken (#3205).
+static Str binding_name(types::Checked *r, Str variant) {
+    if (!name_taken(r, variant)) return variant;
+    Str none = "";
+    if (!types::same_text(variant, "ok")) return none;
+    Str other = msg(format::push(variant, "_value"));
+    if (name_taken(r, other)) return none;
+    return other;
+}
+
+// Whether the function being checked, from local `first` on, declares a local named `name`.
+static Bool local_named(Usize first, Str name) {
+    for (Usize k = first; k < state.local_count; k++) {
+        if (types::same_text(state.locals[k].name, name)) return true;
+    }
+    return false;
+}
+
 // The place a test reads the payload through: `p` for `p.*` (the reads are `p.v`, through the pointer), else `k`.
 static const ast::Expr *guard_base(const ast::Expr *tested) {
     if (tested->kind == .unary && tested->kind.unary.op == .dereference) {
@@ -1080,17 +1099,21 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
     const ast::Expr *left = binary_left(test);
     const ast::Expr *right = binary_right(test);
     Str variant = variant_name(right);
-    if (countof(variant) == 0 || name_taken(r, variant)) return;
-    Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
+    if (countof(variant) == 0) return;
+    Str bound = binding_name(r, variant);
+    if (countof(bound) == 0) return;
+    Str pattern = msg(format::push(".", variant, "(", bound, ") := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
     head[0] = edit_of(left->span.start, left->span.start, pattern);
     head[1] = edit_of(left->span.end, right->span.end, "");
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
-    add_guard(
-        r,
-        (types::Guard){
-            .base = guard_base(left), .variant = variant, .reads = then_branch->span, .head = head, .test = nullptr});
+    add_guard(r, (types::Guard){.base = guard_base(left),
+                                .variant = variant,
+                                .bound = bound,
+                                .reads = then_branch->span,
+                                .head = head,
+                                .test = nullptr});
 }
 
 // `if k == .v && rest: X` and `while k == .v && rest: X` (D12): a variant test that starts an `&&` chain binds the
@@ -1107,15 +1130,21 @@ static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast
     const ast::Expr *left = binary_left(tested);
     const ast::Expr *right = binary_right(tested);
     Str variant = variant_name(right);
-    if (countof(variant) == 0 || name_taken(r, variant)) return;
-    Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
+    if (countof(variant) == 0) return;
+    Str bound = binding_name(r, variant);
+    if (countof(bound) == 0) return;
+    Str pattern = msg(format::push(".", variant, "(", bound, ") := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
     head[0] = edit_of(left->span.start, left->span.start, pattern);
     head[1] = edit_of(left->span.end, right->span.end, "");
     ast::Span reads = {.start = tested->span.end, .end = body->span.end};
-    add_guard(
-        r, (types::Guard){.base = guard_base(left), .variant = variant, .reads = reads, .head = head, .test = nullptr});
+    add_guard(r, (types::Guard){.base = guard_base(left),
+                                .variant = variant,
+                                .bound = bound,
+                                .reads = reads,
+                                .head = head,
+                                .test = nullptr});
 }
 
 // The operands of a chain `a || b || c`, at most `countof(out)`; 0 when there are more.
@@ -1185,13 +1214,16 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     const ast::Expr *left = binary_left(tested);
     const ast::Expr *right = binary_right(tested);
     Str variant = option ? member_name(left) : variant_name(right);
-    if (countof(variant) == 0 || name_taken(r, variant)) return;
+    if (countof(variant) == 0 || (option && name_taken(r, variant))) return;
+    Str bound = "";
+    if (!option) bound = binding_name(r, variant);
+    if (!option && countof(bound) == 0) return;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
         types::Guard *g = &r->guards[i];
         Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
         if (covered && types::same_text(g->variant, variant)) return;
     }
-    Str pattern = option ? msg(format::push(variant, " := ")) : msg(format::push(".", variant, "(", variant, ") := "));
+    Str pattern = option ? msg(format::push(variant, " := ")) : msg(format::push(".", variant, "(", bound, ") := "));
     syntax::Edits head = {};
     if (count == 1) {
         head = mem::realloc(head, 2);
@@ -1205,17 +1237,18 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
             Str first = fixed_source[parts[0]->span.start:parts[at - 1]->span.end];
             before = msg(format::push("if ", first, leave, "\n", indent));
         }
-        Str bound = fixed_source[left->span.start:left->span.end];
+        Str place = fixed_source[left->span.start:left->span.end];
         U32 stop = at + 1 < count ? parts[at + 1]->span.start : parts[at]->span.end;
         Str after = "";
         if (at + 1 < count) after = msg(format::push(leave, "\n", indent, "if "));
         head = mem::realloc(head, 2);
         head[0] = edit_of(s->span.start, parts[at]->span.start, before);
-        head[1] = edit_of(parts[at]->span.start, stop, msg(format::push(pattern, bound, " else", after)));
+        head[1] = edit_of(parts[at]->span.start, stop, msg(format::push(pattern, place, " else", after)));
     }
     ast::Span reads = {.start = parts[at]->span.end, .end = end};
     add_guard(r, (types::Guard){.base = option ? member_base(left) : guard_base(left),
                                 .variant = variant,
+                                .bound = bound,
                                 .reads = reads,
                                 .skip = then_branch->span,
                                 .head = head,
@@ -1452,7 +1485,11 @@ static Bool note_field_chain_guard(types::Checked *r, const ast::Stmt *s, const 
 static Bool note_inline_guard(types::Checked *r, const ast::Stmt *s);
 
 static void note_inline_guard_hook(types::Checked *r, const ast::Stmt *s) {
-    (void)note_inline_guard(r, s);
+    if (note_inline_guard(r, s)) return;
+    // `if c == .ok: c.ok else: -1` used as a value: the reads in the `then` are the test's (#3205)
+    if (s->kind != .if_stmt || s->kind.if_stmt.else_branch == nullptr) return;
+    const ast::Expr *equal = variant_test(s->kind.if_stmt.condition, true);
+    if (equal != nullptr) note_then_guard(r, s, equal);
 }
 
 static Bool note_inline_guard(types::Checked *r, const ast::Stmt *s) {
@@ -2145,7 +2182,21 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     affine::check_body(r, root);                 // after the walk: it reads the types the walk recorded
     for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
         for (Usize k = first_local; k < state.local_count; k++) {
-            if (types::same_text(state.locals[k].name, r->guards[i].variant)) r->guards[i].spoiled = true;
+            Str bound = r->guards[i].variant;
+            Str named = r->guards[i].bound;
+            if (countof(named) > 0) {
+                bound = named;
+            }
+            if (!types::same_text(state.locals[k].name, bound)) continue;
+            // a Result's `ok` declared further down: the guard binds `ok_value` (#3205)
+            Str other = msg(format::push(r->guards[i].variant, "_value"));
+            Bool moved = types::same_text(bound, r->guards[i].variant) && !r->guards[i].option &&
+                         types::same_text(bound, "ok") && !local_named(first_local, other);
+            if (moved) {
+                types_expr::rebind_guard(r, &r->guards[i], first_error, other);
+            } else {
+                r->guards[i].spoiled = true;
+            }
         }
     }
     types_expr::drop_spoiled(r, first_error);
