@@ -200,7 +200,8 @@ export void test_frontend_coverage_excluded_files_leave_the_total() {
     scratch::release(run.err);
 }
 
-// #3037: a listed file that compiles, a listed fixture whose compile crashed and a bad line are errors of the job.
+// #3037: a listed fixture that compiles is a failure that stays in the total (#3207); a listed fixture whose compile
+// crashed and a bad line are errors of the job.
 export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
@@ -217,9 +218,11 @@ export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
     scratch::write(&p, "bad.txt", "b.smith\tbecause\n");
     scratch::write(&p, "twice.txt", "b.smith\terror-fixture\nb.smith\terror-fixture\n");
     scratch::Run passes = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=passes.txt smith run -- summarize table.tsv");
-    scratch::expect_failure("frontend_coverage: a listed file that compiles fails the job", &passes);
-    scratch::expect_contains("frontend_coverage: and says which one", passes.err,
-                             "a.smith is on the excluded list as an error fixture but compiles");
+    scratch::expect_status("frontend_coverage: a listed fixture that compiles does not stop the count", 0, &passes);
+    scratch::expect_contains("frontend_coverage: one line names it", passes.out,
+                             "frontend-excluded-compiles: a.smith\n");
+    scratch::expect_contains("frontend_coverage: it is a failure, not a pass", passes.out, "FAIL  a.smith");
+    scratch::expect_lacks("frontend_coverage: never a pass", passes.out, "pass  a.smith");
     scratch::Run crash = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=crash.txt smith run -- summarize crash.tsv");
     scratch::expect_failure("frontend_coverage: an error fixture that crashed fails the job", &crash);
     scratch::expect_contains("frontend_coverage: and says it had no diagnostic", crash.err,
