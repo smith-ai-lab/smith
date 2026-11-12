@@ -14,7 +14,7 @@ for what it changed, never the full check; the pre-push hook (`.smith/hooks/pre-
 **CI is GitHub's.** A pull request runs no check of its own (#3170): `.github/workflows/ci-pr.yml` has one job, `ci`, that succeeds at once so the pull request can enter the merge queue. The two checks are the pre-push hook on the runner's machine (fmt, lint and the changed files' tests) and the Linux suite in the merge queue (`.github/workflows/ci.yml`, on `merge_group`, on hosted runners; [ci-hosted](ci-hosted.md), #2822): a green pull request is not a green queue run; the one required check is `ci`. The macOS jobs run on a push to main and in the nightly run, never in a queue run, on hosted `macos-26`; the owner's Mac takes them only as overflow.
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
-(`gh pr merge N --auto`). The queue makes one group at a time (1, 2, 4 or 8 entries, by its health) on top of main, runs `ci` on the group
+(`gh pr merge N --auto`). The queue makes one group at a time (one entry, #3286) on top of main, runs `ci` on the group
 (`merge_group`) and, when it passes, squashes each pull request into one commit on main; a red group costs one run and
 the next ones, at size 1, find the pull request at fault ([queue](ci/queue.md)). The ruleset on `main` requires a pull request, the check
 `ci` and the queue, a linear history, and blocks force pushes: nobody pushes to main.
