@@ -445,3 +445,8 @@ export void test_front_check_types_a_record_whose_field_does_not_convert_is_refu
     fails(join(shapes(), "fn f(o: Odd) -> i32:\n    o.x\n\nfn g(p: Point) -> i32:\n    f(p)\n"),
           "the field `y` of `Odd`", "does not convert");
 }
+
+// The checker reads an `errdefer` body as it reads a `defer` body: an error inside it is reported (#3314).
+export void test_front_check_types_an_errdefer_body_is_checked() {
+    fails("fn f() -> i32:\n    errdefer nosuch_fn()\n    return 0\n", "nosuch_fn", "");
+}
