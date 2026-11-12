@@ -950,6 +950,17 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
             record = inner;
         }
     }
+    if (record.kind == .variant_enum && e->options.checked != nullptr) {
+        // `x.op` where the checker narrowed the payload enumeration `x` by `x is .unary` (#3226): the payload is stored
+        // behind the tag, so its place is the second field.
+        types::TypeRef seen = types::type_of(e->options.checked, w->expr->kind.member.base);
+        state::Ty payload = {};
+        if (seen != nullptr && !types::is_payload_enum(seen) &&
+            matching::narrowed_variant(e, record, seen, w->span, &payload)) {
+            base.llvm = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 1, "payload");
+            record = payload;
+        }
+    }
     if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {
         // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
         c::LLVMValueRef first = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 0, "data");

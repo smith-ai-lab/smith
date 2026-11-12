@@ -13,6 +13,7 @@ module front::emit_arith;
 
 import front::ast;
 import front::emit_debug as debug;
+import front::emit_match;
 import front::emit_option;
 import front::emit_state as state;
 import front::types;
@@ -484,6 +485,12 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
         // A `?T` name the checker narrowed to `T` (`if x != .none:`) reads its payload (#2481).
         types::TypeRef seen = types::type_of(e->options.checked, x);
         if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value, local.ty.kind.option);
+    }
+    if (local.ty.kind == .variant_enum && e->options.checked != nullptr) {
+        // A payload enumeration name the checker narrowed by `x is .v` has the variant's payload for its type (#3226).
+        types::TypeRef seen = types::type_of(e->options.checked, x);
+        if (seen != nullptr && !types::is_payload_enum(seen))
+            value = emit_match::narrowed_payload(e, value, seen, x->span);
     }
     state::push_value(e, value);
     return state::success();
