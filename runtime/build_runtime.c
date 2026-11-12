@@ -3609,17 +3609,37 @@ static void smith_shard_append(const char *to, const char *from) {
     fclose(out);
 }
 
+// The digest of the names of `chosen` and of the kind of run: what names a deal (FNV-1a, 64 bits).
+static unsigned long long smith_shard_digest(const SmithTestShard *shard, const SmithTestFound *found,
+                                             const size_t *chosen, size_t chosen_count) {
+    unsigned long long digest = 14695981039346656037ULL ^ (unsigned long long)shard->macos;
+    for (size_t i = 0; i < chosen_count; i++) {                         // bounded by the tests
+        for (const char *at = found[chosen[i]].name; *at != '\0'; at++) // bounded by the name
+            digest = (digest ^ (unsigned char)*at) * 1099511628211ULL;
+        digest = (digest ^ 10U) * 1099511628211ULL;
+    }
+    return digest;
+}
+
 // --weigh <file> (#3283): writes the tests of `chosen` to `<file>.suite`, one a line (the whole suite of this run: the
 // guard of the CI run compares it with what the parts did), and `<file>` is made by `smith test --cache weights`, the
 // weight of each test by what the store holds: next to nothing for one it will serve, the seconds of its last run for
 // one that will run. Every shard makes the same file, being a function of the commit and the store. Without a smith
 // to ask, or when it fails, the file holds no weights and every test weighs the same.
+//
+// The deal is made ONCE. The build asks for it twice, in two processes: to choose the files to compile (the declaration
+// of the tests) and to write the table (the scan step), and a store that answers differently the second time (a test
+// program that ran in between stored its tests) deals the files to other parts: the table then lists tests of a file
+// the part did not compile, and the link fails (#3356). So the answer is kept in `<file>.deal.<digest of the names>`,
+// written whole once (renamed into place) after the weights are in `<file>`; a build that finds it asks nothing.
 static void smith_shard_weigh(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
                               size_t chosen_count) {
-    // The build asks for the split twice, to choose the files to compile and to write the table, and both must see the
-    // same weights: the second asks nothing (the store may not change in between, and a smith costs a second to ask).
+    // The same process asks twice as well: the second asks nothing.
     if (smith_shard_weighed != nullptr && strcmp(smith_shard_weighed, shard->weigh) == 0) return;
     smith_shard_weighed = shard->weigh;
+    const char *deal =
+        smith_text("%s.deal.%016llx", shard->weigh, smith_shard_digest(shard, found, chosen, chosen_count));
+    if (access(deal, R_OK) == 0) return; // another build of this part made it: it is the deal
     const char *self = getenv("SMITH_SELF");
     // A part has a build for each test program and each deals its own tests: they ask the store about their own names
     // (`names`, theirs alone) and add them to the files of the part, which only grow (one write each).
@@ -3644,6 +3664,12 @@ static void smith_shard_weigh(const SmithTestShard *shard, const SmithTestFound 
     for (size_t i = 0; lines != nullptr && lines[i] != nullptr; i++)
         fprintf(out, "%s\n", lines[i]);
     fclose(out);
+    const char *temp = smith_text("%s.%ld", deal, (long)getpid());
+    FILE *made = fopen(temp, "w");
+    if (made == nullptr) smith_fail("--weigh: cannot write %s", temp);
+    for (size_t i = 0; lines != nullptr && lines[i] != nullptr; i++)
+        fprintf(made, "%s\n", lines[i]);
+    if (fclose(made) != 0 || rename(temp, deal) != 0) smith_fail("--weigh: cannot write %s", deal);
     remove(names);
 }
 

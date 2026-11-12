@@ -126,3 +126,30 @@ export void test_runner_shard_a_part_built_alone_is_the_same_part_of_a_full_buil
     scratch::expect_text("shard: ... and the part built alone has the two of its files and the library's", "3",
                          part_objects);
 }
+
+// The deal is made once (#3356): the build asks for the weights twice, in two processes (the files to compile, then the
+// table), and a store that answers differently the second time dealt the files to other parts, so the table listed
+// tests of a file the part had not compiled and the link failed. SMITH_WEIGHS_FLIP makes the store answer differently
+// on every second ask; the parts built alone must still link, list the same tests as a build of the whole, and hold
+// every test once.
+export void test_runner_shard_a_store_that_answers_twice_differently_still_gives_one_deal() {
+    scratch::Project p = runner::project("runner_base", "runner_shard");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *parts = "for i in 1 2; do rm -rf build flip.txt; SMITH_WEIGHS_FLIP=$PWD/flip.txt SMITH_RESULT_CACHE=on "
+                        "SMITH_OUTPUT=full smith "
+                        "test --list --shard $i/2 --weigh $PWD/w$i.tsv 2>&1 | grep '^shard::' | sed \"s/^/$i /\"; done";
+    scratch::expect_text(
+        "deal: both parts link and list, the 7 tests in all", "7",
+        scratch::capture(&p, format_pipe(format_pipe(parts, "awk '{ print $2 }'"), "sort -u | wc -l | tr -d ' '")));
+    scratch::expect_text("deal: ... none in two parts", "",
+                         scratch::capture(&p, format_pipe(format_pipe(parts, "awk '{ print $2 }'"), "sort | uniq -d")));
+    scratch::expect_text(
+        "deal: ... and the store was asked once for a part (the second build reads the deal)", "1",
+        scratch::capture(&p, "rm -rf build flip.txt; SMITH_WEIGHS_FLIP=$PWD/flip.txt SMITH_RESULT_CACHE=on "
+                             "SMITH_OUTPUT=full smith test --list --shard 1/2 --weigh $PWD/w9.tsv "
+                             ">/dev/null 2>&1; cat flip.txt"));
+}

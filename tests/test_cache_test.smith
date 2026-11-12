@@ -136,9 +136,8 @@ export void test_test_cache_a_run_records_each_tests_time_and_the_split_weighs_b
                          scratch::capture(&p, "head -n 1 weights.tsv"));
     // the files of a part only grow (each build and runner of a test program adds its lines), so a second run starts
     // clean
-    scratch::Run second =
-        scratch::sh(&p, "rm -f weights.tsv weights.tsv.suite weights.tsv.part; env SMITH_RESULT_CACHE=on "
-                        "SMITH_OUTPUT=full smith test --shard 1/1 --weigh weights.tsv 2>&1");
+    scratch::Run second = scratch::sh(&p, "rm -f weights.tsv*; env SMITH_RESULT_CACHE=on "
+                                          "SMITH_OUTPUT=full smith test --shard 1/1 --weigh weights.tsv 2>&1");
     scratch::expect_status("weigh: the second run passes", 0, &second);
     scratch::expect_text("weigh: ... its split knew the 3 tests the store serves (the fourth is marked uncached)",
                          "# 4 tests, 3 served by the store", scratch::capture(&p, "head -n 1 weights.tsv"));
