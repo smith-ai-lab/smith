@@ -33,6 +33,7 @@ import front::fix_method;
 import front::fix_opaque;
 import front::fix_payload;
 import front::fix_array;
+import front::fix_struct_list;
 import front::fix_bool;
 import front::fix_chain;
 import front::fix_const;
@@ -869,6 +870,7 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
     out = append(out, fix_payload::edits(source, checked));
     out = append(out, fix_array::edits(source, checked));
+    out = append(out, fix_struct_list::edits(source, checked));
     out = append(out, fix_bool::edits(source, checked));
     out = append(out, fix_const::edits(source));
     if (bindings_take_else()) out = append(out, fix_guard::edits(source));

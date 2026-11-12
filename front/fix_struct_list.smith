@@ -1,0 +1,120 @@
+// front::fix_struct_list, the fix-it for a positional list of a struct written as an array (#3315).
+//
+//   points: [2]Point = [[1, 2], [3, 4]]       points: [2]Point = [Point(1, 2), Point(3, 4)]
+//   Outer(pair = ["x", "yz"])                 Outer(pair = Pair("x", "yz"))
+//
+// The parser cannot tell the braces of `{1, 2}` that initialize a struct from those of an array: it writes `[1, 2]`.
+// The checker can: it reports `expected Point, found i32[2]` at the list when the place it stands in wants a struct.
+// When the type the message names is a record with as many fields as the list has items, the brackets are the
+// construction's parentheses and the type is written before them. A nested list of an array of arrays is accepted by
+// the checker and stays as it is.
+//
+//   fix_struct_list::edits(source, checked)   one fix for each such error
+module front::fix_struct_list;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::format;
+import std::mem;
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Bool starts_with(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    return same(text[0:countof(prefix)], prefix);
+}
+
+// The type the message `expected T, found ...` names, or empty when it has another shape.
+static Str expected_of(Str message) {
+    Str head = "expected ";
+    Str stop = ", found ";
+    if (!starts_with(message, head)) return "";
+    Str rest = message[countof(head):countof(message)];
+    for (Usize i = 0; i + countof(stop) <= countof(rest); i++) {
+        if (same(rest[i:i + countof(stop)], stop)) return rest[0:i];
+    }
+    return "";
+}
+
+// A type name as the messages print it: words, with `::` between the parts of a module's type.
+static Bool is_type_name(Str name) {
+    if (countof(name) == 0) return false;
+    for (Usize i = 0; i < countof(name); i++) {
+        char ch = name[i];
+        Bool word = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+        if (!word && ch != ':') return false;
+    }
+    return true;
+}
+
+// The record as smith's own syntax writes it: its name, which carries its module (`key::Key`), is `key.Key`; a type of
+// a module with a longer path has no spelling here, and its list stays.
+static Str written_name(types::TypeRef record) {
+    Str name = types::name_of(record);
+    char out[:] = format::push("");
+    Usize joins = 0;
+    for (Usize i = 0; i < countof(name); i++) {
+        if (name[i] == ':' && i + 1 < countof(name) && name[i + 1] == ':') {
+            out = format::push(out, ".");
+            joins += 1;
+            i += 1;
+            continue;
+        }
+        out = format::push(out, name[i:i + 1]);
+    }
+    if (joins > 1) return "";
+    return types::message_of(out);
+}
+
+// The array literal that spans exactly `span`, or null.
+static const ast::Expr *list_at(const types::Checked *c, ast::Span span) {
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *e = c->nodes[i].node;
+        if (e == nullptr || e->span.start != span.start || e->span.end != span.end) continue;
+        if (e->kind == .array_lit) return e;
+    }
+    return nullptr;
+}
+
+export core::Errors edits(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error found = c->errors[i];
+        if (countof(found.fix) > 0) continue;
+        Str name = expected_of(found.message);
+        if (!is_type_name(name)) continue;
+        const ast::Expr *list = list_at(c, found.span);
+        if (list == nullptr) continue;
+        const types::Symbol *symbol = types::lookup(&c->scopes, name);
+        if (symbol == nullptr || symbol->type == nullptr) continue;
+        types::TypeRef wanted = symbol->type;
+        if (wanted->kind != .record) continue;
+        if (!(list->kind == .array_lit)) continue;
+        if (countof(types::slots_of(wanted).items) != countof(list->kind.array_lit.items)) continue;
+        Str written = written_name(wanted);
+        if (countof(written) == 0) continue;
+        U32 start = list->span.start;
+        U32 end = list->span.end;
+        if (end <= start + 1 || end > countof(source) || source[start] != '[' || source[end - 1] != ']') continue;
+        core::Edits fix = {};
+        fix = mem::realloc(fix, 2);
+        Str closer = ")";
+        fix[0] = (core::Edit){.span = {.start = start, .end = start + 1},
+                              .text = types::message_of(format::push(written, "("))};
+        fix[1] = (core::Edit){.span = {.start = end - 1, .end = end}, .text = closer};
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError made = {};
+        made.span = found.span;
+        made.message = "a struct's value is written `T(a, b)`, not as an array";
+        made.fix = fix;
+        out[countof(out) - 1] = made;
+    }
+    return out;
+}
