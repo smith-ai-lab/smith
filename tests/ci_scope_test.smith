@@ -62,3 +62,26 @@ export void test_a_push_of_only_documents_is_scope_none_and_a_code_push_is_a_rel
           "knowledge/a.md: scope=none docs_tests=false mac_run=false\n"
           "lib/a.c: scope=release docs_tests=false mac_run=true\n");
 }
+
+// One diff, one answer wherever it is asked (#3163): the hook (`smith check --plan`, no event, from where the branch
+// left origin/main) and a queue entry (CI's Scope step with `merge_group`, the same base) give the same scope, document
+// tests and macOS decision, so a rule changed in one place only fails here. A pull request runs no check of its own
+// (#3170).
+static const char *const parity =
+    "o=$(mktemp -d) && git clone -q --bare . \"$o\" && git remote add origin \"$o\" && "
+    "parity() { EVENT=merge_group case_ \"$1\" | sed 's|^[^:]*:|queue:|'; git fetch -q origin main; "
+    "echo \"hook: $(smith check --plan | grep -E '^(scope|mac_run|docs_tests)=' | paste -sd' ')\"; }; ";
+
+static void check_parity(const char *label, const char *path, const char *answer) {
+    char want[512], cases[1024];
+    snprintf(cases, sizeof cases, "%sparity %s", parity, path);
+    snprintf(want, sizeof want, "queue: %s\nhook: %s\n", answer, answer);
+    check(label, cases, want);
+}
+
+export void test_the_hook_and_the_queue_agree_on_a_diff() {
+    check_parity("knowledge", "knowledge/a.md", "scope=docs docs_tests=false mac_run=false");
+    check_parity("readme", "README.md", "scope=docs docs_tests=true mac_run=false");
+    check_parity("code", "lib/a.c", "scope=full docs_tests=false mac_run=false");
+    check_parity("template", "templates/new/t.md", "scope=full docs_tests=false mac_run=false");
+}
