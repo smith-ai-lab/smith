@@ -126,6 +126,18 @@ export void test_front_fix_guard_the_else_binds_the_other_variant() {
                            "        total = error - 1\n    total\n"));
 }
 
+// A name the earlier test bound in the function is not reused: the `else` binds `error_value` (#3211).
+export void test_front_fix_guard_the_else_binds_error_value_where_error_is_bound_above() {
+    expect_fixed(
+        with_half("fn either(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n"
+                  "    if .error(error) := r:\n        total = error\n"
+                  "    if .ok(ok) := r:\n        total = ok\n    else:\n        total = r.error - 1\n    total\n"),
+        with_half("fn either(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n"
+                  "    if .error(error) := r:\n        total = error\n"
+                  "    if .ok(ok) := r:\n        total = ok\n    else if .error(error_value) := r:\n"
+                  "        total = error_value - 1\n    total\n"));
+}
+
 // A generic function's Result is read the same way.
 export void test_front_fix_guard_a_generic_result_is_bound() {
     Str wrap = "fn wrap(T: type, value: T) -> Result(T, i32):\n    .ok(value)\n";

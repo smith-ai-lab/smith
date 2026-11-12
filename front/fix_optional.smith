@@ -306,6 +306,95 @@ static core::Errors field_tests(core::Errors out, Str source, Usize start, Usize
     return out;
 }
 
+// The line of the `if` that holds the read at `at` and tests the name `name` (`name != .none` or `name == .some`), or
+// `countof(source)`: the nearest line above with less indent than the read's must be that `if`.
+static Usize test_line(Str source, Usize at, Str name) {
+    Usize indent = indent_of(source, line_start(source, at));
+    Usize line = line_start(source, at);
+    while (line > 0) {
+        line = line_start(source, line - 1);
+        Usize end = line_end(source, line);
+        if (blank(source, line, end)) continue;
+        Usize pad = indent_of(source, line);
+        if (pad >= indent) continue;
+        Str text = source[line + pad:end];
+        if (!starts_with(text, "if ")) return countof(source);
+        for (Usize i = 0; i + countof(name) + 9 <= countof(text); i++) {
+            if (!starts_with(text[i:countof(text)], name) || (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')))
+                continue;
+            Str after = text[i + countof(name):countof(text)];
+            if (starts_with(after, " != .none") || starts_with(after, " == .some")) return line;
+        }
+        return countof(source);
+    }
+    return countof(source);
+}
+
+// Whether `name` is assigned (`name = `) in `source[start:stop]`.
+static Bool assigned_in(Str source, Usize start, Usize stop, Str name) {
+    for (Usize i = start; i + countof(name) + 3 <= stop; i++) {
+        if (!starts_with(source[i:countof(source)], name) || (i > 0 && word_char(source[i - 1]))) continue;
+        if (starts_with(source[i + countof(name):countof(source)], " = ")) return true;
+    }
+    return false;
+}
+
+// The end of the block of the `if` at `line`: the first line after it that is not indented deeper.
+static Usize block_end(Str source, Usize line) {
+    Usize pad = indent_of(source, line);
+    Usize k = line_end(source, line) + 1;
+    while (k < countof(source)) {
+        Usize end = line_end(source, k);
+        if (!blank(source, k, end) && indent_of(source, k) <= pad) break;
+        k = end + 1;
+    }
+    return k < countof(source) ? k : countof(source);
+}
+
+// A read `name.some` of a name the checker cannot narrow (a `mut` name, assigned after its declaration) under an `if`
+// that tests it: the value is named first, `v := name` above the `if`, and the test and the read use `v` (item 27,
+// #3211). The `if` is the first read's; its other reads are single edits. Not when the block writes the name.
+static core::Errors named_copy(core::Errors out, Str source, Usize line, ast::Span read, Str name) {
+    Str copy = types::message_of(format::push(name, "_value"));
+    if (assigned_in(source, line, block_end(source, line), name)) return out;
+    for (Usize i = 0; i < countof(out); i++)
+        if (out[i].span.start == read.start) return out;
+    Str why = "a name that may change is named first, and the copy is tested and read";
+    Bool first = true;
+    for (Usize i = 0; i < countof(out); i++) {
+        core::Edits had = out[i].fix;
+        if (countof(had) > 1 && had[0].span.start == line) first = false;
+    }
+    core::Edits fix = {};
+    if (first) {
+        Usize pad = indent_of(source, line);
+        Str head = types::message_of(format::push(source[line:line + pad], copy, " := ", name, "\n"));
+        Str test = source[line:line_end(source, line)];
+        fix = mem::realloc(fix, 3);
+        fix[0] = (core::Edit){.span = {.start = (U32)line, .end = (U32)line}, .text = head};
+        Usize at = 0;
+        for (Usize i = 0; i + countof(name) + 9 <= countof(test); i++) {
+            Str after = test[i + countof(name):countof(test)];
+            if (starts_with(test[i:countof(test)], name) &&
+                !(i > 0 && (word_char(test[i - 1]) || test[i - 1] == '.')) &&
+                (starts_with(after, " != .none") || starts_with(after, " == .some"))) {
+                at = i;
+                break;
+            }
+        }
+        Usize from = line + at;
+        fix[1] = (core::Edit){.span = {.start = (U32)from, .end = (U32)(from + countof(name) + 9)},
+                              .text = types::message_of(format::push(copy, " != .none"))};
+        fix[2] = (core::Edit){.span = read, .text = copy};
+    } else {
+        fix = mem::realloc(fix, 1);
+        fix[0] = (core::Edit){.span = read, .text = copy};
+    }
+    out = mem::realloc(out, countof(out) + 1);
+    out[countof(out) - 1] = (core::ParseError){.span = read, .message = why, .fix = fix};
+    return out;
+}
+
 export core::Errors some_reads(Str source, const types::Checked *c) {
     core::Errors out = {};
     Str lead = "`.` needs a record, found `";
@@ -326,6 +415,9 @@ export core::Errors some_reads(Str source, const types::Checked *c) {
         if (!option && name) {
             Str why = "a name that is not an option is the value already: write it without `.some`";
             out = some_fix(out, e.span.end - 5, e.span.end, "", why);
+        } else if (option && name) {
+            Usize line = test_line(source, e.span.start, base);
+            if (line < countof(source)) out = named_copy(out, source, line, e.span, base);
         } else if (option && member_chain(base)) {
             out = field_tests(out, source, enclosing_function(source, e.span.start), e.span.start, base);
         }

@@ -319,6 +319,9 @@ export void test_front_types_convert_casts() {
     test::check_condition(cast_verdict(&t, readonly, plain).ok);
     test::check_condition(cast_verdict(&t, readonly, types::pointer_to(&t, byte, false)).ok);
     refused(cast_verdict(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
+    // C's `(T *)xs` of an array decays first; a Str is not its characters' address (cstr.of is).
+    test::check_condition(cast_verdict(&t, types::array_of(&t, byte, 8, false), plain).ok);
+    refused(cast_verdict(&t, t.text, plain), "expected I32 *", "found Str", "cstr.of(s)");
     refused(cast_verdict(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
     refused(cast_verdict(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
             "convert the parts one at a time");

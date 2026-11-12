@@ -892,6 +892,26 @@ export void end_scope(Emitter *e) {
     e->local_count = e->scope_marks[e->scope_count];
 }
 
+// The body of a union: an array of integers as wide as the strictest alignment of its members (at most 8 bytes), as
+// big as the biggest member rounded up to it. False without a data layout.
+export Bool union_body(Emitter *e, c::LLVMTypeRef named, const Ty fields[:]) {
+    if (e->target_data == nullptr) return false;
+    U64 size = 0;
+    U64 align = 1;
+    for (Usize i = 0; i < countof(fields); i++) {
+        U64 own = c::LLVMABISizeOfType(e->target_data, fields[i].llvm);
+        U64 own_align = (U64)c::LLVMABIAlignmentOfType(e->target_data, fields[i].llvm);
+        if (own > size) size = own;
+        if (own_align > align) align = own_align;
+    }
+    U64 unit = align > 8 ? 8 : align;
+    U64 rounded = (size + align - 1) / align * align;
+    c::LLVMTypeRef lanes[1] = {nullptr};
+    lanes[0] = c::LLVMArrayType2(c::LLVMIntTypeInContext(e->context, (U32)(unit * 8)), rounded / unit);
+    c::LLVMStructSetBody(named, lanes, 1, 0);
+    return true;
+}
+
 // A pointer's width in bits on the target; 64 when it has no data layout (the rule of emit_debug's `pointer_bits`).
 static U32 pointer_bits(Emitter *e) {
     if (e->target_data == nullptr) return 64;
