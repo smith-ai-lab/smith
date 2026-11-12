@@ -458,14 +458,18 @@ static core::Errors else_edits(core::Errors out, Str source, Usize at, Str name,
     if (body_end > countof(source)) body_end = countof(source);
     Usize start = function_start(source, head);
     Str body = source[next_line(source, head):body_end];
-    if (named_around(source, start, head, indent, variant) || code_word_at(body, variant) < countof(body)) return out;
+    // the binding is the variant's name; where that is taken in the function, `<variant>_value` (#3211)
+    Str bound = variant;
+    if (named_around(source, start, head, indent, bound) || code_word_at(body, bound) < countof(body))
+        bound = types::message_of(format::push(variant, "_value"));
+    if (named_around(source, start, head, indent, bound) || code_word_at(body, bound) < countof(body)) return out;
     Str why = "the `else` of a Result's test binds the other variant: write `else if .v(v) := r:`";
-    Str chained = types::message_of(format::push("else if .", variant, "(", variant, ") := ", name, ":"));
+    Str chained = types::message_of(format::push("else if .", variant, "(", bound, ") := ", name, ":"));
     out = add_why(out, head + indent, head + indent + 5, chained, why);
     Usize from = next_line(source, head);
     Usize found = variant_read_at(source[0:body_end], from, name, variant);
     while (found < body_end) {
-        out = add_why(out, found, found + countof(name) + 1 + countof(variant), variant, why);
+        out = add_why(out, found, found + countof(name) + 1 + countof(variant), bound, why);
         found = variant_read_at(source[0:body_end], found + 1, name, variant);
     }
     return out;
