@@ -1,6 +1,7 @@
 smith check: run all the project's checks
 
 usage: smith check [-v] [--changed [--base <ref>]] [--require <parts>|all] [-D<name>=<value>...]
+       smith check --part <parts>
        smith check --plan [--base <ref>] [--event <name>]
 
 flags:
@@ -8,6 +9,7 @@ flags:
   --changed           lint and test only what the change reaches; --base <ref> is what it is compared with
   --plan              print what the change touches and what runs (scope, docs_tests, mac_run, test_parts, ...); runs nothing
   --event <name>      with --plan: the GitHub event whose rules apply (push, merge_group, schedule, ...)
+  --part <parts>      run only these parts (a comma list of the --require names), as one job of CI does; the rest are left out, not reported
   --require <parts>   fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all
   -D<name>=<value>    an option the project's build.c reads
 

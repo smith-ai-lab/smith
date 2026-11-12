@@ -3950,6 +3950,7 @@ static const SmithVerb smith_verbs[] = {
      (const char *const[]){"smith test", "smith test --test parse --changed", nullptr}, nullptr},
     {"check", SmithVerb_ProjectBare, smith_check_project, "run all the project's checks",
      "smith check [-v] [--changed [--base <ref>]] [--require <parts>|all] [-D<name>=<value>...]\n"
+     "       smith check --part <parts>\n"
      "       smith check --plan [--base <ref>] [--event <name>]",
      (const SmithFlag[]){
          {"-v", "show every part's output and every task's time"},
@@ -3957,6 +3958,8 @@ static const SmithVerb smith_verbs[] = {
          {"--plan",
           "print what the change touches and what runs (scope, docs_tests, mac_run, test_parts, ...); runs nothing"},
          {"--event <name>", "with --plan: the GitHub event whose rules apply (push, merge_group, schedule, ...)"},
+         {"--part <parts>", "run only these parts (a comma list of the --require names), as one job of CI does; the "
+                            "rest are left out, not reported"},
          {"--require <parts>",
           "fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all"},
          {"-D<name>=<value>", "an option the project's build.c reads"},

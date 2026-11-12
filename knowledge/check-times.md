@@ -27,7 +27,7 @@ Keep the release smith first on `PATH` (smith-dev-build), copy the binary under 
   the checks. The checks were 45 to 60% of a big file's time.
 - **After an edit:** edit, `smith build`, `SMITH_LINT_CACHE=why SMITH_OUTPUT=full smith lint`, revert, and lint again.
   The cases of #3081: an exported function added to `lib/std/ascii.smith`, a comment in `smith.c`, a leaf `.c`.
-- **CI:** the queue run's job logs (`get_job_logs` with `tail_lines`) give the `check-lint` and `check-fmt-prove` lines
+- **CI:** the queue run's job logs (`get_job_logs` with `tail_lines`) give the `check` lines
   above; a failed PR run's log names the check that failed (what the checks catch).
 
 ## The causes found
