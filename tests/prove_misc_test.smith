@@ -770,14 +770,12 @@ export void test_prove_cache_follows_the_provers_identity() {
                            "\"$SMITH_REPO/.smith/include\" 2>&1";
     scratch::Run first = scratch::sh(&p, as_built);
     scratch::expect_status("identity: the first run proves", 0, &first);
-    scratch::Run second = scratch::sh(&p, as_built); // every answer is in the store now: the group is kept
-    lacks("identity: ... the second run reuses the answers, compiling", &second, "(not compiled)");
-    scratch::Run same = scratch::sh(&p, as_built);
-    has("identity: the same prover finds its record", &same, "(not compiled)");
+    scratch::Run second = scratch::sh(&p, as_built); // the first run proved the whole group: it kept its record
+    has("identity: the same prover finds its record", &second, "(not compiled)");
     scratch::Run other = scratch::sh(&p, as_other);
     scratch::expect_status("identity: another prover proves", 0, &other);
     lacks("identity: ... the group again, not from the first one's record", &other, "(not compiled)");
-    scratch::Run other_again = scratch::sh(&p, as_other); // its answers came from the store: its record is kept
+    scratch::Run other_again = scratch::sh(&p, as_other); // its first run kept its record too
     has("identity: ... and then finds its own", &other_again, "(not compiled)");
     scratch::Run back = scratch::sh(&p, as_built);
     has("identity: a return to the first prover finds its record", &back, "(not compiled)");

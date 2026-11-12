@@ -412,12 +412,13 @@ void cache_prune(const std::string &directory) {
 // ---- the group's record: a group whose every function was proved from the step store alone is not compiled again ----
 // Asking the store for a function's answers needs its IR, so a group that solves nothing new still paid for compiling
 // every source to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run
-// of a group ends with every function proved by answers of the step store alone (no query ran), the group keeps a
-// record: the files its compiles read (as the compilers' depfiles name them) with the digest of each, and the lines it
-// printed. The next run of the same group (the same sources, libraries, flags and options, the same prover, the same
-// compiler: smith_import_identity hashes the front end, the runtime, lib/std and the LLVM pack) reads the files named,
-// and when every digest holds, the compile would read the same bytes and prove the same: the lines are printed again.
-// Any other case runs as it did; a compile with no depfile, an unreadable file or a macro for the time keeps no record.
+// of a group ends with every function proved (by the solver or by answers of the step store, #3178: a second run of
+// the same group is then not compiled either), the group keeps a record: the files its compiles read (as the compilers'
+// depfiles name them) with the digest of each, and the lines it printed. The next run of the same group (the same
+// sources, libraries, flags and options, the same prover, the same compiler: smith_import_identity hashes the front
+// end, the runtime, lib/std and the LLVM pack) reads the files named, and when every digest holds, the compile would
+// read the same bytes and prove the same: the lines are printed again. Any other case runs as it did; a compile with no
+// depfile, an unreadable file or a macro for the time keeps no record.
 extern "C" const char smith_import_identity[];
 
 struct GroupRecord {
@@ -528,7 +529,7 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
     return true;
 }
 
-// Keeps the record of a group that ended with all of its functions reused from the cache.
+// Keeps the record of a group that ended with all of its functions proved.
 void group_keep(const GroupRecord &record, const std::vector<std::string> &depfiles, const Arguments &arguments) {
     if (record.path.empty()) return;
     std::set<std::string> dependencies;
@@ -1201,7 +1202,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     if (cached > 0) std::printf(", %u cached", cached);
     std::printf(" in %.2f s\n", seconds);
     say_coverage();
-    if (failed == 0 && cached == proved) {
+    if (failed == 0) {
         record.proved = proved;
         record.trusted = trusted;
         group_keep(record, depfiles, arguments);
