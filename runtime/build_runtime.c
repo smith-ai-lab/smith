@@ -3778,6 +3778,13 @@ static bool smith_shard_selected(const SmithTestShard *shard) {
     return shard->count > 0 || shard->filter[0] != '\0' || shard->macos != 0;
 }
 
+// The macOS choice a table records: only one that drops a test. `smith check` builds the runner for `--skip-macos` and
+// `smith prove` builds it for everything, and tables that differ only by the choice would take turns being rewritten,
+// relinking the runner each time (#3178, #3179).
+static size_t smith_shard_macos_choice(const SmithTestShard *shard, size_t kept, size_t count) {
+    return kept < count ? (size_t)shard->macos : 0;
+}
+
 // The step that finds the tests: .inputs are the files, .outputs the prototypes (tests_list.h) and the table
 // (tests_list.c). It rewrites a file only when its bytes change, so the step is restat. With a part in .args (the
 // runner's --shard, --costs, --test, --macos-only and --skip-macos), the table lists only the tests of that part or
@@ -3800,10 +3807,7 @@ static int smith_tests_scan(SmithRun *run) {
     bool selected = smith_shard_selected(shard);
     for (size_t i = 0; selected && i < count; i++) // the part's or the selection's tests, in order
         if (keep[i]) found[kept++] = found[i];
-    // A macOS choice that drops no test leaves the table as a plain build writes it: `smith check` builds the runner for
-    // `--skip-macos` and `smith prove` builds it for everything, and tables that differ only by the choice would take turns
-    // being rewritten, relinking the runner each time (#3178, #3179).
-    size_t macos_choice = kept < count ? (size_t)shard->macos : 0;
+    size_t macos_choice = smith_shard_macos_choice(shard, kept, count);
     if (selected) count = kept;
     const char **rows = SMITH_NEW_LIST(count);
     const char **thunks = SMITH_NEW_LIST(count);
@@ -4009,6 +4013,14 @@ static bool smith_tests_names_some(const char *const *args) {
     return false;
 }
 
+// The scan step's arguments: a macOS choice that leaves every file in is no selection, or `smith check` (--skip-macos)
+// and `smith prove` (nothing) would give the step different arguments and run it again after each other (#3178, #3179).
+static const char *const *smith_tests_scan_args(SmithBuild *b, const char *const *args, const char *const *kept,
+                                                const char *const *every) {
+    if (smith_tests_names_some(args) || smith_count(kept) != smith_count(every)) return args;
+    return smith_list(b, nullptr);
+}
+
 // The step that finds the tests (smith_tests_scan), over every file.
 static void smith_tests_declare_scan(SmithBuild *b, const SmithTests *copy, const char *const *shard_args,
                                      const char *list_header, const char *list_table) {
@@ -4042,13 +4054,9 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *shard_args = smith_tests_shard_args(b);
     const char *const *every_source = copy.sources;
     copy.sources = smith_tests_shard_sources(b, copy.sources, shard_args);
-    // A macOS choice that leaves every file in is no selection: `smith check` builds the runner for --skip-macos and
-    // `smith prove` builds it for everything, and a scan step whose arguments differ runs again after the other
-    // (#3178, #3179).
-    if (!smith_tests_names_some(shard_args) && smith_count(copy.sources) == smith_count(every_source))
-        shard_args = smith_list(b, nullptr);
     SmithTests every = copy;
     every.sources = every_source; // the scan reads every file: the part of a test depends on all of them
+    shard_args = smith_tests_scan_args(b, shard_args, copy.sources, every_source);
     smith_tests_declare_scan(b, &every, shard_args, list_header, list_table);
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
