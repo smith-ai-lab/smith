@@ -60,22 +60,25 @@ export void test_front_types_convert_integers_widen_never_narrow() {
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I64")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "U32")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "I64")), types_convert::widening));
-    refused(conv(&t, named(&t, "U64"), named(&t, "Usize")), "expected Usize", "found U64",
-            "write a conversion: x.to(Usize)"); // Usize is 32 bits on some targets (#2531)
+    refused(conv(&t, named(&t, "U64"), named(&t, "Usize")), "expected `usize`", "found `u64`",
+            "x.to(usize)"); // Usize is 32 bits on some targets (#2531)
     // D8 (#2625): usize is at least 32 bits everywhere, so these lose nothing.
     test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "Usize")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "Usize")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "Isize")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U16"), named(&t, "Isize")), types_convert::widening));
-    refused(conv(&t, named(&t, "U32"), named(&t, "Isize")), "expected Isize", "found U32",
-            "write a conversion: x.to(Isize)");
-    refused(conv(&t, named(&t, "I32"), named(&t, "Usize")), "expected Usize", "found I32",
-            "write a conversion: x.to(Usize)");
+    refused(conv(&t, named(&t, "U32"), named(&t, "Isize")), "expected `isize`", "found `u32`", "x.to(isize)");
+    refused(conv(&t, named(&t, "I32"), named(&t, "Usize")), "expected `usize`", "found `i32`", "x.to(usize)");
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I32")), types_convert::identity));
-    refused(conv(&t, named(&t, "I64"), named(&t, "I32")), "expected I32", "found I64", "write a conversion: x.to(I32)");
-    refused(conv(&t, named(&t, "I32"), named(&t, "U32")), "expected U32", "found I32", "write a conversion: x.to(U32)");
-    refused(conv(&t, named(&t, "U32"), named(&t, "I32")), "expected I32", "found U32", "write a conversion: x.to(I32)");
-    refused(conv(&t, named(&t, "I8"), named(&t, "U64")), "expected U64", "found I8", "write a conversion: x.to(U64)");
+    refused(conv(&t, named(&t, "I64"), named(&t, "I32")), "expected `i32`", "found `i64`", "x.to(i32)");
+    refused(conv(&t, named(&t, "I32"), named(&t, "U32")), "expected `u32`", "found `i32`", "x.to(u32)");
+    refused(conv(&t, named(&t, "U32"), named(&t, "I32")), "expected `i32`", "found `u32`", "x.to(i32)");
+    refused(conv(&t, named(&t, "I8"), named(&t, "U64")), "expected `u64`", "found `i8`", "x.to(u64)");
+    refused(conv(&t, named(&t, "I8"), named(&t, "U64")), "it can lose a value", "x.wrap(u64)", "to cut it to size");
+    refused(conv(&t, named(&t, "I64"), named(&t, "I32")), "it can lose a value", "x.wrap(i32)", "to check it fits");
+    test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "I16")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "F64")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "F64")), types_convert::widening));
 }
 
 export void test_front_types_convert_a_constant_that_fits_converts() {
@@ -111,8 +114,8 @@ export void test_front_types_convert_floats_and_integers_need_casts() {
     defer mem::set_allocator(outside);
     types::Table t = types::start(types::lp64());
     test::check_condition(is(conv(&t, named(&t, "F32"), named(&t, "F64")), types_convert::widening));
-    refused(conv(&t, named(&t, "F64"), named(&t, "F32")), "expected F32", "found F64", "write a conversion: x.to(F32)");
-    refused(conv(&t, named(&t, "F64"), named(&t, "I32")), "expected I32", "found F64", "write a conversion: x.to(I32)");
+    refused(conv(&t, named(&t, "F64"), named(&t, "F32")), "expected `f32`", "found `f64`", "x.to(f32)");
+    refused(conv(&t, named(&t, "F64"), named(&t, "I32")), "expected `i32`", "found `f64`", "x.to(i32)");
     // Always exact: the integer's bits fit the mantissa (24 for F32, 53 for F64).
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "F64")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "F64")), types_convert::widening));
@@ -121,11 +124,11 @@ export void test_front_types_convert_floats_and_integers_need_casts() {
     test::check_condition(is(conv(&t, named(&t, "I8"), named(&t, "F32")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "F64")), types_convert::widening));
     // Could round: a cast.
-    refused(conv(&t, named(&t, "I32"), named(&t, "F32")), "expected F32", "found I32", "write a conversion: x.to(F32)");
-    refused(conv(&t, named(&t, "U32"), named(&t, "F32")), "expected F32", "found U32", "write a conversion: x.to(F32)");
-    refused(conv(&t, named(&t, "I64"), named(&t, "F64")), "expected F64", "found I64", "may round");
-    refused(conv(&t, named(&t, "U64"), named(&t, "F64")), "expected F64", "found U64", "write a conversion: x.to(F64)");
-    refused(conv(&t, named(&t, "Usize"), named(&t, "F64")), "expected F64", "found Usize", "may round");
+    refused(conv(&t, named(&t, "I32"), named(&t, "F32")), "expected `f32`", "found `i32`", "x.to(f32)");
+    refused(conv(&t, named(&t, "U32"), named(&t, "F32")), "expected `f32`", "found `u32`", "x.to(f32)");
+    refused(conv(&t, named(&t, "I64"), named(&t, "F64")), "expected `f64`", "found `i64`", "x.to(f64)");
+    refused(conv(&t, named(&t, "U64"), named(&t, "F64")), "expected `f64`", "found `u64`", "x.to(f64)");
+    refused(conv(&t, named(&t, "Usize"), named(&t, "F64")), "expected `f64`", "found `usize`", "x.to(f64)");
     // An integer constant a float holds exactly converts; any other does not.
     types_convert::Literal zero = types_convert::constant(0);
     test::check_condition(
@@ -140,8 +143,8 @@ export void test_front_types_convert_floats_and_integers_need_casts() {
             "expected F32", "found I32", "16777217 is not exactly an F32");
     refused(types_convert::convert(&t, named(&t, "I64"), named(&t, "F64"), types_convert::constant(9007199254740993)),
             "expected F64", "found I64", "write a conversion: 9007199254740993.to(F64)");
-    refused(types_convert::convert(&t, named(&t, "F64"), named(&t, "I32"), types_convert::no_literal()), "expected I32",
-            "found F64", "write a conversion: x.to(I32)");
+    refused(types_convert::convert(&t, named(&t, "F64"), named(&t, "I32"), types_convert::no_literal()),
+            "expected `i32`", "found `f64`", "x.to(i32)");
 }
 
 export void test_front_types_convert_bool_and_enumerations() {
@@ -265,7 +268,7 @@ export void test_front_types_convert_values_become_some_and_ok() {
            types_convert::to_some));
     refused(types_convert::convert(&t, int32, types::option_of(&t, named(&t, "U8")), types_convert::constant(300)),
             "expected Option(U8)", "found I32", "300 does not fit U8");
-    refused(conv(&t, named(&t, "I64"), maybe), "expected Option(I32)", "found I64", "write a conversion: x.to(I32)");
+    refused(conv(&t, named(&t, "I64"), maybe), "expected `option(i32)`", "found `i64`", "x.to(i32)");
     refused(conv(&t, maybe, int32), "expected I32", "found Option(I32)", "test whether it holds a value first");
     refused(conv(&t, answer, int32), "expected I32", "found Result(I32, Str)", "try");
     refused(conv(&t, t.null_type, maybe), "expected Option(I32)", "found Null", ".none");
@@ -431,13 +434,12 @@ export void test_front_types_convert_usize_follows_the_target() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Table wide = types::start(types::lp64());
-    refused(conv(&wide, named(&wide, "U64"), named(&wide, "Usize")), "expected Usize", "found U64",
-            "write a conversion: x.to(Usize)");
+    refused(conv(&wide, named(&wide, "U64"), named(&wide, "Usize")), "expected `usize`", "found `u64`", "x.to(usize)");
     types::Table narrow = types::start((types::Target){.pointer_bytes = 4, .max_align = 8});
-    refused(conv(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")), "expected Usize", "found U64",
-            "write a conversion: x.to(Usize)");
-    refused(conv(&narrow, named(&narrow, "Usize"), named(&narrow, "U64")), "expected U64", "found Usize",
-            "write a conversion: x.to(U64)");
+    refused(conv(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")), "expected `usize`", "found `u64`",
+            "x.to(usize)");
+    refused(conv(&narrow, named(&narrow, "Usize"), named(&narrow, "U64")), "expected `u64`", "found `usize`",
+            "x.to(u64)");
     test::check_condition(cast_verdict(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")).checked);
     // A pointer is 32 bits there, so it casts to a U32 and not to a U64.
     types::TypeRef plain = types::pointer_to(&narrow, named(&narrow, "I32"), false);

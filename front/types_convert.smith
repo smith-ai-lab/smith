@@ -15,9 +15,10 @@
 //                                   to_some, to_ok, array_to_slice, add_const, to_void_pointer,
 //                                   null_to_pointer, text_from_chars, literal_to_pointer, cast) or `none` when refused.
 //                                   `message` is empty when `ok`; when refused it names what was expected, what was
-//                                   found and what to write: "expected U8, found I32: narrowing may lose a value; write
-//                                   a cast: (U8)x". A type that is already an error (`invalid`) or `Auto` converts with
-//                                   kind `identity`, so one mistake is reported once.
+//                                   found and what to write: "expected `u8`, found `i32`: it can lose a value; write
+//                                   `x.to(u8)` to check it fits, or `x.wrap(u8)` to cut it to size" (#3231). A type
+//                                   that is already an error (`invalid`) or `Auto` converts with kind `identity`, so
+//                                   one mistake is reported once.
 //
 // THE RULES (#414's baseline as the owner decided it on #1220, 2026-11-01, #1328)
 //   Implicit conversions never lose a value or type information; anything that could is refused with the written form.
@@ -66,7 +67,9 @@
 module front::types_convert;
 
 import front::types;
+import std::arena;
 import std::format;
+import std::mem;
 
 // Which rule allowed a conversion.
 // NOLINTBEGIN(readability-identifier-naming)
@@ -169,6 +172,33 @@ static Verdict no_rule(const Ctx *c) {
     return refuse(c, "there is no conversion between these types", "write the value as the expected type");
 }
 
+// The type's name in the spelling of the new syntax: `u8`, `i32`, `usize`.
+static Str lower_name(types::TypeRef t) {
+    Str shown = types::show(t);
+    char out[:] = mem::alloc_slice(char, countof(shown));
+    for (Usize i = 0; i < countof(shown); i++) {
+        char ch = shown[i];
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = (char)(ch + 32);
+        }
+        out[i] = ch;
+    }
+    return out;
+}
+
+// A number that cannot go in without a written conversion (#3231): the message names both ways out, `.to` that checks
+// the value fits and `.wrap` that cuts it to size.
+static Verdict lossy(const Ctx *c, Str why) {
+    Str to = lower_name(c->target_type);
+    Str from = lower_name(c->from);
+    Str expected = lower_name(c->shown);
+    Str text = msg(format::push("expected `", expected, "`, found `", from, "`: ", why, "; write `x.to(", to,
+                                ")` to check it fits, or `x.wrap(", to, ")` to cut it to size"));
+    if (c->target_type->kind == .floating)
+        text = msg(format::push("expected `", expected, "`, found `", from, "`: ", why, "; write `x.to(", to, ")`"));
+    return (Verdict){.message = text};
+}
+
 static Str literal_text(Literal lit) {
     if (lit.negative) return msg(format::push("-", lit.magnitude));
     return msg(format::push(lit.magnitude));
@@ -225,17 +255,16 @@ static Verdict integer_to_integer(const Ctx *c) {
                       msg(format::push("write a value that fits ", types::show(to), " or a conversion: ", number,
                                        ".to(", types::show(to), ")")));
     }
-    if (word) return needs_cast(c, "Usize and Isize have a different width on some targets");
+    if (word) return lossy(c, "usize and isize have a different width on some targets");
     if (types::signed_of(from) != types::signed_of(to) && types::bits_of(to) >= types::bits_of(from))
-        return needs_cast(c, "a sign change may lose a value");
-    return needs_cast(c, "narrowing may lose a value");
+        return lossy(c, "it can lose a value");
+    return lossy(c, "it can lose a value");
 }
 
 static Verdict to_integer(const Ctx *c) {
     const types::Ty *subject = c->from;
     if (subject->kind == .integer) return integer_to_integer(c);
-    if (subject->kind == .floating)
-        return needs_cast(c, "a float converts to an integer only by a cast, which drops the fraction");
+    if (subject->kind == .floating) return lossy(c, "it can lose a value");
     if (subject->kind == .bool_type) return needs_cast(c, "a Bool is not an integer");
     if (subject->kind == .enumeration) return needs_cast(c, "an enumeration is not an integer");
     return no_rule(c);
@@ -278,7 +307,7 @@ static Verdict to_floating(const Ctx *c) {
     if (subject->kind == .floating && types::bits_of(c->target_type) == types::bits_of(c->from) &&
         c->target_type == c->from)
         return accept(widening);
-    if (subject->kind == .floating) return needs_cast(c, "narrowing may lose precision");
+    if (subject->kind == .floating) return lossy(c, "it can lose a value");
     if (subject->kind == .integer && !is_word_size(c->from) && always_exact(c->from, mantissa(c->target_type)))
         return accept(widening);
     if (subject->kind == .integer && c->lit.is_constant) {
@@ -288,7 +317,7 @@ static Verdict to_floating(const Ctx *c) {
         return refuse(c, reason,
                       msg(format::push("write a conversion: ", number, ".to(", types::show(c->target_type), ")")));
     }
-    if (subject->kind == .integer) return needs_cast(c, "this integer may not be exact in the float, so it may round");
+    if (subject->kind == .integer) return lossy(c, "it can lose a value");
     return no_rule(c);
 }
 
