@@ -966,8 +966,8 @@ static ast::Expr *statement_value(parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Primary expressions
 
-// Whether the parenthesized arguments at `open` hold a lambda: `fn(x: i32) -> i32: ...` or `fn(): ...`. A type's arguments
-// never do (a function type has no parameter names).
+// Whether the parenthesized arguments at `open` hold a lambda: `fn(x: i32) -> i32: ...` or `fn(): ...`. A type's
+// arguments never do (a function type has no parameter names).
 static Bool lambda_in_arguments(const parse::Parser *p, Usize open) {
     Usize end = after_group(p, open, lex::left_paren, lex::right_paren);
     for (Usize i = open + 1; i < end; i += 1) {
