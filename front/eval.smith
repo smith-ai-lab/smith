@@ -929,7 +929,9 @@ static Bool coerced_scalar(Run *run, ast::Span at, Value v, types::TypeRef decla
         Whole w = whole(v.integer.magnitude, v.integer.negative);
         if (!fits(declared, w)) {
             failed(run, at,
-                   msg(format::push("`", show(v), "` does not fit `", types::show(declared), "` at compile time")));
+                   msg(format::push("`", show(v), "` does not fit `", types::show(declared),
+                                    "` at compile time; write `(", show(v), ").wrap(", types::show(declared),
+                                    ")` to cut it to size, or use a type that holds it")));
             return false;
         }
         *out = integer_value(w.magnitude, w.negative, declared);
