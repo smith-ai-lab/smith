@@ -229,6 +229,16 @@ export void test_front_types_decl_a_value_converts_to_some_but_option_is_not_a_v
     fails("Option(I32) x = 3;\nI32 y = x;", "expected I32", "Option(I32)");
 }
 
+// An option used where its `T` is wanted (#3228): an initializer, an assignment, an argument and a `return` each say it
+// in the language's words, and name the two ways out.
+export void test_front_types_decl_an_option_as_a_value_says_test_it_or_pass_it_up() {
+    Str words = "a value that may be absent (`?T`) is not a `T`";
+    fails("Option(I32) x = 3;\nI32 y = x;", words, "test it with `== .none`, or pass it up with `try`");
+    fails("Option(I32) x = 3;\nvoid f() { I32 y = 0; y = x; }", words, "name it first, then test the name");
+    fails("Option(I32) x = 3;\nI32 g(I32 a) { return a; }\nI32 f() { return g(x); }", words, "expected I32");
+    fails("Option(I32) x = 3;\nI32 f() { return x; }", words, "found Option(I32)");
+}
+
 export void test_front_types_decl_golden_of_the_use_cases() {
     golden("tests/front/types/decl_returns.txt",
            "I32 f(I32 a) { I32 b = a + 1; return b; }\nI32 g(Str s) { return s; }\nU8 big = 300;");
