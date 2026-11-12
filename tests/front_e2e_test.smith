@@ -501,6 +501,20 @@ export void test_front_e2e_import_c_names_are_read_through_the_binding() {
     remove_all(folder);
 }
 
+// A variable and a type of a header through the header's name (#3339): `unistd.optind` written and read, and
+// `sizeof(stdint.uint32_t)`; the emitter once said "unknown name" for both, as it took the header's name for a value.
+export void test_front_e2e_a_header_variable_and_type_are_named_through_the_header() {
+    use_header_flags();
+    Str folder = folder_for("c_variable");
+    Str source = "import c <unistd.h>\nimport c <stdint.h>\n\npub fn check() -> i32:\n"
+                 "    unistd.optind = 7\n    h := unistd.optind\n    if h != 7:\n        return 1\n"
+                 "    if (sizeof(stdint.uint32_t)).to(i32) != 4:\n        return 2\n    0\n";
+    compile::Report report = compile_module(folder, "variable", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
 // `let Word = stdint.uint32_t` names a type of the header (#2224): a parameter, a pointer to it and a use compile.
 export void test_front_e2e_a_let_names_a_type_of_a_header() {
     use_header_flags();
