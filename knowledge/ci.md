@@ -8,10 +8,10 @@ tags: [ci, process]
 
 **One branch and one pull request per change.** An agent works on its own branch, pushes it and opens a pull request
 (`gh pr create`, `Closes #N`). Locally it may run `smith fmt`, `smith lint`, `smith docs` and `smith test --changed`
-for what it changed, never the full check; the pre-push hook (`.smith/hooks/pre-push`, written by `smith build`, #3132) runs fmt, lint and the changed files' tests on a push, and everything else runs in the merge queue (owner,
+for what it changed, never the full check; the pre-push hook (`.smith/hooks/pre-push`, written by `smith build`, #3132) runs `smith check --changed` (fmt, docs, lint, the tests the change reaches, prove) on a push, and everything else runs in the merge queue (owner,
 2026-10-29).
 
-**CI is GitHub's.** A pull request runs no check of its own (#3170): `.github/workflows/ci-pr.yml` has one job, `ci`, that succeeds at once so the pull request can enter the merge queue. The two checks are the pre-push hook on the runner's machine (fmt, lint and the changed files' tests) and the Linux suite in the merge queue (`.github/workflows/ci.yml`, on `merge_group`, on hosted runners; [ci-hosted](ci-hosted.md), #2822): a green pull request is not a green queue run; the one required check is `ci`. The macOS jobs run on a push to main and in the nightly run, never in a queue run, on hosted `macos-26`; the owner's Mac takes them only as overflow.
+**CI is GitHub's.** A pull request runs no check of its own (#3170): `.github/workflows/ci-pr.yml` has one job, `ci`, that succeeds at once so the pull request can enter the merge queue. The two checks are the pre-push hook on the runner's machine (`smith check --changed`, the same command as the queue's with the change as its selection, #3163) and the Linux suite in the merge queue (`.github/workflows/ci.yml`, on `merge_group`, on hosted runners; [ci-hosted](ci-hosted.md), #2822): a green pull request is not a green queue run; the one required check is `ci`. The macOS jobs run on a push to main and in the nightly run, never in a queue run, on hosted `macos-26`; the owner's Mac takes them only as overflow.
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
 (`gh pr merge N --auto`). The queue makes one group at a time (one entry, #3286) on top of main, runs `ci` on the group

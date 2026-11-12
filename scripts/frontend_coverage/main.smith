@@ -561,6 +561,54 @@ static void print_cause_lines() {
     }
 }
 
+constexpr Usize fail_causes_listed = 8;
+constexpr Usize fail_cause_bytes = 200;
+constexpr Usize fail_distinct_max = 512;
+
+// Prints the line of the failing file whose rows are entries[first..end): `frontend-fail: <path> <stage> <n> <cause>
+// [; <cause> ...]` (#3271). The stage is the file's first failing one, `n` its errors; the causes are its distinct
+// causes (those of `frontend-cause:`, up to 200 bytes) in order of first appearance, the first 8 and `; +<k> more`.
+static void print_fail_line(Usize first, Usize end) {
+    Usize seen[fail_distinct_max];
+    Usize distinct = 0;
+    Usize listed = 0;
+    console::print("frontend-fail: ", (const char *)entries[first].path, " ", (const char *)entries[first].stage, " ",
+                   end - first);
+    for (Usize i = first; i < end; i++) {
+        char cause[message_size];
+        cause_of(cause[0:message_size], text_of(entries[i].message[0:message_size]));
+        struct Group *group = group_of(text_of(cause[0:message_size]));
+        Bool known = false;
+        for (Usize k = 0; k < distinct && k < fail_distinct_max; k++) {
+            if (seen[k] == group->appeared) known = true;
+        }
+        if (known) continue;
+        if (distinct < fail_distinct_max) seen[distinct] = group->appeared;
+        distinct += 1;
+        if (listed == fail_causes_listed) continue;
+        const char *cut = cause;
+        Usize length = 0;
+        while (cut[length] != '\0')
+            length += 1;
+        if (length > fail_cause_bytes) cause[fail_cause_bytes] = '\0';
+        console::print(listed == 0 ? " " : "; ", (const char *)cause);
+        listed += 1;
+    }
+    if (distinct > listed) console::print("; +", distinct - listed, " more");
+    console::print("\n");
+}
+
+// One `frontend-fail:` line for each failing file, in the table's order (the order of the tracked files, by path), so
+// the job log holds the per-file table without the artifact (#3271). Excluded files are out of `entries` already.
+static void print_fail_lines() {
+    Usize first = 0;
+    for (Usize i = 1; i <= entry_count; i++) {
+        if (i < entry_count && !starts_file(i)) continue;
+        if (!is_pass(&entries[first])) print_fail_line(first, i);
+        first = i;
+    }
+}
+
 // `frontend-errors: <errors> <files failing>` (#2731): every diagnostic and every failed file, for the CI summary.
 static void print_error_line() {
     Usize errors = 0;
@@ -784,6 +832,7 @@ static I32 summarize(const char file[:], const char *smith) {
     console::print("\n");
     print_error_line();
     print_cause_lines();
+    print_fail_lines();
     print_pair_lines();
     print_name_lines();
     return 0;

@@ -224,6 +224,13 @@ export void test_frontend_coverage_excluded_files_leave_the_total() {
                              "excluded  c.smith [old-form: #pragma]\n");
     scratch::expect_lacks("frontend_coverage: a listed file is not a failure", run.out, "FAIL  c.smith");
     scratch::expect_contains("frontend_coverage: its cause is not counted", run.out, "frontend-errors: 5 2\n");
+    scratch::expect_lacks("frontend_coverage: a listed file has no frontend-fail line", run.out,
+                          "frontend-fail: c.smith");
+    scratch::expect_contains("frontend_coverage: a file with two causes is one line with both (#3271)", run.out,
+                             "frontend-fail: b.smith check 4 expected <n> arguments, found <n>; unknown name `<name>`\n"
+                             "frontend-fail: e.smith check 1 unknown name `<name>`\n");
+    scratch::expect_lacks("frontend_coverage: a passing file has no frontend-fail line", run.out,
+                          "frontend-fail: a.smith");
     scratch::release(run.out);
     scratch::release(run.err);
 }
