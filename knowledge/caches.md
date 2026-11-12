@@ -20,6 +20,9 @@ from either is simply fetched or built again:
 - `packages/<hex>/`: what `smith_package` extracted (above).
 - `steps/`: the executor's compile steps (`m/` manifests, `r/` results; [the executor](executor.md) says what is keyed).
   The 31-day rule and #618's cap (`SMITH_CACHE_MAX`, least recently used first, the same `smith_cache_cutoff` code) apply;
+  **Why a step missed (#3300):** `SMITH_STEP_KEY_LOG=<file>` appends, for each step the cache keys, its command, the environment
+  lines, the compiler identity, each input's spec and path, the key, the number of variants its manifest held and the first line
+  of each variant that no longer holds. Run the same tree on two machines and diff the two files; `warm` prints its own.
   **A compile is keyed on what its compiler reads (#3175), not on the smith binary.** When the compiler of a step is the
   running smith, its place in the key is an identity `smith build` computed (`build_compile_identity` in `build.c`,
   compiled into `runtime/lint_identity.c`): for a C, C++ or Objective-C source the LLVM pack and the sources that run
