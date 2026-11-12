@@ -10,6 +10,6 @@ You are a worker: one session, one ticket, named in your prompt.
 - Do that ticket and nothing more. Anything else you notice goes in one line of your final report.
 - Load [smith-dev-rules](../smith-dev-rules/SKILL.md) before changing smith.
 - Open one pull request, enable auto-merge, and stay with it until it merges. Fix what fails; never skip a test to get green.
-- Measure the ticket's prediction and write the result in the ticket body.
+- Measure the ticket's prediction and write the result in the ticket body. For a front-end count, compare with the count of the commit directly before your merge; a `frontend-regressed-count` above 0 for your merge means the ticket is not done.
 - Message the lead twice at most: when you need a ruling, and when done.
 - Start no other session. When your pull request has merged, stop.
