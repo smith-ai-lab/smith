@@ -1050,6 +1050,20 @@ export Bool module_function_value(state::Emitter *e, const ast::Expr *x, state::
     return true;
 }
 
+// Whether the callee is the bare name of a global variable that holds a function (`chosen(bits)` with
+// `mut chosen: fn(u64) -> u64 = twice`).
+static Bool is_global_function_value(state::Emitter *e, const ast::Expr *callee) {
+    if (callee->kind != .name || !emit_memory::is_global_name(e, callee)) return false;
+    state::TyResult held = state::type_of_node(e, callee);
+    return held != .error && (held.ok.kind == .fn_value || held.ok.kind == .fn_pointer);
+}
+
+static state::Status call_global_function_value(state::Emitter *e, const ast::Expr *x, const ast::Expr *callee) {
+    state::TyResult held = state::type_of_node(e, callee);
+    if (held == .error) return {.error = held.error};
+    return lambdas::call_value(e, x, held.ok);
+}
+
 export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint hint) {
     if (written->kind != .call) {
         return state::fail("not a call", written->span);
@@ -1075,13 +1089,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
             (local.ty.kind == .fn_value || local.ty.kind == .fn_pointer))
             return lambdas::call_value(e, x, local.ty);
-        if (countof(path.segments) == 1 && !state::find_local(e, path.segments[0].text, &local) &&
-            e->options.checked != nullptr) {
-            // A global holding a function (`chosen(bits)` with `mut chosen: fn(u64) -> u64 = twice`).
-            state::TyResult held = state::type_of_node(e, callee);
-            if (held != .error && (held.ok.kind == .fn_value || held.ok.kind == .fn_pointer))
-                return lambdas::call_value(e, x, held.ok);
-        }
+        if (is_global_function_value(e, callee)) return call_global_function_value(e, x, callee);
         if (streams::is_call(x)) return streams::call(e, x);
     }
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
