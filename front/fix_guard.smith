@@ -690,6 +690,59 @@ static Bool chain_test(Str source, Usize cond, Usize colon, Str name, Str varian
     return *test_start < countof(source);
 }
 
+// Whether a fix already in `out` inside the bytes `start` to `stop` writes the name `name` (`name := ...`).
+static Bool named_by(core::Errors out, Usize start, Usize stop, Str name) {
+    Str written = types::message_of(format::push(name, " := "));
+    for (Usize i = 0; i < countof(out); i++) {
+        if (out[i].span.start < start || out[i].span.start >= stop) continue;
+        if (starts_with(out[i].fix[0].text, written)) return true;
+    }
+    return false;
+}
+
+// The test of a payload enumeration in an `and` chain written with `is` (#3227; items 27 and 28 of #3190): `k is .v`
+// narrows the name `k` to the payload of `v` to its right in the chain and in the body, so a read `k.v` is `k` and
+// `k.v.f` is `k.f`; no name is bound.
+//
+//   if n > 0 and s == .circle:               if n > 0 and s is .circle:
+//       return s.circle                          return s
+//
+// Only a name that cannot change narrows, so a `mut` name stays. A field (`e.kind`) is named first, in a line before
+// the `if` (`kind := e.kind`), and only where its test is the first conjunct of an `if`: the read moves before the
+// whole chain. The sites `is` cannot say (a field after another conjunct, a `while` or an `else if` of a field) keep
+// the pattern of an `if` or `while` head, which the checker reads. True when the edits were added.
+static Bool is_edits(core::Errors *out, Str source, Usize head, Usize keyword, Usize indent, Usize body_end, Str name,
+                     Str variant, Usize test_start, Usize test_end) {
+    Usize start = function_start(source, head);
+    Usize stop = function_end(source, start);
+    Str region = source[start:stop];
+    Str root = root_of(name);
+    if (code_word_at(region, types::message_of(format::push("mut ", root))) < countof(region)) return false;
+    Str bound = name;
+    Str why = "a variant test in an `and` chain narrows its name: write `k is .v`";
+    if (countof(root) < countof(name)) { // a field
+        Usize cond = head + indent + keyword;
+        if (keyword != 3 || test_start != cond) return false;
+        Usize dot = countof(name);
+        while (dot > 0 && name[dot - 1] != '.')
+            dot -= 1;
+        bound = name[dot:countof(name)];
+        if (code_word_at(region, bound) < countof(region) || named_by(*out, start, stop, bound))
+            bound = types::message_of(format::push(bound, "_value"));
+        if (code_word_at(region, bound) < countof(region) || named_by(*out, start, stop, bound)) return false;
+        Str naming = types::message_of(format::push(bound, " := ", name, "\n", source[head:head + indent]));
+        *out = add_why(*out, head + indent, head + indent, naming, why);
+    }
+    Str test = types::message_of(format::push(bound, " is .", variant));
+    *out = add_why(*out, test_start, test_end, test, why);
+    Usize found = variant_read_at(source[0:body_end], test_end, name, variant);
+    while (found < body_end) {
+        *out = add_why(*out, found, found + countof(name) + 1 + countof(variant), bound, why);
+        found = variant_read_at(source[0:body_end], found + 1, name, variant);
+    }
+    return true;
+}
+
 // The fixes that bind the read `name.variant` at `at` in an `and` chain above it, added to `out`.
 static core::Errors chain_edits(core::Errors out, Str source, Usize at, Str name, Str variant, Bool result) {
     Usize read_line = line_above(source, at + 1);
@@ -713,9 +766,12 @@ static core::Errors chain_edits(core::Errors out, Str source, Usize at, Str name
     if (!chain_test(source, cond, colon, name, variant, result, &test_start, &test_end)) return out;
     if (at < test_end) return out;
     if (fixed_at(out, test_start)) return out;
-    // The binding's name.
     Usize start = function_start(source, head);
     Usize stop = function_end(source, start);
+    if (!result && body_changes(source, test_end, body_end, name, variant, indent + 4)) return out;
+    if (!result && is_edits(&out, source, head, keyword, indent, body_end, name, variant, test_start, test_end))
+        return out;
+    // The binding's name.
     Str bound = variant;
     if (code_word_at(source[start:stop], variant) < stop - start || imported_name(source, variant)) {
         bound = types::message_of(format::push(variant, "_value"));
