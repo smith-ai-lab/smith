@@ -225,3 +225,10 @@ export void test_front_fix_blocks_a_for_with_a_pointer_declarator_after_the_firs
           "fn f():\n    mut at: char * = names\n    mut name: char * = next()\n    mut n: char = 0\n    while at:\n"
           "        use(at)\n        at += 1\n");
 }
+
+export void test_front_fix_blocks_a_for_constexpr_with_an_unbraced_body_gets_its_colon() {
+    check("fn f(rest...) -> i32 {\n    mut sum: i32 = 0\n    for constexpr (usize i = countof(rest); i > 0; i--)\n"
+          "        sum += rest[i - 1].to(i32) * i.to(i32)\n    return sum\n}\n",
+          "fn f(rest...) -> i32:\n    mut sum: i32 = 0\n    for constexpr (usize i = countof(rest); i > 0; i--):\n"
+          "        sum += rest[i - 1].to(i32) * i.to(i32)\n    return sum\n");
+}

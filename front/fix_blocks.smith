@@ -911,12 +911,27 @@ static void one_for(Str source, lex::Tokens tokens, Braces braces, Usize at, Dec
     }
 }
 
+// A `for constexpr (init; condition; step)` with its body on the lines under it: the header stays (it is unrolled at
+// compile time, never a `while`), and gets the `:` that starts the indented body.
+static void constexpr_for(Str source, lex::Tokens tokens, Usize at, Cuts *cuts) {
+    if (at + 2 >= countof(tokens) || tokens[at + 1].kind != lex::kw_constexpr) return;
+    if (tokens[at + 2].kind != lex::left_paren) return;
+    Usize close = close_paren(tokens, at + 2);
+    if (close == at + 2 || close + 1 >= countof(tokens)) return;
+    if (tokens[close + 1].kind == lex::left_brace || !tokens[close].line_break) return;
+    Usize body_indent = 0;
+    Usize indent = indent_of(source, tokens[at].span.start);
+    if (unbraced_end(source, tokens[close].span.end, indent, &body_indent) == 0) return;
+    add_cut(cuts, tokens[close].span.end, tokens[close].span.end, ":");
+}
+
 // Every C `for (init; condition; step)` that starts its line, outside the functions left alone.
 static void c_for_loops(Str source, lex::Tokens tokens, Braces braces, Cuts *cuts) {
     Declareds seen = {};
     for (Usize i = 0; i < countof(tokens); i++) {
         if (tokens[i].kind != lex::kw_for || in_skipped(braces, i)) continue;
         if (i > 0 && !tokens[i - 1].line_break) continue;
+        constexpr_for(source, tokens, i, cuts);
         one_for(source, tokens, braces, i, &seen, cuts);
     }
 }

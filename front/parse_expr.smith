@@ -485,7 +485,10 @@ struct ListFix {
     Bool complex;
 };
 
-// One designator: `.x` or `[2]`, or none when neither is at the position.
+static Bool at_old_lambda(const parse::Parser *p);
+
+// One designator: `.x` or `[2]`, or none when neither is at the position. A `[` that starts a lambda (`[](I32 a) {`)
+// is the item's value, not an index.
 static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count, ListFix *fix) {
     if (parse::at(p, lex::dot) &&
         (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
@@ -496,7 +499,7 @@ static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count, Li
         *count += 1;
         return true;
     }
-    if (parse::at(p, lex::left_bracket)) {
+    if (parse::at(p, lex::left_bracket) && !at_old_lambda(p)) {
         fix->complex = true;
         parse::advance(p);
         ast::Designator d = {.index = {.index = parse::expression(p)}};
@@ -963,6 +966,19 @@ static ast::Expr *statement_value(parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Primary expressions
 
+// Whether the parenthesized arguments at `open` hold a lambda: `fn(x: i32) -> i32: ...` or `fn(): ...`. A type's
+// arguments never do (a function type has no parameter names).
+static Bool lambda_in_arguments(const parse::Parser *p, Usize open) {
+    Usize end = after_group(p, open, lex::left_paren, lex::right_paren);
+    for (Usize i = open + 1; i < end; i += 1) {
+        if (parse::peek_at(p, i).kind != lex::kw_fn || parse::peek_at(p, i + 1).kind != lex::left_paren) continue;
+        lex::TokenKind first = parse::peek_at(p, i + 2).kind;
+        if (first == lex::name && parse::peek_at(p, i + 3).kind == lex::colon) return true;
+        if (first == lex::right_paren && parse::peek_at(p, i + 3).kind == lex::colon) return true;
+    }
+    return false;
+}
+
 // Whether the path at the position is called as a construction: `Point(x = 1)`, `Point(1, 2)` or the empty `Point()`,
 // in smith's own syntax (an applied type never has `name =` inside, and `T()` names no type with arguments).
 static Bool named_construction(const parse::Parser *p) {
@@ -978,6 +994,7 @@ static Bool named_construction(const parse::Parser *p) {
     if (parse::peek_at(p, last + 1).kind != lex::left_paren) return false;
     lex::TokenKind second = parse::peek_at(p, last + 2).kind;
     if (second == lex::right_paren) return true;
+    if (lambda_in_arguments(p, last + 1)) return true;
     // A type function takes a type first (`Option(i32)`, `vec(f32, 4)`), so a literal first is a positional field
     // (`Point(1, 2)`, #1813). A name first (`Point(a, b)`) stays a type until the checker can tell.
     if (second == lex::integer || second == lex::floating || second == lex::string || second == lex::character ||
