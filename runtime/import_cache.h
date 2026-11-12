@@ -1,12 +1,13 @@
-// The disk cache of the new front end's imports (#2891): what runtime/import_cache.c shares with front/ and shim/.
+// The disk cache of the new front end's imports (#2891, #3177: answers in the one store): what runtime/import_cache.c
+// shares with front/ and shim/.
 #pragma once
 
 #include "core.h"
 
 constexpr size_t smith_import_cache_key_size = 33; // 32 hex digits and the terminator
 
-// The folder of this smith's entries, `<cache>/smith/imports/<16 hex of smith_self_code_hash>`, or "" when the cache is
-// off ($SMITH_IMPORT_CACHE=0) or this smith's digest cannot be had. Worked out once a process.
+// This smith's import identity (16 hex digits, the first part of every entry's address in the store), or "" when the
+// cache is off ($SMITH_IMPORT_CACHE=0) or this smith has none. Worked out once a process.
 const char *smith_import_cache_folder(void);
 
 // The key of `size` bytes of key material: 32 hex digits of smith_self_quick_hash (not a cryptographic hash: the
@@ -24,7 +25,7 @@ void smith_import_cache_store(const char *kind, const char *key, const uint8_t *
 void smith_import_cache_count(const char *kind, bool hit);
 
 // Appends this process's counts to $SMITH_IMPORT_CACHE_LOG when it is set: one line `<hits> <misses>` for headers and
-// modules, which CI adds up, and the identity folder it used as a line of `$SMITH_IMPORT_CACHE_LOG.identity` (#2978).
+// modules, which CI adds up, and the identity it used as a line of `$SMITH_IMPORT_CACHE_LOG.identity` (#2978).
 void smith_import_cache_report(void);
 
 // A module's parse tree as an image (#2891): the parser runs twice, each time with every block it asks for taken from

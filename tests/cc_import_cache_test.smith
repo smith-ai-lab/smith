@@ -58,7 +58,7 @@ export void test_cc_import_cache_a_header_with_other_defines_is_another_entry() 
                                        "smith cc --front-end=new -c two.smith 2>&1; "
                                        "smith cc --front-end=new -DZZ_ONE -c one.smith 2>&1; "
                                        "smith cc --front-end=new -c two.smith 2>&1; cat log; "
-                                       "ls cache/smith/imports/*/h | wc -l");
+                                       "find cache/smith/steps/a -type f | wc -l");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_lacks("no diagnostics", run.out, "error");
@@ -89,13 +89,13 @@ export void test_cc_import_cache_a_damaged_entry_is_read_again() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     write_project(&p);
-    scratch::Run run = scratch::sh(
-        &p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
-            "smith cc --front-end=new -c a.smith -o one.o; "
-            "for f in cache/smith/imports/*/[hm]/*; do printf '\\377\\376\\375\\374' | dd of=$f bs=1 seek=96 "
-            "conv=notrunc 2>/dev/null; done; smith cc --front-end=new -c a.smith -o two.o; "
-            "smith cc --front-end=new -c a.smith -o three.o; cat log; "
-            "cmp one.o two.o && cmp one.o three.o && echo objects same");
+    scratch::Run run =
+        scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                        "smith cc --front-end=new -c a.smith -o one.o; "
+                        "for f in cache/smith/steps/a/*/*; do printf '\\377\\376\\375\\374' | dd of=$f bs=1 seek=96 "
+                        "conv=notrunc 2>/dev/null; done; smith cc --front-end=new -c a.smith -o two.o; "
+                        "smith cc --front-end=new -c a.smith -o three.o; cat log; "
+                        "cmp one.o two.o && cmp one.o three.o && echo objects same");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("damaged, then stored again", run.out,
@@ -110,7 +110,7 @@ export void test_cc_import_cache_is_off_when_the_variable_is_0() {
     write_project(&p);
     scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
                                        "SMITH_IMPORT_CACHE=0 smith cc --front-end=new -c a.smith; echo status $?; "
-                                       "test -e cache/smith/imports && echo cache made; test -e log && echo counted");
+                                       "test -e cache/smith/steps && echo cache made; test -e log && echo counted");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("it compiles", run.out, "status 0\n");
@@ -124,10 +124,9 @@ export void test_cc_import_cache_the_fixer_names_its_folder_by_the_same_identity
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     write_project(&p);
-    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache; smith cc --front-end=new -c a.smith -o a.o; "
-                                       "smith lint --fix util.smith; ls -d cache/smith/imports/*/ | wc -l; "
-                                       "for d in cache/smith/imports/*/; do "
-                                       "test -d cache/smith/fix-imports/$(basename $d) && echo same name; done");
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                                       "smith cc --front-end=new -c a.smith -o a.o; smith lint --fix util.smith; "
+                                       "test -d cache/smith/fix-imports/$(head -n 1 log.identity) && echo same name");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("the fixer ran", run.out, "util.smith: ");

@@ -2,24 +2,23 @@
 // reads std and each C header once; this keeps what it read on disk, so the next process, a CI job or another machine
 // with the same smith reads it from here.
 //
-// An entry is `<cache>/smith/imports/<identity>/<kind>/<key>`: `<identity>` is the first 16 hex digits of the import
-// identity `smith build` hashed (build_import_identity: every file under front/ and lib/std/, shim/cimport*, the
-// runtime's sources, build.c, the LLVM pack's identity, the compile flags and the format's version), so a smith built
-// from other sources reads none of another's entries and a format change needs nothing more; `<kind>` is `h` (a C
-// header's words, shim/cimport.cpp) or `m` (a module's parse tree, front/module_cache.smith); `<key>` is what the
-// caller hashed with smith_import_cache_key, which never holds a time, a machine's name or a folder outside the
-// project. An entry is a head (`SMIC`, the version, the payload's size and a hash of it) and the payload; one that
-// does not read back whole with its hash is a miss and is written again, never an error. A smith with no identity (a
-// build without LLVM, a test runner) has the cache off.
+// An entry is an answer in the one store (#3177, runtime/executor_cache.c, `steps/a/`, whose prune and cap apply): its
+// key is the SHA-256 of the first 16 hex digits of the import identity `smith build` hashed (build_import_identity:
+// every file under front/ and lib/std/, shim/cimport*, the runtime's sources, build.c, the LLVM pack's identity, the
+// compile flags and the format's version), the entry's kind and `<key>`, so a smith built from other sources reads none
+// of another's entries and a format change needs nothing more; `<kind>` is `h` (a C header's words, shim/cimport.cpp)
+// or `m` (a module's parse tree, front/module_cache.smith); `<key>` is what the caller hashed with
+// smith_import_cache_key, which never holds a time, a machine's name or a folder outside the project. An entry is a
+// head (`SMIC`, the version, the payload's size and a hash of it) and the payload; one that does not read back whole
+// with its hash is a miss and is written again, never an error. A smith with no identity (a build without LLVM, a test
+// runner) has the cache off.
 //
-// A hit touches its entry when the entry is more than a day old, and the folder's `used` stamp the same way. At most
-// once a day (`imports/pruned`) a store removes the folders of other identities unused for 14 days and, past
-// $SMITH_IMPORT_CACHE_MAX bytes (default 512 MB), this identity's oldest entries first.
+// A hit touches its entry when the entry is more than a day old.
 #include "import_cache.h"
 #include "core.h"
+#include "executor_cache.h"
 #include "package.h"
 
-#include <dirent.h>
 #include <sys/stat.h>
 #include <utime.h>
 
@@ -27,30 +26,15 @@ constexpr uint32_t smith_ic_magic = 0x43494d53; // "SMIC"
 constexpr uint32_t smith_ic_version = 1;
 constexpr size_t smith_ic_head = 32; // magic, version, size (8), hash (8), 8 spare
 constexpr time_t smith_ic_day = 86400;
-constexpr time_t smith_ic_unused = 14 * smith_ic_day;
-constexpr uint64_t smith_ic_default_max = (uint64_t)512 << 20;
-constexpr size_t smith_ic_entries_max = (size_t)1 << 16; // entries looked at by one prune
-constexpr size_t smith_ic_folders_max = 4096;
 
 typedef struct {
     bool asked;
-    char folder[PATH_MAX];
-    char base[PATH_MAX]; // <cache>/smith/imports
-    uint32_t counter;
+    char identity[17]; // the first 16 hex digits of the import identity, or "" when the cache is off
     uint32_t hits[2];
     uint32_t misses[2];
 } SmithImportCache;
 
 static SmithImportCache smith_ic;
-
-typedef struct {
-    char name[smith_import_cache_key_size + 2];
-    char kind;
-    time_t used;
-    uint64_t bytes;
-} SmithIcEntry;
-
-static SmithIcEntry smith_ic_entries[smith_ic_entries_max];
 
 // A hash of `size` bytes from `seed`: an entry's finds a damaged or truncated payload, and two seeds make a key. Not
 // cryptographic: the entries come from this machine or from CI, never from a stranger. Four lanes, so the multiplies do
@@ -92,20 +76,6 @@ static uint64_t smith_ic_identity(void) {
     return (uint64_t)smith_ic_magic | ((uint64_t)smith_ic_version << 32);
 }
 
-// $SMITH_IMPORT_CACHE_MAX: bytes, or with a k, M or G suffix (thousands, as SMITH_CACHE_MAX).
-static uint64_t smith_ic_limit(void) {
-    const char *text = getenv("SMITH_IMPORT_CACHE_MAX");
-    if (text == nullptr || *text == '\0') return smith_ic_default_max;
-    char *end = nullptr;
-    unsigned long long value = strtoull(text, &end, 10);
-    if (end == text) return smith_ic_default_max;
-    uint64_t unit = 1;
-    if (*end == 'k' || *end == 'K') unit = (uint64_t)1000;
-    if (*end == 'm' || *end == 'M') unit = (uint64_t)1000 * 1000;
-    if (*end == 'g' || *end == 'G') unit = (uint64_t)1000 * 1000 * 1000;
-    return (uint64_t)value * unit;
-}
-
 static void smith_ic_put64(uint8_t *out, uint64_t value) {
     for (size_t i = 0; i < 8; i++) // bounded by 8
         out[i] = (uint8_t)(value >> (8 * i));
@@ -116,28 +86,6 @@ static uint64_t smith_ic_take64(const uint8_t *in) {
     for (size_t i = 0; i < 8; i++) // bounded by 8
         value |= (uint64_t)in[i] << (8 * i);
     return value;
-}
-
-static bool smith_ic_write_file(const char *path, const uint8_t *data, size_t size) {
-    FILE *file = fopen(path, "wb");
-    if (file == nullptr) return false;
-    bool ok = fwrite(data, 1, size, file) == size;
-    return fclose(file) == 0 && ok;
-}
-
-// Writes `path` whole through a file beside it: a reader sees the old content or the new, never a part.
-static bool smith_ic_replace(const char *path, const uint8_t *head, size_t head_size, const uint8_t *data,
-                             size_t size) {
-    char temporary[PATH_MAX];
-    int written = snprintf(temporary, sizeof temporary, "%s.tmp-%d-%u", path, (int)getpid(), smith_ic.counter++);
-    if (written <= 0 || (size_t)written >= sizeof temporary) return false;
-    FILE *file = fopen(temporary, "wb");
-    if (file == nullptr) return false;
-    bool ok = fwrite(head, 1, head_size, file) == head_size && (size == 0 || fwrite(data, 1, size, file) == size);
-    ok = fclose(file) == 0 && ok;
-    if (ok && rename(temporary, path) == 0) return true;
-    unlink(temporary);
-    return false;
 }
 
 static void smith_ic_touch_when_old(const char *path, time_t now) {
@@ -157,22 +105,17 @@ static const char *smith_ic_build_identity(void) {
     return nullptr;
 }
 
+// The identity of this smith's entries (16 hex digits), or "" when the cache is off ($SMITH_IMPORT_CACHE=0) or this
+// smith has none: the callers ask it whether the cache is on. Worked out once a process.
 const char *smith_import_cache_folder(void) {
-    if (smith_ic.asked) return smith_ic.folder;
+    if (smith_ic.asked) return smith_ic.identity;
     smith_ic.asked = true;
-    smith_ic.folder[0] = '\0';
+    smith_ic.identity[0] = '\0';
     const char *given = getenv("SMITH_IMPORT_CACHE");
-    if (given != nullptr && strcmp(given, "0") == 0) return smith_ic.folder;
-    SmithPackageFault error;
-    char base[PATH_MAX];
-    if (!smith_cache_base(base, &error)) return smith_ic.folder;
-    int written = snprintf(smith_ic.base, sizeof smith_ic.base, "%s/imports", base);
-    if (written <= 0 || (size_t)written >= sizeof smith_ic.base) return smith_ic.folder;
+    if (given != nullptr && strcmp(given, "0") == 0) return smith_ic.identity;
     const char *identity = smith_ic_build_identity();
-    if (identity == nullptr) return smith_ic.folder;
-    written = snprintf(smith_ic.folder, sizeof smith_ic.folder, "%s/%.16s", smith_ic.base, identity);
-    if (written <= 0 || (size_t)written >= sizeof smith_ic.folder) smith_ic.folder[0] = '\0';
-    return smith_ic.folder;
+    if (identity != nullptr) snprintf(smith_ic.identity, sizeof smith_ic.identity, "%.16s", identity);
+    return smith_ic.identity;
 }
 
 void smith_import_cache_key(const void *material, size_t size, char key[smith_import_cache_key_size]) {
@@ -181,14 +124,26 @@ void smith_import_cache_key(const void *material, size_t size, char key[smith_im
              (unsigned long long)smith_ic_hash((const uint8_t *)material, size, 0x13198A2E03707344ULL));
 }
 
-// The file of an entry; false when the cache is off or the kind or key is not one this file makes.
-static bool smith_ic_path(const char *kind, const char *key, char *out) {
-    const char *folder = smith_import_cache_folder();
-    if (folder[0] == '\0' || strlen(kind) != 1 || strlen(key) != smith_import_cache_key_size - 1) return false;
+// The address of an entry in the store: the SHA-256 of the identity, the kind and the key; false when the cache is off
+// or the kind or key is not one this file makes.
+static bool smith_ic_address(const char *kind, const char *key, char hex[smith_sha256_hex_size]) {
+    const char *identity = smith_import_cache_folder();
+    if (identity[0] == '\0' || strlen(kind) != 1 || strlen(key) != smith_import_cache_key_size - 1) return false;
     for (size_t i = 0; key[i] != '\0'; i++) // bounded by the key's 32 digits
         if (!((key[i] >= '0' && key[i] <= '9') || (key[i] >= 'a' && key[i] <= 'f'))) return false;
-    int written = snprintf(out, PATH_MAX, "%s/%s/%s", folder, kind, key);
-    return written > 0 && written < PATH_MAX;
+    const char *const parts[] = {"smith-import 2", identity, kind, key};
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    for (size_t i = 0; i < sizeof parts / sizeof parts[0]; i++) // bounded by the parts
+        smith_sha256_update(&sha, (const uint8_t *)parts[i], strlen(parts[i]) + 1);
+    smith_sha256_final(&sha, hex);
+    return true;
+}
+
+// The file of an entry in the store; false when the cache is off or the kind or key is not one this file makes.
+static bool smith_ic_path(const char *kind, const char *key, char *out) {
+    char hex[smith_sha256_hex_size];
+    return smith_ic_address(kind, key, hex) && smith_stepcache_answer_file(hex, out);
 }
 
 size_t smith_import_cache_load(const char *kind, const char *key, uint8_t *out, size_t capacity) {
@@ -212,96 +167,14 @@ size_t smith_import_cache_load(const char *kind, const char *key, uint8_t *out, 
     return result;
 }
 
-// Collects this digest's entries of one kind into the table, from `count` on; returns the new count.
-static size_t smith_ic_collect(const char *folder, char kind, size_t count, uint64_t *total) {
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/%c", folder, kind);
-    DIR *dir = opendir(path);
-    if (dir == nullptr) return count;
-    for (struct dirent *e = readdir(dir); e != nullptr && count < smith_ic_entries_max; e = readdir(dir)) {
-        if (strlen(e->d_name) != smith_import_cache_key_size - 1) continue; // `.`, `..`, a file being written
-        char entry[PATH_MAX];
-        struct stat info;
-        snprintf(entry, sizeof entry, "%s/%s", path, e->d_name);
-        if (stat(entry, &info) != 0) continue;
-        SmithIcEntry *row = &smith_ic_entries[count++];
-        snprintf(row->name, sizeof row->name, "%s", e->d_name);
-        row->kind = kind;
-        row->used = info.st_mtime;
-        row->bytes = (uint64_t)info.st_size;
-        *total += row->bytes;
-    }
-    closedir(dir);
-    return count;
-}
-
-static int smith_ic_older(const void *a, const void *b) {
-    const SmithIcEntry *x = a;
-    const SmithIcEntry *y = b;
-    return (x->used > y->used) - (x->used < y->used);
-}
-
-// Past the limit, this digest's oldest entries go first until the folder is under it.
-static void smith_ic_prune_size(void) {
-    uint64_t max = smith_ic_limit();
-    uint64_t total = 0;
-    size_t count = smith_ic_collect(smith_ic.folder, 'h', 0, &total);
-    count = smith_ic_collect(smith_ic.folder, 'm', count, &total);
-    if (total <= max) return;
-    qsort(smith_ic_entries, count, sizeof smith_ic_entries[0], smith_ic_older);
-    for (size_t i = 0; i < count && total > max; i++) { // bounded by count
-        char path[PATH_MAX];
-        snprintf(path, sizeof path, "%s/%c/%s", smith_ic.folder, smith_ic_entries[i].kind, smith_ic_entries[i].name);
-        if (unlink(path) == 0) total -= smith_ic_entries[i].bytes;
-    }
-}
-
-// The folders of other digests whose `used` stamp is older than 14 days.
-static void smith_ic_prune_folders(time_t now) {
-    DIR *dir = opendir(smith_ic.base);
-    if (dir == nullptr) return;
-    size_t seen = 0;
-    const char *own = smith_ic.folder + strlen(smith_ic.base) + 1;
-    for (struct dirent *e = readdir(dir); e != nullptr && seen < smith_ic_folders_max; e = readdir(dir), seen++) {
-        if (strlen(e->d_name) != 16 || strcmp(e->d_name, own) == 0) continue;
-        char path[PATH_MAX];
-        struct stat info;
-        snprintf(path, sizeof path, "%s/%s/used", smith_ic.base, e->d_name);
-        if (stat(path, &info) == 0 && now - info.st_mtime <= smith_ic_unused) continue;
-        snprintf(path, sizeof path, "%s/%s", smith_ic.base, e->d_name);
-        smith_package_remove(path);
-    }
-    closedir(dir);
-}
-
-// Once a day: the stamp `imports/pruned` says when the last prune ran.
-static void smith_ic_prune_when_due(void) {
-    char stamp[PATH_MAX];
-    time_t now = time(nullptr);
-    snprintf(stamp, sizeof stamp, "%s/pruned", smith_ic.base);
-    struct stat info;
-    if (stat(stamp, &info) == 0 && now - info.st_mtime < smith_ic_day) return;
-    smith_ic_write_file(stamp, (const uint8_t *)"", 0);
-    smith_ic_prune_folders(now);
-    smith_ic_prune_size();
-}
-
 void smith_import_cache_store(const char *kind, const char *key, const uint8_t *data, size_t size) {
-    char path[PATH_MAX];
-    if (!smith_ic_path(kind, key, path)) return;
-    char folder[PATH_MAX];
-    snprintf(folder, sizeof folder, "%s/%s", smith_ic.folder, kind);
-    if (!smith_package_make_folders(folder)) return;
-    char used[PATH_MAX];
-    snprintf(used, sizeof used, "%s/used", smith_ic.folder);
-    if (access(used, F_OK) != 0) smith_ic_write_file(used, (const uint8_t *)"", 0);
-    smith_ic_touch_when_old(used, time(nullptr));
+    char hex[smith_sha256_hex_size];
+    if (!smith_ic_address(kind, key, hex)) return;
     uint8_t head[smith_ic_head] = {};
     smith_ic_put64(head, smith_ic_identity());
     smith_ic_put64(head + 8, size);
     smith_ic_put64(head + 16, smith_ic_hash(data, size, 0));
-    smith_ic_replace(path, head, sizeof head, data, size);
-    smith_ic_prune_when_due();
+    smith_stepcache_answer_put_parts(hex, (const char *)head, sizeof head, (const char *)data, size);
 }
 
 void smith_import_cache_count(const char *kind, bool hit) {
