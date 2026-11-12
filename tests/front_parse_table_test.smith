@@ -1,0 +1,24 @@
+// A table written over two lines, then another declaration, in the fixer's braced text (#3206): without layout tokens
+// the `]` that ends the table is followed by the next line's `const`, which must not read as the type of an array type.
+module front_parse_table_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+export void test_parse_table_a_table_over_two_lines_ends_with_its_bracket() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "const base: [4]u16 = [3,  4,  5,\n"
+                 "                     31]\n"
+                 "const extra: [4]u8 = [0, 0, 1, 1]\n"
+                 "\n"
+                 "fn first() -> u16 { return base[0] }\n";
+    parser::Parsed parsed = parser::parse_new_braces("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    test::golden("tests/front/parse_decl/braced_table.txt", ast::dump(&parsed.module));
+}

@@ -1,0 +1,7 @@
+(module 
+  (variable base constexpr new (array (named u16) (integer 4)) (array_literal (integer 3) (integer 4) (integer 5) (integer 31)))
+  (variable extra constexpr new (array (named u8) (integer 4)) (array_literal (integer 0) (integer 0) (integer 1) (integer 1)))
+  (function first
+    (result (named u16))
+    (block
+      (return (index (name base) (integer 0))))))
