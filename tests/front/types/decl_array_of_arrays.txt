@@ -1,0 +1,4 @@
+function sum: F32 (F32[:][:])
+function f: F32 (F32[2][2])
+function g: F32 (I32[2][2])
+error 107-108: expected F32[:][:], found I32[2][2]: the elements are different types; write a conversion: x.to(F32[:][:])

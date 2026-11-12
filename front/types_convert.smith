@@ -393,6 +393,19 @@ static Verdict to_pointer(const Ctx *c) {
     return no_rule(c);
 }
 
+// Whether `have` is what `want` is wanted as, one level at a time, const dropped: the same type, or an array of the
+// same element as a slice (an array of arrays is a slice of slices by the same rule one level down). A slice or a
+// pointer type carries no const in the final language (#3235 item 41), so const is no part of the comparison.
+static Bool same_element(types::TypeRef have, types::TypeRef want) {
+    while (have != want) {
+        Bool have_levels = have->kind == .array || have->kind == .slice;
+        if (!have_levels || want->kind != .slice) return false;
+        have = types::element_of(have);
+        want = types::element_of(want);
+    }
+    return true;
+}
+
 static Verdict to_slice(const Ctx *c) {
     const types::Ty *subject = c->from;
     types::TypeRef element = types::element_of(c->target_type);
@@ -400,10 +413,11 @@ static Verdict to_slice(const Ctx *c) {
         if (element != c->char_type)
             return refuse(c, "only Char slices and Str are text", "write the characters as a const Char[:]");
         if (types::points_to_const(c->target_type)) return accept(text_from_chars);
-        return refuse(c, "a Str's characters are const", "expected a const element: write const Char xs[:]");
+        return refuse(c, "a Str's characters are const",
+                      "take a Str, or write a const Char[:] where the characters are wanted");
     }
     if (subject->kind != .slice && subject->kind != .array) return no_rule(c);
-    if (types::element_of(c->from) != element) return needs_cast(c, "the elements are different types");
+    if (!same_element(types::element_of(c->from), element)) return needs_cast(c, "the elements are different types");
     if (fixing && types::points_to_const(c->from) && !types::points_to_const(c->target_type)) return dropped_const(c);
     if (subject->kind == .array) return accept(array_to_slice);
     return accept(add_const);
