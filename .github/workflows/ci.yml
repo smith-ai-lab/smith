@@ -1377,7 +1377,7 @@ jobs:
   release-pack-linux:
     # the Linux release of the commit a queue run tests (#2832), as `release` builds the macOS one on the push (#3172): the
     # tarball, its checksum and the release tool `publish` and `prune` run, in this run's artifact
-    # `stage0-<commit>-linux-x86_64` (3 days). It was packed in the background of `frontend-coverage-fix`, whose warm
+    # `stage0-<commit>-linux-x86_64` (3 days). It was packed in the background of `frontend-coverage-build`, whose warm
     # runs then waited 1.6 to 1.8 minutes for it (#3052); here it is beside the tests and off the count's path. Its
     # release build is served by the release steps main's `warm` saves. `ci` owes it, so a release that does not build
     # fails the queue run.
