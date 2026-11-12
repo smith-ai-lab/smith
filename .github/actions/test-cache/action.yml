@@ -120,7 +120,8 @@ runs:
         # tests/scratch.smith), as the import cache is below
         if [ -d "$dir/steps/a" ]; then
           tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"; mkdir -p "$tests"
-          cp -a "$dir/steps/." "$tests/" && rm -rf "$dir/steps"
+          byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps"; mkdir -p "$byhand" # and where the smith run by hand looks (#3177)
+          cp -a "$dir/steps/." "$byhand/" && cp -a "$dir/steps/." "$tests/" && rm -rf "$dir/steps"
         fi
         if [ "$got" -gt 0 ]; then
           echo "test store: restored $(find "$dir" -type f | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
