@@ -1075,6 +1075,13 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
             (local.ty.kind == .fn_value || local.ty.kind == .fn_pointer))
             return lambdas::call_value(e, x, local.ty);
+        if (countof(path.segments) == 1 && !state::find_local(e, path.segments[0].text, &local) &&
+            e->options.checked != nullptr) {
+            // A global holding a function (`chosen(bits)` with `mut chosen: fn(u64) -> u64 = twice`).
+            state::TyResult held = state::type_of_node(e, callee);
+            if (held != .error && (held.ok.kind == .fn_value || held.ok.kind == .fn_pointer))
+                return lambdas::call_value(e, x, held.ok);
+        }
         if (streams::is_call(x)) return streams::call(e, x);
     }
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
