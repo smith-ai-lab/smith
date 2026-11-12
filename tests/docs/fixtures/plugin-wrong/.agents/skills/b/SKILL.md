@@ -1,4 +1,4 @@
 ---
 name: b
-description: when to load b
+description: Load when b is wanted
 ---
