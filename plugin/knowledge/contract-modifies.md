@@ -38,6 +38,8 @@ pub fn use_it(moves: *mut Moves) -> u32:
 - `p[a:b]` of a `*T` (one object) needs its extent to be known, as a read does ([prove-slices](prove-slices.md)).
 - A failed body shows `FAIL f` and `file:12: the function writes here, outside the ranges its smith_modifies names`.
 
+- **Decided (#3190, item 18):** the language will have no `modifies`: what a function writes will be inferred from its body and the fixer already deletes the call. Until `smith prove` infers it, this call is how a function states its write set.
+
 ## Interactions
 
 - Calls: the callee's pointer arguments go to a scratch object and only its ranges become arbitrary before its `ensures`, so the cost follows the ranges, not the object ([prove-calls](prove-calls.md)).
