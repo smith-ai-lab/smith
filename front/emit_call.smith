@@ -1064,6 +1064,25 @@ static state::Status call_global_function_value(state::Emitter *e, const ast::Ex
     return lambdas::call_value(e, x, held.ok);
 }
 
+// A local of type `fn` or a C function pointer named as the callee.
+static Bool local_function_value(state::Emitter *e, const ast::Expr *callee, state::Ty *held) {
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return false;
+    state::Local local = {};
+    if (!state::find_local(e, callee->kind.name.path.segments[0].text, &local)) return false;
+    if (local.ty.kind != .fn_value && local.ty.kind != .fn_pointer) return false;
+    *held = local.ty;
+    return true;
+}
+
+// No function has the callee's key: a global variable that holds a function is called as a value, else the error.
+static state::Status unknown_callee(state::Emitter *e, const ast::Expr *x, const ast::Expr *callee, Str key,
+                                    SignatureResult found) {
+    state::free_text(key);
+    if (is_global_function_value(e, callee)) return call_global_function_value(e, x, callee);
+    if (found == .error) return {.error = found.error};
+    return state::success();
+}
+
 export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint hint) {
     if (written->kind != .call) {
         return state::fail("not a call", written->span);
@@ -1083,15 +1102,9 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
     if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
     if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)
-    if (callee->kind == .name) {
-        ast::Path path = callee->kind.name.path;
-        state::Local local = {};
-        if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
-            (local.ty.kind == .fn_value || local.ty.kind == .fn_pointer))
-            return lambdas::call_value(e, x, local.ty);
-        if (is_global_function_value(e, callee)) return call_global_function_value(e, x, callee);
-        if (streams::is_call(x)) return streams::call(e, x);
-    }
+    state::Ty held_local = {};
+    if (local_function_value(e, callee, &held_local)) return lambdas::call_value(e, x, held_local);
+    if (callee->kind == .name && streams::is_call(x)) return streams::call(e, x);
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
     if (!is_imported && instance == nullptr && callee->kind != .name) {
         // A call through a field holding a function, or through a conversion `(address.to(Run))()` (#3110).
@@ -1104,10 +1117,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     }
     if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     SignatureResult found = find(e, key, callee->span, imported);
-    if (found == .error) {
-        state::free_text(key);
-        return {.error = found.error};
-    }
+    if (found == .error) return unknown_callee(e, x, callee, key, found);
     Signature sig = found.ok;
     ast::ExprRef args[:] = filled_arguments(e, key, written_args, imported);
     Usize count = countof(args);
