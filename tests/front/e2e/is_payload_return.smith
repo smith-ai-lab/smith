@@ -1,0 +1,26 @@
+# `s is .circle` and `s is Circle` as the value of a `return`, and `is not` as its negative (#3226).
+struct Circle:
+    radius: i32
+
+enum Shape:
+    circle: Circle
+    empty
+
+fn is_round(s: Shape) -> bool:
+    return s is .circle
+
+fn is_round_by_type(s: Shape) -> bool:
+    return s is Circle
+
+fn is_flat(s: Shape) -> bool:
+    return s is not Circle
+
+pub fn check() -> i32:
+    round: Shape = .circle(Circle(radius = 1))
+    if not is_round(round): return 1
+    if is_round(.empty): return 2
+    if not is_round_by_type(round): return 3
+    if is_round_by_type(.empty): return 4
+    if is_flat(round): return 5
+    if not is_flat(.empty): return 6
+    0

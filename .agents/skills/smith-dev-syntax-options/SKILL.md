@@ -27,4 +27,4 @@ is a type or a symbol, and it is an error when `x` can never be it. They narrow 
 `and`, `or` (when false: `x is not .v or use(x)`), an `if` / `else if` / `else` chain (the final `else` takes what is
 left) and an early `return` carry the narrowing on. A payload enumeration narrowed to a variant is the payload: after
 `if x is not .unary: return`, `x.op` reads the `unary` payload. `x == .v` over a payload enumeration does not narrow yet
-(the fixer still writes the binding); the emitter reads `is` in a later ticket.
+(the fixer still writes the binding); the emitter compiles `is` and `is not` to one compare of the tag (#3226).

@@ -46,6 +46,13 @@ static Bool tests_null(Str body, Str name) {
     return false;
 }
 
+// Whether `text` holds `needle`.
+static Bool has_text(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++)
+        if (starts_with(text[i:countof(text)], needle)) return true;
+    return false;
+}
+
 static Bool same(Str a, Str b) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++)
@@ -395,11 +402,30 @@ static core::Errors named_copy(core::Errors out, Str source, Usize line, ast::Sp
     return out;
 }
 
+// An option name used as a value (`return c`, `f(c)`) under an `if` that tests it, where the name is one the checker
+// cannot narrow (`mut`): the checker says "expected T, found Option(T): a value that may be absent (`?T`) is not a
+// `T`" at the name. It is named first and the copy is tested and used (item 27, #3228).
+static core::Errors value_read(core::Errors out, Str source, types::Error e) {
+    Str base = source[e.span.start:e.span.end];
+    if (countof(base) == 0) return out;
+    for (Usize k = 0; k < countof(base); k++)
+        if (!word_char(base[k])) return out;
+    if (!starts_with(e.message, "expected ") || !has_text(e.message, ", found Option(") ||
+        !has_text(e.message, "a value that may be absent (`?T`) is not a `T`"))
+        return out;
+    Usize line = test_line(source, e.span.start, base);
+    if (line < countof(source)) out = named_copy(out, source, line, e.span, base);
+    return out;
+}
+
 export core::Errors some_reads(Str source, const types::Checked *c) {
     core::Errors out = {};
     Str lead = "`.` needs a record, found `";
     for (Usize i = 0; i < c->error_count; i++) {
         types::Error e = c->errors[i];
+        if (countof(e.fix) == 0 && countof(e.fix_module) == 0 && e.span.end <= countof(source) &&
+            e.span.start < e.span.end && !starts_with(e.message, lead))
+            out = value_read(out, source, e);
         if (countof(e.fix) > 0 || countof(e.fix_module) > 0 || e.span.end > countof(source) ||
             e.span.start + 5 >= e.span.end || !starts_with(e.message, lead))
             continue;

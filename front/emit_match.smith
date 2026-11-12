@@ -344,6 +344,32 @@ static state::Value variant_payload(state::Emitter *e, state::Value o, Str name)
     return (state::Value){.llvm = c::LLVMBuildLoad2(e->builder, payload.llvm, data, "payload"), .ty = payload};
 }
 
+// The variant of the payload enumeration `ty` whose payload is the type `seen` the checker gave a name narrowed by
+// `x is .v` (#3226): its place in the enumeration `at` and its payload, false when no variant has it.
+export Bool narrowed_variant(state::Emitter *e, state::Ty ty, types::TypeRef seen, ast::Span span, state::Ty *payload) {
+    Usize at = 0;
+    if (!find_enum(e, ty.name, &at)) return false;
+    state::TyResult wanted = state::type_of_checked(e, seen, span);
+    if (wanted == .error) return false;
+    state::Enumerator items[:] = e->enums[at].items;
+    for (Usize i = 0; i < countof(items); i++) {
+        if (!items[i].has_payload || !state::same_text(items[i].payload.name, wanted.ok.name)) continue;
+        *payload = items[i].payload;
+        return true;
+    }
+    return false;
+}
+
+// A payload enumeration name the checker narrowed to a variant's payload reads that payload; `o` as it is otherwise.
+export state::Value narrowed_payload(state::Emitter *e, state::Value o, types::TypeRef seen, ast::Span span) {
+    state::Ty payload = {};
+    if (!narrowed_variant(e, o.ty, seen, span, &payload)) return o;
+    c::LLVMValueRef slot = state::new_alloca(e, o.ty, "scrutinee");
+    c::LLVMBuildStore(e->builder, o.llvm, slot);
+    c::LLVMValueRef data = c::LLVMBuildStructGEP2(e->builder, o.ty.llvm, slot, 1, "payload");
+    return (state::Value){.llvm = c::LLVMBuildLoad2(e->builder, payload.llvm, data, "payload"), .ty = payload};
+}
+
 // Binds `binding` to the payload of the variant `name` of `o`, if the variant has one and the binding is not `_`.
 static void bind_variant(state::Emitter *e, state::Value o, Str name, Str binding) {
     if (countof(binding) == 0 || state::same_text(binding, "_")) return;

@@ -385,3 +385,63 @@ export void test_front_check_types_static_assert_refuses_a_pack_parameter() {
     fails("fn all(xs...) -> bool:\n    true\n\nstatic_assert(all(1, 2))\n",
           "static_assert needs a condition known at compile time", "not run at compile time");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Array and record shapes (#3255). `[n, m]T` is `[n][m]T`, `[,]T` a block with sizes known at run time.
+
+static Str shapes() {
+    return "struct Point:\n    x: i32\n    y: i32\n\nstruct Spot:\n    y: i32\n    x: i32\n\n"
+           "struct Padded:\n    x: i32\n    y: i32\n    flag: bool = false\n\nstruct Wide:\n    x: i32\n    y: i32\n   "
+           " z: i32\n\nstruct Odd:\n    x: i32\n    y: str\n\n";
+}
+
+// A sized array passes where a block or a list of fixed-width rows is wanted.
+export void test_front_check_types_a_sized_array_passes_where_a_block_is_wanted() {
+    clean("fn f(m: [,]i32) -> i32:\n    0\n\nfn g(a: [4, 2]i32) -> i32:\n    f(a)\n");
+    clean("fn f(m: [, 2]i32) -> i32:\n    0\n\nfn g(a: [4, 2]i32) -> i32:\n    f(a)\n");
+}
+
+// A block does not go where a sized array is wanted, and an array of another size says so.
+export void test_front_check_types_a_block_does_not_pass_where_a_sized_array_is_wanted() {
+    fails("fn f(m: [4, 2]i32) -> i32:\n    0\n\nfn g(a: [,]i32) -> i32:\n    f(a)\n", "known at run time",
+          "check the sizes");
+    fails("fn f(m: [4]i32) -> i32:\n    0\n\nfn g(a: [5]i32) -> i32:\n    f(a)\n", "the sizes differ",
+          "the value has 5, the array wants 4");
+}
+
+// A list of lists and a block are different types, in both directions.
+export void test_front_check_types_a_list_of_lists_and_a_block_are_different_types() {
+    fails("fn f(m: [,]i32) -> i32:\n    0\n\nfn g(a: [][]i32) -> i32:\n    f(a)\n", "different types",
+          "its own length and memory");
+}
+
+// A block of one element type does not go where a block of another is wanted.
+export void test_front_check_types_a_block_of_other_elements_is_refused() {
+    fails("fn f(m: [,]i64) -> i32:\n    0\n\nfn g(a: [4, 2]i32) -> i32:\n    f(a)\n", "elements", "");
+}
+
+// Records are structural: the same set of field names, in any order, each field converting.
+export void test_front_check_types_a_record_goes_where_a_record_of_the_same_fields_is_wanted() {
+    clean(join(shapes(), "fn f(p: Point) -> i32:\n    p.x\n\nfn g(s: Spot) -> i32:\n    f(s)\n"));
+    clean(join(shapes(), "fn f(p: Point) -> i32:\n    p.x\n\nfn g() -> i32:\n    f((y = 2, x = 1))\n"));
+}
+
+// A field left out of the value is the record's default.
+export void test_front_check_types_a_field_with_a_default_may_be_left_out() {
+    clean(join(shapes(), "fn f(p: Padded) -> i32:\n    p.x\n\nfn g(s: Point) -> i32:\n    f(s)\n"));
+}
+
+export void test_front_check_types_a_record_with_a_missing_field_is_refused() {
+    fails(join(shapes(), "fn f(w: Wide) -> i32:\n    w.x\n\nfn g(p: Point) -> i32:\n    f(p)\n"),
+          "the field `z` of `Wide` is not in the value", "");
+}
+
+export void test_front_check_types_a_record_with_an_extra_field_is_refused() {
+    fails(join(shapes(), "fn f(p: Point) -> i32:\n    p.x\n\nfn g(w: Wide) -> i32:\n    f(w)\n"),
+          "the value has a field `z` that `Point` does not have", "");
+}
+
+export void test_front_check_types_a_record_whose_field_does_not_convert_is_refused() {
+    fails(join(shapes(), "fn f(o: Odd) -> i32:\n    o.x\n\nfn g(p: Point) -> i32:\n    f(p)\n"),
+          "the field `y` of `Odd`", "does not convert");
+}

@@ -1,0 +1,45 @@
+name: split-guard
+description: >
+  Fails the run unless every test of the suite is run or served by exactly one test part (#3283). Each part of
+  `test-linux` made the split itself, from the commit and the test store (`--weigh`), and uploaded in its
+  `test-log-linux-<part>-of-<count>` artifact the whole suite it dealt from (`weights.tsv.suite`) and the tests it ran
+  or took from the store (`weights.tsv.part`). `guard.awk` compares the lists; a part with no list, a test in two parts,
+  in none, or a suite that two parts see differently fails it. A run of one part has nothing to compare.
+
+inputs:
+  count:
+    description: the number of parts of the run
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: The lists of the parts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: test-log-linux-*-of-${{ inputs.count }}
+        path: ${{ runner.temp }}/split
+    - name: Every test is in exactly one part
+      shell: bash
+      env:
+        COUNT: ${{ inputs.count }}
+      run: |
+        [ "$COUNT" -gt 1 ] || { echo "split guard: one part, nothing to compare"; exit 0; }
+        dir="$RUNNER_TEMP/split"
+        : >"$RUNNER_TEMP/split.tsv"
+        for part in $(seq 1 "$COUNT"); do
+          folder="$dir/test-log-linux-$part-of-$COUNT"
+          if [ ! -s "$folder/weights.tsv.suite" ] || [ ! -f "$folder/weights.tsv.part" ]; then
+            echo "::error::split guard: part $part of $COUNT uploaded no list of its tests"
+            exit 1
+          fi
+          sort -u "$folder/weights.tsv.suite" | awk -v p="$part" '{ print "suite\t" p "\t" $0 }' >>"$RUNNER_TEMP/split.tsv"
+          awk -v p="$part" '{ print "part\t" p "\t" $0 }' "$folder/weights.tsv.part" >>"$RUNNER_TEMP/split.tsv"
+        done
+        rc=0
+        awk -v parts="$COUNT" -f "$GITHUB_ACTION_PATH/guard.awk" "$RUNNER_TEMP/split.tsv" >"$RUNNER_TEMP/split.out" || rc=$?
+        tee -a "$GITHUB_STEP_SUMMARY" <"$RUNNER_TEMP/split.out"
+        if [ "$rc" -ne 0 ]; then
+          echo "::error::split guard: a test is in no part, in two, or the parts disagree on the suite"
+          exit 1
+        fi

@@ -12,6 +12,7 @@
 #include "verbs.h"
 #include "account.h"
 #include "changed.h"
+#include "check_plan.h"
 #include "core.h"
 #include "coverage.h"
 #include "docs.h"
@@ -1486,10 +1487,10 @@ static bool smith_test_expand_item(const char *item, SmithChangedBuffer *out) {
 
 // Whether a `smith test` flag takes the next word as its value (the runner's options and --base).
 static bool smith_test_flag_takes_value(const char *flag) {
-    static const char *const valued[] = {"--shard",   "--costs",          "--test",         "--others",
-                                         "--explain", "--seed",           "--seeds",        "--explain-max",
-                                         "--jobs",    "--timeout",        "--wall-timeout", "--idle-timeout",
-                                         "--shrink",  "--shrink-seconds", "--shuffle",      "--base"};
+    static const char *const valued[] = {
+        "--shard",        "--costs",  "--weigh",          "--test",    "--others",  "--explain",
+        "--seed",         "--seeds",  "--explain-max",    "--jobs",    "--timeout", "--wall-timeout",
+        "--idle-timeout", "--shrink", "--shrink-seconds", "--shuffle", "--base"};
     for (size_t i = 0; i < sizeof valued / sizeof valued[0]; i++) { // bounded by the table
         if (strcmp(flag, valued[i]) == 0) return true;
     }
@@ -1795,6 +1796,7 @@ constexpr size_t smith_check_part_count = sizeof smith_check_parts / sizeof smit
 typedef struct {
     bool every_task;
     bool changed;
+    bool plan;
     const char *base;
     bool required[smith_check_part_count];
 } SmithCheckArgs;
@@ -1832,18 +1834,21 @@ static bool smith_check_args(const SmithVerbArgs *split, SmithCheckArgs *found) 
             found->every_task = true;
         } else if (strcmp(arg, "--changed") == 0) {
             found->changed = true;
+        } else if (strcmp(arg, "--plan") == 0) {
+            found->plan = true;
         } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
             found->base = split->own[++i];
         } else if (strcmp(arg, "--require") == 0 && i + 1 < split->own_count) {
             if (!smith_check_require(split->own[++i], found->required)) return false;
         } else {
             smith_die(smith_exit_usage,
-                      "takes no arguments but -D options, -v, --changed [--base <ref>] and "
-                      "--require <parts>",
+                      "takes no arguments but -D options, -v, --changed [--base <ref>], --plan "
+                      "[--base <ref>] and --require <parts>",
                       "check");
         }
     }
-    if (found->base != nullptr && !found->changed) smith_die(smith_exit_usage, "--base needs --changed", "check");
+    if (found->base != nullptr && !found->changed && !found->plan)
+        smith_die(smith_exit_usage, "--base needs --changed or --plan", "check");
     return true;
 }
 
@@ -1897,6 +1902,7 @@ int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     SmithCheckArgs given = {};
     if (!smith_check_args(split, &given)) return smith_exit_usage;
+    if (given.plan) return smith_check_plan_print(given.base); // only the plan: what the change touches, nothing run
     bool every_task = given.every_task;
     if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
     bool loud = every_task || smith_quiet_full();      // otherwise each part's output goes to its log

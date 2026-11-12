@@ -211,7 +211,7 @@ export void test_front_types_convert_arrays_slices_and_text() {
     refused(conv(&t, three, types::pointer_to(&t, int32, true)), "expected const I32 *", "found I32[3]", "&xs[0]");
     test::check_condition(is(conv(&t, three, three), types_convert::identity));
     refused(conv(&t, three, types::array_of(&t, int32, 4, false)), "expected I32[4]", "found I32[3]",
-            "write the value as the expected type");
+            "the sizes differ: the value has 3, the array wants 4");
     refused(conv(&t, three, types::slice_of(&t, named(&t, "I64"), false)), "expected I64[:]", "found I32[3]",
             "write a conversion: x.to(I64[:])");
     types::TypeRef chars = types::slice_of(&t, named(&t, "Char"), false);
@@ -270,11 +270,11 @@ export void test_front_types_convert_values_become_some_and_ok() {
     refused(types_convert::convert(&t, int32, types::option_of(&t, named(&t, "U8")), types_convert::constant(300)),
             "expected Option(U8)", "found I32", "300 does not fit U8");
     refused(conv(&t, named(&t, "I64"), maybe), "expected `option(i32)`", "found `i64`", "x.to(i32)");
-    refused(conv(&t, maybe, int32), "expected I32", "found Option(I32)", "test whether it holds a value first");
+    refused(conv(&t, maybe, int32), "expected I32", "found Option(I32)", "pass it up with `try`");
     refused(conv(&t, answer, int32), "expected I32", "found Result(I32, Str)", "try");
     refused(conv(&t, t.null_type, maybe), "expected Option(I32)", "found Null", ".none");
     refused(conv(&t, maybe, types::option_of(&t, named(&t, "I64"))), "expected Option(I64)", "found Option(I32)",
-            "test whether it holds a value first");
+            "pass it up with `try`");
 }
 
 export void test_front_types_convert_an_error_type_is_not_reported_again() {
@@ -327,7 +327,7 @@ export void test_front_types_convert_casts() {
             "convert the parts one at a time");
     refused(cast_verdict(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");
     refused(cast_verdict(&t, types::option_of(&t, int32), int32), "expected I32", "found Option(I32)",
-            "test whether it holds a value first");
+            "pass it up with `try`");
 }
 
 export void test_front_types_convert_float_casts_round_and_are_not_checked() {
