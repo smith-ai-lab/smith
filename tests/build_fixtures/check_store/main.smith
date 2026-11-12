@@ -1,0 +1,14 @@
+// demo. `smith run` builds and runs it.
+module main;
+
+import primes;
+import "add.h";
+
+import std::contract;
+
+I32 main() {
+    I32 sum = primes::sum(5);
+    contract::assert(sum <= 28);
+    primes::report(c::add_two(sum, 0));
+    return 0;
+}
