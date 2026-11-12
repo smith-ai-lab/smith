@@ -26,7 +26,7 @@ nearest compile's command for it). A finding fails it, the last line is `smith l
 `.smith`, leaves them out and says so.
 
 **`smith lint` is incremental** (issue #621, `runtime/lint_cache.c`, [the caches](caches.md)): clang-tidy's output and exit
-status for a file are kept under `<cache>/smith/lint` and replayed when nothing the lint read has changed, so a lint
+status for a file are kept as answers in the one store (`<cache>/smith/steps/a`) and replayed when nothing the lint read has changed, so a lint
 of an unchanged tree runs clang-tidy on no file (about 1 s for smith's 180 files, from 50 s) and one changed file runs
 only itself and the files that include it. `SMITH_LINT_CACHE=0` turns it off, `SMITH_LINT_CACHE=why` says why a file
 ran. Tests: `tests/lint_cache_test.smith`.

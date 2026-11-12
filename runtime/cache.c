@@ -137,28 +137,9 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     if (total > kept) fprintf(smith_cache_out, "  and %zu more\n", total - kept);
 }
 
-// The lint cache (runtime/lint_cache.c) is files in two levels of folders, so it is counted by its files.
-static void smith_cache_show_lint(void) {
-    char folder[PATH_MAX];
-    SmithPackageFault error;
-    if (!smith_cache_folder(SmithCache_Lint, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
-    uint64_t bytes = 0;
-    time_t newest = 0;
-    uint64_t files = 0;
-    if (smith_package_is_folder(folder)) {
-        smith_cache_measure(folder, &bytes, &newest);
-        files = smith_cache_walk_regular;
-    }
-    char size[32];
-    smith_cache_format_size(bytes, size);
-    fprintf(smith_cache_out, "lint: %s\n  %llu %s, %s\n", folder, (unsigned long long)files,
-            files == 1 ? "file" : "files", size);
-}
-
 static void smith_cache_show(bool verbose) {
     smith_cache_show_one(SmithCache_Modules, verbose);
     smith_cache_show_one(SmithCache_Packages, verbose);
-    smith_cache_show_lint();
     smith_cache_show_one(SmithCache_Steps, verbose);
     fprintf(smith_cache_out, "an entry unused for %d days is removed, checked at most once a week\n",
             smith_cache_prune_after / (24 * 60 * 60));
@@ -197,6 +178,7 @@ static void smith_cache_clean_one(SmithCacheKind kind) {
     fprintf(smith_cache_out, "removed %s: %zu %s, %s\n", folder, total, total == 1 ? "entry" : "entries", size);
 }
 
+// The folder of the lint results of a smith before #3177 (they are answers in the steps now): removed when it is there.
 static void smith_cache_clean_lint(void) {
     char folder[PATH_MAX];
     SmithPackageFault error;

@@ -6,7 +6,7 @@ tags: [cache]
 ---
 # The caches and smith cache
 
-**Three caches, one rule:** modules (`<cache>/smith/modules`), packages (`<cache>/smith/packages`) and lint results (`<cache>/smith/lint`, below), `<cache>` being
+**Three caches, one rule:** modules (`<cache>/smith/modules`), packages (`<cache>/smith/packages`) and the steps (`<cache>/smith/steps`, whose `a/` holds the lint and fmt results, below), `<cache>` being
 `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
 modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages
 (a `<hex>.used` stamp per package and `prune.timestamp`). Both are keyed by hash, so a removed entry is fetched or built
@@ -103,7 +103,7 @@ drops it if smith is killed). `smith cache clean` takes the lock exclusively wit
 status 2 while any build, in any project or worktree, holds it. That costs one `open` and one `flock` per build.
 Showing the caches never takes the lock, and pruning does not need it: it is safe as above.
 
-**The lint cache** (issue #621, `runtime/lint_cache.c`) keeps what clang-tidy said about one file so that `smith lint`
+**The lint cache** (issue #621, #3177, `runtime/lint_cache.c`; its entries are answers in the steps' `a/`) keeps what clang-tidy said about one file so that `smith lint`
 runs it only on a file whose lint could differ. It is in two levels, like a compiler cache with a manifest. The *first
 key* is the SHA-256 of the *lint identity* (#2236: the LLVM pack, which fixes clang-tidy, and the sources of smith's own
 checks), the environment that moves a compile (`SDKROOT`, `CPATH`, ...), the file's name, its compile command (the
@@ -115,11 +115,11 @@ compiler's build and not what it compiles, #3062) and the content of every `.cla
 them (#1180). The modules are those the file's own header lists after `// smith-imports:` and, transitively, the ones
 their headers list, as the lowering walks them (#3062: an export added to one module reran every `.smith` file); a file
 with no header of its own, or an import with none, keys on every header there.
-Under it, `m/<xx>/<key>` is the *manifest* of the last run: the files clang-tidy read, which a miss collects through
+Under it is the *manifest* of the last run: the files clang-tidy read, which a miss collects through
 `-Wp,-MMD` (so no build or object is needed, and a `.smith` file's imports are in it). The *second key* adds the
-content of those files, and `r/<xx>/<key>` is the *result*: the exit status and the output with the root replaced. A hit
-prints the stored output and returns the stored status; a miss runs clang-tidy as before and stores the result by
-writing a temporary file and renaming it, so lints in other worktrees are safe together. Only a run that completed
+content of those files, and under that is the *result*: the exit status and the output with the root replaced. A hit
+prints the stored output and returns the stored status; a miss runs clang-tidy as before and stores the result as an
+answer (written whole and renamed in, so lints in other worktrees are safe together). Only a run that completed
 (exit status 0 or 1) is stored, and not one that read a file changed during it or in the 20 ms before it. A system
 header is not in a manifest (nor is a header found only because a new file shadows an earlier one in the include path),
 so an SDK update is seen only through `SDKROOT`, `DEVELOPER_DIR` and the lint identity.
@@ -127,10 +127,8 @@ The lint identity is made by `smith build` (`build_lint_identity` in `build.c`, 
 SHA-256 of the pack's identity and of every project file the preprocessor reads for `shim/tidy.cpp` (`-MM`, so the set
 is the compiler's list and never written by hand). A change to the compiler, the runtime or the libraries is not in it, so
 most pull requests keep every lint result; a change to a check, or to a header a check includes, makes another key. A
-smith built without an LLVM install has no identity and keys on its own build-id (Linux) or LC_UUID (macOS). The rule is the other caches':
-a hit touches its entries when a day old, and once a week (`lint/prune.timestamp`) entries unused for 31 days and
-stale `t/` files go. `SMITH_LINT_CACHE=0` turns it off and `=why` prints why each file ran. `smith cache` counts the
-files and `smith cache clean lint` removes them.
+smith built without an LLVM install has no identity and keys on its own build-id (Linux) or LC_UUID (macOS). The rule is the steps': a hit touches its entry, and the steps' prune and cap (`steps/prune.timestamp`) drop what is unused. `SMITH_LINT_CACHE=0` turns it off and `=why` prints why each file ran. `smith cache clean steps` removes the results; `smith cache clean lint` removes the `lint/` folder an older smith left. The dependency
+file of a miss is a temporary file in `$TMPDIR` (or `/tmp`).
 
 **The fmt cache** (#3081, #3177, `runtime/fmt_cache.c`) keeps that a file was formatted, so `smith fmt` (and its `--dry-run`)
 with no arguments leaves it out. It is an answer in the one store (`steps/a/<xx>/<key>`, the steps' prune and cap, no
