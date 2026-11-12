@@ -5,10 +5,33 @@ module front_fix_errdefer_test;
 
 import front::fix;
 import std::arena;
+import std::format;
 import std::mem;
+import std::process;
 import std::test;
+import <stdlib.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// The fixer reads `stdio.h` with the flags of SMITH_FRONT_CIMPORT_FLAGS, which name smith's resource directory, as
+// `smith cc` passes them (front_fix_test does the same). Without them the header is not read and `c.` is kept.
+static void use_header_flags() {
+    const char *self = c::getenv("SMITH_SELF");
+    const char *const argv[3] = {self != nullptr ? self : "smith", "cc", "-print-resource-dir"};
+    process::OutputResult done = process::run(argv[0:3]);
+    if (done != .ok) return;
+    Usize n = countof(done.ok.output);
+    while (n > 0 && done.ok.output[n - 1] == '\n')
+        n -= 1;
+    Str dir = as_str(format::push(format::bytes((const char *)done.ok.output.data, n)));
+    Str flags = as_str(format::push("-resource-dir\n", dir, "\n"));
+    c::setenv("SMITH_FRONT_CIMPORT_FLAGS", flags.data, 1);
+}
 
 static void expect(Str before, Str after) {
+    use_header_flags();
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
