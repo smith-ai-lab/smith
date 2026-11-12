@@ -1712,12 +1712,17 @@ static int smith_check_child(const char *self, const char *verb, const SmithVerb
 }
 
 // One part of the check that runs as a child, timed and reported.
-static void smith_check_run(const char *self, const char *verb, const SmithVerbArgs *split, bool loud,
-                            const char **failed, size_t *failed_count) {
+static void smith_check_run_as(const char *self, const char *verb, const char *name, const SmithVerbArgs *split,
+                               bool loud, const char **failed, size_t *failed_count) {
     char log[PATH_MAX];
     SmithCheckClock since = smith_check_clock();
     int status = smith_check_child(self, verb, split, loud, log);
-    smith_check_part(verb, status, since, failed, failed_count, loud ? nullptr : log);
+    smith_check_part(name, status, since, failed, failed_count, loud ? nullptr : log);
+}
+
+static void smith_check_run(const char *self, const char *verb, const SmithVerbArgs *split, bool loud,
+                            const char **failed, size_t *failed_count) {
+    smith_check_run_as(self, verb, verb, split, loud, failed, failed_count);
 }
 
 // ---- promises
@@ -2004,6 +2009,32 @@ static void smith_check_built(SmithCheckRun *run) {
     run->ran++;
 }
 
+// The parts of macOS, on a Mac (#3163): `macos-lint` is `smith lint` and `macos-tests` is `smith test --macos-only
+// --shard 1/1` (the plan's mac_flags: only the tests that need macOS, in one part), each reported under its own name.
+// The lint and the tests of the same run cover them when `lint` or `test` is wanted too (a Mac runs everything).
+static void smith_check_macos(SmithCheckRun *run) {
+#ifdef __APPLE__
+    if (smith_check_wants(run, "macos-lint") && !smith_check_wants(run, "lint")) {
+        SmithVerbArgs lint = *run->split;
+        smith_check_select(&lint, "lint", run->given);
+        smith_check_run_as(run->self, "lint", "macos-lint", &lint, run->loud, run->failed, &run->failed_count);
+        run->ran++;
+    }
+    if (smith_check_wants(run, "macos-tests") && !smith_check_wants(run, "test")) {
+        SmithVerbArgs tests = *run->split;
+        smith_check_select(&tests, "test", run->given);
+        smith_verb_room(tests.option_count, 3, "the macOS tests of the check");
+        tests.options[tests.option_count++] = (char *)"--macos-only";
+        tests.options[tests.option_count++] = (char *)"--shard";
+        tests.options[tests.option_count++] = (char *)"1/1";
+        smith_check_run_as(run->self, "test", "macos-tests", &tests, run->loud, run->failed, &run->failed_count);
+        run->ran++;
+    }
+#else
+    (void)run;
+#endif
+}
+
 // The parts of macOS that this host cannot run, when it was asked for them (all parts, or named by --part).
 static void smith_check_mark_macos(SmithCheckRun *run) {
 #ifndef __APPLE__
@@ -2059,6 +2090,7 @@ int smith_check_project(int count, char **args, const char *self) {
         }
     } else {
         smith_check_built(&run);
+        smith_check_macos(&run);
         // The promises are read from the summaries of the project's own compiles, which lint, test and prove need not
         // have made (a project never built): the default build, a no-op when fresh, makes them. A part run (--part)
         // is one job of CI's several, which has built what it needs.
