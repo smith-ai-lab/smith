@@ -10,6 +10,11 @@ name: count
 # by hand. knowledge/ci/count.md.
 on:
   workflow_dispatch:
+    inputs:
+      rehearse:
+        description: "Rehearse the regression path (#3296): treat the newest commit as a regression, print what would be reopened, change no issue, end red"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -307,6 +312,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: write
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -417,6 +423,7 @@ jobs:
                 mkdir -p "$RUNNER_TEMP/previous"
                 if gh run download "${run% *}" -n "frontend-coverage-${run#* }" -D "$RUNNER_TEMP/previous" >/dev/null 2>&1 && [ -s "$RUNNER_TEMP/previous/results.tsv" ]; then
                   prev="$RUNNER_TEMP/previous/results.tsv"
+                  echo "${run#* }" >"$RUNNER_TEMP/previous-sha"
                 fi ;;
             esac
           fi
@@ -439,6 +446,54 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
+      - name: A regression reopens the ticket that caused it
+        # #3296. After the table is saved, so the numbers and the artifact are out before the job fails. With a regressed
+        # count above 0: for each commit of main after the last finished count up to this one, the pull request that
+        # merged it and the issues that pull request closes are reopened and labelled `regressed` (no comment, no body
+        # edit), `frontend-regressed-by: <sha7> #<pr> #<issue>` is printed, and the job ends red. With 0 or unknown it
+        # does nothing. `rehearse` (workflow_dispatch) pretends the newest commit regressed and changes no issue.
+        if: always()
+        shell: bash
+        env:
+          REHEARSE: ${{ github.event.inputs.rehearse }}
+        run: |
+          set +e
+          n=$(wc -l <"$RUNNER_TEMP/regressed.txt" 2>/dev/null | tr -d ' ')
+          prev=$(cat "$RUNNER_TEMP/previous-sha" 2>/dev/null)
+          if [ "$REHEARSE" = true ]; then
+            n=1; prev=$(git rev-parse HEAD~1); echo "frontend-regressed: (rehearsal)"
+          fi
+          if [ -z "$n" ] || [ "$n" = 0 ] || [ -z "$prev" ]; then echo "no regression: nothing reopened"; exit 0; fi
+          range=$(git rev-list "$prev..$GITHUB_SHA")
+          [ -n "$range" ] || range=$GITHUB_SHA
+          commits=$(printf '%s\n' "$range" | wc -l | tr -d ' ')
+          [ "$commits" = 1 ] || echo "the range is $commits commits (a count was skipped): every ticket in it is reopened"
+          [ "$REHEARSE" = true ] || gh api -X POST "repos/$GH_REPO/labels" -f name=regressed -f color=b60205 >/dev/null 2>&1
+          for sha in $range; do
+            prs=$(gh api "repos/$GH_REPO/commits/$sha/pulls" --jq '.[].number' 2>/dev/null)
+            if [ -z "$prs" ]; then echo "frontend-regressed-by: ${sha:0:7} (no pull request found)"; continue; fi
+            for pr in $prs; do
+              text=$(gh api "repos/$GH_REPO/pulls/$pr" --jq '.title + "\n" + (.body // "")' 2>/dev/null; git log -1 --format=%B "$sha")
+              issues=$(printf '%s\n' "$text" | grep -ioE '(close[sd]?|fix(e[sd])?|resolve[sd]?):? +#[0-9]+' | grep -oE '[0-9]+$' | sort -un)
+              if [ -z "$issues" ]; then echo "frontend-regressed-by: ${sha:0:7} #$pr (closes no issue)"; continue; fi
+              for i in $issues; do
+                echo "frontend-regressed-by: ${sha:0:7} #$pr #$i"
+                [ "$REHEARSE" = true ] && continue
+                gh api -X PATCH "repos/$GH_REPO/issues/$i" -f state=open >/dev/null || echo "::error::could not reopen #$i"
+                gh api -X POST "repos/$GH_REPO/issues/$i/labels" -f 'labels[]=regressed' >/dev/null || echo "::error::could not label #$i"
+              done
+            done
+          done
+          {
+            echo "### Front-end regression"
+            echo
+            echo "$n files passed in the last finished count and fail now; the tickets of the $commits commit(s) are reopened (label \`regressed\`)."
+            echo '```'
+            cat "$RUNNER_TEMP/regressed.txt" 2>/dev/null
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "::error::frontend-regressed-count: $n, main needs a fix"
+          exit 1
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
