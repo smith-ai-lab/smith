@@ -419,6 +419,31 @@ static Str prototype_symbol(state::Emitter *e, const ast::Decl *d, Str name) {
     return symbol_for(e, name);
 }
 
+// The key up to its first `.`: the function an instance key belongs to (`order::smallest` of `order::smallest.i32`).
+static Str function_part(Str key) {
+    for (Usize i = 0; i < countof(key); i++) {
+        if (key[i] == '.') return key[0:i];
+    }
+    return key;
+}
+
+// What the message of an unknown function adds to the key looked for: the keys of the instances the module has of the
+// same function, so a mismatch is read at once. A note when there are none.
+static Str same_function_instances(state::Emitter *e, Str key) {
+    if (e->options.checked == nullptr) return " (no instance of it in this module)";
+    Str base = function_part(key);
+    Str listed = "";
+    for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+        Str name = state::instance_name(&e->options.checked->instances[i]);
+        if (state::same_text(function_part(name), base)) {
+            listed = state::msg(format::push(listed, countof(listed) == 0 ? "" : ", ", name));
+        }
+        state::free_text(name);
+    }
+    if (countof(listed) == 0) return " (no instance of it in this module)";
+    return state::msg(format::push(" (the instances of ", base, ": ", listed, ")"));
+}
+
 // The function a call names: one of the module's with a body, or a prototype of the module.
 static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const ast::Decl *imported) {
     if (imported != nullptr) return imported_function(e, key, imported);
@@ -451,7 +476,7 @@ static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const as
         }
         return sig;
     }
-    return signature_failed(state::failf(span, "unknown function ", key));
+    return signature_failed(state::failf(span, "unknown function ", key, same_function_instances(e, key)));
 }
 
 static Bool is_named(const ast::Expr *a) {
@@ -1048,7 +1073,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
         ast::Path path = callee->kind.name.path;
         state::Local local = {};
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
-            local.ty.kind == .fn_value)
+            (local.ty.kind == .fn_value || local.ty.kind == .fn_pointer))
             return lambdas::call_value(e, x, local.ty);
         if (streams::is_call(x)) return streams::call(e, x);
     }
