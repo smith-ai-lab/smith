@@ -4,7 +4,9 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#3131) sets the queue's group size (1, 2, 4 or 8) by the health of its runs and prints it every time. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. When it dequeues the front PR it also sets a failing check `queue` on the PR's head naming the run, the failed jobs and their first FAIL lines (#3243). It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
+# alone, so the PR fails by itself and is dequeued; that holds because the queue's group size is fixed at 1 (`max_entries_to_merge`
+# 1) and nothing writes the ruleset (#3286 deleted the third pass, which rewrote the size by the health of the runs and cancelled
+# the group being built each time it wrote). A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. When it dequeues the front PR it also sets a failing check `queue` on the PR's head naming the run, the failed jobs and their first FAIL lines (#3243). It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -250,61 +252,6 @@ jobs:
             return 0
           }
           stale_pass
-
-          # third pass (#3131): the queue's group size, by the health of its runs. GitHub builds one group at a time
-          # (max_entries_to_build 1) and merges a group's entries all or none (ALLGREEN); the size of the group is
-          # max_entries_to_merge. Health is the number of the last 10 finished merge_group runs of ci.yml that merged
-          # (`success`; failure and cancelled count as not merged). Under 9 of 10: size 1. A failed or cancelled run
-          # since the last size change (the ruleset's `updated_at`, T): size 1. 9 of 10 or better and 10 finished runs
-          # since T: one step up (1, 2, 4, 8). It prints `queue-heal: health 7 of 10, group size 1` on every pass and
-          # runs from an EXIT trap, after the second pass. Same PUT and token fallback as queue-ops' set-group-size.
-          tune() {
-            local id rs g t runs h total after bad nb cur
-            id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ] \
-              || { log "queue-heal: health unknown, group size unreadable (no ruleset main)"; return 0; }
-            rs=$(gh api "repos/$REPO/rulesets/$id") || { log "queue-heal: health unknown, group size unreadable"; return 0; }
-            g=$(echo "$rs" | jq -r '[.rules[] | select(.type == "merge_queue") | .parameters.max_entries_to_merge][0] // empty')
-            t=$(echo "$rs" | jq -r '.updated_at // empty')
-            [ -n "$g" ] && [ -n "$t" ] || { log "queue-heal: health unknown, group size unreadable"; return 0; }
-            runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=completed \
-              -f per_page=30 --jq '.workflow_runs[] | "\(.created_at) \(.conclusion)"') \
-              || { log "queue-heal: health unknown, group size $g kept (merge_group runs unreadable)"; return 0; }
-            # newest first; ISO times in UTC compare as text
-            total=$(echo "$runs" | head -n 10 | grep -c . || true)
-            h=$(echo "$runs" | head -n 10 | grep -c ' success$' || true)
-            after=$(echo "$runs" | awk -v t="$t" '$1 > t' | grep -c . || true)
-            bad=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 != "success"' | grep -c . || true)
-            nb=$g
-            if [ "$h" -lt 9 ] || { [ "$g" -gt 1 ] && [ "$bad" -gt 0 ]; }; then
-              nb=1
-            elif [ "$after" -ge 10 ] && [ "$h" -ge 9 ] && [ "$g" -lt 8 ]; then
-              nb=$((g * 2))
-            fi
-            # a ruleset still set for several builds, a wait, or HEADGREEN is brought to the one-run-at-a-time form
-            cur=$(echo "$rs" | jq -c '[.rules[] | select(.type == "merge_queue") | .parameters | [.max_entries_to_build, .min_entries_to_merge, .grouping_strategy]][0]')
-            log "queue-heal: health $h of $total, group size $nb"
-            if [ "$nb" = "$g" ] && [ "$cur" = '[1,1,"ALLGREEN"]' ]; then
-              return 0
-            fi
-            if dry; then
-              log "dry-run: would set group size $g -> $nb (builds 1, min entries 1, ALLGREEN)"
-              return 0
-            fi
-            echo "$rs" | jq --argjson n "$nb" '{name, target, enforcement, bypass_actors, conditions,
-                rules: (.rules | map(if .type == "merge_queue" then .parameters += {max_entries_to_build: 1,
-                  min_entries_to_merge: 1, max_entries_to_merge: $n, grouping_strategy: "ALLGREEN"} else . end))}' \
-              > "${RUNNER_TEMP:-/tmp}/ruleset.json"
-            # GITHUB_TOKEN first; the owner's secret only when GitHub refuses
-            if GH_TOKEN="$BASE_TOKEN" gh api -X PUT "repos/$REPO/rulesets/$id" --input "${RUNNER_TEMP:-/tmp}/ruleset.json" --silent 2>/dev/null \
-              || { [ -n "$OWNER_TOKEN" ] && GH_TOKEN="$OWNER_TOKEN" gh api -X PUT "repos/$REPO/rulesets/$id" --input "${RUNNER_TEMP:-/tmp}/ruleset.json" --silent; }; then
-              log "queue-heal: group size $g -> $nb"
-            else
-              log "queue-heal: group size $g kept, change to $nb refused"
-            fi
-          }
-
-          # the third pass runs when the job ends, after whichever exit the second pass takes
-          trap tune EXIT
 
           # second pass: only the front entry's group is built on main alone, so only its failure is its own
           front=$(echo "$list" | head -n 1)
