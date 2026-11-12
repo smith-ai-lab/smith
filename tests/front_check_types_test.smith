@@ -300,3 +300,69 @@ export void test_front_check_types_the_address_of_a_field_of_a_constant_local_ha
     parse::Edits fix = r.errors[0].fix;
     test::check_equal(countof(fix), (Usize)1);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// `is` and `is not` (#3225): the test is a `bool`, and the tested name gets the narrower type.
+
+static Str kinds() {
+    return "struct Unary:\n    op: i32\nstruct Binary:\n    left: i32\nenum Kind:\n    unary: Unary\n    binary: "
+           "Binary\n"
+           "    name: i32\n\n";
+}
+
+static Str with_kinds(Str body) {
+    return join(kinds(), body);
+}
+
+export void test_front_check_types_is_is_a_bool() {
+    clean(with_kinds("fn f(x: Kind) -> bool:\n    return x is .unary\n"));
+    clean(with_kinds("fn f(x: Kind) -> bool:\n    return x is not .unary\n"));
+    clean(with_kinds("fn f(x: Kind) -> bool:\n    return x is Unary\n"));
+    clean("fn f(x: ?i32) -> bool:\n    return x is not .none\n");
+    clean("fn f(x: ?i32) -> bool:\n    return x is i32\n");
+}
+
+export void test_front_check_types_is_needs_a_value_that_can_be_it() {
+    fails("fn f(x: i32) -> bool:\n    return x is .none\n", "`x` is `I32`", "never `.none`");
+    fails(with_kinds("fn f(x: Kind) -> bool:\n    return x is Circle\n"), "Circle", "");
+    fails(with_kinds("fn f(x: Kind) -> bool:\n    return x is u8\n"), "`x` is `Kind`", "never a `U8`");
+    fails(with_kinds("fn f(x: Kind) -> bool:\n    return x is .circle\n"), "`x` is `Kind`", "never `.circle`");
+}
+
+export void test_front_check_types_an_early_return_after_is_not_narrows_the_rest() {
+    clean(with_kinds("fn f(x: Kind) -> i32:\n    if x is not .unary:\n        return 0\n    x.op\n"));
+}
+
+export void test_front_check_types_is_narrows_the_then_side() {
+    clean(with_kinds("fn f(x: Kind) -> i32:\n    if x is .unary:\n        return x.op\n    0\n"));
+    clean(with_kinds("fn f(x: Kind) -> i32:\n    if x is Unary:\n        return x.op\n    0\n"));
+}
+
+export void test_front_check_types_a_chain_narrows_the_last_else_to_what_is_left() {
+    clean(with_kinds("fn f(x: Kind) -> i32:\n    if x is .unary:\n        return x.op\n    else if x is .binary:\n"
+                     "        return x.left\n    else:\n        return x\n"));
+}
+
+export void test_front_check_types_and_or_and_not_narrow() {
+    clean(with_kinds("fn f(x: Kind) -> bool:\n    return x is .unary and x.op > 0\n"));
+    clean(with_kinds("fn f(x: Kind) -> bool:\n    return x is not .unary or x.op > 0\n"));
+    clean(with_kinds("fn f(x: Kind) -> i32:\n    if not (x is .unary):\n        return 0\n    x.op\n"));
+    clean(with_kinds("fn f(x: Kind) -> i32:\n    if x is not .unary and x is not .binary:\n        return x\n    0\n"));
+}
+
+export void test_front_check_types_equality_with_a_symbol_narrows_an_option() {
+    clean("fn f(o: ?i32) -> i32:\n    if o != .none:\n        return o\n    0\n");
+    clean("fn f(o: ?i32) -> i32:\n    if o == .none:\n        return 0\n    o\n");
+    clean("fn f(o: ?i32) -> i32:\n    if o is .none:\n        return 0\n    o + 1\n");
+    clean("fn f(o: ?i32) -> i32:\n    if o is not .none:\n        return o\n    0\n");
+    clean("fn f(o: ?i32) -> i32:\n    if o is .none:\n        return 0\n    else:\n        return o\n");
+    clean("fn f(o: ?i32) -> i32:\n    if o is i32:\n        return o\n    0\n");
+}
+
+export void test_front_check_types_a_mut_name_or_a_field_is_not_narrowed_by_is() {
+    fails(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n    x.op\n"),
+          "payload enumeration", "name the value first");
+    fails(with_kinds("pub struct Holder:\n    pub kind: Kind\n\nfn f(h: Holder) -> i32:\n"
+                     "    if h.kind is not .unary:\n        return 0\n    h.kind.op\n"),
+          "payload enumeration", "name the value first");
+}

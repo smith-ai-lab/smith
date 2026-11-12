@@ -1213,6 +1213,7 @@ export struct Symbol {
     Bool has_value; // a compile-time parameter bound in an instance (`n`): `value` is what the call passed
     U64 value;
     Bool narrowed; // a `?T` name known not to be `.none` here, typed `T` (#2481): `x.some` is `x`
+    U64 excluded;  // a payload enumeration name known not to be some variants here: bit `i` is the slot `i` (#3225)
 };
 
 // An index of the names of `symbols[0:indexed)` (#2888): a module that imports std holds tens of thousands of symbols

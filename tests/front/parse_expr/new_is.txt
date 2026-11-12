@@ -1,0 +1,63 @@
+x is .unary
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary is (name x) (variant unary))))))
+
+x is not .unary
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary is_not (name x) (variant unary))))))
+
+x is Circle
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary is (name x) (type_value (named Circle)))))))
+
+x is not Circle and y
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary logical_and (binary is_not (name x) (type_value (named Circle))) (name y))))))
+
+a or b is .none
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary logical_or (name a) (binary is (name b) (variant none)))))))
+
+a == b is .none
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary is (binary equal (name a) (name b)) (variant none))))))
+
+x is
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 4-4: expected a type, found the end of the file
+
+is_set
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (name is_set)))))
+
+
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 0-0: expected an expression, found the end of the file
+
