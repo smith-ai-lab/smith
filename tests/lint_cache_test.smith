@@ -121,10 +121,10 @@ static const char *counts(const scratch::Project *p) {
     return scratch::capture(p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -o '[0-9]* run, [0-9]* cached'");
 }
 
-// The cache folder of the lint results, which a run with the cache off must not make.
+// The answers folder of the steps, which a run with the cache off must not make.
 static Bool has_results(const scratch::Project *p) {
     char path[512];
-    (void)format::write(path, sizeof path, p->cache, "/smith/lint/r");
+    (void)format::write(path, sizeof path, p->cache, "/smith/steps/a");
     files::InfoResult found = files::info(path[0:c::strlen(path)]);
     return found == .ok;
 }
@@ -362,8 +362,9 @@ export void test_lint_cache_off_runs_every_file_each_time() {
     scratch::expect_text("... and nothing was stored", "no", has_results(&p) ? "yes" : "no");
 }
 
-// `smith cache` and `smith cache clean lint` are the verb's wiring, over what the real lint stored.
-export void test_cache_shows_and_cleans_the_lint_results() {
+// The lint results are answers in the steps (#3177): `smith cache clean steps` removes them, and the next lint runs
+// every file.
+export void test_cache_clean_steps_removes_the_lint_results() {
     scratch::Project p = prepared();
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -372,15 +373,13 @@ export void test_cache_shows_and_cleans_the_lint_results() {
     defer mem::set_allocator(outside);
     scratch::Run first = lint(&p);
     scratch::expect_status("the lint passes", 0, &first);
-    scratch::Run shown = scratch::sh(&p, "smith cache");
-    scratch::expect_contains("smith cache lists the lint cache", shown.out, "lint: ");
     scratch::expect_text(
-        "... which holds files", "yes",
-        scratch::capture(&p, "[ -n \"$(find \"$XDG_CACHE_HOME/smith/lint/r\" -type f)\" ] && echo yes || echo no"));
-    scratch::Run cleaned = scratch::sh(&p, "smith cache clean lint");
-    scratch::expect_status("smith cache clean lint exits 0", 0, &cleaned);
-    scratch::expect_text("... and the lint results are gone", "no",
+        "the results are answers in the steps", "yes",
+        scratch::capture(&p, "[ -n \"$(find \"$XDG_CACHE_HOME/smith/steps/a\" -type f)\" ] && echo yes || echo no"));
+    scratch::expect_text("... and the lint has no folder of its own", "no",
                          scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/lint\" && echo yes || echo no"));
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean steps");
+    scratch::expect_status("smith cache clean steps exits 0", 0, &cleaned);
     scratch::expect_text("... so the next lint runs every file", "4 run, 0 cached", counts(&p));
 }
 

@@ -786,7 +786,6 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/smith/lint
             ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
@@ -867,7 +866,6 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/smith/lint
             ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
@@ -1246,7 +1244,6 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/smith/lint
             ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
@@ -1261,13 +1258,12 @@ jobs:
           grep 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
           "$SMITH" prove >"$RUNNER_TEMP/prove.log" 2>&1 || true
           tail -n 3 "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY"
-          du -sh ~/.cache/smith/lint ~/.cache/smith/steps/a | tee -a "$GITHUB_STEP_SUMMARY"
+          du -sh ~/.cache/smith/steps/a | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the lint and proof caches
         if: runner.os == 'Linux' && env.DRY_RUN != '1' && always()
         uses: actions/cache/save@v4
         with:
           path: |
-            ~/.cache/smith/lint
             ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
       - name: Publish the step cache as release assets
