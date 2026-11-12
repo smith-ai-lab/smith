@@ -282,6 +282,24 @@ static Str construct_array(Str element, types::TypeRef t) {
 static Bool mentions(Str text, Str name);
 static Bool array_written = false; // a construction fix wrote `array.filled`: the file needs `import std.array`
 static Str local_record_zero(types::TypeRef t, Str name);
+static Str defaulted_record(types::TypeRef t, Str name);
+
+// A member of another module's smith struct, written out where it is left out: the fields it gives no default get
+// their zero, the ones it defaults (a pointer made an option) are left to the default. `undefined` is not a value
+// inside a construction, so a field with neither a default nor a zero gives up and leaves the construction alone.
+static Str defaulted_record(types::TypeRef t, Str name) {
+    Str built = "";
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+        if (types::slots_of(t).items[i].default_value != nullptr) continue;
+        types::TypeRef field = types::slots_of(t).items[i].type;
+        Str zero = flat_zero(field);
+        if (field->kind == .option) zero = ".none";
+        if (countof(zero) == 0 || mentions(zero, "nullptr") || !nameable(types::slots_of(t).items[i].name)) return "";
+        if (countof(built) > 0) built = types::message_of(format::push(built, ", "));
+        built = types::message_of(format::push(built, types::slots_of(t).items[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(name, "(", built, ")"));
+}
 
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
 // each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
@@ -302,11 +320,16 @@ static Str omitted(types::TypeRef record, U64 given, Str outer) {
         }
         if (countof(zero) == 0) zero = construct_one(nested_name(outer, field), field);
         if (countof(zero) == 0 && field->kind == .record) zero = local_record_zero(field, nested_name(outer, field));
-        // a member of a smith struct whose pointers nothing tests against null: C fills it before use (lead on #2613)
+        if (field->kind == .record && same(zero, "undefined")) continue; // not a value here: the struct's `= undefined`
+        // a member of a smith struct whose pointers nothing tests against null: C fills it before use (lead on #2613).
+        // No construction can write it (`undefined` is a whole initializer), so its own module gives it `= undefined`
+        // in the struct (`defaults`) and this construction leaves it out.
         if (field->kind == .record && countof(types::owner_of(field)) > 0 && !same(types::owner_of(field), "c::") &&
             !types::is_union_record(field) && types::is_complete(field) &&
-            (countof(zero) == 0 || mentions(zero, "nullptr")))
-            zero = "undefined";
+            (countof(zero) == 0 || mentions(zero, "nullptr"))) {
+            zero = defaulted_record(field, nested_name(outer, field));
+            if (countof(zero) == 0) continue;
+        }
         if (countof(zero) == 0 || !nameable(types::slots_of(record).items[k].name)) return "";
         out = types::message_of(format::push(out, ", ", types::slots_of(record).items[k].name, " = ", zero));
     }
@@ -1332,6 +1355,29 @@ static core::ParseError nullable_fix(const ast::FieldDecl *f) {
     return found;
 }
 
+// Whether the field `f` is a member that is a record of this module with a pointer that stays a pointer.
+static Bool holds_plain_pointers(const ast::Module *module, types::Checked *c, const Wanted *w,
+                                 const ast::FieldDecl *f) {
+    types::TypeRef t = field_type(c, f);
+    if (t == nullptr || t->kind != .record || countof(types::owner_of(t)) > 0) return false;
+    Usize e = record_index(w, types::name_of(t));
+    return e < w->count && has_plain_pointer(module, c, w, e);
+}
+
+// The fix that gives the member `f` the default `= undefined`.
+static core::ParseError undefined_default(const ast::FieldDecl *f) {
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    U32 at = f->type->span.end;
+    Str text = " = undefined";
+    fix[0] = (core::Edit){.span = {.start = at, .end = at}, .text = text};
+    core::ParseError found = {};
+    found.span = f->span;
+    found.message = "a member whose pointers C fills before use is `undefined` until then";
+    found.fix = fix;
+    return found;
+}
+
 // The defaults of the fields of the module's records that some construction leaves out, one insertion after each
 // field's type: `count: usize = 0`.
 static core::Errors defaults(Str source, const ast::Module *module, types::Checked *c, core::Errors out) {
@@ -1353,7 +1399,10 @@ static core::Errors defaults(Str source, const ast::Module *module, types::Check
                 continue;
             }
             // Any other field is not given a default in the struct (#3190 item 25, #3224): the construction that
-            // leaves it out writes it (`module_edits`).
+            // leaves it out writes it (`module_edits`). The one exception is a member that is a record of this module
+            // holding a pointer that stays a pointer: no construction can write it (`undefined` is a whole
+            // initializer, not a value in a call), and C fills it before use (lead on #2613, #3268's regression).
+            if (holds_plain_pointers(module, c, &w, f)) out = add(out, undefined_default(f));
         }
     }
     return out;

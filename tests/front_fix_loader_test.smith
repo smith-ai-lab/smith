@@ -200,6 +200,40 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
     }
 }
 
+// #3268's regression: a struct of another module that holds a member struct with a pointer (`build::App` and its
+// `Step`) gets that member as `step: Step = undefined` in its own module, and the construction in another module
+// leaves the member out and writes the rest (`tool = false`). `step = undefined` is not a value inside a construction.
+export void test_front_fix_loader_a_member_with_a_pointer_of_a_module_is_left_to_its_default() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_zero_app.smith";
+    Str user_path = "/tmp/front_fix_zero_app_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_zero_app;\nexport struct Step {\n    const char *cmd;\n"
+                                              "    Bool restat;\n};\nexport struct App {\n    const char *entry;\n"
+                                              "    Bool tool;\n    Step step;\n};\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_zero_app_user;\nimport front_fix_zero_app;\n"
+                                            "static Bool f() {\n    front_fix_zero_app::App app = {.entry = \"x\"};\n"
+                                            "    return app.tool;\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_zero_app\nfn f() -> bool:\n    "
+                        "app := front_fix_zero_app.App(entry = \"x\", tool = false)\n    return app.tool\n");
+    }
+}
+
 // A mended import is read once its statements end at the line break, including one that ends in `p.*` (a `*p` in
 // today's syntax): `out.* = s.*` then `out.n = 1` did not parse, the import was dropped, and the importer was fixed
 // without its types (#2648). `mine` is the out-parameter the import's function fills, so it is `mut` and starts
