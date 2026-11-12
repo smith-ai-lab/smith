@@ -2343,7 +2343,11 @@ static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
         ast::Path element_path = {};
         if (written_path(element, &element_path)) {
             TypeRef of = resolve_name(r, element->span, element_path);
-            return slice_of(&r->table, of, false);
+            // In smith's own syntax `typeof([]char)` is read-only, as `[]char` is, and `typeof([]mut char)` writable;
+            // in today's, `typeof(const char[:])` is read-only and `typeof(char[:])` writable (#3206).
+            Bool read_only = element->qualifiers.is_const;
+            if (r->new_syntax && given->kind == .slice) read_only = !given->kind.slice.is_mut;
+            return slice_of(&r->table, of, read_only);
         }
         failf(r, node->span, "not yet typed: `typeof` of a type that is not a plain name; write the type itself");
         return r->table.invalid;

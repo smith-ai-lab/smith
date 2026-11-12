@@ -815,7 +815,10 @@ static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind op
 static ast::Expr *array_literal(parse::Parser *p) {
     // `[n]T` is an array type written as a value (`no_rule([n + 1]char)`): a type follows the closing bracket.
     Usize after = after_group(p, 0, lex::left_bracket, lex::right_bracket);
-    if (after > 0 && parse_type::starts_type(p, after)) return type_value(p);
+    // The type is on the line of the bracket: without layout tokens the next line's `const T x` would start one
+    // (#3206).
+    if (after > 0 && !parse::peek_at(p, after - 1).line_break && parse_type::starts_type(p, after))
+        return type_value(p);
     U32 start = parse::advance(p).span.start;
     ast::ExprRef items[:] = {};
     while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
