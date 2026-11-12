@@ -51,6 +51,9 @@ static const char *captured(const scratch::Project *p, const char *command) {
 static scratch::Project modules_project() {
     scratch::Project p = start("cache_modules");
     scratch::own_cache(&p);
+    // These tests are about the module folders the compiles fill: a compile served from the step cache fills none, and
+    // its key leaves the module folder out (#3175), so a build of the same project by another smith would be served.
+    scratch::uncached(&p);
     return p;
 }
 
