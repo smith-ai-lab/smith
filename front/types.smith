@@ -944,7 +944,8 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
         U64 bytes = bits_of(t) / 8;
         return (Layout){.size = bytes, .align = least(bytes, target->max_align), .known = true};
     }
-    if (t->kind == .pointer || t->kind == .fn_value || t->kind == .function || t->kind == .null_type || t->kind == .stream)
+    if (t->kind == .pointer || t->kind == .fn_value || t->kind == .function || t->kind == .null_type ||
+        t->kind == .stream)
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
     if (t->kind == .vector) return vector_layout(target, t);
@@ -971,7 +972,7 @@ static void absorb(Frame *f, Layout part_layout) {
         f->align = part_layout.align;
     } else if (f->type->kind == .option) { // `?*T` is the pointer (null is `.none`); any other `?T` is a tag and `T`
         f->size = f->type->kind.option.element->kind == .pointer ? part_layout.size
-                                                                : round_up(1, part_layout.align) + part_layout.size;
+                                                                 : round_up(1, part_layout.align) + part_layout.size;
         f->align = part_layout.align;
     } else if (is_union_record(f->type)) {
         f->size = most(f->size, part_layout.size);
