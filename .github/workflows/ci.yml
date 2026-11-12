@@ -1112,6 +1112,9 @@ jobs:
       # every step that writes outside the job (cache, release, issue body) is skipped when this is 1, and prints what it
       # would have written to the step summary instead
       DRY_RUN: ${{ github.event_name != 'push' && '1' || '0' }}
+      # what each step's key is made of (#3300), printed by the last step: the hosted side of the diff against a cloud
+      # worker's, which is how a machine-specific input of a key is found
+      SMITH_STEP_KEY_LOG: /tmp/smith-step-keys.log
     steps:
       - name: Say which job the stage0 comes from
         # on a push, a `publish` that did not succeed means no release of this commit will appear: say so at once and in one
@@ -1199,6 +1202,15 @@ jobs:
           start=$(date +%s)
           smith build -DPROFILE=release 2>&1 | tee "$RUNNER_TEMP/release-build.out" | tail -n 3
           echo "release build: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/release-build.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/release-build.out" || true) cached" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Print the keys of the steps (#3300)
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          [ -f "$SMITH_STEP_KEY_LOG" ] || { echo "no key log"; exit 0; }
+          wc -l "$SMITH_STEP_KEY_LOG"
+          echo "::group::step keys"
+          cat "$SMITH_STEP_KEY_LOG"
+          echo "::endgroup::"
       - name: Save the packages and tools
         # about 60 MB: every job that restores a build rather than making it reads this, so no job reaches github.com
         # for a package the cache holds (a 504 hour kept #2798 out of the queue for hours, #2825)
