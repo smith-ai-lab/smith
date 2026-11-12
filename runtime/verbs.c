@@ -1798,6 +1798,7 @@ typedef struct {
     bool changed;
     bool plan;
     const char *base;
+    const char *event;
     bool required[smith_check_part_count];
 } SmithCheckArgs;
 
@@ -1838,12 +1839,14 @@ static bool smith_check_args(const SmithVerbArgs *split, SmithCheckArgs *found) 
             found->plan = true;
         } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
             found->base = split->own[++i];
+        } else if (strcmp(arg, "--event") == 0 && i + 1 < split->own_count) {
+            found->event = split->own[++i];
         } else if (strcmp(arg, "--require") == 0 && i + 1 < split->own_count) {
             if (!smith_check_require(split->own[++i], found->required)) return false;
         } else {
             smith_die(smith_exit_usage,
                       "takes no arguments but -D options, -v, --changed [--base <ref>], --plan "
-                      "[--base <ref>] and --require <parts>",
+                      "[--base <ref>] [--event <name>] and --require <parts>",
                       "check");
         }
     }
@@ -1897,11 +1900,36 @@ static void smith_check_not_run(const bool *not_run, const SmithCheckArgs *given
 // A part this host cannot run (the macOS lint and tests on Linux, the proofs without a prover, lint, test and prove
 // without a build file) is never a silent pass: the last lines name it as "not run here". It does not fail the check
 // unless `--require` names it (or `all`), which is how CI says a platform must run it (#3163).
+// `smith check --changed` when the plan leaves most stages out (#3163): a change of only documents no build reads runs
+// nothing, one of only documentation runs the docs check. The stages left out are named, never skipped silently.
+static int smith_check_by_plan(SmithCheckScope scope) {
+    const char *left_out = "fmt, lint, test, prove, macos-lint, macos-tests";
+    if (scope == SmithCheckScope_None) {
+        fprintf(stderr, "smith check: nothing to run: the change touches only documents no build reads (scope none)\n");
+        return 0;
+    }
+    const char *failed[1];
+    size_t failed_count = 0;
+    SmithCheckClock since = smith_check_clock();
+    smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count, nullptr);
+    fprintf(stderr, "smith check: skipped by the plan (scope docs, documentation only): %s\n", left_out);
+    fprintf(stderr, failed_count == 0 ? "smith check: ok\n" : "smith check: failed: docs\n");
+    return failed_count == 0 ? 0 : 1;
+}
+
 int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     SmithCheckArgs given = {};
     if (!smith_check_args(split, &given)) return smith_exit_usage;
-    if (given.plan) return smith_check_plan_print(given.base); // only the plan: what the change touches, nothing run
+    if (given.plan)
+        return smith_check_plan_print(given.base, given.event != nullptr
+                                                      ? given.event
+                                                      : ""); // only the plan: what the change touches, nothing run
+    if (given.changed) {
+        SmithCheckPlan plan = {};
+        if (smith_check_plan_read(given.base, &plan) && smith_check_plan_scope(&plan) != SmithCheckScope_Full)
+            return smith_check_by_plan(smith_check_plan_scope(&plan));
+    }
     bool every_task = given.every_task;
     if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
     bool loud = every_task || smith_quiet_full();      // otherwise each part's output goes to its log

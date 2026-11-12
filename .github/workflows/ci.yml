@@ -127,52 +127,20 @@ jobs:
           BASE: ${{ github.event.merge_group.base_sha }}
           BEFORE: ${{ github.event.before }}
         run: |
-          # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
-          # anything else; a push to main, or a diff that cannot be read, is always full. The rule is one function,
-          # runtime/check_plan.c (#3163), the code `smith check --plan` runs and the pre-push hook shares; this job has
-          # no smith yet, so it compiles that file by itself. Other workflows (llvm.yml) change nothing this one runs;
-          # ci.yml itself and the actions it uses do.
+          # What runs is one rule, runtime/check_plan.c (#3163), the code `smith check --plan` runs and the pre-push hook
+          # shares. scope: none (only documents no build reads), docs (also the documents the docs check and their tests
+          # read), full (anything else; a diff that cannot be read), release (a push to main: the queue already checked
+          # that commit). This job has no smith yet, so it compiles that file by itself; it prints scope, docs_tests,
+          # docs_push, mac_run and the shape of the tests, and the rules per event are there. Other workflows (llvm.yml)
+          # change nothing this one runs; ci.yml itself and the actions it uses do. The base: a push, what it replaced;
+          # a queue entry is built on main plus the entries ahead of it, and merging it merges them too, so its scope is
+          # everything not yet on main (#1539 behind #1541, 2026-11-02: scoped by its own diff, a docs-only entry behind
+          # a code change ran no tests and carried the failing code onto main); any other event has no base, so it is full.
           cc -std=gnu2x -O1 -DSMITH_CHECK_PLAN_MAIN runtime/check_plan.c -o "$RUNNER_TEMP/check_plan"
-          # plan <base>: sets plan_scope, plan_docs_tests and plan_changed; false when the diff cannot be read
-          plan() {
-            local out
-            out=$("$RUNNER_TEMP/check_plan" --base "$1" 2>/dev/null) || return 1
-            plan_changed=$(printf '%s\n' "$out" | sed -n 's/^changed=//p')
-            [ "$plan_changed" != unknown ] || return 1
-            plan_scope=$(printf '%s\n' "$out" | sed -n 's/^scope=//p')
-            plan_docs_tests=$(printf '%s\n' "$out" | sed -n 's/^docs_tests=//p')
-          }
-          docs_push=false
-          scope=full
-          docs_tests=false
-          # a push to main is a commit the merge queue already checked: it only publishes the release
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            scope=release; BASE=
-            # a push of only documentation (#3044): the compiler did not change, so there is no release and no warm
-            # build; the scope is none. A push whose range cannot be read stays release.
-            if [ -n "$BEFORE" ] && ! printf '%s' "$BEFORE" | grep -qE '^0+$' && plan "$BEFORE" && [ "$plan_changed" != 0 ]; then
-              if [ "$plan_scope" != full ]; then scope=none; docs_push=true; fi
-            fi
-          fi
-          # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
-          # everything not yet on main. Scoped by its own diff, a docs-only entry behind a code change ran no tests,
-          # passed, and carried the failing code onto main (#1539 behind #1541, 2026-11-02)
+          if [ "$GITHUB_EVENT_NAME" = push ]; then BASE=$BEFORE; fi
           if [ "$GITHUB_EVENT_NAME" = merge_group ]; then git fetch -q origin main && BASE=$(git merge-base HEAD origin/main); fi
-          if [ -n "$BASE" ] && plan "$BASE"; then
-            scope=$plan_scope
-            if [ "$scope" = docs ]; then docs_tests=$plan_docs_tests; fi
-          fi
-          # The macOS jobs (#3172) run after the merge, on the push to main, and in the nightly and by-hand runs; a queue run
-          # has none, and a documents-only change none at all (#3044): its checks that read documents run on Linux in
-          # `docs-linux` with the published release. `docs_tests`: the diff reaches what readme_test and skills_test read
-          # (README.md, the skills): they build a test runner (about 2 minutes cold), `smith docs` does not.
-          mac_run=false
-          case "$GITHUB_EVENT_NAME:$scope" in push:release | schedule:full | workflow_dispatch:full) mac_run=true ;; esac
-          echo "scope=$scope" >>"$GITHUB_OUTPUT"
-          echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
-          echo "docs_tests=$docs_tests" >>"$GITHUB_OUTPUT"
-          echo "docs_push=$docs_push" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope (macos: $mac_run)" >>"$GITHUB_STEP_SUMMARY"
+          "$RUNNER_TEMP/check_plan" --base "$BASE" --event "$GITHUB_EVENT_NAME" >>"$GITHUB_OUTPUT"
+          echo "scope: $(sed -n 's/^scope=//p' "$GITHUB_OUTPUT") (macos: $(sed -n 's/^mac_run=//p' "$GITHUB_OUTPUT"))" >>"$GITHUB_STEP_SUMMARY"
 
       - name: The tarball the queue run of this commit built
         # a push to main is the commit the merge queue tested: its run built the Linux release profile and kept the tarball
@@ -236,9 +204,9 @@ jobs:
         # runs the few tests only macOS can run (`--macos-only`, one part). The queue runs everything in 8 parts. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
         # cache, and the Mac's build and tests (#3172).
         run: |
-          flags="--skip-macos"
-          macflags="--macos-only --shard 1/1"
-          count=8
+          flags="${{ steps.scope.outputs.linux_flags }}"
+          macflags="${{ steps.scope.outputs.mac_flags }}"
+          count=${{ steps.scope.outputs.test_parts }}
           linux=
           for i in $(seq 1 "$count"); do
             linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
