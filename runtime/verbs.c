@@ -1920,31 +1920,6 @@ static size_t smith_check_prove_first(const char *self, SmithVerbArgs *split, bo
 // A part this host cannot run (the macOS lint and tests on Linux, the proofs without a prover, lint, test and prove
 // without a build file) is never a silent pass: the last lines name it as "not run here". It does not fail the check
 // unless `--require` names it (or `all`), which is how CI says a platform must run it (#3163).
-// `smith check --changed` when the plan leaves most stages out (#3163): a change of only documents no build reads runs
-// nothing, one of only documentation runs the docs check. The stages left out are named, never skipped silently.
-static int smith_check_by_plan(SmithCheckScope scope) {
-    const char *left_out = "fmt, lint, test, prove, macos-lint, macos-tests";
-    if (scope == SmithCheckScope_None) {
-        fprintf(stderr, "smith check: nothing to run: the change touches only documents no build reads (scope none)\n");
-        return 0;
-    }
-    const char *failed[1];
-    size_t failed_count = 0;
-    SmithCheckClock since = smith_check_clock();
-    smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count, nullptr);
-    fprintf(stderr, "smith check: skipped by the plan (scope docs, documentation only): %s\n", left_out);
-    fprintf(stderr, failed_count == 0 ? "smith check: ok\n" : "smith check: failed: docs\n");
-    return failed_count == 0 ? 0 : 1;
-}
-
-// The status of `smith check --changed` when the plan leaves stages out, or -1 when every stage runs.
-static int smith_check_planned(const SmithCheckArgs *given) {
-    SmithCheckPlan plan = {};
-    if (!given->changed || !smith_check_plan_read(given->base, &plan)) return -1;
-    SmithCheckScope scope = smith_check_plan_scope(&plan);
-    return scope == SmithCheckScope_Full ? -1 : smith_check_by_plan(scope);
-}
-
 // One run of `smith check`: what it was asked, the parts that failed and the parts this host did not run.
 typedef struct {
     const char *self;
@@ -1956,6 +1931,48 @@ typedef struct {
     bool not_run[smith_check_part_count];
     size_t ran;
 } SmithCheckRun;
+
+// `smith check --changed` when the plan leaves most stages out (#3163): a change of only documents no build reads runs
+// nothing, one of only documentation runs the docs check. The stages left out are named, never skipped silently.
+static int smith_check_by_plan(const SmithCheckPlan *plan, SmithCheckScope scope, const SmithCheckRun *run) {
+    const char *left_out = "fmt, lint, test, prove, macos-lint, macos-tests";
+    if (scope == SmithCheckScope_None) {
+        fprintf(stderr, "smith check: nothing to run: the change touches only documents no build reads (scope none)\n");
+        return 0;
+    }
+    const char *failed[2];
+    size_t failed_count = 0;
+    SmithCheckClock since = smith_check_clock();
+    smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count, nullptr);
+    if (plan->docs_tests) { // README.md and the skills have tests of their own (#3160): the two a documents change
+                            // reaches
+        static SmithVerbArgs tests;
+        tests = *run->split;
+        smith_verb_room(tests.option_count, 2, "the documents' tests");
+        tests.options[tests.option_count++] = (char *)"--test";
+        tests.options[tests.option_count++] = (char *)"readme_test,skills_test";
+        smith_check_run(run->self, "test", &tests, run->loud, failed, &failed_count);
+        left_out = "fmt, lint, prove, macos-lint, macos-tests, and the other tests";
+    }
+    fprintf(stderr, "smith check: skipped by the plan (scope docs, documentation only): %s\n", left_out);
+    if (failed_count == 0) {
+        fprintf(stderr, "smith check: ok\n");
+        return 0;
+    }
+    fprintf(stderr, "smith check: failed:");
+    for (size_t i = 0; i < failed_count; i++)
+        fprintf(stderr, " %s", failed[i]);
+    fputc('\n', stderr);
+    return 1;
+}
+
+// The status of `smith check --changed` when the plan leaves stages out, or -1 when every stage runs.
+static int smith_check_planned(const SmithCheckRun *run) {
+    SmithCheckPlan plan = {};
+    if (!run->given->changed || !smith_check_plan_read(run->given->base, &plan)) return -1;
+    SmithCheckScope scope = smith_check_plan_scope(&plan);
+    return scope == SmithCheckScope_Full ? -1 : smith_check_by_plan(&plan, scope, run);
+}
 
 // Whether the run was asked for this part: all of them, or those `--part` names (CI's jobs each run some).
 static bool smith_check_wants(const SmithCheckRun *run, const char *name) {
@@ -2017,11 +2034,11 @@ int smith_check_project(int count, char **args, const char *self) {
     if (!smith_check_args(split, &given)) return smith_exit_usage;
     if (given.plan) // only the plan: what the change touches, nothing run
         return smith_check_plan_print(given.base, given.event != nullptr ? given.event : "");
-    int planned = smith_check_planned(&given);
-    if (planned >= 0) return planned;
     if (given.every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
     SmithCheckRun run = {.self = self, .split = split, .given = &given};
     run.loud = given.every_task || smith_quiet_full(); // otherwise each part's output goes to its log
+    int planned = smith_check_planned(&run);
+    if (planned >= 0) return planned;
     SmithCheckClock since = smith_check_clock();
     if (smith_check_wants(&run, "fmt")) {
         smith_check_part("fmt", smith_fmt_project(self, true), since, run.failed, &run.failed_count, nullptr);

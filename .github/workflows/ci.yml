@@ -787,26 +787,32 @@ jobs:
         uses: ./.github/actions/api-budget
 
   docs-linux:
-    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
-    # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
-    # One small Linux job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack.
+    # A documentation-only diff (#3044): `smith check --changed` with the smith built from the checkout (#3163). The plan
+    # (runtime/check_plan.c, the rule everywhere) says scope docs, so the command runs the docs check and, when the diff
+    # touches README.md or the skills, `readme_test` and `skills_test`: the same two the pre-push hook runs now, and the
+    # release smith that used to run them here no longer decides (#3160: a merge broke them and only this job ran them).
+    # The job builds smith like `build-linux` and, with `docs_tests`, only those two tests. No stage logic here.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_OUTPUT: full
-      DOCS_TESTS: ${{ needs.changes.outputs.docs_tests }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/fetch-smith
-      - name: Documentation checks
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: ${{ needs.changes.outputs.docs_tests }}
+          test-flags: ${{ needs.changes.outputs.docs_tests == 'true' && '--test readme_test,skills_test' || '' }}
+      - name: Checks
         run: |
-          smith docs
-          if [ "$DOCS_TESTS" = true ]; then smith test --test readme_test,skills_test; fi
+          "$SMITH" check --changed 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
 
   count-shard:
     # one eighth of the front-end count (#2697, #3369): `smith build frontend-coverage -Dshard=<k>/8` fixes the files whose
