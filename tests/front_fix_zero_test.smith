@@ -59,6 +59,14 @@ export void test_front_fix_zero_fills_the_fields_a_designated_list_leaves_out() 
                  "fn make(k: i32) -> E:\n    return E(k = k, s = S(a = 0, b = 0))\n");
 }
 
+// An array too long to write out is `array.filled` at the construction (the struct keeps no default), with the import.
+export void test_front_fix_zero_a_long_array_left_out_is_filled_at_the_construction() {
+    expect_fixed("module m;\nstruct Big {\n    unsigned int limb[128];\n    unsigned long count;\n};\n"
+                 "Big make(void) {\n    return (Big){.count = 1};\n}\n",
+                 "import std.array\nstruct Big:\n    limb: [128]u32\n    count: u64\n"
+                 "fn make() -> Big:\n    return Big(count = 1, limb = array.filled(u32, 128, 0))\n");
+}
+
 // A smith struct's pointer has no zero: the construction that leaves it out stays as written, and the struct gets no
 // default (`p: *char` stays; it becomes an option only when a read tests it, `nullable`).
 export void test_front_fix_zero_a_construction_that_leaves_a_pointer_out_is_not_mended() {
