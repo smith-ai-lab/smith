@@ -134,8 +134,6 @@ export void test_test_cache_a_run_records_each_tests_time_and_the_split_weighs_b
     scratch::expect_text("weigh: ... with no store to weigh by, the weights file says so",
                          "# no stored run to weigh by: every test weighs the same",
                          scratch::capture(&p, "head -n 1 weights.tsv"));
-    scratch::expect_text("weigh: ... and every one of the 4 tests has a record of its time", "4",
-                         scratch::capture(&p, "ls ../xdg-cache/smith/tests/took | wc -l | tr -d ' '"));
     // the files of a part only grow (each build and runner of a test program adds its lines), so a second run starts
     // clean
     scratch::Run second =
@@ -144,6 +142,10 @@ export void test_test_cache_a_run_records_each_tests_time_and_the_split_weighs_b
     scratch::expect_status("weigh: the second run passes", 0, &second);
     scratch::expect_text("weigh: ... its split knew the 3 tests the store serves (the fourth is marked uncached)",
                          "# 4 tests, 3 served by the store", scratch::capture(&p, "head -n 1 weights.tsv"));
+    scratch::expect_text(
+        "weigh: ... the one that ran weighs the seconds the first run recorded, not a guess", "1",
+        scratch::capture(
+            &p, "awk -F'\t' '$1 == \"cpu\" && $2 != 0.020 && $2 != 0.400' weights.tsv | sort -u | wc -l | tr -d ' '"));
     scratch::expect_text("weigh: ... the served ones weigh next to nothing", "3",
                          scratch::capture(&p, "awk -F'\t' '$2 == 0.020' weights.tsv | sort -u | wc -l | tr -d ' '"));
     scratch::expect_text("weigh: ... the suite it dealt from is all 4", "4",
