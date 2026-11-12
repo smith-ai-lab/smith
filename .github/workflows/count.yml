@@ -156,11 +156,10 @@ jobs:
         with:
           label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
-        # the import cache only (#2891), of the release smith's identity: this shard's set (#2939)
+        # restores no store (#3347); it sets SMITH_IMPORT_CACHE_LOG, from which the save below prints the hits
         with:
           tests: "false"
           fresh: "true"
-          imports-from: count-${{ matrix.shard }}
       - name: API budget (after test-cache)
         uses: ./.github/actions/api-budget
         with:
@@ -191,8 +190,8 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
-      - name: Publish the import cache
-        # `test-cache-<sha7>-count-<k>`, and the shard's hits
+      - name: Report the import-cache hits
+        # the shard's hits (the save publishes no store for tests: false, #3347)
         if: always()
         uses: ./.github/actions/test-cache/save
         with:
