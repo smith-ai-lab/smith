@@ -628,6 +628,22 @@ static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x,
     return state::success();
 }
 
+// An imported module's global as a place (`state.total = 5`, `board.cells[2]`): the global declared external under its
+// `@c_name` (else its key), the address and the type the checker gave the name.
+static state::Status imported_global_place(state::Emitter *e, const ast::Expr *x, const ast::Decl *d, Str key) {
+    types::TypeRef wanted = types::type_of(e->options.checked, x);
+    if (wanted == nullptr) return state::fail("the global has no type", x->span);
+    state::TyResult made = state::type_of_checked(e, wanted, x->span);
+    if (made == .error) return {.error = made.error};
+    Str own = state::c_name_of(d);
+    char *label = state::cstr(countof(own) > 0 ? own : key);
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
+    if (global == nullptr) global = c::LLVMAddGlobal(e->module, made.ok.llvm, label);
+    mem::free(label);
+    state::push_value(e, (state::Value){.llvm = global, .ty = made.ok});
+    return state::success();
+}
+
 // `Kind(pair = (a = 1, b = 2))`: a payload enumeration named as the callee with one argument `variant = payload`, which
 // the checker typed as `.pair((a = 1, b = 2))` of that enumeration (`enum_variant_call` in front/types_expr.smith). The
 // callee is a type, so it has no type of its own. Null when the call is no such form.
@@ -765,6 +781,10 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
 
 // The handler that pushes the address of an lvalue.
 static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
+    const ast::Decl *imported = nullptr;
+    Str imported_key = "";
+    if (x->kind == .member && imported_global(e, x, &imported, &imported_key))
+        return imported_global_place(e, x, imported, imported_key);
     if (x->kind == .name) {
         if (emit_memory::is_global_name(e, x)) return emit_memory::place_name(e, x);
         return arith::place_name(e, x);
