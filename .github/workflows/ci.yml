@@ -1104,10 +1104,15 @@ jobs:
             echo "::error file=$f::passed on $base and fails now at $stage: $cause"
           done <"$RUNNER_TEMP/regressed.txt"
           echo "frontend-regressed-count: $n"
+          # the rule (owner, 2026-11-12, #3369): any file that passed on the base and fails now refuses the change,
+          # whatever the total does (fixing three files and breaking three is refused); two ways out
+          if [ "$n" != 0 ]; then
+            echo "::error::$n files passed on $base and fail now (frontend-regressed lines). Fix them, or, for a file that should no longer be measured, list it in scripts/frontend_coverage/excluded.txt with a reason (knowledge/front-end/driver.md, The count's excluded files); a total that goes up does not excuse a file that fails."
+          fi
           {
             echo "### Front-end regression"
             echo
-            echo "$n files passed on $base and fail now; the run is refused."
+            echo "$n files passed on $base and fail now; the run is refused, whatever the total does. Two ways out: fix them, or list a file that should no longer be measured in \`scripts/frontend_coverage/excluded.txt\` with a reason."
             echo '```'
             cat "$RUNNER_TEMP/regressed.txt"
             echo '```'
