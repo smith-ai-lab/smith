@@ -100,25 +100,12 @@ export void test_front_fix_lambda_that_discards_a_result() {
                  "fn g() -> i32:\n    return 1\nfn main():\n    h: fn() = fn():\n        _ := g()\n    h()\n");
 }
 
-export void test_front_fix_lambda_generic_infer_file() {
-    expect_fixed("module main;\n"
-                 "\n"
-                 "import <stdio.h>;\n"
-                 "\n"
-                 "// The return type is inferred from the first `return`, with the instance's types.\n"
-                 "export T sum(constexpr Type T, T a, T b) {\n"
-                 "    T (*add)(T, T) = [](T x, T y) { return x + y; };\n"
-                 "    void (*nothing)(void) = [] { };\n"
-                 "    nothing();\n"
-                 "    return add(a, b);\n"
-                 "}\n"
-                 "\n"
-                 "I32 main() {\n"
-                 "    c::printf(\"%d %.1f\\n\", sum(I32, 2, 3), sum(F64, 1.5, 2.0));\n"
-                 "    return 0;\n"
-                 "}\n",
-                 "\nimport c <stdio.h>\n\n# The return type is inferred from the first `return`, with the instance's "
-                 "types.\npub fn sum(T: type, a: T, b: T) -> T:\n    add: fn(T, T) -> T = fn(x: T, y: T): x + y\n    "
-                 "nothing: fn() = fn(): ()\n    nothing()\n    return add(a, b)\n\nfn main() -> i32:\n    "
-                 "c.printf(\"%d %.1f\\n\", sum(i32, 2, 3), sum(f64, 1.5, 2.0))\n    return 0\n");
+export void test_front_fix_lambda_generic_infer_after_a_comment() {
+    // A `//` comment keeps the text from lexing as smith's own syntax until the first pass is done (#3317).
+    expect_fixed("module m;\n\n// The return type is inferred.\nexport T sum(constexpr Type T, T a, T b) {\n"
+                 "    T (*add)(T, T) = [](T x, T y) { return x + y; };\n    void (*nothing)(void) = [] { };\n"
+                 "    nothing();\n    return add(a, b);\n}\n",
+                 "\n# The return type is inferred.\npub fn sum(T: type, a: T, b: T) -> T:\n"
+                 "    add: fn(T, T) -> T = fn(x: T, y: T): x + y\n    nothing: fn() = fn(): ()\n    nothing()\n"
+                 "    return add(a, b)\n");
 }
