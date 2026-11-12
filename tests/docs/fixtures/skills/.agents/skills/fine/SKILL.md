@@ -1,5 +1,5 @@
 ---
 name: fine
-description: "Does a thing."
+description: "Load when doing a thing."
 ---
 # fine

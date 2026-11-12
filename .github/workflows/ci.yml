@@ -788,26 +788,32 @@ jobs:
         uses: ./.github/actions/api-budget
 
   docs-linux:
-    # A documentation-only diff (#3044): `smith docs` (0.02 s) with the published release, never a build, and, when the diff
-    # touches README.md or the skills, `readme_test` and `skills_test` (about 2 minutes cold: the test runner is built).
-    # One small Linux job, in a PR check and in a queue run; no macOS, no step cache, no LLVM pack.
+    # A documentation-only diff (#3044): `smith check --changed` with the smith built from the checkout (#3163). The plan
+    # (runtime/check_plan.c, the rule everywhere) says scope docs, so the command runs the docs check and, when the diff
+    # touches README.md or the skills, `readme_test` and `skills_test`: the same two the pre-push hook runs now, and the
+    # release smith that used to run them here no longer decides (#3160: a merge broke them and only this job ran them).
+    # The job builds smith like `build-linux` and, with `docs_tests`, only those two tests. No stage logic here.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_OUTPUT: full
-      DOCS_TESTS: ${{ needs.changes.outputs.docs_tests }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/fetch-smith
-      - name: Documentation checks
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: ${{ needs.changes.outputs.docs_tests }}
+          test-flags: ${{ needs.changes.outputs.docs_tests == 'true' && '--test readme_test,skills_test' || '' }}
+      - name: Checks
         run: |
-          smith docs
-          if [ "$DOCS_TESTS" = true ]; then smith test --test readme_test,skills_test; fi
+          "$SMITH" check --changed 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
 
   count-shard:
     # one eighth of the front-end count (#2697, #3369): `smith build frontend-coverage -Dshard=<k>/8` fixes the files whose
@@ -1005,7 +1011,8 @@ jobs:
           grep '^frontend-name: ' "$out" 2>/dev/null || true
           [ -n "$line" ]
       - name: The gate, files that passed on the base and fail now
-        # REFUSES the run (#3369). The base: the newest commit among the first 20 first parents with a published table.
+        # Report-only for the first 10 queue runs of each gate version (#3443), then REFUSES the run (#3369). The base:
+        # the newest commit among the first 20 first parents with a published table.
         shell: bash
         run: |
           set +e
@@ -1014,45 +1021,71 @@ jobs:
           prev=unknown
           base=
           mkdir -p "$RUNNER_TEMP/previous"
+          verdict="$RUNNER_TEMP/previous/frontend-gate.tsv"
           for sha in $(git rev-list --first-parent -n 20 "$GITHUB_SHA" | tail -n +2); do
             url="https://github.com/$GITHUB_REPOSITORY/releases/download/test-cache-${sha:0:7}-count-table/frontend-coverage-table.tsv"
             if curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/previous/results.tsv" 2>/dev/null && [ -s "$RUNNER_TEMP/previous/results.tsv" ]; then
-              prev="$RUNNER_TEMP/previous/results.tsv"; base=${sha:0:7}; break
+              prev="$RUNNER_TEMP/previous/results.tsv"; base=${sha:0:7}
+              # the verdict row the run of the base published (none: the base ran an older gate, this is its first run)
+              curl -fsSL --retry 3 "${url%frontend-coverage-table.tsv}frontend-gate.tsv" >"$verdict" 2>/dev/null || rm -f "$verdict"
+              break
             fi
           done
+          gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
+          export SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt"
           if [ "$prev" = unknown ]; then
             echo "frontend-regressed-count: unknown"
             echo "::warning::no published table of the count among the 20 first parents: nothing to compare with, this table is the base for the next run"
-            exit 0
+            : >"$RUNNER_TEMP/regressed.txt"
+            (cd "$gate" && "$SMITH" run -- gate "$verdict" 0) >"$RUNNER_TEMP/gate-out.txt"
+          else
+            echo "frontend-base: $base"
+            # a file passed there and has a row here with another stage; a file gone from the tree or listed in excluded.txt
+            # has no row here (`regressed` of the count's tool, with its test)
+            # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
+            # gate-begin
+            (cd "$gate" && "$SMITH" run -- regressed "$prev" "$now" "$verdict") >"$RUNNER_TEMP/gate-out.txt"
+            # gate-end
+            # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields)
+            awk -F'\t' 'NF >= 3 && $1 != "gate-row"' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/regressed.txt"
           fi
-          echo "frontend-base: $base"
-          # a file passed there and has a row here with another stage; a file gone from the tree or listed in excluded.txt
-          # has no row here (`regressed` of the count's tool, with its test)
-          # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
-          gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
-          (cd "$gate" && SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt" \
-            "$SMITH" run -- regressed "$prev" "$now") | awk -F'\t' 'NF >= 3' >"$RUNNER_TEMP/regressed.txt"
-          # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields)
+          awk -F'\t' '$1 == "gate-row" {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/frontend-gate.tsv"
+          mode=report-only
+          [ "$(awk -F'\t' '{print $5}' "$RUNNER_TEMP/frontend-gate.tsv")" = refusing ] && mode=refusing
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
+          echo "frontend-gate: $(tr '\t' ' ' <"$RUNNER_TEMP/frontend-gate.tsv")   (version, run, would refuse, dirty, mode)"
+          # a gate that stays report-only because a dry run would have refused is printed here, as a warning and in the summary
+          note=$(grep '^gate-note: ' "$RUNNER_TEMP/gate-out.txt" | tr -d '\r')
+          [ -n "$note" ] && echo "::warning::${note#gate-note: }"
           while IFS=$'\t' read -r f stage cause; do
-            echo "frontend-regressed: $f ($stage: $cause)"
-            echo "::error file=$f::passed on $base and fails now at $stage: $cause"
+            if [ "$mode" = refusing ]; then
+              echo "frontend-regressed: $f ($stage: $cause)"
+              echo "::error file=$f::passed on $base and fails now at $stage: $cause"
+            else
+              echo "frontend-would-refuse: $f ($stage: $cause)"
+            fi
           done <"$RUNNER_TEMP/regressed.txt"
           echo "frontend-regressed-count: $n"
+          echo "frontend-would-refuse: $n"
           # the rule (owner, 2026-11-12, #3369): any file that passed on the base and fails now refuses the change,
           # whatever the total does (fixing three files and breaking three is refused); two ways out
-          if [ "$n" != 0 ]; then
+          if [ "$mode" = refusing ] && [ "$n" != 0 ]; then
             echo "::error::$n files passed on $base and fail now (frontend-regressed lines). Fix them, or, for a file that should no longer be measured, list it in scripts/frontend_coverage/excluded.txt with a reason (knowledge/front-end/driver.md, The count's excluded files); a total that goes up does not excuse a file that fails."
           fi
           {
             echo "### Front-end regression"
             echo
-            echo "$n files passed on $base and fail now; the run is refused, whatever the total does. Two ways out: fix them, or list a file that should no longer be measured in \`scripts/frontend_coverage/excluded.txt\` with a reason."
+            if [ "$mode" = refusing ]; then
+              echo "$n files passed on $base and fail now; the run is refused, whatever the total does. Two ways out: fix them, or list a file that should no longer be measured in \`scripts/frontend_coverage/excluded.txt\` with a reason."
+            else
+              echo "**The gate is report-only**: $n files passed on $base and fail now and would be refused. ${note#gate-note: }"
+            fi
             echo '```'
             cat "$RUNNER_TEMP/regressed.txt"
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-          [ "$n" = 0 ]
+          [ -s "$RUNNER_TEMP/frontend-gate.tsv" ] || { echo "::error::the gate printed no verdict row"; exit 1; }
+          [ "$mode" != refusing ] || [ "$n" = 0 ]
       - name: Publish the table (the base of the next runs)
         shell: bash
         run: |
@@ -1060,7 +1093,8 @@ jobs:
           tag="test-cache-${GITHUB_SHA:0:7}-count-table"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             cp "$RUNNER_TEMP/coverage/results.tsv" "$RUNNER_TEMP/frontend-coverage-table.tsv"
-            gh release create "$tag" "$RUNNER_TEMP/frontend-coverage-table.tsv" --prerelease --latest=false \
+            # with the gate's verdict row of this run (#3443): version, run of that version, would refuse, dirty, mode
+            gh release create "$tag" "$RUNNER_TEMP/frontend-coverage-table.tsv" "$RUNNER_TEMP/frontend-gate.tsv" --prerelease --latest=false \
               --target "$GITHUB_SHA" --title "count table $tag" \
               --notes "The front-end count's table (#3369) of the queue run at $GITHUB_SHA: the base the next queue runs compare with. Not a release of smith."
           fi
