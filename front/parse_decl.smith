@@ -2022,7 +2022,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         fixable = false;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     // `char s[] = "text"` (a string's length and type are not settled) and any value but a list have no fix (#3316)
-    if (dims.unsized && !(countof(value) > 0 && value[0] == '{')) fixable = false;
+    if (dims.unsized && !(countof(value) > 0 && (value[0] == '{' || value[0] == '['))) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
         warn_by_hand(p, head, name, written);

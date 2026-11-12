@@ -294,7 +294,7 @@ export void test_front_fix_an_option_list_in_a_generic_is_the_variant() {
 // two-dimension one keep the warning: the type of a string array is not settled.
 export void test_front_fix_unsized_array_local() {
     expect_fixed("module m;\nI32 f() {\n    I32 xs[] = {4, 8, 15};\n    return (I32)countof(xs);\n}\n",
-                 "fn f() -> i32:\n    xs: [3]i32 = [4, 8, 15]\n    return countof(xs).to(i32)\n");
+                 "fn f() -> i32:\n    xs: [3]i32 = [4, 8, 15]\n    return (countof(xs)).to(i32)\n");
 }
 
 export void test_front_fix_unsized_array_global() {
@@ -303,5 +303,5 @@ export void test_front_fix_unsized_array_global() {
 
 export void test_front_fix_unsized_array_of_structs() {
     expect_fixed("module m;\nstruct P {\n    I32 x;\n    I32 y;\n};\nvoid f() {\n    P ps[] = {{1, 2}, {3, 4}};\n}\n",
-                 "struct P:\n    x: i32\n    y: i32\n\nfn f():\n    ps: [2]P = [P(1, 2), P(3, 4)]\n");
+                 "struct P:\n    x: i32\n    y: i32\nfn f():\n    ps: [_]P = [P(1, 2), P(3, 4)]\n");
 }
