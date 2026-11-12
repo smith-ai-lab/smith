@@ -880,6 +880,18 @@ static Usize project_of(const char path[:]) {
     return best;
 }
 
+// The module `scratch` (tests/scratch.smith) is on the roots of the files beside it. A file of lib/std/ that says
+// `import scratch;` needs it on a root too (#3214): a link `lib/scratch.smith` to it, in the scratch tree only.
+static void link_scratch_module(const char *scratch) {
+    char link[path_size * 2 + 24];
+    char target[path_size * 2 + 24];
+    (void)format::write(link, sizeof link, scratch, "/lib/scratch.smith");
+    (void)format::write(target, sizeof target, scratch, "/tests/scratch.smith");
+    if (!files::exists(view_of(target))) return;
+    (void)c::unlink(link);
+    if (!files::exists(view_of(link))) (void)c::symlink(target, link);
+}
+
 // Gives each project the two roots the front end looks under, from the folder of the project: `lib` is the library of
 // the copied tree (unless the project has its own), and `src` is the project folder itself (unless it has a src
 // folder).
@@ -896,7 +908,10 @@ static void link_roots(const char *scratch) {
         if (!files::exists(view_of(link))) {
             linked_source[i] = c::symlink(".", link) == 0;
         }
-        if (i == 0) continue;
+        if (i == 0) {
+            link_scratch_module(scratch);
+            continue;
+        }
         (void)format::write(link, sizeof link, (const char *)folder, "/lib");
         (void)format::write(library, sizeof library, scratch, "/lib");
         if (!files::exists(view_of(link))) (void)c::symlink(library, link);
