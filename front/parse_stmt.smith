@@ -1232,6 +1232,8 @@ static Frame open_while(parse::Parser *p) {
 static Bool new_for(const parse::Parser *p) {
     lex::Token next = parse::peek_at(p, 1);
     if (next.kind == lex::name) return parse::peek_at(p, 2).kind == lex::kw_in;
+    if (next.kind == lex::kw_mut)
+        return parse::peek_at(p, 2).kind == lex::name && parse::peek_at(p, 3).kind == lex::kw_in;
     if (next.kind != lex::left_paren) return false;
     return parse::peek_at(p, after_group(p, 1)).kind == lex::kw_in;
 }
@@ -1245,9 +1247,11 @@ static Frame open_for_in(parse::Parser *p) {
     ast::Identifier names[:] = {};
     Usize limit = countof(p->tokens);
     for (Usize i = 0; i < limit && countof(p->errors) == before; i++) {
+        Bool is_mut = parse::accept(p, lex::kw_mut); // `for mut x in xs`, `for (i, mut x) in xs`: changed in place
         lex::Token token = parse::expect(p, lex::name, "a name");
         names = mem::realloc(names, countof(names) + 1);
-        names[countof(names) - 1] = (ast::Identifier){.text = parse::text(p, token), .span = token.span};
+        names[countof(names) - 1] =
+            (ast::Identifier){.text = parse::text(p, token), .span = token.span, .is_mut = is_mut};
         if (!is_tuple || !parse::accept(p, lex::comma)) break;
     }
     if (is_tuple) parse::expect(p, lex::right_paren, "`)`");

@@ -1549,7 +1549,50 @@ static types::TypeRef unary_address(types::Checked *c, const ast::Expr *e, const
     return types::pointer_to(&c->table, t, constant);
 }
 
-static types::TypeRef unary_dereference(types::Checked *c, const ast::Expr *e, types::TypeRef t) {
+// The name `*x` (`x.*`) is written on, when `x` is a single name that holds a value (not a pointer).
+static const types::Symbol *value_name(const types::Checked *c, const ast::Expr *operand, types::TypeRef t) {
+    if (t->kind == .pointer || operand->kind != .name || countof(operand->kind.name.path.segments) != 1) return nullptr;
+    const types::Symbol *s = types::lookup_path(&c->scopes, operand->kind.name.path);
+    if (s == nullptr || s->kind != .variable) return nullptr;
+    return s;
+}
+
+// The fix of `x.*` on a value (#3251): the `.*` goes, and the name of a loop that was not `mut` becomes `for mut x in`.
+// Mutation never needs a pointer: a `mut` name is changed in place (#3235 item 41).
+static syntax::Edits deref_fix(const types::Symbol *s, const ast::Expr *e, const ast::Expr *operand) {
+    syntax::Edits edits = {};
+    Bool mend_loop = s->is_const && s->loop_name && s->at.end > s->at.start;
+    if (e->span.start != operand->span.start || e->span.end < operand->span.end + 2) return edits;
+    if (s->is_const && !mend_loop) return edits;
+    edits = mem::realloc(edits, mend_loop ? 2 : 1);
+    Str nothing = "";
+    edits[0] = (syntax::Edit){.span = {.start = operand->span.end, .end = e->span.end}, .text = nothing};
+    if (mend_loop) {
+        Str word = "mut ";
+        edits[1] = (syntax::Edit){.span = {.start = s->at.start, .end = s->at.start}, .text = word};
+    }
+    return edits;
+}
+
+static types::TypeRef unary_dereference(types::Checked *c, const ast::Expr *e, const ast::Expr *operand,
+                                        types::TypeRef t) {
+    const types::Symbol *held = value_name(c, operand, t);
+    if (held != nullptr && !held->is_const) {
+        Str name = held->name;
+        types::fail_fix(
+            c, e->span,
+            types::message_of(format::push("`", name, "` is a value, not a pointer; write `", name,
+                                           "` where you wrote `*", name, "` (a `mut` name is changed in place)")),
+            deref_fix(held, e, operand));
+        return invalid(c);
+    }
+    if (held != nullptr && held->loop_name) {
+        types::fail_fix(c, e->span,
+                        types::message_of(format::push("`*` needs a pointer, found `", types::show(t),
+                                                       "`; write a pointer such as `", types::show(t), " *`")),
+                        deref_fix(held, e, operand));
+        return invalid(c);
+    }
     if (t->kind != .pointer) {
         types::failf(c, e->span, "`*` needs a pointer, found `", types::show(t), "`; write a pointer such as `",
                      types::show(t), " *`");
@@ -1588,7 +1631,7 @@ static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::Una
         return unary_address(c, e, operand, t);
     }
     if (op == .dereference) {
-        return unary_dereference(c, e, t);
+        return unary_dereference(c, e, operand, t);
     }
     if (op == .negate || op == .plus || op == .logical_not || op == .bit_not) {
         return unary_value(c, e, op, t);

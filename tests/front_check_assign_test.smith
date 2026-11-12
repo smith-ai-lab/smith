@@ -58,3 +58,18 @@ export void test_front_check_assign_a_plain_value_converts_to_the_option() {
                                 "    found = word[0:1]\n"),
                       (Usize)0);
 }
+
+// A loop name written `mut` is changed in place (#3251): `for mut p in xs` takes `p *= 2`, and a loop name without
+// `mut` is constant.
+export void test_front_check_assign_a_mut_loop_name_is_assigned() {
+    test::check_equal(errors_of("pub fn f(xs: []i32):\n"
+                                "    for mut p in xs:\n"
+                                "        p *= 2\n"),
+                      (Usize)0);
+}
+
+export void test_front_check_assign_a_loop_name_without_mut_is_constant() {
+    test::check_condition(errors_of("pub fn f(xs: []i32):\n"
+                                    "    for p in xs:\n"
+                                    "        p *= 2\n") > 0);
+}
