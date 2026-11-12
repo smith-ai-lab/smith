@@ -6897,7 +6897,7 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
 }
 
 static Bool computed_call(types::Checked *c, Frame f);
-static types::TypeRef made_callee(types::Checked *c, const ast::Expr *callee);
+static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee);
 
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -6935,11 +6935,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef made = made_callee(c, callee);
-    if (made == c->table.invalid) {
-        poison(c, e);
-        return;
-    }
+    if (made_callee_failed(c, e, callee)) return;
     types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
     if (record != nullptr) {
         construct_before(w, f, record);
@@ -7098,6 +7094,13 @@ static types::TypeRef made_callee(types::Checked *c, const ast::Expr *callee) {
     if (held == nullptr || held == c->table.invalid || !types::is_made(c, held)) return held;
     types::set_type(c, callee, held);
     return held;
+}
+
+// Whether the callee is a type a type function made that could not be computed: the call is poisoned (#3229).
+static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee) {
+    if (made_callee(c, callee) != c->table.invalid) return false;
+    poison(c, call);
+    return true;
 }
 
 static Bool computed_call(types::Checked *c, Frame f) {
