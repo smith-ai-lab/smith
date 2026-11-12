@@ -1788,7 +1788,7 @@ static void smith_check_promises(bool list) {
 }
 
 // The parts `smith check` names, in the order it runs them; `--require` takes these (or `all`).
-static const char *const smith_check_parts[] = {"fmt", "docs", "lint", "test", "prove", "macos-lint", "macos-tests"};
+static const char *const smith_check_parts[] = {"fmt", "docs", "prove", "lint", "test", "macos-lint", "macos-tests"};
 constexpr size_t smith_check_part_count = sizeof smith_check_parts / sizeof smith_check_parts[0];
 
 // What `smith check` was asked: `-v`, `--changed [--base <ref>]`, `--require <parts>|all`.
@@ -1815,7 +1815,7 @@ static bool smith_check_require(const char *list, bool *required) {
         }
         if (found == smith_check_part_count) {
             fprintf(stderr,
-                    "smith check: --require: '%s' is no part (fmt, docs, lint, test, prove, macos-lint, "
+                    "smith check: --require: '%s' is no part (fmt, docs, prove, lint, test, macos-lint, "
                     "macos-tests, or all)\n",
                     item);
             return false;
@@ -1887,11 +1887,12 @@ static void smith_check_not_run(const bool *not_run, const SmithCheckArgs *given
     fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, *failed_count, skipped);
 }
 
-// `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
-// first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
-// A part this host cannot run (the macOS lint and tests on Linux, the proofs without a prover, lint, test and prove
-// without a build file) is never a silent pass: the last lines name it as "not run here". It does not fail the check
-// unless `--require` names it (or `all`), which is how CI says a platform must run it (#3163).
+// `smith check`: formatting (clang-format's dry run), the docs, the proofs, lint and the tests, in that order (the
+// proofs before the parts that read them, #3178). A part that fails does not stop the rest: every part is reported, and
+// the exit status is 1 if any failed. A part this host cannot run (the macOS lint and tests on Linux, the proofs
+// without a prover, lint, test and prove without a build file) is never a silent pass: the last lines name it as "not
+// run here". It does not fail the check unless `--require` names it (or `all`), which is how CI says a platform must
+// run it (#3163).
 int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     SmithCheckArgs given = {};
@@ -1916,6 +1917,16 @@ int smith_check_project(int count, char **args, const char *self) {
             true;
     } else {
         static SmithVerbArgs lint_split, test_split;
+        // The proofs come first: lint and the compiles read the proof files (`.smith/proved/*.pts`, and the
+        // -DSMITH_PROVED= of the compile commands), so a run that proved after them left the files they had read
+        // changed, and the next run did their work again (#3178).
+        if (smith_has_prover()) {
+            smith_check_run(self, "prove", split, loud, failed, &failed_count);
+            ran++;
+        } else {
+            fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
+            not_run[smith_check_index("prove")] = true;
+        }
         lint_split = *split;
         smith_check_select(&lint_split, "lint", &given);
         smith_check_run(self, "lint", &lint_split, loud, failed, &failed_count);
@@ -1932,13 +1943,6 @@ int smith_check_project(int count, char **args, const char *self) {
         smith_check_run(self, "test", &test_split, loud, failed, &failed_count);
 #endif
         ran++;
-        if (smith_has_prover()) {
-            smith_check_run(self, "prove", split, loud, failed, &failed_count);
-            ran++;
-        } else {
-            fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
-            not_run[smith_check_index("prove")] = true;
-        }
         // The promises are read from the summaries of the project's own compiles, which lint, test and prove need not
         // have made (a project never built): the default build, a no-op when fresh, makes them.
         char build_log[PATH_MAX];

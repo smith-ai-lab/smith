@@ -3954,7 +3954,7 @@ static const SmithVerb smith_verbs[] = {
          {"-v", "show every part's output and every task's time"},
          {"--changed", "lint and test only what the change reaches; --base <ref> is what it is compared with"},
          {"--require <parts>",
-          "fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all"},
+          "fail when a part is not run here: fmt, docs, prove, lint, test, macos-lint, macos-tests, or all"},
          {"-D<name>=<value>", "an option the project's build.c reads"},
          {nullptr, nullptr}},
      (const char *const[]){"smith check", "smith check -v", "smith check --changed --require all", nullptr}, nullptr},

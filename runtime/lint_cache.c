@@ -41,6 +41,8 @@ typedef struct {
     const char *path;
     int64_t mtime;
     bool ok;
+    bool
+        early; // digested while the keys were made, before any file was linted: its digest is what the run started with
     char hex[smith_sha256_hex_size];
 } SmithLcFile;
 
@@ -57,6 +59,7 @@ typedef struct {
 
 typedef struct {
     bool enabled;
+    bool planning; // smith_lc_plan is running: the files digested now are the digests of before the run
     bool explain;  // SMITH_LINT_CACHE=why: say why a file runs
     int64_t began; // the clock of the run, in ns: a file changed after it (less the margin) is not trusted
     char root[PATH_MAX];
@@ -119,6 +122,7 @@ static const SmithLcFile *smith_lc_file(const char *path) {
     struct stat info;
     entry->ok = stat(path, &info) == 0 && S_ISREG(info.st_mode) && smith_sha256_file(path, entry->hex);
     entry->mtime = entry->ok ? smith_lc_nanoseconds(&info) : 0;
+    entry->early = smith_lc.planning;
     smith_lc_file_table[slot] = (uint32_t)smith_lc_file_count;
     return entry;
 }
@@ -548,8 +552,16 @@ static void smith_lc_say_inputs(const char *file, const char *own_flags, const c
             configs, headers);
 }
 
+static void smith_lc_plan_job(size_t number, const char *file, const char *flags);
+
 // Finds the keys of a file with the flags of its compile (tab separated; nullptr: it has none of its own).
 void smith_lc_plan(size_t number, const char *file, const char *flags) {
+    smith_lc.planning = true;
+    smith_lc_plan_job(number, file, flags);
+    smith_lc.planning = false;
+}
+
+static void smith_lc_plan_job(size_t number, const char *file, const char *flags) {
     SMITH_ASSERT(number < smith_lc_jobs_max);
     SmithLcJob *job = &smith_lc_jobs[number];
     *job = (SmithLcJob){};
@@ -690,8 +702,10 @@ static size_t smith_lc_parse_depfile(const char *path, char *out, size_t capacit
     return used;
 }
 
-// Whether every file of the manifest (and each `.clang-tidy`, which the first key holds) is older than the run, with a
-// margin: a file changed since may have been read in either state.
+// Whether every file of the manifest (and each `.clang-tidy`, which the first key holds) is the file the run started
+// with. A file the keys were made from (its source, its generated headers, the files of the last run's manifest) is
+// digested again and must have its first digest and its time; one the keys did not hold is trusted when it is older
+// than the run, with a margin: a file changed since may have been read in either state.
 static bool smith_lc_settled(const char *text, size_t size) {
     for (size_t at = 0; at < size;) { // bounded by the text
         char name[PATH_MAX];
@@ -700,10 +714,18 @@ static bool smith_lc_settled(const char *text, size_t size) {
         memcpy(name, text + at, length);
         name[length] = '\0';
         struct stat info;
-        if (stat(name, &info) != 0 || smith_lc_nanoseconds(&info) > smith_lc.began - smith_lc_margin_ns) return false;
+        if (stat(name, &info) != 0) return false;
         const SmithLcFile *file = smith_lc_file(name); // made before the run, or now
-        if (file == nullptr || !file->ok || (file->mtime != 0 && file->mtime != smith_lc_nanoseconds(&info)))
+        if (file == nullptr || !file->ok) return false;
+        if (file->early) {
+            char hex[smith_sha256_hex_size];
+            if (file->mtime != smith_lc_nanoseconds(&info) || !smith_sha256_file(name, hex) ||
+                strcmp(hex, file->hex) != 0)
+                return false;
+        } else if (smith_lc_nanoseconds(&info) > smith_lc.began - smith_lc_margin_ns ||
+                   (file->mtime != 0 && file->mtime != smith_lc_nanoseconds(&info))) {
             return false;
+        }
         at += length + 1;
     }
     return true;
