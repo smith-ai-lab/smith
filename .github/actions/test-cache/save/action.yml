@@ -1,14 +1,14 @@
 name: test-cache-save
 description: >
-  Publishes this job's test-result store (`~/.cache/smith/tests`, #2686) as the prerelease `test-cache-<sha7>-<name>`
+  Publishes this job's test-result store (the one store, `steps/a`, #2686, #3177) as the prerelease `test-cache-<sha7>-<name>`
   (#2833, #2870), for `./.github/actions/test-cache` to restore. Each job that runs tests publishes its own, so no
   job waits for the others to merge them: the restore extracts every store of the newest commit. Releases are
   immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 10 newest
   commits are kept (a merge queue's groups are newer than main's commit, #2938). Only a merge queue run, the nightly and a push to main (the count, #3052) save (what they ran is the tree
   that lands); a pull request only reads. A failure here never fails the job. The job needs `contents: write`.
-  The release also holds the job's import cache (`~/.cache/smith/imports`, #2891) as `smith-imports-<os>.tar.gz`, even
-  when the job ran no test, and the job's import-cache hits are printed first (`./.github/actions/test-cache/report`),
-  in every run.
+  The release holds the one store only (`steps/a`, #3177; the import cache and the old per-tool folder are answers in it,
+  #3313, #3330, and have no tarball of their own, #3347), and the job's import-cache hits are printed first
+  (`./.github/actions/test-cache/report`), in every run.
 
 inputs:
   os:
@@ -18,7 +18,7 @@ inputs:
     description: this job's part of the commit's stores, unique in the run (e.g. "linux-2of3", "macos")
     required: true
   tests:
-    description: '"false" publishes only the import cache (a job that runs no test, the count)'
+    description: '"false" publishes no store (a job that runs no test, the count)'
     default: "true"
 
 runs:
@@ -36,28 +36,6 @@ runs:
         TESTS: ${{ inputs.tests }}
       run: |
         set -eu
-        dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"
-        # the import cache of smith run by hand and of smith run inside a test (a scratch project's XDG_CACHE_HOME,
-        # tests/scratch.smith), merged: identities keep them apart, and one key is the same bytes in both
-        imports="$RUNNER_TEMP/imports"; mkdir -p "$imports"
-        for src in "${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports" "${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; do
-          [ -d "$src" ] && cp -a "$src/." "$imports/"
-        done
-        # only the identities this job's smiths used stay (#2978): a smith reads its own identity's folder and no other,
-        # so another's entries (the old builds' that the sets carried from job to job) can never hit. Each smith process
-        # appends its identity to "$SMITH_IMPORT_CACHE_LOG.identity"; a log with none (a release from before #2978
-        # writes none) drops nothing.
-        ids="${SMITH_IMPORT_CACHE_LOG:-}.identity"
-        if [ -s "$ids" ]; then
-          kept=0; dropped=0
-          for folder in "$imports"/*/; do
-            [ -d "$folder" ] || continue
-            if grep -qx "$(basename "$folder")" "$ids"; then kept=$((kept + 1)); else rm -rf "$folder"; dropped=$((dropped + 1)); fi
-          done
-          echo "import cache: kept $kept identities ($(sort -u "$ids" | tr '\n' ' ')), dropped $dropped" | tee -a "$GITHUB_STEP_SUMMARY"
-        else
-          echo "import cache: no identity in the log, no folder dropped ($(ls "$imports" | wc -l) identities)" | tee -a "$GITHUB_STEP_SUMMARY"
-        fi
         # the solvers' answers of the smiths run inside the tests (#3174): the step store's folder `a`, in the tarball of
         # the test-result store (restored by ./.github/actions/test-cache)
         answers="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"
@@ -66,45 +44,32 @@ runs:
         byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps/a"
         if [ -d "$byhand" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
-        [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
         [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
         # #3281: a Linux part publishes only what it added (newer than the mark `./.github/actions/test-cache` set after
         # the restore; the hits count, a hit touches its entry); the whole file of main has the rest. No mark (the
         # nightly restored nothing) or another OS: the whole store, as before.
         mark="$RUNNER_TEMP/test-store-mark"; newer=()
         if [ "$OS" = linux ] && [ -f "$mark" ]; then newer=(-newer "$mark"); fi
-        n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f ${newer[@]+"${newer[@]}"} | wc -l || echo 0)
-        a=$( [ -d "$answers/a" ] && [ "$TESTS" = true ] && find "$answers/a" -type f ${newer[@]+"${newer[@]}"} | wc -l || echo 0)
-        n=$((n + a))
-        # the import cache prunes itself (other identities unused for 14 days, then SMITH_IMPORT_CACHE_MAX)
-        m=$( [ -d "$imports" ] && find "$imports" -type f -path '*/[hm]/*' | wc -l || echo 0)
-        if [ "$n" -eq 0 ] && [ "$m" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+        n=$( [ -d "$answers/a" ] && [ "$TESTS" = true ] && find "$answers/a" -type f ${newer[@]+"${newer[@]}"} | wc -l || echo 0)
+        if [ "$n" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
         assets=("$out/smith-tests.sha")
-        if [ "$n" -gt 0 ]; then
-          mkdir -p "$dir"
-          if [ "${#newer[@]}" -gt 0 ]; then
-            # their own asset name (#3281): a release of additions is never read as a whole store
-            file="smith-tests-added-$OS.tar.gz"
-            (cd "$dir" && find . -type f -newer "$mark" | sed 's#^\./##') >"$out/list-tests"
-            (cd "${answers%/steps}" && [ -d steps/a ] && find steps/a -type f -newer "$mark") >"$out/list-steps" || : >"$out/list-steps"
-            tar -C "$dir" -c -T "$out/list-tests" -C "${answers%/steps}" -T "$out/list-steps" | gzip -1 >"$out/$file"
-          else
-            file="smith-tests-$OS.tar.gz"
-            extra=(); [ "$a" -gt 0 ] && extra=(-C "${answers%/steps}" steps/a)
-            tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/$file"
-          fi
-          assets+=("$out/$file")
+        if [ "${#newer[@]}" -gt 0 ]; then
+          # their own asset name (#3281): a release of additions is never read as a whole store
+          file="smith-tests-added-$OS.tar.gz"
+          (cd "${answers%/steps}" && find steps/a -type f -newer "$mark") >"$out/list-steps"
+          tar -C "${answers%/steps}" -c -T "$out/list-steps" | gzip -1 >"$out/$file"
+        else
+          file="smith-tests-$OS.tar.gz"
+          tar -C "${answers%/steps}" -c steps/a | gzip -1 >"$out/$file"
         fi
-        if [ "$m" -gt 0 ]; then
-          tar -C "$imports" -c . | gzip -1 >"$out/smith-imports-$OS.tar.gz"; assets+=("$out/smith-imports-$OS.tar.gz")
-        fi
+        assets+=("$out/$file")
         echo "$GITHUB_SHA" >"$out/smith-tests.sha"
         tag="test-cache-${GITHUB_SHA:0:7}-$NAME"
         if ! gh release view "$tag" >/dev/null 2>&1; then
           gh release create "$tag" "${assets[@]}" --prerelease --latest=false \
             --target "$GITHUB_SHA" --title "test cache $tag" \
-            --notes "The test-result store (#2686) and import cache (#2891) of $NAME in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2870). Not a release of smith."
+            --notes "The test-result store (#2686) of $NAME in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2870). Not a release of smith."
         fi
         # the 10 newest commits' stores stay; an older commit's go, every job's (another job may delete one first). Not 3:
         # a merge queue's groups are newer commits than main's, and three of them deleted main's sets before a run could
@@ -117,4 +82,4 @@ runs:
           while read -r old; do
             gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"
           done
-        echo "test store: published $tag, $n test entries, $m import entries, $(du -ch "${assets[@]}" | tail -1 | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "test store: published $tag, $n entries, $(du -ch "${assets[@]}" | tail -1 | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -78,6 +78,7 @@ tests/smith-lang/cases/error-if-constexpr/src/main.smith	error-fixture
 tests/smith-lang/cases/error-import-broken-module/src/main.smith	error-fixture
 tests/smith-lang/cases/error-import-eof/src/main.smith	error-fixture
 tests/smith-lang/cases/error-keyword-after-type/src/shapes.smith	error-fixture
+tests/smith-lang/cases/error-keyword-function/src/foo.smith	error-fixture
 tests/smith-lang/cases/error-keyword-module/src/shapes.smith	error-fixture
 tests/smith-lang/cases/error-keyword-plain/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-capture-no-module/src/main.smith	error-fixture
@@ -146,6 +147,7 @@ tests/smith-lang/cases/header-include-chain/src/main.smith	old-form: imports a m
 tests/smith-lang/cases/lowered-directives/src/demo/dir.smith	old-form: #pragma
 tests/smith-lang/cases/module-c-features/src/kit/things.smith	old-form: function-like #define
 tests/smith-lang/cases/module-c-features/src/main.smith	old-form: function-like #define
+tests/smith-lang/cases/session-keyword-name/src/foo.smith	error-fixture
 tests/smith-lang/cases/session-keyword-name/src/main.smith	error-fixture
 tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-error-message/src/main.smith	error-fixture

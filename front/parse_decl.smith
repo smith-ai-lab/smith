@@ -2909,25 +2909,22 @@ static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_i
     warn(p, typedef_token.span.start, semi.span.end, message, edits);
 }
 
-// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091). With
-// another name than the tag and no attribute to carry the C name, the typedef is an alias of the tag (`T := S`, #3318),
-// as `enum Tag Name;` always is: the generic path of `parse_typedef` writes it.
-static Bool opaque_typedef_ahead(parse::Parser *p, const Prefixes *pre) {
+// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091).
+static Bool opaque_typedef_ahead(parse::Parser *p) {
     if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union)) return false;
-    Bool shape = parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
-                 parse::peek_at(p, 3).kind == lex::semicolon;
-    if (!shape) return false;
-    Bool same = same_text(parse::text(p, parse::peek_at(p, 1)), parse::text(p, parse::peek_at(p, 2)));
-    return same || countof(pre->attributes) > 0;
+    return parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
+           parse::peek_at(p, 3).kind == lex::semicolon;
 }
 
-// Whether the next tokens name a tag declared elsewhere, not define one: `enum Color Paint;`, `struct S *P;` or
-// `struct BigC (*Make)(U8);` (#3318).
+// Whether the next tokens name a tag declared elsewhere, not define one, and are no opaque struct (#3318): `enum Color
+// Paint;`, `struct S *P;` or `struct BigC (*Make)(U8);`. `typedef struct Tag Name;` stays the opaque struct (its tag
+// may be declared nowhere in the file, so an alias of it would name an unknown type).
 static Bool tag_reference_ahead(parse::Parser *p) {
-    if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union) && !parse::at(p, lex::kw_enum)) return false;
     if (parse::peek_at(p, 1).kind != lex::type_name) return false;
     lex::TokenKind after = parse::peek_at(p, 2).kind;
-    return after == lex::type_name || after == lex::star || after == lex::left_paren;
+    if (parse::at(p, lex::kw_enum)) return after == lex::type_name;
+    if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union)) return false;
+    return after == lex::star || after == lex::left_paren;
 }
 
 // `typedef struct Tag Name;` (a tag declared elsewhere, as `@c_name("Tag") typedef struct Tag Name;` does for an
@@ -2972,7 +2969,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     Usize typedef_index = p->position;
     parse::advance(p);
     Usize errors_before = countof(p->errors);
-    if (opaque_typedef_ahead(p, pre)) return parse_opaque_typedef(p, pre, start, typedef_index);
+    if (opaque_typedef_ahead(p)) return parse_opaque_typedef(p, pre, start, typedef_index);
     if (!parse_type::tuple_ahead(p) && !tag_reference_ahead(p) &&
         (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
         Style style = {.top = pre->top, .is_public = pre->exported || pre->is_pub};

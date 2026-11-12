@@ -792,6 +792,20 @@ static void flag_lane(state::Emitter *e, state::Value base, state::SizedTy vecto
     state::push_value(e, (state::Value){.llvm = slot, .ty = *vector.element});
 }
 
+// A tuple's element `t[i]` (the collected arguments of a variadic function are a tuple): the index is a number known at
+// compile time and inside the tuple; the element is the same place as `t.0`.
+static state::Status tuple_element(state::Emitter *e, state::Value base, state::PartsTy tuple, state::Value at,
+                                   ast::Span span) {
+    if (c::LLVMIsAConstantInt(at.llvm) == nullptr)
+        return state::fail("a tuple is indexed by a number known at compile time", span);
+    U64 index = c::LLVMConstIntGetZExtValue(at.llvm);
+    if (index >= tuple.part_count)
+        return state::failf(span, "this tuple has ", tuple.part_count, " elements; index ", index, " is past the end");
+    c::LLVMValueRef slot = c::LLVMBuildStructGEP2(e->builder, base.ty.llvm, base.llvm, (U32)index, "item");
+    state::push_value(e, (state::Value){.llvm = slot, .ty = tuple.parts[index]});
+    return state::success();
+}
+
 static state::Status index_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value at = state::pop_value(e);
     state::Value base = state::pop_value(e);
@@ -817,6 +831,7 @@ static state::Status index_finish(state::Emitter *e, const state::ThenNone *w) {
         block_row(e, base, base.ty.kind.block, at, position);
         return state::success();
     }
+    if (base.ty.kind == .tuple) return tuple_element(e, base, base.ty.kind.tuple, at, w->span);
     if (base.ty.kind != .pointer || base.ty.kind.pointer.element == nullptr)
         return state::failf(w->span, "indexing ", base.ty.name);
     state::Ty element = *base.ty.kind.pointer.element;

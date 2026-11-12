@@ -638,7 +638,11 @@ static const ast::Expr *named_variant(state::Emitter *e, const ast::Expr *x) {
     if (!(arg->kind == .named_arg)) return nullptr;
     types::TypeRef t = types::type_of(e->options.checked, x);
     if (t == nullptr || !types::is_payload_enum(t)) return nullptr;
-    if (types::type_of(e->options.checked, callee) != nullptr) return nullptr; // a function's call
+    types::TypeRef held = types::type_of(e->options.checked, callee);
+    // a function's call; but `maybe(usize)(some = v)` has as callee the type a type function made (#3229)
+    if (held != nullptr &&
+        !((callee->kind == .call || callee->kind == .type_value) && types::is_made(e->options.checked, held)))
+        return nullptr;
     ast::Expr *variant = mem::alloc(ast::Expr);
     variant->span = x->span;
     variant->kind = {.variant = {.name = arg->kind.named_arg.name, .payload = arg->kind.named_arg.value}};

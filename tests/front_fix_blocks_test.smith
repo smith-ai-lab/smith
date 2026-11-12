@@ -253,3 +253,30 @@ export void test_front_fix_blocks_a_long_text_is_converted_in_memory_that_does_n
     Str out = fix_blocks::convert(text);
     test::check(countof(out) > 0);
 }
+
+// A body on the line of its header holds a braced statement and then another one (#3275): each statement goes on a line
+// of its own, so the braces inside it are converted in a later round.
+export void test_front_fix_blocks_a_statement_after_a_braced_one_on_the_same_line() {
+    check("fn find(xs: []i32, v: i32) -> usize { for i in range(0, 3) { if xs[i] == v { return i } } return 3 }\n",
+          "fn find(xs: []i32, v: i32) -> usize:\n    for i in range(0, 3):\n        if xs[i] == v:\n            return "
+          "i\n"
+          "    return 3\n");
+    check("fn f(a: i32) { if a { g() } else { h() } k() }\n",
+          "fn f(a: i32):\n    if a:\n        g()\n    else:\n        h()\n    k()\n");
+}
+
+// A statement expression is a block value on the lines before its statement (#3275).
+export void test_front_fix_blocks_a_statement_expression_is_a_block_value() {
+    check("fn f(n: i32) {\n    g(pick(({ local: i32 = 5; local * 2 }), n))\n}\n",
+          "fn f(n: i32):\n    block_value_27 := do:\n        local: i32 = 5\n        local * 2\n    "
+          "g(pick(block_value_27, n))\n");
+    check("fn f(n: i32) -> i32 {\n    return ({ a: i32 = n; b: i32 = a + 1; a * b })\n}\n",
+          "fn f(n: i32) -> i32:\n    block_value_34 := do:\n        a: i32 = n\n        b: i32 = a + 1\n        a * "
+          "b\n    return block_value_34\n");
+}
+
+// A statement expression in the condition of a loop is left as it is: it would be evaluated once.
+export void test_front_fix_blocks_a_statement_expression_in_a_loop_condition_stays() {
+    check("fn f(n: i32) {\n    while ({ a: i32 = n; a }) > 0 {\n        g()\n    }\n}\n",
+          "fn f(n: i32):\n    while ({ a: i32 = n; a }) > 0:\n        g()\n");
+}

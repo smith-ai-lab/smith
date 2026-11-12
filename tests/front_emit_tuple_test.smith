@@ -210,6 +210,33 @@ export void test_front_emit_tuple_a_member_past_the_end_or_of_a_non_tuple_is_an_
                false, ".0 needs a tuple, found i32", "t.0");
 }
 
+export void test_front_emit_tuple_a_tuple_is_indexed_by_a_number_known_at_compile_time() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn first(n: i32) -> i32:\n"
+                     "    let t = (n, 7)\n"
+                     "    t[0]\n"
+                     "pub fn second(n: i32) -> i32:\n"
+                     "    let t = (n, 7)\n"
+                     "    t[1]\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick first = (Pick)symbol_of(&host, "first");
+    Pick second = (Pick)symbol_of(&host, "second");
+    test::check_equal(first(9), (I32)9);
+    test::check_equal(second(9), (I32)7);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_tuple_an_index_past_the_end_or_not_known_at_compile_time_is_an_error() {
+    stops_with("fn f(t: (i32, i32)) -> i32:\n"
+               "    t[2]\n",
+               false, "this tuple has 2 elements; index 2 is past the end", "t[2]");
+    stops_with("fn f(t: (i32, i32), n: i32) -> i32:\n"
+               "    t[n]\n",
+               false, "a tuple is indexed by a number known at compile time", "t[n]");
+}
+
 export void test_front_emit_tuple_countof_a_tuple_is_its_element_count() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();

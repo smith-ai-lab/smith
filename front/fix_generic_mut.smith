@@ -450,7 +450,8 @@ static core::Errors scan(const ast::Module *module, Str source, Usize start, Usi
 // `for constexpr (Usize i = 0; i < countof(args); i++)` reads each element as `args[i]`, which the new syntax has only
 // as an unrolled loop over the elements: an index is a run-time value, and a pack or `fields(T)` is indexed by a
 // constant. The counting loop that an earlier pass wrote, `for i in range(0, countof(P)):`, where `P` is a pack
-// parameter of the module or a `fields(...)` list, is written `for arg in P:` (`for f in fields(T):`), and each
+// parameter of the module or a `fields(...)`, `parameters(...)` or `methods(...)` list, is written `for arg in P:`
+// (`for f in fields(T):`), and each
 // `P[i]` of its body is that name. A loop whose body uses `i` any other way (`i > 0`, `weights[i]`, `count[i]`) is left
 // as it is: it needs the index, and the checker reports it.
 //
@@ -562,7 +563,7 @@ static core::Edits loop_edits(const ast::Module *module, Str s, Usize p, Usize h
     Usize close = paren_close(s, list_start - 1, header_end);
     if (close >= header_end || !text_at(s, close, ")):") || close + 3 != header_end) return none;
     Str list = s[list_start:close];
-    Bool fields = text_at(list, 0, "fields(");
+    Bool fields = text_at(list, 0, "fields(") || text_at(list, 0, "parameters(") || text_at(list, 0, "methods(");
     if (!fields && !is_pack(module, list)) return none;
     Str name = fields ? "f" : "arg";
     Usize end = body_end(s, header_end, indent);
@@ -581,10 +582,12 @@ static core::Edits loop_edits(const ast::Module *module, Str s, Usize p, Usize h
         Usize n1 = n0;
         while (n1 < end && word_char(s[n1]))
             n1 += 1;
-        Usize after = n1 + 10 + countof(list) + countof(index) + 2;
-        if (text_at(s, n1, ": Field = ") && text_at(s, n1 + 10, list) && text_at(s, n1 + 10 + countof(list), "[") &&
-            text_at(s, n1 + 11 + countof(list), index) && after <= end && s[after - 1] == ']' &&
-            line_stop(s, bound_start) == after) {
+        // The type is written (`: Field`) or left out, as the earlier passes write it.
+        Usize eq = text_at(s, n1, ": Field = ") ? n1 + 10 : n1 + 3;
+        Usize after = eq + countof(list) + countof(index) + 2;
+        if ((text_at(s, n1, ": Field = ") || text_at(s, n1, " = ")) && text_at(s, eq, list) &&
+            text_at(s, eq + countof(list), "[") && text_at(s, eq + 1 + countof(list), index) && after <= end &&
+            s[after - 1] == ']' && line_stop(s, bound_start) == after) {
             name = s[n0:n1];
             bound = true;
             bound_end = after + 1;
