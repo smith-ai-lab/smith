@@ -236,3 +236,84 @@ export void test_front_check_bind_fix_a_test_inside_an_and_chain_is_a_pattern() 
                                               "    if ok or s == .circle and s.circle > 1:\n        return 1\n    0\n");
     expect(site, site);
 }
+
+// A Result read after a guard that leaves, in a function that already has the name `ok` (#3205): the binding is
+// `ok_value`, for a guard written `!= .ok`, a guard written `== .error`, the `then` of a test and an `if` used as a
+// value.
+static Str steps_text() {
+    return "fn step(n: i32) -> Result(i32, i32):\n    if n < 0:\n        return .error(n)\n    .ok(n)\n";
+}
+
+export void test_front_check_bind_fix_a_guard_binds_ok_value_where_ok_is_a_name() {
+    char before[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    ok := 1\n    r: Result(i32, i32) = step(n)\n"
+                                                "    if r != .ok:\n        return 0\n    ok + r.ok\n");
+    char after[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    ok := 1\n    r: Result(i32, i32) = step(n)\n"
+                                               "    .ok(ok_value) := r else:\n        return 0\n    ok + ok_value\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_a_guard_binds_ok_value_where_ok_is_declared_below() {
+    char before[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                                "    if r != .ok:\n        return 0\n    ok := 1\n    ok + r.ok\n");
+    char after[:] =
+        format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                   "    .ok(ok_value) := r else:\n        return 0\n    ok := 1\n    ok + ok_value\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_the_then_of_a_test_binds_ok_value_where_ok_is_a_name() {
+    char before[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    ok := 1\n    r: Result(i32, i32) = step(n)\n"
+                                                "    if r == .ok:\n        return ok + r.ok\n    0\n");
+    char after[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    ok := 1\n    r: Result(i32, i32) = step(n)\n"
+                                               "    if .ok(ok_value) := r:\n        return ok + ok_value\n    0\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_an_if_used_as_a_value_binds_the_payload() {
+    char before[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                                "    if r == .ok: r.ok else: -1\n");
+    char after[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                               "    if .ok(ok) := r: ok else: -1\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_a_match_whose_error_arm_leaves_is_a_binding() {
+    char before[:] =
+        format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                   "    match r:\n        .error:\n            use(1)\n            return 0\n"
+                                   "        .ok: ()\n    r.ok\n");
+    char after[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                               "    .ok(ok) := r else:\n        use(1)\n        return 0\n    ok\n");
+    expect(before, after);
+}
+
+// A test of a Result's error whose body is longer than a line (#3205): the arm is the block, one level deeper, and
+// the value is read below it. Where `ok` or `value` is a name of the function, the value is `ok_value`.
+export void test_front_check_bind_fix_a_longer_error_body_is_the_arm_block() {
+    char before[:] =
+        format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                   "    if .error(error) := r:\n        use(error)\n        return 0\n    r.ok + 1\n");
+    char after[:] = format::push(steps_text(), "fn f(n: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                               "    ok := match r:\n        .ok(value): value\n        .error(error):\n"
+                                               "            use(error)\n            return 0\n    ok + 1\n");
+    expect(before, after);
+    char taken[:] =
+        format::push(steps_text(), "fn f(n: i32, ok: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                   "    if .error(error) := r:\n        use(error)\n        return 0\n    r.ok + ok\n");
+    char moved[:] =
+        format::push(steps_text(), "fn f(n: i32, ok: i32) -> i32:\n    r: Result(i32, i32) = step(n)\n"
+                                   "    ok_value := match r:\n        .ok(value): value\n        .error(error):\n"
+                                   "            use(error)\n            return 0\n    ok_value + ok\n");
+    expect(taken, moved);
+}
+
+// The name of the result in a string is not a mention of it (#3205).
+export void test_front_check_bind_fix_a_string_that_says_the_name_is_not_a_mention() {
+    char before[:] = format::push(
+        steps_text(), "fn f(n: i32) -> i32:\n    back: Result(i32, i32) = step(n)\n"
+                      "    if back == .error:\n        use(\"cannot read back\")\n        return 0\n    back.ok\n");
+    char after[:] = format::push(
+        steps_text(), "fn f(n: i32) -> i32:\n    back: Result(i32, i32) = step(n)\n"
+                      "    .ok(ok) := back else:\n        use(\"cannot read back\")\n        return 0\n    ok\n");
+    expect(before, after);
+}
