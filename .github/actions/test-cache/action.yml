@@ -65,15 +65,19 @@ runs:
         git rev-parse --verify -q "$GITHUB_SHA^{commit}" >/dev/null 2>&1 || git fetch -q --no-tags --depth=25 origin "$GITHUB_SHA" 2>/dev/null || true
         git rev-list --first-parent -n 20 "$GITHUB_SHA" >"$t/commits" 2>/dev/null ||
           git rev-list --first-parent -n 20 FETCH_HEAD >"$t/commits" 2>/dev/null || : >"$t/commits"
-        tags=$(git ls-remote --tags origin 'refs/tags/test-cache-*' 'refs/tags/test-whole-*' 2>/dev/null | sed 's#.*refs/tags/##' || true)
+        tags=$(git ls-remote --tags origin 'refs/tags/test-cache-*' 'refs/tags/test-store-*' 2>/dev/null | sed 's#.*refs/tags/##' || true)
         printf '%s\n' "$tags" >"$t/tags"
         back=0
         while read -r sha; do
           { [ "$want_tests" = true ] || [ "$want_imports" = true ]; } || break
           mine=$(printf '%s\n' "$tags" | grep "^test-cache-${sha:0:7}" || true)
+          # #3281: the Linux sets of a commit that descends from the change (3654c61) hold additions, not a full store
+          post=false
+          if git cat-file -e 3654c61 2>/dev/null && git merge-base --is-ancestor 3654c61 "$sha" 2>/dev/null; then post=true; fi
           for kind in tests imports; do
             want=want_$kind
             [ "${!want}" = true ] || continue
+            if [ "$kind" = tests ] && [ "$OS" = linux ] && [ "$post" = true ]; then continue; fi
             urls=""
             served=""
             for tag in $mine; do
@@ -105,29 +109,46 @@ runs:
       env:
         REPO: ${{ github.repository }}
       run: |
-        # #3281: the Linux test store is one whole file per commit of main (`test-whole-<sha7>`, asset
-        # `smith-tests-whole-linux.tar.gz`, built by `./.github/actions/test-cache/whole` after the merge) plus the small
-        # additions of every commit newer than it (`test-cache-<sha7>-linux-NofM`, only what a part added). Walk the same
-        # commits as above, newest first: the additions of each go on the list until a commit that has a whole file; that
-        # file, then the additions oldest first, replace the list the step above made. With no whole file in the commits
-        # tried (before the first one exists), the step above's list stays: the newest commit's sets, as before.
+        # #3281: the Linux test store is one whole file per commit of main (`test-store-<sha7>`, asset
+        # `smith-tests-store-linux.tar.gz`, built by `./.github/actions/test-cache/whole` after the merge) plus the small
+        # additions of every commit newer than it (`test-cache-<sha7>-linux-NofM`, asset `smith-tests-added-linux.tar.gz`,
+        # only what a part added). Walk the same commits as above, newest first: the additions of each go on the list
+        # until a commit that has a whole file; that file, then the additions oldest first, replace the list the step
+        # above made. With no whole file in the commits tried (before the first one exists), the step above's list (the
+        # newest commit's full sets) stays and the additions of the commits newer than it follow it. Sets published
+        # before #3281 landed are full stores, the ones after it hold additions under the old name: a commit that
+        # descends from the change (3654c61) is never a full set.
         t="$RUNNER_TEMP"
         adds=""; n=0; base=""; from=""; back=0
         while read -r sha; do
           s=${sha:0:7}
-          if grep -qx "test-whole-$s" "$t/tags"; then
-            url="https://github.com/$REPO/releases/download/test-whole-$s/smith-tests-whole-linux.tar.gz"
+          if grep -qx "test-store-$s" "$t/tags"; then
+            url="https://github.com/$REPO/releases/download/test-store-$s/smith-tests-store-linux.tar.gz"
             code=$(curl -sIL -o /dev/null -w '%{http_code}' --retry 2 "$url" 2>/dev/null || true)
             if [ "$code" = 200 ]; then base=$url; from="whole file of ${s}, $back first parents back"; break; fi
           fi
           for tag in $(grep "^test-cache-$s-linux-" "$t/tags" || true); do
-            adds="https://github.com/$REPO/releases/download/$tag/smith-tests-linux.tar.gz"$'\n'"$adds"; n=$((n + 1))
+            adds="https://github.com/$REPO/releases/download/$tag/smith-tests-added-linux.tar.gz"$'\n'"$adds"; n=$((n + 1))
           done
           back=$((back + 1))
         done <"$t/commits"
         if [ -n "$base" ]; then
           printf '%s\n%s' "$base" "$adds" >"$t/tests-urls"
           echo "$from, plus $n additions of the $back newer commits" >"$t/tests-from"
+        elif [ -s "$t/tests-urls" ]; then
+          full=$(sed -n 's/^commit \([0-9a-f]*\),.*/\1/p' "$t/tests-from")
+          if true; then
+            # the additions of the commits newer than the full sets' commit
+            back_full=$(grep -n "^$full" "$t/commits" | head -n 1 | cut -d: -f1)
+            adds=""; n=0
+            while read -r sha; do
+              for tag in $(grep "^test-cache-${sha:0:7}-linux-" "$t/tags" || true); do
+                adds="https://github.com/$REPO/releases/download/$tag/smith-tests-added-linux.tar.gz"$'\n'"$adds"; n=$((n + 1))
+              done
+            done < <(head -n $(( ${back_full:-1} - 1 )) "$t/commits")
+            printf '%s%s' "$(cat "$t/tests-urls")"$'\n' "$adds" >"$t/tests-urls.new"; mv "$t/tests-urls.new" "$t/tests-urls"
+            echo "$(cat "$t/tests-from"), plus $n additions of the newer commits" >"$t/tests-from"
+          fi
         fi
     - name: Restore the test-result store
       if: inputs.tests == 'true'

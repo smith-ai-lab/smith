@@ -1,7 +1,7 @@
 name: test-cache-whole
 description: >
   Builds the whole Linux test-result store of a commit of main (#3281) and publishes it as the prerelease
-  `test-whole-<sha7>` with one asset, `smith-tests-whole-linux.tar.gz`. It restores with `./.github/actions/test-cache`
+  `test-store-<sha7>` with one asset, `smith-tests-store-linux.tar.gz`. It restores with `./.github/actions/test-cache`
   (os linux), which reads the newest whole file in the commit's first parents plus the additions of the commits newer than
   it, so the result is the previous whole file plus what the parts of the queue runs added. Entries unused for 14 days
   go (a hit touches its entry, so a used one stays). The whole files of the 10 newest commits are kept. The extension to
@@ -23,7 +23,7 @@ runs:
       run: |
         set -eu
         start=$SECONDS
-        tag="test-whole-${GITHUB_SHA:0:7}"
+        tag="test-store-${GITHUB_SHA:0:7}"
         if gh release view "$tag" >/dev/null 2>&1; then echo "test store: $tag exists" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"
         answers="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"
@@ -34,15 +34,15 @@ runs:
         if [ $((n + a)) -eq 0 ]; then echo "test store: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         out="$RUNNER_TEMP/whole"; mkdir -p "$out"
         extra=(); [ "$a" -gt 0 ] && extra=(-C "${answers%/steps}" steps/a)
-        tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/smith-tests-whole-linux.tar.gz"
+        tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/smith-tests-store-linux.tar.gz"
         echo "$GITHUB_SHA" >"$out/smith-tests.sha"
-        gh release create "$tag" "$out/smith-tests-whole-linux.tar.gz" "$out/smith-tests.sha" --prerelease --latest=false \
+        gh release create "$tag" "$out/smith-tests-store-linux.tar.gz" "$out/smith-tests.sha" --prerelease --latest=false \
           --target "$GITHUB_SHA" --title "test store $tag" \
           --notes "The whole Linux test-result store (#3281) after $GITHUB_SHA. Not a release of smith."
         # the 10 newest commits' whole files stay (the newest first by the time they were made)
         gh release list --limit 100 --json tagName,createdAt \
-          --jq '[.[]|select(.tagName|test("^test-whole-[0-9a-f]{7}$"))]|sort_by(.createdAt)|reverse|.[10:]|.[].tagName' |
+          --jq '[.[]|select(.tagName|test("^test-store-[0-9a-f]{7}$"))]|sort_by(.createdAt)|reverse|.[10:]|.[].tagName' |
           while read -r old; do
             gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"
           done
-        echo "test store: published $tag, $((n + a)) entries, $(du -h "$out/smith-tests-whole-linux.tar.gz" | cut -f1), $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "test store: published $tag, $((n + a)) entries, $(du -h "$out/smith-tests-store-linux.tar.gz" | cut -f1), $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
