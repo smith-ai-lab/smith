@@ -7,7 +7,7 @@ description: "Writing smith's GitHub tickets: the body as the only truth, the se
 
 The reader has no context: not the conversation, not the owner's words. The body is the whole brief, and the only truth: a decision or a result is an edit to the body, never a comment.
 
-A ticket is one piece of work for one worker in one pull request, a sub-issue of #1631 at its rank. Label it `difficulty:easy` only when the change is spelled out line by line; otherwise no label.
+A ticket is one piece of work for one worker in one pull request, a sub-issue of #1631 (queue-heal adds it last when you forget; move it to its rank). Label it `difficulty:easy` only when the change is spelled out line by line; otherwise no label.
 
 ## Sections
 1. **Why**: the problem and what it costs.
