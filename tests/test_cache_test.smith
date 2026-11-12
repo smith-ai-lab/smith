@@ -120,36 +120,3 @@ export void test_test_cache_the_import_cache_log_is_not_part_of_the_key() {
         scratch::sh(&p, "env SMITH_IMPORT_CACHE=0 SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test 2>&1");
     scratch::expect_lacks("log: another variable runs them again", other.out, " cached:");
 }
-
-export void test_test_cache_a_run_records_each_tests_time_and_the_split_weighs_by_the_store() {
-    scratch::Project p = cached_project();
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    const char *weigh = "env SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test --shard 1/1 --weigh weights.tsv 2>&1";
-    scratch::Run first = scratch::sh(&p, weigh);
-    scratch::expect_status("weigh: the first run passes", 0, &first);
-    scratch::expect_text("weigh: ... with no store to weigh by, the weights file says so",
-                         "# no stored run to weigh by: every test weighs the same",
-                         scratch::capture(&p, "head -n 1 weights.tsv"));
-    // the files of a part only grow (each build and runner of a test program adds its lines), so a second run starts
-    // clean
-    scratch::Run second =
-        scratch::sh(&p, "rm -f weights.tsv weights.tsv.suite weights.tsv.part; env SMITH_RESULT_CACHE=on "
-                        "SMITH_OUTPUT=full smith test --shard 1/1 --weigh weights.tsv 2>&1");
-    scratch::expect_status("weigh: the second run passes", 0, &second);
-    scratch::expect_text("weigh: ... its split knew the 3 tests the store serves (the fourth is marked uncached)",
-                         "# 4 tests, 3 served by the store", scratch::capture(&p, "head -n 1 weights.tsv"));
-    scratch::expect_text(
-        "weigh: ... the one that ran weighs the seconds the first run recorded, not a guess", "1",
-        scratch::capture(
-            &p, "awk -F'\t' '$1 == \"cpu\" && $2 != 0.020 && $2 != 0.400' weights.tsv | sort -u | wc -l | tr -d ' '"));
-    scratch::expect_text("weigh: ... the served ones weigh next to nothing", "3",
-                         scratch::capture(&p, "awk -F'\t' '$2 == 0.020' weights.tsv | sort -u | wc -l | tr -d ' '"));
-    scratch::expect_text("weigh: ... the suite it dealt from is all 4", "4",
-                         scratch::capture(&p, "sort -u weights.tsv.suite | wc -l | tr -d ' '"));
-    scratch::expect_text("weigh: ... and the part lists all 4, run or served", "4",
-                         scratch::capture(&p, "wc -l <weights.tsv.part | tr -d ' '"));
-}

@@ -486,7 +486,9 @@ static bool smith_tc_slurp(const char *path) {
 // `<folder>/names` (one test a line) and `<folder>/options` (a line the runner writes: its options and its path) are
 // read; `<folder>/hits` gets the names of the tests whose entry holds, and `<folder>/keys` `name<TAB>key` for each test
 // that can be cached, for `store`.
-static void smith_tc_load_names_file(const char *path) {
+static void smith_tc_load_names(const char *folder) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/names", folder);
     FILE *file = fopen(path, "r");
     if (file == nullptr) return;
     for (size_t guard = 0; guard < smith_tc_tests_max; guard++) { // bounded by the tests
@@ -496,12 +498,6 @@ static void smith_tc_load_names_file(const char *path) {
         if (test->name[0] != '\0') smith_tc_test_count++;
     }
     fclose(file);
-}
-
-static void smith_tc_load_names(const char *folder) {
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/names", folder);
-    smith_tc_load_names_file(path);
 }
 
 static bool smith_tc_load_options(const char *folder) {
@@ -540,38 +536,6 @@ static void smith_tc_name_base(void) {
     smith_sha256_final(&sha, smith_tc_base_name);
 }
 
-// Whether `text` (the notes of a stored base) holds the options and the runner of a run with this `macos`; copies them.
-static bool smith_tc_base_of(const char *text, int macos, char *options, char *runner) {
-    char tail[32];
-    snprintf(tail, sizeof tail, " macos=%d", macos);
-    const char *at = strstr(text, "options of the run\t");
-    const char *place = strstr(text, "runner\t");
-    if (at == nullptr || place == nullptr) return false;
-    at += strlen("options of the run\t");
-    place += strlen("runner\t");
-    size_t length = strcspn(at, "\n");
-    size_t tail_length = strlen(tail);
-    if (length < tail_length || strncmp(at + length - tail_length, tail, tail_length) != 0) return false;
-    snprintf(options, sizeof smith_tc_options, "%.*s", (int)length, at);
-    snprintf(runner, PATH_MAX, "%.*s", (int)strcspn(place, "\n"), place);
-    return true;
-}
-
-// The notes of this run's base are also the newest of the runs with its `macos` (--macos-only, --skip-macos or
-// neither), for the dealing of `--shard` (#3283): the options and the runner of the last run of its kind.
-static void smith_tc_save_base_macos(void) {
-    for (int macos = 0; macos < 3; macos++) { // the three kinds
-        char options[sizeof smith_tc_options];
-        char runner[PATH_MAX];
-        char hex[smith_sha256_hex_size];
-        char tag[32];
-        snprintf(tag, sizeof tag, "%d", macos);
-        if (!smith_tc_base_of(smith_tc_notes, macos, options, runner)) continue;
-        smith_tc_address("smith-test-base-macos", tag, hex);
-        smith_stepcache_answer_put(hex, smith_tc_notes, smith_tc_notes_used);
-    }
-}
-
 // Saves the notes of this run's base as an answer named by their digest, once, and as the last base stored; the next
 // run reads them to name what differs.
 static void smith_tc_save_base(void) {
@@ -580,7 +544,6 @@ static void smith_tc_save_base(void) {
     if (!smith_tc_stored(smith_tc_base_name))
         smith_stepcache_answer_put(smith_tc_base_name, smith_tc_notes, smith_tc_notes_used);
     smith_stepcache_answer_put(last, smith_tc_notes, smith_tc_notes_used);
-    smith_tc_save_base_macos();
 }
 
 // The name of a line of notes: what is before the tab.
@@ -801,52 +764,6 @@ static size_t smith_tc_load_passed(const char *folder, const char **names) {
     return count;
 }
 
-// The record of how long a test took the last time it ran (#3283): an answer in the one store at the address of the
-// test's name, holding the CPU seconds. It is by name, not by key, because the test that runs is the one whose key is
-// new, and one that is never stored (it failed, or it cannot be cached) has no entry to put a time in.
-static void smith_tc_took_address(const char *name, char hex[smith_sha256_hex_size]) {
-    smith_tc_address("smith-test-took", name, hex);
-}
-
-// The seconds the record of `name` holds; -1 when there is none.
-static double smith_tc_took(const char *name) {
-    char hex[smith_sha256_hex_size];
-    char text[64];
-    size_t size = 0;
-    smith_tc_took_address(name, hex);
-    if (!smith_stepcache_answer_get(hex, text, sizeof text - 1, &size)) return -1;
-    text[size] = '\0';
-    double seconds = strtod(text, nullptr);
-    return seconds >= 0 ? seconds : -1;
-}
-
-// `<folder>/times`: `seconds<TAB>name` for each test the run finished. A record is rewritten only when the time moved
-// by more than a tenth, so a part adds the tests whose time changed and not all of them.
-static void smith_tc_store_times(const char *folder) {
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/times", folder);
-    FILE *times = fopen(path, "r");
-    if (times == nullptr) return;
-    char row[smith_tc_name_max + 64];
-    for (size_t guard = 0; guard < smith_tc_tests_max; guard++) { // bounded by the tests
-        if (fgets(row, sizeof row, times) == nullptr) break;
-        char *tab = strchr(row, '\t');
-        if (tab == nullptr) continue;
-        *tab = '\0';
-        char *name = tab + 1;
-        name[strcspn(name, "\n")] = '\0';
-        double seconds = strtod(row, nullptr);
-        double before = smith_tc_took(name);
-        if (before >= 0 && seconds <= before * 1.1 + 0.01 && seconds >= before * 0.9 - 0.01) continue;
-        char hex[smith_sha256_hex_size];
-        char text[64];
-        smith_tc_took_address(name, hex);
-        int size = snprintf(text, sizeof text, "%.3f\n", seconds);
-        smith_stepcache_answer_put(hex, text, (size_t)size);
-    }
-    fclose(times);
-}
-
 // `smith test --cache store <folder>`: for the tests of `<folder>/passed` (names), each with its key in `keys`, writes
 // the manifest from `<folder>/reads/<clean name>.txt`.
 static int smith_tc_store_main(const char *folder) {
@@ -873,99 +790,11 @@ static int smith_tc_store_main(const char *folder) {
         smith_tc_write_entry(key, path);
     }
     if (keys != nullptr) fclose(keys);
-    smith_tc_store_times(folder);
     return 0;
 }
 
-// ---- `smith test --cache weights <names file> <macos>` (#3283)
-//
-// What each test weighs when `--shard` deals the tests out, as `cpu<TAB>seconds<TAB>name` lines like a --costs file: a
-// test the store will serve weighs next to nothing, one that will run weighs the seconds it took last time, and one
-// with no record weighs the mean of the others'. It is a function of the commit and the store: the options of the run
-// and the runner's place are those of the newest stored run with the same `macos` (the notes of its base, saved with
-// it), the keys are the keys the runner will make. The names file holds the tests, one a line. The first line is `#
-// summary`.
-constexpr double smith_tc_served_weight = 0.02;
-constexpr double smith_tc_unknown_weight = 0.4; // when the store knows no time at all, as --shard assumed
-
-// The options and the runner of the newest stored run with this `macos` (saved with the base, `smith_tc_save_base`).
-static bool smith_tc_last_run(int macos) {
-    char hex[smith_sha256_hex_size];
-    char tag[32];
-    size_t size = 0;
-    snprintf(tag, sizeof tag, "%d", macos);
-    smith_tc_address("smith-test-base-macos", tag, hex);
-    if (!smith_stepcache_answer_get(hex, smith_tc_text, smith_tc_text_max - 1, &size)) return false;
-    smith_tc_text[size] = '\0';
-    char options[sizeof smith_tc_options];
-    char runner[PATH_MAX];
-    if (!smith_tc_base_of(smith_tc_text, macos, options, runner)) return false;
-    snprintf(smith_tc_options, sizeof smith_tc_options, "%s", options);
-    snprintf(smith_tc_runner, sizeof smith_tc_runner, "%s", runner);
-    return true;
-}
-
-static void smith_tc_weigh(double *weight, size_t *served) {
-    double total = 0;
-    size_t known = 0;
-    for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
-        SmithTcTest *test = &smith_tc_tests[i];
-        test->hit = test->cacheable && smith_tc_manifest_holds(test->key);
-        weight[i] = -1;
-        if (test->hit) {
-            weight[i] = smith_tc_served_weight;
-            (*served)++;
-            continue;
-        }
-        double took = smith_tc_took(test->name);
-        if (took < 0) continue;
-        weight[i] = took;
-        total += took;
-        known++;
-    }
-    double mean = known > 0 ? total / (double)known : smith_tc_unknown_weight;
-    for (size_t i = 0; i < smith_tc_test_count; i++)
-        if (weight[i] < 0) weight[i] = mean;
-}
-
-static int smith_tc_weights_main(const char *names_file, int macos) {
-    static double weight[smith_tc_tests_max];
-    char here[PATH_MAX];
-    smith_tc_load_names_file(names_file); // the file of the tests, one a line
-    if (getcwd(here, sizeof here) == nullptr || !smith_tc_store_folder() || !smith_tc_last_run(macos) ||
-        !smith_tc_open_project()) {
-        printf("# no stored run to weigh by: every test weighs the same\n");
-        return 0;
-    }
-    char self_path[PATH_MAX];
-    const char *self = getenv("SMITH_SELF");
-    ssize_t linked =
-        (self == nullptr || self[0] == '\0') ? readlink("/proc/self/exe", self_path, sizeof self_path - 1) : -1;
-    if (linked > 0) {
-        self_path[linked] = '\0';
-        self = self_path;
-    }
-    if (self != nullptr && self[0] != '\0' && !smith_tc_self_digest(self, smith_tc_self_hex))
-        smith_tc_self_hex[0] = '\0';
-    smith_tc_make_base();
-    smith_tc_index_functions();
-    for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
-        const char *why = "";
-        smith_tc_tests[i].cacheable = smith_tc_key(&smith_tc_tests[i], &why);
-    }
-    size_t served = 0;
-    smith_tc_weigh(weight, &served);
-    if (chdir(here) != 0) return 0;
-    printf("# %zu tests, %zu served by the store\n", smith_tc_test_count, served);
-    for (size_t i = 0; i < smith_tc_test_count; i++)
-        printf("cpu\t%.3f\t%s\n", weight[i], smith_tc_tests[i].name);
-    return 0;
-}
-
-// `smith test --cache check|store <folder>` (the runner's calls), and `weights <names file> <macos>` (the dealing's).
+// `smith test --cache check|store <folder>` (the runner's calls).
 int smith_tc_main(int count, char **args) {
-    if (count == 3 && strcmp(args[0], "weights") == 0)
-        return smith_tc_weights_main(args[1], (int)strtol(args[2], nullptr, 10));
     if (count != 2) {
         fputs("usage: smith test --cache check|store <folder>\n", stderr);
         return smith_exit_usage;

@@ -1527,7 +1527,6 @@ typedef struct {
     Bool full;
     Bool update; // --update: test::golden writes its file
     Bool list;
-    Bool weigh; // --weigh <file>: --costs, and the build made the file from the store (#3283)
     const char
         *costs;    // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
     U8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
@@ -3648,10 +3647,8 @@ Bool parse_value(Options *options, const char *flag, const char *value) {
         parse_filter(options, value);
         return true;
     }
-    if (c::strcmp(flag, "--costs") == 0 ||
-        c::strcmp(flag, "--weigh") == 0) { // --weigh: the build made the file (#3283)
+    if (c::strcmp(flag, "--costs") == 0) {
         options->costs = value;
-        options->weigh = c::strcmp(flag, "--weigh") == 0;
         return value[0] != '\0';
     }
     if (c::strcmp(flag, "--others") == 0) {
@@ -4313,23 +4310,6 @@ void cache_filter(Plan *plan, const Options *options) {
     plan->count = kept;
 }
 
-// `<folder>/times`: `seconds<TAB>name`, the CPU time of each test that ran to its end. The store keeps it by name for
-// `--shard` to deal by (#3283).
-void cache_write_times(const Plan *plan) {
-    char path[path_capacity];
-    __builtin_snprintf(path, sizeof path, "%s/times", &cache_folder[0]);
-    c::FILE *times = c::fopen(path, "w");
-    if (times == nullptr) return;
-    for (Usize i = 0; i < plan->count; i++) {
-        const Run *run = &plan->runs[i];
-        if (!run->finished || run->skipped) continue;
-        char line[600];
-        __builtin_snprintf(line, sizeof line, "%.3f\t%s\n", run->cpu, plan->tests[i]->name);
-        c::fputs(line, times);
-    }
-    c::fclose(times);
-}
-
 // After the run: the tests that passed are stored, and the folder goes.
 void cache_store(const Plan *plan) {
     if (cache_folder[0] == '\0') return;
@@ -4344,7 +4324,6 @@ void cache_store(const Plan *plan) {
             c::fputs("\n", passed);
         }
         c::fclose(passed);
-        cache_write_times(plan);
         cache_call("store");
     }
     for (Usize i = 0; i < plan->count; i++) {
@@ -4353,7 +4332,7 @@ void cache_store(const Plan *plan) {
         __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", &cache_folder[0], &clean[0]);
         c::unlink(path);
     }
-    static const char *const cache_files[_] = {"names", "options", "hits", "keys", "passed", "times", nullptr};
+    static const char *const cache_files[_] = {"names", "options", "hits", "keys", "passed", nullptr};
     for (Usize i = 0; cache_files[i] != nullptr; i++) {
         __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], cache_files[i]);
         c::unlink(path);
@@ -4376,23 +4355,6 @@ void say_misses(Plan *plan, const Options *options) {
     cache_store(plan);
 }
 
-// --weigh <file> (#3283): `<file>.part` is added the tests of this runner in this part, the ones it runs and the ones
-// the store serves, one a line, as they are before the store takes any out. A part has several runners (one a test
-// program), each adds its own in one write; the CI run compares the eight parts with the `<file>.suite` the builds
-// wrote.
-void write_part(const Plan *plan, const Options *options) {
-    char path[path_capacity];
-    __builtin_snprintf(path, sizeof path, "%s.part", options->costs);
-    c::FILE *part = c::fopen(path, "a");
-    if (part == nullptr) return;
-    c::setvbuf(part, nullptr, 0, 1U << 22);
-    for (Usize i = 0; i < plan->count; i++) {
-        c::fputs(plan->tests[i]->name, part);
-        c::fputs("\n", part);
-    }
-    c::fclose(part);
-}
-
 Plan *make_plan(const Options *options) {
     Plan *plan = (Plan *)map_bytes((1) * sizeof(Plan), map_private);
     plan->options = options;
@@ -4410,7 +4372,6 @@ Plan *make_plan(const Options *options) {
         plan->count += 1;
     }
     if (options->shard_count > 0 && !shard_built(options)) shard_plan(plan, options);
-    if (options->weigh) write_part(plan, options);
     cache_filter(plan, options);
     plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
     plan->order = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);

@@ -1,7 +1,7 @@
 name: test-part
 description: >
   Runs one Linux part of `smith test` on a tree that is built (#1758, #2870): Neovim for the editor tests, the restored
-  test-result store, `smith test --shard <part>/<count> --weigh` (the split is made from the store, #3283), the store published (queue and nightly runs), the log
+  test-result store, `smith test --shard <part>/<count>`, the store published (queue and nightly runs), the log
   uploaded as `test-log-linux-<part>-of-<count>`, and the failed tests printed last. `test-linux` runs it for each part
   on the build it restored (8 parts, #3279). The job sets SMITH (setup-smith), SMITH_TEST_STATS=1 and `contents: write`.
 
@@ -47,13 +47,9 @@ runs:
         start=$(date +%s)
         rc=0
         shard=
-        mkdir -p .smith/log
-        # --weigh (#3283): the build deals the tests by what the test store holds (the ones it will serve weigh next to
-        # nothing, the others the seconds of their last run), every part by itself, and writes the weights, the whole
-        # suite (.suite) and this part's tests (.part), a build and a runner for each test program adding theirs beside the logs; the `ci` job checks every test is in one part
-        if [ "$COUNT" -gt 1 ]; then shard="--shard $PART/$COUNT --weigh $PWD/.smith/log/weights.tsv"; fi
+        if [ "$COUNT" -gt 1 ]; then shard="--shard $PART/$COUNT"; fi
         # shellcheck disable=SC2086
-        "$SMITH" test $shard $FLAGS 2>&1 |
+        "$SMITH" test $shard $FLAGS --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
           tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
         took=$(( $(date +%s) - start ))
         # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
@@ -62,10 +58,6 @@ runs:
         cp "$RUNNER_TEMP/test.log" .smith/log/test.log
         {
           echo "### tests linux $PART/$COUNT: $took s"
-          # how the split was made: the tests the store was expected to serve, and the size of the part
-          if [ -s .smith/log/weights.tsv ]; then
-            echo "split: $(grep -h '^#' .smith/log/weights.tsv | cut -c3- | paste -sd';' -); this part $(wc -l <.smith/log/weights.tsv.part) tests"
-          fi
           # a PR check's selection and the base it was made against (#3059: it once said 0 of 384 for every PR)
           grep -E '^smith test --changed: ([0-9]+ changed files? since|.*every test runs|.*whole suite)' "$RUNNER_TEMP/test.log" | head -n 2 || true
           grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true

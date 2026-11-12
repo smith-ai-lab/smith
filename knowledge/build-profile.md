@@ -16,7 +16,7 @@ Measured on 2026-11-11 for #3076 on one cloud container (4 cores, 15 GB, Linux 6
 - **A fresh cache folder:** `XDG_CACHE_HOME=$(mktemp -d) smith build` in a one-file project, against the same with `steps/self/` copied in from a warm folder, measures the digest smith takes of itself (`runtime/self_digest.c`).
 
 ## The tests
-- **The suite's CPU per test** is the test store's own record (`<store>/took/<test>`, #3283), written by every run of `smith test`; `smith test --cache weights <file of names> 2` prints it as `cpu<TAB>seconds<TAB>name` lines (the weights `--weigh` deals by).
+- **The suite's CPU per test** is CI's own table, `.github/shard-costs.tsv`. Sort it before running anything.
 - **One test file alone:** `smith test --no-cache --stats -v --test '<file>::'` with the smith under test first on `PATH`.
 - **Where a file's CPU goes** needs the processes it starts. `strace -f` cannot be used on tests: LeakSanitizer refuses to run under ptrace and the tests fail. Sample `/proc` instead: the script below polls every 20 ms, keeps each process's own user and system time, and classes it by its command line (`smith build`, `smith cc -c`, lld, the solver's forks, the test's programs). The CPU of processes too short to be seen is the difference to the total. `python3 psample.py out.txt -- smith test --no-cache --test 'cache_modules_test::'`.
 - **Sanitizers:** copy `tests/units/` to a scratch folder, remove `-fsanitize=address,undefined` from its `build.c`, build that runner and run the same in-process tests with both runners, twice each.
