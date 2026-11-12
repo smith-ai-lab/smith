@@ -187,6 +187,9 @@ export typedef enum {
         Slot slots[:];
     } tuple; // `(A, B)`: `slots` hold the element types, named "0", "1", ... (read as `t.0`, `t.1`)
     struct {
+        ast::Text name; // written with its dot: `.green`
+    } symbol; // `.green`: the type with the one value `.green`, a member of any union that holds it (#3237)
+    struct {
         TypeRef element;
         U64 count;
     } vector; // `vec(T, N)`: `count` lanes of `element` (a number type, or `bool` for a comparison), one `<N x T>`
@@ -336,6 +339,7 @@ static Bool same_variant(const Ty *a, const Ty *b) {
     if (a->kind == .stream) return b->kind == .stream;
     if (a->kind == .tuple) return b->kind == .tuple;
     if (a->kind == .vector) return b->kind == .vector;
+    if (a->kind == .symbol) return b->kind == .symbol;
     if (a->kind == .record) return b->kind == .record;
     if (a->kind == .enumeration) return b->kind == .enumeration;
     return false;
@@ -395,6 +399,7 @@ static U64 kind_code(const Ty *a) {
     if (a->kind == .stream) return 19;
     if (a->kind == .tuple) return 20;
     if (a->kind == .vector) return 21;
+    if (a->kind == .symbol) return 23;
     return 22;
 }
 
@@ -894,6 +899,7 @@ export Str name_of(TypeRef t) {
     if (t->kind == .record) return t->kind.record.name;
     if (t->kind == .enumeration) return t->kind.enumeration.name;
     if (t->kind == .concept_type) return t->kind.concept_type.name;
+    if (t->kind == .symbol) return t->kind.symbol.name;
     if (t->kind == .invalid) return "<error>";
     if (t->kind == .automatic) return "Auto";
     if (t->kind == .void_type) return "Void";
@@ -2069,6 +2075,12 @@ static Str path_text(ast::Path path) {
         put(&text, path.segments[i].text);
     }
     return text.data[0:text.length];
+}
+
+// The type `.green` of the one value `.green` (#3237); `name` is without the dot.
+export TypeRef symbol_of(Table *t, Str name) {
+    TyKind made = {.symbol = {.name = msg(format::push(".", name))}};
+    return intern(t, (Ty){.kind = made});
 }
 
 // A concept of smith's own syntax (`num`), in a type that is written in it: a family of types, never a field's type.

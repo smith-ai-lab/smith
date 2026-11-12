@@ -1365,6 +1365,16 @@ static void try_after(types::Checked *c, Frame f) {
     finish(c, e, types::element_of(operand), f.expected);
 }
 
+// The members of an enumeration as a user writes them: `.red`, `.green`, `.blue`.
+static Str member_list(types::TypeRef t) {
+    Str out = "";
+    types::Members slots = types::slots_of(t);
+    for (Usize i = 0; i < countof(slots.items); i++) {
+        out = msg(format::push(out, i == 0 ? "`." : ", `.", slots.items[i].name, "`"));
+    }
+    return out;
+}
+
 static void variant_expr(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .variant)) {
@@ -1373,10 +1383,14 @@ static void variant_expr(types::Checked *c, Frame f) {
     Str name = e->kind.variant.name;
     types::TypeRef expected = f.expected;
     if (expected == nullptr) {
-        types::failf(c, e->span, "`.", name,
-                     "` needs a type to say what it is; give the variable a type before `=`, or pass it ",
-                     "where a parameter has the type");
-        poison(c, e);
+        // `.green` alone is a value of its own one-value type, a member of every union that holds it (#3237).
+        if (e->kind.variant.payload != nullptr) {
+            types::failf(c, e->span, "`.", name, "(...)` needs a type to say what it carries; give the variable a type ",
+                         "before `=`, or pass it where a parameter has the type");
+            poison(c, e);
+            return;
+        }
+        types::set_type(c, e, types::symbol_of(&c->table, name));
         return;
     }
     // `x == .some` and `x != .some` test an option's tag, so a bare `.some` is the option too (#2456).
@@ -1416,12 +1430,7 @@ static void variant_expr(types::Checked *c, Frame f) {
     }
     Str want = types::show(expected);
     if (expected->kind == .enumeration) {
-        Str first = "its enumerators";
-        if (countof(types::slots_of(expected).items) > 0) {
-            first = types::slots_of(expected).items[0].name;
-        }
-        types::failf(c, e->span, "`", want, "` has no enumerator `", name,
-                     "`; write one of its enumerators, such as `.", first, "`");
+        types::failf(c, e->span, "`.", name, "` is not a member of `", want, "` (", member_list(expected), ")");
     } else {
         types::failf(c, e->span, "`.", name, "` is not a value of `", want, "`; write a value of type `", want, "`");
     }
