@@ -3,7 +3,17 @@
 # dropped, decided in knowledge/decisions.md or a smith-dev-syntax skill). A listed file must still fail with a
 # diagnostic: one that compiles, or whose compile crashes, fails the count job. How to add to it, and when not to:
 # knowledge/front-end.md, "The count's excluded files".
+# A tests/affine/ file whose `<file>.smith.expected` holds the `smith-affine:` error that names it is an error-fixture
+# (#3234, decided in #3190 item 33): the linear and affine rules are checked at compile time, and these files must fail.
+tests/affine/affine_address_of.smith	error-fixture
+tests/affine/affine_bad_index.smith	error-fixture
+tests/affine/affine_branch_join.smith	error-fixture
+tests/affine/affine_defer.smith	error-fixture
+tests/affine/affine_loop_counter_changed.smith	error-fixture
+tests/affine/affine_second_use.smith	error-fixture
+tests/affine/affine_slice_bad_index.smith	error-fixture
 tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
+tests/build_fixtures/std_scope/affine_twice.smith	error-fixture
 tests/front/corpus/error-array-length/src/main.smith	error-fixture
 tests/front/corpus/error-compound-variant-unknown/src/main.smith	error-fixture
 tests/front/corpus/error-countof-pointer/src/main.smith	error-fixture
