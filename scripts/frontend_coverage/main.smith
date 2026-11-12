@@ -14,8 +14,9 @@
 //                                              rows of a full run
 //   frontend_coverage run SMITH ROOT SCRATCH shard:K/N
 //                                              shard K of N (#2697): the tracked .smith files whose path hashes to
-//                                              K - 1 modulo N, compiled as in a full run (every file is fixed first, as
-//                                              in one); only the rows of the shard's own files are written
+//                                              K - 1 modulo N, compiled as in a full run (they and the modules they
+//                                              import are fixed first, #3369); only the rows of the shard's own files
+//                                              are written
 //   frontend_coverage merge ROOT TABLES          joins the tables of the shards into one, in the order of the tracked
 //                                              files; a file in no table or in two is an error
 //   frontend_coverage chain RESULTS ROOT FILES  reads the table of a filtered run and prints, for each file in it, its
@@ -665,7 +666,7 @@ static void print_name_lines() {
 
 // The files that leave the denominator (#3037): `scripts/frontend_coverage/excluded.txt` (SMITH_COVERAGE_EXCLUDED
 // names another list), read from the repository the count runs in. A line is `path TAB reason`; the reason is
-// `error-fixture` or `old-form: <form>`; blank lines and lines starting with `#` are skipped.
+// `error-fixture`, `tool-fixture` or `old-form: <form>`; blank lines and `#` lines are skipped.
 constexpr const char *excluded_default = "scripts/frontend_coverage/excluded.txt";
 constexpr Usize excluded_max = 1024;
 constexpr Usize reason_size = 96;
@@ -678,9 +679,9 @@ static Bool begins_with(const char text[:], const char prefix[:]) {
     return countof(text) >= countof(prefix) && same(text[0:countof(prefix)], prefix);
 }
 
-// Whether `reason` is one of the fixed set: `error-fixture`, or `old-form: ` and a form.
+// Whether `reason` is one of the fixed set: `error-fixture`, `tool-fixture`, or `old-form: <form>`.
 static Bool valid_reason(const char reason[:]) {
-    if (same(reason, "error-fixture")) return true;
+    if (same(reason, "error-fixture") || same(reason, "tool-fixture")) return true;
     return begins_with(reason, "old-form: ") && countof(reason) > 10;
 }
 
@@ -689,7 +690,7 @@ static Bool excluded_line(const char line[:]) {
     if (tab == 0 || tab >= countof(line) || tab >= path_size || countof(line) - tab - 1 >= reason_size ||
         !valid_reason(line[tab + 1:countof(line)])) {
         console::print_error("frontend_coverage: error: the excluded list has a bad line: ", line,
-                             "\n  (write `path TAB error-fixture` or `path TAB old-form: <form>`)\n");
+                             "\n  (write `path TAB error-fixture`, `tool-fixture` or `old-form: <form>`)\n");
         return false;
     }
     if (excluded_count == excluded_max) {
@@ -2007,8 +2008,10 @@ static Bool parse_shard(const char list[:], Usize *k, Usize *n) {
     return true;
 }
 
-// Marks the files of shard `k` of `n` as owned, and every .smith file as wanted (fixed). Returns how many files
-// the shard owns.
+// Marks the files of shard `k` of `n` as owned, and each of them and what it imports, transitively, as wanted (fixed).
+// Returns how many files the shard owns. A shard used to fix every file of the tree (a serial 6 to 9 minutes in the job
+// before the shards, #3369); the rows of a file made from its closure are the rows of a full run, as in `run ... FILES`
+// (#2309), and the closure holds a quarter of the tree for an eighth of its files.
 static Usize mark_shard(Usize k, Usize n) {
     Usize count = 0;
     Usize mine = 0;
@@ -2017,11 +2020,8 @@ static Usize mark_shard(Usize k, Usize n) {
         owned[i] = true;
         mine += 1;
     }
-    // Every file is fixed, whatever the shard owns: a file reads modules that the closure of imports does not name (a
-    // path import in a project, a C header that stands for a module), and one of them left unfixed changes its row.
-    // Only the owned files are compiled and reported.
     for (Usize i = 0; i < tree_count; i++) {
-        if (is_smith(tree[i])) count = mark_closure(i, count);
+        if (is_smith(tree[i]) && owned[i]) count = mark_closure(i, count);
     }
     return mine;
 }
