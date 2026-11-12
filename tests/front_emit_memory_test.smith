@@ -688,16 +688,22 @@ export void test_front_emit_memory_pointer_casts_and_null() {
 // ---------------------------------------------------------------------------------------------------------------
 // Errors
 
-export void test_front_emit_memory_a_union_is_an_error() {
+// union Number { I32 whole; F64 real; };  U64 number_size() { return sizeof(Number); }: the members share one array
+// that is as big and as aligned as the biggest.
+export void test_front_emit_memory_a_union_is_as_big_as_its_biggest_member() {
     TreeMemory trees = {};
     tree_begin(&trees);
-    ast::FieldDecl fields[1] = {ast::field("a", i32_type())};
-    ast::Decl *u = ast::record_decl("U", fields);
+    ast::FieldDecl fields[2] = {ast::field("whole", i32_type()), ast::field("real", ast::named("F64"))};
+    ast::Decl *u = ast::record_decl("Number", fields);
     if (u->kind == .record) u->kind.record.is_union = true;
-    u->span = (ast::Span){.start = 3, .end = 20};
-    ast::Module m = module1(u);
+    ast::StmtRef items[1] = {give(size_of_type(ast::named("Number")))};
+    ast::Module m = module2(u, function_of0("number_size", ast::named("U64"), items));
     tree_end(&trees);
-    check_error(&m, "not emitted yet: union", 3U, 20U);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgWideFn size = (NoArgWideFn)symbol_of(&host, "front::test::number_size");
+    test::check_equal(size(), (U64)8);
+    emit_jit::stop(&host);
 }
 
 export void test_front_emit_memory_a_bit_field_is_an_error() {

@@ -537,6 +537,10 @@ static Verdict cast_pointer(const Ctx *c) {
             return dropped_const(c);
         return accept(cast);
     }
+    // C's `(T *)xs` of an array: the array decays to the address of its first element, then the pointer is cast.
+    if (from->kind == .array && to->kind == .pointer) return accept(cast);
+    if (from->kind == .text && to->kind == .pointer)
+        return refuse(c, "a Str is not a pointer to its characters", "write cstr.of(s) for the pointer C reads");
     if (from->kind == .pointer && pointer_wide(c, to)) return accept(cast);
     if (to->kind == .pointer && pointer_wide(c, from)) return accept(cast);
     return refuse(c, "a pointer and an integer cast only if the integer is as wide as a pointer", "cast through Usize");
