@@ -134,7 +134,9 @@ export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each() {
     scratch::expect_text("two smiths: the copy is made", "done\n", second.out);
     scratch::Run first_build = scratch::build(&p, "");
     scratch::expect_status("two smiths: the first smith builds", 0, &first_build);
-    scratch::Run other_build = scratch::sh(&p, "rm -rf build .smith && ../other/smith build");
+    // The step cache is off for this build: its key leaves the module folder out (#3175), so the first smith's compile
+    // would be served to this one, which would compile nothing and fill no module folder of its own.
+    scratch::Run other_build = scratch::sh(&p, "rm -rf build .smith && SMITH_STEP_CACHE=0 ../other/smith build");
     scratch::expect_status("two smiths: the second smith builds into the same cache", 0, &other_build);
     scratch::expect_text("two smiths: and the program runs", "7", captured(&p, "./build/app"));
     scratch::expect_text("two smiths: one module folder each", "2",
