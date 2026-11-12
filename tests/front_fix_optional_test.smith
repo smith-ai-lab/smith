@@ -99,3 +99,16 @@ export void test_front_fix_optional_an_error_read_binds_error_value_where_error_
         "    mut error: Err = Err(code = 0)\n    if .error(error_value) := emitted:\n"
         "        error = error_value\n    error\n");
 }
+
+// An option used as a value under its test (#3228): a `mut` name is named first, the copy is tested and returned.
+export void test_front_fix_optional_a_mut_option_used_as_a_value_is_named_before_its_test() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_text(fixed_text("fn second() -> usize:\n    mut c: Option(usize) = .some(3)\n    c = .none\n"
+                          "    if c == .none:\n        c = .some(4)\n    if c != .none:\n        return c\n    0\n"),
+               "fn second() -> usize:\n    mut c: Option(usize) = .some(3)\n    c = .none\n"
+               "    if c == .none:\n        c = .some(4)\n    c_value := c\n    if c_value != .none:\n"
+               "        return c_value\n    0\n");
+}

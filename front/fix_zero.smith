@@ -1614,8 +1614,8 @@ static Bool option_contains(Str text, Str needle) {
 
 // An option given to a pointer parameter that tests for null (#2648): `count(n->next)` where `n->next` is `?*Node`
 // and `count` (of this module, written for a null: it tests `n == nullptr`) takes a `*Node`. The checker says "a value
-// that may be absent is not a value"; the fix writes `?` before the parameter's pointer type, and the passes after it
-// turn the tests into `.none` and narrow the name. A call written `name(args)` only: a fix edits one file.
+// that may be absent (`?T`) is not a `T`"; the fix writes `?` before the parameter's pointer type, and the passes
+// after it turn the tests into `.none` and narrow the name. A call written `name(args)` only: a fix edits one file.
 // Where the call that holds the argument at `at` opens, and which argument it is: the `(` before it, or `at` when
 // the argument is in no call (a bracket or a brace opens first).
 static Usize option_call_open(Str source, Usize at, Usize *index) {
@@ -1676,7 +1676,7 @@ static core::Errors option_param_edits(core::Errors out, Str source, const ast::
         types::Error found = c->errors[i];
         if (countof(found.fix) > 0 || found.span.end > countof(source) || found.span.start >= found.span.end) continue;
         if (!option_starts_with(found.message, "expected ") || !option_contains(found.message, ", found Option(") ||
-            !option_contains(found.message, "a value that may be absent is not a value"))
+            !option_contains(found.message, "a value that may be absent (`?T`) is not a `T`"))
             continue;
         Usize index = 0;
         Usize open = option_call_open(source, found.span.start, &index);

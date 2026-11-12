@@ -449,8 +449,11 @@ static Verdict by_target(const Ctx *c) {
 
 // The source is an Option or a Result and the target is not that same type: absence and errors stay explicit.
 static Verdict from_wrapper(const Ctx *c) {
-    if (c->from->kind == .option)
-        return refuse(c, "a value that may be absent is not a value", "test whether it holds a value first");
+    if (c->from->kind == .option) {
+        Str fix = "test it with `== .none`, or pass it up with `try`; ";
+        Str name_first = "for a `mut` name or a field, name it first, then test the name";
+        return refuse(c, "a value that may be absent (`?T`) is not a `T`", msg(format::push(fix, name_first)));
+    }
     return refuse(c, "a result that may be an error is not a value", "handle the error, or pass it on with try");
 }
 
