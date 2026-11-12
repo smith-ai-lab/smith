@@ -22,7 +22,7 @@ area := do:                                     # a block as a value
     w * (bottom - top)                          # its last line is the value
 ```
 
-- A `:` ending a line opens an indented block; code after the `:` on the same line is a one-line block. On one line `else:` belongs to the nearest `if`, so a nested `if` there needs parentheses. Write 4 spaces a level. The parser accepts any consistent indentation (a block is deeper than the line that opens it, and a dedent lands on an open block), and `smith fmt` re-indents to 4. A tab is an error. No semicolons. A line continues only when it ends with an operator or is inside an open `(` or `[`, where newlines and indentation are ignored.
+- A `:` ending a line opens an indented block; code after the `:` on the same line is a one-line block. On one line `else:` belongs to the nearest `if`, so a nested `if` there needs parentheses. Write 4 spaces a level. The parser accepts any consistent indentation (a block is deeper than the line that opens it, and a dedent lands on an open block), and `smith fmt` re-indents to 4. A tab is an error. No semicolons. A line continues only when it ends with an operator or a comma, when it starts with an operator that cannot begin a statement (`&&`, `||`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `/`, `%`, `<<`, `>>`, `|`, `^`; not `-`, `+`, `*`, `&` or `(`), or is inside an open `(` or `[`, where newlines and indentation are ignored. `|>` does not exist yet, so the rule does not name it (#3240).
 - A comment is `#` and a space; `##` is a doc comment, read by the generated header and by reflection (`f.doc`). `//` is gone, and `#word` with no space (`#if`, `#include`) is an old directive: an error with a fix-it.
 
 ## Declarations

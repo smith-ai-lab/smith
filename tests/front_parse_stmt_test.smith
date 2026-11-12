@@ -45,7 +45,9 @@ static ast::Expr *stub_expression(parse::Parser *p) {
         if (closes(kind) && depth > 0) depth -= 1;
         parse::advance(p);
         // A line break ends the expression (Go's rule), as the real expression parser would.
-        if (depth == 0 && lex::ends_statement(p->tokens[p->position - 1])) break;
+        if (depth == 0 && lex::ends_statement(p->tokens[p->position - 1]) &&
+            !lex::starts_continuation(parse::peek(p).kind))
+            break;
     }
     if (p->position == 0 || parse::span_from(p, start).end == start) {
         parse::expect(p, lex::name, "an expression");
@@ -572,6 +574,35 @@ export void test_parse_stmt_habits_from_other_languages_warn() {
 
 // ---- blocks are `:` and indentation (#1856): the tokens go through lex::layout and the parser has `layout` set. The
 // source starts with the `:` of the function that owns the body, which is taken here.
+
+// How many `(e...` and `(r...` forms a dump shows: its expression and return statements, and the function's result.
+static Usize statements_in(Str dump) {
+    Usize count = 0;
+    for (Usize i = 1; i + 8 < countof(dump); i++) {
+        if (dump[i] == '(' && (dump[i + 1] == 'e' || dump[i + 1] == 'r') && dump[i - 1] == ' ') count += 1;
+    }
+    return count;
+}
+
+// A statement that continues on the next lines (#3240): after a trailing operator or comma, inside brackets, or
+// before a leading operator that cannot begin a statement. Each parses to what its one-line form parses to.
+export void test_parse_stmt_layout_continued_lines_parse_as_one_statement() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str joined = ":\n    total = price * count + shipping\n    ok = a && b || c\n    f(a, b)\n    return\n";
+    Str broken = ":\n    total = price * count +\n        shipping\n    ok = a\n        && b\n        || c\n"
+                 "    f(\n        a,\n        b,\n    )\n    return\n";
+    parse::Parser one = layout_parser(joined);
+    parse::Parser many = layout_parser(broken);
+    Str expected = dump_of(&one);
+    Str got = dump_of(&many);
+    test::check_equal(countof(one.errors), 0);
+    test::check_equal(countof(many.errors), 0);
+    test::check_equal(statements_in(got), statements_in(expected));
+    test::check_equal(statements_in(got) > 4, true);
+}
 
 export void test_parse_stmt_layout_blocks() {
     arena::Arena memory = test::memory(1U << 22);
