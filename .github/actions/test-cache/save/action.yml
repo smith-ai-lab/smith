@@ -61,6 +61,10 @@ runs:
         # the solvers' answers of the smiths run inside the tests (#3174): the step store's folder `a`, in the tarball of
         # the test-result store (restored by ./.github/actions/test-cache)
         answers="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"
+        # the test results of the smith run by hand are answers in the same folder (#3177): `steps/a` of the cache, joined
+        # with the tests' own, so the tarball below holds both
+        byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps/a"
+        if [ -d "$byhand" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
         [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
         [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
