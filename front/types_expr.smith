@@ -3782,8 +3782,8 @@ static void type_call_before(types::Checked *c, Work *w, Frame f) {
     if (!(e->kind == .call)) {
         return;
     }
-    types::TypeRef made = named_type(c, e->kind.call.callee);
-    if (made->kind == .vector) {
+    types::TypeRef made = is_vector_callee(c, e->kind.call.callee) ? nullptr : named_type(c, e->kind.call.callee);
+    if (made == nullptr || made->kind == .vector) {
         vector_before(c, w, f);
         return;
     }
@@ -6913,8 +6913,8 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         generic_before(c, w, f, template);
         return;
     }
-    if (is_vector_callee(c, callee)) {
-        vector_before(c, w, f);
+    if (is_vector_callee(c, callee) || calls_type_name(c, callee, e->kind.call.args)) { // `Words()`, `Lanes(1, 2)`
+        type_call_before(c, w, f);
         return;
     }
     if (countof(stream_callee(c, callee)) > 0) {
@@ -6933,10 +6933,6 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
     if (record != nullptr) {
         construct_before(w, f, record);
-        return;
-    }
-    if (calls_type_name(c, callee, e->kind.call.args)) { // `c::F4(1, 2, 3, 4)`, `Words()`: a type named as a callee
-        type_call_before(c, w, f);
         return;
     }
     types::TypeRef enumeration = nullptr;
