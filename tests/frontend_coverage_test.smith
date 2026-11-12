@@ -292,11 +292,13 @@ export void test_frontend_coverage_the_gate_names_only_files_that_passed_on_the_
                    "a.smith\tpass\t\t\nb.smith\tcheck\texpected <n> arguments\t4\nd.smith\tcheck\tthe error the test "
                    "expects\t1\ne.smith\tpass\t\t\n"
                    "f.smith\tparse\tbad token\t2\ng.smith\temit\tno lowering\t3\n");
-    scratch::Run run =
-        scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed base.tsv now.tsv");
+    // as ci.yml runs it: the rows are the lines with three fields (`smith run` prints its build lines first)
+    scratch::Run run = scratch::sh(
+        &p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed base.tsv now.tsv | awk -F'\\t' 'NF >= 3'");
     scratch::expect_status("frontend_coverage: the gate runs", 0, &run);
     scratch::expect_contains("frontend_coverage: the files that passed on the base and fail now, with stage and cause",
-                             run.out, "\nb.smith\tcheck\texpected <n> arguments\ng.smith\temit\tno lowering\n");
+                             run.out, "b.smith\tcheck\texpected <n> arguments\ng.smith\temit\tno lowering\n");
+    scratch::expect_lacks("frontend_coverage: the build lines of smith run are not rows", run.out, "compile");
     scratch::expect_lacks("frontend_coverage: a file listed in excluded.txt is not a regression", run.out,
                           "\nd.smith\t");
     scratch::expect_lacks("frontend_coverage: a file gone from the tree is not a regression", run.out, "\nc.smith\t");
