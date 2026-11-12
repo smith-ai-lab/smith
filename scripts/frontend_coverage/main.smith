@@ -25,6 +25,8 @@
 //   frontend_coverage summarize RESULTS [SMITH]
 //                                              reads a table and prints one line per file, then the summary; with
 //                                              SMITH, the summary names the smith that was measured
+//   frontend_coverage regressed BASE NOW        prints `path TAB stage TAB message` for each file that passes in BASE
+//                                              and fails in NOW and is not on the excluded list: the queue's gate
 //
 // The table has one line per diagnostic, or one per passing file: `path TAB stage TAB message TAB position`. The stage
 // is `pass`, or the stage that failed: `fixer` (`smith lint --fix`), `parse`, `check`, `emit` or `write` (the front
@@ -836,6 +838,39 @@ static I32 summarize(const char file[:], const char *smith) {
     print_fail_lines();
     print_pair_lines();
     print_name_lines();
+    return 0;
+}
+
+// ----------------------------------------------------------------------------------------------------- regressed
+
+// The queue's gate (#3369): prints `path TAB stage TAB message` for each file that passed in the BASE table and fails
+// in the NOW table, whatever the totals do (owner, 2026-11-12). A file the change lists in the excluded list (the
+// reason is the way out), a file gone from the tree and a file that starts to pass are not named; the table compared
+// with is the one it is given (the base's), never an older green run's.
+static I32 regressed(const char base[:], const char now[:]) {
+    if (!read_table(base)) {
+        console::print_error("frontend_coverage: cannot read ", base, "\n");
+        return 1;
+    }
+    Usize base_rows = entry_count;
+    if (!read_table(now)) {
+        console::print_error("frontend_coverage: cannot read ", now, "\n");
+        return 1;
+    }
+    if (!read_excluded()) return 1;
+    for (Usize j = base_rows; j < entry_count; j++) {
+        if (is_pass(&entries[j])) continue;
+        typeof(const char[:]) path = text_of(entries[j].path[0:path_size]);
+        if (j > base_rows && same(path, text_of(entries[j - 1].path[0:path_size]))) continue;
+        if (excluded_find(path) != excluded_count) continue;
+        Bool passed_on_base = false;
+        for (Usize i = 0; i < base_rows; i++) {
+            if (is_pass(&entries[i]) && same(path, text_of(entries[i].path[0:path_size]))) passed_on_base = true;
+        }
+        if (!passed_on_base) continue;
+        console::print((const char *)entries[j].path, "\t", (const char *)entries[j].stage, "\t",
+                       (const char *)entries[j].message, "\n");
+    }
     return 0;
 }
 
@@ -2420,8 +2455,9 @@ I32 main(Str args[:]) {
     if (countof(args) == 5 && same(args[1], "chain")) return chain(args[2], args[3].data, args[4]);
     if (countof(args) == 3 && same(args[1], "summarize")) return summarize(args[2], nullptr);
     if (countof(args) == 4 && same(args[1], "summarize")) return summarize(args[2], args[3].data);
+    if (countof(args) == 4 && same(args[1], "regressed")) return regressed(args[2], args[3]);
     console::print_error(
         "usage: frontend_coverage run SMITH ROOT SCRATCH [FILES] | frontend_coverage chain RESULTS ROOT FILES | "
-        "frontend_coverage summarize RESULTS [SMITH]\n");
+        "frontend_coverage summarize RESULTS [SMITH] | frontend_coverage regressed BASE NOW\n");
     return 2;
 }
