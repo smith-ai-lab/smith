@@ -1,0 +1,124 @@
+// The property the one store exists for (#3178): the whole check, run again on what it already checked, does no work.
+// A scratch project has a C file (add.c, which a .smith file imports), .smith files, a test and a proof, and passes
+// format and lint. `smith check` runs on it with one store (a cache of the case's own):
+//   - the second run performs zero steps, every one is served from the store;
+//   - a one-byte change of add.c runs only the steps that read add.c and the ones downstream of them;
+//   - a third run with an empty store (and no build folder) gives the same results as the first.
+// A step is a line of the check's output: the files fmt and lint ran (`SMITH_FMT_CACHE=why` and `SMITH_LINT_CACHE=why`
+// print the counts), each build step that is not marked `(cached)` (the compiles, links and header steps; the one
+// that starts the test runner is the tests' own, counted by the tests that ran), the tests that ran, and the proofs
+// that were not taken from the cache. The failure message is the list of steps that ran, one for each line.
+// smith-covers: smith.c runtime/ shim/ lib/std/test.smith tests/build_fixtures/check_store/
+module check_second_run_test;
+
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import scratch;
+
+// The awk program that turns the output of `smith check` into `ran: <step>` lines (the steps that did work) and
+// `result: <line>` lines (what the check found, without a time or a cache count).
+static const char *const filter =
+    "/^smith fmt: [0-9]+ files:/ { n = $0; sub(/.* files: /, \"\", n); if (n + 0 > 0) print \"ran: fmt \" n + 0 \" "
+    "run\"; "
+    "print \"result: fmt \" $3 \" files\" } "
+    "/^smith lint: linted / { n = $0; sub(/.*files \\(/, \"\", n); if (n + 0 > 0) print \"ran: lint \" n + 0 \" run\"; "
+    "print \"result: lint \" $4 \" files\" } "
+    "/^\\[[0-9]+\\/[0-9]+\\] / { if ($0 !~ /\\(cached\\)/ && $0 !~ /[.]smith[/]program --run/) { s = $0; "
+    "sub(/^\\[[0-9]+\\/[0-9]+\\] /, \"\", s); print \"ran: \" s } } "
+    "/^[0-9]+ passed, [0-9]+ failed/ { passed = $1 + 0; print \"result: tests \" $1 \" passed, \" $3 \" failed\" } "
+    "/^[0-9]+ cached: / { cached = $1 + 0 } "
+    "/^[0-9]+ proved, [0-9]+ failed/ { n = $1 + 0; k = 0; if (match($0, /, [0-9]+ cached/)) "
+    "k = substr($0, RSTART + 2, RLENGTH - 2) + 0; if (n > k) print \"ran: prove \" n - k \" run\"; "
+    "print \"result: prove \" $1 \" proved, \" $3 \" failed\" } "
+    "/^smith check: [a-z-]+ (ok|FAILED)/ { s = $0; sub(/ \\(.*/, \"\", s); print \"result: \" s } "
+    "END { if (passed > cached) print \"ran: tests \" passed - cached \" run\" }";
+
+// The project: the fixture, in a git repository, with a cache of its own. Made before the test's memory, since
+// scratch::clean frees what it holds.
+static scratch::Project prepared() {
+    scratch::Project p = scratch::make("p", "check_store");
+    scratch::own_cache(&p);
+    scratch::Run git = scratch::sh(&p, "git init -q . && git add -A 2>&1");
+    scratch::expect_status("the repository is made", 0, &git);
+    scratch::release(git.out);
+    scratch::release(git.err);
+    return p;
+}
+
+// One `smith check` of the project, written to ../run-<name>.txt as `ran:` lines, `result:` lines and the status.
+static void check(const scratch::Project *p, const char *name) {
+    const char *command =
+        format::push(
+            "out=$(SMITH_OUTPUT=full SMITH_RESULT_CACHE=on SMITH_FMT_CACHE=why SMITH_LINT_CACHE=why smith check 2>&1); "
+            "s=$?; { printf '%s\\n' \"$out\" | awk '",
+            filter, "' | sort; echo \"status $s\"; } > ../run-", name,
+            ".txt; [ \"$s\" = 0 ] || printf '%s\\n' \"$out\" | tail -60 >&2")
+            .data;
+    scratch::Run run = scratch::sh(p, command);
+    (void)run;
+}
+
+// The lines of a run that start with `ran: ` (the steps), or the others (the results and the status).
+static const char *steps(const scratch::Project *p, const char *name) {
+    const char *command = format::push("grep '^ran: ' ../run-", name, ".txt | sed 's/^ran: //'; true").data;
+    const char *text = scratch::capture(p, command);
+    return text;
+}
+
+static const char *results(const scratch::Project *p, const char *name) {
+    const char *command = format::push("grep -v '^ran: ' ../run-", name, ".txt").data;
+    const char *text = scratch::capture(p, command);
+    return text;
+}
+
+export void test_check_a_second_run_performs_no_step() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check(&p, "first");
+    scratch::expect_contains("the first run passes", results(&p, "first"), "status 0");
+    check(&p, "second");
+    scratch::expect_contains("the second run passes", results(&p, "second"), "status 0");
+    scratch::expect_text("the steps that ran the second time", "", steps(&p, "second"));
+}
+
+export void test_check_a_changed_byte_runs_only_the_steps_that_read_it() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check(&p, "first");
+    check(&p, "second");
+    scratch::write(&p, "add.c",
+                   "#include \"add.h\"\n\nint32_t add_two(int32_t a, int32_t b) {\n    return b + a;\n}\n");
+    check(&p, "edited");
+    scratch::expect_contains("the run after the edit passes", results(&p, "edited"), "status 0");
+    // fmt reads add.c; lint reads add.c and main.smith (which reads the C file it imports, as its key says); the
+    // compile of add.c, the compile of main.smith and the link of the program are downstream of it. The proofs are
+    // served (the proof of main sees add_two's declaration, not its body), and so are the tests and every other file.
+    scratch::expect_text("the steps that read add.c",
+                         "compile add.c\ncompile main.smith\nfmt 1 run\nlink build/debug/p\n"
+                         "lint 2 run",
+                         steps(&p, "edited"));
+}
+
+export void test_check_an_empty_store_gives_the_results_of_the_first_run() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check(&p, "first");
+    scratch::Run emptied = scratch::sh(&p, "rm -rf build .smith \"$XDG_CACHE_HOME/smith\" && echo emptied");
+    scratch::expect_status("the store and the build folder are removed", 0, &emptied);
+    check(&p, "again");
+    scratch::expect_text("every result equals the first run's", results(&p, "first"), results(&p, "again"));
+}

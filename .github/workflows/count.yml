@@ -50,26 +50,15 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
-  frontend-coverage-fix:
-    # the fixing of the count, done once (#2832). Each of the shards used to fix every tracked file (a file reads
-    # modules that must already be in the new syntax), so the whole tree was fixed once per shard and the fix phase was
-    # most of a shard's 15 to 26 minutes. This job fixes the tree once, from nothing (every count starts from nothing:
-    # no push saves the fixed files of a count to start from), and hands the folder to the
-    # shards as an artifact.
-    # It builds the release profile (-O2, #2684) of smith itself, which `build-linux-release` did in a job of its own: the
-    # count runs the smith it measures, and the dev build of `build-linux` (-O0) made six of eight shards  hit their
-    # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
-    # count is this job and the merge (2 jobs); a cold one also runs the shards on the build it packs. It runs after each code merge to main (#3196): see `frontend-coverage`.
+  frontend-coverage-build:
+    # the release build of smith (-O2, #2684) for the shards, done once: the count runs the smith it measures, and the dev
+    # build of `build-linux` (-O0) made six of eight shards hit their timeout (queue run 42349047932). It fixed the whole
+    # tree here, once, before the shards (#2832: 6 to 9 minutes of the 13 to 15 of a count, serial); each shard now fixes
+    # the files it owns and what they import (#3369), so the shards start when the build is packed.
     runs-on: ubuntu-latest
-    # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
-    # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
-    timeout-minutes: 60
-    outputs:
-      # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
-      shards: ${{ steps.plan.outputs.shards }}
-      count: ${{ steps.plan.outputs.count }}
+    timeout-minutes: 30
     permissions:
-      contents: write # test-cache/save: `gh release create` of the import cache this job made (#2891)
+      contents: read
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -89,21 +78,6 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
-      - name: API budget (before test-cache)
-        uses: ./.github/actions/api-budget
-        with:
-          label: ${{ github.workflow }}/${{ github.job }} before test-cache
-      - uses: ./.github/actions/test-cache
-        # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
-        # count's jobs publish; its own set (#2939)
-        with:
-          tests: "false"
-          fresh: "true"
-          imports-from: count
-      - name: API budget (after test-cache)
-        uses: ./.github/actions/api-budget
-        with:
-          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -129,54 +103,7 @@ jobs:
           done
           [ "$status" = 0 ] && echo "$(echo $excluded | wc -w) objects left out of the key, no caller outside the verbs' own code"
           exit $status
-      - name: Fix the tree
-        shell: bash
-        run: |
-          "$SMITH" build frontend-coverage -Dfix_only=1 -Dsmith="$SMITH" 2>&1 | tee "$RUNNER_TEMP/fix.txt"
-          {
-            echo "### Count: fixed files"
-            echo '```'
-            grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure)' "$RUNNER_TEMP/fix.txt"
-            echo '```'
-          } >>"$GITHUB_STEP_SUMMARY"
-      - name: Size the shards
-        id: plan
-        shell: bash
-        run: |
-          # a part measures at most an eighth of the tree: a cold count is 8 parts, a warm one is 1 or 2
-          read -r missing total < <(sed -n 's/^frontend_coverage: rows to measure: \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$RUNNER_TEMP/fix.txt" | tail -n 1)
-          n=8
-          if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (8 * missing + total - 1) / total )); fi
-          [ "$n" -lt 1 ] && n=1
-          [ "$n" -gt 8 ] && n=8
-          echo "count=$n" >>"$GITHUB_OUTPUT"
-          echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
-          echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Count the rows left, here
-        # one part or none left (a warm run): measured in this job, as part 1 of 1, so no shard job runs
-        if: ${{ steps.plan.outputs.count == '1' }}
-        # never fails the job: the status is read by the merge job, whatever happened here
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          mkdir -p "$RUNNER_TEMP/coverage"
-          "$SMITH" build frontend-coverage -Dshard=1/1 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
-          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
-          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
-          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
-          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit 0
-      - name: Save the part counted here
-        if: ${{ steps.plan.outputs.count == '1' && always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-coverage-shard-${{ github.sha }}-1
-          path: ${{ runner.temp }}/coverage
-          if-no-files-found: ignore
-          retention-days: 30
       - name: Pack the build for the shards
-        # and for the merge job `frontend-coverage`
         shell: bash
         run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
       - name: Save the build for the shards
@@ -186,38 +113,23 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
-      - name: Save the fixed files
-        uses: actions/upload-artifact@v4
-        with:
-          name: count-fixed-${{ github.sha }}
-          path: .smith/frontend-coverage/fixed
-          compression-level: 1
-          retention-days: 3
-      - name: Publish the import cache
-        # `test-cache-<sha7>-count` (a push to main), and the hits of the fix and of a count done here
-        if: always()
-        uses: ./.github/actions/test-cache/save
-        with:
-          name: count
-          tests: "false"
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
 
   frontend-coverage-shard:
-    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
+    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/8` fixes (the files it owns and what they import, #3369) and compiles the tracked files
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
     # count. The job `frontend-coverage` below joins the eight tables. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
-    # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
-    needs: frontend-coverage-fix
-    if: ${{ !cancelled() && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' }}
+    needs: frontend-coverage-build
+    if: ${{ !cancelled() && needs.frontend-coverage-build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.frontend-coverage-fix.outputs.shards) }}
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     permissions:
       contents: write # test-cache/save: `gh release create` of the import cache this shard made (#2891)
       actions: read
@@ -244,21 +156,15 @@ jobs:
         with:
           label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
-        # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
+        # the import cache only (#2891), of the release smith's identity: this shard's set (#2939)
         with:
           tests: "false"
           fresh: "true"
-          imports-from: count count-${{ matrix.shard }}
+          imports-from: count-${{ matrix.shard }}
       - name: API budget (after test-cache)
         uses: ./.github/actions/api-budget
         with:
           label: ${{ github.workflow }}/${{ github.job }} after test-cache
-      - name: Fetch the fixed files
-        # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
-        uses: actions/download-artifact@v4
-        with:
-          name: count-fixed-${{ github.sha }}
-          path: .smith/frontend-coverage/fixed
       - name: Count the shard
         # the shard fails when its count ends with a status other than 0, so it is seen; the merge job still reads the
         # status file it saves (the steps after this one run always)
@@ -269,7 +175,7 @@ jobs:
           # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
           # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
           # from the diff is deterministic, so there is no retry: the command is bounded to 7 minutes and fails the entry.
-          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
           [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 7 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
@@ -300,13 +206,13 @@ jobs:
     # the merge of the parts of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files (a
     # file in no part, or in two, is an error), and the summary is the single job's. A part that failed or did not
     # finish leaves the count unmeasured. The count of how many .smith files the new front end handles (#2073, #1885,
-    # #2433), measured on Linux, on the release smith `frontend-coverage-fix` built for that very commit, which this job
+    # #2433), measured on Linux, on the release smith `frontend-coverage-build` built for that very commit, which this job
     # restores (`build-linux-release`).
     # It runs after each code merge to main and by hand (#3196) and gates nothing: the line `frontend-coverage:` it prints is the
     # number the lead reads. It was in every queue run (11 to 13 minutes, #3052) and then on every push to main.
     # `timeout-minutes` counts queue time too (knowledge/ci-hosted.md).
-    needs: [frontend-coverage-fix, frontend-coverage-shard]
-    if: ${{ !cancelled() && (needs.frontend-coverage-fix.result == 'success' || needs.frontend-coverage-fix.result == 'failure') }}
+    needs: [frontend-coverage-build, frontend-coverage-shard]
+    if: ${{ !cancelled() && (needs.frontend-coverage-build.result == 'success' || needs.frontend-coverage-build.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -341,7 +247,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/coverage"
           out="$RUNNER_TEMP/coverage/output.txt"
           tables=
-          parts=${{ needs.frontend-coverage-fix.outputs.count || 8 }}
+          parts=8
           for k in $(seq 1 "$parts"); do
             d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
             if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then

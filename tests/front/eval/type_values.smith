@@ -1,0 +1,24 @@
+# A type is a value of the evaluator (#3239): `==` and `!=` compare two types, and a function over types is run at
+# compile time with `t[:]` adding one dimension, as `slice.with_dims` counts them.
+fn deeper(T: type, n: usize) -> type:
+    mut t := T
+    mut i := 0
+    while i < n:
+        t = t[:]
+        i = i + 1
+    t
+
+fn pick(T: type) -> i32:
+    if T == i32:
+        1
+    else:
+        2
+
+static_assert(deeper(f32, 1) == []mut f32)
+static_assert(deeper(f32, 2) == [,]f32)
+static_assert(deeper(u8, 3) == [,,]u8)
+static_assert(deeper(i64, 2) != []mut i64)
+static_assert(pick(i32) == 1 and pick(u8) == 2)
+
+pub fn check() -> i32:
+    0
