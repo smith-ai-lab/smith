@@ -1895,6 +1895,20 @@ static void smith_check_not_run(const bool *not_run, const SmithCheckArgs *given
     fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, *failed_count, skipped);
 }
 
+// The proofs come first: lint and the compiles read the proof files (`.smith/proved/*.pts`, and the -DSMITH_PROVED= of
+// the compile commands), so a run that proved after them left the files they had read changed, and the next run did
+// their work again (#3178). Returns 1 when the proofs ran, else 0 (and marks the part not run).
+static size_t smith_check_prove_first(const char *self, SmithVerbArgs *split, bool loud, const char **failed,
+                                      size_t *failed_count, bool *not_run) {
+    if (smith_has_prover()) {
+        smith_check_run(self, "prove", split, loud, failed, failed_count);
+        return 1;
+    }
+    fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
+    not_run[smith_check_index("prove")] = true;
+    return 0;
+}
+
 // `smith check`: formatting (clang-format's dry run), the docs, the proofs, lint and the tests, in that order (the
 // proofs before the parts that read them, #3178). A part that fails does not stop the rest: every part is reported, and
 // the exit status is 1 if any failed.
@@ -1956,16 +1970,7 @@ int smith_check_project(int count, char **args, const char *self) {
             true;
     } else {
         static SmithVerbArgs lint_split, test_split;
-        // The proofs come first: lint and the compiles read the proof files (`.smith/proved/*.pts`, and the
-        // -DSMITH_PROVED= of the compile commands), so a run that proved after them left the files they had read
-        // changed, and the next run did their work again (#3178).
-        if (smith_has_prover()) {
-            smith_check_run(self, "prove", split, loud, failed, &failed_count);
-            ran++;
-        } else {
-            fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
-            not_run[smith_check_index("prove")] = true;
-        }
+        ran += smith_check_prove_first(self, split, loud, failed, &failed_count, not_run);
         lint_split = *split;
         smith_check_select(&lint_split, "lint", &given);
         smith_check_run(self, "lint", &lint_split, loud, failed, &failed_count);
