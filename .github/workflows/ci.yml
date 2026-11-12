@@ -61,14 +61,14 @@ jobs:
       # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
       # hosted pool is saturated; picked per run by the step `Pick the macOS runner`
       pack: ${{ steps.pack.outputs.build }}
-      mac: ${{ steps.mac.outputs.mac }}
+      mac: ${{ steps.mac.outputs.mac || steps.mac-queue.outputs.mac }}
       # whether `warm` runs, and on which OSes: a push to main runs it on both
       warm: ${{ steps.scope.outputs.docs_push == 'true' && 'false' || steps.warm.outputs.warm }}
       # a docs-only diff (#3044): what `docs-linux` also runs
       docs_tests: ${{ steps.scope.outputs.docs_tests }}
       warm_os: ${{ steps.warm.outputs.os }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
-      cores: ${{ steps.mac.outputs.cores }}
+      cores: ${{ steps.mac.outputs.cores || steps.mac-queue.outputs.cores }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -83,8 +83,17 @@ jobs:
         with:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
+      - name: The macOS runner of a queue run (fixed)
+        # a queue run starts no macOS job (`mac_run` is false there), so the 15 s of API calls of `pick-mac` buy nothing (#3277):
+        # the outputs take the values pick-mac gives when hosted macOS has room
+        id: mac-queue
+        if: github.event_name == 'merge_group'
+        run: |
+          echo 'mac="macos-26"' >>"$GITHUB_OUTPUT"
+          echo "cores=3" >>"$GITHUB_OUTPUT"
       - name: Pick the macOS runner
         id: mac
+        if: github.event_name != 'merge_group'
         uses: ./.github/actions/pick-mac
         with:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
@@ -600,8 +609,13 @@ jobs:
     # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
     # plan's 20 slots were full most hours on 2026-11-02), so one job builds, and each shard restores it as an artifact
     # instead of spending about 2.5 min of its own on it (knowledge/ci.md)
-    needs: [changes, pack]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
+    #
+    # It waits for nothing (#3277): `changes` takes 13 s or more, and a queue run always builds. A push to main builds nothing
+    # here (its scope is `release` or `none`); a run by hand has the scope `full`; a queue run builds whatever its scope, the
+    # jobs that read the scope below still skip the tests of a documents-only entry. The 8 parts and their flags are constants
+    # (they were the output `linux` of `changes`, a loop over the same numbers), and the LLVM pack is never built by a run
+    # of this workflow (`changes` gives `pack` false), so `pack` is not waited for either.
+    if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     # the build, then one test part when the sizing asks for one in a queue run (#2870)
     timeout-minutes: 30
@@ -715,12 +729,12 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
-          MATRIX: ${{ needs.changes.outputs.linux }}
           MAC: ${{ steps.pick.outputs.linux-mac }}
           COUNT: ${{ steps.size.outputs.count }}
         run: |
-          # fewer parts than `changes` planned: the same matrix cut to the count sized above (#2833)
-          # no answer keeps the parts `changes` made (8 in the queue, 1 in a PR check)
+          # the 8 parts of the run (the same list `changes` gives its output `linux`), cut to the count sized above (#2833)
+          # no answer keeps the 8 parts
+          MATRIX='{"include":[{"shard":1,"count":8,"flags":"--skip-macos"},{"shard":2,"count":8,"flags":"--skip-macos"},{"shard":3,"count":8,"flags":"--skip-macos"},{"shard":4,"count":8,"flags":"--skip-macos"},{"shard":5,"count":8,"flags":"--skip-macos"},{"shard":6,"count":8,"flags":"--skip-macos"},{"shard":7,"count":8,"flags":"--skip-macos"},{"shard":8,"count":8,"flags":"--skip-macos"}]}'
           case "$COUNT" in ''|*[!0-9]*) COUNT=$(printf '%s' "$MATRIX" | jq '.include | length') ;; esac
           MATRIX=$(printf '%s' "$MATRIX" | jq -c --argjson n "$COUNT" \
             '.include |= (map(select(.shard <= $n)) | map(.count = $n))')
@@ -751,7 +765,7 @@ jobs:
         uses: ./.github/actions/test-part
         with:
           restore: "false"
-          flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+          flags: --skip-macos
       - name: Fail fast
         if: failure() || steps.tests.outcome == 'failure'
         uses: ./.github/actions/fail-fast
