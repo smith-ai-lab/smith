@@ -984,21 +984,42 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     return out;
 }
 
+// Whether some error in the list carries an edit.
+static Bool has_fix(core::Errors errors) {
+    for (Usize i = 0; i < countof(errors); i++) {
+        core::Edits fix = errors[i].fix;
+        if (countof(fix) > 0) return true;
+    }
+    return false;
+}
+
 // The text of a file as smith's own syntax (`fn`, `x: T`, `mut`, `*mut T`), which is what the checker's fixes mend; a
 // text that does not read cleanly in that syntax is read as today's (`parser::parse_file`).
 export parser::Parsed parse_for_fix(Str file, Str source) {
+    parser::Parsed braced = {};
+    Bool read_braced = false;
     if (lex::tokenize_new(source) != .error) {
         parser::Parsed own = parser::parse_new(file, source);
         if (countof(own.errors) == 0) return own;
         // The passes read their own output with braces until `fix_blocks` ends them (#2014).
-        parser::Parsed braced = parser::parse_new_braces(file, source);
+        braced = parser::parse_new_braces(file, source);
+        read_braced = true;
         if (countof(braced.errors) == 0) return braced;
         // Today's lexer reads no `#` comment: a text with some (the fixer wrote them once it lexed as smith's own
         // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106). The braced
         // reader is the one that reads a body still written with braces; the indented one skips it (#2328).
-        if (lex::tokenize(source) == .error) return countof(braced.errors) < countof(own.errors) ? braced : own;
+        if (lex::tokenize(source) == .error) {
+            // The indented reader stops at a body still written with braces, and its error has no fix (#3317).
+            if (!has_fix(own.errors) && has_fix(braced.errors)) return braced;
+            return countof(braced.errors) < countof(own.errors) ? braced : own;
+        }
     }
-    return parser::parse_file(file, source);
+    parser::Parsed old = parser::parse_file(file, source);
+    // Today's reader cannot read a header the passes have already mended (`fn main() -> i32 {`), and its error has no
+    // fix: the file would stay as it is. The braced reader of smith's own syntax reads the rest of the body and mends
+    // it (a lambda `[] { ... }` in a function whose header was written first, #3317).
+    if (read_braced && !has_fix(old.errors) && has_fix(braced.errors)) return braced;
+    return old;
 }
 
 // The modules `load_from_folders` has read in this run, by file (#2586). The checker loads every import, and every

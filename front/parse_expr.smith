@@ -747,7 +747,12 @@ static Bool at_old_lambda(const parse::Parser *p) {
     Usize at = 1;
     while (parse::peek_at(p, at).kind == lex::name || parse::peek_at(p, at).kind == lex::comma)
         at += 1;
-    return parse::peek_at(p, at).kind == lex::right_bracket && parse::peek_at(p, at + 1).kind == lex::left_paren;
+    if (parse::peek_at(p, at).kind != lex::right_bracket) return false;
+    if (parse::peek_at(p, at + 1).kind == lex::left_paren) return true;
+    // `[] { ... }` and `[x] { ... }` (#3317): a lambda with no parameter list, in the braces the fixer's passes keep
+    // until `fix_blocks`. After `in` the group is the list a `for` loop goes through.
+    Bool after_in = p->position > 0 && p->tokens[p->position - 1].kind == lex::kw_in;
+    return parse::peek_at(p, at + 1).kind == lex::left_brace && !after_in;
 }
 
 static ast::Stmt *layout_body(parse::Parser *p);

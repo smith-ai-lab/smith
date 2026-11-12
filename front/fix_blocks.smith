@@ -345,6 +345,78 @@ static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) 
     add_cut(cuts, line_start(source, close.span.start), after_line(source, close.span.end), brace.tail);
 }
 
+// The token of the `fn` that starts the lambda whose body opens at `open`: `fn(a: T) -> R {`. None (`open`) when the
+// header is not a lambda that is an argument: the token before `fn` must be the `(` or the `,` of the call.
+static Usize lambda_head(lex::Tokens tokens, Usize open) {
+    Usize nest = 0;
+    for (Usize back = 1; back < open; back++) {
+        Usize i = open - back;
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::right_paren) nest += 1;
+        if (kind == lex::left_paren && nest > 0) nest -= 1;
+        if (nest == 0 && kind == lex::kw_fn && tokens[i + 1].kind == lex::left_paren) {
+            lex::TokenKind before = tokens[i - 1].kind;
+            return before == lex::comma || before == lex::left_paren ? i : open;
+        }
+        if (tokens[i - 1].line_break) return open;
+    }
+    return open;
+}
+
+// A lambda with a body of several lines, the last argument of a call, is written after the call's parentheses
+// (smith-dev-syntax-functions): `f(a, fn(x) {` ... `})` is `f(a) fn(x):` and the body, its `)` and the line of the
+// `}` going (#3317). Left as it is when anything else follows the `)`, or the `}` shares its line with a statement.
+static void trailing_lambda(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    Usize head = lambda_head(tokens, brace.open);
+    if (head == brace.open || brace.close + 2 >= countof(tokens)) return;
+    if (tokens[brace.close - 1].line_break == false || tokens[brace.close + 1].kind != lex::right_paren) return;
+    Usize last = brace.close + 1;
+    if (tokens[last + 1].kind == lex::semicolon) last += 1;
+    if (!tokens[last].line_break && tokens[last + 1].kind != lex::end_of_file) return;
+    lex::Token before = tokens[head - 1];
+    lex::Token fn_word = tokens[head];
+    if (before.kind == lex::comma) {
+        add_cut(cuts, before.span.start, fn_word.span.start, ") ");
+    } else {
+        add_cut(cuts, fn_word.span.start, fn_word.span.start, ") ");
+    }
+    lex::Token open = tokens[brace.open];
+    add_cut(cuts, spaces_before(source, open.span.start), open.span.end, ":");
+    add_cut(cuts, line_start(source, tokens[brace.close].span.start), after_line(source, tokens[last].span.end), "");
+}
+
+static Usize statement_start(lex::Tokens tokens, Usize at);
+
+// Whether the `:` at `colon` ends the header of a lambda (`fn(a: T) -> R:`): going back over the parameters and the
+// result, a `fn` that is followed by `(`.
+static Bool ends_lambda_header(lex::Tokens tokens, Usize colon) {
+    Usize nest = 0;
+    for (Usize back = 1; back < colon; back++) {
+        Usize i = colon - back;
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::right_paren) nest += 1;
+        if (kind == lex::left_paren && nest > 0) nest -= 1;
+        if (nest == 0 && kind == lex::kw_fn) return tokens[i + 1].kind == lex::left_paren;
+        if (nest == 0 && (kind == lex::equal || kind == lex::colon || kind == lex::semicolon)) return false;
+        if (tokens[i - 1].line_break) return false;
+    }
+    return false;
+}
+
+// A one-line lambda whose body discards a value, `fn(): _ := f()`, is a declaration, and a declaration is a line of its
+// own: the body moves to the next line, one step deeper than the statement (#3317).
+static void discard_bodies(Str source, lex::Tokens tokens, Cuts *cuts) {
+    Str underscore = "_";
+    for (Usize i = 1; i + 2 < countof(tokens); i++) {
+        if (tokens[i].kind != lex::colon || tokens[i].line_break || tokens[i + 1].kind != lex::name) continue;
+        if (tokens[i + 2].kind != lex::colon_equal || !mem::equal(lex::text(source, tokens[i + 1]), underscore))
+            continue;
+        if (!ends_lambda_header(tokens, i)) continue;
+        Usize indent = indent_of(source, tokens[statement_start(tokens, i)].span.start);
+        add_cut(cuts, tokens[i].span.end, tokens[i + 1].span.start, as_str(format::push("\n", spaces(indent + step))));
+    }
+}
+
 // Whether the token at `at` starts a field that follows another one with no separator between them (an earlier fixer
 // drops the `;`): `pub`, or a name followed by `:`, after anything but a separator, a `:` or `pub` (#2520).
 static Bool starts_field(lex::Tokens tokens, Usize at, Usize open) {
@@ -459,7 +531,8 @@ static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
         if (!empty && tokens[brace.open + 1].kind == lex::kw_return && brace.close > brace.open + 2)
             add_cut(cuts, tokens[brace.open + 1].span.start, tokens[brace.open + 2].span.start, "");
         if (!empty) add_cut(cuts, tokens[brace.close - 1].span.end, close.span.end, "");
-        if (empty) add_cut(cuts, open.span.end, close.span.end, "");
+        // A lambda that does nothing has the body `()`, as an arm that does nothing has (#2328, #3317).
+        if (empty) add_cut(cuts, open.span.end, close.span.end, " ()");
         return;
     }
     add_cut(cuts, before, close.span.end, as_str(format::push(colon_for(tokens, brace.open), body)));
@@ -1160,6 +1233,7 @@ static Str convert_once(Str source) {
     Cuts cuts = {};
     string_runs(tokens, braces, &cuts);
     c_for_loops(source, tokens, braces, &cuts);
+    discard_bodies(source, tokens, &cuts);
     for (Usize i = 0; i < countof(braces); i++) {
         Brace brace = braces[i];
         if (!brace.block || brace.skip) continue;
@@ -1167,6 +1241,8 @@ static Str convert_once(Str source) {
             one_line(source, tokens, brace, &cuts);
         } else if (!brace.inside) {
             multi_line(source, tokens, brace, &cuts);
+        } else {
+            trailing_lambda(source, tokens, brace, &cuts);
         }
     }
     if (countof(cuts) == 0) return join_value_ifs(source);
