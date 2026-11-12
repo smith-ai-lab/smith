@@ -37,28 +37,28 @@ static void check(const char *label, const char *cases, const char *want) {
 }
 
 export void test_a_knowledge_only_diff_runs_no_mac_job_and_no_document_tests() {
-    check("knowledge", "case_ knowledge/a.md", "knowledge/a.md: scope=docs mac_run=false docs_tests=false\n");
+    check("knowledge", "case_ knowledge/a.md", "knowledge/a.md: scope=docs docs_tests=false mac_run=false\n");
 }
 
 export void test_a_readme_or_skill_diff_also_runs_the_document_tests() {
-    check("readme", "case_ README.md", "README.md: scope=docs mac_run=false docs_tests=true\n");
+    check("readme", "case_ README.md", "README.md: scope=docs docs_tests=true mac_run=false\n");
 }
 
 export void test_one_code_file_gives_the_full_check_with_the_mac_job() {
-    check("code", "case_ lib/a.c", "lib/a.c: scope=full mac_run=true docs_tests=false\n");
+    check("code", "case_ lib/a.c", "lib/a.c: scope=full docs_tests=false mac_run=true\n");
 }
 
 export void test_a_document_next_to_a_code_file_is_not_docs_only() {
     check("mixed", "mkdir -p knowledge; echo y >knowledge/m.md; case_ lib/a.c",
-          "lib/a.c: scope=full mac_run=true docs_tests=false\n");
+          "lib/a.c: scope=full docs_tests=false mac_run=true\n");
 }
 
 export void test_markdown_that_tests_read_stays_code() {
-    check("template", "case_ templates/new/t.md", "templates/new/t.md: scope=full mac_run=true docs_tests=false\n");
+    check("template", "case_ templates/new/t.md", "templates/new/t.md: scope=full docs_tests=false mac_run=true\n");
 }
 
 export void test_a_push_of_only_documents_is_scope_none_and_a_code_push_is_a_release() {
     check("push", "EVENT=push case_ knowledge/a.md; EVENT=push case_ lib/a.c",
-          "knowledge/a.md: scope=none mac_run=false docs_tests=false\n"
-          "lib/a.c: scope=release mac_run=true docs_tests=false\n");
+          "knowledge/a.md: scope=none docs_tests=false mac_run=false\n"
+          "lib/a.c: scope=release docs_tests=false mac_run=true\n");
 }

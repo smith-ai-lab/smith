@@ -58,6 +58,8 @@ constexpr int smith_stepcache_touch_seconds =
     60; // a hit touches an entry older than this: warm keeps what a build used (#2833)
 constexpr char smith_stepcache_root_token = '\x01';
 constexpr char smith_stepcache_percent_token = '\x02';
+constexpr char smith_stepcache_prefix_token = '\x03'; // \x03, \x04 and \x05: the first, second and third prefix
+constexpr size_t smith_stepcache_prefixes_max = 3;
 
 typedef enum {
     SmithStepCache_Unopened,
@@ -82,6 +84,10 @@ typedef struct {
     char folder[PATH_MAX];
     char roots[2][PATH_MAX]; // the folder the build runs in as clang spells it ($PWD when valid), then as getcwd does
     size_t root_count;
+    // The folders of this machine that a command or an input names besides the root: smith's cache, smith's data
+    // (clang's resource files) and the outer checkout of a nested build (#3300). Each has a token of its own.
+    char prefixes[smith_stepcache_prefixes_max][PATH_MAX];
+    size_t prefix_count;
     char environment[2048];
     SmithStepMemo *memo;
     size_t memo_count;
@@ -167,6 +173,18 @@ static bool smith_stepcache_at_root(const char *text, size_t length, size_t at, 
     return at + size == length || !smith_stepcache_name_char(text[at + size]);
 }
 
+// Whether a folder of this machine is at text[at]: as at_root, and also right after a flag letter (`-I/path`).
+static bool smith_stepcache_at_prefix(const char *text, size_t length, size_t at, const char *needle, size_t size) {
+    if (at + size > length || memcmp(text + at, needle, size) != 0) return false;
+    if (at > 0) {
+        char before = text[at - 1];
+        bool flag = at > 1 && text[at - 2] == '-' && isalpha((unsigned char)before) != 0 &&
+                    (at == 2 || strchr(" \t\"'=", text[at - 3]) != nullptr);
+        if (!flag && (smith_stepcache_name_char(before) || before == '/' || before == '%')) return false;
+    }
+    return at + size == length || !smith_stepcache_name_char(text[at + size]);
+}
+
 // The root as the `%` spelling of the effects summaries' file names: every '/' a '%'.
 static size_t smith_stepcache_percent(const char *root, char *out, size_t capacity) {
     size_t length = strlen(root);
@@ -187,7 +205,10 @@ static bool smith_stepcache_normalize(const char *text, size_t length, SmithStep
         sizes[r][1] = smith_stepcache_percent(smith_stepcache.roots[r], percent[r], sizeof percent[r]);
     }
     for (size_t i = 0; i < length;) {
-        if (text[i] == smith_stepcache_root_token || text[i] == smith_stepcache_percent_token) return false;
+        if (text[i] == smith_stepcache_root_token || text[i] == smith_stepcache_percent_token ||
+            (text[i] >= smith_stepcache_prefix_token &&
+             text[i] < smith_stepcache_prefix_token + (char)smith_stepcache_prefixes_max))
+            return false;
         bool replaced = false;
         for (size_t r = 0; r < smith_stepcache.root_count && !replaced; r++) {
             if (smith_stepcache_at_root(text, length, i, smith_stepcache.roots[r], sizes[r][0], false)) {
@@ -197,6 +218,15 @@ static bool smith_stepcache_normalize(const char *text, size_t length, SmithStep
             } else if (sizes[r][1] > 0 && smith_stepcache_at_root(text, length, i, percent[r], sizes[r][1], true)) {
                 smith_steptext_add(out, &smith_stepcache_percent_token, 1);
                 i += sizes[r][1];
+                replaced = true;
+            }
+        }
+        for (size_t f = 0; f < smith_stepcache.prefix_count && !replaced; f++) {
+            size_t size = strlen(smith_stepcache.prefixes[f]);
+            if (smith_stepcache_at_prefix(text, length, i, smith_stepcache.prefixes[f], size)) {
+                char token = (char)(smith_stepcache_prefix_token + (char)f);
+                smith_steptext_add(out, &token, 1);
+                i += size;
                 replaced = true;
             }
         }
@@ -230,6 +260,10 @@ static bool smith_stepcache_expand(const char *text, size_t length, SmithStepTex
             smith_steptext_add(out, smith_stepcache.roots[0], root_size);
         else if (text[i] == smith_stepcache_percent_token)
             smith_steptext_add(out, percent, percent_size);
+        else if (text[i] >= smith_stepcache_prefix_token &&
+                 (size_t)(text[i] - smith_stepcache_prefix_token) < smith_stepcache.prefix_count)
+            smith_steptext_add(out, smith_stepcache.prefixes[text[i] - smith_stepcache_prefix_token],
+                               strlen(smith_stepcache.prefixes[text[i] - smith_stepcache_prefix_token]));
         else
             smith_steptext_add(out, text + i, 1);
     }
@@ -312,27 +346,35 @@ static bool smith_stepcache_make_parent(const char *path) {
     return smith_package_make_folders(folder);
 }
 
-static bool smith_stepcache_contains_root(const char *path) {
+// What an output holds as bytes: the root (1) or a folder of this machine that has a token (2).
+static unsigned smith_stepcache_contains_root(const char *path) {
     int file = open(path, O_RDONLY | O_CLOEXEC);
-    if (file < 0) return true; // unknown: as if it held it
+    if (file < 0) return 3; // unknown: as if it held both
     size_t keep = 0;
-    bool found = false;
+    unsigned found = 0;
     bool failed = false;
-    for (size_t rounds = 0; !found && !failed && rounds < ((size_t)1 << 32) / smith_stepcache_chunk; rounds++) {
+    for (size_t rounds = 0; found != 3 && !failed && rounds < ((size_t)1 << 32) / smith_stepcache_chunk; rounds++) {
         ssize_t got = read(file, smith_stepcache_buffer + keep, smith_stepcache_chunk);
         if (got < 0 && errno == EINTR) continue;
         failed = got < 0;
         if (got <= 0) break;
         size_t total = keep + (size_t)got;
-        for (size_t r = 0; r < smith_stepcache.root_count; r++)
-            found = found || memmem(smith_stepcache_buffer, total, smith_stepcache.roots[r],
-                                    strlen(smith_stepcache.roots[r])) != nullptr;
+        for (size_t r = 0; r < smith_stepcache.root_count; r++) {
+            if (memmem(smith_stepcache_buffer, total, smith_stepcache.roots[r], strlen(smith_stepcache.roots[r])) !=
+                nullptr)
+                found |= 1;
+        }
+        for (size_t f = 0; f < smith_stepcache.prefix_count; f++) {
+            if (memmem(smith_stepcache_buffer, total, smith_stepcache.prefixes[f],
+                       strlen(smith_stepcache.prefixes[f])) != nullptr)
+                found |= 2;
+        }
         keep = total < PATH_MAX - 1 ? total : PATH_MAX - 1;
         if (keep > smith_stepcache_carry * 4) keep = smith_stepcache_carry * 4;
         memmove(smith_stepcache_buffer, smith_stepcache_buffer + total - keep, keep);
     }
     close(file);
-    return found || failed;
+    return failed ? 3 : found;
 }
 
 // ---------------------------------------------------------------- hashing the inputs
@@ -931,11 +973,47 @@ static bool smith_stepcache_find_roots(void) {
     return strcmp(cache->roots[0], "/") != 0;
 }
 
+// Adds a folder of this machine that gets a token (#3300), unless it is not a plain absolute path or is the root's.
+static void smith_stepcache_add_prefix(const char *folder) {
+    SmithStepCache *cache = &smith_stepcache;
+    if (folder == nullptr || folder[0] != '/' || strlen(folder) < 2 || strlen(folder) >= PATH_MAX ||
+        cache->prefix_count >= smith_stepcache_prefixes_max)
+        return;
+    for (const char *c = folder; *c != '\0'; c++) {
+        if (*c == ' ' || *c == '#' || *c == '$' || *c == '\\' || *c == '\n' || *c == ':' || *c == '"' || *c == '\'' ||
+            (unsigned char)*c < 0x20)
+            return;
+    }
+    for (size_t r = 0; r < cache->root_count; r++) {
+        if (strcmp(cache->roots[r], folder) == 0) return;
+    }
+    snprintf(cache->prefixes[cache->prefix_count++], PATH_MAX, "%s", folder);
+}
+
+// The folders that differ between machines: smith's cache, smith's data (where clang's resource files are, as
+// smith_resource_folder spells it) and the checkout a nested build belongs to.
+static void smith_stepcache_find_prefixes(const char *base) {
+    char data[PATH_MAX];
+    const char *share = getenv("XDG_DATA_HOME");
+    const char *home = getenv("HOME");
+    smith_stepcache.prefix_count = 0;
+    smith_stepcache_add_prefix(base);
+    if (share != nullptr && share[0] == '/')
+        snprintf(data, sizeof data, "%s/smith", share);
+    else if (home != nullptr && home[0] == '/')
+        snprintf(data, sizeof data, "%s/.local/share/smith", home);
+    else
+        data[0] = '\0';
+    smith_stepcache_add_prefix(data);
+    smith_stepcache_add_prefix(getenv("SMITH_REPO"));
+}
+
 // Opens the cache in `base`: the folder, the roots and the memo. Off when anything is missing.
 static bool smith_stepcache_start(SmithExec *exec, const char *base) {
     SmithStepCache *cache = &smith_stepcache;
     cache->state = SmithStepCache_Off;
     if (!smith_stepcache_find_roots()) return false;
+    smith_stepcache_find_prefixes(base);
     int written = snprintf(cache->folder, sizeof cache->folder, "%s/steps", base);
     if (written <= 0 || (size_t)written >= sizeof cache->folder || !smith_package_make_folders(cache->folder))
         return false;
@@ -1388,11 +1466,15 @@ void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job
     if (!smith_stepcache_key(exec, edge, again, &newest, now) || strcmp(again, job->key.manifest) != 0 ||
         newest >= job->wall)
         return;
-    bool rooted = false;
-    for (uint32_t k = 0; k < edge->output_count && !rooted; k++) {
+    unsigned held = 0;
+    for (uint32_t k = 0; k < edge->output_count && held != 3; k++) {
         const char *output = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
-        rooted = !smith_ends_with(output, ".fx") && smith_stepcache_contains_root(output);
+        if (!smith_ends_with(output, ".fx")) held |= smith_stepcache_contains_root(output);
     }
+    // An output that holds a folder of this machine besides the root is not stored: a hit on another machine would
+    // hand it a path that is not there, and what a rebuild there writes is not these bytes (#3300).
+    if ((held & 2) != 0) return;
+    bool rooted = (held & 1) != 0;
     static char variant_storage[smith_stepcache_text_max];
     SmithStepText variant = {.data = variant_storage, .capacity = sizeof variant_storage};
     variant.data[0] = '\0';

@@ -129,7 +129,7 @@ static void smith_plan_on_base(char *text, void *base) {
 }
 
 // The paths that differ from `base` (default: where the branch left origin/main) to HEAD. False when git cannot say.
-static bool smith_plan_collect(const char *base, SmithCheckPlan *plan) {
+bool smith_check_plan_read(const char *base, SmithCheckPlan *plan) {
     char merged[256] = "";
     if (base == nullptr) {
         const char *const merge[] = {"git", "merge-base", "HEAD", "origin/main", nullptr};
@@ -142,25 +142,57 @@ static bool smith_plan_collect(const char *base, SmithCheckPlan *plan) {
     return smith_plan_git(diff, smith_plan_on_path, plan);
 }
 
-int smith_check_plan_print(const char *base) {
-    SmithCheckPlan plan = {};
-    if (!smith_plan_collect(base, &plan)) {
-        fputs("smith check --plan: the diff cannot be read (no base: pass --base <ref>): the scope is full\n", stderr);
-        puts("scope=full\ndocs_tests=false\nchanged=unknown");
-        return 0;
+// The scope an event runs. A push to main is a commit the queue already checked: it only publishes the release, unless
+// the push changed only documents (#3044), which publishes nothing (none). Any other event runs what the diff touches.
+static const char *smith_plan_event_scope(const char *event, bool read, const SmithCheckPlan *plan, bool *docs_push) {
+    SmithCheckScope scope = read ? smith_check_plan_scope(plan) : SmithCheckScope_Full;
+    *docs_push = false;
+    if (strcmp(event, "push") != 0) return smith_check_scope_name(scope);
+    if (read && plan->changed != 0 && scope != SmithCheckScope_Full) {
+        *docs_push = true;
+        return "none";
     }
-    printf("scope=%s\ndocs_tests=%s\nchanged=%zu\n", smith_check_scope_name(smith_check_plan_scope(&plan)),
-           plan.docs_tests ? "true" : "false", plan.changed);
+    return "release";
+}
+
+int smith_check_plan_print(const char *base, const char *event) {
+    SmithCheckPlan plan = {};
+    bool read = smith_check_plan_read(base, &plan);
+    if (!read)
+        fputs("smith check --plan: the diff cannot be read (no base: pass --base <ref>): the scope is full\n", stderr);
+    bool docs_push = false;
+    const char *scope = smith_plan_event_scope(event, read, &plan, &docs_push);
+    // the macOS jobs run after the merge (#3172): on a push that changed more than documents, and in the nightly and
+    // by-hand runs of the whole check; a queue run has none, and a documents-only change none at all
+    bool mac_run =
+        (strcmp(event, "push") == 0 && strcmp(scope, "release") == 0) ||
+        ((strcmp(event, "schedule") == 0 || strcmp(event, "workflow_dispatch") == 0) && strcmp(scope, "full") == 0);
+    bool docs_tests = read && strcmp(scope, "docs") == 0 && plan.docs_tests;
+    printf("scope=%s\ndocs_tests=%s\ndocs_push=%s\nmac_run=%s\n", scope, docs_tests ? "true" : "false",
+           docs_push ? "true" : "false", mac_run ? "true" : "false");
+    if (read)
+        printf("changed=%zu\n", plan.changed);
+    else
+        puts("changed=unknown");
+    // Linux carries the tests: --skip-macos in parts; the Mac runs the few tests only macOS can run, in one part
+    puts("test_parts=8\nlinux_flags=--skip-macos\nmac_flags=--macos-only --shard 1/1");
     return 0;
 }
 
 #ifdef SMITH_CHECK_PLAN_MAIN
 int main(int argc, char **argv) {
-    const char *base = argc == 3 && strcmp(argv[1], "--base") == 0 ? argv[2] : nullptr;
-    if (argc != 1 && base == nullptr) {
-        fputs("usage: check_plan [--base <ref>]\n", stderr);
-        return 2;
+    const char *base = nullptr;
+    const char *event = "";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--base") == 0 && i + 1 < argc)
+            base = argv[++i];
+        else if (strcmp(argv[i], "--event") == 0 && i + 1 < argc)
+            event = argv[++i];
+        else {
+            fputs("usage: check_plan [--base <ref>] [--event <name>]\n", stderr);
+            return 2;
+        }
     }
-    return smith_check_plan_print(base);
+    return smith_check_plan_print(base, event);
 }
 #endif

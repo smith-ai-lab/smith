@@ -4108,7 +4108,7 @@ void shuffle(Usize *order_of, Usize count, U64 seed) {
 }
 
 // The CPU seconds the --costs file gives each chosen test (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does not
-// know.
+// know. The first line of a name wins (smith_shard_costs in runtime/build_runtime.c says why).
 F64 *read_costs(const Plan *plan, const char *path) {
     F64 *cost = (F64 *)map_bytes((plan->count + 1) * sizeof(F64), map_private);
     for (Usize i = 0; i < plan->count; i++)
@@ -4123,7 +4123,8 @@ F64 *read_costs(const Plan *plan, const char *path) {
         name += 1;
         name[c::strcspn(name, "\n")] = '\0';
         for (Usize i = 0; i < plan->count; i++) {
-            if (c::strcmp(plan->tests[i]->name, name) == 0) cost[i] = c::strtod(seconds_text + 1, nullptr);
+            if (cost[i] >= 0 || c::strcmp(plan->tests[i]->name, name) != 0) continue;
+            cost[i] = c::strtod(seconds_text + 1, nullptr);
         }
     }
     c::fclose(file);

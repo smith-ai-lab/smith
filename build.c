@@ -3783,25 +3783,14 @@ static int build_docs_gate_test(SmithRun *run) {
 // ---- The pre-push check (#3132, #3163): the hook (`.smith/hooks/pre-push`, written by `smith build`) runs `smith
 // build pre-push` before a push leaves the machine, and that runs `smith check`, the one command that is the whole
 // check (fmt, docs, lint, test, prove), with the change as its selection. No list of stages or files lives here: the
-// command has the plan. A push that changes only docs (knowledge/, .agents/, *.md) runs nothing, and a base that cannot
-// be resolved here (a shallow clone, no remote) is not checked. `git push --no-verify` skips it; the merge queue
-// decides.
+// command has the plan. The command reads the plan (`smith check --plan`, runtime/check_plan.c): a change of only
+// documents runs the docs check or nothing, and a base that cannot be resolved here (a shallow clone, no remote) is not
+// checked. `git push --no-verify` skips it; the merge queue decides.
 //
 // The owner's end state (2026-11-12) is the queue's exact command with no selection (#3294); it waits for the store to
 // serve a worker's machine (#3300). Until then the selection is the one argument below: set it to false and the hook
 // runs `smith check` whole.
 constexpr bool pre_push_changed_only = true;
-
-static bool pre_push_ends(const char *path, const char *suffix) {
-    size_t length = strlen(path);
-    size_t tail = strlen(suffix);
-    return length >= tail && strcmp(path + length - tail, suffix) == 0;
-}
-
-// Whether a changed file is a document no build reads.
-static bool pre_push_is_doc(const char *path) {
-    return strncmp(path, "knowledge/", 10) == 0 || strncmp(path, ".agents/", 8) == 0 || pre_push_ends(path, ".md");
-}
 
 // The command of the push: `smith check`, with the change since `base` as its selection unless the hook runs it whole.
 // `argv` takes the room of 8 words.
@@ -3826,20 +3815,10 @@ static int build_pre_push(SmithRun *run) {
         printf("pre-push: %s cannot be resolved here: not checked\n", base);
         return 0;
     }
-    const char *const *changed = build_gate_git(
-        run, ".",
-        (const char *[]){"diff", "--name-only", "--diff-filter=d", smith_fmt(run->b, "%s...HEAD", base), nullptr});
-    bool other = false;
-    for (size_t i = 0; changed != nullptr && changed[i] != nullptr && !other; i++)
-        other = !pre_push_is_doc(changed[i]);
-    if (!other) {
-        puts("pre-push: only docs changed: nothing to run");
-        return 0;
-    }
     const char *command[8] = {};
     pre_push_command(smith, mergebase[0], command);
     const char *log = ".smith/pre-push-check.log";
-    puts("pre-push: smith check (fmt, docs, lint, test, prove)");
+    puts("pre-push: smith check (the parts the change needs, by its plan)");
     int status = build_spawn(&(BuildSpawn){.argv = command, .log = log, .tail = 30});
     if (status == 0) return 0;
     fputs("\npre-push: FAILED at smith check; run it again with:\n ", stderr);
@@ -3860,11 +3839,8 @@ static int build_pre_push_test(SmithRun *run) {
                                               strcmp(command[3], "--base") == 0 && strcmp(command[4], "abc123") == 0 &&
                                               command[5] == nullptr
                                         : command[2] == nullptr);
-    bool ok = pre_push_is_doc("knowledge/a.smith") && pre_push_is_doc("README.md") &&
-              pre_push_is_doc(".agents/skills/x/SKILL.md") && !pre_push_is_doc("runtime/a.c") &&
-              !pre_push_is_doc("lib/a.smith") && !pre_push_is_doc("build.c") && !pre_push_is_doc(".github/ci.yml") &&
-              !pre_push_is_doc("tree-sitter/src/parser.c") && shape;
-    if (!ok) fputs("pre-push: a file is classified wrongly or the command is not smith check\n", stderr);
+    bool ok = shape;
+    if (!ok) fputs("pre-push: the command is not smith check\n", stderr);
     return ok ? 0 : 1;
 }
 

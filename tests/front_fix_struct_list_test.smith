@@ -1,0 +1,57 @@
+// Tests of the fix-it for a positional list of a struct that the parser wrote as an array (#3315): the checker knows
+// the struct the place wants, and the list is `T(a, b)`.
+module front_fix_struct_list_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_struct_list_an_array_of_structs_takes_each_item_as_a_construction() {
+    expect_fixed(
+        "typedef struct {\n    I32 x;\n    I32 y;\n} Point;\nI32 main() {\n"
+        "    Point points[2] = {{1, 2}, {3, 4}};\n    Point p = {5, 6};\n    return points[1].y + p.x;\n}\n",
+        "struct Point:\n    x: i32\n    y: i32\nfn main() -> i32:\n"
+        "    points: [2]Point = [Point(1, 2), Point(3, 4)]\n    p := Point(5, 6)\n    return points[1].y + p.x\n");
+}
+
+export void test_front_fix_struct_list_a_struct_field_of_a_struct_is_a_construction() {
+    expect_fixed(
+        "typedef struct {\n    I32 a;\n    I32 b;\n} Pair;\ntypedef struct {\n    Pair pair;\n    I32 n;\n} Outer;\n"
+        "I32 main() {\n    Outer o = {.pair = {1, 2}, .n = 3};\n    return o.pair.b + o.n;\n}\n",
+        "struct Pair:\n    a: i32\n    b: i32\nstruct Outer:\n    pair: Pair\n    n: i32\n"
+        "fn main() -> i32:\n    o := Outer(pair = Pair(1, 2), n = 3)\n    return o.pair.b + o.n\n");
+}
+
+export void test_front_fix_struct_list_a_one_field_struct_is_a_construction() {
+    expect_fixed(
+        "typedef struct {\n    I32 first;\n} Range;\nI32 main() {\n    Range r[1] = {{6}};\n    return "
+        "r[0].first;\n}\n",
+        "struct Range:\n    first: i32\nfn main() -> i32:\n    r: [1]Range = [Range(6)]\n    return r[0].first\n");
+}
+
+export void test_front_fix_struct_list_an_array_of_arrays_keeps_its_lists() {
+    expect_fixed("I32 main() {\n    I32 m[2][2] = {{1, 2}, {3, 4}};\n    return m[1][0];\n}\n",
+                 "fn main() -> i32:\n    m: [2][2]i32 = [[1, 2], [3, 4]]\n    return m[1][0]\n");
+}
+
+export void test_front_fix_struct_list_a_pair_of_strings_is_a_construction() {
+    expect_fixed(
+        "typedef struct {\n    Str key;\n    Str value;\n} Pair;\nstatic const Pair table[2] = {{\"a\", \"b\"}, "
+        "{\"c\", \"d\"}};\n"
+        "I32 main() {\n    return (I32)countof(table);\n}\n",
+        "struct Pair:\n    key: str\n    value: str\nstatic mut table: [2]Pair = [Pair(\"a\", \"b\"), Pair(\"c\", "
+        "\"d\")]\n"
+        "fn main() -> i32:\n    return (countof(table)).to(i32)\n");
+}

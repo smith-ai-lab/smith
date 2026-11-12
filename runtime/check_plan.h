@@ -22,7 +22,12 @@ SmithCheckScope smith_check_plan_scope(const SmithCheckPlan *plan);
 
 const char *smith_check_scope_name(SmithCheckScope scope);
 
-// `smith check --plan [--base <ref>]`: prints `scope=`, `docs_tests=` and `changed=` lines for the diff from `base`
-// (default: the merge-base with origin/main) to HEAD. A diff that cannot be read is `scope=full`. Returns the exit
-// status.
-int smith_check_plan_print(const char *base);
+// Reads the plan of the diff from `base` (default: the merge-base with origin/main) to HEAD. False when git cannot say.
+bool smith_check_plan_read(const char *base, SmithCheckPlan *plan);
+
+// `smith check --plan [--base <ref>] [--event <name>]`: prints what runs for the diff as `key=value` lines: `scope=`
+// (none, docs, full, or release for a push to main), `docs_tests=`, `docs_push=`, `mac_run=`, `changed=`, and the shape
+// of the tests
+// (`test_parts=`, `linux_flags=`, `mac_flags=`). `event` is the GitHub event ("" for a local run); the rules per event
+// are here and nowhere else. A diff that cannot be read is full (release for a push). Returns the exit status.
+int smith_check_plan_print(const char *base, const char *event);

@@ -979,7 +979,40 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
     return push_field(e, record, base.llvm, name, w->span);
 }
 
+// `trace.smith_failure_hook` after `import c <smith/trace.h>` (#1678): a variable the header declares, as a place. The
+// global is declared external under its C name when first used; a local that hides the binding takes the other path.
+static Bool c_variable_place(state::Emitter *e, const ast::Expr *x, state::Value *place) {
+    if (x->kind != .member || e->options.checked == nullptr) return false;
+    state::Local local = {};
+    Str name = types::c_member_name_in(e->options.checked, x, e->instance_scope);
+    if (countof(name) == 0 || state::find_local(e, types::c_member_base(x), &local)) return false;
+    Str full = state::msg(format::push("c::", name));
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
+    state::free_text(full);
+    if (symbol == nullptr || symbol->kind != .variable || symbol->decl == nullptr || !symbol->decl->from_c ||
+        symbol->decl->kind != .variable)
+        return false;
+    types::TypeRef wanted = types::type_of(e->options.checked, x);
+    if (wanted == nullptr) return false;
+    state::TyResult made = state::type_of_checked(e, wanted, x->span);
+    if (made == .error) {
+        state::free_text(made.error.message);
+        return false;
+    }
+    char *label = state::cstr(name);
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
+    if (global == nullptr) global = c::LLVMAddGlobal(e->module, made.ok.llvm, label);
+    mem::free(label);
+    *place = (state::Value){.llvm = global, .ty = made.ok};
+    return true;
+}
+
 export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
+    state::Value header_place = {};
+    if (c_variable_place(e, x, &header_place)) {
+        state::push_value(e, header_place);
+        return state::success();
+    }
     if (x->kind != .member) {
         return state::fail("not a member access", x->span);
     }
@@ -1273,6 +1306,30 @@ static state::Status count_finish(state::Emitter *e, const state::ThenNone *w) {
     return state::success();
 }
 
+// `stdint.uint32_t` as the operand of `sizeof` or `alignof`: the header's type, read as the type written in a
+// declaration (`x: stdint.uint32_t`). False when the operand is no such name.
+static Bool header_type(state::Emitter *e, const ast::Expr *operand, state::Ty *out) {
+    if (operand == nullptr || operand->kind != .member || e->options.checked == nullptr) return false;
+    state::Local local = {};
+    Str name = types::c_member_name_in(e->options.checked, operand, e->instance_scope);
+    if (countof(name) == 0 || state::find_local(e, types::c_member_base(operand), &local)) return false;
+    Str full = state::msg(format::push("c::", name));
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
+    state::free_text(full);
+    if (symbol == nullptr || symbol->kind == .variable || symbol->kind == .function_symbol) return false;
+    ast::Identifier parts[2] = {{.text = types::c_member_base(operand), .span = operand->span},
+                                {.text = name, .span = operand->span}};
+    ast::TypeExpr *written = ast::make_type({.named = {.path = {.segments = parts[0:2], .span = operand->span}}});
+    written->span = operand->span;
+    state::TyResult made = resolve(e, written);
+    if (made == .error) {
+        state::free_text(made.error.message);
+        return false;
+    }
+    *out = made.ok;
+    return true;
+}
+
 // `sizeof`, `alignof` and `countof`.
 export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     if (x->kind != .query) {
@@ -1293,6 +1350,8 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
             return {.error = made.error};
         }
         subject = made.ok;
+    } else if (header_type(e, operand, &subject)) {
+        // `sizeof(stdint.uint32_t)`: the operand names a type of the header, not a value
     } else {
         try static_type(e, operand, &subject);
     }

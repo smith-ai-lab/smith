@@ -73,6 +73,22 @@ export void test_runner_shard_the_split_is_balanced_by_the_costs_file() {
         scratch::capture(&p, "build/tests --list --shard 2/2 --costs costs.tsv | awk 'END { print NR }'"));
 }
 
+// --weigh adds the answer of every process that deals to the one file (the planner of the build, the step that writes
+// the table, each in a process of its own), and the store changes between them: the first line of a test is its cost,
+// or a part would be built for one split and listed for another (#3350).
+export void test_runner_shard_the_first_cost_of_a_test_is_its_cost() {
+    scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "costs.tsv", "cpu\t20\tshard::gamma_test::gamma_1\ncpu\t0.01\tshard::gamma_test::gamma_1\n");
+    scratch::Run heavy = runner::tests(&p, "", "--list --shard 1/2 --costs costs.tsv");
+    scratch::expect_text("shard: the later line does not make the costly file light", "shard::gamma_test::gamma_1",
+                         heavy.out);
+}
+
 export void test_runner_shard_a_run_prints_its_part_and_runs_only_it() {
     scratch::Project p = runner::built_project("runner_base", "runner_shard", "");
     defer scratch::clean(&p);
