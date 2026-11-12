@@ -1026,6 +1026,13 @@ jobs:
           done
           gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
           export SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt"
+          # the log of the last queue runs' outcomes (#3443, item 5): a gate that refused three different pull requests in
+          # a row for the same file demotes itself; the pull request of this queue run is in the ref's name
+          glog="$RUNNER_TEMP/previous/gate-log.tsv"
+          curl -fsSL --retry 3 "https://github.com/$GITHUB_REPOSITORY/releases/download/count-gate-log/gate-log.tsv" >"$glog" 2>/dev/null || : >"$glog"
+          export SMITH_GATE_LOG="$glog"
+          SMITH_GATE_PR=$(printf '%s' "$GITHUB_REF" | sed -n 's#.*/pr-\([0-9][0-9]*\)-.*#\1#p')
+          export SMITH_GATE_PR
           if [ "$prev" = unknown ]; then
             echo "frontend-regressed-count: unknown"
             echo "::warning::no published table of the count among the 20 first parents: nothing to compare with, this table is the base for the next run"
@@ -1047,6 +1054,14 @@ jobs:
           [ "$(awk -F'\t' '{print $5}' "$RUNNER_TEMP/frontend-gate.tsv")" = refusing ] && mode=refusing
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
           echo "frontend-gate: $(tr '\t' ' ' <"$RUNNER_TEMP/frontend-gate.tsv")   (version, run, would refuse, dirty, mode)"
+          # a demotion is printed by the tool as `frontend-gate: demoted (<files>)`; the stall alarm (#3444) lists it
+          grep '^frontend-gate: demoted' "$RUNNER_TEMP/gate-out.txt"
+          # this run's outcome joins the log (the last 50 runs), for the runs behind it
+          awk -F'\t' '$1 == "gate-log" {print $2 "\t" $3 "\t" $4 "\t" $5}' "$RUNNER_TEMP/gate-out.txt" >>"$glog"
+          tail -n 50 "$glog" >"$glog.new" && mv "$glog.new" "$glog"
+          gh release view count-gate-log >/dev/null 2>&1 || gh release create count-gate-log --prerelease --latest=false --title "count gate log" \
+            --notes "The outcome of each queue run of the count's gate (#3443): pull request, gate version, status, files. Not a release of smith." >/dev/null 2>&1
+          gh release upload count-gate-log "$glog" --clobber >/dev/null 2>&1 || echo "::warning::could not save the gate's log"
           # a gate that stays report-only because a dry run would have refused is printed here, as a warning and in the summary
           note=$(grep '^gate-note: ' "$RUNNER_TEMP/gate-out.txt" | tr -d '\r')
           [ -n "$note" ] && echo "::warning::${note#gate-note: }"
