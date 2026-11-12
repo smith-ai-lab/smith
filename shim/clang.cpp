@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 int clang_main(int argc, char **argv, const llvm::ToolContext &context);
 
@@ -47,6 +48,32 @@ static bool hasSource(int argc, char **argv) {
 // -no-canonical-prefixes goes first, so a later -canonical-prefixes from the user wins. It makes the driver take
 // `program` as its own path, not this executable's, so it finds the resource directory (builtin headers, compiler-rt),
 // dsymutil and the other tools beside `program`, exactly as the clang binary there does.
+// The folders that differ between machines are written as fixed names in what a compile makes (#3300): smith's cache
+// (where the LLVM pack's headers are), smith's data (where clang's own headers are) and the checkout a nested build
+// belongs to. A hosted runner, a cloud worker and a laptop spell them differently, and an object that held one could
+// not be shared through the step store, whose key leaves them out (runtime/executor_cache.c). They go before the
+// user's arguments, so a -ffile-prefix-map of the user's wins where both match.
+static void machineMaps(std::vector<std::string> &maps) {
+    const char *home = std::getenv("HOME");
+    const char *cache = std::getenv("XDG_CACHE_HOME");
+    const char *share = std::getenv("XDG_DATA_HOME");
+    const char *repo = std::getenv("SMITH_REPO");
+    std::string folder;
+    if (cache != nullptr && cache[0] == '/')
+        folder = std::string(cache) + "/smith";
+    else if (home != nullptr && home[0] == '/')
+        folder = std::string(home) + "/.cache/smith";
+    if (!folder.empty()) maps.push_back("-ffile-prefix-map=" + folder + "=/smith-cache");
+    folder.clear();
+    if (share != nullptr && share[0] == '/')
+        folder = std::string(share) + "/smith";
+    else if (home != nullptr && home[0] == '/')
+        folder = std::string(home) + "/.local/share/smith";
+    if (!folder.empty()) maps.push_back("-ffile-prefix-map=" + folder + "=/smith-data");
+    if (repo != nullptr && repo[0] == '/' && repo[1] != '\0')
+        maps.push_back(std::string("-ffile-prefix-map=") + repo + "=/smith-repo");
+}
+
 extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource) {
 #ifdef SMITH_HOOK
     smith_hook_install();
@@ -58,6 +85,12 @@ extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool
     if (!cc1) { // the programs are in a folder of their own, the files the driver reads in another
         arguments.push_back(const_cast<char *>("-resource-dir"));
         arguments.push_back(const_cast<char *>(resource));
+    }
+    std::vector<std::string> maps; // kept until clang_main returns: the arguments point into them
+    if (!cc1) {
+        machineMaps(maps);
+        for (std::string &map : maps)
+            arguments.push_back(map.data());
     }
     if (!cc1 && lld && smith_platform_linker_version != nullptr)
         arguments.push_back(const_cast<char *>(smith_platform_linker_version));
