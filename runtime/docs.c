@@ -1147,6 +1147,8 @@ static bool smith_docs_names_skill(const SmithDocsText *listed, uint32_t count, 
 
 // A plugin lists its skills in .claude-plugin/plugin.json, and exactly the ones that are not for changing the project
 // (named <plugin>-dev or <plugin>-dev-*), which stay in the repository only.
+// A listed skill is a folder of .agents/skills or of plugin/skills (#3411, for the trial of #3410); the skills that
+// must be listed are those of .agents/skills only.
 static void smith_docs_plugin(SmithDocs *docs) {
     constexpr char relative[] = ".claude-plugin/plugin.json";
     SmithDocsText json = smith_docs_read(docs, relative);
@@ -1175,15 +1177,15 @@ static void smith_docs_plugin(SmithDocs *docs) {
     }
     SmithDocsEntry *entries = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
     uint32_t total = smith_docs_list(docs, ".agents/skills", entries);
-    SmithDocsEntry *more = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
-    uint32_t more_total = smith_docs_list(docs, "plugin/skills", more);
-    for (uint32_t i = 0; i < more_total && total < smith_docs_entries_max; i++) { // the plugin set counts too
-        if (more[i].directory) entries[total++] = more[i];
-    }
+    SmithDocsEntry *shipped = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
+    uint32_t shipped_total = smith_docs_list(docs, "plugin/skills", shipped); // a listed skill may live here instead
     for (uint32_t i = 0; i < count; i++) {
         bool on_disk = false;
         for (uint32_t j = 0; j < total; j++) {
             on_disk = on_disk || (entries[j].directory && smith_docs_is(listed[i], entries[j].name));
+        }
+        for (uint32_t j = 0; j < shipped_total; j++) {
+            on_disk = on_disk || (shipped[j].directory && smith_docs_is(listed[i], shipped[j].name));
         }
         if (smith_docs_dev_skill(plugin, listed[i])) {
             smith_docs_report(docs, "%s: lists the dev skill %.*s, which must not ship", relative,

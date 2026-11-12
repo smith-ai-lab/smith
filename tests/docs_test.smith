@@ -597,6 +597,10 @@ export void test_docs_fixture_plugin_pass() {
     fixture_case("plugin-pass");
 }
 
+export void test_docs_fixture_plugin_skills() {
+    fixture_case("plugin-skills");
+}
+
 export void test_docs_fixture_plugin_wrong() {
     fixture_case("plugin-wrong");
 }

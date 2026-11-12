@@ -3,11 +3,14 @@
 // globals.
 module front_fix_shadow_test;
 
+import front::ast;
 import front::fix;
 import front::fix_variants;
+import front::parser;
 import std::arena;
 import std::mem;
 import std::test;
+import <string.h>;
 
 static void expect_renamed(Str source, Str want) {
     arena::Arena memory = test::memory(1U << 22);
@@ -90,4 +93,67 @@ export void test_front_fix_shadow_a_header_named_in_keeps_its_path() {
         fix::fix_text("t.smith", "module m;\n\nimport <netinet/in.h>;\n\nI32 f(I32 in) {\n    return in;\n}\n");
     Str want = "\nimport c <netinet/in.h>\n\nfn f(in_: i32) -> i32:\n    return in_\n";
     test::check_equal(fixed.text, want);
+}
+
+// The library the fixer reads in these tests: `std.text` and `std.task`, with one export each.
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    Str source = "";
+    Str text_path = "std.text";
+    Str task_path = "std.task";
+    if (mem::equal(path, text_path)) source = "module std::text;\nexport Usize length(Str s) { return countof(s); }\n";
+    if (mem::equal(path, task_path)) source = "module std::task;\nexport Usize count() { return 0; }\n";
+    if (countof(source) == 0) return nullptr;
+    parser::Parsed p = fix::parse_for_fix("lib.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+static Str fixed_with_library(Str source) {
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    return fix::fix_text("t.smith", source).text;
+}
+
+// A name that is a module of the library hides it once the fixer imports it (#3274): the loop's `text` is `text_value`
+// in a file that imports nothing of the name, so `text.*` is never an unknown name that the import pass answers with
+// `import std.text`.
+export void test_front_fix_shadow_a_loop_pointer_named_like_a_library_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_with_library("module m;\n\nvoid f(char *out, const char *folder) {\n    Usize at = 0;\n"
+                                 "    for (const char *text = folder; *text != '\\0'; text = text + 1)\n"
+                                 "        out[at++] = *text;\n}\n");
+    Str want = "\nfn f(out: *mut char, folder: *char):\n    mut at: usize = 0\n"
+               "    mut text_value: *char = folder\n    while text_value.* != '\\0':\n"
+               "        out[at++] = text_value.*\n        text_value = text_value + 1\n";
+    test::check_equal(got, want);
+}
+
+// A parameter named like the file's own module, and a name that is no module, stay apart.
+export void test_front_fix_shadow_a_parameter_named_like_the_files_own_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got =
+        fixed_with_library("module std::task;\n\nUsize f(Usize *task, Usize count) {\n    return *task + count;\n}\n");
+    Str want = "\nfn f(task_value: *usize, count: usize) -> usize:\n    return task_value.* + count\n";
+    test::check_equal(got, want);
+}
+
+// The parameter of a declaration with no body is no use of the name at the top level: `task` is renamed in the function
+// that has a body although `void finish(Task *task);` also names it, and the prototype is renamed with it.
+export void test_front_fix_shadow_a_prototype_does_not_keep_the_name() {
+    expect_renamed(
+        "module m;\nimport std::task;\nvoid finish(Usize *task);\nvoid f(Usize *task) {\n    finish(task);\n}\n",
+        "module m;\nimport std::task;\nvoid finish(Usize *task_value);\nvoid f(Usize *task_value) {\n"
+        "    finish(task_value);\n}\n");
+    // A call in a global's initializer is a use at the top level: the name stays.
+    Str global = "module m;\nimport std::task;\nstatic Usize task = g(1);\nUsize f() {\n    return task;\n}\n";
+    expect_renamed(global, global);
 }

@@ -375,6 +375,28 @@ static Names imported(Str source, lex::Tokens tokens) {
     return names;
 }
 
+// Whether the `(` at `i` opens the parameters of a function declaration with no body: a name before it, a type word,
+// a `*` or a name before that (not `=` or an operator, which would make it a call in an initializer), and a `;` after
+// the matching `)`.
+static Bool prototype_at(lex::Tokens tokens, Usize i) {
+    if (i < 2 || tokens[i - 1].kind != lex::name) return false;
+    lex::TokenKind before = tokens[i - 2].kind;
+    if (before != lex::name && before != lex::star && before != lex::type_name && before != lex::kw_void &&
+        before != lex::kw_char && before != lex::kw_bool)
+        return false;
+    Usize open = 0;
+    for (Usize j = i; j < countof(tokens); j++) {
+        if (tokens[j].kind == lex::left_paren) {
+            open += 1;
+        }
+        if (tokens[j].kind == lex::right_paren) {
+            open -= 1;
+        }
+        if (open == 0) return j + 1 < countof(tokens) && tokens[j + 1].kind == lex::semicolon;
+    }
+    return false;
+}
+
 // Where each token stands: 0 at the top level, 1 in a function's parameters or body, 2 elsewhere (a struct's body, the
 // parentheses of a declaration with no body).
 static Places places(lex::Tokens tokens) {
@@ -398,6 +420,20 @@ static Places places(lex::Tokens tokens) {
                     place[j] = 1;
                     if (open == 0) break;
                 }
+            }
+        }
+        if (depth == 0 && k == lex::left_paren && prototype_at(tokens, i)) {
+            // The parameters of a declaration with no body (`void finish(Task *task);`) name nothing at the top level.
+            Usize open = 0;
+            for (Usize j = i; j < countof(tokens); j++) {
+                if (tokens[j].kind == lex::left_paren) {
+                    open += 1;
+                }
+                if (tokens[j].kind == lex::right_paren) {
+                    open -= 1;
+                }
+                place[j] = 1;
+                if (open == 0) break;
             }
         }
         if (depth > 0) place[i] = function ? 1 : 2;
@@ -430,11 +466,37 @@ static Bool in_file(Str source, lex::Tokens tokens, Str text) {
     return false;
 }
 
-export Str rename_shadows(Str source) {
+// The names a function's parameters or body declares or uses as a plain name (no `::` after, no `.`, `->` or `::`
+// before, no call): the candidates for `rename_shadows_with`'s `library`, which the caller keeps to the ones that are a
+// module of the library.
+export Words local_names(Str source) {
+    Words out = {};
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return out;
+    lex::Tokens tokens = lexed.ok;
+    Places place = places(tokens);
+    Names seen = {};
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || place[i] != 1 || !is_local_use(tokens, i)) continue;
+        Str text = lex::text(source, tokens[i]);
+        if (listed(seen, text)) continue;
+        seen = with_name(seen, text);
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = (Word){.text = text};
+    }
+    return out;
+}
+
+// `rename_shadows` with more module names than the file's imports: the fixer imports a module of the library for a
+// name it cannot find (`text.*` after a `for` loop's `const char *text`, #3274), so a local with that name hides a
+// module the file will import. `library` lists such names; each is renamed like an imported module.
+export Str rename_shadows_with(Str source, Words library) {
     lex::Lexed lexed = lex::tokenize(source);
     if (lexed == .error) return source;
     lex::Tokens tokens = lexed.ok;
     Names modules = imported(source, tokens);
+    for (Usize i = 0; i < countof(library); i++)
+        modules = with_name(modules, library[i].text);
     if (countof(modules) == 0) return source;
     Places place = places(tokens);
     // A name used at the top level is a global or a function of the file: its declaration is not renamed here.
@@ -472,6 +534,11 @@ export Str rename_shadows(Str source) {
     }
     if (at == 0) return source;
     return as_str(format::push(out, source[at:countof(source)]));
+}
+
+export Str rename_shadows(Str source) {
+    Words none = {};
+    return rename_shadows_with(source, none);
 }
 
 // The option's value in a function whose result is an option (#3027). `return {.some = v}` is C's list of one field;
