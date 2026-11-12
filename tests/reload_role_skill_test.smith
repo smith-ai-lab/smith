@@ -59,7 +59,9 @@ export void test_reload_role_skill_prints_the_lead_skill() {
     scratch::Run run = hook(&p, "lead.jsonl");
     scratch::expect_status("reload_role_skill: exits 0", 0, &run);
     scratch::expect_text("reload_role_skill: the lead skill whole, under the line",
-                         "Your role skill, reloaded after compaction:\nLEAD RULES\nsecond line\n", run.out);
+                         "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Your "
+                         "role skill, reloaded after compaction:\\nLEAD RULES\\nsecond line\\n\"}}\n",
+                         run.out);
 }
 
 export void test_reload_role_skill_prints_the_runner_skill() {
@@ -71,7 +73,9 @@ export void test_reload_role_skill_prints_the_runner_skill() {
     defer scratch::clean(&p);
     scratch::Run run = hook(&p, "runner.jsonl");
     scratch::expect_text("reload_role_skill: the runner skill",
-                         "Your role skill, reloaded after compaction:\nRUNNER RULES\n", run.out);
+                         "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Your "
+                         "role skill, reloaded after compaction:\\nRUNNER RULES\\n\"}}\n",
+                         run.out);
 }
 
 export void test_reload_role_skill_prints_nothing_without_a_role_skill() {
@@ -98,7 +102,9 @@ export void test_reload_role_skill_reads_a_role_skill_read_as_a_file() {
     defer scratch::clean(&p);
     scratch::Run run = hook(&p, "read.jsonl");
     scratch::expect_text("reload_role_skill: the lead skill, read with Read",
-                         "Your role skill, reloaded after compaction:\nLEAD RULES\nsecond line\n", run.out);
+                         "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Your "
+                         "role skill, reloaded after compaction:\\nLEAD RULES\\nsecond line\\n\"}}\n",
+                         run.out);
 }
 
 export void test_reload_role_skill_first_role_seen_wins() {
@@ -110,5 +116,7 @@ export void test_reload_role_skill_first_role_seen_wins() {
     defer scratch::clean(&p);
     scratch::Run run = hook(&p, "both.jsonl");
     scratch::expect_text("reload_role_skill: the runner skill was read first",
-                         "Your role skill, reloaded after compaction:\nRUNNER RULES\n", run.out);
+                         "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Your "
+                         "role skill, reloaded after compaction:\\nRUNNER RULES\\n\"}}\n",
+                         run.out);
 }

@@ -116,11 +116,22 @@ int main(int argc, char **argv) {
         snprintf(skill, sizeof skill, ".claude/skills/%s/SKILL.md", roles[role]);
     FILE *text = fopen(skill, "rb");
     if (text == nullptr) return 0;
-    printf("Your role skill, reloaded after compaction:\n");
-    char block[4096];
-    size_t n;
-    while ((n = fread(block, 1, sizeof block, text)) > 0)
-        fwrite(block, 1, n, stdout);
+    printf("{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"");
+    printf("Your role skill, reloaded after compaction:\\n");
+    int c;
+    while ((c = fgetc(text)) != EOF) {
+        if (c == '"' || c == '\\')
+            printf("\\%c", c);
+        else if (c == '\n')
+            printf("\\n");
+        else if (c == '\t')
+            printf("\\t");
+        else if (c < 0x20)
+            printf("\\u%04x", c);
+        else
+            putchar(c);
+    }
     fclose(text);
+    printf("\"}}\n");
     return 0;
 }
