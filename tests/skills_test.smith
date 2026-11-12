@@ -11,7 +11,7 @@
 // smith-covers: smith.c runtime/verbs.c runtime/lang*.c runtime/front_flag.c runtime/sdk_cache.c runtime/platform_*.c
 // smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
 // smith-covers: .agents/skills/ shim/tidy.cpp shim/preprocessor.h shim/idiom.h shim/unsafe.h shim/mem.h lib/std/
-// smith-covers: lib/trace.c lib/handlers.c
+// smith-covers: lib/trace.c lib/handlers.c plugin/knowledge/ plugin/skills/
 // smith.c is declared for the cc and lint verbs.
 module skills_test;
 
@@ -353,22 +353,6 @@ export void test_skill_smith_console() {
     skill_case("smith-console");
 }
 
-export void test_skill_smith_contract() {
-    skill_case("smith-contract");
-}
-
-export void test_skill_smith_contract_c() {
-    skill_case("smith-contract-c");
-}
-
-export void test_skill_smith_contract_proof() {
-    skill_case("smith-contract-proof");
-}
-
-export void test_skill_smith_contract_roles() {
-    skill_case("smith-contract-roles");
-}
-
 export void test_skill_smith_entropy() {
     skill_case("smith-entropy");
 }
@@ -581,30 +565,6 @@ export void test_skill_smith_process() {
     skill_case("smith-process");
 }
 
-export void test_skill_smith_prove() {
-    skill_case("smith-prove");
-}
-
-export void test_skill_smith_prove_calls() {
-    skill_case("smith-prove-calls");
-}
-
-export void test_skill_smith_prove_loops() {
-    skill_case("smith-prove-loops");
-}
-
-export void test_skill_smith_prove_pointers() {
-    skill_case("smith-prove-pointers");
-}
-
-export void test_skill_smith_prove_slices() {
-    skill_case("smith-prove-slices");
-}
-
-export void test_skill_smith_prove_trusted() {
-    skill_case("smith-prove-trusted");
-}
-
 export void test_skill_smith_random() {
     skill_case("smith-random");
 }
@@ -663,4 +623,26 @@ export void test_skill_smith_text_numbers() {
 
 export void test_skill_smith_trace() {
     skill_case("smith-trace");
+}
+
+// The ```smith blocks of the plugin's concepts and skills (plugin/knowledge/*.md, plugin/skills/*/SKILL.md) are in the
+// new syntax (#1428), not today's: each compiles through the new front end, as `smith cc --front-end=new -c` does,
+// with the standard library as a user project gets it (#3410). A block marked `smith fragment` is skipped.
+export void test_plugin_new_syntax_examples_compile() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(
+        &p, "status=0; "
+            "for f in \"$SMITH_REPO\"/plugin/knowledge/*.md \"$SMITH_REPO\"/plugin/skills/*/SKILL.md; do "
+            "base=$(printf '%s' \"$f\" | sed 's|.*/plugin/||; s|[/.]|_|g'); "
+            "awk -v base=\"$base\" 'BEGIN { k = 0 } /^```smith$/ { k++; out = base \"_\" k \".smith\"; next } "
+            "/^```/ { out = \"\"; next } out != \"\" { print > out }' \"$f\"; done; "
+            "for s in *.smith; do [ -e \"$s\" ] || continue; "
+            "smith cc --front-end=new -c \"$s\" -o \"$s.o\" 2>&1 || { echo \"FAILED $s\"; status=1; }; done; "
+            "exit $status");
+    scratch::expect_status("the examples of plugin/knowledge and plugin/skills", 0, &run);
 }

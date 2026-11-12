@@ -45,6 +45,14 @@ static Bool ends_with(Str text, Str suffix) {
     return countof(text) > countof(suffix) && roots::same(text[countof(text) - countof(suffix):], suffix);
 }
 
+static Bool imports_std(Str source) {
+    Str wanted = "import std.";
+    for (Usize i = 0; i + countof(wanted) <= countof(source); i++) {
+        if ((i == 0 || source[i - 1] == '\n') && roots::same(source[i:i + countof(wanted)], wanted)) return true;
+    }
+    return false;
+}
+
 static void remove_all(Str folder) {
     const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
@@ -109,6 +117,9 @@ static void compile_concept(Str file, Str name) {
             stop = at;
         }
         number += 1;
+        // A block that imports std needs the library a project gets prepared for the new front end, which the repo's
+        // lib/ is not: tests/skills_test.smith compiles it through `smith cc --front-end=new` (#3410).
+        if (imports_std(text[begin:stop])) continue;
         compile_example(folder, as_str(format::push(name, "_", number)), text[begin:stop]);
     }
     remove_all(folder);
