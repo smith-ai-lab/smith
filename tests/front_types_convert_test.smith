@@ -461,3 +461,20 @@ export void test_front_types_convert_string_literal_converts_to_const_char_point
     refused(conv_literal(&t, t.text, types::pointer_to(&t, named(&t, "I32"), true)), "expected const I32 *",
             "found Str", "no conversion");
 }
+
+// The fixer's checker still reports the refusal it learns `mut` from (#3250, until #3285): only while `set_fixing` is
+// on.
+export void test_front_types_convert_the_refusal_is_kept_while_the_fixer_runs() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types::TypeRef plain = types::pointer_to(&t, int32, false);
+    types::TypeRef readonly = types::pointer_to(&t, int32, true);
+    types_convert::set_fixing(true);
+    refused(conv(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
+    types_convert::set_fixing(false);
+    test::check_condition(is(conv(&t, readonly, plain), types_convert::add_const));
+}

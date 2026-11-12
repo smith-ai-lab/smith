@@ -6,6 +6,7 @@ module front_generics_infer_test;
 import front::parse;
 import front::parser;
 import front::types;
+import front::types_convert;
 import front::types_decl;
 import std::arena;
 import std::mem;
@@ -87,6 +88,8 @@ export void test_front_generics_infer_an_auto_parameter_beside_bracketed_generic
 // The fixed arguments of a call of an `auto` function are conformed to the instance's slots: a read-only pointer for a
 // `*mut` parameter is refused as in any call.
 export void test_front_generics_infer_a_fixed_argument_of_an_auto_call_is_conformed() {
+    types_convert::set_fixing(true); // the fixer's checker run (#3250)
+    defer types_convert::set_fixing(false);
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -100,6 +103,8 @@ export void test_front_generics_infer_a_fixed_argument_of_an_auto_call_is_confor
 
 // The same through a pack: `put(p, 3, 4)` for `fn put(out: *mut i32, rest...)`.
 export void test_front_generics_infer_a_fixed_argument_of_a_pack_call_is_conformed() {
+    types_convert::set_fixing(true); // the fixer's checker run (#3250)
+    defer types_convert::set_fixing(false);
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
