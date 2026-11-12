@@ -5,7 +5,7 @@ usage: smith check [-v] [--changed [--base <ref>]] [--require <parts>|all] [-D<n
 flags:
   -v                  show every part's output and every task's time
   --changed           lint and test only what the change reaches; --base <ref> is what it is compared with
-  --require <parts>   fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all
+  --require <parts>   fail when a part is not run here: fmt, docs, prove, lint, test, macos-lint, macos-tests, or all
   -D<name>=<value>    an option the project's build.c reads
 
 examples:
