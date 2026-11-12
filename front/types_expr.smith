@@ -3521,6 +3521,10 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
             parts[i] = base.segments[i];
         parts[count] = (ast::Identifier){.text = callee->kind.member.name, .span = callee->span};
         path = (ast::Path){.segments = parts[0:count + 1], .span = callee->span};
+    } else if (callee->kind == .call || callee->kind == .type_value) {
+        // `maybe(usize)(some = v)`: the callee is a type a type function made, recorded by `made_callee` (#3229)
+        types::TypeRef made = types::type_of(c, callee);
+        return made != nullptr && types::is_made(c, made) ? made : nullptr;
     } else {
         return nullptr;
     }
@@ -6936,6 +6940,7 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
 }
 
 static Bool computed_call(types::Checked *c, Frame f);
+static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee);
 
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -6973,13 +6978,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
+    ast::ExprRef given[:] = e->kind.call.args;
+    if (made_callee_failed(c, e, callee)) return;
+    types::TypeRef record = constructed_call(c, callee, given);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
     }
     types::TypeRef enumeration = nullptr;
-    const ast::Expr *variant = enum_variant_call(c, e->span, callee, e->kind.call.args, &enumeration);
+    const ast::Expr *variant = enum_variant_call(c, e->span, callee, given, &enumeration);
     if (variant != nullptr) {
         push_frame(w, make_frame(e, f.expected, 11, nullptr, 0, "", variant));
         push(w, variant, enumeration, 0);
@@ -6990,7 +6997,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         push(w, callee->kind.member.base, nullptr, 0);
         return;
     }
-    ast::ExprRef args[:] = e->kind.call.args;
+    ast::ExprRef args[:] = given;
     builtins::Entry builtin = {};
     if (builtins::call_entry(c, e, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
@@ -7102,15 +7109,49 @@ static Bool computed_comparison(types::Checked *c, Frame f) {
 }
 
 // A call of a concept, a function over types the compiler answers (`small(u32)`, #3039). True when `f.node` is one.
-static Bool computed_call(types::Checked *c, Frame f) {
-    const ast::Expr *e = f.node;
-    if (e->kind != .call) return false;
+static const types::Symbol *called_function(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .call) return nullptr;
     ast::Path path = {};
     types::Names names = types::member_names(e->kind.call.callee);
     const types::Symbol *callee = nullptr;
     if (types::name_path(e->kind.call.callee, &path)) callee = types::type_through_modules(c, path);
     if (callee == nullptr && names.count >= 2) callee = types::through_modules(c, &names).symbol;
-    if (callee == nullptr || callee->kind != .function_symbol || callee->decl == nullptr) return false;
+    if (callee == nullptr || callee->kind != .function_symbol || callee->decl == nullptr) return nullptr;
+    return callee;
+}
+
+// The type a call of a type function makes (`maybe(usize)`) when it stands as the callee of another call, which then
+// builds a value of it (#3229); null when `callee` is no such call. The invalid type, after an error.
+static types::TypeRef made_callee(types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind == .type_value) { // `Maybe(usize)(some = v)`: the parser read the capitalized callee as a type
+        const ast::TypeExpr *written = callee->kind.type_value.type;
+        if (written == nullptr || written->kind != .applied) return nullptr;
+        types::TypeRef made = types::resolve(c, written);
+        if (made == nullptr || made == c->table.invalid || !types::is_made(c, made)) return nullptr;
+        types::set_type(c, callee, made);
+        return made;
+    }
+    if (callee->kind != .call) return nullptr;
+    const types::Symbol *function = called_function(c, callee);
+    if (function == nullptr || !eval::returns_type(function->decl)) return nullptr;
+    types::TypeRef held = eval::held_for(c, callee);
+    if (held == nullptr || held == c->table.invalid || !types::is_made(c, held)) return held;
+    types::set_type(c, callee, held);
+    return held;
+}
+
+// Whether the callee is a type a type function made that could not be computed: the call is poisoned (#3229).
+static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee) {
+    if (made_callee(c, callee) != c->table.invalid) return false;
+    poison(c, call);
+    return true;
+}
+
+static Bool computed_call(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .call) return false;
+    const types::Symbol *callee = called_function(c, e);
+    if (callee == nullptr) return false;
     if (eval::returns_type(callee->decl)) {
         // a type function (`widen(T)`): the call is the type it makes, and has no run-time form
         types::TypeRef held = eval::held_for(c, e);
