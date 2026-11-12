@@ -229,12 +229,15 @@ static void smith_arena_charge(const char *caller, size_t bytes) {
     smith_arena_caller_bytes[smith_arena_caller_count++] = bytes;
 }
 
+static void smith_arena_print_top(void);
+
 static void *smith_alloc_from(size_t size, const char *caller) {
     SMITH_ASSERT(size < smith_arena_size);
     size_t aligned = (size + 15U) & ~(size_t)15U;
     if (aligned > smith_arena_size - smith_arena_used) {
         // name what filled it (#3032): "build.c: too many strings and lists" alone cost a day of guessing
         smith_context = nullptr;
+        smith_arena_print_top();
         smith_fail(
             "too many strings and lists (bytes) (limit %zu); %zu used, a request for %zu more; the last file read "
             "was %s",
@@ -5822,7 +5825,11 @@ int main(int argc, char **argv) {
     if (smith_arena_used > smith_arena_size / 4 * 3)
         fprintf(stderr, "smith: warning: build.c used %zu of %zu bytes of its arena (%zu%%)\n", smith_arena_used,
                 smith_arena_size, smith_arena_used / (smith_arena_size / 100));
-    if (smith_arena_used > smith_arena_size / 4 * 3) smith_arena_print_top();
+    if (smith_arena_used > smith_arena_size / 4 * 3 || getenv("SMITH_ARENA_REPORT") != nullptr) {
+        if (getenv("SMITH_ARENA_REPORT") != nullptr)
+            fprintf(stderr, "smith: arena high-water mark: %zu bytes\n", smith_arena_used);
+        smith_arena_print_top();
+    }
     return 0;
 }
 #endif
