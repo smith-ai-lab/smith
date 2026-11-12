@@ -4207,12 +4207,31 @@ Bool shard_built(const Options *options) {
 
 // Whether the table was built for a selection and this run asks for another: the test it names may be in a file the
 // build left out (#2998).
+// A run that asks for some of what the table holds is served: every item of its --test list (comma separated) is an
+// item of the built one, and a macOS choice the build made is the one asked for.
+Bool filter_item_built(const char *item, Usize length) {
+    const char *at = built_filter;
+    while (*at != '\0') {
+        Usize size = c::strcspn(at, ",");
+        if (size == length && c::strncmp(at, item, length) == 0) return true;
+        at += size;
+        if (*at == ',') at++;
+    }
+    return false;
+}
+
 Bool selection_differs(const Options *options) {
-    Bool built = built_filter != nullptr || built_filter_macos != 0;
-    if (!built) return false;
-    if (built_filter_macos != (Usize)options->macos) return true;
-    if (built_filter == nullptr || options->filter == nullptr) return built_filter != options->filter;
-    return c::strcmp(built_filter, options->filter) != 0;
+    if (built_filter_macos != 0 && built_filter_macos != (Usize)options->macos) return true;
+    if (built_filter == nullptr) return false;
+    if (options->filter == nullptr) return true;
+    const char *at = options->filter;
+    while (*at != '\0') {
+        Usize size = c::strcspn(at, ",");
+        if (!filter_item_built(at, size)) return true;
+        at += size;
+        if (*at == ',') at++;
+    }
+    return false;
 }
 
 // --shard i/n: keeps the chosen tests of part i. Files are the unit; the split is balanced by --costs.
