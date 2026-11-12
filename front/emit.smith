@@ -2152,47 +2152,6 @@ static state::Status convert_failure(state::Value value, state::Ty to, ast::Span
 
 // `value` as a `to`: as it is, a wider integer (the checker's widening rules: the same signedness, or unsigned to a
 // strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap_some`).
-// A function that takes a context first and drops it, calling `target` with the rest: the code of a `fn` value made
-// from a function's name. One per function.
-static c::LLVMValueRef function_thunk(state::Emitter *e, c::LLVMValueRef target) {
-    Usize length = 0;
-    const char *own = c::LLVMGetValueName2(target, &length);
-    Str label = state::msg(format::push(own, ".thunk"));
-    char *name = state::cstr(label);
-    state::free_text(label);
-    c::LLVMValueRef found = c::LLVMGetNamedFunction(e->module, name);
-    if (found != nullptr) {
-        mem::free(name);
-        return found;
-    }
-    c::LLVMTypeRef inner = c::LLVMGlobalGetValueType(target);
-    U32 count = c::LLVMCountParamTypes(inner);
-    c::LLVMTypeRef given[65];
-    c::LLVMTypeRef wrapped[65];
-    if (count > 64) count = 64;
-    c::LLVMGetParamTypes(inner, given);
-    wrapped[0] = c::LLVMPointerTypeInContext(e->context, 0);
-    for (U32 i = 0; i < count; i++)
-        wrapped[i + 1] = given[i];
-    c::LLVMTypeRef result = c::LLVMGetReturnType(inner);
-    c::LLVMTypeRef outer = c::LLVMFunctionType(result, wrapped, count + 1, 0);
-    c::LLVMValueRef thunk = c::LLVMAddFunction(e->module, name, outer);
-    mem::free(name);
-    c::LLVMSetLinkage(thunk, c::LLVMInternalLinkage);
-    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
-    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, thunk, "entry"));
-    c::LLVMValueRef args[64];
-    for (U32 i = 0; i < count; i++)
-        args[i] = c::LLVMGetParam(thunk, i + 1);
-    c::LLVMValueRef called = c::LLVMBuildCall2(b, inner, target, args, count, "");
-    if (c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind)
-        c::LLVMBuildRetVoid(b);
-    else
-        c::LLVMBuildRet(b, called);
-    c::LLVMDisposeBuilder(b);
-    return thunk;
-}
-
 static state::Status convert_value(state::Emitter *e, state::Value value, state::Ty to, ast::Span span,
                                    state::ConvertSite site) {
     if (state::same_type(value.ty, to)) {
@@ -2224,7 +2183,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
     if (to.kind == .fn_value && from.kind == .pointer && c::LLVMIsAFunction(value.llvm) != nullptr) {
         // The name of a function given to a `fn` parameter: a `fn` value is `{ code, context }` and its code takes the
         // context first, so the function is wrapped in a thunk that drops it.
-        c::LLVMValueRef thunk = function_thunk(e, value.llvm);
+        c::LLVMValueRef thunk = lambdas::function_thunk(e, value.llvm);
         c::LLVMValueRef made = c::LLVMGetUndef(to.llvm);
         made = c::LLVMBuildInsertValue(e->builder, made, thunk, 0, "code");
         c::LLVMTypeRef word = c::LLVMPointerTypeInContext(e->context, 0);

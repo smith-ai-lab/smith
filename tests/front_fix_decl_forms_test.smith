@@ -305,3 +305,12 @@ export void test_front_fix_unsized_array_of_structs() {
     expect_fixed("module m;\nstruct P {\n    I32 x;\n    I32 y;\n};\nvoid f() {\n    P ps[] = {{1, 2}, {3, 4}};\n}\n",
                  "struct P:\n    x: i32\n    y: i32\nfn f():\n    ps: [_]P = [P(1, 2), P(3, 4)]\n");
 }
+
+// A global function pointer whose result is a typedef name (`uint64_t (*chosen)(uint64_t bits) = f;`) is a `fn`
+// variable, not a call of an untyped declaration (#3431).
+export void test_front_fix_a_global_function_pointer_with_a_typedef_result() {
+    expect_fixed(
+        "module m;\nimport <stdint.h>;\nuint64_t twice(uint64_t bits) { return bits * 2; }\n"
+        "uint64_t (*chosen)(uint64_t bits) = twice;\n",
+        "import c <stdint.h>\nfn twice(bits: u64) -> u64:\n    return bits * 2\nmut chosen: fn(u64) -> u64 = twice\n");
+}
