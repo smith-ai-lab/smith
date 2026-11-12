@@ -117,3 +117,35 @@ export void test_front_fix_imports_a_real_c_name_keeps_the_header() {
     test::check(!has(first.text, "import std."));
     test::check(has(first.text, "import c <string.h>"));
 }
+
+// `modifies` is deleted (#3241): a statement that is only a call of it goes with its line, in every spelling.
+export void test_front_fix_modifies_a_call_statement_is_deleted_in_every_spelling() {
+    expect("import std.contract\n\npub fn f(p: *mut i32, xs: []mut i32):\n    contract.modifies(p)\n"
+           "    contract.modifies(xs)\n    contract.modifies()\n    p.* = 1\n",
+           "import std.contract\n\npub fn f(p: *mut i32, xs: []mut i32):\n    p.* = 1\n");
+}
+
+export void test_front_fix_modifies_a_call_over_several_lines_is_deleted() {
+    expect("import std.contract\n\npub fn f(p: *mut i32, xs: []mut i32):\n    contract.modifies(p,\n"
+           "                      xs[0:2])\n    p.* = 1\n",
+           "import std.contract\n\npub fn f(p: *mut i32, xs: []mut i32):\n    p.* = 1\n");
+}
+
+export void test_front_fix_modifies_a_c_like_call_is_deleted() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    fix::Fixed first = fix::fix_text(
+        "t.smith",
+        "module m;\nimport <smith/contract.h>;\nexport void f(I32 *p) {\n    c::smith_modifies(p);\n    *p = 1;\n}\n");
+    test::check(!has(first.text, "modifies"));
+    test::check(has(first.text, "p.* = 1"));
+}
+
+export void test_front_fix_modifies_a_call_inside_a_statement_is_left() {
+    expect("import std.contract\n\npub fn f(p: *mut i32, c: bool):\n    if c: contract.modifies(p)\n    p.* = 1\n",
+           "import std.contract\n\npub fn f(p: *mut i32, c: bool):\n    if c: contract.modifies(p)\n    p.* = 1\n");
+}
