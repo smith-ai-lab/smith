@@ -1,0 +1,19 @@
+# `p is .none` and `p is not .none` over a `?*T` (one machine word) and a `?i32` (a tag): the code of `== .none` (#3226).
+struct Item:
+    size: i32
+
+fn size_of(p: ?*Item) -> i32:
+    if p is not .none:
+        return p.size
+    -1
+
+fn has(n: ?i32) -> bool:
+    return n is not .none
+
+pub fn check() -> i32:
+    mut it := Item(size = 7)
+    if size_of(&it) != 7: return 1
+    if size_of(.none) != -1: return 2
+    if not has(4): return 3
+    if has(.none): return 4
+    0

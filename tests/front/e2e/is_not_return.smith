@@ -1,0 +1,17 @@
+# `s is not .circle` with an early `return`: the rest of the block reads the payload (#3226).
+struct Circle:
+    radius: i32
+
+enum Shape:
+    circle: Circle
+    empty
+
+fn radius_of(s: Shape) -> i32:
+    if s is not .circle:
+        return -1
+    s.radius
+
+pub fn check() -> i32:
+    if radius_of(.circle(Circle(radius = 5))) != 5: return 1
+    if radius_of(.empty) != -1: return 2
+    0
