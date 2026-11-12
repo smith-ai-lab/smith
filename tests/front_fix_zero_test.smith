@@ -53,11 +53,25 @@ export void test_front_fix_zero_a_read_between_the_writes_takes_the_default() {
 }
 
 export void test_front_fix_zero_fills_the_fields_a_designated_list_leaves_out() {
-    expect_fixed(
-        "module m;\nstruct S {\n    int a;\n    int b;\n};\nstruct E {\n    int k;\n    S s;\n    char *p;\n};\n"
-        "E make(int k) {\n    return (E){.k = k};\n}\n",
-        "struct S:\n    a: i32 = 0\n    b: i32 = 0\nstruct E:\n    k: i32\n    s: S = S()\n    p: *char\n"
-        "fn make(k: i32) -> E:\n    return E(k = k)\n");
+    expect_fixed("module m;\nstruct S {\n    int a;\n    int b;\n};\nstruct E {\n    int k;\n    S s;\n};\n"
+                 "E make(int k) {\n    return (E){.k = k};\n}\n",
+                 "struct S:\n    a: i32\n    b: i32\nstruct E:\n    k: i32\n    s: S\n"
+                 "fn make(k: i32) -> E:\n    return E(k = k, s = S(a = 0, b = 0))\n");
+}
+
+// An array too long to write out is `array.filled` at the construction (the struct keeps no default), with the import.
+export void test_front_fix_zero_a_long_array_left_out_is_filled_at_the_construction() {
+    expect_fixed("module m;\nstruct Big {\n    unsigned int limb[128];\n    unsigned long count;\n};\n"
+                 "Big make(void) {\n    return (Big){.count = 1};\n}\n",
+                 "import std.array\nstruct Big:\n    limb: [128]u32\n    count: u64\n"
+                 "fn make() -> Big:\n    return Big(count = 1, limb = array.filled(u32, 128, 0))\n");
+}
+
+// A smith struct's pointer has no zero: the construction that leaves it out stays as written, and the struct gets no
+// default (`p: *char` stays; it becomes an option only when a read tests it, `nullable`).
+export void test_front_fix_zero_a_construction_that_leaves_a_pointer_out_is_not_mended() {
+    expect_fixed("module m;\nstruct E {\n    int k;\n    char *p;\n};\nE make(int k) {\n    return (E){.k = k};\n}\n",
+                 "struct E:\n    k: i32\n    p: *char\nfn make(k: i32) -> E:\n    return E(k = k)\n");
 }
 
 // Slice 6 of #2224 (`std::arena` parses): an opaque type that ends the file keeps its `struct`, and a function's result
@@ -176,19 +190,19 @@ export void test_front_fix_a_local_static_const_table_loses_its_static() {
                  "fn f():\n    t: [2]f64 = [1.0, 2.0]\n    g(&t[0])\n");
 }
 
-// #2530 (the owner, 2026-11-06): a field that a construction leaves out gets C's zero written as its default in the
-// struct, and the construction stays as written. A number is `0` or `0.0`, a `bool` `false`, a `str` `""`, a slice
-// `[]`, an option `.none`, an enumeration its variant of value 0, a fixed array `array.filled`, a struct of the module
-// `S()` (its own fields get defaults too). A pointer gets none: it is left to become `?*T`.
-export void test_front_fix_zero_left_out_fields_get_defaults_in_the_struct() {
+// #3224 (decided on #3190 item 25): a field that a construction leaves out is written at that construction with C's
+// zero; the struct is not edited (a default is not part of a record type). A number is `0` or `0.0`, a `bool` `false`,
+// a `str` `""`, a slice `[]`, an option `.none`, an enumeration its variant of value 0, a fixed array its items, a
+// struct of the module its fields.
+export void test_front_fix_zero_left_out_fields_are_written_at_the_construction() {
     expect_fixed(
         "enum Mode:\n    off\n    on\nstruct In:\n    n: i32\nstruct W:\n    a: i32\n    f: f64\n    ok: bool\n"
         "    name: str\n    xs: []i32\n    maybe: ?i32\n    mode: Mode\n    grid: [3]i32\n    inner: In\n"
-        "    p: *i32\nfn make() -> W:\n    return W(a = 1)\n",
-        "import std.array\nenum Mode:\n    off\n    on\nstruct In:\n    n: i32 = 0\nstruct W:\n    a: i32\n"
-        "    f: f64 = 0.0\n    ok: bool = false\n    name: str = \"\"\n    xs: []i32 = []\n    maybe: ?i32 = .none\n"
-        "    mode: Mode = .off\n    grid: [3]i32 = array.filled(i32, 3, 0)\n    inner: In = In()\n    p: *i32\n"
-        "fn make() -> W:\n    return W(a = 1)\n");
+        "fn make() -> W:\n    return W(a = 1)\n",
+        "enum Mode:\n    off\n    on\nstruct In:\n    n: i32\nstruct W:\n    a: i32\n    f: f64\n    ok: bool\n"
+        "    name: str\n    xs: []i32\n    maybe: ?i32\n    mode: Mode\n    grid: [3]i32\n    inner: In\n"
+        "fn make() -> W:\n    return W(a = 1, f = 0.0, ok = false, name = \"\", xs = [], maybe = .none, mode = .off, "
+        "grid = [0, 0, 0], inner = In(n = 0))\n");
 }
 
 // Only the fields some construction leaves out get a default; a field every construction gives keeps none.
@@ -197,7 +211,7 @@ export void test_front_fix_zero_a_field_every_construction_gives_gets_no_default
     expect_fixed(source, source);
 }
 
-// A construction in another file of the folder (`a.P(x = 1)` after `import fixdef.a`) gives the struct its defaults.
+// A construction in another file of the folder (`a.P(x = 1)` after `import fixdef.a`) leaves the struct as written.
 export void test_front_fix_zero_a_construction_in_a_neighbouring_file_gives_the_default() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -209,12 +223,12 @@ export void test_front_fix_zero_a_construction_in_a_neighbouring_file_gives_the_
     test::check(fix::store("/tmp/front_fix_zero_test_neighbour/b.smith", user));
     fix::Fixed fixed =
         fix::fix_text("/tmp/front_fix_zero_test_neighbour/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
-    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
+    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32\n";
     test::check_equal(fixed.text, want);
 }
 
-// A construction in a file of another folder (`tests/b.smith` builds `lib/a.smith`'s `P`) gives the default too: the
-// fixer reads every file under the working folder that imports the module (#2543).
+// A construction in a file of another folder (`tests/b.smith` builds `lib/a.smith`'s `P`) leaves the struct unchanged
+// too: the fixer reads every file under the working folder that imports the module (#2543).
 export void test_front_fix_zero_a_construction_in_another_folder_gives_the_default() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -230,7 +244,7 @@ export void test_front_fix_zero_a_construction_in_another_folder_gives_the_defau
     test::check_equal(c::chdir("/tmp/front_fix_zero_test_tree"), 0);
     fix::Fixed fixed = fix::fix_text("lib/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
     test::check_equal(c::chdir(home), 0);
-    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
+    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32\n";
     test::check_equal(fixed.text, want);
 }
 
@@ -417,9 +431,9 @@ export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
     expect_fixed("module m;\nstruct Step {\n    const char *name;\n    int (*run)(int);\n    int n;\n};\n"
                  "struct Owner {\n    int id;\n    Step step;\n};\n"
                  "void f(Owner *o) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
-                 "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32 = 0\n"
-                 "struct Owner:\n    id: i32\n    step: Step = undefined\n"
-                 "fn f(o: *Owner):\n    x := Owner(id = 1)\n    g(&x)\n");
+                 "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32\n"
+                 "struct Owner:\n    id: i32\n    step: Step\n"
+                 "fn f(o: *Owner):\n    x := Owner(id = 1, step = undefined)\n    g(&x)\n");
 }
 
 // A local that holds a pointer field the file tests against null is an option, and the `?` goes at its new type, not

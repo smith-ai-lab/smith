@@ -59,7 +59,7 @@ export void test_front_types_import_typedef_left_out_field_keeps_the_type() {
                      "    front_types_import_typedef_c::Node node = (front_types_import_typedef_c::Node){.n = 1};\n"
                      "    node.m = 2;\n}\n");
     Str want = "import front_types_import_typedef_c\nfn f():\n"
-               "    mut node: front_types_import_typedef_c.Node = front_types_import_typedef_c.Node(n = 1)\n"
+               "    mut node: front_types_import_typedef_c.Node = front_types_import_typedef_c.Node(n = 1, m = 0)\n"
                "    node.m = 2\n";
     test::check_equal(got, want);
 }
