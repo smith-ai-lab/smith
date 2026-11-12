@@ -924,6 +924,7 @@ static const char *const build_runtime_sources[] = {
     "runtime/account.c",
     "runtime/cache.c",
     "runtime/changed.c",
+    "runtime/check_plan.c",
     "runtime/coverage.c",
     "runtime/docs.c",
     "runtime/executor.c",

@@ -330,6 +330,39 @@ export void test_build_smith_check_names_the_parts_that_did_not_run_and_require_
     scratch::expect_contains("check: ... with a count", linux.err, "not run here\n");
 }
 
+// smith check --plan reads the scope of a change from git (#3163): the one rule CI's `changes` job and the hook share.
+export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
+    scratch::Project p = scratch::make("planned", "smith_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run made = scratch::sh(
+        &p,
+        "git init -q . && git config user.email t@t && git config user.name t && mkdir -p knowledge .github/workflows "
+        "&& "
+        "echo a >README.md && git add -A && git commit -qm base && git tag base && "
+        "echo b >>README.md && echo b >knowledge/a.md && git add -A && git commit -qm docs && git tag docs && "
+        "echo c >LICENSE && echo d >.github/workflows/queue-heal.yml && git add -A && git commit -qm none && git tag "
+        "none && "
+        "echo e >x.c && git add -A && git commit -qm code && git tag code && "
+        "git checkout -q none && echo y >.github/workflows/ci.yml && git add -A && git commit -qm own && git tag own");
+    scratch::expect_status("plan: the scratch repository is made", 0, &made);
+    scratch::Run docs = scratch::sh(&p, "git checkout -q docs && smith check --plan --base base");
+    scratch::expect_contains("plan: documentation only is scope docs", docs.out,
+                             "scope=docs\ndocs_tests=true\nchanged=2\n");
+    scratch::Run quiet = scratch::sh(&p, "git checkout -q none && smith check --plan --base docs");
+    scratch::expect_contains("plan: a license and another workflow run nothing", quiet.out,
+                             "scope=none\ndocs_tests=false\nchanged=2\n");
+    scratch::Run code = scratch::sh(&p, "git checkout -q code && smith check --plan --base none");
+    scratch::expect_contains("plan: a source file makes it full", code.out, "scope=full\n");
+    scratch::Run own = scratch::sh(&p, "git checkout -q own && smith check --plan --base none");
+    scratch::expect_contains("plan: ci.yml itself is code", own.out, "scope=full\n");
+    scratch::Run unreadable = scratch::sh(&p, "smith check --plan --base nonsense");
+    scratch::expect_contains("plan: a diff that cannot be read is full", unreadable.out, "scope=full\n");
+}
+
 // 10. A mistake in a build.smith names build.smith, not build.c, and every name collision is reported in one run (#47).
 
 export void test_build_smith_a_mistake_in_a_build_smith_names_build_smith_and_every_collision() {
