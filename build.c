@@ -3789,7 +3789,7 @@ static int build_docs_gate_test(SmithRun *run) {
 // The owner's end state (2026-11-12) is the queue's exact command with no selection (#3294); it waits for the store to
 // serve a worker's machine (#3300). Until then the selection is the one argument below: set it to false and the hook
 // runs `smith check` whole.
-static const bool pre_push_changed_only = true;
+constexpr bool pre_push_changed_only = true;
 
 static bool pre_push_ends(const char *path, const char *suffix) {
     size_t length = strlen(path);
