@@ -15,7 +15,8 @@ tags: [ci, process]
 | `check-fmt-prove`, `check-lint` | after `build-linux` | two jobs so neither is longer than the other path (lead, 2026-11-08, #2833); their `Checks` step prints where the time went (#2985): lint's `linted N files (R run, C cached, T s, setup S s: build info, needs, plan and hash)`, prove's `G groups, build B s, proofs P s` and its count of functions reused from the cache |
 | `macos` | not in a queue run: the push to main and the nightly run | the macOS job (#1709): the `--macos-only` tests (its own test store) |
 | `macos-lint` | not in a queue run: the push to main and the nightly run | `smith lint` of the code only the Mac sees (#3045): its own job and tree, since lint and the tests cannot share one (`.smith/build.ninja`); it builds smith, not the tests |
-| `release-pack-linux` | a queue run, beside the others | the Linux release tarball of the commit main moves to ([release](../release.md)), #3052; it also hands its release build to the count |
+| `release-pack-linux` | a queue run, beside the others | builds the release profile of the commit and hands that build to the count (#3369); it ends there, so the count's shards start about 2 minutes into the run |
+| `release-package-linux` | a queue run, after `release-pack-linux` | the Linux release tarball of the commit main moves to ([release](../release.md)), #3052, from the same build; off the count's path (#3369) |
 | `count-shard` (8), `count` | a queue run, after `release-pack-linux` | the front-end count and its gate (#3369, [count](count.md)); `count` joins the 8 tables and refuses a file that passed on the base and fails now |
 | `ci` | last, light | the verdict |
 
