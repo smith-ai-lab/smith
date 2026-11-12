@@ -569,15 +569,47 @@ static Bool assigns_at(Str text, Usize at) {
     return rest[2] == '=' && rest[3] == ' ' && rest[1] != '=' && rest[1] != '!' && rest[1] != '<' && rest[1] != '>';
 }
 
-// Whether `source[from:to]` changes `name` or its payload: `name = `, `&name`, or a write `name.variant... = `.
-static Bool body_changes(Str source, Usize from, Usize to, Str name, Str variant) {
+// The name `name` starts with: `e` for `e.kind`, the name itself for `k`.
+static Str root_of(Str name) {
+    Usize k = 0;
+    while (k < countof(name) && name[k] != '.')
+        k += 1;
+    return name[0:k];
+}
+
+// Whether the write of `root` at `at` (`root = ...`) changes what a later read of `name.variant` in `source[:to]` would
+// mean (#3210): it does unless it is a statement of the body (at `indent`, or on the line of the test, `from` or before
+// it) after which no read of the payload follows. The binding is a copy taken at the test, so the reads before the
+// write, and the right side of the write itself, are the same either way (`type = type.kind.pointer.pointee`).
+// `indent` 0 says no write is allowed.
+static Bool write_moves_payload(Str source, Usize from, Usize to, Usize at, Str name, Str variant, Usize indent) {
+    if (indent == 0) return true;
+    Usize row = line_above(source, at + 1);
+    Bool on_head = row < from;
+    if (!on_head && indent_of(source, row) != indent) return true;
+    if (!on_head && row + indent != at) return true;
+    return variant_read_at(source[0:to], line_end(source, at), name, variant) < to;
+}
+
+// Whether `source[from:to]` changes `name` or its payload: `name = `, `&name`, or a write `name.variant... = `. A write
+// of `name` or of the name it starts with is allowed when `indent` (the indent of the body, 0: none) says it is a
+// statement of the body after which the payload is not read (#3210).
+static Bool body_changes(Str source, Usize from, Usize to, Str name, Str variant, Usize indent) {
     Str text = source[0:to];
-    Usize found = word_at(text, from, name);
+    Str root = root_of(name);
+    Usize found = word_at(text, from, root);
     while (found < to) {
-        Usize end = found + countof(name);
-        if (assigns_at(text, end)) return true;
+        Usize end = found + countof(root);
+        if (assigns_at(text, end) && write_moves_payload(source, from, to, found, name, variant, indent)) return true;
         if (found > 0 && text[found - 1] == '&') return true;
-        found = word_at(text, found + 1, name);
+        found = word_at(text, found + 1, root);
+    }
+    if (countof(root) < countof(name)) { // a field chain `e.kind`: a write of the chain itself changes the payload
+        found = word_at(text, from, name);
+        while (found < to) {
+            if (assigns_at(text, found + countof(name))) return true;
+            found = word_at(text, found + 1, name);
+        }
     }
     found = variant_read_at(text, from, name, variant);
     while (found < to) {
@@ -642,7 +674,7 @@ static Bool chain_test(Str source, Usize cond, Usize colon, Str name, Str varian
         if (!split) continue;
         Str test = trimmed(source[part:i]);
         if (*test_start == countof(source) && tests_variant(test, name, variant, result)) {
-            if (index == 0) return false;
+            if (index == 0 && result) return false;
             *test_start = part;
             while (source[*test_start] == ' ')
                 *test_start += 1;
@@ -684,8 +716,9 @@ static core::Errors chain_edits(core::Errors out, Str source, Usize at, Str name
     if (code_word_at(source[start:stop], variant) < stop - start || imported_name(source, variant)) {
         bound = types::message_of(format::push(variant, "_value"));
         if (code_word_at(source[start:stop], bound) < stop - start || imported_name(source, bound)) return out;
+        if (test_start == cond && !result) return out; // a test that starts the chain keeps its site when `v` is taken
     }
-    if (body_changes(source, test_end, body_end, name, variant)) return out;
+    if (body_changes(source, test_end, body_end, name, variant, indent + 4)) return out;
     Str why = "a variant test in an `and` chain binds its payload where it stands: write `.v(v) := k`";
     Str pattern = types::message_of(format::push(".", variant, "(", bound, ") := ", name));
     out = add_why(out, test_start, test_end, pattern, why);
@@ -801,7 +834,7 @@ static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name
     while (block_end < countof(source) && (blank(source, block_end) || indent_of(source, block_end) >= indent))
         block_end = next_line(source, block_end);
     if (block_end > countof(source)) block_end = countof(source);
-    if (body_changes(source, after, block_end, name, "ok")) return out;
+    if (body_changes(source, after, block_end, name, "ok", 0)) return out;
     return match_emit(out, source, head, body, after, last, name, bound, arm, block_end);
 }
 
@@ -872,7 +905,7 @@ static core::Errors match_arm_edits(core::Errors out, Str source, Usize at, Str 
     while (block_end < countof(source) && (blank(source, block_end) || indent_of(source, block_end) >= indent))
         block_end = next_line(source, block_end);
     if (block_end > countof(source)) block_end = countof(source);
-    if (body_changes(source, end, block_end, name, "ok")) return out;
+    if (body_changes(source, end, block_end, name, "ok", 0)) return out;
     // the new text: the binding line, then the body one level up
     Str text = types::message_of(format::push(source[head:head + indent], ".ok(", bound, ") := ", name, " else:\n"));
     Usize row = body;

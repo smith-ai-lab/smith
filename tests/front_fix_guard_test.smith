@@ -196,3 +196,25 @@ export void test_front_fix_guard_an_error_body_that_does_not_leave_is_left() {
                  with_half("fn kept(n: i32) -> i32:\n    r := half(n)\n    mut total := 0\n"
                            "    if .error(error) := r:\n        total = error\n    total + r.ok\n"));
 }
+
+static Str node_text() {
+    return "struct Node:\n    kind: Kind\n\nenum Kind:\n    next: *Node\n    leaf\n\n";
+}
+
+// A write of the tested name whose right side reads the payload binds it: the binding is a copy taken at the test
+// (#3210).
+export void test_front_fix_guard_a_payload_read_that_moves_the_name_is_a_binding() {
+    expect_fixed(as_str(format::push(node_text(), "fn last(mut n: *Node) -> bool:\n    while n != nullptr:\n"
+                                                  "        if n.kind == .next:\n            n = n.kind.next\n"
+                                                  "        else:\n            return false\n    true\n")),
+                 as_str(format::push(node_text(), "fn last(mut n: *Node) -> bool:\n    while n != nullptr:\n"
+                                                  "        if .next(next) := n.kind:\n            n = next\n"
+                                                  "        else:\n            return false\n    true\n")));
+}
+
+// The same write followed by a read of the payload stays: the read would see the new name.
+export void test_front_fix_guard_a_payload_read_after_the_name_moves_is_left() {
+    Str stale = as_str(format::push(node_text(), "fn twice(mut n: *Node) -> *Node:\n    if n.kind == .next:\n"
+                                                 "        n = n.kind.next\n        return n.kind.next\n    n\n"));
+    expect_fixed(stale, stale);
+}
