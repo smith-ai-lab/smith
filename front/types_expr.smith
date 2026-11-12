@@ -2021,6 +2021,7 @@ struct NameTest {
     Str variant;
     types::TypeRef type;
     Bool positive;
+    Bool by_is; // written with `is` / `is not`; `==` over a payload enumeration stays the fixer's to rewrite (#3211)
 };
 
 // Reads `item` as a `NameTest`; false when it is no test of a single name against a variant or a type.
@@ -2031,6 +2032,7 @@ static Bool name_test(types::Checked *c, const ast::Expr *item, NameTest *out) {
     const ast::Expr *right = item->kind.binary.right;
     if (op == .is || op == .is_not) {
         out->positive = op == .is;
+        out->by_is = true;
     } else if (is_equality(op)) {
         if (right->kind != .variant) {
             const ast::Expr *swap = left;
@@ -2038,6 +2040,7 @@ static Bool name_test(types::Checked *c, const ast::Expr *item, NameTest *out) {
             right = swap;
         }
         out->positive = op == .equal;
+        out->by_is = false;
     } else {
         return false;
     }
@@ -2078,7 +2081,7 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         s->narrowed = true;
         return true;
     }
-    if (!types::is_payload_enum(t) || countof(types::slots_of(t).items) > 64) return false;
+    if (!test->by_is || !types::is_payload_enum(t) || countof(types::slots_of(t).items) > 64) return false;
     Usize count = countof(types::slots_of(t).items);
     Usize at = variant_index(t, test);
     if (at == count) return false;
