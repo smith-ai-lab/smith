@@ -1290,6 +1290,12 @@ static U64 nullable(const ast::Module *module, const Wanted *w, Usize r) {
     return out;
 }
 
+// Whether the fix writes a `nullptr`: a pointer a smith struct's construction leaves out has no zero. It becomes
+// `?*T = .none` (`nullable`, item 3 of #3224) or stays an error; only a C header's struct is given `nullptr`.
+static Bool needs_pointer(core::ParseError fix) {
+    return countof(fix.fix) > 0 && mentions(fix.fix[0].text, "nullptr");
+}
+
 // Whether a field of the record is a pointer or a function that stays one: it has no zero, so a value of the record
 // cannot be built from defaults.
 static Bool has_plain_pointer(const ast::Module *module, types::Checked *c, const Wanted *w, Usize e) {
@@ -1673,9 +1679,7 @@ static core::Errors module_edits(Str source, const ast::Module *module, types::C
         }
         last = error.left_out_call;
         core::ParseError given_zero = left_out_fix(source, error.left_out_call, record, error.left_out_given);
-        // A pointer a smith struct's construction leaves out has no zero: it becomes `?*T = .none` (`nullable`, item 3
-        // of #3224) or stays an error; only a C header's struct is given `nullptr`.
-        if (!from_header && countof(given_zero.fix) > 0 && mentions(given_zero.fix[0].text, "nullptr")) continue;
+        if (!from_header && needs_pointer(given_zero)) continue;
         if (countof(given_zero.fix) == 0 && global_zero(module, error.left_out_call)) {
             out = add(out, undefined_fix(error.left_out_call)); // a C union or struct of a global: C's zeroed storage
             continue;
