@@ -9,9 +9,15 @@ tests/affine/affine_address_of.smith	error-fixture
 tests/affine/affine_bad_index.smith	error-fixture
 tests/affine/affine_branch_join.smith	error-fixture
 tests/affine/affine_defer.smith	error-fixture
+tests/affine/affine_elements.smith	error-fixture
 tests/affine/affine_loop_counter_changed.smith	error-fixture
+tests/affine/affine_member.smith	error-fixture
+tests/affine/affine_plain_loop_two_uses.smith	error-fixture
+tests/affine/affine_range_for.smith	error-fixture
 tests/affine/affine_second_use.smith	error-fixture
 tests/affine/affine_slice_bad_index.smith	error-fixture
+tests/affine/affine_slice_elements.smith	error-fixture
+tests/affine/affine_slice_two_uses.smith	error-fixture
 tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
 tests/build_fixtures/std_scope/affine_twice.smith	error-fixture
 tests/front/corpus/error-array-length/src/main.smith	error-fixture
@@ -35,6 +41,7 @@ tests/front/corpus/error-void-pointer/src/main.smith	error-fixture
 tests/front/corpus/session-keyword-name/src/main.smith	error-fixture
 tests/front/corpus/session-missing-module/src/main.smith	error-fixture
 tests/front/corpus/sized-error-message/src/main.smith	error-fixture
+tests/front/e2e/result_guard_affine.smith	error-fixture
 tests/smith-lang/cases/error-array-empty/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-infer/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-param-index/src/main.smith	error-fixture
