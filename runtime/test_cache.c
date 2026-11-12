@@ -17,6 +17,7 @@
 #include "executor_cache.h"
 #include "package.h"
 #include "platform_linux.h"
+#include "record.h"
 #include "self_digest.h"
 
 #include <dirent.h>
@@ -388,6 +389,54 @@ static void smith_tc_feed_closure(SmithSha256 *sha, bool *runs_smith, bool *unca
     }
 }
 
+// Records (#456, #3387): a test that runs smith is keyed by the smith functions its child executed (its record in
+// `.smith/records`, made only by a run with COVERAGE=1), not by the whole smith. The record is valid only against the
+// digests it was made with: every function, outside and input line is checked against the tree now, and a record with
+// one that differs (a function changed or gone, the test failed, a file it read changed) is stale, which keys the test
+// by the whole smith as before, until a coverage run writes the record again. A plain run never writes one.
+static bool smith_tc_records_read;
+static char smith_tc_toolchain_hex[smith_sha256_hex_size];
+
+// Reads the records of the project (cwd is its root, smith_tc_open_project).
+static void smith_tc_load_records(void) {
+    char folder[PATH_MAX];
+    const char *given = getenv("SMITH_RECORDS_DIR");
+    snprintf(smith_cov_root, sizeof smith_cov_root, "%s", smith_tc_root);
+    snprintf(folder, sizeof folder, "%s/.smith/records", smith_tc_root);
+    smith_rec_result_count = 0;
+    (void)smith_rec_check_folder(given != nullptr && given[0] != '\0' ? given : folder);
+    smith_tc_records_read = true;
+}
+
+// The digest of what a record cannot name, because it is no function smith ran in its own process: the files
+// smith.c embeds (the children compile them), shim/, patches/ and templates/. A change to one is a change to every
+// test that runs smith.
+static void smith_tc_toolchain_digest(void) {
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    char hex[smith_sha256_hex_size];
+    for (size_t i = 0; i < smith_changed_file_count; i++) { // bounded by the files
+        const char *path = smith_changed_files[i];
+        if (strncmp(path, "shim/", 5) != 0 && strncmp(path, "patches/", 8) != 0 && strncmp(path, "templates/", 10) != 0)
+            continue;
+        smith_tc_feed(&sha, path);
+        smith_tc_feed(&sha, smith_tc_file_digest(i));
+    }
+    FILE *source = fopen("smith.c", "r");
+    char line[PATH_MAX + 16];
+    for (size_t guard = 0; source != nullptr && guard < (size_t)1 << 16 && fgets(line, sizeof line, source) != nullptr;
+         guard++) { // bounded by the lines
+        if (strncmp(line, "#embed \"", 8) != 0) continue;
+        char *end = strchr(line + 8, '"');
+        if (end == nullptr) continue;
+        *end = '\0';
+        smith_tc_feed(&sha, line + 8);
+        smith_tc_feed(&sha, smith_tc_hash_path(line + 8, hex) ? hex : "-");
+    }
+    if (source != nullptr) fclose(source);
+    smith_sha256_final(&sha, smith_tc_toolchain_hex);
+}
+
 // The key of one test, or false when it cannot be cached (why says which).
 static bool smith_tc_key(SmithTcTest *test, const char **why) {
     uint32_t sources[8];
@@ -410,7 +459,17 @@ static bool smith_tc_key(SmithTcTest *test, const char **why) {
             *why = "it runs smith and the smith under test (SMITH_SELF) cannot be read";
             return false;
         }
-        smith_tc_feed(&sha, smith_tc_self_hex);
+        const SmithRecResult *record = smith_tc_records_read ? smith_rec_result_of(test->name) : nullptr;
+        if (record != nullptr && !record->stale && record->functions > 0) {
+            char digest[20];
+            snprintf(digest, sizeof digest, "%016llx", (unsigned long long)record->digest);
+            if (smith_tc_toolchain_hex[0] == '\0') smith_tc_toolchain_digest();
+            smith_tc_feed(&sha, "record");
+            smith_tc_feed(&sha, digest);
+            smith_tc_feed(&sha, smith_tc_toolchain_hex);
+        } else {
+            smith_tc_feed(&sha, smith_tc_self_hex);
+        }
     }
     smith_sha256_final(&sha, test->key);
     return true;
@@ -702,6 +761,7 @@ static int smith_tc_check(const char *folder) {
     const char *self = getenv("SMITH_SELF");
     if (self != nullptr && self[0] != '\0' && !smith_tc_self_digest(self, smith_tc_self_hex))
         smith_tc_self_hex[0] = '\0';
+    smith_tc_load_records();
     smith_tc_make_base();
     smith_tc_index_functions();
     smith_tc_name_base();
@@ -973,6 +1033,7 @@ static int smith_tc_weights_main(const char *names_file, int macos) {
     }
     if (self != nullptr && self[0] != '\0' && !smith_tc_self_digest(self, smith_tc_self_hex))
         smith_tc_self_hex[0] = '\0';
+    smith_tc_load_records();
     smith_tc_make_base();
     smith_tc_index_functions();
     for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
