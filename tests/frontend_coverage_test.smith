@@ -175,6 +175,34 @@ export void test_frontend_coverage_a_generics_fix_does_not_depend_on_the_order_o
     scratch::release(run.err);
 }
 
+// #3214: a file of lib/std/ that says `import scratch` finds tests/scratch.smith, as the files beside it do. The link
+// is in the scratch tree only: the repository's own lib/ is not touched.
+export void test_frontend_coverage_a_file_of_lib_std_finds_the_scratch_module() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir -p repo/tests repo/lib/std");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/tests/scratch.smith", "pub fn made() -> i32:\n    return 1\n");
+    scratch::write(&p, "repo/lib/std/x_test.smith",
+                   "import scratch\n\npub fn one() -> i32:\n    return scratch.made()\n");
+    scratch::Run run = scratch::sh(
+        &p, "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+            "chmod +x $S && git -C repo init -q && git -C repo add -A && "
+            "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/all\" > all.tsv; "
+            "grep -c 'x_test.smith.pass' all.tsv; grep -c 'cannot find the module' all.tsv; "
+            "test ! -e repo/lib/scratch.smith && echo REPO_UNCHANGED");
+    scratch::expect_contains("frontend_coverage: the file compiles the import, the repository is as it was", run.out,
+                             "1\n0\nREPO_UNCHANGED\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
+
 // #3037: the files of the excluded list leave the denominator, and the list cannot hide progress or rot.
 export void test_frontend_coverage_excluded_files_leave_the_total() {
     scratch::Project p = scratch::make("p", nullptr);
