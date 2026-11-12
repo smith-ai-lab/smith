@@ -665,7 +665,7 @@ static void print_name_lines() {
 
 // The files that leave the denominator (#3037): `scripts/frontend_coverage/excluded.txt` (SMITH_COVERAGE_EXCLUDED
 // names another list), read from the repository the count runs in. A line is `path TAB reason`; the reason is
-// `error-fixture` or `old-form: <form>`; blank lines and lines starting with `#` are skipped.
+// `error-fixture`, `tool-fixture`, `removed-form` or `old-form: <form>`; blank lines and `#` lines are skipped.
 constexpr const char *excluded_default = "scripts/frontend_coverage/excluded.txt";
 constexpr Usize excluded_max = 1024;
 constexpr Usize reason_size = 96;
@@ -678,9 +678,9 @@ static Bool begins_with(const char text[:], const char prefix[:]) {
     return countof(text) >= countof(prefix) && same(text[0:countof(prefix)], prefix);
 }
 
-// Whether `reason` is one of the fixed set: `error-fixture`, or `old-form: ` and a form.
+// Whether `reason` is one of the fixed set: `error-fixture`, `tool-fixture`, `removed-form`, or `old-form: <form>`.
 static Bool valid_reason(const char reason[:]) {
-    if (same(reason, "error-fixture")) return true;
+    if (same(reason, "error-fixture") || same(reason, "tool-fixture") || same(reason, "removed-form")) return true;
     return begins_with(reason, "old-form: ") && countof(reason) > 10;
 }
 
@@ -689,7 +689,7 @@ static Bool excluded_line(const char line[:]) {
     if (tab == 0 || tab >= countof(line) || tab >= path_size || countof(line) - tab - 1 >= reason_size ||
         !valid_reason(line[tab + 1:countof(line)])) {
         console::print_error("frontend_coverage: error: the excluded list has a bad line: ", line,
-                             "\n  (write `path TAB error-fixture` or `path TAB old-form: <form>`)\n");
+                             "\n  (write `path TAB error-fixture`, `tool-fixture` or `removed-form`)\n");
         return false;
     }
     if (excluded_count == excluded_max) {
