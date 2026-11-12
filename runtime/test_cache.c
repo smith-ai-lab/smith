@@ -928,10 +928,36 @@ static void smith_tc_weigh(double *weight, size_t *served) {
         if (weight[i] < 0) weight[i] = mean;
 }
 
+// A hook for the test of the one deal (tests/test_runner_shard_test.smith): with SMITH_WEIGHS_FLIP=<file>, the file
+// counts the asks, and every second ask answers with other weights, as a store that changed between two asks would. A
+// build that asks twice and deals twice then deals twice differently. Returns whether it answered.
+static bool smith_tc_flip_weights(void) {
+    const char *file = getenv("SMITH_WEIGHS_FLIP");
+    if (file == nullptr || file[0] == '\0') return false;
+    long asked = 0;
+    FILE *in = fopen(file, "r");
+    if (in != nullptr) {
+        char text[32] = "";
+        if (fgets(text, sizeof text, in) != nullptr) asked = strtol(text, nullptr, 10);
+        fclose(in);
+    }
+    FILE *out = fopen(file, "w");
+    if (out != nullptr) {
+        fprintf(out, "%ld\n", asked + 1);
+        fclose(out);
+    }
+    if (asked % 2 == 0) return false;
+    printf("# flipped by SMITH_WEIGHS_FLIP\n");
+    for (size_t i = 0; i < smith_tc_test_count; i++) // bounded by the tests
+        printf("cpu\t%.3f\t%s\n", 1.0 + (double)((i * 7) % 5), smith_tc_tests[i].name);
+    return true;
+}
+
 static int smith_tc_weights_main(const char *names_file, int macos) {
     static double weight[smith_tc_tests_max];
     char here[PATH_MAX];
     smith_tc_load_names_file(names_file); // the file of the tests, one a line
+    if (smith_tc_flip_weights()) return 0;
     if (getcwd(here, sizeof here) == nullptr || !smith_tc_store_folder() || !smith_tc_last_run(macos) ||
         !smith_tc_open_project()) {
         printf("# no stored run to weigh by: every test weighs the same\n");
