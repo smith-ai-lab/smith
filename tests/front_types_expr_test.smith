@@ -560,14 +560,14 @@ export void test_front_types_expr_variants_are_typed_by_the_expected_type() {
     test::check_condition(types_expr::check(&r, variant("green"), color) == color);
     expect(r.error_count, 0);
     types_expr::check(&r, variant("purple"), color);
-    test::check_condition(
-        says(last(&r), "`Color` has no enumerator `purple`; write one of its enumerators, such as `.red`"));
-    types_expr::infer(&r, variant("none"));
-    test::check_condition(says(last(&r), "`.none` needs a type to say what it is; give the variable a type before `=`, "
-                                         "or pass it where a parameter has the type"));
+    test::check_condition(says(last(&r), "`.purple` is not a member of `Color` (`.red`, `.green`)"));
+    // With no expected type `.none` is a value of its own one-value type (#3237).
+    types::TypeRef none = types_expr::infer(&r, variant("none"));
+    test::check_condition(none != r.table.invalid && types::same_text(types::show(none), ".none"));
+    test::check_condition(none == types_expr::infer(&r, variant("none")));
     types_expr::check(&r, variant("none"), ty(&r, "U8"));
     test::check_condition(says(last(&r), "`.none` is not a value of `U8`; write a value of type `U8`"));
-    expect(r.error_count, 3);
+    expect(r.error_count, 2);
 }
 
 export void test_front_types_expr_lists_are_typed_by_the_expected_type() {
