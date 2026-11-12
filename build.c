@@ -453,8 +453,8 @@ static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *con
     return smith_cat(
         b,
         (const char *[]){"-std=c++17", config->optimize, "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
-                         smith_fmt(b, "-ffile-prefix-map=%s/smith=/smith-cache", cache),
-                         "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
+                         smith_fmt(b, "-ffile-prefix-map=%s/smith=/smith-cache", cache), "-D__STDC_CONSTANT_MACROS",
+                         "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
                          smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
         smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
         config->platform->deployment, smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),

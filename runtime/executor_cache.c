@@ -870,7 +870,8 @@ static bool smith_stepcache_pack_id(const char *real, char *value, size_t capaci
     if (snprintf(path, sizeof path, "%.*s/../lib/smith-clang.id", length, real) >= (int)sizeof path) return false;
     if (!smith_stepcache_read(path, text, sizeof text - 1, &got) || got == 0) return false;
     text[got] = '\0';
-    while (got > 0 && (text[got - 1] == '\n' || text[got - 1] == ' ')) text[--got] = '\0';
+    while (got > 0 && (text[got - 1] == '\n' || text[got - 1] == ' '))
+        text[--got] = '\0';
     int written = snprintf(value, capacity, "pack:%s:%lld", text, (long long)size);
     return written > 0 && (size_t)written < capacity;
 }
