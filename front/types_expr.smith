@@ -4095,6 +4095,15 @@ static Str unchanging_hint() {
            "`n = x`, and test `n`";
 }
 
+// The read of the value of an option that a `match` arm of it binds (#3211).
+static syntax::Edits arm_value_fix(types::Checked *c, const ast::Expr *e, types::TypeRef base) {
+    syntax::Edits none = {};
+    if (base->kind != .option || e->kind != .member || !same_text(e->kind.member.name, "some")) return none;
+    types::Guard *g = guard_of(c, e);
+    if (g == nullptr || countof(g->head) != 1) return none; // only a `match` arm's binding; a test is the fixer's
+    return guarded_read(c, e, false);
+}
+
 static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::TypeRef base, Bool arrow) {
     Bool through_pointer = base->kind == .pointer && types::element_of(base)->kind == .record;
     if (arrow && through_pointer) {
@@ -4129,6 +4138,7 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     syntax::Edits error_fix = {};
     if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "error"))
         error_fix = guarded_read(c, e, false);
+    syntax::Edits value_fix = arm_value_fix(c, e, base);
     if (base->kind == .enumeration && types::is_payload_enum(base)) {
         Str hint = "";
         if (!unchanging_name(c, e)) hint = unchanging_hint();
@@ -4144,6 +4154,8 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     } else if (countof(error_fix) > 0) {
         // `r.error` where a test or a `match` arm of `r` guards it: the binding `error` (#2611)
         types::fail_fix(c, e->span, msg(format::push("a `", found, "`'s error is read through a binding")), error_fix);
+    } else if (countof(value_fix) > 0) {
+        types::fail_fix(c, e->span, "a value that may be absent is read through its `match` arm's binding", value_fix);
     } else if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "ok")) {
         Str shown =
             msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));

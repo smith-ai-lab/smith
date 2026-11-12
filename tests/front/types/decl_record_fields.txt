@@ -1,0 +1,5 @@
+type Point: Point
+type Wide: Wide
+variable w: Wide
+variable p: Point
+error 104-105: expected Point, found Wide: the value has a field `z` that `Point` does not have; leave the field out of the value

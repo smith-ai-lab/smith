@@ -61,11 +61,20 @@ runs:
         # the solvers' answers of the smiths run inside the tests (#3174): the step store's folder `a`, in the tarball of
         # the test-result store (restored by ./.github/actions/test-cache)
         answers="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"
+        # the test results of the smith run by hand are answers in the same folder (#3177): `steps/a` of the cache, joined
+        # with the tests' own, so the tarball below holds both
+        byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps/a"
+        if [ -d "$byhand" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
         [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
         [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
-        n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f | wc -l || echo 0)
-        a=$( [ -d "$answers/a" ] && [ "$TESTS" = true ] && find "$answers/a" -type f | wc -l || echo 0)
+        # #3281: a Linux part publishes only what it added (newer than the mark `./.github/actions/test-cache` set after
+        # the restore; the hits count, a hit touches its entry); the whole file of main has the rest. No mark (the
+        # nightly restored nothing) or another OS: the whole store, as before.
+        mark="$RUNNER_TEMP/test-store-mark"; newer=()
+        if [ "$OS" = linux ] && [ -f "$mark" ]; then newer=(-newer "$mark"); fi
+        n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f ${newer[@]+"${newer[@]}"} | wc -l || echo 0)
+        a=$( [ -d "$answers/a" ] && [ "$TESTS" = true ] && find "$answers/a" -type f ${newer[@]+"${newer[@]}"} | wc -l || echo 0)
         n=$((n + a))
         # the import cache prunes itself (other identities unused for 14 days, then SMITH_IMPORT_CACHE_MAX)
         m=$( [ -d "$imports" ] && find "$imports" -type f -path '*/[hm]/*' | wc -l || echo 0)
@@ -73,8 +82,19 @@ runs:
         out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
         assets=("$out/smith-tests.sha")
         if [ "$n" -gt 0 ]; then
-          mkdir -p "$dir"; extra=(); [ "$a" -gt 0 ] && extra=(-C "${answers%/steps}" steps/a)
-          tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/smith-tests-$OS.tar.gz"; assets+=("$out/smith-tests-$OS.tar.gz")
+          mkdir -p "$dir"
+          if [ "${#newer[@]}" -gt 0 ]; then
+            # their own asset name (#3281): a release of additions is never read as a whole store
+            file="smith-tests-added-$OS.tar.gz"
+            (cd "$dir" && find . -type f -newer "$mark" | sed 's#^\./##') >"$out/list-tests"
+            (cd "${answers%/steps}" && [ -d steps/a ] && find steps/a -type f -newer "$mark") >"$out/list-steps" || : >"$out/list-steps"
+            tar -C "$dir" -c -T "$out/list-tests" -C "${answers%/steps}" -T "$out/list-steps" | gzip -1 >"$out/$file"
+          else
+            file="smith-tests-$OS.tar.gz"
+            extra=(); [ "$a" -gt 0 ] && extra=(-C "${answers%/steps}" steps/a)
+            tar -C "$dir" -c . ${extra[@]+"${extra[@]}"} | gzip -1 >"$out/$file"
+          fi
+          assets+=("$out/$file")
         fi
         if [ "$m" -gt 0 ]; then
           tar -C "$imports" -c . | gzip -1 >"$out/smith-imports-$OS.tar.gz"; assets+=("$out/smith-imports-$OS.tar.gz")

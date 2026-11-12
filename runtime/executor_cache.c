@@ -1642,14 +1642,42 @@ bool smith_stepcache_answer_get(const char *hex, char *out, size_t capacity, siz
     return used < capacity;
 }
 
-void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size) {
+// Writes all of `bytes` to the descriptor.
+static bool smith_stepcache_write_fd(int file, const char *bytes, size_t size) {
+    size_t done = 0;
+    for (size_t rounds = 0; done < size && rounds <= size; rounds++) { // bounded by the size
+        ssize_t put = write(file, bytes + done, size - done);
+        if (put < 0 && errno == EINTR) continue;
+        if (put <= 0) return false;
+        done += (size_t)put;
+    }
+    return done == size;
+}
+
+// The file of an answer, which may not be there yet; false when the store is off or `hex` is not 64 digits. For a
+// reader that maps the answer (runtime/import_cache.c), which touches the file itself.
+bool smith_stepcache_answer_file(const char *hex, char *path) {
+    return smith_stepcache_answer_path(path, hex);
+}
+
+// Stores an answer of two parts, the head and the body, written whole to a file beside it and renamed in.
+void smith_stepcache_answer_put_parts(const char *hex, const char *head, size_t head_size, const char *body,
+                                      size_t body_size) {
     char path[PATH_MAX];
     char temporary[PATH_MAX];
     if (!smith_stepcache_answer_path(path, hex)) return;
     int written =
         snprintf(temporary, sizeof temporary, "%s.%d.%lx", path, (int)getpid(), (unsigned long)(uintptr_t)temporary);
     if (written <= 0 || written >= (int)sizeof temporary || !smith_stepcache_make_parent(path)) return;
-    if (smith_stepcache_write(temporary, bytes, size) && rename(temporary, path) != 0) unlink(temporary);
+    int file = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    if (file < 0) return;
+    bool ok = smith_stepcache_write_fd(file, head, head_size) && smith_stepcache_write_fd(file, body, body_size);
+    ok = close(file) == 0 && ok;
+    if (!ok || rename(temporary, path) != 0) unlink(temporary);
+}
+
+void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size) {
+    smith_stepcache_answer_put_parts(hex, bytes, size, "", 0);
 }
 
 #ifdef SMITH_CORE

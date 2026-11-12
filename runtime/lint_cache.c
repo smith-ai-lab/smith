@@ -1,13 +1,14 @@
-// The cache of `smith lint` (issue #621, knowledge/caches.md): clang-tidy's result for one file, its output text and
-// exit status, kept under $XDG_CACHE_HOME/smith/lint and replayed when nothing it read has changed. Linked into smith
-// before runtime/verbs.c, which asks it about each file and runs clang-tidy only on a miss.
+// The cache of `smith lint` (issue #621, #3177, knowledge/caches.md): clang-tidy's result for one file, its output text
+// and exit status, kept as answers in the one store (runtime/executor_cache.c, `steps/a/`: its prune and cap) and
+// replayed when nothing it read has changed. Linked into smith before runtime/verbs.c, which asks it about each file
+// and runs clang-tidy only on a miss.
 //
 // Two levels, as a compiler cache with a manifest does. The FIRST key is the SHA-256 of what is known before the run:
 // the lint identity (the LLVM pack and the sources of smith's own checks, hashed by `smith build`; the binary's
 // build-id or LC_UUID when smith has none), the environment that moves a compile, the file's name and compile command,
-// and the chain of `.clang-tidy` files from its folder up to /. Under it, `m/<xx>/<key>` is the MANIFEST of the last
-// run: the files clang-tidy read (its own dependency file, written by a miss through `-Xclang -dependency-file`). The
-// SECOND key adds the content of those files, and `r/<xx>/<key>` holds the RESULT: the exit status and the output. A
+// and the chain of `.clang-tidy` files from its folder up to /. Under it is the MANIFEST of the last run: the files
+// clang-tidy read (its own dependency file, written by a miss through `-Xclang -dependency-file`). The SECOND key adds
+// the content of those files, and under it is the RESULT: the exit status and the output. A
 // .smith file's first key also holds the generated headers of the modules (.smith/include), which its imports read
 // without the preprocessor. So a header edited, a file edited, a
 // `.clang-tidy` edited or another smith make another key, and a hit needs no build and no object. The project's root is
@@ -16,6 +17,7 @@
 // run.
 #include "lint_cache.h"
 #include "core.h"
+#include "executor_cache.h"
 #include "mcp_unit.h"
 #include "package.h"
 #include "platform_linux.h"
@@ -31,10 +33,8 @@ constexpr size_t smith_lc_output_max = (size_t)1 << 20;
 constexpr size_t smith_lc_depth_max = 256; // folders from a file up to /
 constexpr size_t smith_lc_deps_max = (size_t)1 << 14;
 constexpr int64_t smith_lc_margin_ns = 20000000; // a file this close to the start of a run may have changed in it
-constexpr time_t smith_lc_touch_after = 86400;
-constexpr int smith_lc_temp_after = 86400;
 constexpr char smith_lc_root_word[] = "\x01R\x01";
-constexpr char smith_lc_header[] = "smith-lint-cache 1\n";
+constexpr char smith_lc_header[] = "smith-lint 2\n";
 
 // The digest of one file, made once for the run.
 typedef struct {
@@ -61,7 +61,6 @@ typedef struct {
     int64_t began; // the clock of the run, in ns: a file changed after it (less the margin) is not trusted
     char root[PATH_MAX];
     size_t root_length;
-    char folder[PATH_MAX];
     SmithSha256 base; // the parts of every key that do not depend on the file
     bool headers_made;
     bool headers_ok;                     // headers is the digest of the generated headers
@@ -448,14 +447,11 @@ static void smith_lc_add_environment(SmithSha256 *sha) {
     }
 }
 
-static bool smith_lc_make_folder(const char *path) {
-    return mkdir(path, 0777) == 0 || errno == EEXIST;
-}
-
 // The cache folders and the parts of the key that do not depend on the file. False: nothing is cached.
 #ifdef SMITH_CORE
 static const char *smith_lc_core_cache; // the units runner's cache folder and SMITH_LINT_CACHE: no setenv in a test
 static const char *smith_lc_core_setting;
+void smith_core_package_environment(bool given, const char *xdg, const char *home); // package.c
 #endif
 
 static bool smith_lc_start(void) {
@@ -468,19 +464,9 @@ static bool smith_lc_start(void) {
     SmithPackageFault error;
     char base[PATH_MAX];
     if (!smith_cache_base(base, &error) || getcwd(smith_lc.root, sizeof smith_lc.root) == nullptr) return false;
-#ifdef SMITH_CORE
-    if (smith_lc_core_cache != nullptr &&
-        snprintf(base, sizeof base, "%s/smith", smith_lc_core_cache) >= (int)sizeof base)
-        return false;
-#endif
-    int written = snprintf(smith_lc.folder, sizeof smith_lc.folder, "%s/lint", base);
-    if (written <= 0 || (size_t)written >= sizeof smith_lc.folder) return false;
     smith_lc.root_length = strlen(smith_lc.root);
     if (smith_lc.root_length < 2) return false; // a root of / would be replaced everywhere
-    char temporary[PATH_MAX];
-    if (!smith_package_make_folders(base) || !smith_lc_make_folder(smith_lc.folder) ||
-        !smith_cache_join(temporary, smith_lc.folder, "t", "") || !smith_lc_make_folder(temporary))
-        return false;
+    if (!smith_package_make_folders(base)) return false;
     char identity[2 * smith_platform_id_bytes + 1] = "";
     const char *lint_identity = smith_lc_lint_identity();
     if (lint_identity == nullptr) smith_platform_self_id(identity, sizeof identity);
@@ -512,30 +498,12 @@ static bool smith_lc_add_database(SmithSha256 *sha) {
 
 // ---- The entries
 
-static bool smith_lc_entry_path(char *out, char kind, const char *key, bool folder_only) {
-    int written = folder_only ? snprintf(out, PATH_MAX, "%s/%c/%.2s", smith_lc.folder, kind, key)
-                              : snprintf(out, PATH_MAX, "%s/%c/%.2s/%s", smith_lc.folder, kind, key, key + 2);
-    return written > 0 && written < PATH_MAX;
-}
-
-static void smith_lc_refresh(const char *path) {
-    struct stat info;
-    if (stat(path, &info) == 0 && time(nullptr) - info.st_mtime > smith_lc_touch_after)
-        utimensat(AT_FDCWD, path, nullptr, 0);
-}
-
 // Reads the manifest under the job's first key into the pool: one name per line, each ended by a 0 byte here.
 static void smith_lc_read_manifest(SmithLcJob *job) {
-    char path[PATH_MAX];
-    if (!smith_lc_entry_path(path, 'm', job->first, false)) return;
-    FILE *file = fopen(path, "rb");
-    if (file == nullptr) return;
     size_t room = smith_lc_manifests_max - smith_lc_manifests_used;
     char *text = smith_lc_manifests + smith_lc_manifests_used;
-    size_t size = fread(text, 1, room, file);
-    bool whole = feof(file) != 0;
-    fclose(file);
-    if (!whole || size == 0 || text[size - 1] != '\n') return;
+    size_t size = 0;
+    if (!smith_stepcache_answer_get(job->first, text, room, &size) || size == 0 || text[size - 1] != '\n') return;
     uint32_t count = 0;
     for (size_t i = 0; i < size; i++) { // bounded by the size
         if (text[i] != '\n') continue;
@@ -545,7 +513,6 @@ static void smith_lc_read_manifest(SmithLcJob *job) {
     smith_lc_manifests_used += size;
     job->deps = text;
     job->count = count;
-    smith_lc_refresh(path);
 }
 
 // The second key: the first and the content of what the manifest names.
@@ -625,16 +592,13 @@ static bool smith_lc_parse(const char *text, int *status, unsigned long long *si
 // log would be), false when it is not or is damaged.
 static bool smith_lc_replay_to(size_t number, int *status, FILE *out) {
     const SmithLcJob *job = &smith_lc_jobs[number];
-    char path[PATH_MAX];
-    if (!job->keyed || !smith_lc_entry_path(path, 'r', job->key, false)) return false;
-    FILE *file = fopen(path, "rb");
-    if (file == nullptr) {
+    size_t size = 0;
+    if (!job->keyed) return false;
+    if (!smith_stepcache_answer_get(job->key, smith_lc_entry, sizeof smith_lc_entry - 1, &size)) {
         smith_lc_why(job->first, "runs: no result for the content of the files it read (one of them changed)");
         return false;
     }
-    size_t size = fread(smith_lc_entry, 1, sizeof smith_lc_entry - 1, file);
-    bool whole = feof(file) != 0;
-    fclose(file);
+    bool whole = true;
     smith_lc_entry[size] = '\0';
     constexpr size_t prefix = sizeof smith_lc_header - 1;
     int code = 0;
@@ -649,7 +613,6 @@ static bool smith_lc_replay_to(size_t number, int *status, FILE *out) {
     if (swapped == SIZE_MAX) return false;
     fwrite(smith_lc_scratch, 1, swapped, out);
     fflush(out);
-    smith_lc_refresh(path);
     *status = code;
     return true;
 }
@@ -662,7 +625,9 @@ bool smith_lc_replay(size_t number, int *status) {
 
 // The dependency file a miss writes: <folder>/t/<pid>-<job>.d.
 static bool smith_lc_depfile(size_t number, char *out) {
-    int written = snprintf(out, PATH_MAX, "%s/t/%d-%zu.d", smith_lc.folder, (int)getpid(), number);
+    const char *temporary = getenv("TMPDIR");
+    int written = snprintf(out, PATH_MAX, "%s/smith-lint-%d-%zu.d",
+                           temporary != nullptr && temporary[0] == '/' ? temporary : "/tmp", (int)getpid(), number);
     return written > 0 && written < PATH_MAX;
 }
 
@@ -744,28 +709,6 @@ static bool smith_lc_settled(const char *text, size_t size) {
     return true;
 }
 
-// Writes a file whole to a temporary name and renames it: a lint in another worktree sees all of it or none.
-static void smith_lc_write(char kind, const char *key, const char *head, const char *body, size_t size) {
-    char folder[PATH_MAX];
-    char path[PATH_MAX];
-    char temp[PATH_MAX + 64];
-    char subfolder[PATH_MAX];
-    if (!smith_lc_entry_path(folder, kind, key, true) || !smith_lc_entry_path(path, kind, key, false)) return;
-    int base = snprintf(subfolder, sizeof subfolder, "%s/%c", smith_lc.folder, kind);
-    if (base <= 0 || (size_t)base >= sizeof subfolder || !smith_lc_make_folder(subfolder) ||
-        !smith_lc_make_folder(folder))
-        return;
-    int written = snprintf(temp, sizeof temp, "%s/.tmp-%d-%.8s", folder, (int)getpid(), key);
-    if (written <= 0 || (size_t)written >= sizeof temp) return;
-    int fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
-    if (fd < 0) return;
-    size_t head_size = strlen(head);
-    bool good = (head_size == 0 || write(fd, head, head_size) == (ssize_t)head_size) &&
-                (size == 0 || write(fd, body, size) == (ssize_t)size);
-    good = close(fd) == 0 && good;
-    if (!good || rename(temp, path) != 0) unlink(temp);
-}
-
 // Stores the result of a run that completed (exit status 0 or 1: a crash or a missing tool is not a result), from the
 // log the child wrote and the dependency file it left; always removes that file.
 void smith_lc_store(size_t number, int wait_status, FILE *log) {
@@ -799,8 +742,12 @@ void smith_lc_store(size_t number, int wait_status, FILE *log) {
         if (manifest[i] == '\0') manifest[i] = '\n';
     char head[96];
     snprintf(head, sizeof head, "%sstatus %d\nsize %zu\n", smith_lc_header, WEXITSTATUS(wait_status), swapped);
-    smith_lc_write('m', job->first, "", manifest, manifest_size);
-    smith_lc_write('r', key, head, smith_lc_scratch, swapped);
+    static char answer[smith_lc_output_max + 256];
+    smith_stepcache_answer_put(job->first, manifest, manifest_size);
+    int head_size = snprintf(answer, sizeof answer, "%s", head);
+    if (head_size <= 0 || (size_t)head_size + swapped > sizeof answer) return;
+    memcpy(answer + head_size, smith_lc_scratch, swapped);
+    smith_stepcache_answer_put(key, answer, (size_t)head_size + swapped);
 }
 
 // Reads "status <n>\nsize <n>" at the start of the text; header is the length of that.
@@ -818,50 +765,10 @@ static bool smith_lc_parse(const char *text, int *status, unsigned long long *si
     return true;
 }
 
-// ---- Keeping it small: the rule of the other caches (an entry unused for 31 days is removed, checked at most once a
-// week). A hit touches the entries it read when they are a day old.
-
-static void smith_lc_prune_folder(const char *folder, time_t now, bool temporary_folder) {
-    DIR *dir = opendir(folder);
-    if (dir == nullptr) return;
-    for (size_t i = 0; i < 1000000; i++) { // bounded by the entries
-        struct dirent *entry = readdir(dir);
-        if (entry == nullptr) break;
-        char path[PATH_MAX];
-        struct stat info;
-        if (entry->d_name[0] == '.' && (entry->d_name[1] == '\0' || entry->d_name[1] == '.')) continue;
-        if (!smith_cache_join(path, folder, entry->d_name, "") || lstat(path, &info) != 0 || !S_ISREG(info.st_mode))
-            continue;
-        bool temporary = entry->d_name[0] == '.' || temporary_folder;
-        if (smith_cache_older(&info, now, temporary ? smith_lc_temp_after : smith_cache_prune_after)) unlink(path);
-    }
-    closedir(dir);
-}
-
-// When the weekly check is due (lint/prune.timestamp missing or a week old): stamps it first, so a lint starting
-// meanwhile skips it, and removes the entries unused for 31 days. Otherwise one stat.
-static void smith_lc_prune(void) {
-    char marker[PATH_MAX];
-    struct stat info;
-    time_t now = time(nullptr);
-    if (!smith_cache_join(marker, smith_lc.folder, "prune.timestamp", "")) return;
-    if (stat(marker, &info) == 0 && !smith_cache_older(&info, now, smith_cache_prune_interval)) return;
-    if (!smith_cache_touch(marker)) return;
-    char temporary[PATH_MAX];
-    if (smith_cache_join(temporary, smith_lc.folder, "t", "")) smith_lc_prune_folder(temporary, now, true);
-    for (unsigned shard = 0; shard < 512; shard++) { // m/<xx> and r/<xx>: the first two digits of a key
-        char name[8];
-        char folder[PATH_MAX];
-        snprintf(name, sizeof name, "%c/%02x", shard < 256 ? 'm' : 'r', shard % 256);
-        if (smith_cache_join(folder, smith_lc.folder, name, "")) smith_lc_prune_folder(folder, now, false);
-    }
-}
-
 // Opens the cache for a run of `smith lint`; false (and nothing cached) when it is off (SMITH_LINT_CACHE=0) or cannot
 // be used.
 bool smith_lc_open(void) {
     smith_lc.enabled = smith_lc_start();
-    if (smith_lc.enabled) smith_lc_prune();
     return smith_lc.enabled;
 }
 
@@ -922,6 +829,7 @@ bool smith_core_lint_plan(const char *folder, const char *cache, const char *set
     }
     smith_lc_core_cache = cache;
     smith_lc_core_setting = setting;
+    smith_core_package_environment(cache != nullptr, cache, nullptr);
     smith_lc_reset();
     bool cached = smith_lc_open();
     smith_lc.began += (int64_t)2000000000; // the run starts after the files the test wrote, whatever their mtimes
@@ -938,6 +846,7 @@ bool smith_core_lint_plan(const char *folder, const char *cache, const char *set
     fclose(out);
     smith_lc_core_cache = nullptr;
     smith_lc_core_setting = nullptr;
+    smith_core_package_environment(false, nullptr, nullptr);
     bool back = fchdir(home) == 0;
     close(home);
     return back;

@@ -217,7 +217,7 @@ static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str n
     }
     Bool opaque = d->kind.record.opaque;
     Usize count = countof(d->kind.record.fields);
-    if (d->kind.record.is_union) return state::not_emitted("union", d->span);
+    Bool is_union = d->kind.record.is_union;
     Usize at = 0;
     c::LLVMTypeRef named = nullptr;
     if (find_record_named(e, name, &at)) {
@@ -244,7 +244,21 @@ static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str n
         mem::free(infos.data);
         return status;
     }
-    c::LLVMStructSetBody(named, field_types, (U32)count, 0);
+    if (is_union) {
+        // A union's members share the one array that sizes it; each is read in place (`overlay`).
+        state::Ty members[:] = mem::alloc_slice(state::Ty, count + 1);
+        for (Usize i = 0; i < count; i++)
+            members[i] = infos[i].ty;
+        Bool sized = state::union_body(e, named, members[0:count]);
+        mem::free(members.data);
+        if (!sized) {
+            mem::free(infos.data);
+            return state::not_emitted("union (no data layout to size it)", d->span);
+        }
+        e->records[at].overlay = true;
+    } else {
+        c::LLVMStructSetBody(named, field_types, (U32)count, 0);
+    }
     e->records[at].fields = infos[0:count];
     return state::success();
 }
@@ -936,6 +950,17 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
             record = inner;
         }
     }
+    if (record.kind == .variant_enum && e->options.checked != nullptr) {
+        // `x.op` where the checker narrowed the payload enumeration `x` by `x is .unary` (#3226): the payload is stored
+        // behind the tag, so its place is the second field.
+        types::TypeRef seen = types::type_of(e->options.checked, w->expr->kind.member.base);
+        state::Ty payload = {};
+        if (seen != nullptr && !types::is_payload_enum(seen) &&
+            matching::narrowed_variant(e, record, seen, w->span, &payload)) {
+            base.llvm = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 1, "payload");
+            record = payload;
+        }
+    }
     if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {
         // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
         c::LLVMValueRef first = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 0, "data");
@@ -1082,6 +1107,13 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
     return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name);
 }
 
+// C's `(T *)xs` of an array: the array's address is the address of its first element, then the pointer is cast.
+static state::Status array_cast_finish(state::Emitter *e, const state::ThenGeneral *w) {
+    state::Value place = state::pop_value(e);
+    state::push_value(e, (state::Value){.llvm = place.llvm, .ty = w->ty});
+    return state::success();
+}
+
 export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     if (x->kind != .cast) {
         return state::fail("not a cast", x->span);
@@ -1094,6 +1126,14 @@ export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hin
     }
     state::Hint hint = state::no_hint();
     if (operand->kind == .null_pointer) hint = state::hint_of(made.ok);
+    if (made.ok.kind == .pointer && is_lvalue(operand)) {
+        state::TyResult held = state::type_of_node(e, operand);
+        if (held == .ok && held.ok.kind == .array) {
+            state::push_then_general(e, (state::ThenGeneral){.run = array_cast_finish, .ty = made.ok, .span = x->span});
+            push_address(e, operand);
+            return state::success();
+        }
+    }
     Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
     state::push_then_general(e,
                              (state::ThenGeneral){.run = cast_finish, .ty = made.ok, .flag = checked, .span = x->span});

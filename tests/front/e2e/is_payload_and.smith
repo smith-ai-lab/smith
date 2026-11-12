@@ -1,0 +1,16 @@
+# `is` in an `and` chain: the right side sees the name narrowed to the payload (#3226).
+struct Circle:
+    radius: i32
+
+enum Shape:
+    circle: Circle
+    empty
+
+fn big_circle(s: Shape) -> bool:
+    return s is .circle and s.radius > 10
+
+pub fn check() -> i32:
+    if not big_circle(.circle(Circle(radius = 11))): return 1
+    if big_circle(.circle(Circle(radius = 2))): return 2
+    if big_circle(.empty): return 3
+    0

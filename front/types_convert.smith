@@ -82,6 +82,7 @@ export enum How {
     to_ok,
     array_to_slice,
     array_to_block,
+    record_from_fields,
     add_const,
     to_void_pointer,
     null_to_pointer,
@@ -410,6 +411,10 @@ static Verdict to_slice(const Ctx *c) {
 
 // A fixed array of arrays (`[4][2]T`) is a block `[,]T` of the same shape: the first `count` dimensions are its sizes.
 static Verdict to_block(const Ctx *c) {
+    if (c->from->kind == .slice)
+        return refuse(
+            c, "a list of lists and a block are different types: each row of a list has its own length and memory",
+            "build the block from the rows, or write the list's rows as a nested array [n, m]T");
     if (c->from->kind != .array) return no_rule(c);
     types::TypeRef inner = c->from;
     for (U64 i = 0; i < types::count_of(c->target_type); i++) {
@@ -418,6 +423,20 @@ static Verdict to_block(const Ctx *c) {
     }
     if (inner != types::element_of(c->target_type)) return needs_cast(c, "the elements are different types");
     return accept(array_to_block);
+}
+
+// A block's sizes are known at run time, an array's at compile time (#3255): the block does not go in, and an array of
+// another size says which sizes differ.
+static Verdict to_array(const Ctx *c) {
+    if (c->from->kind == .block)
+        return refuse(c, "the sizes of a block are known at run time and an array's at compile time",
+                      "check the sizes in the code, then copy the cells into an array");
+    if (c->from->kind != .array) return no_rule(c);
+    if (types::element_of(c->from) != types::element_of(c->target_type)) return no_rule(c);
+    return refuse(c,
+                  msg(format::push("the sizes differ: the value has ", types::count_of(c->from), ", the array wants ",
+                                   types::count_of(c->target_type))),
+                  "write an array of the wanted size");
 }
 
 static Verdict to_text(const Ctx *c) {
@@ -433,8 +452,8 @@ static Verdict to_text(const Ctx *c) {
 // ---------------------------------------------------------------------------------------------------------------
 // The entry points
 
-// A target that is not an option or a result: the rule by its kind.
-static Verdict by_target(const Ctx *c) {
+// A target that is not an option, a result or a record: the rule by its kind.
+static Verdict by_leaf_target(const Ctx *c) {
     const types::Ty *subject = c->target_type;
     if (subject->kind == .integer) return to_integer(c);
     if (subject->kind == .floating) return to_floating(c);
@@ -443,8 +462,64 @@ static Verdict by_target(const Ctx *c) {
     if (subject->kind == .pointer) return to_pointer(c);
     if (subject->kind == .slice) return to_slice(c);
     if (subject->kind == .block) return to_block(c);
+    if (subject->kind == .array) return to_array(c);
     if (subject->kind == .text) return to_text(c);
     return no_rule(c);
+}
+
+// The field of `fields` named `name`, or -1.
+static I64 field_named(types::Members fields, Str name) {
+    for (Usize i = 0; i < countof(fields.items); i++)
+        if (types::same_text(fields.items[i].name, name)) return (I64)i;
+    return -1;
+}
+
+// A record, or a tuple whose slots are written names, goes where a record with the same set of field names is wanted
+// and each field converts, a field with a default may be left out (#3255, #3246 item 25: a record type is only its set
+// of fields; the order does not matter).
+static Verdict to_record(const Ctx *c) {
+    const types::Ty *from = c->from;
+    if (from->kind != .tuple && from->kind != .record) return no_rule(c);
+    if (types::is_union_record(c->target_type) || !types::is_complete(c->target_type)) return no_rule(c);
+    if (from->kind == .record && (types::is_union_record(from) || !types::is_complete(from))) return no_rule(c);
+    types::Members have = types::slots_of(from);
+    types::Members want = types::slots_of(c->target_type);
+    if (from->kind == .tuple && (countof(have.items) == 0 || types::is_position(have.items[0].name))) return no_rule(c);
+    Str name = types::name_of(c->target_type);
+    for (Usize i = 0; i < countof(want.items); i++) {
+        if (field_named(have, want.items[i].name) >= 0 || want.items[i].default_value != nullptr) continue;
+        return refuse(c, msg(format::push("the field `", want.items[i].name, "` of `", name, "` is not in the value")),
+                      "write the field in the value");
+    }
+    for (Usize i = 0; i < countof(have.items); i++) {
+        if (field_named(want, have.items[i].name) >= 0) continue;
+        return refuse(
+            c, msg(format::push("the value has a field `", have.items[i].name, "` that `", name, "` does not have")),
+            "leave the field out of the value");
+    }
+    for (Usize i = 0; i < countof(want.items); i++) {
+        I64 at = field_named(have, want.items[i].name);
+        if (at < 0) continue; // left out, and it has a default
+        types::TypeRef given = have.items[(Usize)at].type;
+        Ctx field = *c;
+        field.from = given;
+        field.target_type = want.items[i].type;
+        field.shown = want.items[i].type;
+        // A field that is a record itself has to be of the same type: the rule does not recurse (nothing here may).
+        Verdict inner = given == want.items[i].type ? accept(identity) : by_leaf_target(&field);
+        if (inner.ok) continue;
+        return refuse(
+            c,
+            msg(format::push("the field `", want.items[i].name, "` of `", name, "` does not convert: ", inner.message)),
+            "write the field with the type of the record");
+    }
+    return accept(record_from_fields);
+}
+
+// A record is converted field by field (#3255); every other target by its kind.
+static Verdict by_target(const Ctx *c) {
+    if (c->target_type->kind == .record) return to_record(c);
+    return by_leaf_target(c);
 }
 
 // The source is an Option or a Result and the target is not that same type: absence and errors stay explicit.
@@ -537,6 +612,10 @@ static Verdict cast_pointer(const Ctx *c) {
             return dropped_const(c);
         return accept(cast);
     }
+    // C's `(T *)xs` of an array: the array decays to the address of its first element, then the pointer is cast.
+    if (from->kind == .array && to->kind == .pointer) return accept(cast);
+    if (from->kind == .text && to->kind == .pointer)
+        return refuse(c, "a Str is not a pointer to its characters", "write cstr.of(s) for the pointer C reads");
     if (from->kind == .pointer && pointer_wide(c, to)) return accept(cast);
     if (to->kind == .pointer && pointer_wide(c, from)) return accept(cast);
     return refuse(c, "a pointer and an integer cast only if the integer is as wide as a pointer", "cast through Usize");

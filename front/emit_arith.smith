@@ -13,6 +13,7 @@ module front::emit_arith;
 
 import front::ast;
 import front::emit_debug as debug;
+import front::emit_match;
 import front::emit_option;
 import front::emit_state as state;
 import front::types;
@@ -485,6 +486,12 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
         types::TypeRef seen = types::type_of(e->options.checked, x);
         if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value, local.ty.kind.option);
     }
+    if (local.ty.kind == .variant_enum && e->options.checked != nullptr) {
+        // A payload enumeration name the checker narrowed by `x is .v` has the variant's payload for its type (#3226).
+        types::TypeRef seen = types::type_of(e->options.checked, x);
+        if (seen != nullptr && !types::is_payload_enum(seen))
+            value = emit_match::narrowed_payload(e, value, seen, x->span);
+    }
     state::push_value(e, value);
     return state::success();
 }
@@ -622,7 +629,14 @@ static state::Status binary_middle(state::Emitter *e, const state::ThenExpr *w) 
     state::push_then_expr(e, (state::ThenExpr){.run = binary_finish, .expr = w->expr, .span = w->span});
     state::Ty wanted = left.ty;
     if (left.ty.kind == .pointer) state::scalar_type(e, "Usize", &wanted); // `p + 1`: the offset is a count
-    state::push_eval(e, w->expr->kind.binary.right, state::hint_of(wanted));
+    // `start + (if c: a else: b)`: the value's slot has the hint's type, so a hint of the left operand's type would
+    // narrow branches of a wider integer type. The checker's type of the value is its type, and the sum widens (#3215).
+    const ast::Expr *right = w->expr->kind.binary.right;
+    if (right->kind == .stmt_expr && left.ty.kind == .integer) {
+        state::TyResult typed = state::type_of_node(e, right);
+        if (typed != .error && typed.ok.kind == .integer) wanted = typed.ok;
+    }
+    state::push_eval(e, right, state::hint_of(wanted));
     return state::success();
 }
 

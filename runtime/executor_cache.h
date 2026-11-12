@@ -16,3 +16,8 @@ void smith_stepcache_prune(SmithExec *exec);
 bool smith_stepcache_answer_get(const char *hex, char *out, size_t capacity, size_t *size);
 
 void smith_stepcache_answer_put(const char *hex, const char *bytes, size_t size);
+
+bool smith_stepcache_answer_file(const char *hex, char *path);
+
+void smith_stepcache_answer_put_parts(const char *hex, const char *head, size_t head_size, const char *body,
+                                      size_t body_size);

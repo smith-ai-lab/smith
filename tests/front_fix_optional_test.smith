@@ -63,3 +63,39 @@ export void test_front_fix_optional_a_some_read_is_the_value() {
                                                    "        return b.v.some\n    0\n"))),
                as_str(format::push(box, "fn read(b: Box) -> i32:\n    if v := b.v:\n        return v\n    0\n")));
 }
+
+// A read of an option the checker cannot narrow is named first (#3211): a `mut` name under its test, a `match` arm, and
+// a Result's error where `error` is a local.
+export void test_front_fix_optional_a_mut_option_is_named_before_its_test_and_read() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_text(fixed_text("fn read() -> i32:\n    i: ?i32 = find(1)\n    mut j: ?i32 = .none\n    j = find(2)\n"
+                          "    if i != .none and j != .none:\n        return i + j.some\n    0\n"),
+               "fn read() -> i32:\n    i: ?i32 = find(1)\n    mut j: ?i32 = .none\n    j = find(2)\n"
+               "    j_value := j\n    if i != .none and j_value != .none:\n        return i + j_value\n    0\n");
+}
+
+export void test_front_fix_optional_a_match_arm_binds_the_option_value() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_text(fixed_text("fn read(n: ?i32) -> i32:\n    match n:\n        .some: n.some\n        .none: 0\n"),
+               "fn read(n: ?i32) -> i32:\n    match n:\n        .some(some): some\n        .none: 0\n");
+}
+
+export void test_front_fix_optional_an_error_read_binds_error_value_where_error_is_a_local() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_text(
+        fixed_text("struct Err:\n    code: i32\nfn failure(emitted: Result(i32, Err)) -> Err:\n"
+                   "    mut error: Err = Err(code = 0)\n    if emitted == .error:\n        error = emitted.error\n"
+                   "    error\n"),
+        "struct Err:\n    code: i32\nfn failure(emitted: Result(i32, Err)) -> Err:\n"
+        "    mut error: Err = Err(code = 0)\n    if .error(error_value) := emitted:\n"
+        "        error = error_value\n    error\n");
+}

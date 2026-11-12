@@ -588,6 +588,73 @@ static state::Status payload_test_finish(state::Emitter *e, const state::ThenExp
     return state::success();
 }
 
+// `x is T`, `x is not T`, `x is .v`, `x is not .v` (#3226): the operand, the variant's place in a payload enumeration
+// (`countof(slots)` when the operand is not one) and whether the test asks for a payload (`.some`, `.ok`, a type).
+static const ast::Expr *is_operand(state::Emitter *e, const ast::Expr *x, Usize *position, Bool *wants_some) {
+    if (!(x->kind == .binary) || e->options.checked == nullptr) return nullptr;
+    const ast::Expr *operand = x->kind.binary.left;
+    const ast::Expr *right = x->kind.binary.right;
+    types::TypeRef t = types::type_of(e->options.checked, operand);
+    if (t == nullptr) return nullptr;
+    types::TypeRef written = right->kind == .type_value ? types::type_of(e->options.checked, right) : nullptr;
+    Str name = "";
+    if (right->kind == .variant) name = right->kind.variant.name;
+    *position = 0;
+    if (types::is_payload_enum(t)) {
+        types::Slot items[:] = types::slots_of(t).items;
+        *position = countof(items);
+        for (Usize i = 0; i < countof(items); i++) {
+            if (written != nullptr ? items[i].type == written : state::same_text(items[i].name, name)) {
+                *position = i;
+                break;
+            }
+        }
+        return operand;
+    }
+    *wants_some = written != nullptr || state::same_text(name, "some") || state::same_text(name, "ok");
+    return operand;
+}
+
+// The operand is on the stack: a tag compare for a payload enumeration, an option or a Result; the constant the type
+// decides when the operand is not a union here (a name already narrowed to the variant's payload).
+static state::Status is_test_finish(state::Emitter *e, const state::ThenExpr *w) {
+    Usize position = 0;
+    Bool wants_some = false;
+    is_operand(e, w->expr, &position, &wants_some);
+    if (!(w->expr->kind == .binary)) return state::fail("not a type test", w->span);
+    Bool positive = w->expr->kind.binary.op == .is;
+    state::Value v = state::pop_value(e);
+    c::LLVMValueRef out = nullptr;
+    if (v.ty.kind == .variant_enum) {
+        c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, v.llvm, 0, "tag");
+        c::LLVMValueRef want = c::LLVMConstInt(c::LLVMTypeOf(tag), position, 0);
+        out = c::LLVMBuildICmp(e->builder, positive ? c::LLVMIntEQ : c::LLVMIntNE, tag, want, "");
+    } else if (v.ty.kind == .option || v.ty.kind == .result) {
+        c::LLVMValueRef tag = v.llvm;
+        if (!(v.ty.kind == .option && v.ty.kind.option.element->kind == .pointer)) // `?*T` is the pointer itself
+            tag = c::LLVMBuildExtractValue(e->builder, v.llvm, 0, "tag");
+        Bool same = positive == wants_some;     // `is .some` and `is not .none` ask for a payload
+        if (v.ty.kind == .result) same = !same; // a Result's tag is 0 for `.ok`, where an option's is 1 for `.some`
+        out = c::LLVMBuildICmp(e->builder, same ? c::LLVMIntNE : c::LLVMIntEQ, tag,
+                               c::LLVMConstNull(c::LLVMTypeOf(tag)), "");
+    } else {
+        out = c::LLVMConstInt(bool_type(e).llvm, positive ? 1 : 0, 0);
+    }
+    state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});
+    return state::success();
+}
+
+// `x is T` / `x is not T` over any operand the checker accepted (#3226): one compare of the tag.
+export state::Status type_test(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+    Usize position = 0;
+    Bool wants_some = false;
+    const ast::Expr *operand = is_operand(e, x, &position, &wants_some);
+    if (operand == nullptr) return state::fail("not yet supported: a type test without the checker's types", x->span);
+    state::push_then_expr(e, (state::ThenExpr){.run = is_test_finish, .expr = x, .span = x->span});
+    state::push_eval(e, operand, state::no_hint());
+    return state::success();
+}
+
 // `binary` with `less`, `greater`, `less_equal`, `greater_equal`, `equal` or `not_equal`: signed or unsigned by the
 // operands' type, a Bool (an `i1`) as the result.
 export state::Status comparison(state::Emitter *e, const ast::Expr *x, state::Hint _) {

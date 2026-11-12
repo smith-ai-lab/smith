@@ -81,26 +81,6 @@ static Bool find_keyed(state::Emitter *e, Str key, Usize *found) {
     return false;
 }
 
-// The body of an anonymous union: an array of integers as wide as the strictest alignment (at most 8 bytes), as big
-// as the biggest member rounded up to it. False without a data layout.
-static Bool union_body(state::Emitter *e, c::LLVMTypeRef named, const state::Ty fields[:]) {
-    if (e->target_data == nullptr) return false;
-    U64 size = 0;
-    U64 align = 1;
-    for (Usize i = 0; i < countof(fields); i++) {
-        U64 own = c::LLVMABISizeOfType(e->target_data, fields[i].llvm);
-        U64 own_align = (U64)c::LLVMABIAlignmentOfType(e->target_data, fields[i].llvm);
-        if (own > size) size = own;
-        if (own_align > align) align = own_align;
-    }
-    U64 unit = align > 8 ? 8 : align;
-    U64 rounded = (size + align - 1) / align * align;
-    c::LLVMTypeRef lanes[1] = {nullptr};
-    lanes[0] = c::LLVMArrayType2(c::LLVMIntTypeInContext(e->context, (U32)(unit * 8)), rounded / unit);
-    c::LLVMStructSetBody(named, lanes, 1, 0);
-    return true;
-}
-
 // The record of `fields` named `names`: the one already in the table under its key, else a new one.
 static state::TyResult made(state::Emitter *e, const Str *names, const state::Ty fields[:], Bool is_union,
                             ast::Span span) {
@@ -115,7 +95,7 @@ static state::TyResult made(state::Emitter *e, const Str *names, const state::Ty
     c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
     mem::free(label);
     if (is_union) {
-        if (!union_body(e, named, fields)) {
+        if (!state::union_body(e, named, fields)) {
             state::free_text(key);
             return state::ty_fail("not emitted yet: an anonymous union (no data layout to size it)", span);
         }

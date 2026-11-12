@@ -211,7 +211,7 @@ export void test_front_types_convert_arrays_slices_and_text() {
     refused(conv(&t, three, types::pointer_to(&t, int32, true)), "expected const I32 *", "found I32[3]", "&xs[0]");
     test::check_condition(is(conv(&t, three, three), types_convert::identity));
     refused(conv(&t, three, types::array_of(&t, int32, 4, false)), "expected I32[4]", "found I32[3]",
-            "write the value as the expected type");
+            "the sizes differ: the value has 3, the array wants 4");
     refused(conv(&t, three, types::slice_of(&t, named(&t, "I64"), false)), "expected I64[:]", "found I32[3]",
             "write a conversion: x.to(I64[:])");
     types::TypeRef chars = types::slice_of(&t, named(&t, "Char"), false);
@@ -319,6 +319,9 @@ export void test_front_types_convert_casts() {
     test::check_condition(cast_verdict(&t, readonly, plain).ok);
     test::check_condition(cast_verdict(&t, readonly, types::pointer_to(&t, byte, false)).ok);
     refused(cast_verdict(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
+    // C's `(T *)xs` of an array decays first; a Str is not its characters' address (cstr.of is).
+    test::check_condition(cast_verdict(&t, types::array_of(&t, byte, 8, false), plain).ok);
+    refused(cast_verdict(&t, t.text, plain), "expected I32 *", "found Str", "cstr.of(s)");
     refused(cast_verdict(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
     refused(cast_verdict(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
             "convert the parts one at a time");
