@@ -61,8 +61,11 @@ typedef struct {
     const char *why;
     size_t named_first; // its files in smith_rec_named: what its program was built from
     size_t named_count;
-    double cpu;  // seconds the test took when it was recorded, 0 when unknown
-    bool opened; // the record lists what the test opened (#739): a file it never opened is no input of it
+    double cpu;       // seconds the test took when it was recorded, 0 when unknown
+    bool opened;      // the record lists what the test opened (#739): a file it never opened is no input of it
+    size_t functions; // how many functions of smith it executed
+    uint64_t
+        digest; // of its fn, outside and input lines: what the executed functions were when it was recorded (#3387)
 } SmithRecResult;
 
 extern const char *smith_rec_named[smith_rec_named_max];
@@ -72,6 +75,9 @@ extern SmithRecResult smith_rec_results[smith_rec_records_max];
 extern size_t smith_rec_result_count;
 
 bool smith_rec_mentioned(const char *path);
+
+// The result of the record of test `name`, or nullptr when there is none (smith_rec_check_folder read the folder).
+const SmithRecResult *smith_rec_result_of(const char *name);
 
 size_t smith_rec_check_folder(const char *folder);
 
