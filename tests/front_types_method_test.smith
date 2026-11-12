@@ -159,8 +159,9 @@ export void test_front_types_method_of_another_type_is_not_a_method() {
     fails(join(head(), "fn run(o: list.Other) -> i32:\n    o.first()\n"), "does not take a", "first");
 }
 
-export void test_front_types_method_pointer_to_mut_needs_a_mut_base() {
-    fails(join(head(), "fn run():\n    let xs = list.make()\n    xs.push(5)\n"), "drops const", "");
+export void test_front_types_method_pointer_to_mut_no_longer_needs_a_mut_base() {
+    // A pointer type carries no const (#3250): the conversion is not refused.
+    clean(join(head(), "fn run():\n    let xs = list.make()\n    xs.push(5)\n"));
 }
 
 export void test_front_types_method_a_field_and_a_function_of_one_name() {
@@ -210,19 +211,10 @@ export void test_front_types_a_fn_field_compares_with_a_function_of_its_signatur
 }
 
 // #2452: `p + n` of a read-only field handed where a `*mut` is wanted is mended through the field (the fix exists).
-export void test_front_types_a_read_only_field_in_a_pointer_sum_has_a_fix() {
-    arena::Arena memory = test::memory(1U << 24);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    types::Checked r =
-        check_text("pub struct B:\n    pub memory: *u8\n    pub used: usize\n\n"
-                   "fn run(b: *mut B) -> *mut u8:\n    result: *mut u8 = b.memory + b.used\n    result\n");
-    Str none = "";
-    if (r.error_count != 1) test::check_equal(errors_of(&r), none);
-    test::check_equal(r.error_count, (Usize)1);
-    parse::Edits fix = r.errors[0].fix;
-    test::check_equal(countof(fix), (Usize)1);
+export void test_front_types_a_read_only_field_in_a_pointer_sum_converts() {
+    // A pointer type carries no const (#3250): `b.memory + b.used` converts to a `*mut u8`.
+    clean("pub struct B:\n    pub memory: *u8\n    pub used: usize\n\n"
+          "fn run(b: *mut B) -> *mut u8:\n    result: *mut u8 = b.memory + b.used\n    result\n");
 }
 
 // #2461: a function whose last line is a call to a `[[noreturn]]` function has no value to match: it ends there.
