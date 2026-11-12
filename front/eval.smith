@@ -1583,14 +1583,18 @@ static void arguments_step(Run *run, Step s, const types::Symbol *symbol, const 
                 msg(format::push("`", name, "` is a C function; only smith functions run at compile time")));
         return;
     }
-    Bool plain = countof(args) <= countof(params);
+    // A C-variadic function (`Bool within(...)`) takes more arguments than it has parameters, and its body cannot
+    // read them: they are not run, so a function name given to it (`effects::within(f, set)`) is plain.
+    Bool variadic = decl->kind.function.variadic;
+    Usize given_count = variadic && countof(args) > countof(params) ? countof(params) : countof(args);
+    Bool plain = variadic || countof(args) <= countof(params);
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *given = args[i];
         plain = plain && given->kind != .named_arg && given->kind != .expand;
     }
     for (Usize i = 0; i < countof(params); i++) {
         plain = plain && !params[i].is_rest && !params[i].is_pack && !params[i].is_gather;
-        plain = plain && (i < countof(args) || params[i].default_value != nullptr);
+        plain = plain && (i < given_count || params[i].default_value != nullptr);
     }
     if (!plain) {
         unknown(run, e->span,
@@ -1600,12 +1604,12 @@ static void arguments_step(Run *run, Step s, const types::Symbol *symbol, const 
     }
     Str module = module_of(symbol->name, s.prefix);
     push_step(run, later(s, 3));
-    for (Usize i = countof(params); i > countof(args); i--) {
+    for (Usize i = countof(params); i > given_count; i--) {
         Step given = expr_step(params[i - 1].default_value, s);
         given.prefix = module;
         push_step(run, given);
     }
-    for (Usize i = countof(args); i > 0; i--)
+    for (Usize i = given_count; i > 0; i--)
         push_step(run, expr_step(args[i - 1], s));
 }
 

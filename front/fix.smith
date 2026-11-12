@@ -20,6 +20,7 @@
 module front::fix;
 
 import front::ast;
+import front::cimport;
 import front::header_table;
 import front::fix_zero;
 import front::parse as core;
@@ -280,6 +281,34 @@ static const ast::Module *load_header(Str header, Bool angled) {
     return header_table::read(header, angled, header_folder, joined);
 }
 
+static Bool contains_text(Str text, Str needle);
+
+// Whether the header lists `name` among what it does not import because it is a macro (`assert`, a function-like
+// macro; `errno`, an object-like one that is not a constant). The header table keeps declarations only, so the header
+// is read again with the same flags, and the reason clang's reader gave for each name it left out is read.
+static Bool header_skips_macro(Str header, Bool angled, Str name) {
+    Str empty = "";
+    const char *flags = empty.data;
+    const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
+    if (given != nullptr) flags = given;
+    Str given_text = as_str(format::push(flags));
+    Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n",
+                                     database_flags()));
+    Str terminated = as_str(format::push(joined));
+    Str file = as_str(format::push(header));
+    Str folder = as_str(format::push(header_folder));
+    arena::Arena memory = {};
+    cimport::Header got = cimport::read(&memory, file.data, !angled, folder.data, terminated.data);
+    if (countof(got.error) > 0) return false;
+    for (Usize i = 0; i < countof(got.not_imported); i++) {
+        cimport::NotImported skipped = got.not_imported[i];
+        if (!mem::equal(skipped.name, name)) continue;
+        // the reader's reasons for a macro: "a function-like macro", "not a constant: ..." (cimport.cpp, macros_of)
+        if (contains_text(skipped.reason, "macro") || contains_text(skipped.reason, "not a constant")) return true;
+    }
+    return false;
+}
+
 // The libc headers a name used as `c.name` may come from, most specific first (#2627): the file never imports the
 // header (C reached it through another header's includes), so the fix adds `import c <h>` and the next pass writes
 // `h.name`.
@@ -304,8 +333,6 @@ static Str undeclared_c_name(Str message) {
         end += 1;
     return message[countof(lead):end];
 }
-
-static Bool contains_text(Str text, Str needle);
 
 // The name in "`T` has no method `printf`; write a function ...": empty for another message.
 static Str no_method_name(Str message) {
@@ -348,6 +375,47 @@ static core::Errors c_shadow_fixes(Str source, const types::Checked *checked) {
             core::ParseError fix_error = {};
             fix_error.span = at;
             fix_error.message = "a local named `c` hides the C namespace";
+            fix_error.fix = edits;
+            out[countof(out) - 1] = fix_error;
+            break;
+        }
+    }
+    return out;
+}
+
+// A name of a header the file imports that is no function or variable of it (a macro: `c.assert(..)`, `c.errno`), or
+// that a quoted header of the file declares, keeps `c.` after the checker's own fix (#3213): the header is looked for
+// first among the headers the file imports, and the `c` becomes its binding, `assert.assert(..)`.
+static core::Errors c_import_use_fixes(Str source, const ast::Module *module, const types::Checked *checked) {
+    core::Errors out = {};
+    for (Usize i = 0; i < checked->error_count; i++) {
+        types::Error e = checked->errors[i];
+        Str name = undeclared_c_name(e.message);
+        if (countof(name) == 0 || e.span.end <= e.span.start + 2) continue;
+        if (source[e.span.start] != 'c' || source[e.span.start + 1] != '.') continue;
+        for (Usize k = 0; k < countof(module->decls); k++) {
+            const ast::Decl *d = module->decls[k];
+            if (d->kind != .import_c || countof(d->kind.import_c.alias) > 0) continue;
+            Str language = "c";
+            if (!mem::equal(d->kind.import_c.language, language)) continue;
+            Str header = d->kind.import_c.header;
+            Bool angled = d->kind.import_c.angled;
+            const ast::Module *found = load_header(header, angled);
+            if (found == nullptr) continue;
+            if (!header_declares(found, name) && !header_skips_macro(header, angled, name)) continue;
+            Usize stem = 0;
+            for (Usize m = 0; m < countof(header); m++)
+                if (header[m] == '/') stem = m + 1;
+            if (countof(header) < stem + 3) continue;
+            Str space = header[stem:countof(header) - 2];
+            ast::Span at = {.start = e.span.start, .end = e.span.start + 1};
+            core::Edits edits = {};
+            edits = mem::realloc(edits, 1);
+            edits[0] = (core::Edit){.span = at, .text = space};
+            out = mem::realloc(out, countof(out) + 1);
+            core::ParseError fix_error = {};
+            fix_error.span = at;
+            fix_error.message = "a C name is written with the name of its header";
             fix_error.fix = edits;
             out[countof(out) - 1] = fix_error;
             break;
@@ -834,6 +902,7 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     // a module named by its full path and a library read through its C header (#3077): the import the file lacks.
     out = append(out, import_fixes(source, module, &checked, loader));
     out = append(out, c_shadow_fixes(source, &checked));
+    out = append(out, c_import_use_fixes(source, module, &checked));
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     out = append(out, fix_zero::edits(source, module, &checked));
     // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.
