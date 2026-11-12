@@ -359,7 +359,9 @@ export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
         "echo c >LICENSE && echo d >.github/workflows/queue-heal.yml && git add -A && git commit -qm none && git tag "
         "none && "
         "echo e >x.c && git add -A && git commit -qm code && git tag code && "
-        "git checkout -q none && echo y >.github/workflows/ci.yml && git add -A && git commit -qm own && git tag own");
+        "git checkout -q none && echo y >.github/workflows/ci.yml && git add -A && git commit -qm own && git tag own "
+        "&& "
+        "git checkout -q -b notes && echo n >knowledge/b.md && git add -A && git commit -qm notes && git tag notes");
     scratch::expect_status("plan: the scratch repository is made", 0, &made);
     scratch::Run docs = scratch::sh(&p, "git checkout -q docs && smith check --plan --base base");
     scratch::expect_contains("plan: documentation only is scope docs", docs.out,
@@ -397,8 +399,16 @@ export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
     scratch::Run only_docs =
         scratch::sh(&p, "git checkout -q docs && env SMITH_OUTPUT=full smith check --changed --base base");
     scratch::expect_contains("plan: ... runs the docs check, and only it", only_docs.err, "smith check: docs ");
+    scratch::expect_contains("plan: ... and, for README.md, the tests of README.md and the skills (#3160)",
+                             only_docs.err, "smith check: test ");
     scratch::expect_contains(
         "plan: ... and names what the plan left out", only_docs.err,
+        "smith check: skipped by the plan (scope docs, documentation only): fmt, lint, prove, macos-lint, macos-tests, "
+        "and the other tests");
+    scratch::Run notes =
+        scratch::sh(&p, "git checkout -q notes && env SMITH_OUTPUT=full smith check --changed --base own");
+    scratch::expect_contains(
+        "plan: a change of knowledge/ alone runs no test", notes.err,
         "smith check: skipped by the plan (scope docs, documentation only): fmt, lint, test, prove");
     scratch::Run no_docs =
         scratch::sh(&p, "git checkout -q none && env SMITH_OUTPUT=full smith check --changed --base docs");
