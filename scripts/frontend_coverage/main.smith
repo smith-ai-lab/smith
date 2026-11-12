@@ -686,8 +686,9 @@ static Usize excluded_find(const char path[:]) {
 }
 
 // Takes the rows of the listed files out of the table, so the totals and the causes do not see them. A listed file
-// that is an error fixture and passes is an error (the front end no longer rejects it), and so is one whose compile
-// ended without a diagnostic, killed or crashed. An old-form file that passes is a warning that names the line to
+// that is an error fixture and passes is a failure that stays in the total (the front end does not reject it; one
+// `frontend-excluded-compiles:` line names it), and a fixture whose compile ended without a diagnostic, killed or
+// crashed, is an error. An old-form file that passes is a warning that names the line to
 // delete, and the file stays in the total. Returns how many listed files the table had, or `excluded_count + 1`.
 static Usize apply_exclusions() {
     Usize kept = 0;
@@ -702,12 +703,16 @@ static Usize apply_exclusions() {
         Bool fixture = same(text_of(excluded_reason[k][0:reason_size]), "error-fixture");
         if (is_pass(&entries[i])) {
             if (fixture) {
-                console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
-                                     " is on the excluded list as an error fixture but compiles: the front end no "
-                                     "longer rejects it, which is a bug; fix the front end, and only if the file is "
-                                     "no longer a fixture take it out of ",
-                                     excluded_default, "\n");
-                return excluded_count + 1;
+                // A must-fail file that compiles is a miss of the front end, never a pass: one line names it, the
+                // row becomes a failure that stays in the total, and the count is still measured.
+                console::print("frontend-excluded-compiles: ", (const char *)entries[i].path, "\n");
+                copy_text(entries[i].stage[0:stage_size], "check");
+                copy_text(entries[i].message[0:message_size],
+                          "an error fixture compiles: the front end does not reject it");
+                copy_text(entries[i].position[0:position_size], "");
+                if (kept != i) entries[kept] = entries[i];
+                kept += 1;
+                continue;
             }
             // An old form that now compiles is progress, not a failure: the file stays in the total, as a pass.
             console::print_error("frontend_coverage: warning: ", (const char *)entries[i].path,
