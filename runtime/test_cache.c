@@ -395,6 +395,8 @@ static void smith_tc_feed_closure(SmithSha256 *sha, bool *runs_smith, bool *unca
 // one that differs (a function changed or gone, the test failed, a file it read changed) is stale, which keys the test
 // by the whole smith as before, until a coverage run writes the record again. A plain run never writes one.
 static bool smith_tc_records_read;
+static size_t smith_tc_runs_smith_count; // the tests keyed so far that run smith
+static size_t smith_tc_record_keyed;     // ... of which by a fresh record
 static char smith_tc_toolchain_hex[smith_sha256_hex_size];
 
 // Reads the records of the project (cwd is its root, smith_tc_open_project).
@@ -455,6 +457,7 @@ static bool smith_tc_key(SmithTcTest *test, const char **why) {
     if (uncached) *why = "its source reads the clock, the network, a file without files::, or asks to be uncached";
     if (found == 0 || uncached) return false;
     if (runs_smith) {
+        smith_tc_runs_smith_count++;
         if (smith_tc_self_hex[0] == '\0') {
             *why = "it runs smith and the smith under test (SMITH_SELF) cannot be read";
             return false;
@@ -464,6 +467,7 @@ static bool smith_tc_key(SmithTcTest *test, const char **why) {
             char digest[20];
             snprintf(digest, sizeof digest, "%016llx", (unsigned long long)record->digest);
             if (smith_tc_toolchain_hex[0] == '\0') smith_tc_toolchain_digest();
+            smith_tc_record_keyed++;
             smith_tc_feed(&sha, "record");
             smith_tc_feed(&sha, digest);
             smith_tc_feed(&sha, smith_tc_toolchain_hex);
@@ -793,6 +797,9 @@ static int smith_tc_check(const char *folder) {
         fprintf(stderr, "cache test-store: %zu of %zu (%zu%%)\n", hits, smith_tc_test_count,
                 hits * 100 / smith_tc_test_count);
     if (smith_tc_report) fprintf(stderr, "cache test-store: smith hashed whole %u times\n", smith_tc_self_hashed);
+    if (smith_tc_report)
+        fprintf(stderr, "cache test-store: records: %zu of %zu tests that run smith have a fresh record\n",
+                smith_tc_record_keyed, smith_tc_runs_smith_count);
     smith_tc_save_base();
     smith_tc_write_results(folder);
     return 0;
