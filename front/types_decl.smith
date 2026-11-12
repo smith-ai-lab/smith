@@ -1019,6 +1019,7 @@ static void block_statement(types::Checked *r, const ast::Stmt *s) {
 // The text that `smith lint --fix` mends, for the fixes that copy a part of it (`front::fix` sets it, #2503).
 export void set_source(Str source) {
     fixed_source = source;
+    types_convert::set_fixing(countof(source) > 0);
 }
 
 // Whether the statement always ends by leaving its block: it is a `return`, `break` or `continue`, or a block whose

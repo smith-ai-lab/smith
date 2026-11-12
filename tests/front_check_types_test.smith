@@ -12,6 +12,7 @@ import front::parse_stmt;
 import front::parse_type;
 import front::parser;
 import front::types;
+import front::types_convert;
 import front::types_decl;
 import std::arena;
 import std::mem;
@@ -289,6 +290,8 @@ export void test_front_check_types_a_member_of_a_cast_pointer_needs_no_arrow() {
 
 // `&x.inner` of a local handed where a `*mut Inner` is wanted: the error carries the fix that writes `mut x`.
 export void test_front_check_types_the_address_of_a_field_of_a_constant_local_has_a_mut_fix() {
+    types_convert::set_fixing(true); // the fixer's checker run (#3250)
+    defer types_convert::set_fixing(false);
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);

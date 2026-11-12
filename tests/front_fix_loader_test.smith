@@ -3,6 +3,7 @@
 module front_fix_loader_test;
 
 import front::fix;
+import front::types_convert;
 import std::arena;
 import std::files;
 import std::format;
@@ -428,4 +429,14 @@ export void test_front_fix_loader_an_instance_of_an_imported_generic_is_not_fixe
         check_text(got, "import front_fix_loader_instance_args\nfn f() -> i32:\n"
                         "    return front_fix_loader_instance_args.first(1, 2)\n");
     }
+}
+
+// #3250: the fixer's mode ends with its run, so a later check does not inherit it.
+export void test_front_fix_loader_the_fixing_mode_is_off_after_a_fixer_run() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)fixed_text("module m;\nstatic void f() {\n    g();\n}\n");
+    test::check_condition(!types_convert::is_fixing());
 }

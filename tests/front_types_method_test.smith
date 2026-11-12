@@ -12,6 +12,7 @@ import front::parse_stmt;
 import front::parse_type;
 import front::parser;
 import front::types;
+import front::types_convert;
 import front::types_decl;
 import std::arena;
 import std::mem;
@@ -160,6 +161,8 @@ export void test_front_types_method_of_another_type_is_not_a_method() {
 }
 
 export void test_front_types_method_pointer_to_mut_needs_a_mut_base() {
+    types_convert::set_fixing(true); // the fixer's checker run (#3250)
+    defer types_convert::set_fixing(false);
     fails(join(head(), "fn run():\n    let xs = list.make()\n    xs.push(5)\n"), "drops const", "");
 }
 
@@ -211,6 +214,8 @@ export void test_front_types_a_fn_field_compares_with_a_function_of_its_signatur
 
 // #2452: `p + n` of a read-only field handed where a `*mut` is wanted is mended through the field (the fix exists).
 export void test_front_types_a_read_only_field_in_a_pointer_sum_has_a_fix() {
+    types_convert::set_fixing(true); // the fixer's checker run (#3250)
+    defer types_convert::set_fixing(false);
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);

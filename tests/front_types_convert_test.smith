@@ -180,8 +180,9 @@ export void test_front_types_convert_pointers() {
     test::check_condition(is(conv(&t, plain, const_nothing), types_convert::to_void_pointer));
     test::check_condition(is(conv(&t, readonly, const_nothing), types_convert::to_void_pointer));
     test::check_condition(is(conv(&t, t.null_type, plain), types_convert::null_to_pointer));
-    refused(conv(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
-    refused(conv(&t, readonly, nothing), "expected Void *", "found const I32 *", "drops const");
+    // A pointer type carries no const (#3250): a pair differing only in const converts.
+    test::check_condition(is(conv(&t, readonly, plain), types_convert::add_const));
+    test::check_condition(is(conv(&t, readonly, nothing), types_convert::to_void_pointer));
     refused(conv(&t, nothing, plain), "expected I32 *", "found Void *", "write a conversion: x.cast(I32 *)");
     refused(conv(&t, plain, bytes), "expected U8 *", "found I32 *", "write a conversion: x.cast(U8 *)");
     refused(conv(&t, named(&t, "I32"), plain), "expected I32 *", "found I32", "write a conversion: x.cast(I32 *)");
@@ -201,7 +202,7 @@ export void test_front_types_convert_arrays_slices_and_text() {
     test::check_condition(is(conv(&t, three, xs), types_convert::array_to_slice));
     test::check_condition(is(conv(&t, three, read_xs), types_convert::array_to_slice));
     test::check_condition(is(conv(&t, xs, read_xs), types_convert::add_const));
-    refused(conv(&t, read_xs, xs), "expected I32[:]", "found const I32[:]", "drops const");
+    test::check_condition(is(conv(&t, read_xs, xs), types_convert::add_const));
     refused(conv(&t, xs, address), "expected I32 *", "found I32[:]", "&xs[0]");
     refused(conv(&t, three, address), "expected I32 *", "found I32[3]", "&xs[0]");
     refused(conv(&t, three, types::pointer_to(&t, int32, true)), "expected const I32 *", "found I32[3]", "&xs[0]");
@@ -312,9 +313,8 @@ export void test_front_types_convert_casts() {
     test::check_condition(cast_verdict(&t, plain, named(&t, "Usize")).ok);
     test::check_condition(cast_verdict(&t, named(&t, "U64"), plain).ok);
     test::check_condition(is(cast_verdict(&t, int32, types::option_of(&t, int32)), types_convert::to_some));
-    refused(cast_verdict(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
-    refused(cast_verdict(&t, readonly, types::pointer_to(&t, byte, false)), "expected U8 *", "found const I32 *",
-            "drops const");
+    test::check_condition(cast_verdict(&t, readonly, plain).ok);
+    test::check_condition(cast_verdict(&t, readonly, types::pointer_to(&t, byte, false)).ok);
     refused(cast_verdict(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
     refused(cast_verdict(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
     refused(cast_verdict(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
@@ -455,9 +455,26 @@ export void test_front_types_convert_string_literal_converts_to_const_char_point
     test::check_condition(is(conv_literal(&t, t.text, read_pointer), types_convert::literal_to_pointer));
     // The same Str as a value (a variable, a parameter, a slice): not NUL-terminated, so it needs cstr.of.
     refused(conv(&t, t.text, read_pointer), "expected const Char *", "found Str", "cstr.of(s)");
-    // The literal's characters are const.
-    refused(conv_literal(&t, t.text, write_pointer), "expected Char *", "found Str", "drops const");
+    // A pointer type carries no const (#3250), so a `Char *` target accepts the literal too.
+    test::check_condition(is(conv_literal(&t, t.text, write_pointer), types_convert::literal_to_pointer));
     // Only characters: a literal is no `const I32 *`.
     refused(conv_literal(&t, t.text, types::pointer_to(&t, named(&t, "I32"), true)), "expected const I32 *",
             "found Str", "no conversion");
+}
+
+// The fixer's checker still reports the refusal it learns `mut` from (#3250, until #3285): only while `set_fixing` is
+// on.
+export void test_front_types_convert_the_refusal_is_kept_while_the_fixer_runs() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = named(&t, "I32");
+    types::TypeRef plain = types::pointer_to(&t, int32, false);
+    types::TypeRef readonly = types::pointer_to(&t, int32, true);
+    types_convert::set_fixing(true);
+    refused(conv(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
+    types_convert::set_fixing(false);
+    test::check_condition(is(conv(&t, readonly, plain), types_convert::add_const));
 }
