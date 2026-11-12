@@ -1549,7 +1549,50 @@ static types::TypeRef unary_address(types::Checked *c, const ast::Expr *e, const
     return types::pointer_to(&c->table, t, constant);
 }
 
-static types::TypeRef unary_dereference(types::Checked *c, const ast::Expr *e, types::TypeRef t) {
+// The name `*x` (`x.*`) is written on, when `x` is a single name that holds a value (not a pointer).
+static const types::Symbol *value_name(const types::Checked *c, const ast::Expr *operand, types::TypeRef t) {
+    if (t->kind == .pointer || operand->kind != .name || countof(operand->kind.name.path.segments) != 1) return nullptr;
+    const types::Symbol *s = types::lookup_path(&c->scopes, operand->kind.name.path);
+    if (s == nullptr || s->kind != .variable) return nullptr;
+    return s;
+}
+
+// The fix of `x.*` on a value (#3251): the `.*` goes, and the name of a loop that was not `mut` becomes `for mut x in`.
+// Mutation never needs a pointer: a `mut` name is changed in place (#3235 item 41).
+static syntax::Edits deref_fix(const types::Symbol *s, const ast::Expr *e, const ast::Expr *operand) {
+    syntax::Edits edits = {};
+    Bool mend_loop = s->is_const && s->loop_name && s->at.end > s->at.start;
+    if (e->span.start != operand->span.start || e->span.end < operand->span.end + 2) return edits;
+    if (s->is_const && !mend_loop) return edits;
+    edits = mem::realloc(edits, mend_loop ? 2 : 1);
+    Str nothing = "";
+    edits[0] = (syntax::Edit){.span = {.start = operand->span.end, .end = e->span.end}, .text = nothing};
+    if (mend_loop) {
+        Str word = "mut ";
+        edits[1] = (syntax::Edit){.span = {.start = s->at.start, .end = s->at.start}, .text = word};
+    }
+    return edits;
+}
+
+static types::TypeRef unary_dereference(types::Checked *c, const ast::Expr *e, const ast::Expr *operand,
+                                        types::TypeRef t) {
+    const types::Symbol *held = value_name(c, operand, t);
+    if (held != nullptr && !held->is_const) {
+        Str name = held->name;
+        types::fail_fix(
+            c, e->span,
+            types::message_of(format::push("`", name, "` is a value, not a pointer; write `", name,
+                                           "` where you wrote `*", name, "` (a `mut` name is changed in place)")),
+            deref_fix(held, e, operand));
+        return invalid(c);
+    }
+    if (held != nullptr && held->loop_name) {
+        types::fail_fix(c, e->span,
+                        types::message_of(format::push("`*` needs a pointer, found `", types::show(t),
+                                                       "`; write a pointer such as `", types::show(t), " *`")),
+                        deref_fix(held, e, operand));
+        return invalid(c);
+    }
     if (t->kind != .pointer) {
         types::failf(c, e->span, "`*` needs a pointer, found `", types::show(t), "`; write a pointer such as `",
                      types::show(t), " *`");
@@ -1588,7 +1631,7 @@ static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::Una
         return unary_address(c, e, operand, t);
     }
     if (op == .dereference) {
-        return unary_dereference(c, e, t);
+        return unary_dereference(c, e, operand, t);
     }
     if (op == .negate || op == .plus || op == .logical_not || op == .bit_not) {
         return unary_value(c, e, op, t);
@@ -3478,6 +3521,10 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
             parts[i] = base.segments[i];
         parts[count] = (ast::Identifier){.text = callee->kind.member.name, .span = callee->span};
         path = (ast::Path){.segments = parts[0:count + 1], .span = callee->span};
+    } else if (callee->kind == .call || callee->kind == .type_value) {
+        // `maybe(usize)(some = v)`: the callee is a type a type function made, recorded by `made_callee` (#3229)
+        types::TypeRef made = types::type_of(c, callee);
+        return made != nullptr && types::is_made(c, made) ? made : nullptr;
     } else {
         return nullptr;
     }
@@ -4355,7 +4402,7 @@ static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t)
     if (t == bad || t == c->table.automatic || countable(t)) {
         return;
     }
-    types::failf(c, e->span, "countof takes an array or a slice, found `", types::show(t),
+    types::failf(c, e->span, "countof takes an array, a slice or a pack, found `", types::show(t),
                  "`; write the name of an array or a slice");
     poison(c, e);
 }
@@ -6129,10 +6176,12 @@ static Bool has_auto_param(ast::Param params[:]) {
 // The tuple type a typed pack (`nums: i32...`) expects for its leftover arguments: every element of the written type,
 // so each argument is checked against it like any argument (an implicit conversion, else an error at the argument).
 // Null for a pack with no written type or a concept (`nums: int...`), whose elements keep their own types.
-static types::TypeRef pack_expected(types::Checked *c, const ast::Param *pack, const ast::Expr *tuple) {
+static types::TypeRef pack_expected(types::Checked *c, const ast::Param *pack, const ast::Expr *tuple,
+                                    ast::Param generics[:]) {
     if (pack->type == nullptr || pack->type->kind == .auto_type || countof(types::written_concept(pack->type)) > 0) {
         return nullptr;
     }
+    if (countof(generics) > 0) return nullptr; // `nums: T...`: the type is a generic, `bind_pack_elements` checks it
     if (!(tuple->kind == .tuple_lit)) return nullptr;
     types::TypeRef element = resolve_written(c, pack->type);
     types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(tuple->kind.tuple_lit.items));
@@ -6167,7 +6216,9 @@ static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol
             }
             continue;
         }
-        types::TypeRef wanted = params[i - 1].is_pack ? pack_expected(c, &params[i - 1], arg) : nullptr;
+        types::TypeRef wanted = params[i - 1].is_pack
+                                    ? pack_expected(c, &params[i - 1], arg, template->decl->kind.function.generics)
+                                    : nullptr;
         push(w, arg, wanted, 0);
     }
 }
@@ -6212,6 +6263,29 @@ static Bool pin_first(types::Checked *c, const ast::Expr *e, ast::Param generics
     return true;
 }
 
+// The elements of a typed pack (`nums: T...`) each have the pack's written type: a generic it names and no other
+// parameter bound takes the type of the first element, and an element of another type is the error.
+static Bool bind_pack_elements(types::Checked *c, ast::Param params[:], ast::ExprRef args[:], ast::Param generics[:],
+                               types::Binding bound[:], Bool set[:]) {
+    for (Usize i = 0; i < countof(params) && i < countof(args); i++) {
+        const ast::Expr *tuple = argument_value(args[i]);
+        if (!params[i].is_pack || params[i].type == nullptr || !(tuple->kind == .tuple_lit)) continue;
+        ast::ExprRef items[:] = tuple->kind.tuple_lit.items;
+        for (Usize k = 0; k < countof(items); k++) {
+            types::TypeRef t = typ(c, items[k]);
+            if (t == invalid(c)) return false;
+            types::Unified clash = {};
+            const ast::Expr *item = items[k];
+            Bool literal = item->kind == .integer || item->kind == .floating;
+            if (types::unify_generics(generics, params[i].type, t, bound, set, !literal, &clash)) continue;
+            types::failf(c, items[k]->span, "argument ", i + k + 1, " is `", types::show(t), "`, but `", params[i].name,
+                         "...` collects `", types::show(clash.before), "`");
+            return false;
+        }
+    }
+    return true;
+}
+
 // Binds the generics from the arguments' types, the literals in a second pass. False, with the error, on a clash.
 static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const types::Symbol *template,
                                 types::Binding bound[:], Bool set[:]) {
@@ -6222,6 +6296,7 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
     types::Unified clash = {};
     for (Usize pass = 0; pass < 2; pass++) {
         for (Usize i = 0; i < countof(params); i++) {
+            if (params[i].is_pack) continue; // the pack takes what the other parameters left: `bind_pack_elements`
             const ast::Expr *arg = argument_value(args[i]);
             Bool literal = arg->kind == .integer || arg->kind == .floating;
             if (literal != (pass == 1)) continue;
@@ -6336,17 +6411,10 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     ast::Param params[:] = template->decl->kind.function.params;
     ast::Param generics[:] = template->decl->kind.function.generics;
     ast::ExprRef args[:] = e->kind.call.args;
-    for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].is_pack || params[i].is_gather) {
-            types::failf(c, params[i].span, "not yet: `", template->name,
-                         "` has both bracketed generics and rest parameters");
-            poison(c, e);
-            return;
-        }
-    }
     types::Binding bound[:] = mem::alloc_slice(types::Binding, countof(generics));
     Bool set[:] = mem::alloc_slice(Bool, countof(generics));
-    if (!pin_first(c, e, generics, bound, set) || !bind_from_arguments(c, e, template, bound, set)) {
+    if (!pin_first(c, e, generics, bound, set) || !bind_from_arguments(c, e, template, bound, set) ||
+        !bind_pack_elements(c, params, args, generics, bound, set)) {
         poison(c, e);
         return;
     }
@@ -6893,6 +6961,7 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
 }
 
 static Bool computed_call(types::Checked *c, Frame f);
+static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee);
 
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -6930,13 +6999,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
+    ast::ExprRef given[:] = e->kind.call.args;
+    if (made_callee_failed(c, e, callee)) return;
+    types::TypeRef record = constructed_call(c, callee, given);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
     }
     types::TypeRef enumeration = nullptr;
-    const ast::Expr *variant = enum_variant_call(c, e->span, callee, e->kind.call.args, &enumeration);
+    const ast::Expr *variant = enum_variant_call(c, e->span, callee, given, &enumeration);
     if (variant != nullptr) {
         push_frame(w, make_frame(e, f.expected, 11, nullptr, 0, "", variant));
         push(w, variant, enumeration, 0);
@@ -6947,7 +7018,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         push(w, callee->kind.member.base, nullptr, 0);
         return;
     }
-    ast::ExprRef args[:] = e->kind.call.args;
+    ast::ExprRef args[:] = given;
     builtins::Entry builtin = {};
     if (builtins::call_entry(c, e, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
@@ -7059,15 +7130,49 @@ static Bool computed_comparison(types::Checked *c, Frame f) {
 }
 
 // A call of a concept, a function over types the compiler answers (`small(u32)`, #3039). True when `f.node` is one.
-static Bool computed_call(types::Checked *c, Frame f) {
-    const ast::Expr *e = f.node;
-    if (e->kind != .call) return false;
+static const types::Symbol *called_function(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .call) return nullptr;
     ast::Path path = {};
     types::Names names = types::member_names(e->kind.call.callee);
     const types::Symbol *callee = nullptr;
     if (types::name_path(e->kind.call.callee, &path)) callee = types::type_through_modules(c, path);
     if (callee == nullptr && names.count >= 2) callee = types::through_modules(c, &names).symbol;
-    if (callee == nullptr || callee->kind != .function_symbol || callee->decl == nullptr) return false;
+    if (callee == nullptr || callee->kind != .function_symbol || callee->decl == nullptr) return nullptr;
+    return callee;
+}
+
+// The type a call of a type function makes (`maybe(usize)`) when it stands as the callee of another call, which then
+// builds a value of it (#3229); null when `callee` is no such call. The invalid type, after an error.
+static types::TypeRef made_callee(types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind == .type_value) { // `Maybe(usize)(some = v)`: the parser read the capitalized callee as a type
+        const ast::TypeExpr *written = callee->kind.type_value.type;
+        if (written == nullptr || written->kind != .applied) return nullptr;
+        types::TypeRef made = types::resolve(c, written);
+        if (made == nullptr || made == c->table.invalid || !types::is_made(c, made)) return nullptr;
+        types::set_type(c, callee, made);
+        return made;
+    }
+    if (callee->kind != .call) return nullptr;
+    const types::Symbol *function = called_function(c, callee);
+    if (function == nullptr || !eval::returns_type(function->decl)) return nullptr;
+    types::TypeRef held = eval::held_for(c, callee);
+    if (held == nullptr || held == c->table.invalid || !types::is_made(c, held)) return held;
+    types::set_type(c, callee, held);
+    return held;
+}
+
+// Whether the callee is a type a type function made that could not be computed: the call is poisoned (#3229).
+static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee) {
+    if (made_callee(c, callee) != c->table.invalid) return false;
+    poison(c, call);
+    return true;
+}
+
+static Bool computed_call(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .call) return false;
+    const types::Symbol *callee = called_function(c, e);
+    if (callee == nullptr) return false;
     if (eval::returns_type(callee->decl)) {
         // a type function (`widen(T)`): the call is the type it makes, and has no run-time form
         types::TypeRef held = eval::held_for(c, e);

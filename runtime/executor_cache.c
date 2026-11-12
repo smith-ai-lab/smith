@@ -857,6 +857,25 @@ static bool smith_stepcache_running(char out[PATH_MAX]) {
 #endif
 }
 
+// A program of the LLVM pack (<pack>/bin/clang-23, which has no build-id) is the pack's identity, the text of
+// <pack>/lib/smith-clang.id, and the program's size: the pack's path and the time it was extracted differ on every
+// machine, its contents do not (#3176, #3300). False for a program that has no such file beside it.
+static bool smith_stepcache_pack_id(const char *real, char *value, size_t capacity, off_t size) {
+    char path[PATH_MAX];
+    char text[256];
+    size_t got = 0;
+    const char *slash = strrchr(real, '/');
+    if (slash == nullptr) return false;
+    int length = (int)(slash - real);
+    if (snprintf(path, sizeof path, "%.*s/../lib/smith-clang.id", length, real) >= (int)sizeof path) return false;
+    if (!smith_stepcache_read(path, text, sizeof text - 1, &got) || got == 0) return false;
+    text[got] = '\0';
+    while (got > 0 && (text[got - 1] == '\n' || text[got - 1] == ' '))
+        text[--got] = '\0';
+    int written = snprintf(value, capacity, "pack:%s:%lld", text, (long long)size);
+    return written > 0 && (size_t)written < capacity;
+}
+
 // What a program is: its build-id (LC_UUID on macOS) when it has one, else its real path, size and time. Kept by name
 // and, for the running smith, by the kind of compile.
 static const char *smith_stepcache_program(const char *name, SmithCompileKind kind) {
@@ -888,6 +907,8 @@ static const char *smith_stepcache_program(const char *name, SmithCompileKind ki
         written = snprintf(value, sizeof cache->id_values[0], "self:%s", self);
     } else if (smith_platform_file_id(real, id)) {
         written = snprintf(value, sizeof cache->id_values[0], "id:%s", id);
+    } else if (smith_stepcache_pack_id(real, value, sizeof cache->id_values[0], info.st_size)) {
+        written = (int)strlen(value);
     } else {
         written = snprintf(value, sizeof cache->id_values[0], "file:%s:%lld:%lld", real, (long long)info.st_size,
                            (long long)smith_stepcache_mtime_of(&info));
