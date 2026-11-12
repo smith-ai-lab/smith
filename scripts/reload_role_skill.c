@@ -28,8 +28,10 @@ static bool transcript_path(const char *input, char *out, int size) {
     if (p == nullptr) return false;
     int n = 0;
     for (p++; *p != '"' && *p != '\0'; p++) {
-        if (*p == '\\' && (p[1] == '/' || p[1] == '\\')) p++;
-        else if (*p == '\\') return false;
+        if (*p == '\\' && (p[1] == '/' || p[1] == '\\'))
+            p++;
+        else if (*p == '\\')
+            return false;
         if (n + 1 >= size) return false;
         out[n++] = *p;
     }
@@ -63,7 +65,10 @@ static int loaded_role(FILE *file) {
             long at = last_match(buf, len, a);
             long at2 = last_match(buf, len, b);
             if (at2 > at) at = at2;
-            if (at >= 0 && base + at >= best_at) { best_at = base + at; best = r; }
+            if (at >= 0 && base + at >= best_at) {
+                best_at = base + at;
+                best = r;
+            }
         }
         kept = len < overlap ? len : overlap;
         memmove(buf, buf + len - kept, (size_t)kept);
@@ -86,15 +91,19 @@ int main(int argc, char **argv) {
     char skill[path_size];
     const char *dir = argc > 1 ? argv[1] : nullptr;
     const char *project = getenv("CLAUDE_PROJECT_DIR");
-    if (dir != nullptr) snprintf(skill, sizeof skill, "%s/%s/SKILL.md", dir, roles[role]);
-    else if (project != nullptr) snprintf(skill, sizeof skill, "%s/.claude/skills/%s/SKILL.md", project, roles[role]);
-    else snprintf(skill, sizeof skill, ".claude/skills/%s/SKILL.md", roles[role]);
+    if (dir != nullptr)
+        snprintf(skill, sizeof skill, "%s/%s/SKILL.md", dir, roles[role]);
+    else if (project != nullptr)
+        snprintf(skill, sizeof skill, "%s/.claude/skills/%s/SKILL.md", project, roles[role]);
+    else
+        snprintf(skill, sizeof skill, ".claude/skills/%s/SKILL.md", roles[role]);
     FILE *text = fopen(skill, "rb");
     if (text == nullptr) return 0;
     printf("Your role skill, reloaded after compaction:\n");
     char block[4096];
     size_t n;
-    while ((n = fread(block, 1, sizeof block, text)) > 0) fwrite(block, 1, n, stdout);
+    while ((n = fread(block, 1, sizeof block, text)) > 0)
+        fwrite(block, 1, n, stdout);
     fclose(text);
     return 0;
 }
