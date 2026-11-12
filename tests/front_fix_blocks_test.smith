@@ -4,9 +4,14 @@ module front_fix_blocks_test;
 import front::fix;
 import front::fix_blocks;
 import std::arena;
+import std::format;
 import std::mem;
 import std::slice;
 import std::test;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
 
 static void check(Str before, Str want) {
     test::check_equal(fix_blocks::convert(before), want);
@@ -231,4 +236,20 @@ export void test_front_fix_blocks_a_for_constexpr_with_an_unbraced_body_gets_its
           "        sum += rest[i - 1].to(i32) * i.to(i32)\n    return sum\n}\n",
           "fn f(rest...) -> i32:\n    mut sum: i32 = 0\n    for constexpr (usize i = countof(rest); i > 0; i--):\n"
           "        sum += rest[i - 1].to(i32) * i.to(i32)\n    return sum\n");
+}
+
+// A text with no `if` value to join is not copied line by line (#3365): `smith lint --fix` of the largest file of
+// front/ ran out of its 6 GB cap because `join_value_ifs` pushed every line to a copy of the text so far. 12288 lines
+// (about 500 KB) took 12288 copies of up to 500 KB there (3 GB); the arena below holds 64 MB (brackets are left out: an
+// arena copies at each `realloc`), which the few copies of the text that the rounds make fit in.
+export void test_front_fix_blocks_a_long_text_is_converted_in_memory_that_does_not_grow_with_its_lines() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = "first_value = other_value\nsecond_value = a_third_value\nthird = fourth_value + one_more_value\n";
+    for (Usize doubling = 0; doubling < 12; doubling++)
+        text = as_str(format::push(text, text));
+    Str out = fix_blocks::convert(text);
+    test::check(countof(out) > 0);
 }
