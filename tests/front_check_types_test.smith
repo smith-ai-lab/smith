@@ -300,3 +300,19 @@ export void test_front_check_types_the_address_of_a_field_of_a_constant_local_ha
     parse::Edits fix = r.errors[0].fix;
     test::check_equal(countof(fix), (Usize)1);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// static_assert of a call whose argument is a function (#3236)
+
+// A C-variadic function takes a function name past its parameters: the extra arguments are not run, so the call is
+// known at compile time.
+export void test_front_check_types_static_assert_runs_a_variadic_call_with_a_function_argument() {
+    clean("fn within(set: u32, ...) -> bool:\n    true\n\nfn leaf() -> i32:\n    0\n\nstatic_assert(within(1, leaf, "
+          "2))\n");
+}
+
+// A function with a pack parameter still passes its arguments in a way that is not run at compile time.
+export void test_front_check_types_static_assert_refuses_a_pack_parameter() {
+    fails("fn all(xs...) -> bool:\n    true\n\nstatic_assert(all(1, 2))\n",
+          "static_assert needs a condition known at compile time", "not run at compile time");
+}
