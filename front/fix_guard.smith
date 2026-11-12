@@ -719,6 +719,37 @@ static Bool line_leaves(Str source, Usize at) {
            starts_with(text, "c.__builtin_trap()");
 }
 
+// The fixes of the `match` of `name` at `head` whose error body is `source[body:after]` (the last line at `last`):
+// the arms with the names `bound` and `arm`, and the reads of `name.ok` below up to `block_end` (#3205).
+static core::Errors match_emit(core::Errors out, Str source, Usize head, Usize body, Usize after, Usize last, Str name,
+                               Str bound, Str arm, Usize block_end) {
+    Usize indent = indent_of(source, head);
+    Usize inner = indent_of(source, body);
+    Str why = "a Result whose error is handled where it is tested and whose value is read below: write a `match`";
+    Str pad = types::message_of(format::push(source[head:head + indent], "    "));
+    if (last == body && next_line(source, body) >= after) {
+        Str leave = source[body + inner:line_end(source, body)];
+        Str arms = types::message_of(format::push(bound, " := match ", name, ":\n", pad, ".ok(", arm, "): ", arm, "\n",
+                                                  pad, ".error(error): ", leave));
+        out = add_why(out, head + indent, line_end(source, body), arms, why);
+    } else { // a longer body is the arm's block, one level deeper
+        Str arms = types::message_of(
+            format::push(bound, " := match ", name, ":\n", pad, ".ok(", arm, "): ", arm, "\n", pad, ".error(error):"));
+        out = add_why(out, head + indent, line_end(source, head), arms, why);
+        for (Usize row = body; row < after; row = next_line(source, row)) {
+            if (!blank(source, row)) {
+                out = add_why(out, row, row, "    ", why);
+            }
+        }
+    }
+    Usize found = read_at(source[0:block_end], after, name);
+    while (found < block_end) {
+        out = add_why(out, found, found + countof(name) + 3, bound, why);
+        found = read_at(source[0:block_end], found + 1, name);
+    }
+    return out;
+}
+
 // The fixes that turn the test of `name`'s error above the read `name.ok` at `at` into a `match`, added to `out`.
 static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name) {
     Usize read_line = line_above(source, at + 1);
@@ -771,29 +802,7 @@ static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name
         block_end = next_line(source, block_end);
     if (block_end > countof(source)) block_end = countof(source);
     if (body_changes(source, after, block_end, name, "ok")) return out;
-    Str why = "a Result whose error is handled where it is tested and whose value is read below: write a `match`";
-    Str pad = types::message_of(format::push(source[head:head + indent], "    "));
-    if (last == body && next_line(source, body) >= after) {
-        Str leave = source[body + inner:line_end(source, body)];
-        Str arms = types::message_of(format::push(bound, " := match ", name, ":\n", pad, ".ok(", arm, "): ", arm, "\n",
-                                                  pad, ".error(error): ", leave));
-        out = add_why(out, head + indent, line_end(source, body), arms, why);
-    } else { // a longer body is the arm's block, one level deeper
-        Str arms = types::message_of(
-            format::push(bound, " := match ", name, ":\n", pad, ".ok(", arm, "): ", arm, "\n", pad, ".error(error):"));
-        out = add_why(out, head + indent, line_end(source, head), arms, why);
-        for (Usize row = body; row < after; row = next_line(source, row)) {
-            if (!blank(source, row)) {
-                out = add_why(out, row, row, "    ", why);
-            }
-        }
-    }
-    Usize found = read_at(source[0:block_end], after, name);
-    while (found < block_end) {
-        out = add_why(out, found, found + countof(name) + 3, bound, why);
-        found = read_at(source[0:block_end], found + 1, name);
-    }
-    return out;
+    return match_emit(out, source, head, body, after, last, name, bound, arm, block_end);
 }
 
 // A `match` of a Result whose error arm leaves and whose `ok` arm is empty, with the value read below it (#3205): the
@@ -809,25 +818,27 @@ static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name
 // Only these two arms in this order, a body that leaves on its last line and never mentions the result, and no write
 // to the result below. The binding is `ok`, or `ok_value` where `ok` is a name of the function.
 
-// The fixes that turn the `match` of `name` above the read `name.ok` at `at` into a binding, added to `out`.
-static core::Errors match_arm_edits(core::Errors out, Str source, Usize at, Str name) {
+// The line of `match name:` above the read at `at`, in a block that holds it, or `countof(source)`.
+static Usize match_head(Str source, Usize at, Str name, Usize start) {
     Usize read_line = line_above(source, at + 1);
     Str test = types::message_of(format::push("match ", name, ":"));
-    Usize start = function_start(source, at);
     Usize line = read_line;
     Usize floor = indent_of(source, read_line);
-    Usize head = countof(source);
     while (line > start) {
         line = line_above(source, line);
         if (blank(source, line)) continue;
         Usize indent = indent_of(source, line);
         if (indent > floor) continue;
         floor = indent;
-        if (same_str(source[line + indent:line_end(source, line)], test)) {
-            head = line;
-            break;
-        }
+        if (same_str(source[line + indent:line_end(source, line)], test)) return line;
     }
+    return countof(source);
+}
+
+// The fixes that turn the `match` of `name` above the read `name.ok` at `at` into a binding, added to `out`.
+static core::Errors match_arm_edits(core::Errors out, Str source, Usize at, Str name) {
+    Usize start = function_start(source, at);
+    Usize head = match_head(source, at, name, start);
     if (head == countof(source) || fixed_at(out, head + indent_of(source, head))) return out;
     Usize indent = indent_of(source, head);
     Usize arm = next_line(source, head);
