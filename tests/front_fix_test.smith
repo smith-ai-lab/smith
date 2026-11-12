@@ -3,6 +3,7 @@
 // `smith lint --fix` on the real parser applies nothing yet.
 module front_fix_test;
 
+import front::ast;
 import front::fix;
 import front::parse as syntax;
 import front::parser;
@@ -723,18 +724,44 @@ export void test_a_bare_c_function_becomes_the_header_binding() {
     check_count(fixed.applied, 1);
 }
 
-// A macro of a header the file imports keeps `c.` after the checker's fix: `assert` and `errno` are no functions of
-// their headers, and the `c` becomes the header's binding (#3213).
-export void test_a_macro_of_an_imported_header_becomes_the_header_binding() {
+static const ast::Module *load_contract(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    Str wanted = "std.contract";
+    if (!mem::equal(path, wanted)) return nullptr;
+    parser::Parsed p =
+        fix::parse_for_fix("lib.smith", "module std::contract;\nexport void assert(Bool condition) {}\n");
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+static void check_assert(Str before, Str after) {
     use_header_flags();
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    fix::Fixed fixed = fix::fix_text("t.smith", "import c <assert.h>\n\npub fn f():\n    c.assert(1 > 2)\n");
-    check_text(fixed.text, "import c <assert.h>\n\npub fn f():\n    assert.assert(1 > 2)\n");
+    fix::set_loader(load_contract);
+    defer fix::set_loader(nullptr);
+    fix::Fixed fixed = fix::fix_text("t.smith", before);
+    check_text(fixed.text, after);
 }
 
+// C's `assert(c)` is `contract.assert(c)` until the one `assert` exists: the file imports `std.contract` and loses
+// `import c <assert.h>`, which declares only the macro (#3343).
+export void test_c_assert_becomes_contract_assert_and_the_header_import_goes() {
+    check_assert("import c <assert.h>\n\npub fn f(n: i32):\n    c.assert(n > 0)\n",
+                 "import std.contract\npub fn f(n: i32):\n    contract.assert(n > 0)\n");
+}
+
+export void test_c_assert_keeps_the_import_of_contract_the_file_has() {
+    check_assert(
+        "import c <assert.h>\nimport std.contract\n\npub fn f(n: i32):\n    c.assert(n > 0)\n    c.assert(n < 9)\n",
+        "import std.contract\n\npub fn f(n: i32):\n    contract.assert(n > 0)\n    contract.assert(n < 9)\n");
+}
+
+// A macro of a header the file imports keeps `c.` after the checker's fix: `errno` is no function of its header, and
+// the `c` becomes the header's binding (#3213).
 export void test_errno_of_an_imported_header_becomes_the_header_binding() {
     use_header_flags();
     arena::Arena memory = test::memory(1U << 24);

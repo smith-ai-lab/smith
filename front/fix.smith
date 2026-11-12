@@ -404,6 +404,24 @@ static core::Errors c_import_use_fixes(Str source, const ast::Module *module, co
             const ast::Module *found = load_header(header, angled);
             if (found == nullptr) continue;
             if (!header_declares(found, name) && !header_skips_macro(header, angled, name)) continue;
+            Str assert_header = "assert.h";
+            Str assert_name = "assert";
+            if (mem::equal(header, assert_header) && mem::equal(name, assert_name)) {
+                // C's `assert(c)` is smith's `contract.assert(c)` until the one `assert` exists (#3343); the next pass
+                // imports `std.contract`, and `drop_assert_import` removes the header's import.
+                Str library = "contract";
+                ast::Span first = {.start = e.span.start, .end = e.span.start + 1};
+                core::Edits to_library = {};
+                to_library = mem::realloc(to_library, 1);
+                to_library[0] = (core::Edit){.span = first, .text = library};
+                out = mem::realloc(out, countof(out) + 1);
+                core::ParseError library_error = {};
+                library_error.span = first;
+                library_error.message = "C's assert is contract.assert";
+                library_error.fix = to_library;
+                out[countof(out) - 1] = library_error;
+                break;
+            }
             Usize stem = 0;
             for (Usize m = 0; m < countof(header); m++)
                 if (header[m] == '/') stem = m + 1;
@@ -755,6 +773,46 @@ static core::Errors imp_library_fixes(Str source, const ast::Module *module, typ
     return out;
 }
 
+// `import c <assert.h>` once nothing in the file reads `assert` through it (`c.assert`, `assert.assert`): the header
+// declares only the macro, and the uses became `contract.assert` (#3343).
+static core::Errors drop_assert_import(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    Str assert_header = "assert.h";
+    for (Usize k = 0; k < countof(module->decls); k++) {
+        const ast::Decl *d = module->decls[k];
+        if (d->kind != .import_c || countof(d->kind.import_c.alias) > 0) continue;
+        if (!mem::equal(d->kind.import_c.header, assert_header) || !d->kind.import_c.angled) continue;
+        // Any other word `assert` keeps the import (`c::assert` and a bare `assert` of the C-like form included):
+        // only the file's own `contract.assert` and the import line itself do not count.
+        Bool used = false;
+        for (Usize i = 0; i + 6 <= countof(source); i++) {
+            if (i >= d->span.start && i < d->span.end) continue;
+            if (!imp_at(source, i, "assert")) continue;
+            if (i > 0 && imp_word_char(source[i - 1])) continue;
+            if (i + 6 < countof(source) && imp_word_char(source[i + 6])) continue;
+            if (i >= 9 && imp_at(source, i - 9, "contract.")) continue;
+            if (imp_at(source, i + 6, ".h")) continue; // the name of the header in a comment
+            used = true;
+        }
+        if (used) continue;
+        Usize end = d->span.end;
+        if (end < countof(source) && source[end] == '\n') end += 1;
+        // the blank line after the file's first import goes with it
+        if (d->span.start == 0 && end < countof(source) && source[end] == '\n') end += 1;
+        core::Edits edits = {};
+        edits = mem::realloc(edits, 1);
+        Str nothing = "";
+        edits[0] = (core::Edit){.span = {.start = d->span.start, .end = (U32)end}, .text = nothing};
+        core::ParseError fix_error = {};
+        fix_error.span = (ast::Span){.start = d->span.start, .end = d->span.start};
+        fix_error.message = "an import of assert.h with no use is dropped";
+        fix_error.fix = edits;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = fix_error;
+    }
+    return out;
+}
+
 static core::Errors import_fixes(Str source, const ast::Module *module, const types::Checked *checked,
                                  types::ModuleLoader load) {
     core::Errors out = {};
@@ -905,6 +963,7 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     out = append(out, import_fixes(source, module, &checked, loader));
     out = append(out, c_shadow_fixes(source, &checked));
     out = append(out, c_import_use_fixes(source, module, &checked));
+    out = append(out, drop_assert_import(source, module));
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     out = append(out, fix_zero::edits(source, module, &checked));
     // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.
