@@ -1,0 +1,43 @@
+// Tests of the fixer on `errdefer` (#3314): the statement after `errdefer` is fixed as the statement after `defer` is,
+// so `errdefer c::puts(..)` becomes `errdefer stdio.puts(..)` beside a `defer` of the same function. Before the checker
+// read `errdefer` bodies, the fixer had no error to fix there and left `c.` in place.
+module front_fix_errdefer_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed result = fix::fix_text("t.smith", before);
+    test::check_equal(result.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", result.text);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_errdefer_a_call_after_errdefer_is_named_as_after_defer() {
+    expect(
+        "import <stdio.h>;\nI32 main() {\n    defer c::puts(\"a\");\n    errdefer c::puts(\"b\");\n    return 0;\n}\n",
+        "import c <stdio.h>\nfn main() -> i32:\n    defer stdio.puts(\"a\")\n    errdefer stdio.puts(\"b\")\n    "
+        "return 0\n");
+}
+
+export void test_front_fix_errdefer_a_call_with_arguments_after_errdefer_is_named_as_after_defer() {
+    expect("import <stdio.h>;\nI32 main() {\n    defer c::printf(\"x %d\\n\", 1);\n    errdefer c::printf(\"y %d\\n\", "
+           "2);\n"
+           "    return 0;\n}\n",
+           "import c <stdio.h>\nfn main() -> i32:\n    defer stdio.printf(\"x %d\\n\", 1)\n"
+           "    errdefer stdio.printf(\"y %d\\n\", 2)\n    return 0\n");
+}
+
+export void test_front_fix_errdefer_a_block_after_errdefer_is_named_as_after_defer() {
+    expect(
+        "import <stdio.h>;\nI32 main() {\n    defer c::puts(\"a\");\n    errdefer {\n        c::puts(\"c\");\n    }\n"
+        "    return 0;\n}\n",
+        "import c <stdio.h>\nfn main() -> i32:\n    defer stdio.puts(\"a\")\n    errdefer:\n        stdio.puts(\"c\")\n"
+        "    return 0\n");
+}
