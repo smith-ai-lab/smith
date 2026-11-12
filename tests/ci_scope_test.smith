@@ -1,4 +1,4 @@
-// The `Scope` step of .github/workflows/ci.yml (#3044): a diff of only documentation gets no macOS job and no build, a
+// The `Scope` step of .github/workflows/ci.yml (#3044), with the rule of runtime/check_plan.c (#3163): a diff of only documentation gets no macOS job and no build, a
 // diff with one code file gets today's result, so the exception cannot silently widen. The step's script is cut out of
 // the workflow and run in a scratch repository with the event's variables; no network, no CI run.
 // smith-covers: .github/workflows/ci.yml
@@ -14,10 +14,11 @@ static const char *const setup =
     "awk '/^      - name: Scope$/{f=1;next} f&&/^        run: \\|/{r=1;next} r&&/^      - name:/{exit} "
     "r&&/^          /{sub(/^          /,\"\");print}' \"$SMITH_REPO/.github/workflows/ci.yml\" >scope.sh && "
     "git init -q -b main . && git config user.email t@t && git config user.name t && "
-    "mkdir -p knowledge lib templates/new .github/workflows && echo a >knowledge/a.md && echo c >lib/a.c && "
+    "mkdir -p knowledge lib templates/new runtime .github/workflows && "
+    "cp \"$SMITH_REPO\"/runtime/check_plan.c \"$SMITH_REPO\"/runtime/check_plan.h runtime/ && echo a >knowledge/a.md && echo c >lib/a.c && "
     "echo t >templates/new/t.md && echo w >.github/workflows/llvm.yml && git add -A && git commit -q -m base && "
     "case_() { echo x >>\"$1\"; git add -A; git commit -q -m c; rm -f out sum; "
-    "GITHUB_OUTPUT=$PWD/out GITHUB_STEP_SUMMARY=$PWD/sum GITHUB_EVENT_NAME=${EVENT:-workflow_dispatch} "
+    "RUNNER_TEMP=$PWD GITHUB_OUTPUT=$PWD/out GITHUB_STEP_SUMMARY=$PWD/sum GITHUB_EVENT_NAME=${EVENT:-workflow_dispatch} "
     "BASE=$(git rev-parse HEAD~1) BEFORE=$(git rev-parse HEAD~1) GITHUB_SHA=$(git rev-parse HEAD) bash scope.sh; "
     "echo \"$1: $(grep -E '^(scope|mac_run|docs_tests)=' out | paste -sd' ')\"; }; ";
 
