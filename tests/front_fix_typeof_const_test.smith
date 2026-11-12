@@ -1,0 +1,38 @@
+// `typeof(const char[:])` is a read-only slice (#3206): a local that takes it is `[]char`, not `[]mut char`, which the
+// pointer's slice could not be assigned to and std.text could not be compiled with.
+module front_fix_typeof_const_test;
+
+import front::fix;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    if (countof(parsed.errors) != 0) return 1000;
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    return checked.error_count;
+}
+
+export void test_front_fix_typeof_const_a_local_of_a_const_slice_through_a_pointer_is_read_only() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module t;\n\n"
+                 "export Bool take(typeof(const char[:]) *text, typeof(const char[:]) *line) {\n"
+                 "    const char all[:] = *text;\n"
+                 "    *line = all;\n"
+                 "    return true;\n"
+                 "}\n";
+    Str after = "\npub fn take(text: *[]char, line: *mut []char) -> bool:\n"
+                "    all: []char = text.*\n"
+                "    line.* = all\n"
+                "    return true\n";
+    fix::Fixed result = fix::fix_text("t.smith", before);
+    test::check_equal(result.text, after);
+    test::check_equal(errors_in(after), (Usize)0);
+}
