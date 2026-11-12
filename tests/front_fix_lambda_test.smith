@@ -40,3 +40,14 @@ export void test_front_fix_lambda_function_pointer_local_with_a_result() {
     expect_fixed("module m;\nI32 main() {\n    I32 (*f)(I32) = [](I32 a) { return a; };\n}\n",
                  "fn main() -> i32:\n    f: fn(i32) -> i32 = fn(a: i32): a\n");
 }
+
+export void test_front_fix_lambda_in_a_braced_initializer() {
+    expect_fixed(
+        "module m;\nstatic const struct Op ops[_] = {\n    {\"plus\", [](I32 a, I32 b) { return a + b; }},\n};\n",
+        "static mut ops: [_]Op = [\n    [\"plus\", fn(a: i32, b: i32): a + b],\n]\n");
+}
+
+export void test_front_fix_lambda_among_the_arguments_of_a_construction() {
+    expect_fixed("fn a(path: *char) -> Route:\n    r := Route(path, fn(x: i32) -> i32: x)\n    return r\n",
+                 "fn a(path: *char) -> Route:\n    r := Route(path, fn(x: i32) -> i32: x)\n    return r\n");
+}

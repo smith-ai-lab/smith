@@ -4,6 +4,27 @@
 # diagnostic: one that compiles, or whose compile crashes, fails the count job. How to add to it, and when not to:
 # knowledge/front-end.md, "The count's excluded files".
 tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
+tests/front/corpus/error-array-length/src/main.smith	error-fixture
+tests/front/corpus/error-compound-variant-unknown/src/main.smith	error-fixture
+tests/front/corpus/error-countof-pointer/src/main.smith	error-fixture
+tests/front/corpus/error-defer-name/src/main.smith	error-fixture
+tests/front/corpus/error-enum-payload/src/main.smith	error-fixture
+tests/front/corpus/error-generic-header-binding/src/main.smith	error-fixture
+tests/front/corpus/error-generic-private-name/src/main.smith	error-fixture
+tests/front/corpus/error-lambda-param-count/src/main.smith	error-fixture
+tests/front/corpus/error-lambda-returns-disagree/src/main.smith	error-fixture
+tests/front/corpus/error-lambda-wrong-signature/src/main.smith	error-fixture
+tests/front/corpus/error-module-missing/src/main.smith	error-fixture
+tests/front/corpus/error-range-for/src/main.smith	error-fixture
+tests/front/corpus/error-slice-not-sliceable/src/main.smith	error-fixture
+tests/front/corpus/error-slice-pointer-argument/src/main.smith	error-fixture
+tests/front/corpus/error-slice-step/src/main.smith	error-fixture
+tests/front/corpus/error-struct-from-module-c-name/src/main.smith	error-fixture
+tests/front/corpus/error-unused-read-underscore/src/main.smith	error-fixture
+tests/front/corpus/error-void-pointer/src/main.smith	error-fixture
+tests/front/corpus/session-keyword-name/src/main.smith	error-fixture
+tests/front/corpus/session-missing-module/src/main.smith	error-fixture
+tests/front/corpus/sized-error-message/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-empty/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-infer/src/main.smith	error-fixture
 tests/smith-lang/cases/error-array-param-index/src/main.smith	error-fixture

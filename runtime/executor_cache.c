@@ -27,6 +27,10 @@
 #include "platform_linux.h"
 #include "self_digest.h"
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 #ifdef SMITH_COMPILE_IDENTITY_LINKED
 extern const char smith_compile_identity[]; // runtime/lint_identity.c (#3175)
 extern const char smith_lang_identity[];
@@ -199,6 +203,21 @@ static bool smith_stepcache_normalize(const char *text, size_t length, SmithStep
         if (!replaced) smith_steptext_add(out, text + i++, 1);
     }
     return !out->full;
+}
+
+// Leaves the folder of clang's module cache out of a command being keyed (#3175, as runtime/lint_cache.c does for a
+// lint): `-fmodules-cache-path=<cache>/modules/<id>` names the smith that compiles (its build id changes with every
+// build of it), where compiled modules are kept, not what the compile reads, so an object cannot move with it. With it
+// in the key the ~90 compiles of smith's own sources (the only commands with the flag) were served in no run.
+static void smith_stepcache_drop_modules_path(SmithStepText *text) {
+    static const char flag[] = "-fmodules-cache-path=";
+    for (char *at = strstr(text->data, flag); at != nullptr; at = strstr(at, flag)) { // bounded by the text
+        char *value = at + sizeof flag - 1;
+        size_t length = strcspn(value, " \t\"'");
+        memmove(value, value + length, strlen(value + length) + 1);
+        text->size -= length;
+        at = value;
+    }
 }
 
 // The other way: the tokens become this build's root.
@@ -783,6 +802,19 @@ static SmithCompileKind smith_stepcache_compile_kind(const SmithStepScope *scope
 #endif
 }
 
+// The real path of the running executable: /proc/self/exe on Linux, which macOS has not, so there dyld is asked (as
+// smith.c's smith_self_path does; this file also links into the units runner, which has no smith.c). Without it the
+// running smith was never recognised on a Mac and a compile there was keyed by the build-id of the file (#3175).
+static bool smith_stepcache_running(char out[PATH_MAX]) {
+#ifdef __APPLE__
+    char raw[PATH_MAX];
+    uint32_t size = sizeof raw;
+    return _NSGetExecutablePath(raw, &size) == 0 && realpath(raw, out) != nullptr;
+#else
+    return realpath("/proc/self/exe", out) != nullptr;
+#endif
+}
+
 // What a program is: its build-id (LC_UUID on macOS) when it has one, else its real path, size and time. Kept by name
 // and, for the running smith, by the kind of compile.
 static const char *smith_stepcache_program(const char *name, SmithCompileKind kind) {
@@ -801,7 +833,7 @@ static const char *smith_stepcache_program(const char *name, SmithCompileKind ki
     char self[smith_sha256_hex_size];
     char running[PATH_MAX];
     int written = 0;
-    bool is_self = realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0;
+    bool is_self = smith_stepcache_running(running) && strcmp(running, real) == 0;
     // The smith that runs this build is also the compiler of its own smith-cc steps. Its build-id and the commit it
     // carries change with every commit, and a stage0 is a new smith for each commit of main, so no object of the
     // restored cache would be served (#2833): it is identified by its code, with both blanked.
@@ -944,6 +976,7 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
     SmithStepText command = {.data = smith_stepcache_lines, .capacity = sizeof smith_stepcache_lines};
     command.data[0] = '\0';
     if (!smith_stepcache_normalize(edge->command, strlen(edge->command), &command)) return false;
+    if (!function) smith_stepcache_drop_modules_path(&command);
     smith_sha256_update(&sha, (const uint8_t *)command.data, command.size);
     smith_stepcache_feed(&sha, "\n");
     if (!function) {

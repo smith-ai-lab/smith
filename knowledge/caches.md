@@ -28,6 +28,8 @@ from either is simply fetched or built again:
   A commit that touches only the verbs, the caches, `build.c` or the prover leaves both. A response file, `-x`, `.metal`,
   `--front-end` (smith's own front end, `front/`, which no identity names) or a smith with no identity keep the digest of
   the whole binary. A file that runs inside a compile and is missing from the lists is a wrong hit, so add it there.
+  The command's `-fmodules-cache-path=` value is left out of the key (as a lint's is, #3062): it names the smith that
+  compiles, not what the compile reads, and with it in smith's own sources never hit a second run.
   A hit touches its entry when a minute old (#2833), and the check runs at most once an hour (`steps/prune.timestamp`), at a build's start. The manifests go with the results: the cutoff that drops the oldest results drops the manifests as old, and a prune that dropped something prints `cache: kept N entries (X MB), dropped M (Y MB)`. CI keeps it at 300 MB (`setup-smith`'s `step-cache-max`), and `warm` leaves the stamp out of its save so the next build prunes.
 - `modules/<LC_UUID of the smith>/`: clang's module cache for `smith_modules` (below), one folder for each smith binary
   (issue #575): clang keys a module by its flags and paths, not by the compiler and resource folder that built it, so two

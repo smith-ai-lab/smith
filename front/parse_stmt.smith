@@ -1792,6 +1792,8 @@ static Frame open_for(parse::Parser *p) {
     if (countof(p->errors) > before) skip_group(p, open);
     if (countof(p->errors) == before && range.ok) range = reread_range(p, open);
     if (countof(p->errors) == before) for_fix(p, &frame, cut_start, range);
+    // A pass that mended the body before the header leaves `for constexpr (...):` and an indented body.
+    if (p->layout && countof(p->errors) == before) parse::accept(p, lex::colon);
     return frame;
 }
 
