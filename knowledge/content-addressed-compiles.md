@@ -347,7 +347,7 @@ decision.
   instance instead of 40, and one copy in the binary.
 - **D11. Cached proofs.** The proof cache exists already. Should a proof that ran out of its budget be stored? (a)
   Store proofs and counterexamples, never a timeout. (b) Store a timeout too. **Recommend (a).** The budget is CPU time
-  ([proof-budget](proof-budget.md)), but a timeout says nothing about the function, and a proof that once timed out on
+  ([proof-budget](../plugin/knowledge/proof-budget.md)), but a timeout says nothing about the function, and a proof that once timed out on
   a loaded machine must be allowed to pass.
 
 ## 6. A build plan
