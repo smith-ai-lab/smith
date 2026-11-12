@@ -622,7 +622,14 @@ static state::Status binary_middle(state::Emitter *e, const state::ThenExpr *w) 
     state::push_then_expr(e, (state::ThenExpr){.run = binary_finish, .expr = w->expr, .span = w->span});
     state::Ty wanted = left.ty;
     if (left.ty.kind == .pointer) state::scalar_type(e, "Usize", &wanted); // `p + 1`: the offset is a count
-    state::push_eval(e, w->expr->kind.binary.right, state::hint_of(wanted));
+    // `start + (if c: a else: b)`: the value's slot has the hint's type, so a hint of the left operand's type would
+    // narrow branches of a wider integer type. The checker's type of the value is its type, and the sum widens (#3215).
+    const ast::Expr *right = w->expr->kind.binary.right;
+    if (right->kind == .stmt_expr && left.ty.kind == .integer) {
+        state::TyResult typed = state::type_of_node(e, right);
+        if (typed != .error && typed.ok.kind == .integer) wanted = typed.ok;
+    }
+    state::push_eval(e, right, state::hint_of(wanted));
     return state::success();
 }
 
