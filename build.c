@@ -3713,6 +3713,22 @@ static bool build_gate_other_untouched(SmithRun *run, const char *other, const c
            (dirty == nullptr || dirty[0] == nullptr);
 }
 
+// A skill change alone (of either set) does not satisfy the gate; a plugin concept does (#3411). 0 when all hold.
+static int build_gate_skill_cases(SmithRun *run, const char *dir) {
+    int status = build_gate_commit(dir, ".agents/skills/x/SKILL.md", "docs: the skill");
+    if (status == 0) {
+        fputs("(the next gate failure is the one under test)\n", stderr);
+        if (build_gate_run(run, dir, "main") == 0) return build_gate_fail("gate: a skill change alone must fail\n");
+    }
+    status = status != 0 ? status : build_gate_commit(dir, "plugin/skills/y/SKILL.md", "docs: the plugin skill");
+    if (status == 0 && build_gate_run(run, dir, "main") == 0)
+        return build_gate_fail("gate: a plugin skill change alone must fail\n");
+    status = status != 0 ? status : build_gate_commit(dir, "plugin/knowledge/y.md", "docs: the plugin concept");
+    if (status == 0 && build_gate_run(run, dir, "main") != 0)
+        return build_gate_fail("gate: a plugin concept change must pass\n");
+    return status;
+}
+
 // The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill change alone still
 // fails, a concept change (knowledge/ or plugin/knowledge/) makes it pass, a base that cannot be resolved passes.
 static int build_docs_gate_test(SmithRun *run) {
@@ -3735,20 +3751,7 @@ static int build_docs_gate_test(SmithRun *run) {
         fputs("(the next gate failure is the one under test)\n", stderr);
         if (build_gate_run(run, dir, "main") == 0) failed = build_gate_fail("gate: a feat with no docs must fail\n");
     }
-    status = failed != 0 ? failed : build_gate_commit(dir, ".agents/skills/x/SKILL.md", "docs: the skill");
-    failed = failed != 0 ? failed : status;
-    if (failed == 0) {
-        fputs("(the next gate failure is the one under test)\n", stderr);
-        if (build_gate_run(run, dir, "main") == 0) failed = build_gate_fail("gate: a skill change alone must fail\n");
-    }
-    status = failed != 0 ? failed : build_gate_commit(dir, "plugin/skills/y/SKILL.md", "docs: the plugin skill");
-    failed = failed != 0 ? failed : status;
-    if (failed == 0 && build_gate_run(run, dir, "main") == 0)
-        failed = build_gate_fail("gate: a plugin skill change alone must fail\n");
-    status = failed != 0 ? failed : build_gate_commit(dir, "plugin/knowledge/y.md", "docs: the plugin concept");
-    failed = failed != 0 ? failed : status;
-    if (failed == 0 && build_gate_run(run, dir, "main") != 0)
-        failed = build_gate_fail("gate: a plugin concept change must pass\n");
+    failed = failed != 0 ? failed : build_gate_skill_cases(run, dir);
     if (failed == 0 && build_gate_run(run, dir, "nowhere") != 0)
         failed = build_gate_fail("gate: an unknown base must pass\n");
     // A branch that merged a feat branch whose squash is already on main, and adds only a test, passes; its own feat
