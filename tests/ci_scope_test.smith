@@ -1,7 +1,8 @@
 // The `Scope` step of .github/workflows/ci.yml (#3044), with the rule of runtime/check_plan.c (#3163): a diff of only
 // documentation gets no macOS job and no build, a diff with one code file gets today's result, so the exception cannot
 // silently widen. The step's script is cut out of the workflow and run in a scratch repository with the event's
-// variables; no network, no CI run. smith-covers: .github/workflows/ci.yml
+// variables; no network, no CI run.
+// smith-covers: .github/workflows/ci.yml
 module ci_scope_test;
 
 import std::test;
