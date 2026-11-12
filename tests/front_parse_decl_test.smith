@@ -1079,8 +1079,7 @@ export void test_parse_decl_anonymous_struct_variable_is_hoisted() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     expect_fixed("static struct {\n    alignas(16) U8 bytes[8];\n} scratch_area;\n",
-                 "import std.array\nstatic mut scratch_area: ScratchArea = ScratchArea()\n\nstruct ScratchArea:\n    "
-                 "@align(16)\n"
-                 "    bytes: [8]u8 = array.filled(u8, 8, 0)\n",
-                 9);
+                 "static mut scratch_area: ScratchArea = ScratchArea(bytes = [0, 0, 0, 0, 0, 0, 0, 0])\n\n"
+                 "struct ScratchArea:\n    @align(16)\n    bytes: [8]u8\n",
+                 7);
 }

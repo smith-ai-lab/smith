@@ -193,10 +193,10 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
         files::Bytes bytes = back.ok;
         char chars[:] = mem::view(bytes, char);
         Str got = chars;
-        check_text(got,
-                   "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: front_fix_zero_place.Place = "
-                   "front_fix_zero_place.Place(file = \"\", line = 0)\nfn f() -> u32:\n    "
-                   "row := Row(kind = 1)\n    return row.kind\n");
+        check_text(got, "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: "
+                        "front_fix_zero_place.Place\nfn f() -> u32:\n    "
+                        "row := Row(kind = 1, place = front_fix_zero_place.Place(file = \"\", line = 0))\n"
+                        "    return row.kind\n");
     }
 }
 

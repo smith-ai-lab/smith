@@ -51,8 +51,10 @@ export void test_front_fix_left_out_slice_field_is_empty_literal() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nexport struct A {\n    I32 n;\n    I32 xs[:];\n};\nstatic "
                                                 "A make(void) {\n    return (A){.n = 1};\n}\n");
-    Str want = "pub xs: []mut i32 = []"; // a C slice field is writable (#3073)
+    Str want = "pub xs: []mut i32\n"; // a C slice field is writable (#3073), and has no default (#3224)
     test::check_equal(slice::find_slice(fixed.text, want) == .some, true);
+    Str built = "make() -> A:\n    return A(n = 1, xs = [])";
+    test::check_equal(slice::find_slice(fixed.text, built) == .some, true);
 }
 
 // A C enumerator written bare is `.name` (the type comes from the other operand), and plain enums are ordered by
