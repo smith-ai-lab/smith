@@ -233,7 +233,8 @@ export void test_front_widening_a_narrow_const_where_a_wider_is_expected() {
 export void test_front_widening_needs_no_proof_and_a_narrowing_stays_a_checked_conversion() {
     clean("fn f(x: u8) -> u64:\n    return x\n");
     clean("fn g(x: u64) -> u8:\n    return x.to(u8)\n");
-    fails("fn h(x: u64) -> u8:\n    return x\n", "x.to(U8)");
+    fails("fn h(x: u64) -> u8:\n    return x\n", "x.wrap(u8)");
+    fails("fn h(x: u64) -> u8:\n    return x\n", "it can lose a value");
 }
 
 export void test_front_widening_vectors_do_not_convert_between_each_other() {

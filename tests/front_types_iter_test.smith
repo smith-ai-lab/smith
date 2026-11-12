@@ -144,7 +144,7 @@ export void test_front_types_iter_range_yields_its_integers() {
           "total + "
           "i\n    "
           "total\n");
-    fails("fn run(x: i32, y: u32):\n    for i in range(x, y):\n        return\n", "U32", "I32");
+    fails("fn run(x: i32, y: u32):\n    for i in range(x, y):\n        return\n", "`u32`", "`i32`");
 }
 
 export void test_front_types_iter_range_of_a_string_is_refused() {

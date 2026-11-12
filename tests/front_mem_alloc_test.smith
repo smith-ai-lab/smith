@@ -166,7 +166,7 @@ export void test_front_mem_alloc_a_size_is_an_integer() {
             "pub fn check() -> i32:\n"
             "    x := mem.alloc(u8, 1.5)\n"
             "    0\n",
-            "expected Usize, found F64");
+            "expected `usize`, found `f64`");
 }
 
 // The first argument is a type.
