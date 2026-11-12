@@ -20,5 +20,11 @@ side of `x != .none and ...`, the `else` of `if x == .none:`, and the lines afte
 leaves (`return`, `break`, `continue`). Only names that can't change narrow: parameters and locals without `mut`, not
 `mut` names and not fields (`p.child`); those keep the pattern form `if v := p.child:`. There is no `x.some`: after the
 test `x` is the value. `x == .some` is written `x != .none`, and `x != .some` is `x == .none` (the fixer rewrites both,
-and `x.some` to `x`). Results get no short form and no narrowing: use `try`, `match` or `if .ok(v) := r:`. `or` chains
-do not narrow.
+and `x.some` to `x`). Results get no short form and no narrowing: use `try`, `match` or `if .ok(v) := r:`.
+
+`x is T`, `x is not T`, `x is .v` and `x is not .v` (#3225, D28) are boolean tests at the level of `==`; the right side
+is a type or a symbol, and it is an error when `x` can never be it. They narrow the way `==` and `!=` do, and `not`,
+`and`, `or` (when false: `x is not .v or use(x)`), an `if` / `else if` / `else` chain (the final `else` takes what is
+left) and an early `return` carry the narrowing on. A payload enumeration narrowed to a variant is the payload: after
+`if x is not .unary: return`, `x.op` reads the `unary` payload. `x == .v` over a payload enumeration does not narrow yet
+(the fixer still writes the binding); the emitter reads `is` in a later ticket.

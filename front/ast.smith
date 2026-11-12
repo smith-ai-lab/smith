@@ -211,6 +211,8 @@ export typedef enum {
     bit_or;
     logical_and;
     logical_or;
+    is;     // `x is T`, `x is .v`: true when the value has the type or the variant (#3225)
+    is_not; // `x is not T`
 } BinaryOp;
 
 export typedef enum {
@@ -1731,6 +1733,10 @@ static Str binary_word(BinaryOp op) {
         return "logical_and";
     case .logical_or:
         return "logical_or";
+    case .is:
+        return "is";
+    case .is_not:
+        return "is_not";
     }
     return "";
 }

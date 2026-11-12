@@ -449,6 +449,10 @@ static U32 binary_code(ast::BinaryOp op) {
         return 16;
     case .logical_or:
         return 17;
+    case .is:
+        return 18;
+    case .is_not:
+        return 19;
     }
 }
 
@@ -488,6 +492,10 @@ static ast::BinaryOp binary_op(U32 code) {
         return .logical_and;
     case 17:
         return .logical_or;
+    case 18:
+        return .is;
+    case 19:
+        return .is_not;
     default:
         return .add;
     }

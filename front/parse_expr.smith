@@ -1837,6 +1837,22 @@ static ast::UnaryOp prefix_op(lex::TokenKind kind) {
     }
 }
 
+// `x is T`, `x is not T` and `x is .v` (#3225): a test of the type or the variant of a value, at the level of `==`. The
+// right side is a type or a symbol, so it is read here and not as an operand. `is` is a word only after an expression.
+static ast::Expr *is_test(parse::Parser *p, Stack *st) {
+    reduce_above(st, 8, false);
+    ast::Expr *left = st->values[st->value_count - 1];
+    parse::advance(p);
+    ast::BinaryOp op = .is;
+    if (parse::at(p, lex::bang)) { // `not` is read as `!` in smith's own syntax
+        parse::advance(p);
+        op = .is_not;
+    }
+    ast::Expr *right = parse::at(p, lex::dot) ? variant_value(p) : type_value(p);
+    if (right == nullptr) return nullptr;
+    return make(parse::span_from(p, left->span.start), {.binary = {.op = op, .left = left, .right = right}});
+}
+
 // An infix operator at the position: binary, assignment or the `?:`. Absent when the token is none.
 static Outcome infix_step(parse::Parser *p, Stack *st) {
     lex::TokenKind kind = parse::peek(p).kind;
@@ -2119,6 +2135,12 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     if (p->layout && p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent) return .absent;
     ast::Expr *base = st->values[st->value_count - 1];
     ast::Expr *result = nullptr;
+    if (token.kind == lex::name && same_text(parse::text(p, token), "is")) { // `x is T`, an operator after a value
+        result = is_test(p, st);
+        if (result == nullptr) return .broken;
+        replace_top(st, result);
+        return .done;
+    }
     switch (token.kind) {
     case lex::left_paren:
         result = call(p, base, st->head);

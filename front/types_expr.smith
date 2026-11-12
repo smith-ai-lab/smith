@@ -2024,37 +2024,164 @@ static const ast::Expr *option_test_name(const ast::Expr *e, Bool *not_none, Boo
     return named;
 }
 
-// What `test` proves about options when it is true (`when_true`) or false: the `?T` names it says are not `.none`, as
-// symbols of the same name with the type `T`. Only names that cannot change narrow: a parameter or a local without
-// `mut`, never a field or a `mut` name (they can change through a pointer). `x != .none && y != .none` narrows both
-// when true; `x == .none` alone narrows when false. Returns how many symbols were written to `out`.
+// One test of a name, read from `x == .v`, `x != .v`, `x is .v`, `x is not .v`, `x is T` or `x is not T`: the name, the
+// variant or the type it names, and whether the test is true exactly when the name is that (#3225).
+struct NameTest {
+    const ast::Expr *name;
+    Str variant;
+    types::TypeRef type;
+    Bool positive;
+    Bool by_is; // written with `is` / `is not`; `==` over a payload enumeration stays the fixer's to rewrite (#3211)
+};
+
+// Reads `item` as a `NameTest`; false when it is no test of a single name against a variant or a type.
+static Bool name_test(types::Checked *c, const ast::Expr *item, NameTest *out) {
+    if (item->kind != .binary) return false;
+    ast::BinaryOp op = item->kind.binary.op;
+    const ast::Expr *left = item->kind.binary.left;
+    const ast::Expr *right = item->kind.binary.right;
+    if (op == .is || op == .is_not) {
+        out->positive = op == .is;
+        out->by_is = true;
+    } else if (is_equality(op)) {
+        if (right->kind != .variant) {
+            const ast::Expr *swap = left;
+            left = right;
+            right = swap;
+        }
+        out->positive = op == .equal;
+        out->by_is = false;
+    } else {
+        return false;
+    }
+    if (left->kind != .name || countof(left->kind.name.path.segments) != 1) return false;
+    out->name = left;
+    out->variant = "";
+    out->type = nullptr;
+    if (right->kind == .variant && right->kind.variant.payload == nullptr) {
+        out->variant = right->kind.variant.name;
+        return true;
+    }
+    if (right->kind != .type_value || !(op == .is || op == .is_not)) return false;
+    out->type = types::type_of(c, right);
+    return out->type != nullptr && out->type != invalid(c);
+}
+
+// The slot of the payload enumeration `t` that a test names, by variant or by payload type; `countof(slots)` if none.
+static Usize variant_index(types::TypeRef t, const NameTest *test) {
+    Usize found = countof(types::slots_of(t).items);
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+        const types::Slot *slot = &types::slots_of(t).items[i];
+        if (test->type != nullptr ? slot->type == test->type : same_text(slot->name, test->variant)) found = i;
+    }
+    return found;
+}
+
+// The type the name of `test` has when the test says so (`has`) or not, given the symbol `s` as it is, written to `s`.
+// An option is its element when it is not `.none`; a payload enumeration is the payload of its variant, or of the one
+// variant left when the others are ruled out. False when the test narrows nothing.
+static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
+    types::TypeRef t = s->type;
+    if (t->kind == .option && types::element_of(t) != nullptr) {
+        Bool some = test->type != nullptr || same_text(test->variant, "some");
+        if (!some && !same_text(test->variant, "none")) return false;
+        if (test->type != nullptr && test->type != types::element_of(t)) return false;
+        if (has != some) return false; // `.none` has no type to name
+        s->type = types::element_of(t);
+        s->narrowed = true;
+        return true;
+    }
+    if (!test->by_is || !types::is_payload_enum(t) || countof(types::slots_of(t).items) > 64) return false;
+    Usize count = countof(types::slots_of(t).items);
+    Usize at = variant_index(t, test);
+    if (at == count) return false;
+    U64 mask = s->excluded;
+    if (!has) mask |= 1ULL << at;
+    Usize left = count;
+    for (Usize i = 0; i < count; i++) {
+        if ((mask >> i & 1) != 0) left -= 1;
+        if (has ? i == at : (mask >> i & 1) == 0) at = i;
+    }
+    if (has || left == 1) {
+        types::TypeRef payload = types::slots_of(t).items[at].type;
+        if (payload == nullptr || payload->kind == .void_type) return false;
+        s->type = payload;
+        s->narrowed = true;
+        return true;
+    }
+    if (mask == s->excluded) return false;
+    s->excluded = mask;
+    return true;
+}
+
+// The place of the symbol named `name` in `out[0:count]`, or `count`.
+static Usize found_at(types::Symbol out[:], Usize count, Str name) {
+    for (Usize i = 0; i < count; i++) {
+        if (same_text(out[i].name, name)) return i;
+    }
+    return count;
+}
+
+// Whether `item` is `a and b` read as true or `a or b` read as false: both sides are proved (negated for `or`).
+static Bool joins(const ast::Expr *item, Bool truth) {
+    if (!(item->kind == .binary)) return false;
+    if (truth) return item->kind.binary.op == .logical_and;
+    return item->kind.binary.op == .logical_or;
+}
+
+// The text of a name of one segment.
+static Str single_name(const ast::Expr *name) {
+    if (!(name->kind == .name)) return "";
+    return name->kind.name.path.segments[0].text;
+}
+
+// What `test` proves about names when it is true (`when_true`) or false (#3225, item 27 of #3190): the symbols of the
+// same names with the narrower type. The tests are `==` and `!=` over a symbol, `is` and `is not` over a variant or a
+// type; `and` proves both sides when true, `or` proves the negation of both when false, `not` flips what is proved.
+// Only names that cannot change narrow: a parameter or a local without `mut`, never a field or a `mut` name (they can
+// change through a pointer). Returns how many symbols were written to `out`.
 export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true, types::Symbol out[:]) {
     Usize count = 0;
-    const ast::Expr *rest = test;
-    while (rest != nullptr && count < countof(out)) {
-        const ast::Expr *item = rest;
-        rest = nullptr;
-        if (when_true && item->kind == .binary && item->kind.binary.op == .logical_and) {
-            rest = item->kind.binary.left;
-            item = item->kind.binary.right;
-        }
-        Bool not_none = false;
-        Bool some = false;
-        const ast::Expr *named = option_test_name(item, &not_none, &some);
-        if (named == nullptr || not_none != when_true || !(named->kind == .name)) {
+    const ast::Expr *items[16] = {};
+    Bool truths[16] = {};
+    Usize pending = 1;
+    items[0] = test;
+    truths[0] = when_true;
+    while (pending > 0 && count < countof(out)) {
+        pending -= 1;
+        const ast::Expr *item = items[pending];
+        Bool truth = truths[pending];
+        if (item->kind == .unary && item->kind.unary.op == .logical_not && pending < 16) {
+            items[pending] = item->kind.unary.operand;
+            truths[pending] = !truth;
+            pending += 1;
             continue;
         }
-        const types::Symbol *s = types::lookup(&c->scopes, named->kind.name.path.segments[0].text);
-        if (s == nullptr || s->kind != .variable || !s->is_const || !s->is_new) {
+        if (item->kind == .binary) {
+            const ast::Expr *right = item->kind.binary.right;
+            const ast::Expr *left = item->kind.binary.left;
+            Bool both = joins(item, truth) && pending + 2 <= 16;
+            if (both) {
+                items[pending] = right;
+                truths[pending] = truth;
+                items[pending + 1] = left;
+                truths[pending + 1] = truth;
+                pending += 2;
+                continue;
+            }
+        }
+        NameTest t = {};
+        if (!name_test(c, item, &t)) continue;
+        Str name = single_name(t.name);
+        const types::Symbol *s = types::lookup(&c->scopes, name);
+        if (s == nullptr || s->kind != .variable || !s->is_const || !s->is_new) continue;
+        Usize at = found_at(out, count, name);
+        types::Symbol next = at < count ? out[at] : *s;
+        if (!narrow_symbol(&t, t.positive == truth, &next)) {
             continue;
         }
-        if (s->type->kind != .option || types::element_of(s->type) == nullptr) {
-            continue;
-        }
-        out[count] = *s;
-        out[count].type = types::element_of(s->type);
-        out[count].narrowed = true;
-        count += 1;
+        out[at] = next;
+        if (at == count) count += 1;
     }
     return count;
 }
@@ -2388,6 +2515,78 @@ static void vector_binary(types::Checked *c, const ast::Expr *e, types::TypeRef 
     }
 }
 
+// What the value `left` is called in a message: its name, or "this value".
+static Str is_subject(const ast::Expr *left) {
+    if (left->kind == .name && countof(left->kind.name.path.segments) == 1)
+        return msg(format::push("`", left->kind.name.path.segments[0].text, "`"));
+    return "this value";
+}
+
+// Whether a value of type `t` can be the variant `name` (`is .v`) or hold a `T` (`is T`): an option, a Result or a
+// payload enumeration; a symbol of a plain enumeration is its own enumerators (#3225).
+static Bool can_be(types::TypeRef t, Str variant, types::TypeRef type) {
+    if (t->kind == .option) {
+        if (type != nullptr) return type == types::element_of(t);
+        return same_text(variant, "some") || same_text(variant, "none");
+    }
+    if (t->kind == .result_type) {
+        if (type != nullptr) return type == types::element_of(t) || type == types::error_of(t);
+        return same_text(variant, "ok") || same_text(variant, "error");
+    }
+    if (t->kind == .enumeration) {
+        for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+            const types::Slot *slot = &types::slots_of(t).items[i];
+            Bool by_type = types::is_payload_enum(t) && slot->type == type;
+            if (type != nullptr ? by_type : same_text(slot->name, variant)) return true;
+        }
+    }
+    return false;
+}
+
+// `x is T`, `x is not T`, `x is .v`, `x is not .v`: a `bool`. The left side must be able to be the right one (#3225).
+static void is_after(types::Checked *c, const ast::Expr *e, Frame f) {
+    if (!(e->kind == .binary)) return;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    types::TypeRef lt = typ(c, left);
+    if (lt == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    types::TypeRef type = nullptr;
+    Str variant = "";
+    if (right->kind == .variant) {
+        variant = right->kind.variant.name;
+        if (right->kind.variant.payload != nullptr) {
+            types::failf(c, right->span, "`is .", variant, "` tests the variant alone: write `", variant,
+                         "` without a payload");
+            poison(c, e);
+            return;
+        }
+        types::set_type(c, right, lt);
+    } else if (right->kind == .type_value) {
+        type = resolve_written(c, right->kind.type_value.type);
+        if (type == nullptr || type == invalid(c)) {
+            poison(c, e);
+            return;
+        }
+        types::set_type(c, right, type);
+    } else {
+        types::fail(c, right->span, "`is` is followed by a type or a symbol: `x is Circle`, `x is .none`");
+        poison(c, e);
+        return;
+    }
+    if (!can_be(lt, variant, type) && lt != type) {
+        Str word =
+            type != nullptr ? msg(format::push("a `", types::show(type), "`")) : msg(format::push("`.", variant, "`"));
+        types::failf(c, e->span, is_subject(left), " is `", types::show(lt), "`, which is never ", word,
+                     "; test a value that can be it, such as an option, a Result or a payload enumeration");
+        poison(c, e);
+        return;
+    }
+    finish(c, e, c->table.bool_type, f.expected);
+}
+
 static void binary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .binary)) {
@@ -2397,6 +2596,10 @@ static void binary_after(types::Checked *c, Frame f) {
     const ast::Expr *left = e->kind.binary.left;
     const ast::Expr *right = e->kind.binary.right;
     types::TypeRef bad = invalid(c);
+    if (op == .is || op == .is_not) {
+        is_after(c, e, f);
+        return;
+    }
     if (typ(c, left) == bad || typ(c, right) == bad) {
         poison(c, e);
         return;
@@ -3876,6 +4079,22 @@ export void drop_spoiled(types::Checked *c, Usize from) {
 }
 
 // The record a member access reads: `.` on a record, `->` on a pointer to one; reports what to write otherwise.
+// Whether the base of the member `e` is a name that cannot change (a parameter or a local without `mut`): only such a
+// name is narrowed by `x is .v` (#3225).
+static Bool unchanging_name(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .member) return true;
+    const ast::Expr *base = e->kind.member.base;
+    if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
+    const types::Symbol *s = types::lookup(&c->scopes, base->kind.name.path.segments[0].text);
+    return s != nullptr && s->kind == .variable && s->is_const;
+}
+
+static Str unchanging_hint() {
+    return "; `x is .variant` narrows only a name that cannot change, not a `mut` name or a field: name the value "
+           "first, "
+           "`n = x`, and test `n`";
+}
+
 static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::TypeRef base, Bool arrow) {
     Bool through_pointer = base->kind == .pointer && types::element_of(base)->kind == .record;
     if (arrow && through_pointer) {
@@ -3911,9 +4130,11 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "error"))
         error_fix = guarded_read(c, e, false);
     if (base->kind == .enumeration && types::is_payload_enum(base)) {
+        Str hint = "";
+        if (!unchanging_name(c, e)) hint = unchanging_hint();
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
-                                     "`; test the variant first, with `if .variant(v) := x:` or a `match`"));
+                                     "`; test the variant first, with `if .variant(v) := x:` or a `match`", hint));
         syntax::Edits fix = guarded_read(c, e, false);
         if (countof(fix) > 0) {
             types::fail_fix(c, e->span, shown, fix);
@@ -6810,8 +7031,12 @@ static void binary_before(Work *w, Frame f) {
     const ast::Expr *right = e->kind.binary.right;
     const ast::Expr *left = e->kind.binary.left;
     Bool compares = is_ordering(e->kind.binary.op) || is_equality(e->kind.binary.op);
-    if (e->kind.binary.op == .logical_and && right->kind != .variant) {
-        // `x != .none && use(x)`: the right side sees `x` as a `T`, in a scope of its own (#2481).
+    if (e->kind.binary.op == .is || e->kind.binary.op == .is_not) {
+        push(w, e, f.expected, 1); // `x is T`: the right side is a type or a symbol, read once `x` is typed (#3225)
+        push(w, left, nullptr, 0);
+    } else if ((e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or) && right->kind != .variant) {
+        // `x != .none && use(x)`: the right side sees `x` as a `T`, in a scope of its own (#2481); after `x is not T
+        // or` it sees what the left side proves when false (#3225).
         push(w, e, f.expected, 1);
         push_frame(w, make_frame(e, nullptr, stage_unnarrow, nullptr, 0, "", nullptr));
         push(w, right, nullptr, 0);
@@ -6835,7 +7060,7 @@ static void binary_before(Work *w, Frame f) {
 static void binary_stage(types::Checked *c, Work *w, Frame f) {
     if (f.stage == stage_narrow && f.node->kind == .binary) {
         types::push_scope(&c->scopes);
-        narrow_scope(c, f.node->kind.binary.left, true);
+        narrow_scope(c, f.node->kind.binary.left, f.node->kind.binary.op == .logical_and);
     } else if (f.stage == stage_unnarrow) {
         types::pop_scope(&c->scopes);
     } else if (f.stage >= 2) {
