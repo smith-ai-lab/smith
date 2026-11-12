@@ -731,8 +731,7 @@ export void test_a_macro_of_an_imported_header_becomes_the_header_binding() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    fix::Fixed fixed =
-        fix::fix_text("t.smith", "import c <assert.h>\n\npub fn f():\n    c.assert(1 > 2)\n");
+    fix::Fixed fixed = fix::fix_text("t.smith", "import c <assert.h>\n\npub fn f():\n    c.assert(1 > 2)\n");
     check_text(fixed.text, "import c <assert.h>\n\npub fn f():\n    assert.assert(1 > 2)\n");
 }
 

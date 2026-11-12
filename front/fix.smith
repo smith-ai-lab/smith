@@ -302,7 +302,9 @@ static Bool header_skips_macro(Str header, Bool angled, Str name) {
     if (countof(got.error) > 0) return false;
     for (Usize i = 0; i < countof(got.not_imported); i++) {
         cimport::NotImported skipped = got.not_imported[i];
-        if (mem::equal(skipped.name, name) && contains_text(skipped.reason, "macro")) return true;
+        if (!mem::equal(skipped.name, name)) continue;
+        // the reader's reasons for a macro: "a function-like macro", "not a constant: ..." (cimport.cpp, macros_of)
+        if (contains_text(skipped.reason, "macro") || contains_text(skipped.reason, "not a constant")) return true;
     }
     return false;
 }
@@ -381,9 +383,9 @@ static core::Errors c_shadow_fixes(Str source, const types::Checked *checked) {
     return out;
 }
 
-// A name of a header the file imports that is no function or variable of it (a macro: `c.assert(..)`, `c.errno`), or that
-// a quoted header of the file declares, keeps `c.` after the checker's own fix (#3213): the header is looked for first
-// among the headers the file imports, and the `c` becomes its binding, `assert.assert(..)`.
+// A name of a header the file imports that is no function or variable of it (a macro: `c.assert(..)`, `c.errno`), or
+// that a quoted header of the file declares, keeps `c.` after the checker's own fix (#3213): the header is looked for
+// first among the headers the file imports, and the `c` becomes its binding, `assert.assert(..)`.
 static core::Errors c_import_use_fixes(Str source, const ast::Module *module, const types::Checked *checked) {
     core::Errors out = {};
     for (Usize i = 0; i < checked->error_count; i++) {
@@ -394,7 +396,8 @@ static core::Errors c_import_use_fixes(Str source, const ast::Module *module, co
         for (Usize k = 0; k < countof(module->decls); k++) {
             const ast::Decl *d = module->decls[k];
             if (d->kind != .import_c || countof(d->kind.import_c.alias) > 0) continue;
-            if (!mem::equal(d->kind.import_c.language, "c")) continue;
+            Str language = "c";
+            if (!mem::equal(d->kind.import_c.language, language)) continue;
             Str header = d->kind.import_c.header;
             Bool angled = d->kind.import_c.angled;
             const ast::Module *found = load_header(header, angled);
