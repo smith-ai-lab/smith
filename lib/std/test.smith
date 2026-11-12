@@ -153,7 +153,7 @@ import <unistd.h>;
 [[std::c_name("smith_test_shard_count")]] export extern const Usize built_shard_count;
 // The selection (--test, --macos-only, --skip-macos) the table was built for: `smith test --test` compiles only the
 // test files that hold a chosen test (#2998). The filter is nullptr and the macOS choice 0 for a table of every test.
-[[std::c_name("smith_test_built_filter")]] export extern const char *const built_filter;
+[[std::c_name("smith_test_built_filter")]] export extern const char *const *const built_filter;
 [[std::c_name("smith_test_built_filter_macos")]] export extern const Usize built_filter_macos;
 
 // The runner's own capability, which main makes and hands to run: the forked workers, their pipes and sockets, the
@@ -4210,12 +4210,8 @@ Bool shard_built(const Options *options) {
 // A run that asks for some of what the table holds is served: every item of its --test list (comma separated) is an
 // item of the built one, and a macOS choice the build made is the one asked for.
 Bool filter_item_built(const char *item, Usize length) {
-    const char *at = built_filter;
-    while (*at != '\0') {
-        Usize size = c::strcspn(at, ",");
-        if (size == length && c::strncmp(at, item, length) == 0) return true;
-        at += size;
-        if (*at == ',') at++;
+    for (Usize i = 0; built_filter[i] != nullptr; i++) {
+        if (c::strlen(built_filter[i]) == length && c::strncmp(built_filter[i], item, length) == 0) return true;
     }
     return false;
 }
@@ -4629,8 +4625,11 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
         return 1;
     }
     if (selection_differs(&options)) {
-        say("this runner was built only for %s%s: run it with the same options, or build every test\n",
-            built_filter != nullptr ? "--test " : "", built_filter != nullptr ? built_filter : "its macOS choice");
+        Usize items = 0;
+        while (built_filter != nullptr && built_filter[items] != nullptr)
+            items++;
+        say("this runner was built only for %zu --test values (or its macOS choice): run it with the same options, or build every test\n",
+            items);
         return 1;
     }
     prepare_run(&options);
