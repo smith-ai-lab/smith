@@ -4402,7 +4402,7 @@ static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t)
     if (t == bad || t == c->table.automatic || countable(t)) {
         return;
     }
-    types::failf(c, e->span, "countof takes an array or a slice, found `", types::show(t),
+    types::failf(c, e->span, "countof takes an array, a slice or a pack, found `", types::show(t),
                  "`; write the name of an array or a slice");
     poison(c, e);
 }
@@ -6176,10 +6176,12 @@ static Bool has_auto_param(ast::Param params[:]) {
 // The tuple type a typed pack (`nums: i32...`) expects for its leftover arguments: every element of the written type,
 // so each argument is checked against it like any argument (an implicit conversion, else an error at the argument).
 // Null for a pack with no written type or a concept (`nums: int...`), whose elements keep their own types.
-static types::TypeRef pack_expected(types::Checked *c, const ast::Param *pack, const ast::Expr *tuple) {
+static types::TypeRef pack_expected(types::Checked *c, const ast::Param *pack, const ast::Expr *tuple,
+                                    ast::Param generics[:]) {
     if (pack->type == nullptr || pack->type->kind == .auto_type || countof(types::written_concept(pack->type)) > 0) {
         return nullptr;
     }
+    if (countof(generics) > 0) return nullptr; // `nums: T...`: the type is a generic, `bind_pack_elements` checks it
     if (!(tuple->kind == .tuple_lit)) return nullptr;
     types::TypeRef element = resolve_written(c, pack->type);
     types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(tuple->kind.tuple_lit.items));
@@ -6214,7 +6216,9 @@ static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol
             }
             continue;
         }
-        types::TypeRef wanted = params[i - 1].is_pack ? pack_expected(c, &params[i - 1], arg) : nullptr;
+        types::TypeRef wanted = params[i - 1].is_pack
+                                    ? pack_expected(c, &params[i - 1], arg, template->decl->kind.function.generics)
+                                    : nullptr;
         push(w, arg, wanted, 0);
     }
 }
@@ -6259,6 +6263,29 @@ static Bool pin_first(types::Checked *c, const ast::Expr *e, ast::Param generics
     return true;
 }
 
+// The elements of a typed pack (`nums: T...`) each have the pack's written type: a generic it names and no other
+// parameter bound takes the type of the first element, and an element of another type is the error.
+static Bool bind_pack_elements(types::Checked *c, ast::Param params[:], ast::ExprRef args[:], ast::Param generics[:],
+                               types::Binding bound[:], Bool set[:]) {
+    for (Usize i = 0; i < countof(params) && i < countof(args); i++) {
+        const ast::Expr *tuple = argument_value(args[i]);
+        if (!params[i].is_pack || params[i].type == nullptr || !(tuple->kind == .tuple_lit)) continue;
+        ast::ExprRef items[:] = tuple->kind.tuple_lit.items;
+        for (Usize k = 0; k < countof(items); k++) {
+            types::TypeRef t = typ(c, items[k]);
+            if (t == invalid(c)) return false;
+            types::Unified clash = {};
+            const ast::Expr *item = items[k];
+            Bool literal = item->kind == .integer || item->kind == .floating;
+            if (types::unify_generics(generics, params[i].type, t, bound, set, !literal, &clash)) continue;
+            types::failf(c, items[k]->span, "argument ", i + k + 1, " is `", types::show(t), "`, but `", params[i].name,
+                         "...` collects `", types::show(clash.before), "`");
+            return false;
+        }
+    }
+    return true;
+}
+
 // Binds the generics from the arguments' types, the literals in a second pass. False, with the error, on a clash.
 static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const types::Symbol *template,
                                 types::Binding bound[:], Bool set[:]) {
@@ -6269,6 +6296,7 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
     types::Unified clash = {};
     for (Usize pass = 0; pass < 2; pass++) {
         for (Usize i = 0; i < countof(params); i++) {
+            if (params[i].is_pack) continue; // the pack takes what the other parameters left: `bind_pack_elements`
             const ast::Expr *arg = argument_value(args[i]);
             Bool literal = arg->kind == .integer || arg->kind == .floating;
             if (literal != (pass == 1)) continue;
@@ -6383,17 +6411,10 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     ast::Param params[:] = template->decl->kind.function.params;
     ast::Param generics[:] = template->decl->kind.function.generics;
     ast::ExprRef args[:] = e->kind.call.args;
-    for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].is_pack || params[i].is_gather) {
-            types::failf(c, params[i].span, "not yet: `", template->name,
-                         "` has both bracketed generics and rest parameters");
-            poison(c, e);
-            return;
-        }
-    }
     types::Binding bound[:] = mem::alloc_slice(types::Binding, countof(generics));
     Bool set[:] = mem::alloc_slice(Bool, countof(generics));
-    if (!pin_first(c, e, generics, bound, set) || !bind_from_arguments(c, e, template, bound, set)) {
+    if (!pin_first(c, e, generics, bound, set) || !bind_from_arguments(c, e, template, bound, set) ||
+        !bind_pack_elements(c, params, args, generics, bound, set)) {
         poison(c, e);
         return;
     }
