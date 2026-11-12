@@ -2179,6 +2179,13 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         state::push_value(e, value);
         return state::success();
     }
+    if (to.kind == .pointer && value.ty.kind == .slice && state::same_text(value.ty.name, "str")) {
+        // A string literal given to a C `const char *` (`.name = "hello"` for a `?*char` field): the address of its
+        // bytes, which the compiler ends with a zero byte.
+        c::LLVMValueRef bytes = c::LLVMBuildExtractValue(e->builder, value.llvm, 0, "bytes");
+        state::push_value(e, (state::Value){.llvm = bytes, .ty = to});
+        return state::success();
+    }
     if (to.kind == .option) return optional::wrap_some(e, value, to, to.kind.option, span);
     if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, to.kind.result, span);
 
@@ -2365,6 +2372,10 @@ static Bool computed_constant(state::Emitter *e, const ast::Expr *x, state::Ty t
 
 static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state::Ty to, c::LLVMValueRef *out) {
     if (computed_constant(e, x, to, out)) return state::success();
+    if ((to.kind == .array || to.kind == .record) && x->kind == .compound && countof(x->kind.compound.items) == 0) {
+        *out = c::LLVMConstNull(to.llvm); // `{}`: every element zero
+        return state::success();
+    }
     if (to.kind == .array ||
         to.kind == .record) // a struct or array is written only when the evaluator computed it (#3039)
         return state::failf(x->span, "the initializer of a global is a constant of type ", to.name);

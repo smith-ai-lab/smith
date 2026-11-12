@@ -784,7 +784,7 @@ export Str owner_of(TypeRef t) {
 // enumeration; none for a leaf.
 static Usize part_count(TypeRef t) {
     if (t->kind == .record || t->kind == .tuple) return countof(slots_of(t).items);
-    if (t->kind == .array || t->kind == .enumeration) return 1;
+    if (t->kind == .array || t->kind == .enumeration || t->kind == .option) return 1;
     return 0;
 }
 
@@ -944,7 +944,7 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
         U64 bytes = bits_of(t) / 8;
         return (Layout){.size = bytes, .align = least(bytes, target->max_align), .known = true};
     }
-    if (t->kind == .pointer || t->kind == .fn_value || t->kind == .null_type || t->kind == .stream)
+    if (t->kind == .pointer || t->kind == .fn_value || t->kind == .function || t->kind == .null_type || t->kind == .stream)
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
     if (t->kind == .vector) return vector_layout(target, t);
@@ -968,6 +968,10 @@ static void absorb(Frame *f, Layout part_layout) {
         f->align = part_layout.align;
     } else if (f->type->kind == .enumeration) {
         f->size = part_layout.size;
+        f->align = part_layout.align;
+    } else if (f->type->kind == .option) { // `?*T` is the pointer (null is `.none`); any other `?T` is a tag and `T`
+        f->size = f->type->kind.option.element->kind == .pointer ? part_layout.size
+                                                                : round_up(1, part_layout.align) + part_layout.size;
         f->align = part_layout.align;
     } else if (is_union_record(f->type)) {
         f->size = most(f->size, part_layout.size);
@@ -1012,7 +1016,8 @@ export Layout layout(const Target *target, TypeRef t) {
             continue;
         }
         U64 size = f->size;
-        if (f->type->kind == .record || f->type->kind == .tuple) size = round_up(f->size, f->align);
+        if (f->type->kind == .record || f->type->kind == .tuple || f->type->kind == .option)
+            size = round_up(f->size, f->align);
         finished = (Layout){.size = size, .align = f->align, .known = f->known};
         have_finished = true;
         top -= 1;

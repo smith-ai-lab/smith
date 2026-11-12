@@ -1,5 +1,6 @@
 module geometry::unused;
 
+// Nothing imports this file, so nothing compiles it: the build leaves no object and no header for it.
 export I32 nothing() {
-    return 0 +; // would not compile: nothing imports this file, so nothing compiles it
+    return 0;
 }

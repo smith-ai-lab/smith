@@ -6298,8 +6298,8 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
         for (Usize i = 0; i < countof(params); i++) {
             if (params[i].is_pack) continue; // the pack takes what the other parameters left: `bind_pack_elements`
             const ast::Expr *arg = argument_value(args[i]);
-            Bool literal = arg->kind == .integer || arg->kind == .floating;
-            if (literal != (pass == 1)) continue;
+            Bool literal = arg->kind == .integer || arg->kind == .floating || arg->kind == .null_pointer;
+            if (literal != (pass == 1)) continue; // `check_not_equal(item, nullptr)`: `nullptr` takes the pointer's type
             types::TypeRef t = typ(c, arg);
             if (t == invalid(c)) return false;
             const ast::TypeExpr *written = params[i].type;

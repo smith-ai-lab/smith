@@ -118,7 +118,7 @@ static c::LLVMValueRef predicate(state::Emitter *e, table::Entry entry, state::V
     return c::LLVMBuildFCmp(e->builder, c::LLVMRealOEQ, difference, c::LLVMConstReal(x.ty.llvm, 0.0), "isfinite");
 }
 
-constexpr Usize max_values = 8;
+constexpr Usize max_values = 24;
 
 // The value `v` as the C type a letter of a libc signature names: `z` a 64-bit integer, `i` an int, `d` a double, `f` a
 // float; a pointer is as it is.
@@ -318,7 +318,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
         if (table::is_type_argument(entry, i)) values -= 1;
     }
     if (values > max_values)
-        return state::failf(x->span, entry.name, " takes at most 8 arguments, the call has ", (U64)values);
+        return state::failf(x->span, entry.name, " takes at most 24 arguments, the call has ", (U64)values);
     state::push_then_general(e, (state::ThenGeneral){.run = finish, .expr = x, .number = values, .span = x->span});
     for (Usize i = countof(args); i > 0; i--) {
         state::Hint hint = state::no_hint(); // the format of `__builtin_snprintf` is a C string, not a `str`
