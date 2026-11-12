@@ -39,11 +39,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <sys/resource.h>
 #include <thread>
@@ -283,6 +285,31 @@ std::string render(const smt::Model *model_or_none, const IR::StateValue &value,
 
 namespace {
 
+// Z3 numbers the `let` variables of a query by the order it made its expressions in (`$x555`), which changes from run
+// to run with the order the functions and threads reach it, though the query is the same. The text is the key of the
+// solver's answer in the step store, so the same query asked again missed the store (#3178). Each variable is renamed
+// by its first place in the text, `$x1`, `$x2`, ...: the same query is the same text.
+std::string canonical_variables(const std::string &text) {
+    std::string result;
+    std::map<std::string, std::string> renamed;
+    result.reserve(text.size());
+    for (size_t i = 0; i < text.size();) {
+        size_t end = i + 1;
+        if (text[i] == '$') {
+            while (end < text.size() && (std::isalnum(static_cast<unsigned char>(text[end])) || text[end] == '_'))
+                end++;
+            std::string name = text.substr(i, end - i);
+            auto found = renamed.find(name);
+            if (found == renamed.end()) found = renamed.emplace(name, "$v" + std::to_string(renamed.size() + 1)).first;
+            result += found->second;
+        } else {
+            result += text[i];
+        }
+        i = end;
+    }
+    return result;
+}
+
 // A query as SMT-LIB 2 text. Alive2 writes the query of a check to a file when it is asked for benchmarks and told to
 // skip the solving, and that is the one way to print it that its classes allow.
 std::string smtlib_of(const smt::expr &query, const char *name) {
@@ -316,6 +343,7 @@ std::string smtlib_of(const smt::expr &query, const char *name) {
         }
         closedir(folder);
     }
+    text = canonical_variables(text);
     if (const char *keep = std::getenv("SMITH_PROVE_KEEP")) {
         static int counter = 0;
         std::ofstream(std::string(keep) + "/q" + std::to_string(counter++) + "_" + name + ".smt2") << text;

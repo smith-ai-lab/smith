@@ -1,0 +1,31 @@
+// The text of a proof's query is the key of the solver's answer in the step store (#3174), so it must be the same text
+// every time for the same query (#3178). Z3 numbers the `let` variables of a query by the order it made its
+// expressions in (`$x555`), which changed from run to run with the order the functions and threads reached it, and the
+// same query asked again missed the store: a second run re-asked a proof it had answered. The variables are renamed by
+// their first place in the text. The test proves the check fixture's group several times with the answers not read
+// (--no-cache) and keeps every query's text (SMITH_PROVE_KEEP): the texts of all runs are the same. Its smith children
+// run prove, cc and build by the token lowering: nothing under front/ (#3076). smith-covers: shim/
+// tests/build_fixtures/check_store/
+module prove_query_names_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+export void test_prove_query_names_the_same_query_is_the_same_text_in_every_run() {
+    scratch::Project p = scratch::make("p", "check_store");
+    scratch::own_cache(&p); // before the arena: clean frees the path
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    // the texts of 12 runs, one line each (the hash of all the queries of the run); one distinct line is the property
+    const char *distinct =
+        scratch::capture(&p, "smith build >/dev/null 2>&1 || echo failed; "
+                             "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do mkdir -p ../q$i; "
+                             "SMITH_PROVE_KEEP=$PWD/../q$i smith prove --no-cache >/dev/null 2>&1 || echo failed; "
+                             "cat ../q$i/* | sha256sum; done | sort -u | wc -l");
+    scratch::expect_text("the texts of 12 runs, distinct", "1", distinct);
+}
