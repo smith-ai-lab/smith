@@ -2111,6 +2111,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         types_stream::check_yield(r, s, state.generator);
     } else if (s->kind == .defer_stmt) {
         push(s->kind.defer_stmt.body, nullptr, enter);
+    } else if (s->kind == .errdefer_stmt) {
+        push(s->kind.errdefer_stmt.body, nullptr, enter);
     } else if (s->kind == .labeled) {
         push(s->kind.labeled.body, nullptr, enter);
     } else if (s->kind == .switch_stmt) {
