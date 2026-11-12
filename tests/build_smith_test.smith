@@ -351,16 +351,48 @@ export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
     scratch::expect_status("plan: the scratch repository is made", 0, &made);
     scratch::Run docs = scratch::sh(&p, "git checkout -q docs && smith check --plan --base base");
     scratch::expect_contains("plan: documentation only is scope docs", docs.out,
-                             "scope=docs\ndocs_tests=true\nchanged=2\n");
+                             "scope=docs\ndocs_tests=true\ndocs_push=false\nmac_run=false\nchanged=2\n");
     scratch::Run quiet = scratch::sh(&p, "git checkout -q none && smith check --plan --base docs");
     scratch::expect_contains("plan: a license and another workflow run nothing", quiet.out,
-                             "scope=none\ndocs_tests=false\nchanged=2\n");
+                             "scope=none\ndocs_tests=false\ndocs_push=false\nmac_run=false\nchanged=2\n");
     scratch::Run code = scratch::sh(&p, "git checkout -q code && smith check --plan --base none");
     scratch::expect_contains("plan: a source file makes it full", code.out, "scope=full\n");
     scratch::Run own = scratch::sh(&p, "git checkout -q own && smith check --plan --base none");
     scratch::expect_contains("plan: ci.yml itself is code", own.out, "scope=full\n");
     scratch::Run unreadable = scratch::sh(&p, "smith check --plan --base nonsense");
     scratch::expect_contains("plan: a diff that cannot be read is full", unreadable.out, "scope=full\n");
+    // the rules of the events: a push of only documents is none, a push of code is a release with the macOS jobs, the
+    // nightly run of the whole check runs them too, and a queue entry or a pull request never does
+    scratch::Run push_docs = scratch::sh(&p, "true; "
+                                             "git checkout -q docs && smith check --plan --base base --event push");
+    scratch::expect_contains("plan: a push of only documents is none", push_docs.out,
+                             "scope=none\ndocs_tests=false\ndocs_push=true\nmac_run=false\n");
+    scratch::Run push_code = scratch::sh(&p, "git checkout -q code && smith check --plan --base none --event push");
+    scratch::expect_contains("plan: a push of code is a release with the macOS jobs", push_code.out,
+                             "scope=release\ndocs_tests=false\ndocs_push=false\nmac_run=true\n");
+    scratch::Run nightly = scratch::sh(&p, "smith check --plan --base none --event schedule");
+    scratch::expect_contains("plan: the nightly run of code runs the macOS jobs", nightly.out,
+                             "scope=full\ndocs_tests=false\ndocs_push=false\nmac_run=true\n");
+    scratch::Run queued = scratch::sh(&p, "smith check --plan --base none --event merge_group");
+    scratch::expect_contains("plan: a queue run has no macOS job", queued.out,
+                             "scope=full\ndocs_tests=false\ndocs_push=false\nmac_run=false\n");
+    scratch::expect_contains("plan: ... and the shape of the tests", queued.out,
+                             "test_parts=8\nlinux_flags=--skip-macos\nmac_flags=--macos-only --shard 1/1\n");
+    scratch::Run unread_push = scratch::sh(&p, "smith check --plan --base nonsense --event push");
+    scratch::expect_contains("plan: a push whose range cannot be read stays a release", unread_push.out,
+                             "scope=release\n");
+    // smith check --changed leaves out the stages the plan does (#3163), and says so
+    scratch::Run only_docs =
+        scratch::sh(&p, "git checkout -q docs && env SMITH_OUTPUT=full smith check --changed --base base");
+    scratch::expect_contains("plan: ... runs the docs check, and only it", only_docs.err, "smith check: docs ");
+    scratch::expect_contains(
+        "plan: ... and names what the plan left out", only_docs.err,
+        "smith check: skipped by the plan (scope docs, documentation only): fmt, lint, test, prove");
+    scratch::Run no_docs =
+        scratch::sh(&p, "git checkout -q none && env SMITH_OUTPUT=full smith check --changed --base docs");
+    scratch::expect_contains(
+        "plan: a change of only non-built documents runs nothing", no_docs.err,
+        "smith check: nothing to run: the change touches only documents no build reads (scope none)");
 }
 
 // 10. A mistake in a build.smith names build.smith, not build.c, and every name collision is reported in one run (#47).
