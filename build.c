@@ -3575,13 +3575,14 @@ static void build_nvim_task(SmithBuild *b) {
     smith_task(b, "nvim", &task);
 }
 
-// ---- The docs gate (#313): a change that adds something updates its skill and its concept in the same
-// commit; this makes `smith check` say so. The commits on the branch since the base, taken together, must change
-// something under .agents/skills/ or knowledge/ when any of them has a subject starting with `feat`. On main itself,
+// ---- The docs gate (#313): a change that adds something updates its concept in the same commit; this makes
+// `smith check` say so. The commits on the branch since the base, taken together, must change something under
+// knowledge/ or plugin/knowledge/ when any of them has a subject starting with `feat`: a new verb or feature always has
+// a "what", and a change to a skill alone (a "how") no longer counts (#3411). On main itself,
 // with no `feat` commit, or when the base cannot be resolved (a shallow clone), it passes, and says so in the last
 // case.
-static const char *const build_gate_message = "feat commits need their skill and concept updated; none of "
-                                              ".agents/skills/ or knowledge/ changed since";
+static const char *const build_gate_message = "feat commits need their concept updated (a skill alone is a how, not "
+                                              "the what); none of knowledge/ or plugin/knowledge/ changed since";
 
 // The lines `git -C dir args...` prints, or nullptr when git fails.
 static const char *const *build_gate_git(SmithRun *run, const char *dir, const char *const *args) {
@@ -3613,10 +3614,10 @@ static const char *build_gate_feat_commits(SmithRun *run, const char *dir, const
 
 // The gate reads commits (base...HEAD), never the working tree: skill and concept files that are edited, staged or
 // untracked count only once committed. One line of "  <git status code> <path>" for each such file under
-// .agents/skills and knowledge, or "" when there is none.
+// knowledge and plugin/knowledge, or "" when there is none.
 static const char *build_gate_uncommitted(SmithRun *run, const char *dir) {
     const char *const *status = build_gate_git(
-        run, dir, (const char *[]){"status", "--porcelain", "-uall", "--", ".agents/skills", "knowledge", nullptr});
+        run, dir, (const char *[]){"status", "--porcelain", "-uall", "--", "knowledge", "plugin/knowledge", nullptr});
     const char *found = "";
     for (size_t i = 0; status != nullptr && status[i] != nullptr; i++)
         found = smith_fmt(run->b, "%s  %s\n", found, status[i]);
@@ -3636,14 +3637,14 @@ static int build_gate_run(SmithRun *run, const char *dir, const char *base) {
     if (feats[0] == '\0') return 0;
     const char *const *changed =
         build_gate_git(run, dir,
-                       (const char *[]){"diff", "--name-only", smith_fmt(run->b, "%s...HEAD", base), "--",
-                                        ".agents/skills", "knowledge", nullptr});
+                       (const char *[]){"diff", "--name-only", smith_fmt(run->b, "%s...HEAD", base), "--", "knowledge",
+                                        "plugin/knowledge", nullptr});
     if (changed != nullptr && changed[0] != nullptr) return 0;
     fprintf(stderr, "%s %s\nthe feat commits:\n%s", build_gate_message, base, feats);
     const char *waiting = build_gate_uncommitted(run, dir);
     if (waiting[0] != '\0')
         fprintf(stderr,
-                "these skill and concept files are not committed, and the gate reads commits only: commit them "
+                "these concept files are not committed, and the gate reads commits only: commit them "
                 "(or `git add` and commit):\n%s",
                 waiting);
     return 1;
@@ -3712,8 +3713,8 @@ static bool build_gate_other_untouched(SmithRun *run, const char *other, const c
            (dirty == nullptr || dirty[0] == nullptr);
 }
 
-// The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill or concept change
-// makes it pass, a base that cannot be resolved passes.
+// The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill change alone still
+// fails, a concept change (knowledge/ or plugin/knowledge/) makes it pass, a base that cannot be resolved passes.
 static int build_docs_gate_test(SmithRun *run) {
     char dir[PATH_MAX];
     snprintf(dir, sizeof dir, "%s/smith-gate-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
@@ -3736,8 +3737,18 @@ static int build_docs_gate_test(SmithRun *run) {
     }
     status = failed != 0 ? failed : build_gate_commit(dir, ".agents/skills/x/SKILL.md", "docs: the skill");
     failed = failed != 0 ? failed : status;
+    if (failed == 0) {
+        fputs("(the next gate failure is the one under test)\n", stderr);
+        if (build_gate_run(run, dir, "main") == 0) failed = build_gate_fail("gate: a skill change alone must fail\n");
+    }
+    status = failed != 0 ? failed : build_gate_commit(dir, "plugin/skills/y/SKILL.md", "docs: the plugin skill");
+    failed = failed != 0 ? failed : status;
+    if (failed == 0 && build_gate_run(run, dir, "main") == 0)
+        failed = build_gate_fail("gate: a plugin skill change alone must fail\n");
+    status = failed != 0 ? failed : build_gate_commit(dir, "plugin/knowledge/y.md", "docs: the plugin concept");
+    failed = failed != 0 ? failed : status;
     if (failed == 0 && build_gate_run(run, dir, "main") != 0)
-        failed = build_gate_fail("gate: a skill change must pass\n");
+        failed = build_gate_fail("gate: a plugin concept change must pass\n");
     if (failed == 0 && build_gate_run(run, dir, "nowhere") != 0)
         failed = build_gate_fail("gate: an unknown base must pass\n");
     // A branch that merged a feat branch whose squash is already on main, and adds only a test, passes; its own feat
@@ -4240,7 +4251,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep gate = {
         .run = build_docs_gate,
         .args = smith_list(b, "origin/main", nullptr),
-        .description = "checking that feat commits update their skill and concept",
+        .description = "checking that feat commits update their concept",
         .test = true, // part of `smith check`
     };
     smith_task(b, "check-docs-gate", &gate);

@@ -57,6 +57,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 ## Contracts
 
 - [The build API](build-api.md): Every call of <smith/build.h> with its fields, defaults and the generated manifest.
+- [smith docs holds the shape of skills and concepts](docs-shape.md): smith docs fails a project with more than 20 skills, a skill whose description is over 300 characters or names no trigger, a concept over 4,000 bytes, or a plugin that links out of its folder; the old files are on ratchets that only go down.
 - [The idiom checks](idiom-checks.md): clang-tidy checks smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23 and smith-constexpr tell an agent what idiomatic Smith and C23 look like.
 - [The libc map, from every libc function to smith's way](libc-map.md): Every libc and POSIX function that .smith code calls with c:: on main, grouped by header, with smith's module and function for it or a gap and its issue; the table the check that makes libc a compile error in a module reads its messages from.
 - [Typed memory functions, and the raw ones are an error in a module](mem-typed-functions.md): std::mem has copy, move, zero, fill, equal, bytes and view over slices, and the clang-tidy check smith-mem reports C's memcpy, memmove, memset, memcmp, malloc, calloc, aligned_alloc, posix_memalign, realloc and free in a module.
