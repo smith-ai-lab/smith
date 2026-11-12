@@ -469,8 +469,8 @@ jobs:
             echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           }
           macos_tests() {
-            # shellcheck disable=SC2086
-            "$SMITH" test $MACFLAGS --weigh "$RUNNER_TEMP/weights.tsv"
+            # the part `macos-tests` of smith check (#3163): `smith test --macos-only --shard 1/1`, required here
+            "$SMITH" check --part macos-tests --require macos-tests
           }
           # fmt, docs, lint and prove run on Linux (`check`, #2234); lint runs on the Mac too, since each sees
           # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
@@ -559,7 +559,8 @@ jobs:
         run: |
           start=$SECONDS
           code=0
-          "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
+          # the part `macos-lint` of smith check (#3163): `smith lint` on a Mac, required here
+          "$SMITH" check --part macos-lint --require macos-lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
           echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$code" != 0 ]; then
             tail -n 60 "$RUNNER_TEMP/lint.log"
