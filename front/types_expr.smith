@@ -6935,14 +6935,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
+    ast::ExprRef given[:] = e->kind.call.args;
     if (made_callee_failed(c, e, callee)) return;
-    types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
+    types::TypeRef record = constructed_call(c, callee, given);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
     }
     types::TypeRef enumeration = nullptr;
-    const ast::Expr *variant = enum_variant_call(c, e->span, callee, e->kind.call.args, &enumeration);
+    const ast::Expr *variant = enum_variant_call(c, e->span, callee, given, &enumeration);
     if (variant != nullptr) {
         push_frame(w, make_frame(e, f.expected, 11, nullptr, 0, "", variant));
         push(w, variant, enumeration, 0);
@@ -6953,7 +6954,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         push(w, callee->kind.member.base, nullptr, 0);
         return;
     }
-    ast::ExprRef args[:] = e->kind.call.args;
+    ast::ExprRef args[:] = given;
     builtins::Entry builtin = {};
     if (builtins::call_entry(c, e, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
