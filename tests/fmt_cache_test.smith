@@ -94,5 +94,22 @@ export void test_fmt_cache_off_runs_every_file_each_time() {
     scratch::expect_status("with the cache off it passes", 0, &first);
     scratch::expect_lacks("... prints no counts", first.out, "cached");
     scratch::expect_text("... and keeps nothing", "no",
-                         scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/fmt\" && echo yes || echo no"));
+                         scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/steps/a\" && echo yes || echo no"));
+}
+
+// The key holds what the format reads, not where the project is: the same files in another folder, on the same cache,
+// are all answered (#3177).
+export void test_fmt_answers_do_not_depend_on_where_the_project_is() {
+    scratch::Project p = prepared();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)dry_run(&p);
+    scratch::expect_text("a copy of the project elsewhere finds both answered", "0 run, 2 cached\nstatus 0",
+                         scratch::capture(&p, "d=$(mktemp -d) && cp -R . \"$d/q\" && cd \"$d/q\" && "
+                                              "out=$(SMITH_FMT_CACHE=why smith fmt --dry-run --Werror 2>&1); s=$?; "
+                                              "printf '%s\\n' \"$out\" | grep -o '[0-9]* run, [0-9]* cached'; "
+                                              "echo \"status $s\"; rm -rf \"$d\""));
 }

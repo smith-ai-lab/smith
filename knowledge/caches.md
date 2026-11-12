@@ -129,13 +129,15 @@ a hit touches its entries when a day old, and once a week (`lint/prune.timestamp
 stale `t/` files go. `SMITH_LINT_CACHE=0` turns it off and `=why` prints why each file ran. `smith cache` counts the
 files and `smith cache clean lint` removes them.
 
-**The fmt cache** (#3081, `runtime/fmt_cache.c`) keeps that a file was formatted, so `smith fmt` (and its `--dry-run`)
-with no arguments leaves it out. An entry is an empty file `<cache>/smith/fmt/<xx>/<key>`; the key is the SHA-256 of
+**The fmt cache** (#3081, #3177, `runtime/fmt_cache.c`) keeps that a file was formatted, so `smith fmt` (and its `--dry-run`)
+with no arguments leaves it out. It is an answer in the one store (`steps/a/<xx>/<key>`, the steps' prune and cap, no
+cache folder of its own); the key is the SHA-256 of
 the *fmt identity* (`build_fmt_identity` in `build.c`, compiled into `runtime/lint_identity.c`: the LLVM pack, `front/`,
 `runtime/`, `smith.c`, `shim/format.cpp` and the shim's headers, and `templates/defaults`; a smith without one keys on its
-build-id), `SMITH_CLANG_FORMAT`, the file's path and content, and every `.clang-format`, `_clang-format` and
-`.clang-format-ignore` from its folder up to `/`. An entry is written only after the batch that held the file exited 0
+build-id), `SMITH_CLANG_FORMAT`, the file's path from the project's root and its content, and every `.clang-format`,
+`_clang-format` and `.clang-format-ignore` from its folder up to `/`, each by its level and content, never its absolute
+path, so a clone elsewhere shares the answers. An answer is written only after the batch that held the file exited 0
 (after `-i` rewrote it), so a file that is not formatted is never kept and fails every run. The files the cache does not
 answer go in batches side by side, one a core. `SMITH_FMT_CACHE=0` turns it off and `=why` prints how many files ran
-and how many were cached; the prune is the other caches' (a day's touch, 31 days, checked weekly). Tests:
+and how many were cached. A `fmt/` folder left by an older smith is unused and can be removed. Tests:
 `tests/fmt_cache_test.smith`.
