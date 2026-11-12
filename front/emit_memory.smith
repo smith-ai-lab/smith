@@ -1979,6 +1979,17 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
             return state::success();
         }
     }
+    if (ty.kind == .fn_value && x->kind == .name && countof(x->kind.name.path.segments) == 1) {
+        // A function's name in a global of type `fn(...) -> R`: a `fn` value is `{ code, context }`, the code a thunk
+        // that drops the context and no context.
+        for (Usize i = 0; i < e->function_count; i++) {
+            if (!state::same_text(e->functions[i].name, x->kind.name.path.segments[0].text)) continue;
+            c::LLVMValueRef parts[2] = {lambdas::function_thunk(e, e->functions[i].llvm),
+                                        c::LLVMConstNull(c::LLVMPointerTypeInContext(e->context, 0))};
+            *out = c::LLVMConstNamedStruct(ty.llvm, parts, 2);
+            return state::success();
+        }
+    }
     F64 real = 0.0;
     if (ty.kind == .floating && float_constant(x, &real)) {
         *out = c::LLVMConstReal(ty.llvm, real);

@@ -1,0 +1,5 @@
+module select::broken_test;
+
+export void test_broken_1() {
+    this_name_is_unknown();
+}
