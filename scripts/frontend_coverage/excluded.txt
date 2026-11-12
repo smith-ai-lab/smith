@@ -1,8 +1,8 @@
 # Files the front-end count does not measure (#3037, #3371): each line is `path TAB reason`.
 # reason is `error-fixture` (a test expects a diagnostic for the file and the front end gives it), `tool-fixture` (a tool
-# test reads the file as data and no test compiles it as a program) or `removed-form` (the file tests a form the language
-# removed, named in knowledge/decisions.md or a smith-dev-syntax skill; `old-form: <form>` is the older spelling). A listed
-# file must still fail with a diagnostic: an error-fixture that compiles, or whose compile crashes, fails the count job.
+# test reads the file as data and no test compiles it as a program) or `old-form: <form>` (the file tests a form the
+# language removed, named in knowledge/decisions.md or a smith-dev-syntax skill). A listed file must still fail with a
+# diagnostic: an error-fixture that compiles, or whose compile crashes, fails the count job.
 # How to add to it, and when not to: knowledge/front-end/driver.md, "The count's excluded files".
 # A tests/affine/ file whose `<file>.smith.expected` holds the `smith-affine:` error that names it is an error-fixture
 # (#3234, decided in #3190 item 33): the linear and affine rules are checked at compile time, and these files must fail.
@@ -191,4 +191,4 @@ tests/build_fixtures/lsp/p/complete.smith	tool-fixture
 tests/build_fixtures/lsp/p/geometry/dims.smith	tool-fixture
 tests/build_fixtures/lsp/editor-enum/shapes.smith	tool-fixture
 tests/build_fixtures/lsp/editor-smith/m.smith	tool-fixture
-tests/smith-lang/cases/defer-run/src/main.smith	removed-form
+tests/smith-lang/cases/defer-run/src/main.smith	old-form: goto
