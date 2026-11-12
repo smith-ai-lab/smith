@@ -5331,19 +5331,48 @@ static bool smith_is_debug_word(const char *word) {
            strcmp(word, "-ggdb") == 0 || strncmp(word, "-gdwarf", 7) == 0;
 }
 
-// Whether the command is a compile that writes debug info and names no prefix map of its own.
-static bool smith_wants_prefix_map(const SmithStep *step) {
+// Whether the command is a compile that names no prefix map of its own; *debug is whether it writes debug info.
+static bool smith_wants_prefix_map(const SmithStep *step, bool *debug) {
+    *debug = false;
     if (smith_manifest_root == nullptr || step->command[0] == nullptr || !smith_is_compiler_word(step->command[0]))
         return false;
-    bool debug = false;
     bool compile = false;
     for (size_t i = 1; step->command[i] != nullptr; i++) {
         const char *word = step->command[i];
         if (strncmp(word, "-f", 2) == 0 && strstr(word, "prefix-map") != nullptr) return false;
-        debug = debug || smith_is_debug_word(word);
+        *debug = *debug || smith_is_debug_word(word);
         compile = compile || strcmp(word, "-c") == 0;
     }
-    return debug && compile;
+    return compile;
+}
+
+// The folders that differ between machines, each written as a fixed name in what a compile makes (#3300): smith's cache
+// (where the LLVM pack's headers are), smith's data (where clang's own headers are) and the checkout a nested build
+// belongs to. A hosted runner, a cloud worker and a laptop spell all three differently, and an object that held one
+// could not be shared; the step cache also leaves them out of the key, so that two machines make one key.
+static void smith_put_machine_maps(FILE *file) {
+    char cache[PATH_MAX];
+    SmithPackageFault fault;
+    char data[PATH_MAX] = "";
+    const char *share = getenv("XDG_DATA_HOME");
+    const char *home = getenv("HOME");
+    const char *repo = getenv("SMITH_REPO");
+    if (share != nullptr && share[0] == '/')
+        snprintf(data, sizeof data, "%s/smith", share);
+    else if (home != nullptr && home[0] == '/')
+        snprintf(data, sizeof data, "%s/.local/share/smith", home);
+    if (smith_cache_base(cache, &fault) && cache[1] != '\0') {
+        fputc(' ', file);
+        smith_put_quoted(file, smith_text("-ffile-prefix-map=%s=/smith-cache", cache), false);
+    }
+    if (data[1] != '\0') {
+        fputc(' ', file);
+        smith_put_quoted(file, smith_text("-ffile-prefix-map=%s=/smith-data", data), false);
+    }
+    if (repo != nullptr && repo[0] == '/' && repo[1] != '\0') {
+        fputc(' ', file);
+        smith_put_quoted(file, smith_text("-ffile-prefix-map=%s=/smith-repo", repo), false);
+    }
 }
 
 // The command line as sh reads it: the words, then the stamp's touch. It is built in a fixed buffer and ends with a
@@ -5370,9 +5399,13 @@ static const char *smith_render_command(const SmithEntry *entry, size_t *length)
     for (size_t i = 0; step->run == nullptr && step->command[i] != nullptr; i++) {
         if (i > 0) fputc(' ', file);
         smith_put_word(file, step, step->command[i]);
-        if (i == 0 && smith_wants_prefix_map(step)) {
-            fputc(' ', file);
-            smith_put_quoted(file, smith_text("-ffile-prefix-map=%s=.", smith_manifest_root), false);
+        bool debug = false;
+        if (i == 0 && smith_wants_prefix_map(step, &debug)) {
+            if (debug) {
+                fputc(' ', file);
+                smith_put_quoted(file, smith_text("-ffile-prefix-map=%s=.", smith_manifest_root), false);
+            }
+            smith_put_machine_maps(file);
         }
     }
     if (entry->stamp) {

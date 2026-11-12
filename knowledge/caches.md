@@ -17,6 +17,8 @@ on `<cache>/smith/lock`). Tests: `tests/cache_*_test.smith`, with caches of thei
 smith keeps two caches under `$XDG_CACHE_HOME/smith/` (or `~/.cache/smith/`), each keyed by hash, so anything removed
 from either is simply fetched or built again:
 
+One store, on every machine (#3300): a step's key holds no folder that differs between machines. Besides the root, three folders have a token in the command, in the variant lines and in the stored text: smith's cache (`$XDG_CACHE_HOME/smith`, where the LLVM pack's headers are), smith's data (`$XDG_DATA_HOME/smith`, where clang's own headers are unpacked) and, in a nested build (the front project, the units project), `SMITH_REPO`, the outer checkout. A compile that has them in its command also gets `-ffile-prefix-map=<folder>=/smith-cache` (`/smith-data`, `/smith-repo`), so its object holds none of them; an object that still holds one is not stored (a hit would hand another machine a path that is not there). A hosted runner (`/home/runner/...`), a cloud worker (`/root/...`) and a laptop make one key for one step, and an object from the store is the one a build without it writes (`tests/build_step_cache_test.smith`, `..._the_same_steps_are_served_in_other_cache_and_data_folders`).
+
 - `packages/<hex>/`: what `smith_package` extracted (above).
 - `steps/`: the executor's compile steps (`m/` manifests, `r/` results; [the executor](executor.md) says what is keyed).
   The 31-day rule and #618's cap (`SMITH_CACHE_MAX`, least recently used first, the same `smith_cache_cutoff` code) apply;
