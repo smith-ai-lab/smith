@@ -2,9 +2,11 @@ name: count
 
 # The front-end coverage count (#2073, #3196): how many original-syntax `.smith` files the new front end compiles after the
 # fixer. It runs after every push to `main` that changes code (the paths below are the `Scope` step of ci.yml's `none`
-# and `docs` scopes, inverted), never in the merge queue, and gates nothing. One count at a time: a newer merge cancels
-# the count that runs or waits and the newer commit is counted. It is a workflow of its own so that the cancelling
-# reaches only the count, not the post-merge jobs of ci.yml (publish, warm, release, macos). `workflow_dispatch` runs it
+# and `docs` scopes, inverted), never in the merge queue, and gates nothing. One count at a time, and a running count is
+# never cancelled (#3196: every count was cancelled just before it finished, as merges land every ~9 minutes and a count
+# takes 9 to 10): a newer merge waits, and a newer one replaces only a WAITING count. The group is on the workflow, so
+# no job is cancelled alone. It is a workflow of its own so that its concurrency does not touch the post-merge jobs of
+# ci.yml (publish, warm, release, macos). `workflow_dispatch` runs it
 # by hand. knowledge/ci/count.md.
 on:
   workflow_dispatch:
@@ -31,8 +33,10 @@ on:
       - ".github/workflows/ci.yml"
 
 concurrency:
+  # workflow level: one run in progress, one pending; a newer pending run replaces the older pending one, a running one
+  # is never cancelled. No job has a group of its own, so no shard is cancelled by itself.
   group: count
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
