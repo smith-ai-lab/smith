@@ -1541,15 +1541,28 @@ static Str keyword_clash(Str source) {
     return "";
 }
 
+// The locals and parameters of `source` named like a module of the library (`std.text`), whether the file imports it or
+// not (#3274): the import pass adds `import std.text` for a name it cannot find (`text.*` after `for (const char *text
+// = ...)`), and the local would then hide the module it imports. They are renamed with the imported ones
+// (`text_value`).
+static fix_variants::Words library_locals(Str source) {
+    fix_variants::Words found = {};
+    if (loader == nullptr) return found;
+    fix_variants::Words names = fix_variants::local_names(source);
+    for (Usize i = 0; i < countof(names); i++) {
+        // The file only: a module read here, before the passes, would be mended outside the run that needs it.
+        Str library = as_str(format::push(roots::default_roots().library, "/std/", names[i].text, ".smith"));
+        if (!files::exists(library)) continue;
+        found = mem::realloc(found, countof(found) + 1);
+        found[countof(found) - 1] = names[i];
+    }
+    return found;
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    // A local named like an imported module is renamed first, while `::` still tells the module from the local (#3027).
-    Str renamed = rename_in_names(
-        rename_type_names(rename_target_systems(fix_variants::rename_shadows(fix_build::mend(file, source)))));
-    renamed = with_foreign_fixes(file, source, renamed);
-    Fixed total = {.text = renamed, .clash = keyword_clash(source)};
-    if (!mem::equal(renamed, source)) total.applied = 1;
+    // The folder beside the file is set before the first module is read (#3274: the locals are looked up as modules).
     header_folder = ".";
     // Not compared with the last file: its text may be gone with that file's memory.
     database_read = false;
@@ -1560,6 +1573,13 @@ export Fixed fix_text(Str file, Str source) {
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
         break;
     }
+    // A local named like an imported module is renamed first, while `::` still tells the module from the local (#3027).
+    Str mended = fix_build::mend(file, source);
+    Str renamed = rename_in_names(
+        rename_type_names(rename_target_systems(fix_variants::rename_shadows_with(mended, library_locals(mended)))));
+    renamed = with_foreign_fixes(file, source, renamed);
+    Fixed total = {.text = renamed, .clash = keyword_clash(source)};
+    if (!mem::equal(renamed, source)) total.applied = 1;
     // A header kept from an earlier `fix_text` is checked against its files first; one `fix_run` is one generation.
     if (!within_run) header_table::next_generation();
     mend_passes(file, &total, true);
