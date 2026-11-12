@@ -372,8 +372,12 @@ export void test_front_types_expr_unary_operators_and_their_errors() {
     expect(r.error_count, 0);
     types_expr::infer(&r, unary(.logical_not, ast::name("x")));
     test::check_condition(says(last(&r), "`!` needs a Bool, found `U8`; write a comparison such as `x == 0`"));
+    types_expr::infer(&r, unary(.dereference, ast::name("k")));
+    test::check_condition(says(last(&r), "`*` needs a pointer, found `I32`; write a pointer such as `I32 *`"));
+    // A `mut` name is changed in place: `*x` is `x` (#3251).
     types_expr::infer(&r, unary(.dereference, ast::name("x")));
-    test::check_condition(says(last(&r), "`*` needs a pointer, found `U8`; write a pointer such as `U8 *`"));
+    test::check_condition(says(
+        last(&r), "`x` is a value, not a pointer; write `x` where you wrote `*x` (a `mut` name is changed in place)"));
     types_expr::infer(&r, unary(.address_of, num(1)));
     test::check_condition(says(
         last(&r),
@@ -384,7 +388,7 @@ export void test_front_types_expr_unary_operators_and_their_errors() {
     types_expr::infer(&r, unary(.bit_not, ast::name("b")));
     test::check_condition(
         says(last(&r), "`~` needs an integer, found `Bool`; write an integer such as `U32` or `I64`"));
-    expect(r.error_count, 5);
+    expect(r.error_count, 6);
 }
 
 export void test_front_types_expr_assignment_checks_the_value_against_the_target() {
@@ -511,7 +515,7 @@ export void test_front_types_expr_casts_and_queries() {
     expect(r.error_count, 0);
     types_expr::infer(&r, query(.count_of, ast::name("x")));
     test::check_condition(
-        says(last(&r), "countof takes an array or a slice, found `U8`; write the name of an array or a slice"));
+        says(last(&r), "countof takes an array, a slice or a pack, found `U8`; write the name of an array or a slice"));
     types_expr::infer(&r, cast_expr("Nope", ast::name("x")));
     test::check_condition(says(
         last(&r), "unknown type `Nope`; declare it before it is used, and write a type name with a capital letter"));

@@ -813,6 +813,78 @@ static core::Errors drop_assert_import(Str source, const ast::Module *module) {
     return out;
 }
 
+// ---- `modifies` is deleted (#3241, #3190 items 17 and 18)
+//
+//   c::smith_modifies(&x);       contract::modifies(xs);       c.smith_modifies(p[a:b])       contract.modifies()
+//
+// The language has no `modifies`: what a function writes is inferred from its body. A statement that is only a call of
+// it, in any of the four spellings and with any arguments (over several lines too), goes with its line. A call used as
+// a value, or a statement that holds anything else (`if (c) contract.modifies(p);`, a comment after the `;`), is left.
+
+// The length of the spelling of `modifies` that is at `at` and is called there, or 0.
+static Usize mod_spelling(Str source, Usize at) {
+    if (imp_at(source, at, "c::smith_modifies(")) return countof("c::smith_modifies(") - 1;
+    if (imp_at(source, at, "c.smith_modifies(")) return countof("c.smith_modifies(") - 1;
+    if (imp_at(source, at, "contract::modifies(")) return countof("contract::modifies(") - 1;
+    if (imp_at(source, at, "contract.modifies(")) return countof("contract.modifies(") - 1;
+    return 0;
+}
+
+// The index of the `)` that closes the first `(` from `open` on, or the size of the text when none does.
+static Usize mod_close(Str source, Usize open) {
+    Usize depth = 0;
+    for (Usize i = open; i < countof(source); i++) {
+        if (source[i] == '(') depth += 1;
+        if (source[i] == ')') {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return countof(source);
+}
+
+static Usize mod_blanks(Str source, Usize i) {
+    while (i < countof(source) && (source[i] == ' ' || source[i] == '\t'))
+        i += 1;
+    return i;
+}
+
+static Usize mod_next_line(Str source, Usize i) {
+    while (i < countof(source) && source[i] != '\n')
+        i += 1;
+    return i < countof(source) ? i + 1 : i;
+}
+
+// Where the line of a statement that is only a call of `modifies` ends (after its newline), or 0 for any other line.
+static Usize mod_statement_end(Str source, Usize line) {
+    Usize at = mod_blanks(source, line);
+    Usize name = mod_spelling(source, at);
+    if (name == 0) return 0;
+    Usize close = mod_close(source, at);
+    if (close >= countof(source)) return 0;
+    Usize after = mod_blanks(source, close + 1);
+    if (after < countof(source) && source[after] == ';') after = mod_blanks(source, after + 1);
+    if (after < countof(source) && source[after] != '\n') return 0;
+    return after < countof(source) ? after + 1 : after;
+}
+
+static core::Errors drop_modifies(Str source) {
+    core::Errors out = {};
+    Usize line = 0;
+    while (line < countof(source)) {
+        Usize end = mod_statement_end(source, line);
+        if (end == 0) {
+            line = mod_next_line(source, line);
+            continue;
+        }
+        core::Edits fix = {};
+        fix = imp_push(fix, line, end, "");
+        out = imp_add(out, fix, line, "`modifies` is deleted: what a function writes is inferred from its body");
+        line = end;
+    }
+    return out;
+}
+
 static core::Errors import_fixes(Str source, const ast::Module *module, const types::Checked *checked,
                                  types::ModuleLoader load) {
     core::Errors out = {};
@@ -964,6 +1036,7 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     out = append(out, c_shadow_fixes(source, &checked));
     out = append(out, c_import_use_fixes(source, module, &checked));
     out = append(out, drop_assert_import(source, module));
+    out = append(out, drop_modifies(source)); // the language has no `modifies` (#3241)
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     out = append(out, fix_zero::edits(source, module, &checked));
     // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.
@@ -1019,6 +1092,14 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     // fix: the file would stay as it is. The braced reader of smith's own syntax reads the rest of the body and mends
     // it (a lambda `[] { ... }` in a function whose header was written first, #3317).
     if (read_braced && !has_fix(old.errors) && has_fix(braced.errors)) return braced;
+    // Today's reader cannot read the tour's array value (`Grid(cells = [[1, 2, 3], [4, 5, 6]])`) either: it stops
+    // at the `[[`, and the error it recovers from takes the `,` after the `1` away (#3324). The braced reader's
+    // result goes in when it reads more of the declarations and has fewer errors: a header only today's reader
+    // reads (`export I32 double(...)`) leaves the braced reader with nothing, and stays with today's.
+    if (read_braced && countof(braced.module.decls) >= countof(old.module.decls) &&
+        countof(braced.errors) < countof(old.errors) && countof(braced.module.decls) > 0) {
+        return braced;
+    }
     return old;
 }
 
@@ -1464,15 +1545,28 @@ static Str keyword_clash(Str source) {
     return "";
 }
 
+// The locals and parameters of `source` named like a module of the library (`std.text`), whether the file imports it or
+// not (#3274): the import pass adds `import std.text` for a name it cannot find (`text.*` after `for (const char *text
+// = ...)`), and the local would then hide the module it imports. They are renamed with the imported ones
+// (`text_value`).
+static fix_variants::Words library_locals(Str source) {
+    fix_variants::Words found = {};
+    if (loader == nullptr) return found;
+    fix_variants::Words names = fix_variants::local_names(source);
+    for (Usize i = 0; i < countof(names); i++) {
+        // The file only: a module read here, before the passes, would be mended outside the run that needs it.
+        Str library = as_str(format::push(roots::default_roots().library, "/std/", names[i].text, ".smith"));
+        if (!files::exists(library)) continue;
+        found = mem::realloc(found, countof(found) + 1);
+        found[countof(found) - 1] = names[i];
+    }
+    return found;
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    // A local named like an imported module is renamed first, while `::` still tells the module from the local (#3027).
-    Str renamed = rename_in_names(
-        rename_type_names(rename_target_systems(fix_variants::rename_shadows(fix_build::mend(file, source)))));
-    renamed = with_foreign_fixes(file, source, renamed);
-    Fixed total = {.text = renamed, .clash = keyword_clash(source)};
-    if (!mem::equal(renamed, source)) total.applied = 1;
+    // The folder beside the file is set before the first module is read (#3274: the locals are looked up as modules).
     header_folder = ".";
     // Not compared with the last file: its text may be gone with that file's memory.
     database_read = false;
@@ -1483,6 +1577,13 @@ export Fixed fix_text(Str file, Str source) {
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
         break;
     }
+    // A local named like an imported module is renamed first, while `::` still tells the module from the local (#3027).
+    Str mended = fix_build::mend(file, source);
+    Str renamed = rename_in_names(
+        rename_type_names(rename_target_systems(fix_variants::rename_shadows_with(mended, library_locals(mended)))));
+    renamed = with_foreign_fixes(file, source, renamed);
+    Fixed total = {.text = renamed, .clash = keyword_clash(source)};
+    if (!mem::equal(renamed, source)) total.applied = 1;
     // A header kept from an earlier `fix_text` is checked against its files first; one `fix_run` is one generation.
     if (!within_run) header_table::next_generation();
     mend_passes(file, &total, true);

@@ -249,6 +249,9 @@ export void test_front_types_decl_golden_of_the_use_cases() {
     golden("tests/front/types/decl_record_fields.txt",
            "typedef struct { I32 x; I32 y; } Point;\ntypedef struct { I32 x; I32 y; I32 z; } Wide;\n"
            "Wide w;\nPoint p = w;");
+    golden("tests/front/types/decl_array_of_arrays.txt",
+           "F32 sum(F32 m[:][:]) { return 0.0; }\nF32 f(F32 a[2][2]) { return sum(a); }\n"
+           "F32 g(I32 a[2][2]) { return sum(a); }");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -3,5 +3,18 @@
     "allow": [
       "mcp__github__enable_pr_auto_merge"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "o=$(mktemp) && cc -std=gnu2x -O1 \"${CLAUDE_PROJECT_DIR:-.}/scripts/reload_role_skill.c\" -o \"$o\" 2>/dev/null && \"$o\"; rm -f \"$o\"; exit 0"
+          }
+        ]
+      }
+    ]
   }
 }

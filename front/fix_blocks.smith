@@ -403,6 +403,82 @@ static Bool ends_lambda_header(lex::Tokens tokens, Usize colon) {
     return false;
 }
 
+// A statement expression `({ a: i32 = 5; a * 2 })` on one line (#3275) is a block value, `do:` with the statements and
+// the last line as the value (smith-dev-syntax-values). A block cannot be written inside parentheses, where lines do
+// not end a statement, so it goes on the lines before the statement that holds it, as the value of a name that takes
+// its place: `block_value_N := do:` and the lines. Only a plain statement is rewritten: not a header (`if`, `while`,
+// `for`, ...), whose condition would then be evaluated once, before the loop or the branch.
+static Bool plain_statement(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::kw_if:
+    case lex::kw_else:
+    case lex::kw_while:
+    case lex::kw_for:
+    case lex::kw_match:
+    case lex::kw_fn:
+    case lex::kw_defer:
+    case lex::kw_errdefer:
+        return false;
+    default:
+        return true;
+    }
+}
+
+// The offsets of the `;` that end a statement between the braces `open` and `close`, at the level of the block; the
+// last one is `close` itself when the text ends without a `;`. Empty when there is none.
+static Usize statements_in(lex::Tokens tokens, Usize open, Usize close, Usize ends[:]) {
+    Usize nest = 0;
+    Usize n = 0;
+    Usize from = open + 1;
+    for (Usize i = open + 1; i < close; i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) nest += 1;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest -= 1;
+        if (nest == 0 && kind == lex::semicolon) {
+            if (i > from) {
+                ends[n] = i;
+                n += 1;
+            }
+            from = i + 1;
+        }
+    }
+    if (from < close) {
+        ends[n] = close;
+        n += 1;
+    }
+    return n;
+}
+
+static void statement_expressions(Str source, lex::Tokens tokens, Braces braces, Cuts *cuts) {
+    for (Usize b = 0; b < countof(braces); b++) {
+        Brace brace = braces[b];
+        if (brace.skip || brace.block || brace.close == brace.open + 1 || brace.open == 0) continue;
+        if (tokens[brace.open - 1].kind != lex::left_paren || brace.close + 1 >= countof(tokens)) continue;
+        if (tokens[brace.close + 1].kind != lex::right_paren || !same_line(tokens, brace.open, brace.close)) continue;
+        Usize first = statement_start(tokens, brace.open);
+        if (!plain_statement(tokens[first].kind) || (first > 0 && !tokens[first - 1].line_break)) continue;
+        Usize ends[:] = {};
+        ends = mem::realloc(ends, brace.close - brace.open);
+        Usize n = statements_in(tokens, brace.open, brace.close, ends);
+        // One expression is no block: it stays, and so does a text with a statement ending in `}` that another cut
+        // owns.
+        if (n < 2) continue;
+        Usize indent = indent_of(source, tokens[first].span.start);
+        Str name = as_str(format::push("block_value_", tokens[brace.open].span.start));
+        Str lines = as_str(format::push(spaces(indent), name, " := do:\n"));
+        Usize from = brace.open + 1;
+        for (Usize k = 0; k < n; k++) {
+            Usize last = ends[k];
+            Str text = source[tokens[from].span.start:tokens[last - 1].span.end];
+            lines = as_str(format::push(lines, spaces(indent + step), text, "\n"));
+            from = last + 1;
+        }
+        add_cut(cuts, line_start(source, tokens[first].span.start), line_start(source, tokens[first].span.start),
+                lines);
+        add_cut(cuts, tokens[brace.open - 1].span.start, tokens[brace.close + 1].span.end, name);
+    }
+}
+
 // A one-line lambda whose body discards a value, `fn(): _ := f()`, is a declaration, and a declaration is a line of its
 // own: the body moves to the next line, one step deeper than the statement (#3317).
 static void discard_bodies(Str source, lex::Tokens tokens, Cuts *cuts) {
@@ -430,7 +506,29 @@ static Bool starts_field(lex::Tokens tokens, Usize at, Usize open) {
     return (kind == lex::name || kind == lex::type_name) && tokens[at + 1].kind == lex::colon;
 }
 
-// The fields or statements between the braces of a one-line block, one to a line at `depth` spaces.
+// Whether a statement starts at the token after a `}` that closed a braced statement on the same line (`for ... { ... }
+// return n`, #3275): a keyword that starts a statement, or a name. `else` and an operator continue the statement.
+static Bool starts_statement(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::kw_return:
+    case lex::kw_if:
+    case lex::kw_for:
+    case lex::kw_while:
+    case lex::kw_match:
+    case lex::kw_defer:
+    case lex::kw_errdefer:
+    case lex::kw_break:
+    case lex::kw_continue:
+    case lex::name:
+    case lex::type_name:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The fields or statements between the braces of a one-line block, one to a line at `depth` spaces. A statement that
+// follows a `}` closing a braced statement starts a line of its own (#3275).
 static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
     Str out = "";
     Usize from = tokens[brace.open + 1].span.start;
@@ -445,6 +543,11 @@ static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
         if (fields && nest == 0 && starts_field(tokens, i, brace.open)) {
             out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[i - 1].span.end]));
             start = tokens[i].span.start;
+        }
+        if (!fields && nest == 0 && kind == lex::right_brace && i + 1 < brace.close &&
+            starts_statement(tokens[i + 1].kind)) {
+            out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[i].span.end]));
+            start = tokens[i + 1].span.start;
         }
         if (fields && nest == 0 && (kind == lex::comma || kind == lex::semicolon)) {
             out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[i].span.start]));
@@ -548,6 +651,11 @@ static Bool c_signature(lex::Tokens tokens, Usize open) {
         i -= 1;
     Bool paren = false;
     Usize first = i;
+    // A statement on the line of a one-line body (`for i in range(0, n) { ... }`, #3275) is no signature, which has a
+    // type before its name; `if constexpr (...) {` and `for constexpr (...) {` at the top stay as they were.
+    lex::TokenKind head = tokens[first].kind;
+    Bool statement = head == lex::kw_for || head == lex::kw_while || head == lex::kw_if || head == lex::kw_else;
+    if (statement && !(first + 1 < open && tokens[first + 1].kind == lex::kw_constexpr)) return false;
     for (; i < open; i++) {
         lex::TokenKind kind = tokens[i].kind;
         if (kind == lex::kw_fn || kind == lex::kw_struct || kind == lex::kw_enum || kind == lex::kw_union) return false;
@@ -1233,6 +1341,7 @@ static Str convert_once(Str source) {
     Cuts cuts = {};
     string_runs(tokens, braces, &cuts);
     c_for_loops(source, tokens, braces, &cuts);
+    statement_expressions(source, tokens, braces, &cuts);
     discard_bodies(source, tokens, &cuts);
     for (Usize i = 0; i < countof(braces); i++) {
         Brace brace = braces[i];

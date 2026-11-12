@@ -1,0 +1,51 @@
+// Tests of the fixer on a nested list in a designated initializer (#3324): `{.cells = {{1, 2, 3}, {4, 5, -6}}}` keeps
+// every comma. A text that still holds a form of today's syntax (`constexpr char name[]`) is read by neither new reader
+// without errors, and today's reader cannot read `[[1, 2, 3], ...]`: its recovery took the `,` after the `1` away.
+module front_fix_nested_list_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+}
+
+export void test_front_fix_nested_list_global_with_a_form_left_to_mend() {
+    expect_fixed(
+        "import <stdio.h>;\nstruct Grid {\n    I32 cells[2][3];\n    F32 origin[2];\n};\n"
+        "constexpr struct Grid grid = {.cells = {{1, 2, 3}, {4, 5, -6}}, .origin = {7, 0.5f}};\n"
+        "constexpr char name[] = \"hi\";\n",
+        "import c <stdio.h>\nstruct Grid:\n    cells: [2][3]i32\n    origin: [2]f32\n"
+        "const grid = Grid(cells = [[1, 2, 3], [4, 5, -6]], origin = [7, 0.5f])\nconstexpr char name[] = \"hi\";\n");
+}
+
+export void test_front_fix_nested_list_local_with_a_trailing_designator() {
+    expect_fixed("typedef struct {\n    I32 cells[3][3];\n    I32 *moves;\n    I32 color;\n} Board;\n"
+                 "void f(I32 *moves) {\n"
+                 "    Board board = {.cells = {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}, .moves = moves, .color = 1};\n}\n"
+                 "constexpr char name[] = \"hi\";\n",
+                 "struct Board:\n    cells: [3][3]i32\n    moves: *i32\n    color: i32\nfn f(moves: *i32):\n"
+                 "    board := Board(cells = [[1, 2, 3], [4, 5, 6], [7, 8, 9]], moves = moves, color = 1)\n"
+                 "constexpr char name[] = \"hi\";\n");
+}
+
+export void test_front_fix_nested_list_three_levels() {
+    expect_fixed(
+        "typedef struct {\n    I32 cube[2][2][2];\n} Cube;\n"
+        "constexpr Cube cube = {.cube = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}}};\n"
+        "constexpr char name[] = \"hi\";\n",
+        "struct Cube:\n    cube: [2][2][2]i32\nconst cube = Cube(cube = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]])\n"
+        "constexpr char name[] = \"hi\";\n");
+}
+
+export void test_front_fix_nested_list_a_function_named_double_is_still_mended_by_todays_reader() {
+    expect_fixed("module foo;\n\nexport I32 double(I32 x) { return x * 2; }\n",
+                 "\npub fn f64(x: i32) -> i32:\n    return x * 2\n");
+}

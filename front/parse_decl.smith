@@ -958,7 +958,9 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type, Bool
         }
         parse::advance(p);
         // `I32 xs[]` as a parameter is C's pointer: the head's fix writes `xs: []i32`
-        if (parse::accept(p, lex::colon) || (parameter && parse::at(p, lex::right_bracket))) {
+        // `I32 xs[] = {..}` takes its length from the list (#3316): the declaration's fix writes it
+        Bool sized_by_value = parse::at(p, lex::right_bracket) && parse::peek_at(p, 1).kind == lex::equal;
+        if (parse::accept(p, lex::colon) || ((parameter || sized_by_value) && parse::at(p, lex::right_bracket))) {
             suffix.is_slice = true;
         } else if (parse::at(p, lex::right_bracket)) {
             Str message = "an array needs a size: write `[N]`, or `[:]` for a slice";
@@ -1347,6 +1349,7 @@ struct Dims {
     Str text;
     U32 end;
     Bool blocked;
+    Bool unsized; // `xs[] = {..}`: the length is the initializer's (#3316), `text` is `[_]`
 };
 
 // The suffixes in the tokens `first` to `last` (not taken), which follow a type and a name (so `first` is at least 2).
@@ -1356,6 +1359,14 @@ static Dims read_dims(const parse::Parser *p, Usize first, Usize last) {
     dims.end = p->tokens[last - 1].span.end;
     Str text = "";
     dims.blocked = first < 2 || strip_suffixes(p, first - 2, last, &text, false) != first;
+    // `I32 xs[] = {..}`: one empty pair of brackets before `=` is `[_]`, the list's length; `[][2]` has no fix
+    Bool before_value = last < countof(p->tokens) && p->tokens[last].kind == lex::equal;
+    if (dims.blocked && before_value && first >= 2 && strip_suffixes(p, first - 2, last, &text, true) == first &&
+        same_text(text, "[]")) {
+        dims.blocked = false;
+        dims.unsized = true;
+        text = "[_]";
+    }
     if (!dims.blocked) dims.text = text;
     return dims;
 }
@@ -1980,6 +1991,15 @@ static U32 value_end(const parse::Parser *p, U32 semi) {
     return end;
 }
 
+// Whether a variable's value has no mechanical fix: a `constexpr` declared apart or with no value, `auto` with no
+// value, and `char s[] = "text"` or any value but a list for an array whose length is the value's (a string's length
+// and type are not settled, #3316).
+static Bool no_fix_for_value(const Prefixes *pre, Head head, Dims dims, Str value, Bool has_init, Bool automatic) {
+    if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) return true;
+    if (automatic && !has_init) return true;
+    return dims.unsized && !(countof(value) > 0 && (value[0] == '{' || value[0] == '['));
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
@@ -2009,9 +2029,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (suffixed && countof(zeros) == 0 && countof(value) > 0 && value[0] == '{' &&
         !array_list(p, type, equal_end, last.span.start, written, &dims, &item_edits, &zero_later))
         fixable = false;
-    if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
-    if (automatic && !has_init) fixable = false;
-    if (!fixable) {
+    if (!fixable || no_fix_for_value(pre, head, dims, value, has_init, automatic)) {
         warn_by_hand(p, head, name, written);
         return;
     }
@@ -2891,25 +2909,22 @@ static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_i
     warn(p, typedef_token.span.start, semi.span.end, message, edits);
 }
 
-// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091). With
-// another name than the tag and no attribute to carry the C name, the typedef is an alias of the tag (`T := S`, #3318),
-// as `enum Tag Name;` always is: the generic path of `parse_typedef` writes it.
-static Bool opaque_typedef_ahead(parse::Parser *p, const Prefixes *pre) {
+// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091).
+static Bool opaque_typedef_ahead(parse::Parser *p) {
     if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union)) return false;
-    Bool shape = parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
-                 parse::peek_at(p, 3).kind == lex::semicolon;
-    if (!shape) return false;
-    Bool same = same_text(parse::text(p, parse::peek_at(p, 1)), parse::text(p, parse::peek_at(p, 2)));
-    return same || countof(pre->attributes) > 0;
+    return parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
+           parse::peek_at(p, 3).kind == lex::semicolon;
 }
 
-// Whether the next tokens name a tag declared elsewhere, not define one: `enum Color Paint;`, `struct S *P;` or
-// `struct BigC (*Make)(U8);` (#3318).
+// Whether the next tokens name a tag declared elsewhere, not define one, and are no opaque struct (#3318): `enum Color
+// Paint;`, `struct S *P;` or `struct BigC (*Make)(U8);`. `typedef struct Tag Name;` stays the opaque struct (its tag
+// may be declared nowhere in the file, so an alias of it would name an unknown type).
 static Bool tag_reference_ahead(parse::Parser *p) {
-    if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union) && !parse::at(p, lex::kw_enum)) return false;
     if (parse::peek_at(p, 1).kind != lex::type_name) return false;
     lex::TokenKind after = parse::peek_at(p, 2).kind;
-    return after == lex::type_name || after == lex::star || after == lex::left_paren;
+    if (parse::at(p, lex::kw_enum)) return after == lex::type_name;
+    if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union)) return false;
+    return after == lex::star || after == lex::left_paren;
 }
 
 // `typedef struct Tag Name;` (a tag declared elsewhere, as `@c_name("Tag") typedef struct Tag Name;` does for an
@@ -2942,7 +2957,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     Usize typedef_index = p->position;
     parse::advance(p);
     Usize errors_before = countof(p->errors);
-    if (opaque_typedef_ahead(p, pre)) return parse_opaque_typedef(p, pre, start, typedef_index);
+    if (opaque_typedef_ahead(p)) return parse_opaque_typedef(p, pre, start, typedef_index);
     if (!parse_type::tuple_ahead(p) && !tag_reference_ahead(p) &&
         (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
         Style style = {.top = pre->top, .is_public = pre->exported || pre->is_pub};

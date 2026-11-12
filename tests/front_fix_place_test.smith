@@ -2,6 +2,7 @@
 // `k.v.f` of its body become `v.f`.
 module front_fix_place_test;
 
+import front::fix;
 import front::fix_place;
 import front::parse as core;
 import std::arena;
@@ -80,4 +81,41 @@ export void test_front_fix_place_a_discard_inside_a_block_keeps_its_indent() {
 export void test_front_fix_place_a_comparison_with_underscore_and_a_name_ending_in_it_are_left() {
     expect("fn f(a_: i32):\n    a_ = 1\n    _x = 2\n    _ == 3\n",
            "fn f(a_: i32):\n    a_ = 1\n    _x = 2\n    _ == 3\n");
+}
+
+// A loop name or a `mut` name is changed in place, so `x.*` of it is `x` (#3251); the fixer is the whole pipeline.
+static void expect_fixed(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, after);
+}
+
+// (b): the loop name written through is `mut` and loses its star.
+export void test_front_fix_place_a_loop_name_written_through_is_mut_and_loses_its_star() {
+    expect_fixed("fn double_all(xs: []i32):\n    for p in xs:\n        p.* *= 2\n",
+                 "fn double_all(xs: []i32):\n    for mut p in xs:\n        p *= 2\n");
+}
+
+// Every read and write of the name in the body, in the body of a generic that a call instantiates.
+export void test_front_fix_place_every_star_of_the_loop_name_goes() {
+    expect_fixed(
+        "fn bump(xs: auto):\n    for p in xs:\n        p.* += 10\n        p.* *= 2\nfn run(xs: []i32):\n    bump(xs)\n",
+        "fn bump(xs: auto):\n    for mut p in xs:\n        p += 10\n        p *= 2\nfn run(xs: []i32):\n    "
+        "bump(xs)\n");
+}
+
+// (a): a `mut` parameter is changed in place, so only the `.*` goes.
+export void test_front_fix_place_a_mut_parameter_loses_its_star() {
+    expect_fixed("fn grow(mut n: i32):\n    n.* += 1\n", "fn grow(mut n: i32):\n    n += 1\n");
+}
+
+// A pointer keeps its star: the loop over `refs(xs)` names pointers.
+export void test_front_fix_place_a_pointer_loop_name_keeps_its_star() {
+    expect_fixed("fn f(xs: []i32):\n    for p in refs(xs):\n        p.* *= 2\n",
+                 "fn f(xs: []i32):\n    for p in refs(xs):\n        p.* *= 2\n");
 }

@@ -6,7 +6,7 @@ tags: [ci, process]
 ---
 # CI jobs, scope and the split
 
-**A typical queue run (#2870)** is a change whose untested tests fit in one part (a parts PR). Its heavy jobs, at most 5 at once on Linux (the count runs after each code merge to main and by hand, in `count.yml`, not here: [count](count.md)):
+**A typical queue run (#2870)** is a change whose untested tests fit in one part (a parts PR). Its heavy jobs, at most 5 at once on Linux (the front-end count, `count-shard` and `count`, is part of the run too and refuses a regression: [count](count.md)):
 
 | job | runs | why it is its own job |
 |---|---|---|
@@ -15,7 +15,8 @@ tags: [ci, process]
 | `check` | after `build-linux` | one job, `smith check --part fmt,docs,prove,lint` (#3163): the command the pre-push hook runs, so a mistake has one place to be fixed. It was two jobs, `check-fmt-prove` (135 s) and `check-lint` (114 s), so neither would be longer than a test part (lead, 2026-11-08, #2833); one job restores the build once (22 to 31 s) and takes one runner, and stays under the slowest test part. Its `Checks` step prints each part's line and where the time went (#2985): lint's `linted N files (R run, C cached, T s, setup S s: build info, needs, plan and hash)`, prove's `G groups, build B s, proofs P s` and its count of functions reused from the cache |
 | `macos` | not in a queue run: the push to main and the nightly run | the macOS job (#1709): the `--macos-only` tests (its own test store) |
 | `macos-lint` | not in a queue run: the push to main and the nightly run | `smith lint` of the code only the Mac sees (#3045): its own job and tree, since lint and the tests cannot share one (`.smith/build.ninja`); it builds smith, not the tests |
-| `release-pack-linux` | a queue run, beside the others | the Linux release tarball of the commit main moves to ([release](../release.md)), #3052 |
+| `release-pack-linux` | a queue run, beside the others | the Linux release tarball of the commit main moves to ([release](../release.md)), #3052; it also hands its release build to the count |
+| `count-shard` (8), `count` | a queue run, after `release-pack-linux` | the front-end count and its gate (#3369, [count](count.md)); `count` joins the 8 tables and refuses a file that passed on the base and fails now |
 | `ci` | last, light | the verdict |
 
 More parts (a change to `lib/std/test.smith`, the nightly's empty store) run in `test-linux`, one job per part on the build `build-linux` uploads, and a pull request's part runs there too, beside `check`, so its checks are not behind its tests. No job gathers the test stores: each job that runs tests publishes its own ([caches](caches.md)). Until #2870 a typical run also had `build-linux-release` (now in `frontend-coverage-build`, #2890), `test-linux` (now in `build-linux` for one part) and `save-test-cache` (now in each test job; the `macos` job's store upload of #2867 became its own `test-cache/save`): before, the batch heads 42558311503 and 42559604613 ran 9 jobs outside the count.
