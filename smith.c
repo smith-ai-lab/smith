@@ -3961,7 +3961,7 @@ static const SmithVerb smith_verbs[] = {
          {"--part <parts>", "run only these parts (a comma list of the --require names), as one job of CI does; the "
                             "rest are left out, not reported"},
          {"--require <parts>",
-          "fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all"},
+          "fail when a part is not run here: fmt, docs, prove, lint, test, macos-lint, macos-tests, or all"},
          {"-D<name>=<value>", "an option the project's build.c reads"},
          {nullptr, nullptr}},
      (const char *const[]){"smith check", "smith check -v", "smith check --changed --require all",

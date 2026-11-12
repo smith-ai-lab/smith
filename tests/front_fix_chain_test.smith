@@ -89,9 +89,16 @@ export void test_front_fix_chain_a_name_test_after_another_conjunct_is_written()
     expect("    return ok && s == .circle && s.circle.r > 1\n", "    return ok && s is .circle && s.r > 1\n");
 }
 
-export void test_front_fix_chain_an_or_at_the_top_level_is_left() {
+export void test_front_fix_chain_and_and_or_together_is_left() {
     expect("    return e.kind == .binary && e.kind.binary.op == .add || other\n",
            "    return e.kind == .binary && e.kind.binary.op == .add || other\n");
+}
+
+export void test_front_fix_chain_a_chain_of_ors_tests_with_is_not() {
+    expect("fn f(s: Shape) -> bool:\n    return s != .circle or s.circle.r > 1\n",
+           "fn f(s: Shape) -> bool:\n    return s is not .circle or s.r > 1\n");
+    expect("fn f(e: *Expr) -> bool:\n    return e.kind != .binary || e.kind.binary.op == .add\n",
+           "fn f(e: *Expr) -> bool:\n    kind := e.kind\n    return kind is not .binary || kind.op == .add\n");
 }
 
 export void test_front_fix_chain_a_read_before_the_test_is_left() {

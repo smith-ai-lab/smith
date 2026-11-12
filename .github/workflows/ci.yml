@@ -710,7 +710,7 @@ jobs:
         if: always()
         uses: ./.github/actions/api-budget
   check:
-    # fmt, docs, lint and the proofs on Linux (#2234), beside the test parts: `smith check --part fmt,docs,lint,prove`
+    # fmt, docs, lint and the proofs on Linux (#2234), beside the test parts: `smith check --part fmt,docs,prove,lint`
     # (#3163), the command the pre-push hook runs, on the build of `build-linux` restored like a shard. Parts run one
     # after another (two verbs cannot share one tree) and each runs even when an earlier one failed. It was two jobs
     # (`check-fmt-prove` 135 s and `check-lint` 114 s, run 43214535651) so neither would be longer than a test part;
@@ -761,7 +761,7 @@ jobs:
         run: |
           start=$SECONDS
           code=0
-          "$SMITH" check --part fmt,docs,lint,prove >"$RUNNER_TEMP/check.log" 2>&1 || code=$?
+          "$SMITH" check --part fmt,docs,prove,lint >"$RUNNER_TEMP/check.log" 2>&1 || code=$?
           echo "took check $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           # each part's line, with its wall and CPU seconds
           grep -E '^smith check: (fmt|docs|lint|prove|[0-9]+ ok)' "$RUNNER_TEMP/check.log" | tee -a "$GITHUB_STEP_SUMMARY" || true

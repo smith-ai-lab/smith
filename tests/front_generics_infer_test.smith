@@ -201,7 +201,7 @@ export void test_front_generics_infer_a_conflicting_binding_is_an_error() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str source =
-        "fn same[T](a: T, b: T) -> T:\n    return a\n\nfn run(x: i32, y: f64) -> i32:\n    return same(x, y)\n";
+        "fn same[T](a: T, b: T) -> T:\n    return a\n\nfn run(x: i32, y: u32) -> i32:\n    return same(x, y)\n";
     types::Checked r = checked(source);
     test::check_condition(has(errors_of(&r), "from an earlier argument"));
 }

@@ -240,3 +240,45 @@ export void test_front_widening_needs_no_proof_and_a_narrowing_stays_a_checked_c
 export void test_front_widening_vectors_do_not_convert_between_each_other() {
     fails("fn f(v: vec(f32, 4)) -> vec(f64, 4):\n    return v\n", "F64");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Generic arguments and branches of a value join like operands (#3232)
+
+export void test_front_widening_generic_arguments_take_the_wider_type() {
+    clean("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: i64, b: i32) -> bool:\n    return same(a, "
+          "b)\n");
+    clean("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: i64, b: i32) -> bool:\n    return same(b, "
+          "a)\n");
+    clean("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: u8, b: u32) -> bool:\n    return same(a, "
+          "b)\n");
+    clean("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: i32, b: f64) -> bool:\n    return same(a, "
+          "b)\n");
+}
+
+export void test_front_widening_generic_arguments_with_no_common_type_are_refused() {
+    fails("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: i32, b: u32) -> bool:\n    return same(a, "
+          "b)\n",
+          "from an earlier argument");
+    fails("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: i64, b: f64) -> bool:\n    return same(a, "
+          "b)\n",
+          "from an earlier argument");
+    fails("fn same[T: num](a: T, b: T) -> bool:\n    return a == b\nfn f(a: u64, b: i64) -> bool:\n    return same(a, "
+          "b)\n",
+          "from an earlier argument");
+}
+
+export void test_front_widening_branches_of_a_value_take_the_wider_type() {
+    clean("fn f(c: bool, a: u32, b: usize) -> usize:\n    v := if c: a else: b\n    return v\n");
+    clean("fn f(c: bool, a: usize, b: u32) -> usize:\n    v := if c: a else: b\n    return v\n");
+    clean("fn f(c: bool, a: i32, b: i64) -> i64:\n    v := if c: a else: b\n    return v\n");
+    clean("fn f(c: bool, a: i32, b: f64) -> f64:\n    v := if c: a else: b\n    return v\n");
+}
+
+export void test_front_widening_branches_with_no_common_type_are_refused() {
+    fails("fn f(c: bool, a: i32, b: u32):\n    v := if c: a else: b\n", "the branches of this value");
+    fails("fn f(c: bool, a: i64, b: f64):\n    v := if c: a else: b\n", "the branches of this value");
+}
+
+export void test_front_widening_the_shift_amount_has_its_own_type() {
+    clean("fn f(value: u32, i: i32) -> u32:\n    return value >> (8 * i)\n");
+}

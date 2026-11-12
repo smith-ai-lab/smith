@@ -11,7 +11,9 @@
 // is the first conjunct. A name declared `mut` stays, and so does a test after another conjunct on a field.
 //
 // A chain is a `return` or a `name := ...` / `name: bool = ...` of one line, whose chain at the top level has `A == .v`
-// followed by reads of `A.v`. A chain with an `or` at the top level is left, and so is a read to the left of the test.
+// followed by reads of `A.v`; in a chain of `or`s it is `A != .v`, written `A is not .v` (`return s != .circle or
+// s.circle.r > 1` is `return s is not .circle or s.r > 1`). A chain with both is left, and so is a read to the left of
+// the test.
 // The `if` and `while` forms are the checker's. Tests: `tests/front_fix_chain_test.smith`.
 //
 //   fix_chain::edits(source)   the fixes for the statements of `source`
@@ -62,10 +64,12 @@ struct Piece {
     Usize stop;
 };
 
-// Splits `line[from:]` at its top-level `&&`; false when a top-level `||` or a trailing `:` (a block follows) is in it.
-// A pattern `.w(w) := x` is a piece that no test matches.
-static Bool pieces_of(Str line, Usize from, Piece parts[8], Usize *count) {
+// Splits `line[from:]` at its top-level `&&` (or at its top-level `||`, then `*or_chain` is set); false when both are
+// in it or a trailing `:` (a block follows) is. A pattern `.w(w) := x` is a piece that no test matches.
+static Bool pieces_of(Str line, Usize from, Piece parts[8], Usize *count, Bool *or_chain) {
     Usize depth = 0;
+    Bool saw_and = false;
+    *or_chain = false;
     Usize start = from;
     *count = 0;
     Bool quoted = false;
@@ -77,9 +81,21 @@ static Bool pieces_of(Str line, Usize from, Piece parts[8], Usize *count) {
         if ((ch == ')' || ch == ']' || ch == '}') && depth > 0) depth -= 1;
         if (depth != 0) continue;
         if (ch == ':' && i + 1 == countof(line)) return false; // a block follows: `x := if ...:`
-        if (ch == '|' && i + 1 < countof(line) && line[i + 1] == '|') return false;
-        if (ch == ' ' && starts_with(line[i:countof(line)], " or ")) return false;
+        Bool or_here = (ch == '|' && i + 1 < countof(line) && line[i + 1] == '|') ||
+                       (ch == ' ' && starts_with(line[i:countof(line)], " or "));
+        if (or_here) {
+            if (saw_and) return false;
+            *or_chain = true;
+            if (*count >= 8) return false;
+            parts[*count] = (Piece){.start = start, .stop = i};
+            *count += 1;
+            start = i + (ch == '|' ? 2 : 4);
+            i = start - 1;
+            continue;
+        }
         if (ch == ' ' && starts_with(line[i:countof(line)], " and ")) {
+            if (*or_chain) return false;
+            saw_and = true;
             if (*count >= 8) return false;
             parts[*count] = (Piece){.start = start, .stop = i};
             *count += 1;
@@ -87,6 +103,8 @@ static Bool pieces_of(Str line, Usize from, Piece parts[8], Usize *count) {
             i += 4;
         }
         if (ch == '&' && i + 1 < countof(line) && line[i + 1] == '&') {
+            if (*or_chain) return false;
+            saw_and = true;
             if (*count >= 8) return false;
             parts[*count] = (Piece){.start = start, .stop = i};
             *count += 1;
@@ -100,12 +118,13 @@ static Bool pieces_of(Str line, Usize from, Piece parts[8], Usize *count) {
     return true;
 }
 
-// `A == .v` as a whole conjunct: the chain `A` of names and dots, then the variant; false when it is anything else.
-static Bool is_test(Str piece, Str *subject, Str *variant) {
+// `A == .v` (`A != .v` where `negative`) as a whole conjunct: the chain `A` of names and dots, then the variant; false
+// when it is anything else.
+static Bool is_test(Str piece, Bool negative, Str *subject, Str *variant) {
     Usize k = 0;
     while (k < countof(piece) && (word_char(piece[k]) || piece[k] == '.'))
         k += 1;
-    if (k == 0 || !starts_with(piece[k:countof(piece)], " == .")) return false;
+    if (k == 0 || !starts_with(piece[k:countof(piece)], negative ? " != ." : " == .")) return false;
     Usize v = k + 5;
     Usize end = v;
     while (end < countof(piece) && word_char(piece[end]))
@@ -210,7 +229,8 @@ static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
 static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Usize from) {
     Piece parts[8];
     Usize count = 0;
-    if (!pieces_of(line, from, parts, &count) || count < 2) return out;
+    Bool or_chain = false;
+    if (!pieces_of(line, from, parts, &count, &or_chain) || count < 2) return out;
     for (Usize i = 0; i + 1 < count; i++) {
         Usize a = parts[i].start;
         Usize b = parts[i].stop;
@@ -220,7 +240,7 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
             b -= 1;
         Str subject = "";
         Str variant = "";
-        if (!is_test(line[a:b], &subject, &variant)) continue;
+        if (!is_test(line[a:b], or_chain, &subject, &variant)) continue;
         // a read to the left of the test is out of its scope: leave the chain
         if (read_at(line[from:a], 0, subject, variant) < countof(line[from:a])) continue;
         Usize first = read_at(line, parts[i].stop, subject, variant);
@@ -241,7 +261,8 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
             Str naming = types::message_of(format::push(name, " := ", subject, "\n", line[0:indent]));
             out = add(out, base + indent, base + indent, naming);
         }
-        out = add(out, base + a, base + b, types::message_of(format::push(name, " is .", variant)));
+        out = add(out, base + a, base + b,
+                  types::message_of(format::push(name, or_chain ? " is not ." : " is .", variant)));
         Usize at = parts[i].stop;
         Usize found = read_at(line, at, subject, variant);
         while (found < countof(line)) {

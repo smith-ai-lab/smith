@@ -636,6 +636,15 @@ static state::Status binary_middle(state::Emitter *e, const state::ThenExpr *w) 
         state::TyResult typed = state::type_of_node(e, right);
         if (typed != .error && typed.ok.kind == .integer) wanted = typed.ok;
     }
+    // `value >> (8 * i)`: a shift amount has its own type, the checker's, never the shifted value's (#3232).
+    Bool shift = w->expr->kind.binary.op == .shift_left || w->expr->kind.binary.op == .shift_right;
+    if (shift && left.ty.kind == .integer) {
+        state::Hint own = state::no_hint();
+        state::TyResult typed = state::type_of_node(e, right);
+        if (typed != .error && typed.ok.kind == .integer) own = state::hint_of(typed.ok);
+        state::push_eval(e, right, own);
+        return state::success();
+    }
     state::push_eval(e, right, state::hint_of(wanted));
     return state::success();
 }

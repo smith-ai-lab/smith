@@ -1789,7 +1789,7 @@ static void smith_check_promises(bool list) {
 }
 
 // The parts `smith check` names, in the order it runs them; `--require` takes these (or `all`).
-static const char *const smith_check_parts[] = {"fmt", "docs", "lint", "test", "prove", "macos-lint", "macos-tests"};
+static const char *const smith_check_parts[] = {"fmt", "docs", "prove", "lint", "test", "macos-lint", "macos-tests"};
 constexpr size_t smith_check_part_count = sizeof smith_check_parts / sizeof smith_check_parts[0];
 
 // What `smith check` was asked: `-v`, `--changed [--base <ref>]`, `--require <parts>|all`.
@@ -1820,7 +1820,7 @@ static bool smith_check_require(const char *list, bool *required, const char *op
         }
         if (found == smith_check_part_count) {
             fprintf(stderr,
-                    "smith check: %s: '%s' is no part (fmt, docs, lint, test, prove, macos-lint, "
+                    "smith check: %s: '%s' is no part (fmt, docs, prove, lint, test, macos-lint, "
                     "macos-tests, or all)\n",
                     option, item);
             return false;
@@ -1900,8 +1900,23 @@ static void smith_check_not_run(const bool *not_run, const SmithCheckArgs *given
     fprintf(stderr, "smith check: %zu ok, %zu failed, %zu not run here\n", ran - ran_failed, *failed_count, skipped);
 }
 
-// `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
-// first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
+// The proofs come first: lint and the compiles read the proof files (`.smith/proved/*.pts`, and the -DSMITH_PROVED= of
+// the compile commands), so a run that proved after them left the files they had read changed, and the next run did
+// their work again (#3178). Returns 1 when the proofs ran, else 0 (and marks the part not run).
+static size_t smith_check_prove_first(const char *self, SmithVerbArgs *split, bool loud, const char **failed,
+                                      size_t *failed_count, bool *not_run) {
+    if (smith_has_prover()) {
+        smith_check_run(self, "prove", split, loud, failed, failed_count);
+        return 1;
+    }
+    fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
+    not_run[smith_check_index("prove")] = true;
+    return 0;
+}
+
+// `smith check`: formatting (clang-format's dry run), the docs, the proofs, lint and the tests, in that order (the
+// proofs before the parts that read them, #3178). A part that fails does not stop the rest: every part is reported, and
+// the exit status is 1 if any failed.
 // A part this host cannot run (the macOS lint and tests on Linux, the proofs without a prover, lint, test and prove
 // without a build file) is never a silent pass: the last lines name it as "not run here". It does not fail the check
 // unless `--require` names it (or `all`), which is how CI says a platform must run it (#3163).
@@ -1947,34 +1962,29 @@ static bool smith_check_wants(const SmithCheckRun *run, const char *name) {
     return !run->given->part_given || run->given->parts[smith_check_index(name)];
 }
 
-// Lint, the tests and the proofs, the parts that need the project built.
+// The proofs, lint and the tests, the parts that need the project built: the proofs first (#3178).
 static void smith_check_built(SmithCheckRun *run) {
     static SmithVerbArgs lint_split, test_split;
+    if (smith_check_wants(run, "prove")) {
+        run->ran +=
+            smith_check_prove_first(run->self, run->split, run->loud, run->failed, &run->failed_count, run->not_run);
+    }
     if (smith_check_wants(run, "lint")) {
         lint_split = *run->split;
         smith_check_select(&lint_split, "lint", run->given);
         smith_check_run(run->self, "lint", &lint_split, run->loud, run->failed, &run->failed_count);
         run->ran++;
     }
-    if (smith_check_wants(run, "test")) {
-        test_split = *run->split;
-        smith_check_select(&test_split, "test", run->given);
+    if (!smith_check_wants(run, "test")) return;
+    test_split = *run->split;
+    smith_check_select(&test_split, "test", run->given);
 #ifndef __APPLE__
-        // The tests that need macOS cannot run here: the runner's `--skip-macos`, as CI's test shards pass it.
-        test_split.options[test_split.option_count++] = (char *)"--skip-macos";
-        fprintf(stderr, "smith check: the macOS-only tests do not run on this host\n");
+    // The tests that need macOS cannot run here: the runner's `--skip-macos`, as CI's test shards pass it.
+    test_split.options[test_split.option_count++] = (char *)"--skip-macos";
+    fprintf(stderr, "smith check: the macOS-only tests do not run on this host\n");
 #endif
-        smith_check_run(run->self, "test", &test_split, run->loud, run->failed, &run->failed_count);
-        run->ran++;
-    }
-    if (!smith_check_wants(run, "prove")) return;
-    if (smith_has_prover()) {
-        smith_check_run(run->self, "prove", run->split, run->loud, run->failed, &run->failed_count);
-        run->ran++;
-    } else {
-        fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
-        run->not_run[smith_check_index("prove")] = true;
-    }
+    smith_check_run(run->self, "test", &test_split, run->loud, run->failed, &run->failed_count);
+    run->ran++;
 }
 
 // The parts of macOS that this host cannot run, when it was asked for them (all parts, or named by --part).

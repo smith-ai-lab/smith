@@ -727,7 +727,9 @@ export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kin
                                          "or import the module that has it"));
     types_expr::infer(&r, ast::name("Point"));
     test::check_condition(
-        says(last(&r), "`Point` is a type, not a value; write a variable, a function or a constant here"));
+        says(last(&r),
+             "`Point` is a type; a type has no run-time form: use it where a type is written, or in a compile-time "
+             "value"));
     declare(&r, "arena", .module_name, r.table.invalid, false);
     types_expr::infer(&r, ast::name("arena::push"));
     test::check_condition(says(last(&r), "not yet typed: `arena::push`, a name from another module"));
@@ -763,6 +765,33 @@ static Str cat(Str a, Str b) {
 
 static Str row(Str text, Str label, types::Checked *r, ast::Expr *e) {
     return cat(text, cat(label, cat(": ", cat(shown(r, e), "\n"))));
+}
+
+// #3238: a type named as a callee builds a value: the lanes of a vector alias, the empty slice of a slice alias. A type
+// anywhere else at run time is the error that says a type has no run-time form.
+export void test_front_types_expr_a_type_called_builds_a_value() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef lanes = types::vector_of(&r.table, ty(&r, "F32"), 4);
+    types::TypeRef words = types::slice_of(&r.table, ty(&r, "U8"), false);
+    declare(&r, "Lanes", .type_name, lanes, false);
+    declare(&r, "Words", .type_name, words, false);
+    ast::ExprRef four[4] = {real(1.0), real(2.0), real(3.0), real(4.0)};
+    test::check_condition(types_expr::infer(&r, ast::call(ast::name("Lanes"), four[0:4])) == lanes);
+    ast::ExprRef none[1] = {};
+    types::TypeRef got = types_expr::infer(&r, ast::call(ast::name("Words"), none[0:0]));
+    test::check_condition(got == words);
+    expect(r.error_count, 0);
+    ast::ExprRef three[3] = {real(1.0), real(2.0), real(3.0)};
+    types_expr::infer(&r, ast::call(ast::name("Lanes"), three[0:3]));
+    test::check_condition(
+        says(last(&r), "`vec(F32, 4)` is built from exactly 4 values, found 3; write one value for each lane"));
+    types_expr::infer(&r, ast::name("Words"));
+    test::check_condition(says(last(&r), "`Words` is a type; a type has no run-time form: use it where a type is "
+                                         "written, or in a compile-time value"));
 }
 
 export void test_front_types_expr_golden_of_the_typed_expressions() {
@@ -884,7 +913,7 @@ export void test_front_types_expr_an_if_value_needs_a_bool_and_branches_of_one_t
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
     var(&r, "x", "U8");
-    var(&r, "f", "F32");
+    var(&r, "f", "I8");
     test::check_condition(types_expr::infer(&r, as_value(branch(ast::name("x"), braces(num(1)), braces(num(2))))) ==
                           r.table.invalid);
     test::check_condition(says(last(&r), "expected `Bool`, found `U8`; write a value of type `Bool`, or convert it "

@@ -182,7 +182,16 @@ export void test_front_fix_guard_a_test_inside_an_and_chain_is_a_pattern() {
     expect_fixed(as_str(format::push(shape, "fn radius(s: Shape, n: i32) -> i32:\n    if n > 0 and s == .circle:\n"
                                             "        return s.circle\n    0\n")),
                  as_str(format::push(shape, "fn radius(s: Shape, n: i32) -> i32:\n"
-                                            "    if n > 0 and .circle(circle) := s:\n        return circle\n    0\n")));
+                                            "    if n > 0 and s is .circle:\n        return s\n    0\n")));
+}
+
+// The same test of a payload enumeration is `is` and the name narrows (#3227); a `mut` name keeps the pattern.
+export void test_front_fix_guard_a_payload_test_in_an_and_chain_is_written_with_is() {
+    Str shape = "struct Circle:\n    r: i32\n\nenum Shape:\n    circle: Circle\n    empty\n\n";
+    expect_fixed(as_str(format::push(shape, "fn big(s: Shape, n: i32) -> i32:\n    if n > 0 and s == .circle and "
+                                            "s.circle.r > 1:\n        return s.circle.r\n    0\n")),
+                 as_str(format::push(shape, "fn big(s: Shape, n: i32) -> i32:\n    if n > 0 and s is .circle and "
+                                            "s.r > 1:\n        return s.r\n    0\n")));
 }
 
 // A chain with an `or`, and a body that writes the result, stay as they are.
