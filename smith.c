@@ -3958,7 +3958,7 @@ static const SmithVerb smith_verbs[] = {
           "print what the change touches and what runs (scope, docs_tests, mac_run, test_parts, ...); runs nothing"},
          {"--event <name>", "with --plan: the GitHub event whose rules apply (push, merge_group, schedule, ...)"},
          {"--require <parts>",
-          "fail when a part is not run here: fmt, docs, lint, test, prove, macos-lint, macos-tests, or all"},
+          "fail when a part is not run here: fmt, docs, prove, lint, test, macos-lint, macos-tests, or all"},
          {"-D<name>=<value>", "an option the project's build.c reads"},
          {nullptr, nullptr}},
      (const char *const[]){"smith check", "smith check -v", "smith check --changed --require all",
