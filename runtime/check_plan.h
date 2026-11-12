@@ -1,4 +1,5 @@
-// What `smith check --plan` reads (#3163): the scope of a change, the one rule CI's `changes` job and the pre-push hook share.
+// What `smith check --plan` reads (#3163): the scope of a change, the one rule CI's `changes` job and the pre-push hook
+// share.
 #pragma once
 
 #include <stdbool.h>
@@ -21,6 +22,7 @@ SmithCheckScope smith_check_plan_scope(const SmithCheckPlan *plan);
 
 const char *smith_check_scope_name(SmithCheckScope scope);
 
-// `smith check --plan [--base <ref>]`: prints `scope=`, `docs_tests=` and `changed=` lines for the diff from `base` (default:
-// the merge-base with origin/main) to HEAD. A diff that cannot be read is `scope=full`. Returns the exit status.
+// `smith check --plan [--base <ref>]`: prints `scope=`, `docs_tests=` and `changed=` lines for the diff from `base`
+// (default: the merge-base with origin/main) to HEAD. A diff that cannot be read is `scope=full`. Returns the exit
+// status.
 int smith_check_plan_print(const char *base);

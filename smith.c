@@ -3960,7 +3960,8 @@ static const SmithVerb smith_verbs[] = {
          {"-D<name>=<value>", "an option the project's build.c reads"},
          {nullptr, nullptr}},
      (const char *const[]){"smith check", "smith check -v", "smith check --changed --require all",
-                          "smith check --plan --base origin/main", nullptr}, nullptr},
+                           "smith check --plan --base origin/main", nullptr},
+     nullptr},
     {"prove", SmithVerb_ToolOrProject, smith_prove_project, "prove the project's contracts",
      "smith prove [-v] [--budget=<s>] [--emit-ir=<file>] [--function=<name>] [--no-cache] [--induction] [--unroll]\n"
      "       smith prove <prover arguments>",

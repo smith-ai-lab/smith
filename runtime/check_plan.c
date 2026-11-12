@@ -1,9 +1,9 @@
-// The plan of `smith check` (#3163): what a change touches decides what runs. These are the rules that were three regexes
-// in ci.yml's `changes` job and a list in the pre-push hook.
+// The plan of `smith check` (#3163): what a change touches decides what runs. These are the rules that were three
+// regexes in ci.yml's `changes` job and a list in the pre-push hook.
 //
 // The file stands alone (libc and git only): ci.yml's `changes` job runs before any smith is built, so it compiles this
-// file with -DSMITH_CHECK_PLAN_MAIN into a tool of its own, as it does for scripts/revert_check.c, and `smith check --plan`
-// is the same code.
+// file with -DSMITH_CHECK_PLAN_MAIN into a tool of its own, as it does for scripts/revert_check.c, and `smith check
+// --plan` is the same code.
 #include "check_plan.h"
 
 #include <fcntl.h>
@@ -72,9 +72,12 @@ SmithCheckScope smith_check_plan_scope(const SmithCheckPlan *plan) {
 
 const char *smith_check_scope_name(SmithCheckScope scope) {
     switch (scope) {
-    case SmithCheckScope_None: return "none";
-    case SmithCheckScope_Docs: return "docs";
-    case SmithCheckScope_Full: return "full";
+    case SmithCheckScope_None:
+        return "none";
+    case SmithCheckScope_Docs:
+        return "docs";
+    case SmithCheckScope_Full:
+        return "full";
     }
     return "full";
 }
@@ -83,7 +86,8 @@ const char *smith_check_scope_name(SmithCheckScope scope) {
 static bool smith_plan_name_ok(const char *name) {
     if (name[0] == '\0' || name[0] == '-') return false;
     for (const char *c = name; *c != '\0'; c++) { // bounded by the name
-        bool ok = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || strchr("._/-~^@", *c) != nullptr;
+        bool ok = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') ||
+                  strchr("._/-~^@", *c) != nullptr;
         if (!ok) return false;
     }
     return true;
