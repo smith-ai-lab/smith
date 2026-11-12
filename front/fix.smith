@@ -1092,14 +1092,10 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     // fix: the file would stay as it is. The braced reader of smith's own syntax reads the rest of the body and mends
     // it (a lambda `[] { ... }` in a function whose header was written first, #3317).
     if (read_braced && !has_fix(old.errors) && has_fix(braced.errors)) return braced;
-    // Today's reader cannot read the tour's array value (`Grid(cells = [[1, 2, 3], [4, 5, 6]])`) either: it stops
-    // at the `[[`, and the error it recovers from takes the `,` after the `1` away (#3324). The braced reader's
-    // result goes in when it reads more of the declarations and has fewer errors: a header only today's reader
-    // reads (`export I32 double(...)`) leaves the braced reader with nothing, and stays with today's.
-    if (read_braced && countof(braced.module.decls) >= countof(old.module.decls) &&
-        countof(braced.errors) < countof(old.errors) && countof(braced.module.decls) > 0) {
-        return braced;
-    }
+    // Today's reader cannot read the tour's array value (`Grid(cells = [[1, 2, 3], [4, 5, 6]])`) either: it reports
+    // errors all through the text, and the error it recovers from takes the `,` after the `1` away (#3324). A text
+    // that the braced reader reads with fewer errors is the one in smith's own syntax: the old reader's fixes stay out.
+    if (read_braced && countof(braced.errors) < countof(old.errors)) return braced;
     return old;
 }
 
