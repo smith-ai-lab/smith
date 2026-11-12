@@ -231,9 +231,8 @@ export void test_front_check_bind_fix_a_test_inside_an_and_chain_is_a_pattern() 
     char before[:] = format::push(
         shape_text(),
         "fn big(s: Shape, ok: bool) -> i32:\n    if ok and s == .circle and s.circle > 1:\n        return 1\n    0\n");
-    char after[:] =
-        format::push(shape_text(), "fn big(s: Shape, ok: bool) -> i32:\n"
-                                   "    if ok and s is .circle and s > 1:\n        return 1\n    0\n");
+    char after[:] = format::push(shape_text(), "fn big(s: Shape, ok: bool) -> i32:\n"
+                                               "    if ok and s is .circle and s > 1:\n        return 1\n    0\n");
     expect(before, after);
     char site[:] = format::push(shape_text(), "fn big(s: Shape, ok: bool) -> i32:\n"
                                               "    if ok or s == .circle and s.circle > 1:\n        return 1\n    0\n");
