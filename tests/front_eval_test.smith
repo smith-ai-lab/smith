@@ -96,7 +96,9 @@ export void test_front_eval_overflow_and_division_by_zero_are_errors() {
     expect(source, "over", "failed: this overflows `I32` at compile time: 2147483647 + 1");
     expect(source, "split", "failed: this divides by zero at compile time");
     expect(source, "far", "failed: this shifts by 40 at compile time, which is not below the 32 bits of the value");
-    expect(source, "use", "failed: `300` does not fit `U8` at compile time");
+    expect(source, "use",
+           "failed: `300` does not fit `U8` at compile time; write `(300).wrap(U8)` to cut it to size, or use a type "
+           "that holds it");
     expect(source, "down", "-2147483648");
 }
 

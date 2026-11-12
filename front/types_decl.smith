@@ -2438,6 +2438,13 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     state.function = name;
     types::TypeRef type = symbol->type;
+    // The initializer is checked against the declared type first, so the compiler reads its literals with that type:
+    // `const k: [2]u32 = [0x80000000, 5]` holds u32 items, not i32 ones that do not fit.
+    if (is_auto(type)) {
+        (void)types_expr::infer(r, init);
+    } else {
+        (void)types_expr::check(r, init, type);
+    }
     if (constant) {
         require_constant(r, name, init);
     } else if (computed) {
@@ -2445,11 +2452,6 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
         // a value that is not known yet (a call, until step 2 of #3039) is left to the emitter
         eval::Outcome found = eval::value(r, init);
         if (found.failed) eval::report(r, found, init, "this constant");
-    }
-    if (is_auto(type)) {
-        (void)types_expr::infer(r, init);
-    } else {
-        (void)types_expr::check(r, init, type);
     }
 }
 
