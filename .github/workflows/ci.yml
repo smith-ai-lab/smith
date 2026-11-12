@@ -1295,42 +1295,6 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
-      - name: Publish the step cache as release assets
-        # a cloud runner cannot download an Actions artifact (its zip is served from a host the session's proxy refuses
-        # by name, and the upload of one cost 3.35 runner-minutes a push for no reader: it is gone, #3069), but it can
-        # download a release asset. The repository's releases are immutable (a release takes its
-        # assets when it is created and never again, #2772), so each push to main creates its own prerelease
-        # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
-        # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
-        # them in order) and smith-steps-linux.sha (the commit it was built from). The 3 newest releases stay. A failure
-        # here must not fail main's push
-        if: runner.os == 'Linux'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -eu
-          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
-          tar -C ~/.cache/smith/steps -c . | gzip -1 | split -b 1900M -d - "$out/smith-steps-linux.tar.gz."
-          echo "$GITHUB_SHA" >"$out/smith-steps-linux.sha"
-          files=("$out"/smith-steps-linux.tar.gz.* "$out/smith-steps-linux.sha")
-          ls -l "${files[@]}" | awk '{print $5, $9}'
-          if [ "$DRY_RUN" = 1 ]; then
-            { echo "### Dry run: would create release \`step-cache-${GITHUB_SHA:0:7}\` with these assets, then keep the 3 newest"; echo '```'; ls -l "${files[@]}" | awk '{print $5, $9}'; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          tag="step-cache-${GITHUB_SHA:0:7}"
-          if ! GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" "${files[@]}" --prerelease --latest=false --target "$GITHUB_SHA" \
-              --title "step cache $tag" --notes "Main's step cache at $GITHUB_SHA (#2772). Not a release of smith."
-          fi
-          # keep the 3 newest (the old rolling `step-cache` of #2755 goes first); a refused delete only warns
-          GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release list --limit 100 --json tagName,createdAt \
-            --jq '[.[]|select(.tagName|test("^step-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
-            while read -r old; do
-              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
-            done
-          gh release delete step-cache --cleanup-tag --yes 2>/dev/null || true
-          echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Restore the lint and proof caches
         # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
@@ -1362,6 +1326,46 @@ jobs:
             ~/.cache/smith/lint
             ~/.cache/smith/steps/a
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+      - name: Publish the step cache as release assets
+        # a cloud runner cannot download an Actions artifact (its zip is served from a host the session's proxy refuses
+        # by name, and the upload of one cost 3.35 runner-minutes a push for no reader: it is gone, #3069), but it can
+        # download a release asset. The repository's releases are immutable (a release takes its
+        # assets when it is created and never again, #2772), so each push to main creates its own prerelease
+        # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
+        # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
+        # them in order) and smith-steps-linux.sha (the commit it was built from). The 3 newest releases stay. A failure
+        # here must not fail main's push. It runs after the proof results are filled in (`steps/a` is inside the folder), so the
+        # file is the whole store of this commit (#3176); `smith-steps-linux.stage0` names the commit of the smith that
+        # filled it (every key holds that smith's digest, and `warm` builds with `stage0-<its own commit>`), so a reader
+        # takes the matching release and not the one before it, which served 24 of 339 steps (#3176)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          tar -C ~/.cache/smith/steps -c . | gzip -1 | split -b 1900M -d - "$out/smith-steps-linux.tar.gz."
+          echo "$GITHUB_SHA" >"$out/smith-steps-linux.sha"
+          echo "$GITHUB_SHA" >"$out/smith-steps-linux.stage0"
+          files=("$out"/smith-steps-linux.tar.gz.* "$out/smith-steps-linux.sha" "$out/smith-steps-linux.stage0")
+          ls -l "${files[@]}" | awk '{print $5, $9}'
+          if [ "$DRY_RUN" = 1 ]; then
+            { echo "### Dry run: would create release \`step-cache-${GITHUB_SHA:0:7}\` with these assets, then keep the 3 newest"; echo '```'; ls -l "${files[@]}" | awk '{print $5, $9}'; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag="step-cache-${GITHUB_SHA:0:7}"
+          if ! GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "${files[@]}" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "step cache $tag" --notes "Main's step cache at $GITHUB_SHA (#2772). Not a release of smith."
+          fi
+          # keep the 3 newest (the old rolling `step-cache` of #2755 goes first); a refused delete only warns
+          GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^step-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
+            done
+          gh release delete step-cache --cleanup-tag --yes 2>/dev/null || true
+          echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Time the build (tracked on #2751)
         # Linux only, after every cache is saved, so the timing never changes what is saved or delays it. It records
         # numbers and gates nothing: a failure here must not fail main's push. Hosted runners vary by about 15%

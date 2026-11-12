@@ -98,6 +98,28 @@ runs:
         key: smith-steps-${{ runner.os }}-${{ github.sha }}
         restore-keys: smith-steps-${{ runner.os }}-
 
+    - name: Fetch the store from main's release (#3176)
+      # the store is one file per commit of main, `step-cache-<sha7>` (smith-steps-linux.tar.gz.NN), the same one
+      # `smith build stage0` fetches in a clone: when no Actions cache entry matched (an expired cache, a fork, a
+      # runner of another repository), the newest one among the last 20 first-parent commits fills the folder. It only
+      # fills a cache: a missing or unreadable file leaves the folder empty and the steps run for real
+      if: inputs.artifact == '' && runner.os == 'Linux' && steps.steps.outputs.cache-matched-key == ''
+      shell: bash
+      run: |
+        base="https://github.com/${{ github.repository }}/releases/download"
+        dir="$HOME/.cache/smith/steps"; mkdir -p "$dir"
+        start=$(date +%s); got=none
+        for sha in $(git rev-list --first-parent -n 20 HEAD); do
+          tag="step-cache-${sha:0:7}"
+          curl -fsIL -o /dev/null "$base/$tag/smith-steps-linux.sha" || continue
+          part=0; : >"$RUNNER_TEMP/store.tar.gz"
+          while curl -fsSL --retry 3 "$base/$tag/smith-steps-linux.tar.gz.$(printf %02d $part)" >>"$RUNNER_TEMP/store.tar.gz" 2>/dev/null; do part=$((part + 1)); done
+          if [ "$part" -gt 0 ] && tar -xzf "$RUNNER_TEMP/store.tar.gz" -C "$dir"; then got=$tag; fi
+          break
+        done
+        rm -f "$RUNNER_TEMP/store.tar.gz"
+        echo "store: $got, $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+
     - name: Restore the packages and tools
       # a job that takes the build of `build-linux` restores no step cache, but still needs the packages the tests
       # fetch (the tree-sitter CLI, Neovim): main's `warm` saves them apart, a small cache (#2825), so such a job
