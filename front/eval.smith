@@ -2663,6 +2663,28 @@ static void conditional_resume(Run *run, Step s) {
 // ---------------------------------------------------------------------------------------------------------------
 // The loop
 
+// `t[:]` where `t` is a type: one more dimension, as `slice.with_dims` counts them (`T[:]` is `[]T`, `T[:][:]` is
+// `[,]T`), so a function over types builds a slice type with a loop (`t = t[:]`).
+static void type_slice_resume(Run *run, Step s) {
+    const ast::Expr *e = s.expr;
+    Value base = pop_value(run);
+    if (base != .type_value) {
+        unknown(run, e->span, "this slices something that is not a type known at compile time");
+        return;
+    }
+    types::TypeRef t = base.type_value.type;
+    U64 dims = 1;
+    types::TypeRef element = t;
+    if (t->kind == .slice) {
+        dims = 2;
+        element = types::element_of(t);
+    } else if (t->kind == .block) {
+        dims = types::count_of(t) + 1;
+        element = types::element_of(t);
+    }
+    push_value(run, type_value(types::with_dims(run->r, element, dims)));
+}
+
 static void resume(Run *run, Step s) {
     const ast::Expr *e = s.expr;
     if (e->kind == .binary) {
@@ -2689,6 +2711,8 @@ static void resume(Run *run, Step s) {
         field_resume(run, s);
     } else if (e->kind == .index) {
         index_resume(run, s);
+    } else if (e->kind == .slice_of) {
+        type_slice_resume(run, s);
     } else if (e->kind == .query && s.phase == 15) {
         count_resume(run, s);
     } else if (e->kind == .call) {
@@ -2769,6 +2793,9 @@ static void enter(Run *run, Step s) {
         assign_step(run, s);
     } else if (e->kind == .stmt_expr) {
         push_step(run, stmt_step(e->kind.stmt_expr.stmt, s));
+    } else if (e->kind == .slice_of && e->kind.slice_of.start == nullptr && e->kind.slice_of.end == nullptr) {
+        push_step(run, later(s, 1)); // `t[:]` of a type
+        push_step(run, expr_step(e->kind.slice_of.base, s));
     } else if (has_memory(e)) {
         unknown(run, e->span,
                 "this is a value with memory (an array, a slice, a string, a struct or a pointer), and compile-time "
