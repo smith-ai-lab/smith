@@ -436,6 +436,11 @@ static Bool checked_vector(state::Emitter *e, const ast::Expr *x) {
     return t != nullptr && t->kind == .vector;
 }
 
+// `x is T` is read and checked (#3225); the emitter that writes it is the next ticket.
+static state::Status type_test_not_yet(const ast::Expr *x) {
+    return state::fail("not yet supported: a type test in an expression", x->span);
+}
+
 static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast::BinaryOp op, state::Hint hint) {
     if (x->kind == .binary && (checked_vector(e, x->kind.binary.left) || checked_vector(e, x->kind.binary.right)))
         return vectors::binary(e, x);
@@ -462,6 +467,9 @@ static state::Status dispatch_binary(state::Emitter *e, const ast::Expr *x, ast:
     case .logical_and:
     case .logical_or:
         return control::logical(e, x, hint);
+    case .is:
+    case .is_not:
+        return type_test_not_yet(x);
     }
 }
 

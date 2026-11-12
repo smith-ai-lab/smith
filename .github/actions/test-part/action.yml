@@ -3,8 +3,7 @@ description: >
   Runs one Linux part of `smith test` on a tree that is built (#1758, #2870): Neovim for the editor tests, the restored
   test-result store, `smith test --shard <part>/<count>`, the store published (queue and nightly runs), the log
   uploaded as `test-log-linux-<part>-of-<count>`, and the failed tests printed last. `test-linux` runs it for each part
-  on the build it restored; `build-linux` runs it itself when the sizing asks for one part, so a typical queue run has
-  no `test-linux` job. The job sets SMITH (setup-smith), SMITH_TEST_STATS=1 and `contents: write`.
+  on the build it restored (8 parts, #3279). The job sets SMITH (setup-smith), SMITH_TEST_STATS=1 and `contents: write`.
 
 inputs:
   part:

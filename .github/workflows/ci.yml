@@ -617,11 +617,8 @@ jobs:
     # of this workflow (`changes` gives `pack` false), so `pack` is not waited for either.
     if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
-    # the build, then one test part when the sizing asks for one in a queue run (#2870)
     timeout-minutes: 30
     outputs:
-      # the outcome of the test part this job ran (`success`, `failure`), or empty when the parts are `test-linux`'s
-      tests: ${{ steps.tests.outcome != 'skipped' && steps.tests.outcome || '' }}
       # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
@@ -630,11 +627,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
-      # in every test key (an environment variable of SMITH_ is): the test jobs set it, so the sizing step must too,
-      # or `smith test --misses` finds nothing of the store and asks for 7 parts (#2833)
-      SMITH_TEST_STATS: "1"
     permissions:
-      contents: write # test-cache/save: `gh release create` of the test store of the part it runs (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - uses: actions/checkout@v4
@@ -666,52 +659,6 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
-      - name: API budget (before test-cache)
-        uses: ./.github/actions/api-budget
-        with:
-          label: ${{ github.workflow }}/${{ github.job }} before test-cache
-      - uses: ./.github/actions/test-cache
-        with:
-          os: linux
-          fresh: ${{ github.event_name == 'schedule' }}
-          imports-from: linux-* # the test parts' import caches, not the count's (#2939)
-      - name: API budget (after test-cache)
-        uses: ./.github/actions/api-budget
-        with:
-          label: ${{ github.workflow }}/${{ github.job }} after test-cache
-      - name: Size the test parts
-        # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
-        # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
-        # pays about 4 minutes of setup whatever it runs, so a part gets about 500 CPU seconds (2 minutes on 4 cores),
-        # at most 8 parts and at least 1. Any failure keeps the 8 parts of `changes`.
-        id: size
-        continue-on-error: true
-        shell: bash
-        env:
-          SMITH_OUTPUT: full
-        run: |
-          count=8
-          flags=--skip-macos
-          # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
-          "$SMITH" test $flags --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
-          line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
-          if [ -n "$line" ]; then
-            secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
-            count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
-          fi
-          # one part in a queue run is run by this job, which holds its runner already (#2870)
-          jobs=$(( count + 2 )); [ "$count" = 1 ] && jobs=2
-          echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
-          echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Report the test-store hit rate (sizing)
-        # one line per cache with its hit rate; the first misses say which input differs (#2876)
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/cache-report
-        with:
-          name: test-store
-          log: ${{ runner.temp }}/misses.out
-          inputs: '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
       - name: Pick the Mac's Linux runners
         # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
@@ -723,22 +670,17 @@ jobs:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
           fork: false
-          linux-jobs: ${{ steps.size.outputs.jobs || '10' }}
+          linux-jobs: "10"
       - name: Give each job its runner
         id: runners
         if: ${{ always() }}
         shell: bash
         env:
           MAC: ${{ steps.pick.outputs.linux-mac }}
-          COUNT: ${{ steps.size.outputs.count }}
         run: |
-          # the 8 parts of the run (the same list `changes` gives its output `linux`), cut to the count sized above (#2833)
-          # no answer keeps the 8 parts
+          # the 8 fixed parts of the run (#3279)
           MATRIX='{"include":[{"shard":1,"count":8,"flags":"--skip-macos"},{"shard":2,"count":8,"flags":"--skip-macos"},{"shard":3,"count":8,"flags":"--skip-macos"},{"shard":4,"count":8,"flags":"--skip-macos"},{"shard":5,"count":8,"flags":"--skip-macos"},{"shard":6,"count":8,"flags":"--skip-macos"},{"shard":7,"count":8,"flags":"--skip-macos"},{"shard":8,"count":8,"flags":"--skip-macos"}]}'
-          case "$COUNT" in ''|*[!0-9]*) COUNT=$(printf '%s' "$MATRIX" | jq '.include | length') ;; esac
-          MATRIX=$(printf '%s' "$MATRIX" | jq -c --argjson n "$COUNT" \
-            '.include |= (map(select(.shard <= $n)) | map(.count = $n))')
-          [ "$COUNT" -gt 8 ] && COUNT=8
+          COUNT=8
           # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then lint, then fmt-prove. An empty
           # or failed pick is 0: everything hosted.
           hosted='"ubuntu-latest"'; mac='["self-hosted","Linux","X64"]'
@@ -754,20 +696,8 @@ jobs:
           { echo "matrix=$matrix"; echo "lint=$lint"; echo "fmt-prove=$fmt"; } >>"$GITHUB_OUTPUT"
           echo "Linux jobs on the Mac: $n (parts $parts, lint $([ "$lint" = "$mac" ] && echo yes || echo no), fmt-prove $([ "$fmt" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
 
-      - name: The one test part, in this job
-        # A queue run whose misses fit in one part runs it here, on the tree just built, not in a `test-linux` job
-        # (#2870): the part is no job of its own, restores and rebuilds nothing, and its test time replaces a job's
-        # setup. The jobs that need this build start once it ends. A pull request keeps its part in `test-linux`, beside `check-fmt-prove`. A failing test
-        # fails the step, not the job, so the checks still run on this build; `ci` reads the outcome.
-        id: tests
-        if: steps.size.outputs.count == '1' && github.event_name == 'merge_group'
-        continue-on-error: true
-        uses: ./.github/actions/test-part
-        with:
-          restore: "false"
-          flags: --skip-macos
       - name: Fail fast
-        if: failure() || steps.tests.outcome == 'failure'
+        if: failure()
         uses: ./.github/actions/fail-fast
       - name: API budget (last)
         if: always()
@@ -776,7 +706,7 @@ jobs:
   test-linux:
     # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
     needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.build-linux.outputs.tests == '' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 20
     strategy:
@@ -1013,7 +943,7 @@ jobs:
           MACOS_LINT: ${{ needs.macos-lint.result }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
-          TEST_LINUX: ${{ needs.build-linux.outputs.tests || needs.test-linux.result }}
+          TEST_LINUX: ${{ needs.test-linux.result }}
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}

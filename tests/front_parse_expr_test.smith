@@ -280,6 +280,14 @@ export void test_parse_expr_new_as_is_an_error_with_a_fix() {
                     "x as f64\n-x as f64\na + b as f64\nx as u8 as i32\nx as *mut u8\n", true);
 }
 
+// `x is T`, `x is not T`, `x is .v` (#3225): a test at the level of `==`, its right side a type or a symbol.
+export void test_parse_expr_new_is_and_is_not() {
+    check_golden_in("tests/front/parse_expr/new_is.txt",
+                    "x is .unary\nx is not .unary\nx is Circle\nx is not Circle and y\na or b is .none\n"
+                    "a == b is .none\nx is\nis_set\n",
+                    true);
+}
+
 export void test_parse_expr_new_lambdas_and_types() {
     check_golden_in("tests/front/parse_expr/new_lambdas.txt",
                     "fn(x) { x }\nfn() { }\nfn[a, b](x) { x }\nfn(x: i32, y) -> i32 { x }\nfn(i32) -> i32\nfn()\n"

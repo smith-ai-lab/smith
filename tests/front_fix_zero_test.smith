@@ -427,13 +427,15 @@ export void test_front_fix_zero_a_tag_that_is_also_a_function_starts_with_mem_ze
 
 // A member that C zeroes, of a struct with a pointer and a function pointer nothing tests against null, is
 // `undefined`: `Step()` would need a default for each pointer, and a pointer is never null in smith (lead, #2613).
+// `undefined` is a whole initializer, not a value inside a construction, so this is the one member that gets the
+// default in the struct and the construction leaves it out (#3268's regression on the build files).
 export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
     expect_fixed("module m;\nstruct Step {\n    const char *name;\n    int (*run)(int);\n    int n;\n};\n"
                  "struct Owner {\n    int id;\n    Step step;\n};\n"
                  "void f(Owner *o) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
                  "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32\n"
-                 "struct Owner:\n    id: i32\n    step: Step\n"
-                 "fn f(o: *Owner):\n    x := Owner(id = 1, step = undefined)\n    g(&x)\n");
+                 "struct Owner:\n    id: i32\n    step: Step = undefined\n"
+                 "fn f(o: *Owner):\n    x := Owner(id = 1)\n    g(&x)\n");
 }
 
 // A local that holds a pointer field the file tests against null is an option, and the `?` goes at its new type, not
