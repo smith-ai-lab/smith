@@ -236,6 +236,9 @@ export void test_front_types_decl_golden_of_the_use_cases() {
                                                 "Bool run() { return apply([](I32 a, I32 b) { return a < b; }); }");
     golden("tests/front/types/decl_option.txt", "Option(I32) x = 3;\nI32 f() { I32 y = x; return y; }");
     golden("tests/front/types/decl_ascii.txt", use_ascii());
+    golden("tests/front/types/decl_record_fields.txt",
+           "typedef struct { I32 x; I32 y; } Point;\ntypedef struct { I32 x; I32 y; I32 z; } Wide;\n"
+           "Wide w;\nPoint p = w;");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
