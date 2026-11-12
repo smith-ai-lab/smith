@@ -100,12 +100,20 @@ jobs:
               -f id="$id" --jq '.data.enqueuePullRequest.mergeQueueEntry.position'
           }
 
+          # the times the ruleset `main` was written, newest first (its history, else only `updated_at`)
+          writes() {
+            { echo "$2"; gh api "repos/$REPO/rulesets/$1/history" --jq '.[].updated_at' 2>/dev/null || true; } | sort -ru
+          }
+
           # a failed lookup must stop the job: with no entry list every queued PR would look lost
           list=$(entries) || { log "queue-heal: cannot read the queue's entries, nothing done"; exit 1; }
           queued=" $(echo "$list" | tr '\n' ' ')"
           q=$(echo "$list" | grep -c . || true)
           now=$(date -u +%s)
           lost=0
+          rsid=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id' 2>/dev/null) || rsid=
+          writes=
+          [ -z "$rsid" ] || writes=$(writes "$rsid" "$(gh api "repos/$REPO/rulesets/$rsid" --jq .updated_at 2>/dev/null)")
           # a PR labelled `dequeued` was taken out on purpose by queue-ops: an API dequeue leaves no timeline event
           open=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
             --jq '.[] | select([.labels[].name] | index("dequeued") | not) | .number') \
@@ -117,8 +125,23 @@ jobs:
               '.[] | select(.event == "added_to_merge_queue" or .event == "removed_from_merge_queue") | "\(.event) \(.created_at)"') \
               || { log "queue-heal: #$pr timeline unreadable, skipped"; continue; }
             last=$(echo "$events" | tail -n 1)
-            case "$last" in added_to_merge_queue*) ;; *) continue ;; esac
             since=${last#* }
+            # a size write makes GitHub remove the entries of the group being built, about 2 minutes after it (#3286: #3268);
+            # a PR removed within 5 minutes after a write of the ruleset has no fault of its own and is queued again here,
+            # with the owner's token, as soon as this pass sees it (no grace period)
+            case "$last" in removed_from_merge_queue*)
+              if [ -n "$writes" ] && echo "$writes" | while read -r w; do
+                  d=$(( $(date -u -d "$since" +%s) - $(date -u -d "$w" +%s) )); [ "$d" -ge 0 ] && [ "$d" -le 300 ] && echo y
+                done | grep -q y; then
+                if pos=$(requeue "$pr"); then
+                  log "queue-heal: #$pr removed at $since by a group size change, re-queued at position $pos"
+                else
+                  log "queue-heal: #$pr removed at $since by a group size change, re-queue failed"
+                fi
+                lost=$((lost + 1))
+              fi
+              continue ;;
+            added_to_merge_queue*) ;; *) continue ;; esac
             [ $((now - $(date -u -d "$since" +%s))) -gt "$GRACE" ] || continue
             if pos=$(requeue "$pr"); then
               log "queue-heal: #$pr lost since $since, re-queued at position $pos"
@@ -254,10 +277,19 @@ jobs:
           # third pass (#3131): the queue's group size, by the health of its runs. GitHub builds one group at a time
           # (max_entries_to_build 1) and merges a group's entries all or none (ALLGREEN); the size of the group is
           # max_entries_to_merge. Health is the number of the last 10 finished merge_group runs of ci.yml that merged
-          # (`success`; failure and cancelled count as not merged). Under 9 of 10: size 1. A failed or cancelled run
-          # since the last size change (the ruleset's `updated_at`, T): size 1. 9 of 10 or better and 10 finished runs
-          # since T: one step up (1, 2, 4, 8). It prints `queue-heal: health 7 of 10, group size 1` on every pass and
+          # (`success`; failure and cancelled count as not merged, except a run cancelled within 5 minutes after a write of
+          # the ruleset: GitHub cancels the group in flight, #3286, and that run is left out). A real failure since the last
+          # size change (the ruleset's `updated_at`, T): size 1. 10 counted runs since T with 9 of 10 or better: one step up
+          # (1, 2, 4, 8); with fewer than 9 of 10: size 1. Until then the size holds. It prints `queue-heal: health 7 of 10, group size 1` on every pass and
           # runs from an EXIT trap, after the second pass. Same PUT and token fallback as queue-ops' set-group-size.
+          # jq program (#3286): the finished merge_group runs that count for health, "<created_at> <conclusion>", newest
+          # first. A run that ended `cancelled` within 5 minutes after a write of the ruleset was cancelled by GitHub
+          # (its `ci` job is red, no job of its own failed): it is no health signal and is left out.
+          COUNTED='($ups | split("\n") | map(select(length > 0) | fromdateiso8601)) as $w
+            | .workflow_runs[] | (.updated_at | fromdateiso8601) as $e
+            | select((.conclusion == "cancelled" and any($w[]; . <= $e and $e <= . + 300)) | not)
+            | "\(.created_at) \(.conclusion)"'
+
           tune() {
             local id rs g t runs h total after bad nb cur
             id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ] \
@@ -266,18 +298,23 @@ jobs:
             g=$(echo "$rs" | jq -r '[.rules[] | select(.type == "merge_queue") | .parameters.max_entries_to_merge][0] // empty')
             t=$(echo "$rs" | jq -r '.updated_at // empty')
             [ -n "$g" ] && [ -n "$t" ] || { log "queue-heal: health unknown, group size unreadable"; return 0; }
+            # every write of the ruleset (#3286): a write makes GitHub cancel the group being built about 75 to 115 s later
+            # (runs 43153506621 and 43154633643, 2026-11-12), and `ci` goes red with it. Such a run says nothing about the tests
             runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=completed \
-              -f per_page=30 --jq '.workflow_runs[] | "\(.created_at) \(.conclusion)"') \
+              -f per_page=30 | jq -r --arg ups "$(writes "$id" "$t")" "$COUNTED") \
               || { log "queue-heal: health unknown, group size $g kept (merge_group runs unreadable)"; return 0; }
-            # newest first; ISO times in UTC compare as text
+            # newest first; ISO times in UTC compare as text. A run our own write cancelled is left out of the 10 (rule 2)
             total=$(echo "$runs" | head -n 10 | grep -c . || true)
             h=$(echo "$runs" | head -n 10 | grep -c ' success$' || true)
             after=$(echo "$runs" | awk -v t="$t" '$1 > t' | grep -c . || true)
             bad=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 != "success"' | grep -c . || true)
+            # rule 3: after a write the size changes only on a real failure (down to 1) or after 10 counted runs since it
             nb=$g
-            if [ "$h" -lt 9 ] || { [ "$g" -gt 1 ] && [ "$bad" -gt 0 ]; }; then
+            if [ "$g" -gt 1 ] && [ "$bad" -gt 0 ]; then
               nb=1
-            elif [ "$after" -ge 10 ] && [ "$h" -ge 9 ] && [ "$g" -lt 8 ]; then
+            elif [ "$after" -ge 10 ] && [ "$h" -lt 9 ]; then
+              nb=1
+            elif [ "$after" -ge 10 ] && [ "$g" -lt 8 ]; then
               nb=$((g * 2))
             fi
             # a ruleset still set for several builds, a wait, or HEADGREEN is brought to the one-run-at-a-time form
