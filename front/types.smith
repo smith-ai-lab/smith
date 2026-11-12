@@ -188,7 +188,7 @@ export typedef enum {
     } tuple; // `(A, B)`: `slots` hold the element types, named "0", "1", ... (read as `t.0`, `t.1`)
     struct {
         ast::Text name; // written with its dot: `.green`
-    } symbol; // `.green`: the type with the one value `.green`, a member of any union that holds it (#3237)
+    } symbol;           // `.green`: the type with the one value `.green`, a member of any union that holds it (#3237)
     struct {
         TypeRef element;
         U64 count;

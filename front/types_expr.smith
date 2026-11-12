@@ -1385,7 +1385,8 @@ static void variant_expr(types::Checked *c, Frame f) {
     if (expected == nullptr) {
         // `.green` alone is a value of its own one-value type, a member of every union that holds it (#3237).
         if (e->kind.variant.payload != nullptr) {
-            types::failf(c, e->span, "`.", name, "(...)` needs a type to say what it carries; give the variable a type ",
+            types::failf(c, e->span, "`.", name,
+                         "(...)` needs a type to say what it carries; give the variable a type ",
                          "before `=`, or pass it where a parameter has the type");
             poison(c, e);
             return;
