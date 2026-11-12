@@ -1,17 +1,16 @@
 name: test-cache
 description: >
-  Restores the test-result store (`~/.cache/smith/tests`, #2686) from the `test-cache-<sha7>-*` prereleases of the
+  Restores the test-result store (the one store, `steps/a`, #2686, #3177) from the `test-cache-<sha7>-*` prereleases of the
   newest commit that has them (the commit under test and its first parents, #2938), which every job that runs tests in
   a merge queue run publishes with `./.github/actions/test-cache/save` (#2833, #2870): each Linux part and the macOS
   job its own, and this action extracts all of that commit's stores of the OS. `smith test` then leaves out every test whose key (its code, what it read, the smith under test) matches an
   entry that passed. A missing or unreadable release only leaves the store empty: every test runs. A cache entry never
   changes a result and a failure is never stored. `fresh: true` (the nightly full run) restores nothing, so every test
   runs and the run stores them all.
-  The same releases hold the import cache (`~/.cache/smith/imports`, #2891), `smith-imports-<os>.tar.gz`: std's parse
-  trees and the C headers' declarations, in a folder per smith identity (a smith whose front end differs reads none).
-  This action extracts every one of the newest commit that published one, and sets SMITH_IMPORT_CACHE_LOG, from which
-  `./.github/actions/test-cache/save` (or `./.github/actions/test-cache/report`) prints the job's hits. `fresh: true`
-  restores none of it either.
+  The one store (`steps/a`, #3177) is all that travels: the results of tests, formats, lints and imports are answers in
+  it (#3313, #3330), so there is no second tarball of imports and no `smith/tests` folder (#3347). The action sets
+  SMITH_IMPORT_CACHE_LOG, from which `./.github/actions/test-cache/save` (or `./.github/actions/test-cache/report`)
+  prints the job's import-cache hits.
 
 inputs:
   os:
@@ -21,15 +20,8 @@ inputs:
     description: '"true" restores nothing'
     default: "false"
   tests:
-    description: '"false" restores only the import cache (a job that runs no test, the count)'
+    description: '"false" restores nothing (a job that runs no test, the count)'
     default: "true"
-  imports-from:
-    description: >
-      the jobs whose import caches are restored, as patterns of the last part of their tag (`count count-3`,
-      `linux-*`); empty, every job's. A count shard's set holds what that shard's files import (40 to 90 MB once the
-      module trees are stored, about 490 MB for the nine count sets of a commit), so a shard restores its own and the fix
-      job's, and a test job only the test jobs' (the dev smith's; the count's are the release smith's) (#2939)
-    default: ""
 
 runs:
   using: composite
@@ -39,29 +31,25 @@ runs:
       # every smith of the job appends its import-cache counts here (#2891); the save or report step prints them
       run: echo "SMITH_IMPORT_CACHE_LOG=$RUNNER_TEMP/import-cache.log" >>"$GITHUB_ENV"
     - name: Find the newest commit's sets
-      if: inputs.fresh != 'true'
+      if: inputs.fresh != 'true' && inputs.tests == 'true'
       shell: bash
       env:
         OS: ${{ inputs.os }}
-        TESTS: ${{ inputs.tests }}
-        FROM: ${{ inputs.imports-from }}
         REPO: ${{ github.repository }}
       run: |
         # The sets of the newest commit that published them (#2938): the commit under test, then its first parents,
         # newest first, at most 20, each by its tags (`test-cache-<sha7>-<job>`, or `test-cache-<sha7>` before #2870).
         # In a merge queue a group's first parent is the group ahead of it, so a run reads the sets of the groups
-        # before it, then main's; in a pull request it is main. The test store and the import cache may come from two
-        # commits, and the import cache only from the jobs `imports-from` names, the newest of each pattern (#2978).
+        # before it, then main's; in a pull request it is main.
         # No REST call (#2978; the walk made about 18 a commit, and the workflow token's pool ran out): the parents come
         # from git (`rev-list`, after a fetch when the checkout is shallow), the tags of every commit from one
         # `git ls-remote --tags`, and an asset by its download URL (`releases/download/<tag>/<file>`, the repository is
-        # public; the name is known from the OS and the kind), probed with a HEAD request, which neither needs a token nor
-        # counts against the pool. A tag without the asset answers 404 and is skipped. A macOS job looks only at the
-        # `-macos` tag of a commit (its sets are the only ones it can use), not at every Linux job's. Writes
-        # <kind>-urls (tests: one URL a line; imports: `<job> <URL>`) and <kind>-from to RUNNER_TEMP.
-        t="$RUNNER_TEMP"; : >"$t/tests-urls"; : >"$t/imports-urls"
-        echo "none in the commits tried" >"$t/tests-from"; echo "none in the commits tried" >"$t/imports-from"
-        want_tests=$TESTS; want_imports=true
+        # public; the name is known from the OS), probed with a HEAD request, which neither needs a token nor counts
+        # against the pool. A tag without the asset answers 404 and is skipped. A macOS job looks only at the `-macos`
+        # tag of a commit (its sets are the only ones it can use), not at every Linux job's. Writes tests-urls (one URL a
+        # line) and tests-from to RUNNER_TEMP.
+        t="$RUNNER_TEMP"; : >"$t/tests-urls"
+        echo "none in the commits tried" >"$t/tests-from"
         git rev-parse --verify -q "$GITHUB_SHA^{commit}" >/dev/null 2>&1 || git fetch -q --no-tags --depth=25 origin "$GITHUB_SHA" 2>/dev/null || true
         git rev-list --first-parent -n 20 "$GITHUB_SHA" >"$t/commits" 2>/dev/null ||
           git rev-list --first-parent -n 20 FETCH_HEAD >"$t/commits" 2>/dev/null || : >"$t/commits"
@@ -69,38 +57,26 @@ runs:
         printf '%s\n' "$tags" >"$t/tags"
         back=0
         while read -r sha; do
-          { [ "$want_tests" = true ] || [ "$want_imports" = true ]; } || break
           mine=$(printf '%s\n' "$tags" | grep "^test-cache-${sha:0:7}" || true)
           # #3281: the Linux sets of a commit that descends from the change (3654c61) hold additions, not a full store
           post=false
           if git cat-file -e 3654c61 2>/dev/null && git merge-base --is-ancestor 3654c61 "$sha" 2>/dev/null; then post=true; fi
-          for kind in tests imports; do
-            want=want_$kind
-            [ "${!want}" = true ] || continue
-            if [ "$kind" = tests ] && [ "$OS" = linux ] && [ "$post" = true ]; then continue; fi
-            urls=""
-            served=""
-            for tag in $mine; do
-              job=${tag#test-cache-*-}; [ "$job" = "$tag" ] && job=""
-              if [ "$OS" = macos ] && [ "$job" != macos ]; then continue; fi
-              if [ "$OS" != macos ] && [ "$job" = macos ]; then continue; fi
-              if [ "$kind" = imports ] && [ -n "$FROM" ]; then
-                ok=false; set -f # the patterns are words, not files of the working folder
-                for pattern in $FROM; do
-                  if [[ $job == $pattern && " $served " != *" $pattern "* ]]; then ok=true; served="$served $pattern"; break; fi # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
-                done
-                [ "$ok" = true ] || continue
-              fi
-              url="https://github.com/$REPO/releases/download/$tag/smith-$kind-$OS.tar.gz"
-              code=$(curl -sIL -o /dev/null -w '%{http_code}' --retry 2 "$url" 2>/dev/null || true)
-              [ "$code" = 200 ] || continue
-              if [ "$kind" = imports ]; then urls="$urls$job $url"$'\n'; else urls="$urls$url"$'\n'; fi
-            done
-            [ -n "$urls" ] || continue
-            printf '%s' "$urls" >"$t/$kind-urls"
-            echo "commit ${sha:0:7}, $back first parents back" >"$t/$kind-from"
-            printf -v "$want" false
+          if [ "$OS" = linux ] && [ "$post" = true ]; then back=$((back + 1)); continue; fi
+          urls=""
+          for tag in $mine; do
+            job=${tag#test-cache-*-}; [ "$job" = "$tag" ] && job=""
+            if [ "$OS" = macos ] && [ "$job" != macos ]; then continue; fi
+            if [ "$OS" != macos ] && [ "$job" = macos ]; then continue; fi
+            url="https://github.com/$REPO/releases/download/$tag/smith-tests-$OS.tar.gz"
+            code=$(curl -sIL -o /dev/null -w '%{http_code}' --retry 2 "$url" 2>/dev/null || true)
+            [ "$code" = 200 ] || continue
+            urls="$urls$url"$'\n'
           done
+          if [ -n "$urls" ]; then
+            printf '%s' "$urls" >"$t/tests-urls"
+            echo "commit ${sha:0:7}, $back first parents back" >"$t/tests-from"
+            break
+          fi
           back=$((back + 1))
         done <"$t/commits"
     - name: Find the whole file (Linux test store)
@@ -154,71 +130,33 @@ runs:
       if: inputs.tests == 'true'
       shell: bash
       env:
-        OS: ${{ inputs.os }}
         FRESH: ${{ inputs.fresh }}
       run: |
-        dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"; mkdir -p "$dir"
         if [ "$FRESH" = true ]; then echo "test store: fresh run, nothing restored" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         # every store of the commit the step above found: one per job that ran tests (a part's store holds what it
         # restored plus what it added, so a set with a part missing is still a whole store). REST, plain HTTPS download
-        # (retried: release downloads return 504 now and then, #2792; a plain download URL, no token and no API call, #2978)
+        # (retried: release downloads return 504 now and then, #2792; a plain download URL, no token and no API call, #2978).
+        # Only the one store (`steps/a`, #3177) is taken from a tarball; a set published before #3347 also holds the old
+        # per-tool folder, which nothing reads, and it is left in the tarball.
         urls=$(cat "$RUNNER_TEMP/tests-urls"); from=$(cat "$RUNNER_TEMP/tests-from")
+        stage="$RUNNER_TEMP/test-store-stage"; mkdir -p "$stage"
         got=0
         for url in $urls; do
           curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
-            tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$dir" && got=$((got + 1))
+            tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$stage" steps && got=$((got + 1))
         done
         # the mark of the additions (#3281): what a part adds is newer than this file, and `save` publishes only that
         touch "$RUNNER_TEMP/test-store-mark"
-        # the solvers' answers (#3174) are where smith run inside a test looks (a scratch project's XDG_CACHE_HOME,
-        # tests/scratch.smith), as the import cache is below
-        if [ -d "$dir/steps/a" ]; then
+        # the answers go where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
+        # and where the smith run by hand looks (#3177)
+        if [ -d "$stage/steps/a" ]; then
           tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"; mkdir -p "$tests"
-          byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps"; mkdir -p "$byhand" # and where the smith run by hand looks (#3177)
-          cp -a "$dir/steps/." "$byhand/" && cp -a "$dir/steps/." "$tests/" && rm -rf "$dir/steps"
+          byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps"; mkdir -p "$byhand"
+          cp -a "$stage/steps/." "$byhand/" && cp -a "$stage/steps/." "$tests/"
         fi
         if [ "$got" -gt 0 ]; then
-          echo "test store: restored $(find "$dir" -type f | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "test store: restored $(find "$stage/steps" -type f 2>/dev/null | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         else
           echo "test store: none, every test runs ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-    - name: Restore the import cache
-      shell: bash
-      env:
-        OS: ${{ inputs.os }}
-        FRESH: ${{ inputs.fresh }}
-      run: |
-        if [ "$FRESH" = true ]; then echo "import cache: fresh run, nothing restored" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
-        dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports"; mkdir -p "$dir"
-        # every job's set of the commit the step above found (each holds what it restored plus what its own processes
-        # stored, so the sets overlap; the same entry is the same bytes)
-        urls=$(cat "$RUNNER_TEMP/imports-urls"); from=$(cat "$RUNNER_TEMP/imports-from")
-        got=0
-        # one line a set (#2978): its entries, size and seconds, or where it failed and the first line of the error; a
-        # failed set never fails the job. `df` of the cache's filesystem before the first set and after the last.
-        echo "import cache: df before: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
-        while read -r set_name url; do
-          [ -n "$url" ] || continue
-          start=$SECONDS; err="$RUNNER_TEMP/imports.err"
-          if ! curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>"$err"; then
-            echo "import cache: set $set_name: FAILED at download: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"; continue
-          fi
-          mb=$(( $(wc -c <"$RUNNER_TEMP/imports.tar.gz") / 1048576 ))
-          if tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" 2>"$err"; then
-            got=$((got + 1))
-            n=$(tar -tzf "$RUNNER_TEMP/imports.tar.gz" 2>/dev/null | grep -c '/[hm]/[^/][^/]*$' || true)
-            echo "import cache: set $set_name: $n entries, $mb MB, $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            echo "import cache: set $set_name: FAILED at extract: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
-        done <<<"$urls"
-        echo "import cache: df after: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
-        # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
-        if [ "$got" -gt 0 ]; then
-          tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; mkdir -p "$tests"; cp -a "$dir/." "$tests/"
-        fi
-        if [ "$got" -gt 0 ]; then
-          echo "import cache: restored $(find "$dir" -type f -path '*/[hm]/*' | wc -l) entries ($(du -sh "$dir" | cut -f1)) from $got sets ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
-        else
-          echo "import cache: none, std and the headers are read ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
-        fi
+        rm -rf "$stage"

@@ -1031,7 +1031,6 @@ jobs:
       - uses: ./.github/actions/test-cache
         with:
           os: linux
-          imports-from: linux-*
       - name: smith check
         id: check
         env:
