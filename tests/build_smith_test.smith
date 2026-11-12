@@ -320,6 +320,18 @@ export void test_build_smith_check_names_the_parts_that_did_not_run_and_require_
     scratch::expect_status("check: --base alone is a usage error", 2, &lonely);
     scratch::expect_contains("check: ... that says what it needs", lonely.err, "--base needs --changed");
     // On Linux the macOS parts cannot run: they are named, and `--require all` fails the check for them.
+    scratch::Run part_bad = scratch::sh(&p, "env SMITH_OUTPUT=full smith check --part nonsense");
+    scratch::expect_status("check: --part names a part that exists", 2, &part_bad);
+    scratch::expect_contains("check: ... and the message says which option", part_bad.err,
+                             "--part: 'nonsense' is no part");
+    // --part runs only the parts it names: the others are left out, and a macOS part it names is reported as not run
+    scratch::Run part =
+        scratch::sh(&p, "[ \"$(uname -s)\" = Linux ] || { echo 'smith check: not run here: macos-tests' >&2; "
+                        "echo 'smith check: 0 ok, 0 failed, 1 not run here' >&2; exit 0; }; "
+                        "env SMITH_OUTPUT=full smith check --part macos-tests");
+    scratch::expect_status("check: a --part run of a part this host cannot run passes", 0, &part);
+    scratch::expect_contains("check: ... it names it", part.err, "smith check: not run here: macos-tests");
+    scratch::expect_contains("check: ... runs nothing else", part.err, "smith check: 0 ok, 0 failed, 1 not run here");
     scratch::Run linux = scratch::sh(
         &p,
         "[ \"$(uname -s)\" = Linux ] || { echo 'smith check: not run here: macos-lint, macos-tests' >&2; exit 1; }; "

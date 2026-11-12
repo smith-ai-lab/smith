@@ -3763,10 +3763,32 @@ static void smith_shard_keep(const SmithTestShard *shard, const SmithTestFound *
         keep[chosen[i]] = owner[i] == shard->index - 1;
 }
 
+// The declaration of one test's function, for the generated header.
+static const char *smith_test_prototype(const SmithTestFound *test) {
+    const char *argument = test->kind == SmithTestKind_Property  ? "SmithKey key"
+                           : test->kind == SmithTestKind_Failing ? "SmithKey key, struct SmithFailing *failing"
+                                                                 : "void";
+    const char *label = test->label != nullptr ? smith_text(" __asm__(\"_%s\")", test->label) : "";
+    return smith_text("void %s(%s)%s;\n", test->symbol, argument, label);
+}
+
+// Whether the options choose some of the tests, by a part or by a selection (--test, --macos-only, --skip-macos): the
+// runner is then built from the files of those tests (#1200, #2998).
+static bool smith_shard_selected(const SmithTestShard *shard) {
+    return shard->count > 0 || shard->filter[0] != '\0' || shard->macos != 0;
+}
+
+// The macOS choice a table records: only one that drops a test. `smith check` builds the runner for `--skip-macos` and
+// `smith prove` builds it for everything, and tables that differ only by the choice would take turns being rewritten,
+// relinking the runner each time (#3178, #3179).
+static size_t smith_shard_macos_choice(const SmithTestShard *shard, size_t kept, size_t count) {
+    return kept < count ? (size_t)shard->macos : 0;
+}
+
 // The step that finds the tests: .inputs are the files, .outputs the prototypes (tests_list.h) and the table
 // (tests_list.c). It rewrites a file only when its bytes change, so the step is restat. With a part in .args (the
-// runner's --shard, --costs, --test, --macos-only and --skip-macos), the table lists only the tests of that part; the
-// runner then knows its part is built in (smith_test_shard_index).
+// runner's --shard, --costs, --test, --macos-only and --skip-macos), the table lists only the tests of that part or
+// that selection; the runner then knows what is built in (smith_test_shard_index, smith_test_built_filter).
 static int smith_tests_scan(SmithRun *run) {
     SmithTestFound *found = smith_tests_found;
     size_t count = 0;
@@ -3776,24 +3798,25 @@ static int smith_tests_scan(SmithRun *run) {
     smith_shard_parse(shard, found, count, run->args);
     bool *keep = SMITH_ALLOC(count + 1);
     smith_shard_keep(shard, found, count, keep);
-    size_t kept = 0;
-    for (size_t i = 0; shard->count > 0 && i < count; i++) // the part's tests, in order
-        if (keep[i]) found[kept++] = found[i];
-    if (shard->count > 0) count = kept;
+    // A prototype for every test found: a file kept for one chosen test defines its others too, and
+    // -Werror=missing-prototypes wants each declared (#2998). The table lists only the chosen ones.
     const char **prototypes = SMITH_NEW_LIST(count);
+    for (size_t i = 0; i < count; i++)
+        prototypes[i] = smith_test_prototype(&found[i]);
+    size_t kept = 0;
+    bool selected = smith_shard_selected(shard);
+    for (size_t i = 0; selected && i < count; i++) // the part's or the selection's tests, in order
+        if (keep[i]) found[kept++] = found[i];
+    size_t macos_choice = smith_shard_macos_choice(shard, kept, count);
+    if (selected) count = kept;
     const char **rows = SMITH_NEW_LIST(count);
     const char **thunks = SMITH_NEW_LIST(count);
     size_t thunk_count = 0;
     for (size_t i = 0; i < count; i++) {
-        const char *argument = found[i].kind == SmithTestKind_Property  ? "SmithKey key"
-                               : found[i].kind == SmithTestKind_Failing ? "SmithKey key, struct SmithFailing *failing"
-                                                                        : "void";
         if (found[i].kind == SmithTestKind_Failing)
             thunks[thunk_count++] = smith_text("static void thunk_%s(SmithKey key, void *failing) {\n"
                                                "    %s(key, (struct SmithFailing *)failing);\n}\n\n",
                                                found[i].symbol, found[i].symbol);
-        const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
-        prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
         const char *slot_names[] = {"nullptr", "nullptr", "nullptr"};
         slot_names[found[i].kind] = found[i].symbol;
         if (found[i].kind == SmithTestKind_Failing) // the table's slot takes the allocator as a void * (test.smith)
@@ -3806,6 +3829,7 @@ static int smith_tests_scan(SmithRun *run) {
                                     "#include <smith/random.h>\n\nstruct SmithFailing;\n\n%s",
                                     smith_join(run->b, prototypes, ""));
     const char *base = strrchr(run->outputs[0], '/');
+    const char *filter_text = shard->filter[0] != '\0' ? smith_text("\"%s\"", shard->filter) : "nullptr";
     const char *table = smith_text(
         "// Generated by smith_tests from the test files; do not edit.\n"
         "#include <smith/test.h>\n\n#include \"%s\"\n\n%s"
@@ -3814,7 +3838,10 @@ static int smith_tests_scan(SmithRun *run) {
         "const size_t smith_test_count = sizeof smith_test_rows / sizeof "
         "smith_test_rows[0] - 1;\n"
         // The part this table was built for (0 of 0: the whole suite), so the runner does not split it again.
-        "const size_t smith_test_shard_index = %zu;\nconst size_t smith_test_shard_count = %zu;\n\n"
+        "const size_t smith_test_shard_index = %zu;\nconst size_t smith_test_shard_count = %zu;\n"
+        // The selection (--test values, comma joined; --macos-only is 1, --skip-macos 2) the table was built for, so a
+        // runner built for one selection does not report "no such test" for another (#2998).
+        "const char *const smith_test_built_filter = %s;\nconst size_t smith_test_built_filter_macos = %zu;\n\n"
         // The runner's way to the profile runtime when `smith test --changed` built it with the counters (issue #456):
         // compiler-rt's functions are hidden, so only code linked with them can name them.
         "#ifdef SMITH_PROFILING\n"
@@ -3827,7 +3854,7 @@ static int smith_tests_scan(SmithRun *run) {
         "const SmithProfile smith_profile = {nullptr, nullptr, nullptr};\n"
         "#endif\n",
         base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, thunks, ""), smith_join(run->b, rows, ""),
-        shard->index, shard->count);
+        shard->index, shard->count, filter_text, macos_choice);
     smith_write(run->b, run->outputs[0], header);
     smith_write(run->b, run->outputs[1], table);
     return 0;
@@ -3922,14 +3949,15 @@ static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const
 }
 
 // The runner's options that choose the tests and the part, out of the arguments of `smith test`, for the scan step's
-// .args (it sees nothing else of the build); empty without a --shard.
+// .args (it sees nothing else of the build); empty when they choose no part and no test (#2998).
 static const char *const *smith_tests_shard_args(SmithBuild *b) {
     const char *const *given = smith_args(b);
     const char **kept = SMITH_NEW_LIST(smith_count(given));
     size_t used = 0;
-    bool sharded = false;
+    bool selected = false;
     for (size_t i = 0; given[i] != nullptr; i++) { // bounded by smith_args
-        sharded = sharded || strcmp(given[i], "--shard") == 0;
+        selected = selected || strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                   strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
         bool flag = strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
         bool option = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--costs") == 0 ||
                       strcmp(given[i], "--test") == 0 || strcmp(given[i], "--weigh") == 0;
@@ -3940,11 +3968,11 @@ static const char *const *smith_tests_shard_args(SmithBuild *b) {
         }
     }
     kept[used] = nullptr;
-    return sharded ? kept : smith_list(b, nullptr);
+    return selected ? kept : smith_list(b, nullptr);
 }
 
-// The sources the build compiles: with a part, the files that hold one of its tests and the files with no test of their
-// own (the helpers); else all.
+// The sources the build compiles: with a part or a selection, the files that hold one of its tests and the files with
+// no test of their own (the helpers); else all.
 static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *const *sources,
                                                     const char *const *args) {
     if (args[0] == nullptr) return sources;
@@ -3953,7 +3981,7 @@ static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *c
     if (!smith_tests_find(&probe, smith_tests_found, &count)) return sources; // the scan step reports it
     SmithTestShard *shard = SMITH_ALLOC(sizeof *shard);
     smith_shard_parse(shard, smith_tests_found, count, args);
-    if (shard->count == 0) return sources;
+    if (!smith_shard_selected(shard)) return sources;
     bool *keep = SMITH_ALLOC(count + 1);
     smith_shard_keep(shard, smith_tests_found, count, keep);
     const char **kept = SMITH_NEW_LIST(smith_count(sources));
@@ -3972,6 +4000,27 @@ static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *c
     return kept;
 }
 
+static bool smith_tests_has_part(const char *const *args) {
+    for (size_t i = 0; args[i] != nullptr; i++) // bounded by the arguments
+        if (strcmp(args[i], "--shard") == 0) return true;
+    return false;
+}
+
+// Whether the arguments name a test (--test) or a part (--shard): the table then lists fewer tests than the files hold.
+static bool smith_tests_names_some(const char *const *args) {
+    for (size_t i = 0; args[i] != nullptr; i++) // bounded by the arguments
+        if (strcmp(args[i], "--shard") == 0 || strcmp(args[i], "--test") == 0) return true;
+    return false;
+}
+
+// The scan step's arguments: a macOS choice that leaves every file in is no selection, or `smith check` (--skip-macos)
+// and `smith prove` (nothing) would give the step different arguments and run it again after each other (#3178, #3179).
+static const char *const *smith_tests_scan_args(SmithBuild *b, const char *const *args, const char *const *kept,
+                                                const char *const *every) {
+    if (smith_tests_names_some(args) || smith_count(kept) != smith_count(every)) return args;
+    return smith_list(b, nullptr);
+}
+
 // The step that finds the tests (smith_tests_scan), over every file.
 static void smith_tests_declare_scan(SmithBuild *b, const SmithTests *copy, const char *const *shard_args,
                                      const char *list_header, const char *list_table) {
@@ -3979,7 +4028,7 @@ static void smith_tests_declare_scan(SmithBuild *b, const SmithTests *copy, cons
         .run = smith_tests_scan,
         .inputs = copy->sources, // every file: the part of a test depends on all of them
         .args = shard_args,
-        .always = shard_args[0] != nullptr, // the --costs file may have changed; restat keeps an equal table
+        .always = smith_tests_has_part(shard_args), // the --costs file may have changed; restat keeps an equal table
         .outputs = smith_list(b, list_header, list_table, nullptr),
         .description = "find the tests",
         .restat = true,
@@ -4003,9 +4052,12 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *list_header = smith_text("%stests_list.h", folder);
     const char *list_table = smith_text("%stests_list.c", folder);
     const char *const *shard_args = smith_tests_shard_args(b);
-    smith_tests_declare_scan(b, &copy, shard_args, list_header, list_table);
     const char *const *every_source = copy.sources;
     copy.sources = smith_tests_shard_sources(b, copy.sources, shard_args);
+    SmithTests every = copy;
+    every.sources = every_source; // the scan reads every file: the part of a test depends on all of them
+    shard_args = smith_tests_scan_args(b, shard_args, copy.sources, every_source);
+    smith_tests_declare_scan(b, &every, shard_args, list_header, list_table);
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);

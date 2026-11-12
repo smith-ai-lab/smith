@@ -475,6 +475,18 @@ static int smith_cov_merge(const char *name, bool pass) {
     char binaries_text[PATH_MAX];
     const char *binaries[smith_cov_binaries_max];
     char problem[512] = "";
+    // The mapping names a source as the compiler was given it, relative to the project (`smith.c`, `runtime/lang.c`):
+    // the export resolves it from here. The runner's folder (the units project) holds only `tests` and `lib`, so from
+    // there the records named no function of smith.c or runtime/, and a key made from them would ignore those (#3387).
+    char dir_here[PATH_MAX];
+    char binary_here[PATH_MAX];
+    if (dir[0] != '/' && realpath(dir, dir_here) != nullptr) dir = dir_here;
+    if (strchr(binary, ':') == nullptr && binary[0] != '/' && realpath(binary, binary_here) != nullptr)
+        binary = binary_here;
+    if (chdir(smith_cov_root) != 0) {
+        fprintf(stderr, "smith test --coverage merge: cannot enter %s\n", smith_cov_root);
+        return 1;
+    }
     smith_cov_clean_name(name, clean, sizeof clean);
     snprintf(raw, sizeof raw, "%s/raw/%s", dir, clean);
     snprintf(list, sizeof list, "%s.list", raw);

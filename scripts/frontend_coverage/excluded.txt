@@ -39,7 +39,6 @@ tests/front/corpus/error-slice-step/src/main.smith	error-fixture
 tests/front/corpus/error-struct-from-module-c-name/src/main.smith	error-fixture
 tests/front/corpus/error-unused-read-underscore/src/main.smith	error-fixture
 tests/front/corpus/error-void-pointer/src/main.smith	error-fixture
-tests/front/corpus/session-keyword-name/src/main.smith	error-fixture
 tests/front/corpus/session-missing-module/src/main.smith	error-fixture
 tests/front/corpus/sized-error-message/src/main.smith	error-fixture
 tests/front/e2e/result_guard_affine.smith	error-fixture
@@ -77,15 +76,14 @@ tests/smith-lang/cases/error-generic-private-generic/src/main.smith	error-fixtur
 tests/smith-lang/cases/error-generic-private-name/src/main.smith	error-fixture
 tests/smith-lang/cases/error-generic-return-type/src/main.smith	error-fixture
 tests/smith-lang/cases/error-if-constexpr/src/main.smith	error-fixture
+tests/smith-lang/cases/error-import-broken-module/src/broken.smith	error-fixture
 tests/smith-lang/cases/error-import-broken-module/src/main.smith	error-fixture
 tests/smith-lang/cases/error-import-eof/src/main.smith	error-fixture
 tests/smith-lang/cases/error-keyword-after-type/src/shapes.smith	error-fixture
-tests/smith-lang/cases/error-keyword-function/src/foo.smith	error-fixture
 tests/smith-lang/cases/error-keyword-module/src/shapes.smith	error-fixture
 tests/smith-lang/cases/error-keyword-plain/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-capture-no-module/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-captures-local/src/main.smith	error-fixture
-tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-generic-runtime-capture/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-param-count/src/main.smith	error-fixture
 tests/smith-lang/cases/error-lambda-param-untyped/src/main.smith	error-fixture
@@ -162,8 +160,6 @@ tests/smith-lang/cases/lowered-directives/src/demo/dir.smith	old-form: #pragma
 tests/smith-lang/cases/module-c-features/src/kit/things.smith	old-form: function-like #define
 tests/smith-lang/cases/module-c-features/src/main.smith	old-form: function-like #define
 tests/smith-lang/cases/reflection-doc-if-constexpr/src/main.smith	old-form: fields(T) reflection (#3221 dropped table: fields(T), f.name, f.type replaced by `for (name, value) in T`)
-tests/smith-lang/cases/session-keyword-name/src/foo.smith	error-fixture
-tests/smith-lang/cases/session-keyword-name/src/main.smith	error-fixture
 tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-error-message/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-own-typedef/src/main.smith	error-fixture
@@ -215,3 +211,13 @@ tests/build_fixtures/lsp/p/geometry/dims.smith	tool-fixture
 tests/build_fixtures/lsp/editor-enum/shapes.smith	tool-fixture
 tests/build_fixtures/lsp/editor-smith/m.smith	tool-fixture
 tests/smith-lang/cases/defer-run/src/main.smith	old-form: goto
+tests/smith-lang/cases/array-infer-run/src/main.smith	old-form: array literal passed to a bare pointer parameter
+tests/smith-lang/cases/enum-type-function-export/src/main.smith	old-form: array literal passed to a bare pointer parameter
+tests/smith-lang/cases/constexpr-import-result-type/src/main.smith	old-form: a type value sliced step by step
+tests/smith-lang/cases/filescope-if-type-function/src/main.smith	old-form: a type value sliced step by step
+tests/smith-lang/cases/enum-c-rule/src/main.smith	old-form: C enumerator as an int
+tests/smith-lang/cases/filescope-if-dropped-macro/src/errors.smith	old-form: C macro read through c:: (item 59 not built)
+tests/smith-lang/cases/countof-fixed-array/src/main.smith	old-form: a C cast applied over a pack expansion
+tests/front/corpus/session-keyword-name/src/main.smith	old-form: a C keyword as a name is an error only in today's language
+tests/smith-lang/cases/session-keyword-name/src/main.smith	old-form: a C keyword as a name is an error only in today's language
+tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	old-form: an error only in today's lowering

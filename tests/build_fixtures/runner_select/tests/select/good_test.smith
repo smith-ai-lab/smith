@@ -1,0 +1,7 @@
+module select::good_test;
+
+export void test_good_1() {
+}
+
+export void test_good_2() {
+}

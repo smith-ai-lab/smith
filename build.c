@@ -1623,6 +1623,25 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
     return encoded;
 }
 
+// With a --shard or a selection (--test, --macos-only, --skip-macos), a project's build compiles only the test files of
+// the part or the chosen tests (#1200, #2998, #3179): the build there reads the arguments as `smith test` does, as the
+// option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A). Empty for neither.
+static const char *build_units_selection(SmithBuild *b, const char *const *given) {
+    const char *option = "";
+    for (size_t i = 0; given[i] != nullptr; i++) {
+        bool selects = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                       strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+        if (!selects) continue;
+        const char *encoded = "";
+        for (size_t k = 0; given[k] != nullptr; k++) {
+            const char *argument = build_encode_argument(b, given[k]);
+            encoded = smith_fmt(b, "%s;%s", encoded, argument);
+        }
+        option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
+    }
+    return option;
+}
+
 // The folder that holds the smith under test and its smith-cc. With no LLVM install to link smith from (a
 // documents-only pull request's `docs-linux`, #3160) the smith under test is the smith that runs this build, named by
 // its absolute path.
@@ -1660,19 +1679,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", running ? home : folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
-    // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
-    // `smith test` does, as the option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B
-    // and %0A).
-    const char *shard_option = "";
-    for (size_t i = 0; given[i] != nullptr; i++) {
-        if (strcmp(given[i], "--shard") != 0) continue;
-        const char *encoded = "";
-        for (size_t k = 0; given[k] != nullptr; k++) {
-            const char *argument = build_encode_argument(b, given[k]);
-            encoded = smith_fmt(b, "%s;%s", encoded, argument);
-        }
-        shard_option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
-    }
+    const char *shard_option = build_units_selection(b, given);
     SmithStep build_step = {
         .command = (const char *[]){"sh", "-c",
                                     smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
@@ -1728,14 +1735,15 @@ static void build_front_units(SmithBuild *b, const BuildConfig *config, const ch
         smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\" SMITH_LLVM=\"%s\"", folder, self,
                   config->llvm);
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    const char *const *given = smith_args(b);
     SmithStep build_step = {
-        .command =
-            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
-                             "sh", folder, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
+                                              build_units_selection(b, given)),
+                                    "sh", folder, nullptr},
         .inputs = inputs,
     };
     smith_task(b, "front-build", &build_step);
-    const char *const *given = smith_args(b);
     const char *quoted[256];
     size_t quoted_count = 0;
     if (getenv("SMITH_TEST_STATS") != nullptr) quoted[quoted_count++] = "'--stats'";
@@ -3960,6 +3968,38 @@ static void build_stage0_steps(SmithBuild *b, const char *os, const char *commit
     }
 }
 
+// The execution records of main (#3434): a nightly COVERAGE=1 run publishes `.smith/records/*.rec` as the prerelease
+// `test-records-<sha7>` (asset smith-test-records.tar.gz), and `./.github/actions/test-cache` restores the newest one
+// in CI; this is the same restore for a clone, so the test key (#3387) finds a fresh record for the tests that run
+// smith. The newest one among HEAD's last 200 first-parent commits is unpacked into `.smith/records`. It only fills a
+// folder: none published or a failed download leaves it empty (the key falls back to the whole smith) and never fails
+// the task.
+static void build_stage0_records(SmithBuild *b) {
+    const char *tags = smith_capture_or(
+        b, (const char *[]){"git", "ls-remote", "--tags", "origin", "refs/tags/test-records-*", nullptr}, "");
+    const char *commits =
+        smith_capture_or(b, (const char *[]){"git", "rev-list", "--first-parent", "-n", "200", "HEAD", nullptr}, "");
+    for (const char *at = commits; strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) {
+        const char *tag = smith_fmt(b, "refs/tags/test-records-%.7s\n", at);
+        if (strstr(smith_fmt(b, "%s\n", tags), tag) == nullptr) continue;
+        const char *url = smith_fmt(b,
+                                    "https://github.com/smith-ai-lab/smith/releases/download/test-records-%.7s/"
+                                    "smith-test-records.tar.gz",
+                                    at);
+        const char *joined = ".smith/test-records.tar.gz";
+        const char *const *fetch = smith_list(b, "curl", "-fsL", "--retry", "3", "-o", joined, url, nullptr);
+        int status = build_exec(fetch);
+        if (status == 0) status = build_exec(smith_list(b, "tar", "-C", ".smith", "-xzf", joined, nullptr));
+        (void)build_remove(b, joined);
+        if (status == 0) {
+            fprintf(stderr, "smith: execution records: test-records-%.7s, unpacked into .smith/records\n", at);
+            return;
+        }
+    }
+    fprintf(stderr, "smith: execution records: none among the last 200 commits of HEAD (tests that run smith are keyed "
+                    "by the whole smith)\n");
+}
+
 // Downloads the release under `base` into .smith/stage0/ and checks its .sha256. Both files are saved under their
 // published names, because the checksum tool finds the tarball only under the name its .sha256 lists (#2232).
 static int build_stage0_install(SmithBuild *b, const char *base, const char *name) {
@@ -4012,11 +4052,13 @@ static int build_stage0(SmithRun *run) {
                 "takes the newest release and no cache); put .smith/stage0/bin first on PATH\n",
                 release, cache);
         build_stage0_steps(b, os, cache);
+        build_stage0_records(b);
         return 0;
     }
     status = build_stage0_install(b, smith_fmt(b, "%s/latest/download", site), name);
     if (status != 0) return status;
     fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    build_stage0_records(b);
     if (strcmp(run->args[0], "0") != 0) {
         fprintf(stderr, "smith: step cache: none (%s)\n",
                 cache == nullptr ? "no published one for the last 20 commits of HEAD"
