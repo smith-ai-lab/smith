@@ -5703,6 +5703,17 @@ static Bool absent_pointer(types::Checked *c, types::TypeRef *first, types::Type
     return true;
 }
 
+// Two numbers in the branches of a value: the value is the wider of the two when the narrower widens to it without
+// losing a value (`u32` and `usize`, `i32` and `i64`), the lattice of the operands (#3190 item 31, #3232). False, with
+// `first` as it was, when neither holds every value of the other.
+static Bool widen_branch(types::Checked *c, types::TypeRef *first, types::TypeRef t) {
+    if (!is_number(*first) || !is_number(t)) return false;
+    types::TypeRef wide = types_convert::operand_type(&c->table, *first, t);
+    if (wide == nullptr) return false;
+    *first = wide;
+    return true;
+}
+
 // The last frame: the branches have the one type. With an expected type each was checked against it already; without
 // one the first branch with a value decides, and an unsuffixed literal after it takes its type.
 static void value_join(types::Checked *c, Frame f) {
@@ -5729,7 +5740,8 @@ static void value_join(types::Checked *c, Frame f) {
             first = t;
         } else if (f.expected == nullptr && t != first && absent_pointer(c, &first, t)) {
             continue; // a pointer and `nullptr`: the value is the `?*T` (#2643)
-        } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first)) {
+        } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first) &&
+                   !widen_branch(c, &first, t)) {
             types::failf(c, p.leaves[i]->span, "the branches of this value have the types `", types::show(first),
                          "` and `", types::show(t),
                          "`; give them one type, for example with a conversion such as `value.to(", types::show(first),
@@ -6193,6 +6205,17 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
                 t = types::slice_of(&c->table, types::builtin(&c->table, "Char"), true); // `str` is a slice of `char`
             }
             if (!types::unify_generics(generics, params[i].type, t, bound, set, pass == 0, &clash)) {
+                // `f(a_i64, b_i32)` with one `T`: the type is the wider of the two when the narrower widens to it
+                // without losing a value, the lattice of operands (#3190 item 31, #3232).
+                types::TypeRef wide = nullptr;
+                if (written != nullptr && written->kind == .named && clash.before != nullptr) {
+                    wide = types_convert::operand_type(&c->table, clash.before, clash.now);
+                }
+                if (wide != nullptr && is_number(wide)) {
+                    bound[clash.generic].type = wide;
+                    clash = (types::Unified){};
+                    continue;
+                }
                 types::failf(c, arg->span, "`", generics[clash.generic].name, "` is `", types::show(clash.before),
                              "` from an earlier argument and `", types::show(clash.now),
                              "` from this one; make the arguments agree, or write `", template->name, "[...]`");
