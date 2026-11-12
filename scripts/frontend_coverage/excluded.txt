@@ -75,6 +75,7 @@ tests/smith-lang/cases/error-generic-private-generic/src/main.smith	error-fixtur
 tests/smith-lang/cases/error-generic-private-name/src/main.smith	error-fixture
 tests/smith-lang/cases/error-generic-return-type/src/main.smith	error-fixture
 tests/smith-lang/cases/error-if-constexpr/src/main.smith	error-fixture
+tests/smith-lang/cases/error-import-broken-module/src/broken.smith	error-fixture
 tests/smith-lang/cases/error-import-broken-module/src/main.smith	error-fixture
 tests/smith-lang/cases/error-import-eof/src/main.smith	error-fixture
 tests/smith-lang/cases/error-keyword-after-type/src/shapes.smith	error-fixture

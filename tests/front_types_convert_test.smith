@@ -483,3 +483,16 @@ export void test_front_types_convert_the_refusal_is_kept_while_the_fixer_runs() 
     types_convert::set_fixing(false);
     test::check_condition(is(conv(&t, readonly, plain), types_convert::add_const));
 }
+
+// `*mut *mut char` to `**char` (a C `char **` into a pointer to const pointers) only adds const at each level (#3431).
+export void test_front_types_convert_a_pointer_to_pointers_may_add_const_at_each_level() {
+    types::Table t = types::start(types::lp64());
+    types::TypeRef char_type = named(&t, "Char");
+    types::TypeRef inner_write = types::pointer_to(&t, char_type, false);
+    types::TypeRef inner_read = types::pointer_to(&t, char_type, true);
+    types::TypeRef write_write = types::pointer_to(&t, inner_write, false);
+    types::TypeRef read_read = types::pointer_to(&t, inner_read, true);
+    test::check_condition(is(conv(&t, write_write, read_read), types_convert::add_const));
+    // Taking const away at the inner level is still a different type.
+    test::check_condition(!conv(&t, read_read, write_write).ok);
+}
