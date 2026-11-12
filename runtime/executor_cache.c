@@ -858,6 +858,21 @@ static const char *smith_stepcache_program(const char *name, SmithCompileKind ki
 
 // ---------------------------------------------------------------- the keys
 
+// The key log (#3300): with SMITH_STEP_KEY_LOG=<file> every step the cache keys appends what its key is made of (the
+// command, the environment, the compiler, each input's spec and path) and, for a manifest that exists, the first line
+// of each variant that no longer holds. Two machines' logs of the same tree are diffed to find what differs.
+static void smith_stepcache_log(const char *format, ...) {
+    const char *path = getenv("SMITH_STEP_KEY_LOG");
+    if (path == nullptr || *path == '\0') return;
+    FILE *file = fopen(path, "a");
+    if (file == nullptr) return;
+    va_list arguments;
+    va_start(arguments, format);
+    vfprintf(file, format, arguments);
+    va_end(arguments);
+    fclose(file);
+}
+
 // The environment a compile can read, as lines of the key. Fixed at the first use.
 static void smith_stepcache_environment(void) {
     static const char *const names[] = {"SMITH_LANG_FLAGS",
@@ -979,7 +994,10 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
     if (!function) smith_stepcache_drop_modules_path(&command);
     smith_sha256_update(&sha, (const uint8_t *)command.data, command.size);
     smith_stepcache_feed(&sha, "\n");
+    smith_stepcache_log("step %s\ncommand %s\n", exec->graph.nodes[smith_plan_output(exec, edge, 0)].path,
+                        command.data);
     if (!function) {
+        smith_stepcache_log("%scompiler %s\nclang %s\n", smith_stepcache.environment, compiler, external);
         smith_stepcache_feed(&sha, smith_stepcache.environment);
         smith_stepcache_feed(&sha, "compiler ");
         smith_stepcache_feed(&sha, compiler);
@@ -1005,9 +1023,11 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
         smith_steptext_addf(&command, "input %s ", spec);
         if (!smith_stepcache_normalize(path, strlen(path), &command)) return false;
         smith_steptext_add(&command, "\n", 1);
+        smith_stepcache_log("%s", command.data);
         smith_sha256_update(&sha, (const uint8_t *)command.data, command.size);
     }
     smith_sha256_final(&sha, hex);
+    smith_stepcache_log("key %s\n", hex);
     return true;
 }
 
@@ -1107,7 +1127,11 @@ static bool smith_stepcache_variant_holds(const SmithStepVariant *variant, int64
         char spec[smith_stepcache_hex + 32];
         int64_t mtime = 0;
         if (!smith_stepcache_spec(path, spec, sizeof spec, &mtime, now)) return false;
-        if (strlen(spec) != (size_t)(space - line) || memcmp(spec, line, (size_t)(space - line)) != 0) return false;
+        if (strlen(spec) != (size_t)(space - line) || memcmp(spec, line, (size_t)(space - line)) != 0) {
+            smith_stepcache_log("variant line differs: stored %.*s, here %s, %s\n", (int)(space - line), line, spec,
+                                path);
+            return false;
+        }
         line = newline + 1;
     }
     return true;
@@ -1212,6 +1236,7 @@ bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key
     key->valid = true;
     SmithStepVariant found[smith_stepcache_variants_max] = {};
     size_t total = smith_stepcache_variants(key->manifest, found);
+    smith_stepcache_log("variants %zu\n", total);
     for (size_t i = total; i > 0; i--) { // the newest first
         const SmithStepVariant *variant = &found[i - 1];
         if (!smith_stepcache_variant_holds(variant, now)) continue;
