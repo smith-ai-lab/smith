@@ -490,6 +490,19 @@ export void test_lint_smith_sized_types_sized_types_char_and_main_are_clean() {
                                        "idiom_findings <sized-ok.out"));
 }
 
+export void test_lint_smith_sized_types_int_and_float_as_concepts_are_clean() {
+    scratch::Project p = scratch::make("p", "lint_smith");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p, false);
+    scratch::expect_text("smith-sized-types: `[T: int]` and `y: float)` are concepts, not C types (#3258)", "",
+                         lint_text(&p, "idiom smith-sized-types idiom/sized_concept.smith >sized-concept.out; "
+                                       "idiom_findings <sized-concept.out"));
+}
+
 export void test_lint_smith_sized_types_a_c_file_is_left_alone() {
     scratch::Project p = scratch::make("p", "lint_smith");
     defer scratch::clean(&p);
