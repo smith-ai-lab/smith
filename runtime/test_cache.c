@@ -156,6 +156,24 @@ static bool smith_tc_env_keyed(const char *entry) {
     return true;
 }
 
+// What of `SMITH_*` variable `entry` ("NAME=value") is keyed. SMITH_LLVM names the LLVM install by a path
+// (`.../llvm/<version>-<pack id>/install`), which differs between machines (CI's /home/runner, a worker's /root): the
+// key holds the install's identity, the folder name that carries the version and the pack id (#3460), not where it is.
+static const char *smith_tc_env_identity(const char *entry, char *buffer, size_t size) {
+    static const char llvm[] = "SMITH_LLVM=";
+    if (strncmp(entry, llvm, sizeof llvm - 1) != 0) return entry;
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s", entry + sizeof llvm - 1);
+    size_t length = strlen(path);
+    while (length > 1 && path[length - 1] == '/') path[--length] = '\0';
+    static const char install[] = "/install";
+    if (length > sizeof install - 1 && strcmp(path + length - (sizeof install - 1), install) == 0)
+        path[length - (sizeof install - 1)] = '\0';
+    const char *slash = strrchr(path, '/');
+    snprintf(buffer, size, "%s%s", llvm, slash != nullptr ? slash + 1 : path);
+    return buffer;
+}
+
 // Feeds the `SMITH_*` variables, sorted, into `sha`.
 static void smith_tc_feed_environment(SmithSha256 *sha) {
     static const char *kept[256];
@@ -165,12 +183,14 @@ static void smith_tc_feed_environment(SmithSha256 *sha) {
     }
     qsort((void *)kept, count, sizeof kept[0], smith_tc_compare);
     for (size_t i = 0; i < count; i++) { // bounded by the kept
-        smith_tc_feed(sha, kept[i]);
-        const char *equals = strchr(kept[i], '=');
+        char identity[PATH_MAX];
+        const char *entry = smith_tc_env_identity(kept[i], identity, sizeof identity);
+        smith_tc_feed(sha, entry);
+        const char *equals = strchr(entry, '=');
         char name[96];
-        snprintf(name, sizeof name, "environment %.*s", equals != nullptr ? (int)(equals - kept[i]) : 80, kept[i]);
+        snprintf(name, sizeof name, "environment %.*s", equals != nullptr ? (int)(equals - entry) : 80, entry);
         smith_tc_note(name, equals != nullptr ? equals + 1 : "");
-        if (smith_tc_why) fprintf(stderr, "smith test cache: the key holds %s\n", kept[i]);
+        if (smith_tc_why) fprintf(stderr, "smith test cache: the key holds %s\n", entry);
     }
 }
 
