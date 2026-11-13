@@ -242,3 +242,4 @@ tests/build_fixtures/runner_select/tests/select/broken_test.smith	error-fixture
 tests/build_fixtures/lsp/cinterop/main.smith	old-form: C macro read through c:: (item 59 not built)
 tests/build_fixtures/std_scope/capitals.smith	old-form: concept names as variable types (smith-dev-syntax-generics)
 tests/build_fixtures/runner_lang/tests/test_c_header.smith	old-form: a std module imported through its C header (<smith/test.h>)
+tests/smith-lang/cases/void-pointer-plain/src/main.smith	old-form: void * converts to T * implicitly outside a module (#398)

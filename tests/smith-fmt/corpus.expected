@@ -13721,7 +13721,7 @@ constexpr struct Config config = {.count = 4, .step = 3};
 I32 total(constexpr Type T) {
     I32 sum = 0;
     for constexpr (Usize i = 0; i < config.count; i++) {
-        sum += config.step + sizeof(T);
+        sum += config.step + (I32)sizeof(T);
     }
     return sum;
 }
