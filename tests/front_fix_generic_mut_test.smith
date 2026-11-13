@@ -33,6 +33,15 @@ export void test_front_fix_generic_mut_a_pointer_parameter_written_through_is_mu
                  "pub fn fill(buffer: *mut char, x: auto):\n    buffer[0] = x.to(char)\n");
 }
 
+export void test_front_fix_generic_mut_a_pointer_parameter_cast_to_a_mut_pointer_is_mut() {
+    expect_fixed("module m;\nexport void spawn(I32 *group, auto f, auto *arg) {\n    U64 address = (U64)f;\n"
+                 "    keep(group, (void (*)(void *))address, (void *)arg);\n}\n"
+                 "void keep(I32 *g, void (*e)(void *), void *c) {}\n",
+                 "pub fn spawn(group: *i32, f: auto, arg: *mut auto):\n    address: u64 = f.to(u64)\n"
+                 "    keep(group, address.cast(fn(*mut void)), arg.cast(*mut void))\n"
+                 "fn keep(g: *i32, e: fn(*mut void), c: *void):\n");
+}
+
 export void test_front_fix_generic_mut_a_pointer_parameter_only_read_stays() {
     expect_fixed(
         "module m;\nexport Usize peek(const char *buffer, auto x) {\n    return (Usize)buffer[0] + (Usize)x;\n}\n",
