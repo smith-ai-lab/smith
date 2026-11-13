@@ -855,6 +855,62 @@ static const ast::Expr *default_of(Reflection *st, const ast::Expr *e, Entry ent
     return nullptr;
 }
 
+// Whether `text` has `word` at `at`.
+static Bool starts(Str text, Usize at, Str word) {
+    if (at + countof(word) > countof(text)) return false;
+    for (Usize i = 0; i < countof(word); i++) {
+        if (text[at + i] != word[i]) return false;
+    }
+    return true;
+}
+
+// The type a field's written name stands for: smith's own spelling of a pointer `*T` or `*mut T`, a slice `[]T` or
+// `[]mut T` and an array `[N]T` is peeled from the outside in, then the rest is a name (#3609: a name is no type that
+// reads `[]mut f64`).
+static ast::TypeExpr *written_type(Str text) {
+    constexpr Usize limit = 16;
+    Usize kinds[limit]; // 1: `*`, 2: `*mut`, 3: `[]`, 4: `[]mut`, 5: `[N]`
+    U64 counts[limit];
+    Usize n = 0;
+    Usize at = 0;
+    while (n < limit && at < countof(text)) {
+        if (text[at] == '*') {
+            Bool is_mut = starts(text, at, "*mut");
+            kinds[n] = is_mut ? 2 : 1;
+            at += is_mut ? 5 : 1;
+        } else if (text[at] == '[' && at + 1 < countof(text) && text[at + 1] == ']') {
+            Bool is_mut = starts(text, at, "[]mut ");
+            kinds[n] = is_mut ? 4 : 3;
+            at += is_mut ? 6 : 2;
+        } else if (text[at] == '[') {
+            U64 count = 0;
+            at += 1;
+            while (at < countof(text) && text[at] >= '0' && text[at] <= '9') {
+                count = count * 10 + (U64)(text[at] - '0');
+                at += 1;
+            }
+            kinds[n] = 5;
+            counts[n] = count;
+            at += 1;
+        } else {
+            break;
+        }
+        n += 1;
+    }
+    ast::TypeExpr *made = ast::named(text[at:countof(text)]);
+    while (n > 0) {
+        n -= 1;
+        if (kinds[n] <= 2) {
+            made = ast::make_type({.pointer = {.pointee = made, .is_mut = kinds[n] == 2}});
+        } else if (kinds[n] <= 4) {
+            made = ast::make_type({.slice = {.element = made, .is_mut = kinds[n] == 4}});
+        } else {
+            made = ast::make_type({.array = {.element = made, .count = ast::integer(counts[n])}});
+        }
+    }
+    return made;
+}
+
 // `entry.name`, `entry.doc`, `entry.type` and `entry.default` of an entry, as the value they stand for; null for
 // another member.
 static const ast::Expr *member_value(Reflection *st, const ast::Expr *e) {
@@ -867,7 +923,7 @@ static const ast::Expr *member_value(Reflection *st, const ast::Expr *e) {
     if (same(which, "doc")) return at_span(ast::string(entry.doc), e->span);
     if (same(which, "default")) return default_of(st, e, entry);
     if (same(which, "type") || same(which, "ty")) { // `type` is reserved: the fixer writes `ty` (#1901)
-        ast::Expr *value = ast::expr({.type_value = {.type = ast::named(entry.type_name)}});
+        ast::Expr *value = ast::expr({.type_value = {.type = written_type(entry.type_name)}});
         return at_span(value, e->span);
     }
     return nullptr;
