@@ -143,6 +143,32 @@ export void test_runner_shard_a_part_built_alone_is_the_same_part_of_a_full_buil
                          part_objects);
 }
 
+// SMITH_TESTS_WHOLE (#3458): a part built with it compiles every test file and its table holds every test, and the
+// runner splits at run time, so the part lists what the same part of a full build lists, and a second part after the
+// first compiles and links nothing (the runner a CI job built once is the runner of every part).
+export void test_runner_shard_a_whole_build_serves_every_part() {
+    scratch::Project p = runner::project("runner_base", "runner_shard");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "costs.tsv", "cpu\t20\tshard::gamma_test::gamma_1\n");
+    const char *full = scratch::capture(
+        &p, "SMITH_OUTPUT=full smith build build/tests >/dev/null 2>&1; for i in 1 2 3; do build/tests --list --shard "
+            "$i/3 --costs costs.tsv | sed \"s/^/$i /\"; done");
+    const char *whole = scratch::capture(
+        &p, "rm -rf build; for i in 1 2 3; do SMITH_TESTS_WHOLE=1 SMITH_OUTPUT=full smith test --list --shard $i/3 "
+            "--costs costs.tsv 2>&1 | grep '^shard::' | sed \"s/^/$i /\"; done");
+    const char *objects = scratch::capture(&p, "ls build/tests_objects | grep -c '_test.o$'");
+    const char *again = scratch::capture(
+        &p, "SMITH_TESTS_WHOLE=1 SMITH_OUTPUT=full smith test --list --shard 2/3 --costs costs.tsv 2>&1 | grep -cE "
+            "'^\\[[0-9]+/[0-9]+\\] (compile|link)'");
+    scratch::expect_text("whole: the parts list the tests of the parts of a full build", full, whole);
+    scratch::expect_text("whole: ... and the build compiled all four test files and the library", "5", objects);
+    scratch::expect_text("whole: ... and a part after another compiles and links nothing", "0", again);
+}
+
 // The deal is made once (#3356): the build asks for the weights twice, in two processes (the files to compile, then the
 // table), and a store that answers differently the second time dealt the files to other parts, so the table listed
 // tests of a file the part had not compiled and the link failed. SMITH_WEIGHS_FLIP makes the store answer differently
