@@ -360,11 +360,17 @@ export void test_front_emit_option_a_narrowed_read_needs_no_check_for_prove() {
                 "    o + 1\n");
 }
 
-// A name that can change keeps the pattern form: `mut` names and fields do not narrow.
-export void test_front_emit_option_a_mut_name_does_not_narrow() {
+// A `mut` name narrows like any other (item 55 of #3284); a write to it drops what the test proved (#3438).
+export void test_front_emit_option_a_mut_name_narrows_until_it_is_assigned() {
+    check_clean("fn g(o: ?i32) -> i32:\n"
+                "    mut m: ?i32 = o\n"
+                "    if m != .none:\n"
+                "        return m + 1\n"
+                "    0\n");
     Str message = first_error("fn g(o: ?i32) -> i32:\n"
                               "    mut m: ?i32 = o\n"
                               "    if m != .none:\n"
+                              "        m = .none\n"
                               "        return m + 1\n"
                               "    0\n");
     test::check_equal(countof(message) > 0, true);
