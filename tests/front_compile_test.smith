@@ -128,3 +128,30 @@ export void test_front_compile_an_error_in_an_imported_instance_carries_its_trac
                       true);
     remove_all(folder);
 }
+
+// A question about a type in an imported generic is the builtin one, whatever the importer declares (#3600): `main`
+// has a function named `is_integer` of its own, and `util.kind` still picks a branch by the type of each of its
+// three pieces (the pieces are a pack, as std.format's are), with no error from the branches it drops.
+export void test_front_compile_a_callers_function_does_not_hide_a_question_in_an_imported_generic() {
+    Str folder = folder_for("question");
+    write_text(as_str(format::push(folder, "/src/util.smith")),
+               "fn sink(x: i64) -> i64:\n    return x\n\n"
+               "fn kind(piece: auto) -> i64:\n"
+               "    if is_integer(typeof(piece)) and is_signed(typeof(piece)):\n"
+               "        return sink(piece.to(i64))\n"
+               "    else if typeof(piece) == bool:\n"
+               "        return 2\n"
+               "    else:\n"
+               "        return 3\n\n"
+               "pub fn total(pieces...) -> i64:\n"
+               "    mut sum: i64 = 0\n"
+               "    for (i, piece) in enumerate(pieces):\n"
+               "        sum += kind(piece)\n"
+               "    return sum\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import util\n\nfn is_integer(e: u32) -> bool:\n    return e == 1\n\n"
+               "pub fn f() -> i64:\n    return util.total(7, true, \"x\")\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}
