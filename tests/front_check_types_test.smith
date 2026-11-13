@@ -508,6 +508,14 @@ export void test_front_check_types_an_errdefer_body_is_checked() {
     fails("fn f() -> i32:\n    errdefer nosuch_fn()\n    return 0\n", "nosuch_fn", "");
 }
 
+// A function held in an option field is named first, then tested and called (#3230); a tested name is called as is.
+export void test_front_check_types_a_call_of_an_option_field_asks_to_name_it_first() {
+    Str holder = "struct E:\n    hook: ?fn(i32) -> i32 = .none\n";
+    fails(join(holder, "fn run(e: E, x: i32) -> i32:\n    if e.hook != .none:\n        return e.hook(x)\n    0\n"),
+          "may be `.none`: name it first (`hook := ...`", "then call it");
+    clean("fn run(hook: ?fn(i32) -> i32, x: i32) -> i32:\n    if hook != .none:\n        return hook(x)\n    0\n");
+}
+
 // A function that only reads (`*P`) goes where `fn(*mut P)` or `?fn(*mut P)` is wanted; nothing else is relaxed
 // (#3326).
 static Str hooks() {
