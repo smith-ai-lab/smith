@@ -61,13 +61,14 @@ runs:
           # #3458: the restore made the tests' folder out of hard links to the by-hand one, so the two hold the same
           # old entries; only the entries of the by-hand folder written or touched since the restore are joined (one walk,
           # not a copy of 347,000 files), and the 14-day prune is the whole file's (`whole`), not each part's
-          if [ -d "$byhand" ]; then
+          # (the restore of a hosted runner keeps the store in memory, one folder that both names reach: nothing to join)
+          if [ -d "$byhand" ] && [ ! "$byhand" -ef "$answers/a" ]; then
             mkdir -p "$answers/a"
             (cd "$byhand" && find . -type f -newer "$mark" -print0) >"$out/byhand-newer"
             if [ -s "$out/byhand-newer" ]; then tar -C "$byhand" --null -T "$out/byhand-newer" -c | tar -x -C "$answers/a"; fi
           fi
         else
-          if [ -d "$byhand" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
+          if [ -d "$byhand" ] && [ ! "$byhand" -ef "$answers/a" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
           # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
           [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
         fi

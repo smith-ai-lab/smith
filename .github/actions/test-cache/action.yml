@@ -224,15 +224,37 @@ runs:
         # #3458: each tarball is extracted straight into the folder the smith run by hand reads (`smith/steps` of the
         # cache), not into a stage that was then copied twice, counted and deleted (347,508 files, 4 passes, 200 s of a
         # part). The tests' folder is the same files by hard links (Linux; macOS copies), made in one pass; the entries
-        # a job adds are new files in one folder or the other, and `save` joins them.
+        # a job adds are new files in one folder or the other, and `save` joins them (or are in the one folder below).
         byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps"; mkdir -p "$byhand"
         tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"; mkdir -p "$tests"
         got=0; entries=0; start_at=$SECONDS; phase=$SECONDS; fetched=0
+        # #3458: 62 s of a part were the creation of 400,000 small files on the runner's disk, and 9 s the hard links
+        # of the second folder. On a hosted Linux runner the store goes to memory instead: a tmpfs mounted on the tests'
+        # folder `a` (about 1.6 GB for 400,000 entries, a page each; the runner has 16 GB), and the by-hand folder `a` is
+        # a link to it, so both are the same entries and nothing is copied. Without sudo, without the room or off a
+        # hosted runner nothing changes: the files go to the disk as before.
+        into="${byhand%/steps}"; ram=false
+        if [ "$(uname -s)" = Linux ] && [ -n "${GITHUB_ACTIONS:-}" ] && [ ! -L "$byhand/a" ] &&
+           [ "$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)" -ge 8 ] && sudo -n true 2>/dev/null; then
+          # what the job's own builds already put in either folder moves aside, and goes into the memory folder after
+          for d in "$byhand" "$tests"; do if [ -d "$d/a" ]; then mv "$d/a" "$d/a.pre"; fi; done
+          mkdir -p "$tests/a"
+          if sudo -n mount -t tmpfs -o "size=6g,uid=$(id -u),gid=$(id -g),mode=0755" tmpfs "$tests/a"; then
+            for d in "$byhand" "$tests"; do
+              if [ -d "$d/a.pre" ]; then cp -a "$d/a.pre/." "$tests/a/"; rm -rf "$d/a.pre"; fi
+            done
+            rmdir "$byhand/a" 2>/dev/null || true
+            ln -sfn "$tests/a" "$byhand/a"; into="${tests%/steps}"; ram=true
+          else
+            rmdir "$tests/a" 2>/dev/null || true
+            for d in "$byhand" "$tests"; do if [ -d "$d/a.pre" ]; then mv "$d/a.pre" "$d/a"; fi; done
+          fi
+        fi
         for url in $urls; do
           curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null || continue
           fetched=$((fetched + SECONDS - phase)); phase=$SECONDS
           # the members are `steps/...`; the old per-tool folder some sets still hold is left in the tarball
-          if tar -xzvf "$RUNNER_TEMP/tests.tar.gz" -C "${byhand%/steps}" steps >"$RUNNER_TEMP/members.txt"; then
+          if tar -xzvf "$RUNNER_TEMP/tests.tar.gz" -C "$into" steps >"$RUNNER_TEMP/members.txt"; then
             n=$(grep -vc '/$' "$RUNNER_TEMP/members.txt" || true)
             got=$((got + 1)); entries=$((entries + n))
           fi
@@ -245,7 +267,7 @@ runs:
         touch "$RUNNER_TEMP/test-store-mark"
         # the answers go where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
         # and where the smith run by hand looks (#3177)
-        if [ -d "$byhand/a" ]; then
+        if [ "$ram" = false ] && [ -d "$byhand/a" ]; then
           if [ "$(uname -s)" = Linux ]; then cp -alf "$byhand/." "$tests/"; else cp -a "$byhand/." "$tests/"; fi
         fi
         if [ "$got" -gt 0 ]; then
