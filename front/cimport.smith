@@ -334,6 +334,23 @@ static ast::TypeExpr *build_function(const CType *c, TypeList done) {
     return ast::make_type(kind);
 }
 
+// The pointee of `data` when struct `index` is a slice as C passes it (#3327): named `smith_array_<elem>_n` or
+// `smith_array_const_<elem>_n`, with exactly `data` (a pointer) and `count` (an array of one `unsigned long`). Any
+// other struct is a record. -1 for none.
+static I64 slice_pointee(const Table *t, U32 index) {
+    const Record *s = &t->structs[index];
+    Usize n = countof(s->name);
+    if (s->is_union || s->opaque || countof(s->fields) != 2 || n < 15) return -1;
+    if (c::strncmp(s->name.data, "smith_array_", 12) != 0 || c::strncmp(s->name.data + n - 2, "_n", 2) != 0) return -1;
+    if (c::strcmp(s->fields[0].name.data, "data") != 0 || c::strcmp(s->fields[1].name.data, "count") != 0) return -1;
+    CType data = t->types[s->fields[0].type];
+    CType count = t->types[s->fields[1].type];
+    if (data.kind != kind_pointer || count.kind != kind_array || count.b != 1) return -1;
+    CType item = t->types[count.a];
+    if (item.kind != kind_integer || item.a != 64 || item.b != 0) return -1;
+    return (I64)data.a;
+}
+
 // The type at `index` when everything it is made of is in `done`; null when not yet.
 static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
     CType c = t->types[index];
@@ -348,7 +365,14 @@ static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
         return ast::named(spelled);
     }
     if (c.kind == kind_typedef) return ast::named(c.name);
-    if (c.kind == kind_struct) return ast::named(t->structs[c.a].name);
+    if (c.kind == kind_struct) {
+        I64 pointee = slice_pointee(t, c.a);
+        if (pointee < 0) return ast::named(t->structs[c.a].name);
+        ast::TypeRef element = done[(Usize)pointee];
+        if (element == nullptr) return nullptr;
+        ast::TypeKind kind = {.slice = {.element = element, .is_mut = !element->qualifiers.is_const}};
+        return ast::make_type(kind);
+    }
     if (c.kind == kind_string) return ast::named("Str");
     if (c.kind == kind_unsupported) {
         ast::TypeKind kind = {.unsupported_c = {.spelling = c.name}};

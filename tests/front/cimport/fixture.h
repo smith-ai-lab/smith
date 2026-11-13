@@ -23,6 +23,27 @@ struct Flags {
     int ready : 1;
 };
 
+// A slice as C passes it (#3327): these two are `[]char` and `[]mut char`, the third has a field more and stays a
+// record.
+struct smith_array_const_char_n {
+    const char *data;
+    unsigned long count[1];
+};
+struct smith_array_char_n {
+    char *data;
+    unsigned long count[1];
+};
+struct smith_array_odd_n {
+    int *data;
+    unsigned long count[1];
+    int extra;
+};
+struct Text {
+    struct smith_array_const_char_n name;
+    struct smith_array_char_n buffer;
+};
+struct smith_array_const_char_n label(struct smith_array_const_char_n text, struct smith_array_odd_n odd);
+
 void poison(void const volatile *region, unsigned long size); // a volatile pointee in a parameter is read as plain
 int add(int a, int b);
 int log_line(const char *format, ...);
