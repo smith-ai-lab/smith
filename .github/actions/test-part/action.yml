@@ -15,6 +15,12 @@ inputs:
   flags:
     description: the test flags of the part (`--skip-macos`)
     default: --skip-macos
+  store-urls:
+    description: the store files `build-linux` chose for the whole run (#3471), so every part deals from the same store; empty chooses here
+    default: ""
+  store-from:
+    description: the description of that list; empty chooses here
+    default: ""
   restore:
     description: '"true" restores the test-result store first; "false" when the job already did'
     default: "true"
@@ -35,6 +41,8 @@ runs:
       with:
         os: linux
         fresh: ${{ github.event_name == 'schedule' }}
+        urls: ${{ inputs.store-urls }}
+        from: ${{ inputs.store-from }}
     - name: Tests, part ${{ inputs.part }} of ${{ inputs.count }}
       shell: bash
       env:
@@ -48,7 +56,8 @@ runs:
         shard=
         mkdir -p .smith/log
         # --weigh (#3283): the build deals the tests by what the test store holds (the ones it will serve weigh next to
-        # nothing, the others the seconds of their last run), every part by itself, and writes the weights, the whole
+        # nothing, the others the seconds of their last run), every part by itself from the same store (the list
+        # `build-linux` chose, #3471), and writes the weights, the whole
         # suite (.suite) and this part's tests (.part), a build and a runner for each test program adding theirs beside the logs; the `ci` job checks every test is in one part
         if [ "$COUNT" -gt 1 ]; then shard="--shard $PART/$COUNT --weigh $PWD/.smith/log/weights.tsv"; fi
         # shellcheck disable=SC2086
