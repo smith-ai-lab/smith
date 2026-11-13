@@ -419,7 +419,7 @@ export state::Status if_let_branch(state::Emitter *e, const state::ThenGeneral *
         state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
     }
     if (has_else) {
-        state::ThenBlocks end = {.run = branch_end, .span = s->span};
+        state::ThenBlocks end = state::then_blocks(branch_end, s->span);
         end.blocks[0] = end_block;
         state::push_then_blocks(e, end);
         state::push_branch(e, w, else_branch);

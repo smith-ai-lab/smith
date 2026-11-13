@@ -1182,6 +1182,25 @@ struct Pending {
     Bool legacy;     // a query written `_Countof` (C2y)
 };
 
+// A `Pending` with every field written: the ones an operator does not read are zero, null or empty, and the
+// construction assigns the ones it does.
+static Pending pending_op(Form form, U32 prec) {
+    ast::Span none = {.start = 0, .end = 0};
+    Pending op = {.form = form,
+                  .prec = prec,
+                  .start = 0,
+                  .unary = .negate,
+                  .binary = .add,
+                  .assign = .plain,
+                  .query = .size_of,
+                  .type = nullptr,
+                  .middle = nullptr,
+                  .head = none,
+                  .colon = none,
+                  .legacy = false};
+    return op;
+}
+
 // A `++` or `--` seen in an expression: it is a statement in Smith, so the end of the expression decides its warning.
 struct Bump {
     ast::Expr *expr;
@@ -1865,14 +1884,16 @@ static Outcome infix_step(parse::Parser *p, Stack *st) {
     U32 prec = binary_prec(kind);
     if (prec > 0) {
         reduce_above(st, prec, false);
-        Pending op = {.form = .infix, .prec = prec, .binary = binary_op(kind)};
+        Pending op = pending_op(.infix, prec);
+        op.binary = binary_op(kind);
         push_op(st, op);
         parse::advance(p);
         return .done;
     }
     if (is_assign(kind)) {
         reduce_above(st, 1, true);
-        Pending op = {.form = .assignment, .prec = 1, .assign = assign_op(kind)};
+        Pending op = pending_op(.assignment, 1);
+        op.assign = assign_op(kind);
         push_op(st, op);
         parse::advance(p);
         return .done;
@@ -1887,7 +1908,10 @@ static Outcome infix_step(parse::Parser *p, Stack *st) {
         parse::expect(p, lex::colon, "`:` of the conditional");
         return .broken;
     }
-    Pending op = {.form = .conditional_form, .prec = 2, .middle = middle, .head = question, .colon = colon};
+    Pending op = pending_op(.conditional_form, 2);
+    op.middle = middle;
+    op.head = question;
+    op.colon = colon;
     push_op(st, op);
     return .done;
 }
@@ -2224,12 +2248,11 @@ static Step query(parse::Parser *p, Stack *st) {
             st, make(parse::span_from(p, keyword.span.start), {.query = {.op = op, .type = type, .operand = nullptr}}));
         return .value;
     }
-    Pending pending = {.form = .query_form,
-                       .prec = prefix_prec,
-                       .start = keyword.span.start,
-                       .head = keyword.span,
-                       .query = op,
-                       .legacy = parse::text(p, keyword)[0] == '_'};
+    Pending pending = pending_op(.query_form, prefix_prec);
+    pending.start = keyword.span.start;
+    pending.head = keyword.span;
+    pending.query = op;
+    pending.legacy = parse::text(p, keyword)[0] == '_';
     push_op(st, pending);
     return .more;
 }
@@ -2388,11 +2411,10 @@ static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
         p->new_syntax = was_new;
         lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
-        Pending cast = {.form = .cast_form,
-                        .prec = prefix_prec,
-                        .start = start,
-                        .type = type,
-                        .head = from_to(start, close.span.end)};
+        Pending cast = pending_op(.cast_form, prefix_prec);
+        cast.start = start;
+        cast.type = type;
+        cast.head = from_to(start, close.span.end);
         push_op(st, cast);
         return .more;
     }
@@ -2446,11 +2468,10 @@ static Step paren(parse::Parser *p, Stack *st) {
             push_value(st, initializer_list(p, type, start, close.span.start));
             return .value;
         }
-        Pending cast = {.form = .cast_form,
-                        .prec = prefix_prec,
-                        .start = start,
-                        .type = type,
-                        .head = from_to(start, close.span.end)};
+        Pending cast = pending_op(.cast_form, prefix_prec);
+        cast.start = start;
+        cast.type = type;
+        cast.head = from_to(start, close.span.end);
         push_op(st, cast);
         return .more;
     }
@@ -2505,7 +2526,9 @@ static Step operand_step(parse::Parser *p, Stack *st) {
     }
     if (is_prefix(token.kind) || token.kind == lex::kw_try) {
         parse::advance(p);
-        Pending op = {.form = .prefix, .prec = prefix_prec, .start = token.span.start, .head = token.span};
+        Pending op = pending_op(.prefix, prefix_prec);
+        op.start = token.span.start;
+        op.head = token.span;
         if (token.kind == lex::kw_try) {
             op.form = .try_form;
         } else {

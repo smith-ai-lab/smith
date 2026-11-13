@@ -4968,7 +4968,7 @@ static types::TypeRef lambda_signature(types::Checked *c, const ast::Expr *e, ty
         if (t == nullptr) {
             ok = false;
         }
-        slots[i] = (types::Slot){.name = params[i].name, .type = t};
+        slots[i] = types::make_slot(params[i].name, t);
     }
     types::TypeRef result = lambda_result(c, e, signature);
     if (!ok || result == nullptr) {

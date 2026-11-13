@@ -180,16 +180,27 @@ typedef struct {
     U32 mode;
 } Entry;
 
+// An `Entry` with every field written: no link target, no data; a constructor assigns what its kind has.
+static Entry entry_of(const char *name, char type, U32 mode) {
+    Entry entry = {.name = name, .type = type, .link = nullptr, .data = nullptr, .size = 0, .mode = mode};
+    return entry;
+}
+
 static Entry file_of(const char *name, const char *text) {
-    return (Entry){.name = name, .type = '0', .data = (const U8 *)text, .size = c::strlen(text), .mode = 0o644};
+    Entry entry = entry_of(name, '0', 0o644);
+    entry.data = (const U8 *)text;
+    entry.size = c::strlen(text);
+    return entry;
 }
 
 static Entry folder_of(const char *name) {
-    return (Entry){.name = name, .type = '5', .mode = 0o755};
+    return entry_of(name, '5', 0o755);
 }
 
 static Entry link_of(const char *name, char type, const char *target) {
-    return (Entry){.name = name, .type = type, .link = target, .mode = 0o777};
+    Entry entry = entry_of(name, type, 0o777);
+    entry.link = target;
+    return entry;
 }
 
 static void octal(U8 *field, Usize width, U64 value) {
@@ -522,7 +533,10 @@ export void test_untar_tar_xz_with_zero_padding_after_it() {
 // Data that does not compress is stored: gzip's stored blocks (more than one: 65535 bytes at most), and LZMA2's
 // uncompressed chunks (70000 bytes of random data, from a real xz).
 static Entry random_file(Bytes data) {
-    return (Entry){.name = "pkg-1.0/random.bin", .type = '0', .data = data.data, .size = countof(data), .mode = 0o644};
+    Entry entry = entry_of("pkg-1.0/random.bin", '0', 0o644);
+    entry.data = data.data;
+    entry.size = countof(data);
+    return entry;
 }
 
 static const char *random_listing(Case *t, Bytes data) {

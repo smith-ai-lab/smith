@@ -18,7 +18,7 @@ static Bool says(Str a, Str b) {
 }
 
 static types::Slot slot(Str name, types::TypeRef type) {
-    return (types::Slot){.name = name, .type = type};
+    return types::make_slot(name, type);
 }
 
 static types::Symbol symbol(Str name, types::SymbolKind kind, types::TypeRef type) {
@@ -92,9 +92,10 @@ export void test_front_types_show_a_type_with_many_slots() {
     defer mem::set_allocator(outside);
     types::Table t = types::start(types::lp64());
     types::TypeRef int32 = types::builtin(&t, "I32");
-    types::Slot many[20] = {};
-    for (Usize i = 0; i < 20; i++)
-        many[i] = slot("", int32);
+    types::Slot many[20] = {slot("", int32), slot("", int32), slot("", int32), slot("", int32), slot("", int32),
+                            slot("", int32), slot("", int32), slot("", int32), slot("", int32), slot("", int32),
+                            slot("", int32), slot("", int32), slot("", int32), slot("", int32), slot("", int32),
+                            slot("", int32), slot("", int32), slot("", int32), slot("", int32), slot("", int32)};
     test::check_condition(
         says(types::show(types::tuple_of(&t, many)),
              "(I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32)"));

@@ -52,6 +52,14 @@ export struct Signature {
 
 export typedef Result(Signature, state::Error) SignatureResult;
 
+// A `Signature` with every field written: the construction assigns the ones it knows.
+static Signature signature_of(state::Ty result) {
+    state::Ty params[:] = {};
+    Signature sig = {
+        .function = nullptr, .type = nullptr, .result = result, .params = params, .owned = false, .variadic = false};
+    return sig;
+}
+
 static Bool is_void(state::Ty ty) {
     return c::LLVMGetTypeKind(ty.llvm) == c::LLVMVoidTypeKind;
 }
@@ -135,7 +143,10 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
         mem::free(all.data);
         return {.error = made_result.error};
     }
-    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = variadic};
+    Signature sig = signature_of(made_result.ok);
+    sig.params = all[0:count];
+    sig.owned = true;
+    sig.variadic = variadic;
     sig.type = c::LLVMFunctionType(made_result.ok.llvm, parameter_types, (U32)count, variadic ? 1 : 0);
     return sig;
 }
@@ -177,8 +188,10 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
         mem::free(all.data);
         return {.error = made_result.error};
     }
-    Signature sig = {
-        .result = made_result.ok, .params = all[0:count], .owned = true, .variadic = types::is_variadic(type)};
+    Signature sig = signature_of(made_result.ok);
+    sig.params = all[0:count];
+    sig.owned = true;
+    sig.variadic = types::is_variadic(type);
     sig.type = c::LLVMFunctionType(made_result.ok.llvm, llvm_types, (U32)count, types::is_variadic(type) ? 1 : 0);
     char *label = state::cstr(name);
     sig.function = c::LLVMGetNamedFunction(e->module, label);
@@ -454,11 +467,11 @@ static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const as
     for (Usize i = 0; i < e->function_count; i++) {
         if (state::same_text(e->functions[i].name, key)) {
             state::FunctionInfo info = e->functions[i];
-            Signature sig = {.function = info.llvm,
-                             .type = info.llvm_type,
-                             .result = info.result,
-                             .params = info.params,
-                             .variadic = info.variadic};
+            Signature sig = signature_of(info.result);
+            sig.function = info.llvm;
+            sig.type = info.llvm_type;
+            sig.params = info.params;
+            sig.variadic = info.variadic;
             return sig;
         }
     }

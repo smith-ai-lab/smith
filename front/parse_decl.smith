@@ -678,6 +678,23 @@ static Bool reject_gnu_spelling(parse::Parser *p) {
     return true;
 }
 
+// An `Attribute` with every field written: no name, no arguments, an empty span.
+static ast::Attribute attribute_of(Bool is_new) {
+    ast::Span none = {.start = 0, .end = 0};
+    ast::Identifier segments[:] = {};
+    ast::ExprRef args[:] = {};
+    ast::Path name = {.segments = segments, .span = none};
+    ast::Attribute attribute = {.name = name, .args = args, .span = none, .is_new = is_new};
+    return attribute;
+}
+
+// A `TypeExpr` with every field written: no qualifiers, and the kind it is given.
+static ast::TypeExpr type_expr_of(ast::Span span, ast::TypeKind kind) {
+    ast::Qualifiers plain = {.is_const = false, .is_volatile = false, .is_restrict = false};
+    ast::TypeExpr node = {.span = span, .qualifiers = plain, .kind = kind};
+    return node;
+}
+
 // One `[[a, b::c(args)]]` group (the position is at its first `[`).
 static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
     U32 group_start = parse::peek(p).span.start;
@@ -686,7 +703,7 @@ static void parse_attribute_group(parse::Parser *p, Prefixes *out) {
     parse::advance(p);
     while (!parse::at(p, lex::end_of_file)) {
         U32 start = parse::peek(p).span.start;
-        ast::Attribute attribute = {};
+        ast::Attribute attribute = attribute_of(false);
         attribute.name = parse_path(p, "an attribute name");
         reject_gnu_attribute(p, attribute.name);
         if (parse::accept(p, lex::left_paren)) {
@@ -762,7 +779,7 @@ static void warn_empty_call(parse::Parser *p, U32 open) {
 // (`@serial::rename("id")`).
 static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
     U32 start = parse::advance(p).span.start;
-    ast::Attribute attribute = {.is_new = true};
+    ast::Attribute attribute = attribute_of(true);
     if (!at_attribute_name(p)) {
         parse::error(p, parse::peek(p).span, "an attribute has a name: write `@inline` or `@c_name(\"f\")`");
         return;
@@ -836,7 +853,7 @@ static Bool take_prefix_keyword(Prefixes *pre, lex::TokenKind kind) {
 static void parse_alignas(parse::Parser *p, Prefixes *out) {
     lex::Token word = parse::advance(p);
     Str align_name = "align";
-    ast::Attribute attribute = {.is_new = true};
+    ast::Attribute attribute = attribute_of(true);
     attribute.name.segments = mem::alloc_slice(ast::Identifier, 1);
     attribute.name.segments[0] = (ast::Identifier){.text = align_name, .span = word.span};
     attribute.name.span = word.span;
@@ -985,7 +1002,9 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type, Bool
         ast::Span span = {.start = type->span.start, .end = suffix.span.end};
         ast::TypeKind kind = {.array = {.element = wrapped, .count = suffix.count}};
         if (suffix.is_slice) kind = {.slice = {.element = wrapped}};
-        wrapped = ast::new_type((ast::TypeExpr){.span = span, .kind = kind, .qualifiers = suffix.qualifiers});
+        ast::TypeExpr node = type_expr_of(span, kind);
+        node.qualifiers = suffix.qualifiers;
+        wrapped = ast::new_type(node);
     }
     return wrapped;
 }
@@ -1117,8 +1136,8 @@ static void several_field_names_error(parse::Parser *p, const ast::TypeExpr *typ
 // Functions and variables
 
 static ast::TypeExpr *auto_type(ast::Span span) {
-    ast::TypeExpr node = {.span = span};
-    node.kind = .auto_type;
+    ast::TypeKind kind = .auto_type;
+    ast::TypeExpr node = type_expr_of(span, kind);
     return ast::new_type(node);
 }
 
@@ -2460,8 +2479,7 @@ static FieldList parse_fields(parse::Parser *p, Style *style) {
             U32 field_start = stack[depth].field_start;
             ast::TypeKind kind = {.record = {.fields = stack[depth].fields, .is_union = stack[depth].is_union}};
             parse::expect(p, lex::right_brace, "`}`");
-            ast::TypeExpr node = {.span = parse::span_from(p, field_start)};
-            node.kind = kind;
+            ast::TypeExpr node = type_expr_of(parse::span_from(p, field_start), kind);
             depth -= 1;
             ast::FieldDecl field = {.type = ast::new_type(node)};
             field = finish_field(p, field, true, field_start, style, false);
@@ -2529,8 +2547,7 @@ static ast::TypeExpr *parse_anonymous_record(parse::Parser *p) {
     FieldList fields = parse_fields(p, &style);
     parse::expect(p, lex::right_brace, "`}`");
     ast::TypeKind kind = {.record = {.fields = fields, .is_union = is_union}};
-    ast::TypeExpr node = {.span = parse::span_from(p, start)};
-    node.kind = kind;
+    ast::TypeExpr node = type_expr_of(parse::span_from(p, start), kind);
     return ast::new_type(node);
 }
 

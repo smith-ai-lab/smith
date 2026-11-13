@@ -23,7 +23,7 @@ the next ones, at size 1, find the pull request at fault ([queue](ci/queue.md)).
 release tarball of that commit; the push's `publish` job publishes it as the stage0 release `stage0-<commit>` within
 minutes, with the macOS tarball its own `release` job builds (#2832). `release-linux` builds the Linux tarball only when
 the queue left none ([release](release.md)). `publish` prunes old releases last, off its path. The push also runs the
-macOS tests (`macos`, `macos-lint`) and the Mac watchdog; they gate nothing: a failure is red on the push run, and the
+macOS tests (`macos`, with the Mac's lint as a stage) and the Mac watchdog; they gate nothing: a failure is red on the push run, and the
 lead files a ticket at the top of #1631.
 
 **A `SessionStart` hook with matcher `compact` (`.claude/settings.json`, #3383)** runs `scripts/reload_role_skill.c`, which prints the whole `SKILL.md` of the role skill the session loaded (`smith-dev-lead` or `smith-dev-runner`, found in the transcript) back into context after a compaction, and nothing when it loaded neither; `tests/reload_role_skill_test.smith` tests it.
@@ -32,7 +32,7 @@ lead files a ticket at the top of #1631.
 
 **Every job has a `timeout-minutes`** set from the observed maximum with headroom (#1139): 3 for `changes` and `ci`, 10 for `publish`, 15 for llvm.yml's `pick`; 15 for `warm`, `release` and `release-linux`; 30 for `macos` (#1709); 20 for `test-linux`, `check`; 240 for llvm.yml's `macos` and `linux` packs (observed 131 and 162). A job that grows past its limit raises the limit with the measurement.
 
-**One macOS job** (#1709). `macos` builds smith, then runs the `--macos-only` tests one stage after another in that checkout: two verbs at once collide on `.smith/build.ninja` (`cannot replace .smith/build.ninja`). A failed stage prints its last 60 lines and `FAIL <stage>`, and the job summary has `took <stage> <n>s (exit <code>)` for each. `fmt`, `docs`, `prove` and `lint` run on Linux, in `check` (#2234), beside the test parts (#2137, #2171). `macos-lint` (#3045) lints the code only the Mac sees, in its own job, because each platform lints code the other can't see.
+**One macOS job** (#1709). `macos` builds smith, then runs the `--macos-only` tests one stage after another in that checkout: two verbs at once collide on `.smith/build.ninja` (`cannot replace .smith/build.ninja`). A failed stage prints its last 60 lines and `FAIL <stage>`, and the job summary has `took <stage> <n>s (exit <code>)` for each. `fmt`, `docs`, `prove` and `lint` run on Linux, in `check` (#2234), beside the test parts (#2137, #2171). `macos` lints too (last stage, #3568).
 
 **A documents-only diff builds nothing** (#3044). When every changed file is in `knowledge/`, `.agents/`, `.claude/skills/` or a Markdown file at the repository root (the one list is `smith_plan_is_gated` in `runtime/check_plan.c`, which `smith check --plan` and the `Scope` step of `ci.yml` share (#3163); Markdown elsewhere, such as `templates/new` or `tests/docs/fixtures`, is read by tests and stays code), `changes` gives scope `docs` and `mac_run=false`: no `macos`, no `watch`, no test shards. A queue run still starts `build-linux` at once, without waiting for `changes` (#3277: a queue run always builds, and `pick-mac` is not run there; the fixed hosted values stand in its outputs). The one job `docs-linux` builds the smith of the checkout (`setup-smith`; with only the two tests when the diff needs them) and runs `smith check --changed` (#3163): for scope `docs` the command runs the docs check and, when the diff touches `README.md` or the skills, `readme_test` and `skills_test`; the pre-push hook runs the same command, so the two tests are no longer the only thing the release smith ran in CI alone (#3160). `ci` owes `docs-linux` for this scope. A docs run is recognised by its jobs: `docs-linux` ran and `macos`, `build-linux` and the shards show as skipped (in a queue run `build-linux` ran too). A push to main of only such files is scope `none`: no release, no warm build (nothing in the compiler changed). `tests/ci_scope_test.smith` runs the `Scope` script on a docs-only, a README, a code, a mixed, a template and a push diff, so the exception cannot silently widen.
 
@@ -52,8 +52,10 @@ before its first test (pack and step cache restore 0.5, `fetch` 0.2, `build` 1.2
 later and only runner minutes dropped (about 17 of 41 per queue run), so the shards built for themselves. On
 2026-11-02 the trade-off flipped: the free plan's 20 hosted job slots were full most hours and runs waited 15 to 40 min
 for a runner, so runner minutes are the limit (owner: no paid runners). Now `build-linux` builds smith and the tests
-once, packs `build/` and `.smith/` with `tar --zstd`, and uploads it as the artifact `build-linux` (1 day); each shard
-restores it (`setup-smith` with `artifact: build-linux`), gives the checkout's sources an old time so none is newer than
+once, packs `build/`, `.smith/` and the generated `tree-sitter/src` with `tar --zstd` (and, in a second file of the artifact, the shim's
+`smith/shim-pch` folder of the cache: both are inputs of smith's own steps, and without them every shard generated the
+parser and compiled the header, the 8 shims and the link of smith again, 16 steps and 26 s, #3458), and uploads it as the artifact
+`build-linux` (1 day); each shard restores it (`setup-smith` with `artifact: build-linux`), gives the checkout's sources an old time so none is newer than
 the build (the build's own files keep their times: touching them made every step run again, #2833), and runs its tests. Measurement before and after (3 queue runs, 3 pull request runs): in the PR of #1758.
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.

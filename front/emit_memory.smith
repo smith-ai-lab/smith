@@ -53,7 +53,7 @@ import <llvm-c/Target.h>;
 // Small helpers
 
 static state::TyResult ty_failf(ast::Span span, Str first, Str second) {
-    state::Error error = {.message = state::msg(format::push(first, second)), .span = span};
+    state::Error error = state::error_at(state::msg(format::push(first, second)), span);
     return {.error = error};
 }
 

@@ -1962,7 +1962,7 @@ static state::TyResult other_from_checked(state::Emitter *e, types::TypeRef base
     if (base->kind == .fn_value) return lambdas::from_checked(e, base);
     if (base->kind == .function) return lambdas::pointer_from_checked(e, base); // a C function pointer
     Str shown = types::show(base);
-    state::Error error = {.message = state::msg(format::push("not emitted yet: ", shown)), .span = span};
+    state::Error error = state::error_at(state::msg(format::push("not emitted yet: ", shown)), span);
     state::free_text(shown);
     return {.error = error};
 }
@@ -2070,7 +2070,7 @@ static void name_union_fields(state::Emitter *e, types::TypeRef base, Usize at) 
             mem::free(infos.data);
             return;
         }
-        infos[i] = (state::FieldInfo){.name = types::slots_of(base).items[i].name, .ty = made.ok};
+        infos[i] = state::field_info(types::slots_of(base).items[i].name, made.ok);
     }
     e->records[at].fields = infos;
     e->records[at].overlay = true;
@@ -2120,7 +2120,7 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
             mem::free(infos.data);
             return;
         }
-        infos[i] = (state::FieldInfo){.name = types::slots_of(base).items[i].name, .ty = made.ok};
+        infos[i] = state::field_info(types::slots_of(base).items[i].name, made.ok);
         fields[i] = made.ok.llvm;
     }
     c::LLVMStructSetBody(named, fields, (U32)count, 0);
@@ -2444,7 +2444,7 @@ static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state:
         return state::failf(x->span, "the initializer of a global is a constant of type ", to.name);
     c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), nullptr, 0, 0);
     c::LLVMValueRef scratch = c::LLVMAddFunction(e->module, ".fold", type);
-    state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
+    state::Ty none = {.kind = {.integer = {}}, .llvm = c::LLVMVoidTypeInContext(e->context), .name = ""};
     start_function(e, (state::FunctionInfo){.llvm = scratch, .llvm_type = type, .result = none});
     state::begin_scope(e);
     state::push_eval(e, x, state::hint_of(to));
@@ -2571,7 +2571,7 @@ export Emitted module_all(c::LLVMContextRef context, const ast::Module *m, state
     char *triple = state::cstr(options.target.triple);
     c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext(name, context);
     c::LLVMSetTarget(ir, triple);
-    state::Emitter e = {.context = context, .module = ir, .options = options, .tree = m};
+    state::Emitter e = state::emitter(context, ir, options, m);
     e.type_hook = type_of;
     e.node_type_hook = type_of_node;
     e.checked_type_hook = type_of_checked;
