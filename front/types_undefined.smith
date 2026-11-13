@@ -307,6 +307,12 @@ static Usage scan(Str name, const ast::Stmt *stmt, const ast::Expr *expr) {
     return u;
 }
 
+// Whether `stmt` may write `name` or a part of it (an assignment, `&name`, a call that takes it on, code it cannot
+// read): the narrowing of a `mut` name before a loop is dropped when the loop does (#3438).
+export Bool may_write(Str name, const ast::Stmt *stmt) {
+    return scan(name, stmt, nullptr).writes > 0;
+}
+
 static void report(types::Checked *r, Str name, const ast::Expr *at) {
     types::failf(r, at->span, "`", name, "` is read before it is written: write it first, or give it a value");
 }
