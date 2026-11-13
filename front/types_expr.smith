@@ -67,6 +67,7 @@
 module front::types_expr;
 
 import front::ast;
+import front::ast_clone;
 import front::eval;
 import front::parse as syntax;
 import front::types;
@@ -6400,6 +6401,11 @@ static Bool value_argument(types::Checked *c, const ast::Param *p, const ast::Ex
             *value = s->value;
             return true;
         }
+        // A constant of the enclosing function, such as the `i` of an unrolled `for (i, f) in enumerate(fields(T))`
+        // (`const i: usize = <at>` in each copy): its initializer has a value.
+        if (s != nullptr && s->is_const && eval::length(c, arg, value)) {
+            return true;
+        }
     }
     types::failf(c, arg->span, "`", p->name, "` must be known at compile time; write an integer literal or a ",
                  "compile-time parameter of the enclosing function");
@@ -7025,8 +7031,23 @@ static Bool is_spread(const ast::Expr *arg) {
     return arg->kind == .expand; // `s...` after the `;` spreads named fields, `rest...` a pack into positions (#2293)
 }
 
-// The value a spread argument spreads.
+// `map(pack, f)...` (item 45 of #3235, `f(...map(rest, g))`): `f` applied to each element of the tuple `pack`, spread
+// into positions. It is no call to run: each element of `pack` keeps its own type, so the spread is checked as the
+// arguments `f(pack.0), f(pack.1), ...`. Null when `arg` is not one.
+static const ast::Expr *mapped_call(const ast::Expr *arg) {
+    if (arg->kind != .expand || arg->kind.expand.named) return nullptr;
+    const ast::Expr *call = arg->kind.expand.pattern;
+    if (call->kind != .call || countof(call->kind.call.args) != 2) return nullptr;
+    const ast::Expr *callee = call->kind.call.callee;
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return nullptr;
+    if (!types::same_text(callee->kind.name.path.segments[0].text, "map")) return nullptr;
+    return call;
+}
+
+// The value a spread argument spreads: for `map(pack, f)...` the `pack`.
 static ast::Expr *spread_value(const ast::Expr *arg) {
+    const ast::Expr *mapped = mapped_call(arg);
+    if (mapped != nullptr && mapped->kind == .call) return mapped->kind.call.args[0];
     if (arg->kind == .expand) return arg->kind.expand.pattern;
     return nullptr;
 }
@@ -7045,6 +7066,51 @@ static Bool plain_place(const ast::Expr *e) {
     while (at->kind == .member)
         at = at->kind.member.base;
     return at->kind == .name;
+}
+
+static Str mapped_param = "";
+static const ast::Expr *mapped_element = nullptr;
+
+static const ast::Stmt *keep_statement(const ast::Stmt *s) {
+    return s;
+}
+
+// In a copy of the body of the function of `map(pack, fn(each): body)...`: the parameter is the element.
+static const ast::Expr *element_for_param(const ast::Expr *e) {
+    if (e->kind != .name || countof(e->kind.name.path.segments) != 1) return e;
+    if (!types::same_text(e->kind.name.path.segments[0].text, mapped_param)) return e;
+    return mapped_element;
+}
+
+// What the function of `map(pack, f)...` gives for `element`: the call `f(element)`, or the body of a lambda written
+// with `element` for its parameter. Null, with the error, when the function is a lambda of another shape.
+static ast::Expr *mapped_result(types::Checked *c, const ast::Expr *arg, ast::Expr *element) {
+    const ast::Expr *mapped = mapped_call(arg);
+    if (mapped == nullptr || mapped->kind != .call) return nullptr;
+    ast::Expr *function = mapped->kind.call.args[1];
+    if (function->kind != .lambda) {
+        ast::ExprRef given[1] = {element};
+        ast::Expr *call = ast::call(function, given);
+        call->span = arg->span;
+        return call;
+    }
+    ast::Param params[:] = function->kind.lambda.params;
+    const ast::Stmt *body = function->kind.lambda.body;
+    if (body != nullptr && body->kind == .block && countof(body->kind.block.items) == 1) {
+        body = body->kind.block.items[0];
+    }
+    if (countof(params) != 1 || body == nullptr || body->kind != .expression) {
+        types::failf(c, function->span, "the function of `map` over a pack is a name, or a lambda of one parameter ",
+                     "whose body is one expression, such as `fn(each): g(each, n)`");
+        return nullptr;
+    }
+    mapped_param = params[0].name;
+    mapped_element = element;
+    ast::Stmt *copy = ast_clone::clone_stmt_rewriting(body, keep_statement, element_for_param);
+    mapped_param = "";
+    mapped_element = nullptr;
+    if (copy->kind != .expression) return nullptr;
+    return copy->kind.expression.value;
 }
 
 // `rest...` in a call: each element of the tuple `t` is passed as the next argument, `rest.0, rest.1, ...` (#2293). A
@@ -7068,6 +7134,10 @@ static Bool spread_positions(types::Checked *c, const ast::Expr *arg, types::Typ
         ast::ExprKind member = {.member = {.base = pattern, .name = index}};
         ast::Expr *element = ast::expr(member);
         element->span = arg->span;
+        if (mapped_call(arg) != nullptr) {
+            element = mapped_result(c, arg, element);
+            if (element == nullptr) return false;
+        }
         out[*count] = element;
         *count += 1;
     }
