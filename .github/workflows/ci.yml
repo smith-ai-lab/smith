@@ -868,7 +868,10 @@ jobs:
           label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # restores the one store (#3457): the count's fixed files and rows are answers in it (`steps/a`), keyed by what
-        # each read, so a file the smith and its imports leave as they were is served; it also sets SMITH_IMPORT_CACHE_LOG
+        # each read, so a file the smith and its imports leave as they were is served; it also sets SMITH_IMPORT_CACHE_LOG.
+        # Only this shard's own additions (the entries its last count looked up), not the whole file of main
+        with:
+          only: count${{ matrix.shard }}of4
       - name: API budget (after test-cache)
         uses: ./.github/actions/api-budget
         with:
