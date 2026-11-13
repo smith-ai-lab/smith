@@ -191,11 +191,11 @@ export void test_autodiff_scan_enzyme_equals_the_hand_written_backward() {
 }
 
 export void test_autodiff_scan_gradient_in_smith_equals_the_hand_written_backward() {
-    reference_equals_backward("scan gradient", "scangrad", "scan-gradient/main.smith");
+    reference_equals_backward("scan gradient", "scangrad", "scan/gradient.smith");
 }
 
 export void test_autodiff_scan_struct_of_slices_equals_the_hand_written_backward() {
-    reference_equals_backward("scan struct", "scanstruct", "scan-struct/main.smith");
+    reference_equals_backward("scan struct", "scanstruct", "scan/struct.smith");
 }
 
 export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references() {
