@@ -1554,6 +1554,14 @@ static const types::Symbol *called(Run *run, const ast::Expr *callee) {
         symbol = types::type_through_modules(run->r, path_of(&names, names.count, callee->span));
     } else if (types::name_path(callee, &path)) {
         symbol = types::type_through_modules(run->r, path);
+        // A question about a type read in the body of an instance of another module's generic is not hidden by a
+        // function of the module being checked (#3600): `is_integer` of the caller is not the one `std.format` asks.
+        if (symbol != nullptr && countof(path.segments) == 1) {
+            Str asked = path.segments[0].text;
+            if ((is_question(asked) || is_concept(asked)) && types::lookup_own(&run->r->scopes, asked) == nullptr) {
+                return nullptr;
+            }
+        }
     }
     if (symbol == nullptr || symbol->kind != .function_symbol) return nullptr;
     return symbol;

@@ -279,7 +279,10 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
     ast::Path path = callee->kind.name.path;
     if (countof(path.segments) != 1) return false;
     if (!find(path.segments[0].text, found)) return false;
-    return types::lookup_path(&c->scopes, path) == nullptr;
+    // In the body of an instance of another module's generic only that body's and its module's names can hide the
+    // builtin, not those of the module being checked (#3600): `is_integer` declared by the caller is not the one
+    // `std.format` asks with.
+    return types::lookup_own(&c->scopes, path.segments[0].text) == nullptr;
 }
 
 // The builtin a call names: `mem.alloc` with a size, or the builtin of its callee (`callee_entry`).
