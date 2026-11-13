@@ -18,12 +18,12 @@ export I32 sign_of(Signed n) {
 }
 
 export typeof(x) shifted(Num x) {
-    Int one = 1;
-    Num y = x + one;
+    typeof(x) one = 1;
+    typeof(x) y = x + one;
     return y;
 }
 
 export I32 plain(I32 q) {
-    Int r = q * 2;
+    I32 r = q * 2;
     return r;
 }
