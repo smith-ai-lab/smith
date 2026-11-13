@@ -68,13 +68,14 @@ static Build build_reading(const scratch::Project p, const char *cache, I64 time
     const char *const depends[_] = {format::push("main.o: main.c ", other, " ", util).data,
                                     format::push("util.o: util.c ", util, " ", extra).data,
                                     format::push("other.o: other.c ", other).data, nullptr};
-    c::SmithCoreStepCache step = {.plan = {.folder = p.dir,
-                                           .manifest = ".smith/build.ninja",
-                                           .targets = nullptr,
-                                           .unchanged = nullptr,
-                                           .depends = depends,
-                                           .time = time},
-                                  .cache = cache};
+    c::SmithCoreStepCache step = {};
+    step.plan.folder = p.dir;
+    step.plan.manifest = ".smith/build.ninja";
+    step.plan.targets = nullptr;
+    step.plan.unchanged = nullptr;
+    step.plan.depends = depends;
+    step.plan.time = time;
+    step.cache = cache;
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     Usize served = 0;
@@ -330,13 +331,14 @@ export void test_build_step_cache_a_precompiled_header_is_compiled_again() {
     test::check_condition(c::smith_core_plan_write(a.dir, ".smith/build.ninja", pch_manifest, 100));
     test::check_condition(c::smith_core_plan_write(b.dir, ".smith/build.ninja", pch_manifest, 100));
     const char *const depends[_] = {"other.pch: other.h", nullptr};
-    c::SmithCoreStepCache step = {.plan = {.folder = a.dir,
-                                           .manifest = ".smith/build.ninja",
-                                           .targets = nullptr,
-                                           .unchanged = nullptr,
-                                           .depends = depends,
-                                           .time = 0},
-                                  .cache = a.cache};
+    c::SmithCoreStepCache step = {};
+    step.plan.folder = a.dir;
+    step.plan.manifest = ".smith/build.ninja";
+    step.plan.targets = nullptr;
+    step.plan.unchanged = nullptr;
+    step.plan.depends = depends;
+    step.plan.time = 0;
+    step.cache = a.cache;
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     Usize served = 0;
@@ -368,13 +370,14 @@ export void test_build_step_cache_a_validated_precompiled_header_is_served() {
     test::check_condition(c::smith_core_plan_write(a.dir, ".smith/build.ninja", pch_validated_manifest, 100));
     test::check_condition(c::smith_core_plan_write(b.dir, ".smith/build.ninja", pch_validated_manifest, 100));
     const char *const depends[_] = {"other.pch: other.h", nullptr};
-    c::SmithCoreStepCache step = {.plan = {.folder = a.dir,
-                                           .manifest = ".smith/build.ninja",
-                                           .targets = nullptr,
-                                           .unchanged = nullptr,
-                                           .depends = depends,
-                                           .time = 0},
-                                  .cache = a.cache};
+    c::SmithCoreStepCache step = {};
+    step.plan.folder = a.dir;
+    step.plan.manifest = ".smith/build.ninja";
+    step.plan.targets = nullptr;
+    step.plan.unchanged = nullptr;
+    step.plan.depends = depends;
+    step.plan.time = 0;
+    step.cache = a.cache;
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     Usize served = 0;
@@ -648,13 +651,14 @@ static scratch::Project header_project(const char *name) {
 
 static Build header_build(const scratch::Project p, const char *cache, I64 time) {
     const char *const depends[_] = {"api.h: api.smith base.h", nullptr};
-    c::SmithCoreStepCache step = {.plan = {.folder = p.dir,
-                                           .manifest = ".smith/build.ninja",
-                                           .targets = nullptr,
-                                           .unchanged = nullptr,
-                                           .depends = depends,
-                                           .time = time},
-                                  .cache = cache};
+    c::SmithCoreStepCache step = {};
+    step.plan.folder = p.dir;
+    step.plan.manifest = ".smith/build.ninja";
+    step.plan.targets = nullptr;
+    step.plan.unchanged = nullptr;
+    step.plan.depends = depends;
+    step.plan.time = time;
+    step.cache = cache;
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     Usize served = 0;
