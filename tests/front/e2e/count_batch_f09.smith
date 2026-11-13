@@ -1,0 +1,14 @@
+## The forms the F09 batch (#3487) made the front end take: an integer literal added to or multiplied into a float
+## element (`row[1] += 100`), and `countof` written `_Countof` is mended by the fixer (see tests/front_fix_test.smith).
+
+pub fn check() -> i32:
+    mut a: [2]f32 = [1, 2]
+    a[1] += 100
+    a[0] *= 3
+    if a[0] != 3.0 or a[1] != 102.0:
+        return 1
+    mut x: f32 = 0.5
+    x += 2
+    if x != 2.5:
+        return 2
+    0
