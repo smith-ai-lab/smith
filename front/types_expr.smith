@@ -6964,7 +6964,7 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
 // `c.SmithCorePlan(folder = dir)`: a type of an imported C header built through the old global `c`. The parser reads a
 // capitalized `c.Thing` as one qualified name, so `c_member_error` never sees it; the error carries the fix that
 // writes the header's binding where `c` stood, as it does for a function (`smith lint --fix`).
-static Bool header_type_callee_error(types::Checked *c, const ast::Expr *callee) {
+static Bool header_type_callee_error(types::Checked *c, const ast::Expr *e, const ast::Expr *callee) {
     if (callee->kind != .name || countof(callee->kind.name.path.segments) != 2) return false;
     ast::Identifier first = callee->kind.name.path.segments[0];
     Str name = callee->kind.name.path.segments[1].text;
@@ -6975,6 +6975,7 @@ static Bool header_type_callee_error(types::Checked *c, const ast::Expr *callee)
     fix[0] = (syntax::Edit){.span = first.span, .text = binding};
     types::fail_fix(c, callee->span, msg(format::push("there is no global `c`: write `", binding, ".", name, "`")),
                     fix);
+    poison(c, e);
     return true;
 }
 
@@ -7017,12 +7018,8 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    if (header_type_callee_error(c, callee)) { // `c.SmithCorePlan(folder = dir)` with no `c` bound
-        poison(c, e);
-        return;
-    }
     ast::ExprRef given[:] = e->kind.call.args;
-    if (made_callee_failed(c, e, callee)) return;
+    if (header_type_callee_error(c, e, callee) || made_callee_failed(c, e, callee)) return;
     types::TypeRef record = constructed_call(c, callee, given);
     if (record != nullptr) {
         construct_before(w, f, record);
