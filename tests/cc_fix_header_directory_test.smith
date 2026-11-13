@@ -1,0 +1,40 @@
+// The fixer reads a C header with the flags of the file's entry in compile_commands.json, a relative `-I` from the
+// entry's `directory` as the compiler does (#3578): a copy of a tree that lacks the generated `.smith/include` still
+// names the binding of a header that includes a generated one, so `c::name` is written `h.name`.
+// smith-covers: front/fix.smith
+module cc_fix_header_directory_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+static void prepare(const scratch::Project *p) {
+    scratch::Run made = scratch::sh(p, "mkdir -p tree/inc/lib work/src");
+    scratch::expect_status("the folders are made", 0, &made);
+    scratch::write(p, "tree/inc/lib/inner.h", "int inner_value(void);\n");
+    scratch::write(p, "tree/inc/lib/outer.h", "#include <lib/inner.h>\nint outer_value(void);\n");
+    scratch::write(p, "work/src/a.smith",
+                   "import <lib/outer.h>;\n\nexport I32 g() {\n    return c::outer_value() + c::inner_value();\n}\n");
+    scratch::Run database = scratch::sh(p, "printf '[\\n  {\\n    \"directory\": \"%s/tree\",\\n    \"file\": "
+                                           "\"src/a.smith\",\\n    \"arguments\": [\\n      \"smith-cc\",\\n      "
+                                           "\"-I\",\\n      \"inc\",\\n      \"-c\",\\n      \"src/a.smith\"\\n    "
+                                           "]\\n  }\\n]\\n' \"$PWD\" > work/compile_commands.json");
+    scratch::expect_status("the database is written", 0, &database);
+}
+
+export void test_cc_fix_header_directory_a_relative_include_is_read_from_the_entry_directory() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::Run run = scratch::sh(&p, "cd work && unset SMITH_FRONT_CIMPORT_FLAGS; smith lint --fix src/a.smith 2>&1");
+    scratch::expect_status("the file is fixed", 0, &run);
+    scratch::expect_contains("the first header's function is written with its binding",
+                             scratch::read(&p, "work/src/a.smith"), "outer.outer_value()");
+    scratch::expect_contains("the header it includes is read too", scratch::read(&p, "work/src/a.smith"),
+                             "outer.inner_value()");
+}

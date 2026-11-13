@@ -217,9 +217,25 @@ static Bool is_flag(Str text, Str flag) {
     return countof(text) == countof(flag) && starts_with_text(text, flag);
 }
 
+// The value of an include flag as the compiler reads it: a relative folder is the entry's `directory` and the folder.
+static Str from_directory(Str flag, Str directory, Str value) {
+    Bool folder = is_flag(flag, "-I") || is_flag(flag, "-isystem");
+    if (!folder || countof(directory) == 0 || countof(value) == 0 || value[0] == '/') return value;
+    return as_str(format::push(directory, "/", value));
+}
+
+// `-Ifolder` with a relative folder written from the entry's `directory`; any other flag as it is.
+static Str attached_flag(Str directory, Str flag) {
+    if (!starts_with_text(flag, "-I") || countof(flag) < 3) return flag;
+    return as_str(format::push("-I", from_directory("-I", directory, flag[2:countof(flag)])));
+}
+
 // The `-I`, `-isystem`, `-D` and `-isysroot` flags the database gives `database_file`, one on each line as
 // SMITH_FRONT_CIMPORT_FLAGS has them (`smith cc` does the same, #2313): `<llvm-c/Core.h>` is found at
-// `-I<llvm>/include`, so a call of it is typed and the checker's fixes for it are made (#2648).
+// `-I<llvm>/include`, so a call of it is typed and the checker's fixes for it are made (#2648). A relative include
+// folder is read from the entry's `directory`, as the compiler reads it: the fixer may run in a copy of the tree that
+// lacks the generated `.smith/include`, and `<smith/json.h>` (which includes `<smith/text.h>`) is then unreadable and
+// no `c.name` of it is written `json.name` (#3578).
 static Str database_flags() {
     if (database_read) return database_text;
     database_read = true;
@@ -233,6 +249,7 @@ static Str database_flags() {
         Bool matched = false;
         Bool inside = false;
         Str previous = "";
+        Str directory = "";
         Usize from = 0;
         for (Usize i = 0; i <= countof(text); i++) {
             if (i < countof(text) && text[i] != '\n') continue;
@@ -247,6 +264,7 @@ static Str database_flags() {
                 matched = false;
                 inside = false;
                 previous = "";
+                directory = value;
             } else if (starts_with_text(line, "    \"file\"")) {
                 matched = same_file(value, database_file);
             } else if (matched && starts_with_text(line, "    \"arguments\"")) {
@@ -256,9 +274,9 @@ static Str database_flags() {
             } else if (matched && inside) {
                 Bool pair = is_flag(previous, "-I") || is_flag(previous, "-isystem") || is_flag(previous, "-D") ||
                             is_flag(previous, "-isysroot");
-                if (pair) out = as_str(format::push(out, previous, "\n", value, "\n"));
+                if (pair) out = as_str(format::push(out, previous, "\n", from_directory(previous, directory, value), "\n"));
                 if (!pair && (starts_with_text(value, "-I") || starts_with_text(value, "-D")) && countof(value) > 2)
-                    out = as_str(format::push(out, value, "\n"));
+                    out = as_str(format::push(out, attached_flag(directory, value), "\n"));
                 previous = value;
             }
         }
