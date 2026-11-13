@@ -1,0 +1,71 @@
+// Tests of the construction that leaves fields of another module's struct out (#3224, #3536): the fields are written at
+// the construction, even one named `module`, and a pointer the construction cannot write is left to `= undefined`.
+module front_fix_zero_left_out_test;
+
+import front::ast;
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+import <string.h>;
+
+static Bool same(Str a, Str b) {
+    return countof(a) == countof(b) && mem::equal(a, b);
+}
+
+static Str source_of(Str path) {
+    if (same(path, "front.left_out")) {
+        return "module front::left_out;\n"
+               "export struct Error {\n    Str message;\n    Str module;\n    Bool in_instance;\n    Usize instance;\n};\n"
+               "export struct Then {\n    Usize run;\n    const int *expr;\n    Bool flag;\n};\n";
+    }
+    return "";
+}
+
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    Str source = source_of(path);
+    if (countof(source) == 0) return nullptr;
+    parser::Parsed p = fix::parse_for_fix("lib.smith", source);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::set_loader(load);
+    defer fix::set_loader(nullptr);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+}
+
+// A field named `module` is a name where an argument is written (`Error(module = "")`), so it is given its zero.
+export void test_front_fix_zero_left_out_a_field_named_module_is_written() {
+    expect_fixed("module m;\nimport front::left_out;\nleft_out::Error make(Str m) {\n"
+                 "    left_out::Error error = {.message = m};\n    return error;\n}\n",
+                 "import front.left_out\nfn make(m: str) -> left_out.Error:\n"
+                 "    error := left_out.Error(message = m, module = \"\", in_instance = false, instance = 0)\n"
+                 "    return error\n");
+}
+
+// A pointer of another module's struct has no zero: the construction that leaves it out stays as written.
+export void test_front_fix_zero_left_out_a_pointer_of_another_module_stays_an_error() {
+    expect_fixed("module m;\nimport front::left_out;\nleft_out::Then make(void) {\n"
+                 "    return (left_out::Then){.run = 3};\n}\n",
+                 "import front.left_out\nfn make() -> left_out.Then:\n"
+                 "    return left_out.Then(run = 3)\n");
+}
+
+// A member that holds a record that holds a pointer is `= undefined` too, as far down as the pointer is.
+export void test_front_fix_zero_left_out_a_member_two_records_above_a_pointer_is_undefined() {
+    expect_fixed("module m;\nstruct Step {\n    const char *name;\n};\nstruct Mid {\n    int a;\n    Step step;\n};\n"
+                 "struct Owner {\n    int id;\n    Mid mid;\n};\n"
+                 "void f(void) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
+                 "struct Step:\n    name: *char\nstruct Mid:\n    a: i32\n    step: Step = undefined\nstruct Owner:\n    id: i32\n"
+                 "    mid: Mid = undefined\nfn f():\n    x := Owner(id = 1)\n    g(&x)\n");
+}
