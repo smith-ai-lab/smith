@@ -1146,7 +1146,7 @@ jobs:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The front-end count is here (#3369): `count-shard` and `count` are owed by a full queue run, and `count` refuses a regression.
-    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check, release-pack-linux, count-shard, count]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check, release-pack-linux, release-package-linux, count-shard, count]
     # not on a push to main (#3172): no required check reads that run, whose own jobs fail it when they fail
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
@@ -1174,6 +1174,7 @@ jobs:
           TEST_LINUX: ${{ needs.test-linux.result }}
           CHECK: ${{ needs.check.result }}
           RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}
+          RELEASE_PACKAGE_LINUX: ${{ needs.release-package-linux.result }}
           COUNT_SHARD: ${{ needs.count-shard.result }}
           COUNT: ${{ needs.count.result }}
           PRS: ${{ needs.changes.outputs.prs }}
@@ -1214,7 +1215,7 @@ jobs:
           esac
           if [ "$MAC_RUN" = true ]; then owed="$owed MACOS MACOS_LINT"; fi
           # a full merge group builds the Linux release main will publish (#2832): one that does not build fails the entry
-          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_LINUX"; fi
+          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_LINUX RELEASE_PACKAGE_LINUX"; fi
           # and counts the files the new front end compiles, and refuses a change that makes a passing file fail (#3369)
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed COUNT_SHARD COUNT"; fi
           for name in $owed; do
@@ -1645,11 +1646,10 @@ jobs:
   release-pack-linux:
     # the Linux release of the commit a queue run tests (#2832), as `release` builds the macOS one on the push (#3172): the
     # tarball, its checksum and the release tool `publish` and `prune` run, in this run's artifact
-    # `stage0-<commit>-linux-x86_64` (3 days). It was packed in the background of `frontend-coverage-build`, whose warm
-    # runs then waited 1.6 to 1.8 minutes for it (#3052); here it is beside the tests and off the count's path. Its
-    # release build is served by the release steps main's `warm` saves. `ci` owes it, so a release that does not build
-    # fails the queue run. It also packs the build for the count's shards (#3369): the release smith is the one the count
-    # measures.
+    # `stage0-<commit>-linux-x86_64` (3 days). Here it only builds the release smith (served by the release steps
+    # main's `warm` saves) and saves the build for the count's shards (#3369): the release smith is the one the count
+    # measures. The packaging is `release-package-linux`, which starts from that build, so the shards do not wait for
+    # it. `ci` owes both, so a release that does not build or package fails the queue run.
     needs: [changes, pack]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
@@ -1665,6 +1665,43 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - name: Pack the build for the count's shards (#3369)
+        # the release smith this job built is the smith the count measures: `count-shard` restores it, so the count
+        # builds nothing of its own
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - name: Save the build for the count's shards
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
+  release-package-linux:
+    # the Linux release tarball of the commit a queue run tests (#2832): packaged here, off the count's path (#3369).
+    # `release-pack-linux` ends once it has saved the build the count's shards restore; the packaging (2.3 minutes of
+    # a 4.2-minute job) took the shards' start from 2 to 4.4 minutes into the run. This job restores that same build, so
+    # the tarball is of the release smith the count measures. `ci` owes it, so a release that does not package fails
+    # the queue run.
+    needs: [changes, release-pack-linux]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.release-pack-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux-release
       - name: Package the release
         run: |
           start=$SECONDS
@@ -1688,18 +1725,6 @@ jobs:
           path: ${{ runner.temp }}/stage0
           compression-level: 0
           retention-days: 3
-      - name: Pack the build for the count's shards (#3369)
-        # the release smith this job built is the smith the count measures: `count-shard` restores it, so the count
-        # builds nothing of its own
-        shell: bash
-        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
-      - name: Save the build for the count's shards
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-release
-          path: ${{ runner.temp }}/build.tar.zst
-          compression-level: 0
-          retention-days: 1
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
