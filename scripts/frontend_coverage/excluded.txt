@@ -196,6 +196,11 @@ tests/build_fixtures/lsp/p/geometry/dims.smith	tool-fixture
 tests/build_fixtures/lsp/editor-enum/shapes.smith	tool-fixture
 tests/build_fixtures/lsp/editor-smith/m.smith	tool-fixture
 tests/smith-lang/cases/defer-run/src/main.smith	old-form: goto
+tests/build_fixtures/neovim/alone/main.smith	error-fixture
+tests/build_fixtures/neovim/project/main.smith	error-fixture
+tests/build_fixtures/headers/chain/last.smith	tool-fixture
+tests/build_fixtures/lint_verb/main.smith	tool-fixture
+tests/build_fixtures/std_tests_io/tests/world_test.smith	tool-fixture
 tests/smith-lang/cases/array-infer-run/src/main.smith	old-form: array literal passed to a bare pointer parameter
 tests/smith-lang/cases/enum-type-function-export/src/main.smith	old-form: array literal passed to a bare pointer parameter
 tests/smith-lang/cases/constexpr-import-result-type/src/main.smith	old-form: a type value sliced step by step

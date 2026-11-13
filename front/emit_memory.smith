@@ -1240,6 +1240,8 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
             if (ty->kind != .pointer || ty->kind.pointer.element == nullptr)
                 return state::failf(node->span, "`->` on ", ty->name);
             record = *ty->kind.pointer.element;
+        } else if (ty->kind == .pointer && ty->kind.pointer.element != nullptr) { // `p.field` reads through the pointer
+            record = *ty->kind.pointer.element;
         }
         if (record.kind == .slice && state::same_text(name, "data")) { // `sizeof(xs.data.*)` (std.mem's realloc)
             *ty = pointer_to(e, *record.kind.slice.element, 0);
