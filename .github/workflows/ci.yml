@@ -581,6 +581,9 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
+          # the table of the runner every Linux part runs (#3458): every test the Mac does not run; a part selects its
+          # own at run time (SMITH_TESTS_WHOLE in test-part), so no part builds a runner of its own
+          test-flags: --skip-macos
       - name: Pack the build
         shell: bash
         run: |

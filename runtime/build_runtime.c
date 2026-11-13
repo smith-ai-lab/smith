@@ -3829,15 +3829,44 @@ static const char *smith_filter_pointer(const char *items) {
 // (tests_list.c). It rewrites a file only when its bytes change, so the step is restat. With a part in .args (the
 // runner's --shard, --costs, --test, --macos-only and --skip-macos), the table lists only the tests of that part or
 // that selection; the runner then knows what is built in (smith_test_shard_index, smith_test_built_filter).
+// SMITH_TESTS_WHOLE (#3458): the build does not narrow by the part or by --test: it compiles the files the macOS choice
+// leaves and its table lists those tests, the table of 0 of 0, and the runner deals and selects at run time. The deal
+// is still made here (--weigh writes the weights and the suite the CI split guard reads), only what is built is the
+// same for every part, so a job builds the runner once.
+static bool smith_tests_whole(void) {
+    const char *whole = getenv("SMITH_TESTS_WHOLE");
+    return whole != nullptr && whole[0] != '\0';
+}
+
+// `args` with only the macOS choice left, for the build of a whole runner.
+static const char *const *smith_tests_macos_args(SmithBuild *b, const char *const *args) {
+    const char **kept = SMITH_NEW_LIST(smith_count(args));
+    size_t used = 0;
+    for (size_t i = 0; args[i] != nullptr; i++) // bounded by the arguments
+        if (strcmp(args[i], "--macos-only") == 0 || strcmp(args[i], "--skip-macos") == 0) kept[used++] = args[i];
+    kept[used] = nullptr;
+    (void)b;
+    return kept;
+}
+
+// Parses the options and chooses the tests to keep; a whole build (SMITH_TESTS_WHOLE) deals first, which writes the
+// weights and the suite of --weigh, then keeps what the macOS choice leaves.
+static void smith_tests_deal(SmithRun *run, SmithTestShard *shard, size_t count, bool *keep) {
+    smith_shard_parse(shard, smith_tests_found, count, run->args);
+    smith_shard_keep(shard, smith_tests_found, count, keep);
+    if (!smith_tests_whole()) return;
+    smith_shard_parse(shard, smith_tests_found, count, smith_tests_macos_args(run->b, run->args));
+    smith_shard_keep(shard, smith_tests_found, count, keep);
+}
+
 static int smith_tests_scan(SmithRun *run) {
     SmithTestFound *found = smith_tests_found;
     size_t count = 0;
     SMITH_ASSERT(run->outputs[0] != nullptr && run->outputs[1] != nullptr);
     if (!smith_tests_find(run, found, &count)) return 1;
     SmithTestShard *shard = SMITH_ALLOC(sizeof *shard);
-    smith_shard_parse(shard, found, count, run->args);
     bool *keep = SMITH_ALLOC(count + 1);
-    smith_shard_keep(shard, found, count, keep);
+    smith_tests_deal(run, shard, count, keep);
     // A prototype for every test found: a file kept for one chosen test defines its others too, and
     // -Werror=missing-prototypes wants each declared (#2998). The table lists only the chosen ones.
     const char **prototypes = SMITH_NEW_LIST(count);
@@ -4015,6 +4044,7 @@ static const char *const *smith_tests_shard_args(SmithBuild *b) {
 // no test of their own (the helpers); else all.
 static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *const *sources,
                                                     const char *const *args) {
+    if (smith_tests_whole()) args = smith_tests_macos_args(b, args); // no part, no --test (#3458)
     if (args[0] == nullptr) return sources;
     SmithRun probe = {.b = b, .inputs = sources};
     size_t count = 0;
