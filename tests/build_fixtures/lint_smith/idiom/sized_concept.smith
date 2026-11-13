@@ -1,5 +1,0 @@
-pub fn add[T: int](a: T, b: T) -> T:
-    return a
-
-pub fn half[T: float](x: T, y: float) -> T:
-    return x

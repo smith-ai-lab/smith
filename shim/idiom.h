@@ -133,7 +133,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
                     continue;
                 }
                 if (!is_keyword(name)) continue;
-                if (is_concept(tokens, i)) continue;
                 std::vector<std::string> run;
                 size_t j = i;
                 while (j < tokens.size() && !lexed.in_directive[j] && tokens[j].is(tok::raw_identifier) &&
@@ -157,13 +156,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
         static bool is_keyword(llvm::StringRef name) {
             return name == "unsigned" || name == "signed" || name == "short" || name == "long" || name == "int" ||
                    name == "char" || name == "float" || name == "double";
-        }
-
-        // `int` and `float` are also the concepts of the new syntax: `fn add[T: int](a: T)`, `x: float)`. A keyword
-        // written as `: word` and closed by `]`, `,` or `)` is a concept, never a C type (#3258).
-        static bool is_concept(const std::vector<Token> &tokens, size_t i) {
-            if (i == 0 || i + 1 >= tokens.size() || !tokens[i - 1].is(tok::colon)) return false;
-            return tokens[i + 1].isOneOf(tok::r_square, tok::comma, tok::r_paren);
         }
 
         static std::string join(const std::vector<std::string> &words) {
