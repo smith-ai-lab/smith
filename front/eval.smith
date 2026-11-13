@@ -334,10 +334,15 @@ struct Run {
 // A `Run` with every field written: empty stacks, nothing known, no outer run. The construction assigns what it needs.
 static Run run_of(types::Checked *r, Bool typed_only, Bool lenient, Run *outer) {
     Outcome out = {.known = false, .value = nothing_value(), .failed = false, .at = {.start = 0, .end = 0}, .why = ""};
+    Step steps[:] = {};
+    Value values[:] = {};
+    Local locals[:] = {};
+    Frame frames[:] = {};
+    Loop loops[:] = {};
     Run run = {.r = r,
-               .steps = {},
+               .steps = steps,
                .top = 0,
-               .values = {},
+               .values = values,
                .have = 0,
                .ran = 0,
                .depth = 0,
@@ -346,11 +351,11 @@ static Run run_of(types::Checked *r, Bool typed_only, Bool lenient, Run *outer) 
                .typed_only = typed_only,
                .lenient = lenient,
                .out = out,
-               .locals = {},
+               .locals = locals,
                .local_count = 0,
-               .frames = {},
+               .frames = frames,
                .frame_count = 0,
-               .loops = {},
+               .loops = loops,
                .loop_count = 0,
                .outer = outer};
     return run;

@@ -681,8 +681,10 @@ static Bool reject_gnu_spelling(parse::Parser *p) {
 // An `Attribute` with every field written: no name, no arguments, an empty span.
 static ast::Attribute attribute_of(Bool is_new) {
     ast::Span none = {.start = 0, .end = 0};
-    ast::Path name = {.segments = {}, .span = none};
-    ast::Attribute attribute = {.name = name, .args = {}, .span = none, .is_new = is_new};
+    ast::Identifier segments[:] = {};
+    ast::ExprRef args[:] = {};
+    ast::Path name = {.segments = segments, .span = none};
+    ast::Attribute attribute = {.name = name, .args = args, .span = none, .is_new = is_new};
     return attribute;
 }
 
