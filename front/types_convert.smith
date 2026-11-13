@@ -619,7 +619,8 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
         types::TypeRef have = types::element_of(from);
         types::TypeRef want = types::element_of(to);
         Bool gains_const = types::points_to_const(want) || !types::points_to_const(have);
-        if (have->kind == .slice && want->kind == .slice && types::element_of(have) == types::element_of(want) && gains_const)
+        if (have->kind == .slice && want->kind == .slice && types::element_of(have) == types::element_of(want) &&
+            gains_const)
             return accept(identity);
     }
     if (is_wrapper(from)) return from_wrapper(&c);

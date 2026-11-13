@@ -506,7 +506,8 @@ export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
         types::TypeRef seen = types::type_of(e->options.checked, x);
         if (seen != nullptr && seen->kind != .option) {
             c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
-            state::Value inner = emit_option::payload(e, (state::Value){.llvm = whole, .ty = local.ty}, local.ty.kind.option);
+            state::Value inner =
+                emit_option::payload(e, (state::Value){.llvm = whole, .ty = local.ty}, local.ty.kind.option);
             c::LLVMValueRef slot = state::new_alloca(e, inner.ty, "narrowed");
             c::LLVMBuildStore(e->builder, inner.llvm, slot);
             state::push_value(e, (state::Value){.llvm = slot, .ty = inner.ty});
