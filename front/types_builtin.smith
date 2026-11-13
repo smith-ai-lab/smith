@@ -619,9 +619,11 @@ export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
 static Bool filled_dimension(types::Checked *c, const ast::Expr *node, U64 *count) {
     U64 folded = *count;
     folded = 0;
-    if (c->options.length != nullptr && c->options.length(c, node, "", &folded)) {
-        *count = folded;
-        return true;
+    if (c->options.length != nullptr) {
+        if (c->options.length(c, node, "", &folded)) {
+            *count = folded;
+            return true;
+        }
     }
     types::fail(c, node->span,
                 "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");

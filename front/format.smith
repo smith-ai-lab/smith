@@ -424,7 +424,8 @@ static void say_error(Str path, Str text, Usize offset, Str message) {
             status = 1;
             continue;
         }
-        if (mem::equal(text, done.ok)) continue;
+        Str formatted = done.ok;
+        if (mem::equal(text, formatted)) continue;
         if (!write) {
             say(2, path);
             say(2, ": would be formatted\n");

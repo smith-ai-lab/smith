@@ -94,10 +94,11 @@ static Parsed read_new(Str file, Str source, Bool braces) {
     lex::Lexed made = lex::layout(source, tokens);
     Bool layout = false;
     if (made == .ok) {
+        lex::Tokens laid = made.ok;
         if (braces) {
-            mem::free(made.ok.data);
+            mem::free(laid.data);
         } else {
-            tokens = made.ok;
+            tokens = laid;
             layout = true;
         }
     } else if (!braces) {

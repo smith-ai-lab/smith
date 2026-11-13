@@ -187,7 +187,11 @@ export const ast::Module *read(Str header, Bool angled, Str importer, Str flags)
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
     ast::Module *module = nullptr;
     Str kept_key = "";
-    HeaderKept kept = {.request = {.name = nullptr, .quoted = 0, .folder = nullptr, .flags = nullptr}};
+    HeaderFiles unlisted = {};
+    HeaderKept kept = {.request = {.name = nullptr, .quoted = 0, .folder = nullptr, .flags = nullptr},
+                       .read_at = 0,
+                       .files = unlisted,
+                       .generation = 0};
     if (countof(got.error) == 0) {
         module = mem::alloc(ast::Module);
         module->decls = got.decls;
@@ -197,7 +201,7 @@ export const ast::Module *read(Str header, Bool angled, Str importer, Str flags)
                                         .folder = as_str(format::push(folder)).data,
                                         .flags = as_str(format::push(flags)).data},
                             .read_at = read_at,
-                            .files = {.known = false},
+                            .files = unlisted,
                             .generation = header_generation};
     }
     mem::set_allocator(outside);
