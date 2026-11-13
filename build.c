@@ -4023,6 +4023,50 @@ static void build_stage0_records(SmithBuild *b) {
                     "by the whole smith)\n");
 }
 
+// The test-result store of main (#3460): CI publishes the whole store as the prerelease `test-store-<sha7>` (asset
+// smith-tests-store-linux.tar.gz, folder `steps/a`), and `./.github/actions/test-cache` restores it in CI; this is the
+// same restore for a clone, so a worker's first `smith check --changed` serves the tests main already passed. The
+// newest one among HEAD's last 200 first-parent commits is unpacked where `smith test` reads it (the user's step
+// cache, and the folder a test's scratch project reads, as the action does). Only Linux publishes one. A plain run
+// only reads it and writes its own results locally. None published or a failed download leaves the store empty and
+// never fails the task.
+static void build_stage0_tests(SmithBuild *b, const char *os) {
+    if (strcmp(os, "linux") != 0) return;
+    const char *home = getenv("HOME");
+    const char *cache = getenv("XDG_CACHE_HOME");
+    if (home == nullptr) return;
+    const char *user =
+        cache != nullptr && cache[0] != '\0' ? smith_fmt(b, "%s/smith", cache) : smith_fmt(b, "%s/.cache/smith", home);
+    const char *tests = getenv("SMITH_TEST_CACHE");
+    const char *scratch = tests != nullptr && tests[0] != '\0' ? smith_fmt(b, "%s/xdg/smith", tests)
+                                                               : smith_fmt(b, "%s/.cache/smith-tests/xdg/smith", home);
+    const char *tags = smith_capture_or(
+        b, (const char *[]){"git", "ls-remote", "--tags", "origin", "refs/tags/test-store-*", nullptr}, "");
+    const char *commits =
+        smith_capture_or(b, (const char *[]){"git", "rev-list", "--first-parent", "-n", "200", "HEAD", nullptr}, "");
+    for (const char *at = commits; strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) {
+        const char *tag = smith_fmt(b, "refs/tags/test-store-%.7s\n", at);
+        if (strstr(smith_fmt(b, "%s\n", tags), tag) == nullptr) continue;
+        const char *url = smith_fmt(b,
+                                    "https://github.com/smith-ai-lab/smith/releases/download/test-store-%.7s/"
+                                    "smith-tests-store-linux.tar.gz",
+                                    at);
+        const char *joined = ".smith/test-store.tar.gz";
+        int status = build_exec(smith_list(b, "curl", "-fsL", "--retry", "3", "-o", joined, url, nullptr));
+        for (int which = 0; which < 2 && status == 0; which++) {
+            const char *folder = which == 0 ? user : scratch;
+            status = build_make_folder(b, folder);
+            if (status == 0) status = build_exec(smith_list(b, "tar", "-C", folder, "-xzf", joined, "steps", nullptr));
+        }
+        (void)build_remove(b, joined);
+        if (status == 0) {
+            fprintf(stderr, "smith: test store: test-store-%.7s, unpacked into %s/steps\n", at, user);
+            return;
+        }
+    }
+    fprintf(stderr, "smith: test store: none among the last 200 commits of HEAD (every test runs)\n");
+}
+
 // Downloads the release under `base` into .smith/stage0/ and checks its .sha256. Both files are saved under their
 // published names, because the checksum tool finds the tarball only under the name its .sha256 lists (#2232).
 static int build_stage0_install(SmithBuild *b, const char *base, const char *name) {
@@ -4076,12 +4120,14 @@ static int build_stage0(SmithRun *run) {
                 release, cache);
         build_stage0_steps(b, os, cache);
         build_stage0_records(b);
+        build_stage0_tests(b, os);
         return 0;
     }
     status = build_stage0_install(b, smith_fmt(b, "%s/latest/download", site), name);
     if (status != 0) return status;
     fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
     build_stage0_records(b);
+    build_stage0_tests(b, os);
     if (strcmp(run->args[0], "0") != 0) {
         fprintf(stderr, "smith: step cache: none (%s)\n",
                 cache == nullptr ? "no published one for the last 20 commits of HEAD"
