@@ -648,3 +648,40 @@ export void test_frontend_coverage_import_resolves_from_the_folder_above_the_fil
     scratch::release(run.out);
     scratch::release(run.err);
 }
+
+// #3527: a compile of a group of files that dies by a signal says, on the row of the file it died in, the size of the
+// batch, the file's place in it, the file before it and the status; and the tool's standard error lists the whole batch
+// in order, with what the dead process printed.
+export void test_frontend_coverage_a_crashed_batch_names_its_members_and_order() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir repo");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/a.smith", "pub fn one() -> i32:\n    return 1\n");
+    scratch::write(&p, "repo/b.smith", "pub fn two() -> i32:\n    return 2\n");
+    // the launcher runs the real smith, except a compile of two or more files: its second file is the one it dies in
+    scratch::write(&p, "launcher.sh",
+                   "#!/bin/sh\n"
+                   "if [ \"$1\" = cc ]; then n=0; for a in \"$@\"; do case $a in *.smith) n=$((n+1)); "
+                   "[ $n = 2 ] && f=$a;; esac; done; "
+                   "if [ $n -ge 2 ]; then echo \"$f:1:1: error: the compiler crashed (SIGSEGV) in the check stage\" "
+                   ">&2; echo \"$f: stage: check\" >&2; kill -SEGV $$; fi; fi\n"
+                   "exec \"$REAL_SMITH\" \"$@\"\n");
+    scratch::Run run = scratch::sh(&p, "chmod +x launcher.sh && git -C repo init -q && git -C repo add -A && "
+                                       "REAL_SMITH=\"$(command -v smith)\" smith run -- run \"$PWD/launcher.sh\" "
+                                       "\"$PWD/repo\" \"$PWD/all\" > all.tsv 2> all.err; cat all.tsv all.err");
+    scratch::expect_contains("frontend_coverage: the crashed file's row names its batch and the file before it",
+                             run.out, "the compiler crashed (SIGSEGV) in the check stage; batch of 2, file 2, after ");
+    scratch::expect_contains("frontend_coverage: the batch is listed in order on standard error", run.out,
+                             "frontend-crash: batch member 1: ");
+    scratch::expect_contains("frontend_coverage: and so is the dead process's output", run.out,
+                             "frontend-crash: output of the dead process (status 139):");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
