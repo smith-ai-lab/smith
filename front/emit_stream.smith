@@ -389,10 +389,13 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     if (countof(args) != 1)
         return state::failf(x->span, "stream::", path.segments[1].text, " takes one argument, the call has ",
                             (U64)countof(args));
-    if (is_next)
-        state::push_then_general(e, (state::ThenGeneral){.run = next_finish, .span = x->span});
-    else
-        state::push_then_general(e, (state::ThenGeneral){.run = close_finish, .span = x->span});
+    if (is_next) {
+        state::ThenGeneral item = state::then_general(next_finish, x->span);
+        state::push_then_general(e, item);
+    } else {
+        state::ThenGeneral item = state::then_general(close_finish, x->span);
+        state::push_then_general(e, item);
+    }
     state::push_eval(e, args[0], state::no_hint());
     return state::success();
 }

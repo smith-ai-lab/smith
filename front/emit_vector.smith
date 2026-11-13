@@ -77,8 +77,12 @@ static state::Status build_from(state::Emitter *e, ast::ExprRef items[:], state:
     if (vector.kind != .vector) return state::failf(span, "a vector construction of ", vector.name);
     state::SizedTy shape = vector.kind.vector;
     if (countof(items) != shape.count) return state::failf(span, vector.name, " lanes: found ", countof(items));
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = build_finish, .ty = vector, .number = countof(items), .span = span});
+    {
+        state::ThenGeneral general = state::then_general(build_finish, span);
+        general.ty = vector;
+        general.number = countof(items);
+        state::push_then_general(e, general);
+    }
     for (Usize i = countof(items); i > 0; i--)
         state::push_eval(e, items[i - 1], state::hint_of(*shape.element));
     return state::success();

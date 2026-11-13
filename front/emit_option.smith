@@ -304,7 +304,12 @@ static state::Status result_variant(state::Emitter *e, const ast::Expr *x, state
         ty = checked.ok;
     }
     if (ty.kind != .result) return state::failf(x->span, ".", name, " builds ", ty.name, ", which is not a Result");
-    state::push_then_general(e, (state::ThenGeneral){.run = result_finish, .ty = ty, .flag = error, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(result_finish, x->span);
+        general.ty = ty;
+        general.flag = error;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, inner, state::hint_of(ty.kind.result.parts[error ? 1 : 0]));
     return state::success();
 }
@@ -334,7 +339,11 @@ export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint 
         return state::success();
     }
     if (ty.kind != .option) return state::failf(x->span, ".some builds ", ty.name, ", which is not an option");
-    state::push_then_general(e, (state::ThenGeneral){.run = some_finish, .ty = ty, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(some_finish, x->span);
+        general.ty = ty;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, inner, state::hint_of(*ty.kind.option.element));
     return state::success();
 }
@@ -415,7 +424,8 @@ export state::Status if_let_branch(state::Emitter *e, const state::ThenGeneral *
         state::push_then_blocks(e, end);
         state::push_branch(e, w, else_branch);
     }
-    state::ThenGeneral after = {.run = after_then, .flag = has_else, .span = s->span};
+    state::ThenGeneral after = state::then_general(after_then, s->span);
+    after.flag = has_else;
     after.blocks[0] = else_block;
     after.blocks[1] = end_block;
     state::push_then_general(e, after);
@@ -427,7 +437,11 @@ export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .if_let) {
         return state::fail("not an if let", s->span);
     }
-    state::push_then_general(e, (state::ThenGeneral){.run = if_let_branch, .stmt = s, .span = s->span});
+    {
+        state::ThenGeneral general = state::then_general(if_let_branch, s->span);
+        general.stmt = s;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, s->kind.if_let.value, state::no_hint());
     return state::success();
 }
@@ -463,10 +477,16 @@ static state::Status try_result(state::Emitter *e, const state::ThenGeneral *w, 
     c::LLVMBuildCondBr(e->builder, is_variant(e, r, false), ok_block, error_block);
     c::LLVMPositionBuilderAtEnd(e->builder, error_block);
     state::Value failure = result_of(e, e->result, result_payload(e, r, result, true).llvm, true);
-    state::ThenGeneral next = {.run = try_result_continue, .value = r.llvm, .ty = r.ty, .span = w->span};
+    state::ThenGeneral next = state::then_general(try_result_continue, w->span);
+    next.value = r.llvm;
+    next.ty = r.ty;
     next.blocks[0] = ok_block;
     state::push_then_general(e, next);
-    state::push_then_general(e, (state::ThenGeneral){.run = ret_none, .value = failure.llvm, .span = w->span});
+    {
+        state::ThenGeneral general = state::then_general(ret_none, w->span);
+        general.value = failure.llvm;
+        state::push_then_general(e, general);
+    }
     try control::before_error_return(e, w->span);
     return state::success();
 }
@@ -484,11 +504,16 @@ static state::Status try_branch(state::Emitter *e, const state::ThenGeneral *w) 
     c::LLVMBasicBlockRef none_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_none");
     c::LLVMBuildCondBr(e->builder, is_some(e, o), some_block, none_block);
     c::LLVMPositionBuilderAtEnd(e->builder, none_block);
-    state::ThenGeneral next = {.run = try_continue, .value = o.llvm, .ty = o.ty, .span = w->span};
+    state::ThenGeneral next = state::then_general(try_continue, w->span);
+    next.value = o.llvm;
+    next.ty = o.ty;
     next.blocks[0] = some_block;
     state::push_then_general(e, next);
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = ret_none, .value = c::LLVMConstNull(e->result.llvm), .span = w->span});
+    {
+        state::ThenGeneral general = state::then_general(ret_none, w->span);
+        general.value = c::LLVMConstNull(e->result.llvm);
+        state::push_then_general(e, general);
+    }
     try control::before_error_return(e, w->span);
     return state::success();
 }
@@ -498,7 +523,10 @@ export state::Status try_expr(state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .try_expr) {
         return state::fail("not a try", x->span);
     }
-    state::push_then_general(e, (state::ThenGeneral){.run = try_branch, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(try_branch, x->span);
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, x->kind.try_expr.operand, state::no_hint());
     return state::success();
 }

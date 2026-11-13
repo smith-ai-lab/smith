@@ -239,7 +239,10 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
     state::ThenBlocks finish = {.run = loop_end, .span = s->span};
     finish.blocks[0] = end;
     state::push_then_blocks(e, finish);
-    state::ThenGeneral next = {.run = loop_step, .stmt = s, .ty = plan.counter, .value = slot, .span = s->span};
+    state::ThenGeneral next = state::then_general(loop_step, s->span);
+    next.stmt = s;
+    next.ty = plan.counter;
+    next.value = slot;
     next.blocks[0] = step;
     next.blocks[1] = cond;
     next.blocks[2] = end;
@@ -303,12 +306,18 @@ static Bool is_place(const ast::Expr *x) {
 static state::Status begin_array(state::Emitter *e, const ast::Stmt *s, const ast::Expr *array, Bool by_reference,
                                  ast::Span span) {
     if (!is_place(array)) {
-        state::push_then_general(
-            e, (state::ThenGeneral){.run = value_start, .stmt = s, .flag = by_reference, .span = span});
+        {
+            state::ThenGeneral general = state::then_general(value_start, span);
+            general.stmt = s;
+            general.flag = by_reference;
+            state::push_then_general(e, general);
+        }
         state::push_eval(e, array, state::no_hint());
         return state::success();
     }
-    state::ThenGeneral start = {.run = array_start, .stmt = s, .flag = by_reference, .span = span};
+    state::ThenGeneral start = state::then_general(array_start, span);
+    start.stmt = s;
+    start.flag = by_reference;
     state::push_then_general(e, start);
     state::push_place(e, array);
     return state::success();
@@ -349,7 +358,11 @@ static state::Status begin_range(state::Emitter *e, const ast::Stmt *s, const as
         if (!positive) return state::not_emitted("range with a step that is not a positive constant", call->span);
     }
     state::Hint hint = hint_for(e, args);
-    state::push_then_general(e, (state::ThenGeneral){.run = range_start, .stmt = s, .span = s->span});
+    {
+        state::ThenGeneral general = state::then_general(range_start, s->span);
+        general.stmt = s;
+        state::push_then_general(e, general);
+    }
     Usize evaluated = countof(args) == 1 ? 1 : 2;
     for (Usize i = evaluated; i > 0; i--)
         state::push_eval(e, args[i - 1], hint);

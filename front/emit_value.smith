@@ -126,7 +126,10 @@ static void jump_unless_ended(state::Emitter *e, c::LLVMBasicBlockRef target) {
 
 // What the last line of a branch stores into: the slot and its type, carried in a `Then`.
 static state::ThenGeneral into_work(state::Continuation then, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty) {
-    state::ThenGeneral item = {.run = then, .stmt = s, .value = slot, .ty = ty, .span = s->span};
+    state::ThenGeneral item = state::then_general(then, s->span);
+    item.stmt = s;
+    item.value = slot;
+    item.ty = ty;
     return item;
 }
 
@@ -286,7 +289,9 @@ export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint
         if (!found) state::scalar_type(e, "i32", &ty); // every branch ends: the value is never read
     }
     c::LLVMValueRef slot = state::new_alloca(e, ty, "value");
-    state::ThenGeneral done = {.run = finish, .value = slot, .ty = ty, .span = s->span};
+    state::ThenGeneral done = state::then_general(finish, s->span);
+    done.value = slot;
+    done.ty = ty;
     state::push_then_general(e, done);
     state::push_then_general(e, into_work(into_start, s, slot, ty));
     return state::success();
