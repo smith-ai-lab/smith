@@ -12,9 +12,10 @@
 //   each
 //   fix_variants::rename_all_with(sources, imported)  the same, with the names of the modules they import too
 //
-// A name is left alone (and so are its uses) when it is also the name of a struct, enum or union in the files, since
-// text alone cannot tell which is meant. A lowercase result that is a keyword gets a `_` at the end (`Default` is
-// `default_`). The variants keep the attributes written before them, so a `@c_name` stays as it was. Tests:
+// A name is left alone (and so are its uses) when it is also the name of a struct, enum, union or typedef in the
+// files, since text alone cannot tell which is meant. A lowercase result that is a keyword gets a `_` at the end
+// (`Default` is `default_`). The variants keep the attributes written before them, so a `@c_name` stays as it was.
+// Tests:
 // `tests/front_fix_variants_test.smith`.
 module front::fix_variants;
 
@@ -195,7 +196,21 @@ static Words push_word(Words list, Str text) {
     return more;
 }
 
-// `tags` with the names `source` declares as a struct, enum or union tag added.
+// The index of the name the `typedef` at token `at` declares, or `countof(tokens)`: the type name in `(*Name)` of a
+// function pointer, else the last type name before the `;`. A typedef is a type, not a variant (`Read := fn(i32)`
+// would be renamed `.read` when an enum of the tree has a variant `Read`).
+static Usize typedef_name(lex::Tokens tokens, Usize at) {
+    Usize found = countof(tokens);
+    for (Usize j = at + 1; j < countof(tokens) && tokens[j].kind != lex::semicolon; j++) {
+        if (tokens[j].kind == lex::type_name) found = j;
+        if (j + 2 < countof(tokens) && tokens[j].kind == lex::star && tokens[j + 1].kind == lex::type_name &&
+            tokens[j + 2].kind == lex::right_paren)
+            return j + 1;
+    }
+    return found;
+}
+
+// `tags` with the names `source` declares as a struct, enum or union tag, or as a typedef, added.
 static Words add_tags(Words tags, Str source) {
     lex::Lexed read = lex::tokenize_new(source);
     // An imported module still in today's syntax (`// ...`) reads with today's lexer, as `collect` does (#3325).
@@ -204,9 +219,15 @@ static Words add_tags(Words tags, Str source) {
     lex::Tokens tokens = read.ok;
     for (Usize i = 0; i + 1 < countof(tokens); i++) {
         lex::TokenKind k = tokens[i].kind;
-        if (k != lex::kw_struct && k != lex::kw_enum && k != lex::kw_union) continue;
-        if (tokens[i + 1].kind != lex::type_name) continue;
-        Str name = lex::text(source, tokens[i + 1]);
+        Usize at = i + 1;
+        if (k == lex::kw_typedef) at = typedef_name(tokens, i);
+        // A mended typedef, `Read := fn(i32) -> i64`: a capitalized name that starts a line and is given a value.
+        else if (k == lex::type_name && tokens[i + 1].kind == lex::colon_equal && (i == 0 || tokens[i - 1].line_break))
+            at = i;
+        else if (k != lex::kw_struct && k != lex::kw_enum && k != lex::kw_union)
+            continue;
+        if (at >= countof(tokens) || tokens[at].kind != lex::type_name) continue;
+        Str name = lex::text(source, tokens[at]);
         if (!has(tags, name)) tags = push_word(tags, name);
     }
     return tags;
