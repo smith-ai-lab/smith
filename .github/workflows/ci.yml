@@ -1130,12 +1130,16 @@ jobs:
             # the costs the next count deals by (#3455): what the 4 shards timed in this run, else the last known cost
             # (a file a shard served from a cache has no time), for the files of this table only
             costs="$RUNNER_TEMP/frontend-coverage-costs.tsv"
-            cat .smith/count-costs.tsv "$RUNNER_TEMP"/shards/frontend-coverage-shard-"$GITHUB_SHA"-*/costs.tsv 2>/dev/null \
-              | awk -F'\t' 'NR == FNR { keep[$1] = 1; next } ($1 in keep) { cost[$1] = $2 } END { for (f in cost) print f "\t" cost[f] }' \
-                <(cut -f1 "$RUNNER_TEMP/frontend-coverage-table.tsv" | sort -u) - | sort >"$costs" || : >"$costs"
-            echo "count costs: $(wc -l <"$costs" | tr -d ' ') files (slowest: $(sort -t"$(printf '\t')" -k2 -n -r "$costs" | head -n 3 | tr '\t\n' ' :'))"
+            # (the step runs under pipefail: nothing here may fail on a missing file; no costs is an empty file, not published)
+            { [ ! -f .smith/count-costs.tsv ] || cat .smith/count-costs.tsv; cat "$RUNNER_TEMP"/shards/frontend-coverage-shard-"$GITHUB_SHA"-*/costs.tsv 2>/dev/null || true; } >"$RUNNER_TEMP/costs-all.tsv"
+            cut -f1 "$RUNNER_TEMP/frontend-coverage-table.tsv" | sort -u >"$RUNNER_TEMP/costs-keep.txt"
+            awk -F'\t' 'NR == FNR { keep[$1] = 1; next } ($1 in keep) { cost[$1] = $2 } END { for (f in cost) print f "\t" cost[f] }' \
+              "$RUNNER_TEMP/costs-keep.txt" "$RUNNER_TEMP/costs-all.tsv" | sort >"$costs" || : >"$costs"
+            echo "count costs: $(wc -l <"$costs" | tr -d ' ') files, the 3 slowest: $(sort -t"$(printf '\t')" -k2 -n -r "$costs" | head -n 3 | tr '\t\n' ' ;')"
+            assets=("$RUNNER_TEMP/frontend-coverage-table.tsv" "$RUNNER_TEMP/frontend-gate.tsv")
+            [ ! -s "$costs" ] || assets+=("$costs")
             # with the gate's verdict row of this run (#3443): version, run of that version, would refuse, dirty, mode
-            gh release create "$tag" "$RUNNER_TEMP/frontend-coverage-table.tsv" "$RUNNER_TEMP/frontend-gate.tsv" "$costs" --prerelease --latest=false \
+            gh release create "$tag" "${assets[@]}" --prerelease --latest=false \
               --target "$GITHUB_SHA" --title "count table $tag" \
               --notes "The front-end count's table (#3369) of the queue run at $GITHUB_SHA: the base the next queue runs compare with. Not a release of smith."
           fi
