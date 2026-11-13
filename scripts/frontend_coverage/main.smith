@@ -27,7 +27,9 @@
 //                                              SMITH, the summary names the smith that was measured
 //   frontend_coverage regressed BASE NOW        prints `path TAB stage TAB message` for each file that passes in BASE
 //                                              and fails in NOW and is not on the excluded list: the queue's gate
-//   frontend_coverage regressed BASE NOW PREV   the same, then the gate's mode (below) for the files it named
+//   frontend_coverage regressed BASE NOW PREV [OLDER]
+//                                              the same, then the gate's mode (below) for the files it named; OLDER
+//                                              is the table of the base's own base (#3509)
 //   frontend_coverage gate PREV WOULD           the gate's mode for this queue run (#3443): PREV is the verdict row the
 //                                              base's run published (or `-`), WOULD how many files the comparison
 //                                              names; prints one `gate-row` line and, when it only reports, why
@@ -852,8 +854,8 @@ static I32 summarize(const char file[:], const char *smith) {
 // The gate's version (#3443): bumped by any change to the comparison below or to the CI step that calls it. The
 // fingerprint is the hash `gate-check` prints for the text between the gate-begin and gate-end lines of this file and
 // of ci.yml; the test `the_gate_version_moves_with_the_comparison` fails when they differ, and says what to write.
-constexpr U64 gate_version = 3;
-constexpr U64 gate_fingerprint = 8397174399189343438ULL;
+constexpr U64 gate_version = 4;
+constexpr U64 gate_fingerprint = 3098037309174690426ULL;
 constexpr U64 gate_dry_runs = 10;
 
 // The files the comparison named, as `,a,b,` (the verdict log keeps them, #3443).
@@ -2620,17 +2622,50 @@ static Bool demoted_by(const char log[:]) {
     return shared;
 }
 
+// Whether the table entries[from:to] show NAME: 1 it passes, 2 it fails, 0 it has no row.
+static Usize table_state(const char name[:], Usize from, Usize to) {
+    for (Usize i = from; i < to; i++) {
+        if (!same(name, text_of(entries[i].path[0:path_size]))) continue;
+        return is_pass(&entries[i]) ? 1 : 2;
+    }
+    return 0;
+}
+
+// Item 2 of #3509: whether every file of the list `,a,b,` that a would-refuse named is shown true by the published
+// tables: `pass` in BEFORE (the table of that run's base) and not `pass` in AFTER (the table of the commit it merged),
+// both read as published, not from the gate's own comparison. A table that is missing or a file with no row in
+// either shows nothing, and the would-refuse counts against the gate as before.
+static Bool refusal_true(const char files[:], const char before[:], const char after[:]) {
+    if (countof(before) == 0 || countof(after) == 0) return false;
+    entry_count = 0;
+    if (!read_table(before)) return false;
+    Usize split = entry_count;
+    if (!read_table(after)) return false;
+    Usize from = 1;
+    Bool any = false;
+    for (Usize i = 1; i < countof(files); i++) {
+        if (files[i] != ',') continue;
+        typeof(const char[:]) name = files[from:i];
+        from = i + 1;
+        if (countof(name) == 0) continue;
+        any = true;
+        if (table_state(name, 0, split) != 1 || table_state(name, split, entry_count) != 2) return false;
+    }
+    return any;
+}
+
 // The mode of this queue run (#3443). PREV is the row the base's run published: `version TAB run TAB would TAB dirty
 // TAB mode`. A version counts the queue runs that finished with it; it refuses from its 11th run, and only when none
 // of its first 10 would have refused (`dirty` carries that along, so only the base's row is read). A gate that is
 // about to refuse but whose last three refusals, in the log SMITH_GATE_LOG, name a shared file in three different pull
 // requests (SMITH_GATE_PR) demotes itself: this run only reports and the count of runs starts again, as a new
 // version's. The line `gate-log` is what the step appends to the log. No input, flag or label turns the dry run off.
-static I32 gate(const char prev_path[:], Usize would) {
+static I32 gate(const char prev_path[:], Usize would, const char older_table[:], const char base_table[:]) {
     Usize version = 0;
     Usize run = 0;
     Usize would_before = 0;
     Usize dirty = 0;
+    Bool carried = false;
     files::BytesResult loaded = files::read_file(prev_path);
     if (loaded != .error) {
         defer mem::free(loaded.ok.data);
@@ -2640,11 +2675,15 @@ static I32 gate(const char prev_path[:], Usize would) {
         run = gate_number(text[0:countof(text)], &at);
         would_before = gate_number(text[0:countof(text)], &at);
         dirty = gate_number(text[0:countof(text)], &at);
+        // the files the base's run named: a would-refuse counts against this gate only when it is not shown true
+        // (#3509)
+        if (version == gate_version && run <= gate_dry_runs && would_before > 0) {
+            typeof(const char[:]) first_line = text[0:find(text[0:countof(text)], '\n', 0)];
+            carried = !refusal_true(log_field(first_line, 5), older_table, base_table);
+        }
     }
-    (void)would_before;
     Usize index = version == gate_version ? run + 1 : 1;
-    Usize taint = version == gate_version ? dirty : 0;
-    if (index <= gate_dry_runs && would > 0) taint = 1;
+    Usize taint = version == gate_version && (dirty > 0 || carried) ? 1 : 0;
     Bool live = index > gate_dry_runs && taint == 0;
     Bool demoted = false;
     const char *log_name = c::getenv("SMITH_GATE_LOG");
@@ -2665,7 +2704,8 @@ static I32 gate(const char prev_path[:], Usize would) {
         live = false;
     }
     console::print("gate-row\t", gate_version, "\t", index, "\t", would, "\t", taint, "\t",
-                   live ? "refusing" : "report-only", "\n");
+                   live ? "refusing" : "report-only", "\t", named_files_length > 0 ? (const char *)named_files : ",",
+                   "\n");
     console::print("gate-log\t", pr != nullptr ? pr : "?", "\t", gate_version, "\t", status, "\t",
                    named_files_length > 0 ? (const char *)named_files : ",", "\n");
     if (live) return 0;
@@ -2695,11 +2735,15 @@ I32 main(Str args[:]) {
     if (countof(args) == 4 && same(args[1], "regressed")) return regressed(args[2], args[3]);
     if (countof(args) == 5 && same(args[1], "regressed")) {
         I32 status = regressed(args[2], args[3]);
-        return status != 0 ? status : gate(args[4], named_count);
+        return status != 0 ? status : gate(args[4], named_count, args[4][0:0], args[2]);
+    }
+    if (countof(args) == 6 && same(args[1], "regressed")) {
+        I32 status = regressed(args[2], args[3]);
+        return status != 0 ? status : gate(args[4], named_count, args[5], args[2]);
     }
     if (countof(args) == 4 && same(args[1], "gate")) {
         Usize at = 0;
-        return gate(args[2], gate_number(args[3], &at));
+        return gate(args[2], gate_number(args[3], &at), args[2][0:0], args[2][0:0]);
     }
     if (countof(args) == 4 && same(args[1], "gate-check")) return gate_check(args[2], args[3]);
     console::print_error(
