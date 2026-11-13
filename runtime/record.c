@@ -467,7 +467,9 @@ static bool smith_rec_outside_now(const char *path, uint64_t *hash) {
 // run the same functions), and its verdict depends on the tree and the touched list alone, both fixed while the records
 // are read; without this each record loads and parses again every file it names, for a one-file cache that the next
 // file evicts: 26 s for 1855 records. A line is known by two hashes of its fields, so a collision needs both.
-enum { smith_rec_verdict_ok = 1, smith_rec_verdict_gone = 2, smith_rec_verdict_stale = 3 };
+constexpr unsigned char smith_rec_verdict_ok = 1;
+constexpr unsigned char smith_rec_verdict_gone = 2;
+constexpr unsigned char smith_rec_verdict_stale = 3;
 constexpr size_t smith_rec_verdict_slots = (size_t)1 << 18;
 static uint64_t smith_rec_verdict_key[smith_rec_verdict_slots];
 static uint64_t smith_rec_verdict_check[smith_rec_verdict_slots];
