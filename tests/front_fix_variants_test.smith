@@ -36,7 +36,7 @@ export void test_front_fix_variants_declaration_and_uses_in_two_files() {
     fix_variants::Word sources[2] = {word(one), word(two)};
     fix_variants::Words out = fix_variants::rename_all(sources);
     Str want_one = "enum Error {\n    not_found\n    refused\n}\n\nfn find() -> Error {\n    return .not_found\n}\n";
-    Str want_two = "fn same(e: files.Error) -> bool {\n    return e == files.not_found\n}\n";
+    Str want_two = "fn same(e: files.Error) -> bool {\n    return e == .not_found\n}\n";
     test::check_equal(out[0].text, want_one);
     test::check_equal(out[1].text, want_two);
 }
@@ -159,8 +159,8 @@ export void test_front_fix_variants_a_type_named_like_an_imported_variant_stays_
     fix_variants::Word imported[1] = {word(console)};
     fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
     Str want = "struct Run:\n    out: process.Output\n\nfn f(mut a: process.Output, b: []Output) -> Output:\n"
-               "    output: process.Output = ok\n    s: console.Stream = if c: console.output else: console.input\n"
-               "    t: console.Stream = console.output\n    return a\n";
+               "    output: process.Output = ok\n    s: console.Stream = if c: .output else: .input\n"
+               "    t: console.Stream = .output\n    return a\n";
     test::check_equal(out[0].text, want);
     Str want_ternary = "I32 g(void) {\n    return k(c ? console::output : console::input);\n}\n";
     test::check_equal(out[1].text, want_ternary);
@@ -181,9 +181,9 @@ export void test_front_fix_variants_a_switch_arm_and_a_call_of_an_imported_enum(
     fix_variants::Word sources[1] = {word(user)};
     fix_variants::Word imported[1] = {word(files)};
     fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
-    Str want = "fn f(mode: files.Mode) -> i32:\n    match mode:\n        files.replace: return 1\n"
+    Str want = "fn f(mode: files.Mode) -> i32:\n    match mode:\n        .replace: return 1\n"
                "        .read: return 2\n        _: return c.O_RDONLY\n"
-               "fn g():\n    write(files.append, c.O_RDONLY)\n";
+               "fn g():\n    write(.append, c.O_RDONLY)\n";
     test::check_equal(out[0].text, want);
 }
 
@@ -204,7 +204,7 @@ export void test_front_fix_variants_a_typedef_struct_of_an_imported_module_stays
     fix_variants::Word imported[2] = {word(process), word(console)};
     fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
     Str want = "fn none() -> process.Output:\n    return process.Output(exit = 0)\n"
-               "fn out() -> console.Stream:\n    return console.output\n";
+               "fn out() -> console.Stream:\n    return .output\n";
     test::check_equal(out[0].text, want);
 }
 
