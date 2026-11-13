@@ -47,12 +47,13 @@ static void put(const char *dir, const char *name, const char *text, I64 time) {
 // outputs a command leaves as they are, `depends` what the depfile of an output names.
 static Build build(const char *dir, const char *const *targets, I64 time, const char *const *unchanged,
                    const char *const *depends) {
-    c::SmithCorePlan plan = {.folder = dir,
-                             .manifest = ".smith/build.ninja",
-                             .targets = targets,
-                             .unchanged = unchanged,
-                             .depends = depends,
-                             .time = time};
+    c::SmithCorePlan plan = {0};
+    plan.folder = dir;
+    plan.manifest = ".smith/build.ninja";
+    plan.targets = targets;
+    plan.unchanged = unchanged;
+    plan.depends = depends;
+    plan.time = time;
     char *text = mem::alloc_slice(char, output_capacity).data;
     Usize ran = 0;
     test::check_equal(c::smith_core_plan(&plan, text, output_capacity, &ran), true);
