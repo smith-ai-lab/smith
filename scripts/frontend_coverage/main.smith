@@ -852,9 +852,26 @@ static I32 summarize(const char file[:], const char *smith) {
 // The gate's version (#3443): bumped by any change to the comparison below or to the CI step that calls it. The
 // fingerprint is the hash `gate-check` prints for the text between the gate-begin and gate-end lines of this file and
 // of ci.yml; the test `the_gate_version_moves_with_the_comparison` fails when they differ, and says what to write.
-constexpr U64 gate_version = 1;
-constexpr U64 gate_fingerprint = 12971711105674178599ULL;
+constexpr U64 gate_version = 2;
+constexpr U64 gate_fingerprint = 14142060457059869624ULL;
 constexpr U64 gate_dry_runs = 10;
+
+// The files the comparison named, as `,a,b,` (the verdict log keeps them, #3443).
+static char named_files[4096];
+static Usize named_files_length = 0;
+
+static void note_named(const char path[:]) {
+    if (named_files_length == 0) {
+        named_files[0] = ',';
+        named_files_length = 1;
+    }
+    if (named_files_length + countof(path) + 2 > sizeof(named_files)) return;
+    for (Usize i = 0; i < countof(path); i++)
+        named_files[named_files_length + i] = path[i];
+    named_files[named_files_length + countof(path)] = ',';
+    named_files_length += countof(path) + 1;
+    named_files[named_files_length] = '\0';
+}
 
 // gate-begin
 // The queue's gate (#3369): prints `path TAB stage TAB message` for each file that passed in the BASE table and fails
@@ -887,6 +904,7 @@ static I32 regressed(const char base[:], const char now[:]) {
         console::print((const char *)entries[j].path, "\t", (const char *)entries[j].stage, "\t",
                        (const char *)entries[j].message, "\n");
         named_count += 1;
+        note_named(path);
     }
     return 0;
 }
@@ -2533,10 +2551,81 @@ static Usize gate_number(const char text[:], Usize *at) {
     return value;
 }
 
+// The nth tab-separated field of a line of the verdict log.
+static typeof(const char[:]) log_field(const char line[:], Usize n) {
+    Usize at = 0;
+    for (Usize k = 0; k < n; k++) {
+        at = find(line, '\t', at);
+        if (at >= countof(line)) return line[0:0];
+        at += 1;
+    }
+    Usize stop = find(line, '\t', at);
+    return line[at:stop];
+}
+
+// Whether the list `,a,b,` has the file `name`.
+static Bool list_has(const char list[:], const char name[:]) {
+    if (countof(name) == 0) return false;
+    for (Usize i = 1; i + countof(name) < countof(list); i++) {
+        if (list[i - 1] == ',' && list[i + countof(name)] == ',' && same(list[i:i + countof(name)], name)) return true;
+    }
+    return false;
+}
+
+// Item 5 of #3443: the gate demotes itself. The log has one line per queue run, `pr TAB version TAB status TAB files`
+// (status `refused`, `ok`, `report` or `demoted`, files as `,a,b,`). When its last three lines are all `refused`, for
+// three different pull requests, and the three sets of files share a file, the fault is the gate's or main's (three
+// unrelated pull requests cannot all have broken the same file): returns true and prints the shared files.
+static Bool demoted_by(const char log[:]) {
+    Usize starts[3] = {0, 0, 0};
+    Usize ends[3] = {0, 0, 0};
+    Usize seen = 0;
+    Usize at = 0;
+    while (at < countof(log)) {
+        Usize stop = find(log, '\n', at);
+        if (stop > at) {
+            starts[0] = starts[1];
+            ends[0] = ends[1];
+            starts[1] = starts[2];
+            ends[1] = ends[2];
+            starts[2] = at;
+            ends[2] = stop;
+            seen += 1;
+        }
+        at = stop + 1;
+    }
+    if (seen < 3) return false;
+    for (Usize k = 0; k < 3; k++) {
+        if (!same(log_field(log[starts[k]:ends[k]], 2), "refused")) return false;
+    }
+    typeof(const char[:]) first = log[starts[0]:ends[0]];
+    typeof(const char[:]) second = log[starts[1]:ends[1]];
+    typeof(const char[:]) third = log[starts[2]:ends[2]];
+    if (same(log_field(first, 0), log_field(second, 0)) || same(log_field(first, 0), log_field(third, 0)) ||
+        same(log_field(second, 0), log_field(third, 0)))
+        return false;
+    typeof(const char[:]) last = log_field(third, 3);
+    Bool shared = false;
+    Usize from = 1;
+    for (Usize i = 1; i < countof(last); i++) {
+        if (last[i] != ',') continue;
+        typeof(const char[:]) name = last[from:i];
+        from = i + 1;
+        if (list_has(log_field(first, 3), name) && list_has(log_field(second, 3), name)) {
+            console::print(shared ? "," : "frontend-gate: demoted (", name);
+            shared = true;
+        }
+    }
+    if (shared) console::print(")\n");
+    return shared;
+}
+
 // The mode of this queue run (#3443). PREV is the row the base's run published: `version TAB run TAB would TAB dirty
 // TAB mode`. A version counts the queue runs that finished with it; it refuses from its 11th run, and only when none
-// of its first 10 would have refused (`dirty` carries that along, so only the base's row is read). No input, flag or
-// label changes this.
+// of its first 10 would have refused (`dirty` carries that along, so only the base's row is read). A gate that is
+// about to refuse but whose last three refusals, in the log SMITH_GATE_LOG, name a shared file in three different pull
+// requests (SMITH_GATE_PR) demotes itself: this run only reports and the count of runs starts again, as a new
+// version's. The line `gate-log` is what the step appends to the log. No input, flag or label turns the dry run off.
 static I32 gate(const char prev_path[:], Usize would) {
     Usize version = 0;
     Usize run = 0;
@@ -2557,10 +2646,34 @@ static I32 gate(const char prev_path[:], Usize would) {
     Usize taint = version == gate_version ? dirty : 0;
     if (index <= gate_dry_runs && would > 0) taint = 1;
     Bool live = index > gate_dry_runs && taint == 0;
+    Bool demoted = false;
+    const char *log_name = c::getenv("SMITH_GATE_LOG");
+    if (live && log_name != nullptr) {
+        files::BytesResult log = files::read_file(view_of(log_name));
+        if (log != .error) {
+            defer mem::free(log.ok.data);
+            typeof(char[:]) log_text = mem::view(log.ok, char);
+            demoted = demoted_by(log_text[0:countof(log_text)]);
+        }
+    }
+    const char *pr = c::getenv("SMITH_GATE_PR");
+    const char *status = demoted ? "demoted" : !live ? "report" : would > 0 ? "refused" : "ok";
+    if (demoted) {
+        run = 0;
+        index = 0;
+        taint = 0;
+        live = false;
+    }
     console::print("gate-row\t", gate_version, "\t", index, "\t", would, "\t", taint, "\t",
                    live ? "refusing" : "report-only", "\n");
+    console::print("gate-log\t", pr != nullptr ? pr : "?", "\t", gate_version, "\t", status, "\t",
+                   named_files_length > 0 ? (const char *)named_files : ",", "\n");
     if (live) return 0;
-    if (index <= gate_dry_runs) {
+    if (demoted) {
+        console::print("gate-note: gate version ", gate_version, " demoted itself: its last three refusals, in three ",
+                       "different pull requests, name the same file; it only reports for ", gate_dry_runs,
+                       " queue runs, then refuses again if none of them would have\n");
+    } else if (index <= gate_dry_runs) {
         console::print("gate-note: gate version ", gate_version, " is on its queue run ", index, " of ", gate_dry_runs,
                        " and only reports (frontend-would-refuse lines); it refuses from run ", gate_dry_runs + 1,
                        ", if none of those runs would have refused\n");
