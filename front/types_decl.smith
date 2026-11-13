@@ -1095,6 +1095,35 @@ static syntax::Edit edit_of(U32 start, U32 end, Str text) {
     return (syntax::Edit){.span = {.start = start, .end = end}, .text = text};
 }
 
+// Whether `left` is a field path the checker narrows (`a.kind`, `p->kind`, `a.b.kind`: member steps from one name), not
+// a name, an index or a dereference. A test of such a path is left as written, and a read `a.kind.v` after it is
+// written `a.kind` by the checker's fix (#3598, item 68 of #3516); a test of a name keeps its binding.
+static Bool field_path(const ast::Expr *left) {
+    if (left->kind != .member) return false;
+    const ast::Expr *at = left;
+    while (at->kind == .member)
+        at = at->kind.member.base;
+    return at->kind == .name && countof(at->kind.name.path.segments) == 1;
+}
+
+static Bool word_char(char c);
+
+// `text` with each `->` written `.`, so the old and the new form of a path read the same.
+static Str dotted(Str text) {
+    char out[:] = mem::alloc_slice(char, countof(text));
+    Usize put = 0;
+    for (Usize i = 0; i < countof(text); i++) {
+        if (text[i] == '-' && i + 1 < countof(text) && text[i + 1] == '>') {
+            out[put] = '.';
+            i += 1;
+        } else {
+            out[put] = text[i];
+        }
+        put += 1;
+    }
+    return out[0:put];
+}
+
 // `if k == .v:` with no `else`: the reads in the `then` are the test's, written `if .v(v) := k:`.
 static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
     if (s->kind != .if_stmt || test->kind != .binary) return;
@@ -1102,8 +1131,9 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
     const ast::Expr *right = binary_right(test);
     Str variant = variant_name(right);
     if (countof(variant) == 0) return;
-    Str bound = binding_name(r, variant);
-    if (countof(bound) == 0) return;
+    Bool direct = field_path(left);
+    Str bound = binding_name(r, variant); // a direct test binds nothing, unless a read of it is dropped (bind_dropped)
+    if (!direct && countof(bound) == 0) return;
     Str pattern = msg(format::push(".", variant, "(", bound, ") := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
@@ -1115,6 +1145,7 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
                                 .bound = bound,
                                 .reads = then_branch->span,
                                 .head = head,
+                                .direct = direct,
                                 .test = nullptr});
 }
 
@@ -1133,8 +1164,9 @@ static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast
     const ast::Expr *right = binary_right(tested);
     Str variant = variant_name(right);
     if (countof(variant) == 0) return;
-    Str bound = binding_name(r, variant);
-    if (countof(bound) == 0) return;
+    Bool direct = field_path(left);
+    Str bound = binding_name(r, variant); // a direct test binds nothing, unless a read of it is dropped (bind_dropped)
+    if (!direct && countof(bound) == 0) return;
     Str pattern = msg(format::push(".", variant, "(", bound, ") := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
@@ -1146,6 +1178,7 @@ static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast
                                 .bound = bound,
                                 .reads = reads,
                                 .head = head,
+                                .direct = direct,
                                 .test = nullptr});
 }
 
@@ -1218,8 +1251,9 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     Str variant = option ? member_name(left) : variant_name(right);
     if (countof(variant) == 0 || (option && name_taken(r, variant))) return;
     Str bound = "";
+    Bool direct = !option && field_path(left);
     if (!option) bound = binding_name(r, variant);
-    if (!option && countof(bound) == 0) return;
+    if (!option && !direct && countof(bound) == 0) return;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
         types::Guard *g = &r->guards[i];
         Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
@@ -1255,6 +1289,7 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
                                 .skip = then_branch->span,
                                 .head = head,
                                 .option = option,
+                                .direct = direct,
                                 .test = option ? parts[at] : nullptr});
 }
 
@@ -2073,6 +2108,73 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// The edits that write the binding for each read `base.f` of the guarded path in its reads, where `f` is no variant.
+static syntax::Edits path_reads(const types::Guard *g) {
+    syntax::Edits out = {};
+    Str base = fixed_source[g->base->span.start:g->base->span.end];
+    for (Usize at = g->reads.start; at + countof(base) < g->reads.end && at + countof(base) < countof(fixed_source);
+         at++) {
+        if (!types::same_text(fixed_source[at:at + countof(base)], base)) continue;
+        if (at > 0 && (word_char(fixed_source[at - 1]) || fixed_source[at - 1] == '.')) continue;
+        Usize next = at + countof(base);
+        if (fixed_source[next] != '.') continue;
+        Usize word = next + 1;
+        Usize stop = word;
+        while (stop < countof(fixed_source) && word_char(fixed_source[stop]))
+            stop += 1;
+        if (stop == word || types::same_text(fixed_source[word:stop], g->variant)) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = edit_of((U32)at, (U32)next, g->bound);
+    }
+    return out;
+}
+
+// A direct test (`if a.kind == .v:`, #3598) whose reads were not all narrowed: a loop that may write `a` drops the
+// narrowing of the path inside it, so the read `a.kind.v.f` there stays an error. Such a test is written as the
+// binding `.v(v) := a.kind` and every read of it as `v`, as before; no read keeps the other fix, since the binding
+// would leave `a.kind` un-narrowed. A site that cannot be bound (the name is taken, a write spoiled it) keeps none.
+static void bind_dropped(types::Checked *r, types::Guard *g, Usize from) {
+    if (countof(fixed_source) < g->base->span.end) return;
+    Str want = msg(format::push(dotted(fixed_source[g->base->span.start:g->base->span.end]), ".", g->variant));
+    Usize plain = 0;
+    for (Usize k = from; k < r->error_count; k++) {
+        types::Error *e = &r->errors[k];
+        Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+        Bool skipped = e->span.start >= g->skip.start && e->span.end <= g->skip.end && g->skip.end > g->skip.start;
+        if (!inside || skipped || e->span.end > countof(fixed_source)) continue;
+        if (!types::same_text(dotted(fixed_source[e->span.start:e->span.end]), want)) continue;
+        if (countof(e->fix) == 0 && countof(e->fix_module) == 0) plain += 1;
+    }
+    if (plain == 0) return;
+    Bool bind = !g->spoiled && countof(g->bound) > 0;
+    // The reads of the path itself that the test narrowed (`a.kind.f` in `a.kind != .v or a.kind.f > 1`) stay valid
+    // only while the test stands: once it is a binding they read the binding (#3598).
+    syntax::Edits extra = {};
+    if (bind && !g->head_sent) extra = path_reads(g);
+    for (Usize k = from; k < r->error_count; k++) {
+        types::Error *e = &r->errors[k];
+        Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+        Bool skipped = e->span.start >= g->skip.start && e->span.end <= g->skip.end && g->skip.end > g->skip.start;
+        if (!inside || skipped || e->span.end > countof(fixed_source)) continue;
+        if (!types::same_text(dotted(fixed_source[e->span.start:e->span.end]), want)) continue;
+        Bool deletion = countof(e->fix) == 1 && types::same_text(e->fix[0].text, "");
+        if (countof(e->fix) != 0 && !deletion) continue;
+        syntax::Edits fix = {};
+        if (bind) {
+            fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head) + countof(extra));
+            fix[0] = edit_of(e->span.start, e->span.end, g->bound);
+            if (!g->head_sent) {
+                for (Usize h = 0; h < countof(g->head); h++)
+                    fix[1 + h] = g->head[h];
+                for (Usize x = 0; x < countof(extra); x++)
+                    fix[1 + countof(g->head) + x] = extra[x];
+            }
+            g->head_sent = true;
+        }
+        e->fix = fix;
+    }
+}
+
 // A loop runs its body again after the last statement of it: a name that a test narrowed before the loop and that the
 // loop may write is not narrowed in the loop, nor after it (#3438, item 55 of #3284).
 static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
@@ -2166,6 +2268,29 @@ static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// A local of the binding's name, anywhere in the body, makes the guard bind another name or leaves its site (#2503).
+static void rename_taken(types::Checked *r, Usize first_error, Usize first_local) {
+    for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
+        for (Usize k = first_local; k < state.local_count; k++) {
+            Str bound = r->guards[i].variant;
+            Str named = r->guards[i].bound;
+            if (countof(named) > 0) {
+                bound = named;
+            }
+            if (!types::same_text(state.locals[k].name, bound)) continue;
+            // a Result's `ok` declared further down: the guard binds `ok_value` (#3205)
+            Str other = msg(format::push(r->guards[i].variant, "_value"));
+            Bool moved = types::same_text(bound, r->guards[i].variant) && !r->guards[i].option &&
+                         types::same_text(bound, "ok") && !local_named(first_local, other);
+            if (moved) {
+                types_expr::rebind_guard(r, &r->guards[i], first_error, other);
+            } else {
+                r->guards[i].spoiled = true;
+            }
+        }
+    }
+}
+
 // Walks `root` with the function's result type `result`.
 static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result) {
     types::TypeRef outer = state.result;
@@ -2205,25 +2330,10 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             enter_statement(r, f.stmt);
         }
     }
-    affine::check_body(r, root);                 // after the walk: it reads the types the walk recorded
-    for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
-        for (Usize k = first_local; k < state.local_count; k++) {
-            Str bound = r->guards[i].variant;
-            Str named = r->guards[i].bound;
-            if (countof(named) > 0) {
-                bound = named;
-            }
-            if (!types::same_text(state.locals[k].name, bound)) continue;
-            // a Result's `ok` declared further down: the guard binds `ok_value` (#3205)
-            Str other = msg(format::push(r->guards[i].variant, "_value"));
-            Bool moved = types::same_text(bound, r->guards[i].variant) && !r->guards[i].option &&
-                         types::same_text(bound, "ok") && !local_named(first_local, other);
-            if (moved) {
-                types_expr::rebind_guard(r, &r->guards[i], first_error, other);
-            } else {
-                r->guards[i].spoiled = true;
-            }
-        }
+    affine::check_body(r, root); // after the walk: it reads the types the walk recorded
+    rename_taken(r, first_error, first_local);
+    for (Usize i = 0; i < r->guard_count; i++) {
+        if (r->guards[i].direct && !r->guards[i].through) bind_dropped(r, &r->guards[i], first_error);
     }
     types_expr::drop_spoiled(r, first_error);
     // The test of an option field whose binding no read wrote (or whose site is spoiled) gets its own fix: `nullptr`
