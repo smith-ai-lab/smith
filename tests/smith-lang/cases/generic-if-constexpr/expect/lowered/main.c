@@ -32,8 +32,8 @@ extern __INT32_TYPE__ kind_floats_only__f32(float value)__asm__("_kind::floats_o
 extern __INT32_TYPE__ kind_floats_only__i32(__INT32_TYPE__ value)__asm__("_kind::floats_only(__INT32_TYPE__)");
 [[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_floats_only__i32(__INT32_TYPE__ value){return 0;}
 extern __INT32_TYPE__ kind_bytes__u8(void)__asm__("_kind::bytes(__UINT8_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_bytes__u8(void){return 3+(sizeof(__UINT8_TYPE__)!=8);}
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_bytes__u8(void){return sizeof(__UINT8_TYPE__)!=8?4:3;}
 extern __INT32_TYPE__ kind_bytes__u64(void)__asm__("_kind::bytes(__UINT64_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_bytes__u64(void){return 3+(sizeof(__UINT64_TYPE__)!=8);}
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_bytes__u64(void){return sizeof(__UINT64_TYPE__)!=8?4:3;}
 extern __INT32_TYPE__ kind_bytes__Point(void)__asm__("_kind::bytes(Point)");
-[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_bytes__Point(void){return 3+(sizeof(Point)!=8);}
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_bytes__Point(void){return sizeof(Point)!=8?4:3;}

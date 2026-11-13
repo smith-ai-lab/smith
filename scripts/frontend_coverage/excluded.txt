@@ -125,9 +125,11 @@ tests/smith-lang/cases/generic-auto-constants-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-auto-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-auto-written/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-bare-type-then-code/src/num.smith	error-fixture
+tests/smith-lang/cases/generic-built-list-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-built-list-error/src/plain.smith	error-fixture
 tests/smith-lang/cases/generic-call-unclosed-statement/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-call-unclosed/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-error-instance/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-fields-doc/src/docs.smith	old-form: imports a module with a preprocessor directive
 tests/smith-lang/cases/generic-fields-doc/src/main.smith	old-form: imports a module with a preprocessor directive
 tests/smith-lang/cases/generic-fields-error/src/main.smith	old-form: fields(T) reflection (#3221 dropped table)
@@ -139,9 +141,12 @@ tests/smith-lang/cases/generic-fields-star/src/main.smith	old-form: fields(T) re
 tests/smith-lang/cases/generic-fields-values/src/walk.smith	old-form: fields(T) reflection (#3221 dropped table)
 tests/smith-lang/cases/generic-fields/src/main.smith	old-form: fields(T) reflection (#3221 dropped table)
 tests/smith-lang/cases/generic-for-constexpr-error/src/bad.smith	error-fixture
+tests/smith-lang/cases/generic-for-constexpr-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-for-range-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-function-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-function-generic-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-function-generic-error/src/order.smith	error-fixture
+tests/smith-lang/cases/generic-if-constexpr-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-pack-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-rest-error/src/bad.smith	error-fixture
 tests/smith-lang/cases/generic-rest-error/src/main.smith	error-fixture
