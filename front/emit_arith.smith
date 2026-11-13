@@ -500,6 +500,19 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
 export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
     state::Local local = {};
     try lookup(e, x, &local);
+    if (local.ty.kind == .option && local.ty.kind.option.element != nullptr && e->options.checked != nullptr) {
+        // A `?T` name the checker narrowed to `T` (`if x != .none:`) used as a place (`x[i]`, `x.f`): its payload, in
+        // a temporary that has an address (#3485).
+        types::TypeRef seen = types::type_of(e->options.checked, x);
+        if (seen != nullptr && seen->kind != .option) {
+            c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
+            state::Value inner = emit_option::payload(e, (state::Value){.llvm = whole, .ty = local.ty}, local.ty.kind.option);
+            c::LLVMValueRef slot = state::new_alloca(e, inner.ty, "narrowed");
+            c::LLVMBuildStore(e->builder, inner.llvm, slot);
+            state::push_value(e, (state::Value){.llvm = slot, .ty = inner.ty});
+            return state::success();
+        }
+    }
     state::push_value(e, (state::Value){.llvm = local.address, .ty = local.ty});
     return state::success();
 }

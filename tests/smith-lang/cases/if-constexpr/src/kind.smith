@@ -16,14 +16,14 @@ export I32 arch_name() {
     }
 }
 
-// The constraint for another architecture would not compile here.
+// The branch for another architecture would not compile here.
 export I32 opaque(I32 value) {
     if constexpr (target::arch == target::aarch64) {
-        __asm__("" : "+w"(value));
+        value += 0;
     } else if constexpr (target::arch == target::x86_64) {
-        __asm__("" : "+r"(value));
+        value += 0;
     } else {
-        __asm__("" : "+nonsense"(value));
+        undeclared_function();
     }
     return value;
 }

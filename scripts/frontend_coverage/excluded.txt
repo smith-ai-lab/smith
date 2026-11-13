@@ -226,3 +226,5 @@ tests/smith-lang/cases/countof-fixed-array/src/main.smith	old-form: a C cast app
 tests/front/corpus/session-keyword-name/src/main.smith	old-form: a C keyword as a name is an error only in today's language
 tests/smith-lang/cases/session-keyword-name/src/main.smith	old-form: a C keyword as a name is an error only in today's language
 tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	old-form: an error only in today's lowering
+tests/smith-lang/cases/generic-print-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-static-assert/src/main.smith	error-fixture

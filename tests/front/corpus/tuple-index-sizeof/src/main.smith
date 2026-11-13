@@ -1,0 +1,15 @@
+import c <stdio.h>
+
+# `sizeof(rest[0])` on the collected arguments: the index is a number in the code, and the type is the element's own (#3485).
+fn size_of_first(rest...) -> usize:
+    if countof(rest) == 0:
+        return 0
+    else:
+        return sizeof(rest[0])
+
+pub fn main() -> i32:
+    z0 := size_of_first()
+    z1 := size_of_first(1.to(u16), 2.0)
+    z2 := size_of_first(2.0, 1.to(u16))
+    _ := stdio.printf("%zu %zu %zu\n", z0, z1, z2)
+    return 0
