@@ -35,7 +35,8 @@ static Bool header_arena_made = false;
 // header (an angled one does not look there), and the flags. The key is text compared whole, never a hash alone.
 constexpr Usize shared_headers_max = 512;
 static Str shared_header_keys[shared_headers_max];
-static const ast::Module *shared_header_modules[shared_headers_max];
+typedef const ast::Module *ModuleRef;
+static ModuleRef shared_header_modules[shared_headers_max];
 static Usize shared_header_count = 0;
 
 // A header's file can change while the process lives (the editor's next request, a test that writes it

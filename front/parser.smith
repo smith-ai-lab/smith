@@ -93,6 +93,13 @@ static Parsed read_new(Str file, Str source, Bool braces) {
     lex::Tokens tokens = lexed.ok;
     lex::Lexed made = lex::layout(source, tokens);
     Bool layout = false;
+    if (made == .error && !braces) {
+        lex::LexError failure = made.error;
+        parse::ParseError first = {.span = failure.span, .message = failure.message};
+        result.errors = mem::realloc(result.errors, 1);
+        result.errors[0] = first;
+        return result;
+    }
     if (made == .ok) {
         lex::Tokens laid = made.ok;
         if (braces) {
@@ -101,12 +108,6 @@ static Parsed read_new(Str file, Str source, Bool braces) {
             tokens = laid;
             layout = true;
         }
-    } else if (!braces) {
-        lex::LexError failure = made.error;
-        parse::ParseError first = {.span = failure.span, .message = failure.message};
-        result.errors = mem::realloc(result.errors, 1);
-        result.errors[0] = first;
-        return result;
     }
     parse::Parser p = parse::make(tokens, source);
     p.new_syntax = true;
