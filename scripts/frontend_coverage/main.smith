@@ -51,7 +51,7 @@
 // The summary says how many files are stopped at parse. The real
 // files are never changed: only the copies are.
 //
-// The fixer's work is cached (#2309) in `SCRATCH/../fixed/<hash>`: the fixed text of a file, keyed by the file, every
+// The fixer's work is cached (#2309) in the one store (`steps/a`, #3457): the fixed text of a file, keyed by the file, every
 // module it imports transitively (the fixer checks against them), the tracked C headers and the objects the fixer is
 // built from (#2632; the smith itself when its folder has none). A
 // file that fails to fix is never cached. A cache entry never changes a result.
