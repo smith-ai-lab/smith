@@ -337,6 +337,19 @@ static Str undeclared_c_name(Str message) {
     return message[countof(lead):end];
 }
 
+// The name in "`c.foo` is not declared by that header; ...", said of a `c.` that a quoted header's import binds: empty
+// for another message.
+static Str undeclared_member_name(Str message) {
+    Str lead = "`c.";
+    Str tail = "` is not declared by that header";
+    if (countof(message) <= countof(lead) || !mem::equal(message[0:countof(lead)], lead)) return "";
+    Usize end = countof(lead);
+    while (end < countof(message) && message[end] != '`')
+        end += 1;
+    if (end + countof(tail) > countof(message) || !mem::equal(message[end:end + countof(tail)], tail)) return "";
+    return message[countof(lead):end];
+}
+
 // The name in "`T` has no method `printf`; write a function ...": empty for another message.
 static Str no_method_name(Str message) {
     Str lead = "` has no method `";
@@ -394,6 +407,11 @@ static core::Errors c_import_use_fixes(Str source, const ast::Module *module, co
     for (Usize i = 0; i < checked->error_count; i++) {
         types::Error e = checked->errors[i];
         Str name = undeclared_c_name(e.message);
+        Bool bound = false; // `c.name` where the import `c "c.h"` binds `c` and another header declares `name`
+        if (countof(name) == 0) {
+            name = undeclared_member_name(e.message);
+            bound = true;
+        }
         if (countof(name) == 0 || e.span.end <= e.span.start + 2) continue;
         if (source[e.span.start] != 'c' || source[e.span.start + 1] != '.') continue;
         for (Usize k = 0; k < countof(module->decls); k++) {
@@ -429,6 +447,7 @@ static core::Errors c_import_use_fixes(Str source, const ast::Module *module, co
                 if (header[m] == '/') stem = m + 1;
             if (countof(header) < stem + 3) continue;
             Str space = header[stem:countof(header) - 2];
+            if (bound && countof(space) == 1 && space[0] == 'c') continue;
             ast::Span at = {.start = e.span.start, .end = e.span.start + 1};
             core::Edits edits = {};
             edits = mem::realloc(edits, 1);

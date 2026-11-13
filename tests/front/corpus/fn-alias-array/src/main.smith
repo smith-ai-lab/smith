@@ -1,0 +1,13 @@
+import c <stdio.h>
+
+Unary := fn(i32) -> i32
+
+fn twice(a: i32) -> i32:
+    a * 2
+
+# An alias of a function type is the element of an array.
+pub fn main() -> i32:
+    let table: [2]Unary = [twice, twice]
+    let triple: Unary = fn(a: i32) -> i32: a * 3
+    let _ = stdio.printf("%d %d\n", table[1](4), triple(5))
+    0

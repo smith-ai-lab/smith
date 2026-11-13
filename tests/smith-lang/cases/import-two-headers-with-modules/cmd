@@ -1,1 +1,1 @@
--fmodules -fmodules-cache-path=@OUT@/modules -fmodule-map-file=m.modulemap main.smith -o @OUT@/program
+-fmodules -fmodules-cache-path=@OUT@/modules -fmodule-map-file=m.modulemap main.smith defs.c -o @OUT@/program

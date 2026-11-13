@@ -5,7 +5,7 @@ static __INT32_TYPE__ main_pick(__INT32_TYPE__ x) {
 __INT32_TYPE__ y = x;
 if (y == 2) return 1;
 while (y > 5) y -= 1;
-for (;;) break;
+for (__INT32_TYPE__ n = 0; n < 3; n++) break;
 return a_pass(y);
 }
 __INT32_TYPE__ main(void) {
