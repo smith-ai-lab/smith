@@ -1,4 +1,4 @@
 ---
 name: p
-description: when to load p
+description: Load when p is wanted
 ---

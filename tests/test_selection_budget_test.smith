@@ -1,0 +1,49 @@
+// A selection of any size works (#3453): `smith test --test` over 400 test files builds the runner with no string
+// literal over 4095 characters in its table (-Werror=overlength-strings) and the build program's arena stays under a
+// budget, so the next growth fails this test and not a worker's push. The 395-file selection of the tree used 18 MB
+// after the fix (it overflowed 64 MB before); the budget is 32 MB.
+// smith-covers: build.c runtime/build_runtime.c lib/std/test.smith
+module test_selection_budget_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import runner;
+import scratch;
+
+// Makes 400 test files and sets $names to the comma list that selects all of them (about 13 KB, as the tree's own).
+static const char *const make_files =
+    "mkdir -p tests/shard && names=''; for i in $(seq 1 400); do n=$(printf 'generated_selection_file_%03d_test' "
+    "$i); printf 'module shard::%s;\\n\\nexport void test_%s_1() {\\n}\\n' $n $n > tests/shard/$n.smith; "
+    "names=\"$names,$n\"; done; names=${names#,}\n";
+
+export void test_selection_budget_the_arena_of_a_selection_of_every_file_stays_under_32_mb() {
+    scratch::Project p = runner::project("runner_base", "runner_shard");
+    scratch::write(&p, "make.sh", make_files);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text(
+        "budget: the mark is under 32 MB", "ok",
+        scratch::capture(&p, "set -e; . ./make.sh; SMITH_ARENA_REPORT=1 smith test --test \"$names\" --list 2>&1 | "
+                             "grep 'arena high-water mark' | awk '{ if ($5 + 0 > m) m = $5 + 0 } "
+                             "END { print m }' > mark; test -s mark && "
+                             "test \"$(cat mark)\" -lt 33554432 && echo ok"));
+}
+
+export void test_selection_budget_no_literal_of_the_table_is_over_4095_characters() {
+    scratch::Project p = runner::project("runner_base", "runner_shard");
+    scratch::write(&p, "make.sh", make_files);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::expect_text("budget: the table's longest line is short", "ok",
+                         scratch::capture(&p, ". ./make.sh; smith test --test \"$names\" --list >/dev/null 2>&1; "
+                                              "f=$(find . -name tests_list.c | head -1); test -n \"$f\" && "
+                                              "test \"$(awk '{ if (length($0) > m) m = length($0) } END { print m }' "
+                                              "\"$f\")\" -lt 4095 && echo ok"));
+}

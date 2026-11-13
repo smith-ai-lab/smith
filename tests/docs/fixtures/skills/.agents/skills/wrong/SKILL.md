@@ -1,5 +1,5 @@
 ---
 name: other
-description: "Does a thing."
+description: "Load when doing a thing."
 ---
 # other
