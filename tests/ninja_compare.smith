@@ -160,7 +160,7 @@ void add_edge(Rng *rng, Graph *graph, I32 id) {
     if (graph->output_count > 0 && chance(rng, 30) &&
         sample(rng, graph->outputs, graph->output_count, between(rng, 0, 1), one) == 1)
         edge->order = one[0];
-    const Kind kinds[8] = {plain, plain, restat, restat, deps, multi, restat_deps, restat_multi};
+    const U8 kinds[8] = {plain, plain, restat, restat, deps, multi, restat_deps, restat_multi};
     edge->kind = kinds[between(rng, 0, 7)];
     edge->outs[0] = format::push("o", id, ".txt").data;
     edge->out_count = 1;
@@ -347,7 +347,7 @@ Result run_tool(Bool ninja, const char *smith, Text folder, const char *target) 
     switch (done) {
     case .ok:
         process::Output finished = done.ok;
-        result.status = finished.exit.status + 128 * (finished.exit.signal != 0);
+        result.status = finished.exit.status + (finished.exit.signal != 0 ? 128 : 0);
         result.said = format::push(text_of(finished.output));
         break;
     case .error:
@@ -410,7 +410,7 @@ Text mutate(Rng *rng, Graph *graph, Text a, Text b, const char **target) {
     const char *choice = choices[between(rng, 0, 8)];
     *target = "";
     if (chance(rng, 25)) *target = graph->outputs[between(rng, 0, graph->output_count - 1)];
-    Text folders[2] = {a, b};
+    format::Chars folders[2] = {a, b};
     Text what = format::push(choice);
     if (c::strcmp(choice, "source") == 0) {
         const char *name = graph->sources[between(rng, 0, graph->source_count - 1)];
