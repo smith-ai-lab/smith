@@ -55,6 +55,13 @@ static Bool ends_type(lex::TokenKind kind) {
            kind == lex::kw_void || kind == lex::kw_bool || kind == lex::type_name;
 }
 
+// Whether the name at `tokens[i]`, inside a record's body, is the name of a field: a declarator ends after it.
+static Bool is_field_name(lex::Tokens tokens, Usize i) {
+    if (i + 1 >= countof(tokens)) return false;
+    lex::TokenKind next = tokens[i + 1].kind;
+    return next == lex::semicolon || next == lex::left_bracket || next == lex::colon || next == lex::comma;
+}
+
 // Whether the reserved name at `tokens[i]` is declared there: a type before it, and a token after it that ends a
 // declarator.
 static Bool is_declaration(lex::Tokens tokens, Usize i) {
@@ -202,8 +209,17 @@ export Str rename(Str source) {
     Usize count = declared_names(source, tokens, names, types);
     Str out = "";
     Usize at = 0;
+    Bool in_record[depth_max];
+    Usize depth = 0;
     for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::right_brace && depth > 0) depth -= 1;
+        if (tokens[i].kind == lex::left_brace) {
+            if (depth < depth_max) in_record[depth] = opens_record(tokens, i);
+            depth += 1;
+        }
         if (!is_reserved(source, tokens[i]) || is_member(tokens, i)) continue;
+        // a field's own declaration (`const char *str;` in a struct) is no binding, like its uses after `.` and `->`
+        if (depth > 0 && depth <= depth_max && in_record[depth - 1] && is_field_name(tokens, i)) continue;
         Str word = lex::text(source, tokens[i]);
         Bool capital = false;
         Bool bound = false;
