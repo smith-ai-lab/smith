@@ -1258,6 +1258,16 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
             state::scalar_type(e, "usize", ty);
             return state::success();
         }
+        if (record.kind == .tuple && countof(name) > 0 && name[0] >= '0' && name[0] <= '9') { // `sizeof(rest.0)`
+            Usize part = 0;
+            for (Usize i = 0; i < countof(name) && part < 1000000; i++)
+                part = part * 10 + (Usize)(name[i] - '0');
+            if (part >= record.kind.tuple.part_count)
+                return state::failf(node->span, "the tuple ", record.name, " has ", record.kind.tuple.part_count,
+                                    " elements; there is no .", part);
+            *ty = record.kind.tuple.parts[part];
+            return state::success();
+        }
         Usize field = 0;
         Usize at = 0;
         try field_index(e, record, name, node->span, &field);

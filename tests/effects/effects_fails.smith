@@ -16,7 +16,7 @@ export [[std::effects(alloc)]] I32 alloc_at(I32 values[:], Usize index) {
     return values[index];
 }
 
-static I32 first(I32 values[:]) {
+static U32 first(U32 values[:]) {
     return values[0];
 }
 
@@ -26,15 +26,15 @@ export [[std::pure]] U32 safe(U32 x) {
 }
 
 // The generic asks for no `fails` of the function it is given.
-export I32 run(constexpr auto f, auto x) {
+export U32 run(constexpr auto f, auto x) {
     static_assert(effects::within(f, effects::none), "run: f may not fail");
     return f(x);
 }
 
-export I32 good(I32 x) {
+export U32 good(U32 x) {
     return run(safe, x);
 }
 
-export I32 bad(I32 values[:]) {
+export U32 bad(U32 values[:]) {
     return run(first, values);
 }
