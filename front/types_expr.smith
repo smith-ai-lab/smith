@@ -6888,12 +6888,28 @@ static void spread_resolved(types::Checked *c, Work *w, Frame f) {
 }
 
 // The variant built in the place of `E(name = payload)` is typed: the call takes its type (stage 11).
+// The payload as the program wrote it, `(a = 1, b = 2)`: the twin carries it as the struct list `payload_value` made
+// (#2434), so the written node gets the twin payload's type too; the emitter reads the call as written (#3328).
+static void written_payload_typed(types::Checked *c, const ast::Expr *written, const ast::Expr *twin) {
+    const ast::Expr *given = nullptr;
+    if (written->kind == .call && countof(written->kind.call.args) == 1) {
+        const ast::Expr *arg = written->kind.call.args[0];
+        given = arg->kind == .named_arg ? arg->kind.named_arg.value : nullptr;
+    } else if (written->kind == .compound && countof(written->kind.compound.items) == 1) {
+        given = written->kind.compound.items[0].value;
+    }
+    if (given == nullptr || given->kind != .tuple_lit || twin->kind != .variant) return;
+    types::TypeRef made = types::type_of(c, twin->kind.variant.payload);
+    if (made != nullptr && made != invalid(c) && types::type_of(c, given) == nullptr) types::set_type(c, given, made);
+}
+
 static void enum_variant_after(types::Checked *c, Frame f) {
     types::TypeRef t = types::type_of(c, f.twin);
     if (t == nullptr || t == invalid(c)) {
         poison(c, f.node);
         return;
     }
+    written_payload_typed(c, f.node, f.twin);
     finish(c, f.node, t, f.expected);
 }
 

@@ -1,0 +1,43 @@
+// Tests of the fix-it that drops the `_: ()` arm of a `match` that names every variant (#3321): a C `switch` over an
+// enum whose cases name every variant is an exhaustive `match`, so the function's last line has the function's type.
+module front_fix_match_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Str fixed(Str before) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(fix::fix_text("t.smith", first.text).applied, (Usize)0);
+    return first.text;
+}
+
+export void test_front_fix_match_every_variant_has_no_wildcard_arm() {
+    Str out = fixed("module m;\ntypedef enum { red, green, blue } Color;\nI32 code(Color c) {\n    switch (c) {\n"
+                    "    case red: return 1;\n    case green: return 2;\n    case blue: return 3;\n    }\n}\n");
+    test::golden("tests/front/fix_match/all_variants.txt", out);
+}
+
+export void test_front_fix_match_a_default_arm_is_kept() {
+    Str out = fixed("module m;\ntypedef enum { red, green, blue } Color;\nI32 code(Color c) {\n    switch (c) {\n"
+                    "    case red: return 1;\n    case green: return 2;\n    case blue: return 3;\n"
+                    "    default: return 4;\n    }\n}\n");
+    test::golden("tests/front/fix_match/with_default.txt", out);
+}
+
+export void test_front_fix_match_a_missing_variant_keeps_the_wildcard_arm() {
+    Str out = fixed("module m;\ntypedef enum { red, green, blue } Color;\nvoid note(Color c, int *n) {\n"
+                    "    switch (c) {\n    case red: *n = 1; break;\n    case green: *n = 2; break;\n    }\n}\n");
+    test::golden("tests/front/fix_match/missing_variant.txt", out);
+}
+
+export void test_front_fix_match_an_integer_switch_keeps_the_wildcard_arm() {
+    Str out = fixed("module m;\nvoid note(int v, int *n) {\n    switch (v) {\n"
+                    "    case 1: *n = 1; break;\n    case 2: *n = 2; break;\n    }\n}\n");
+    test::golden("tests/front/fix_match/integer.txt", out);
+}
