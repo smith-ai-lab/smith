@@ -672,64 +672,20 @@ export Emitter emitter(c::LLVMContextRef context, c::LLVMModuleRef module, Optio
     U32 line_starts[:] = {};
     // Positional, in the order of the struct: a designated list this long is over the 200 tokens the old pipeline
     // reads in an initializer of a struct with slices.
+    // clang-format off
     Emitter e = {
-        context,       // context
-        module,        // module
-        nullptr,       // builder
-        nullptr,       // alloca_builder
-        nullptr,       // target_data
-        options,       // options
-        tree,          // tree
-        functions,     // functions
-        0,             // function_count
-        nullptr,       // function
-        nullptr,       // entry_block
-        nullptr,       // trap_block
-        empty,         // result
-        locals,        // locals
-        0,             // local_count
-        scope_marks,   // scope_marks
-        0,             // scope_count
-        loops,         // loops
-        0,             // loop_count
-        defers,        // defers
-        0,             // defer_count
-        records,       // records
-        0,             // record_count
-        enums,         // enums
-        0,             // enum_count
-        lambda_frames, // lambda_frames
-        0,             // lambda_frame_count
-        errors,        // errors
-        0,             // error_count
-        skipped,       // skipped
-        0,             // skipped_count
-        "",            // instance_scope
-        "",            // import_scope
-        nullptr,       // scoped_leaf
-        nullptr,       // instance
-        {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-         nullptr, nullptr, nullptr, nullptr}, // local_types
-        0,                                    // local_type_count
-        nullptr,                              // type_hook
-        nullptr,                              // node_type_hook
-        nullptr,                              // checked_type_hook
-        nullptr,                              // convert_hook
-        false,                                // folding
-        nullptr,                              // fold_hook
-        work,                                 // work
-        0,                                    // work_count
-        values,                               // values
-        0,                                    // value_count
-        nullptr,                              // debug_builder
-        nullptr,                              // compile_unit
-        nullptr,                              // file
-        nullptr,                              // scope
-        line_starts,                          // line_starts
-        0,                                    // parameters_left
-        0,                                    // next_parameter
-        nullptr,                              // owned
-    };
+        context, module, nullptr, nullptr, nullptr, options, tree,                        // the module and its builders
+        functions, 0, nullptr, nullptr, nullptr, empty,                                  // the function being emitted
+        locals, 0, scope_marks, 0, loops, 0, defers, 0,                                  // its locals, scopes, loops
+        records, 0, enums, 0, lambda_frames, 0, errors, 0, skipped, 0,                   // the module's tables
+        "", "", nullptr, nullptr,                                                        // the scopes of instances
+        {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}, 0,     // local_types
+        nullptr, nullptr, nullptr, nullptr, false, nullptr,                              // the hooks
+        work, 0, values, 0,                                                              // the stacks
+        nullptr, nullptr, nullptr, nullptr, line_starts, 0, 0,                           // debug info
+        nullptr};                                                                        // owned
+    // clang-format on
     return e;
 }
 
