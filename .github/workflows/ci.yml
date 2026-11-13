@@ -4,7 +4,7 @@ name: ci
 # shards that restore the one build `build-linux` made, #1758) and the checks (`check`: fmt, docs, lint, prove; same
 # build, beside the shards, #2234); the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that fails cancels the run. A push to main (a commit the queue
 # checked) re-tests nothing (#3172): it builds the macOS release (`release`) and publishes it with the Linux one the queue
-# run packed, saves the cache (`warm`), and runs the macOS build, lint and tests (`macos`, `macos-lint`), which gate
+# run packed, saves the cache (`warm`), and runs the macOS build, lint and tests (`macos`, one job), which gate
 # nothing: a failure there is the lead's to file. The front-end count runs in the queue run and refuses a regression (`count-shard`, `count`, #3369).
 # A pull request runs nothing here: its check is the one job `ci` of ci-pr.yml, which passes at once so the PR can enter
 # the queue. The pre-push hook is the check before the merge, the queue run the test.
@@ -472,14 +472,20 @@ jobs:
             # the part `macos-tests` of smith check (#3163): `smith test --macos-only --shard 1/1`, required here
             "$SMITH" check --part macos-tests --require macos-tests
           }
+          lint() {
+            # the part `macos-lint` of smith check (#3163): `smith lint` on a Mac, required here
+            "$SMITH" check --part macos-lint --require macos-lint
+          }
           # fmt, docs, lint and prove run on Linux (`check`, #2234); lint runs on the Mac too, since each sees
-          # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
-          # on the Mac it is the job `macos-lint`, beside this one (#3045), so the two take their minutes together
-          names="test"
+          # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there).
+          # It was its own job (#3045) and is a stage here again (#3568): a push starts 3 hosted macOS jobs, not 4, and
+          # GitHub drops a macOS job that waits 15 minutes for a runner. The tests run first, in the same tree.
+          names="test lint"
           stage test macos_tests
           # the test stage's output, with the SMITH_TEST_STATS lines, is the log `smith build ci-times` reads (#1139)
           mkdir -p .smith/log
           [ -f "$RUNNER_TEMP/test.log" ] && cp "$RUNNER_TEMP/test.log" .smith/log/test.log
+          stage lint lint
           failed=0
           for name in $names; do
             read -r code took <"$RUNNER_TEMP/$name.status"
@@ -524,51 +530,6 @@ jobs:
           line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
           [ -n "$line" ] || line=unknown
           echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
-
-  macos-lint:
-    # `smith lint` of the code only the Mac sees, beside `macos` and not after it (#3045): the two stages cannot share one
-    # tree (they collide on .smith/build.ninja), so each gets its own job and its own copy, and the job takes the longer
-    # of the two, not their sum (lint 102 to 151 s, the macOS tests 116 to 173 s, on 2026-11-10). It builds smith only,
-    # not the tests (`tests: false`: 109 to 156 s of `macos` that lint does not need). It runs where `macos` runs its
-    # tests, on the push to main (#3172). It takes one more hosted macOS slot of the
-    # five, so a second run's jobs may queue behind the first (knowledge/ci/caches.md).
-    needs: [changes, pack, watch]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.watch.result == 'success' && needs.changes.outputs.mac_run == 'true' }}
-    runs-on: ${{ fromJSON(needs.watch.outputs.runner) }}
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.watch.outputs.cores }}
-      SMITH_OUTPUT: full
-    permissions:
-      contents: read
-      actions: write # queue-guard: `gh run cancel` (#2256)
-    steps:
-      - uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/queue-guard
-      - uses: ./.github/actions/setup-smith
-        timeout-minutes: 20
-        with:
-          tests: "false"
-      - name: Lint
-        timeout-minutes: 30
-        shell: bash
-        run: |
-          start=$SECONDS
-          code=0
-          # the part `macos-lint` of smith check (#3163): `smith lint` on a Mac, required here
-          "$SMITH" check --part macos-lint --require macos-lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
-          echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$code" != 0 ]; then
-            tail -n 60 "$RUNNER_TEMP/lint.log"
-            echo "FAIL lint"
-            echo "::error::smith lint failed"
-            exit 1
-          fi
-          echo "ok lint"
 
   build-linux:
     # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
@@ -1175,7 +1136,7 @@ jobs:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The front-end count is here (#3369): `count-shard` and `count` are owed by a full queue run, and `count` refuses a regression.
-    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check, release-pack-linux, release-package-linux, count-shard, count]
+    needs: [changes, pack, macos, docs-linux, build-linux, test-linux, check, release-pack-linux, release-package-linux, count-shard, count]
     # not on a push to main (#3172): no required check reads that run, whose own jobs fail it when they fail
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
@@ -1197,7 +1158,6 @@ jobs:
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
           DOCS_LINUX: ${{ needs.docs-linux.result }}
-          MACOS_LINT: ${{ needs.macos-lint.result }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
           TEST_LINUX: ${{ needs.test-linux.result }}
@@ -1234,7 +1194,7 @@ jobs:
             exit 1
           fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
-          # the run owes: `full` owes test-linux and check, and the two macOS jobs where they run (the
+          # the run owes: `full` owes test-linux and check, and `macos` where it runs (the
           # nightly run, not a queue run, #3172), `docs` owes docs-linux (#3044), `none` owes nothing. A job that was owed
           # and skipped (a skipped `pack` skipped the three macOS jobs for hours) fails the check.
           case "$SCOPE" in
@@ -1242,7 +1202,7 @@ jobs:
           docs) owed="DOCS_LINUX" ;;
           *) owed="" ;;
           esac
-          if [ "$MAC_RUN" = true ]; then owed="$owed MACOS MACOS_LINT"; fi
+          if [ "$MAC_RUN" = true ]; then owed="$owed MACOS"; fi
           # a full merge group builds the Linux release main will publish (#2832): one that does not build fails the entry
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_LINUX RELEASE_PACKAGE_LINUX"; fi
           # and counts the files the new front end compiles, and refuses a change that makes a passing file fail (#3369)
