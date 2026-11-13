@@ -1176,7 +1176,7 @@ struct Job {
     // the files of a compile that took several (`measure_group`); their rows are cached under `row_path`
     Usize members[batch_max];
     Usize member_count;
-    U64 cpu_ms; // the CPU time the program used, set by read_job, for the cost of a file (#3455)
+    U64 begun; // clock::monotonic() when the job started, for the cost of a file (#3455)
 };
 
 static struct Job jobs[jobs_max];
@@ -1208,9 +1208,6 @@ static struct Ran read_job(struct Job *job) {
     struct Ran ran = {.status = 127, .text = ""};
     if (!job->started) return ran;
     process::ExitResult ended = process::wait(&job->child);
-    // the CPU time of the program (wait sets it): a file's cost is not the wall time of its job, which the order the
-    // jobs are finished in stretches (a short job reaped behind a long one), nor the machine's load (#3455)
-    job->cpu_ms = (job->child.user_ns + job->child.system_ns) / 1000000;
     process::close(&job->child);
     if (ended == .error) return ran;
     ran.status = ended.ok.signal != 0 ? 128 + (I32)ended.ok.signal : (I32)ended.ok.status;
@@ -1234,7 +1231,7 @@ static void job_finish() {
     job_count -= 1;
     struct Ran ran = read_job(job);
     entry_file = job->file;
-    U64 took = job->cpu_ms;
+    U64 took = (clock::monotonic() - job->begun) / clock::millisecond;
     if (!job->is_fix && job->member_count > 1) {
         for (Usize k = 0; k < job->member_count; k++)
             add_cost(job->members[k], took / job->member_count);
@@ -1290,10 +1287,7 @@ static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const c
     Usize slot = (job_head + job_count) % job_limit;
     job_count += 1;
     struct Job *job = &jobs[slot];
-    *job = (struct Job){
-        .file = file,
-        .is_fix = is_fix,
-    };
+    *job = (struct Job){.file = file, .is_fix = is_fix, .begun = clock::monotonic()};
     (void)format::write(job->out, sizeof job->out, job_folder, "/", slot, ".out");
     (void)format::write(job->err, sizeof job->err, job_folder, "/", slot, ".err");
     const char *argv[job_args_max];
