@@ -3,7 +3,8 @@ import "k.h";
 
 struct Plain { U8 cells[c::SIDE]; };
 typedef struct { U8 cells[c::SIDE][c::depth]; U32 n; } Typed;
-struct Nested { struct { U8 x[c::SIDE * 2]; } in; U8 y[c::SIDE + 1]; };
+struct Inner { U8 x[c::SIDE * 2]; };
+struct Nested { struct Inner in; U8 y[c::SIDE + 1]; };
 U8 table[c::SIDE];
 
 export struct Board { U8 cells[c::SIDE * c::SIDE]; U32 n; };

@@ -201,10 +201,11 @@ typedef struct {
     U8 cells[c::SIDE][c::depth];
     U32 n;
 } Typed;
+struct Inner {
+    U8 x[c::SIDE * 2];
+};
 struct Nested {
-    struct {
-        U8 x[c::SIDE * 2];
-    } in;
+    struct Inner in;
     U8 y[c::SIDE + 1];
 };
 U8 table[c::SIDE];
@@ -1419,8 +1420,9 @@ typedef Option(Text) MaybeText; // names the struct once, as the first mention o
 static Usize first_len(Text word, Bool b) {
     Option(Text) found = .none;
     if (b) found = word[0:1];
-    if (found == .none) return 9;
-    return countof(found.some);
+    Option(Text) seen = found;
+    if (seen == .none) return 9;
+    return countof(seen.some);
 }
 
 static Usize typeof_len(Text word) {
@@ -1634,22 +1636,22 @@ static Bool is_empty(Shape s) {
 }
 
 static Bool is_big_circle(Shape s) {
-    return s == .circle && s.circle.radius > 1.0f;
+    if (s == .circle) return s.circle.radius > 1.0f;
+    return false;
 }
 
-static void grow(Shape *p) {
-    switch (*p) {
+static Shape grown(Shape s) {
+    switch (s) {
     case .circle:
-        p->circle.radius *= 2;
-        break;
+        return {.circle = {.radius = s.circle.radius * 2}};
     case .rect:
-        p->rect.w *= 2;
-        p->rect.h *= 2;
-        break;
+        return {.rect = {.w = s.rect.w * 2, .h = s.rect.h * 2}};
     case .inline_one:
+        return s;
     case .empty:
-        break;
+        return s;
     }
+    return s;
 }
 
 static Token flip(Token t) {
@@ -1669,8 +1671,8 @@ I32 main() {
     d = .empty;
     d = {.inline_one = {.a = 5}};
     c::printf("%g %g %g %g %d %d\n", area(a), area(b), area(c), area(d), is_empty(b), is_empty(a));
-    grow(&a);
-    grow(&c);
+    a = grown(a);
+    c = grown(c);
     Shape *p = &b;
     c::printf("%g %g %d %d\n", area(a), area(c), is_big_circle(a), *p == .empty);
     c::printf("%g %d %d\n", twice(.empty), .empty == b, twice({.circle = {.radius = 1}}) > 5);

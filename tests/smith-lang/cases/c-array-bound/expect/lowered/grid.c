@@ -3,7 +3,9 @@
 struct grid_Plain { __UINT8_TYPE__ cells[SIDE]; };
 typedef struct grid_Plain grid_Plain;
 typedef struct { __UINT8_TYPE__ cells[SIDE][depth]; __UINT32_TYPE__ n; } grid_Typed;
-struct grid_Nested { struct { __UINT8_TYPE__ x[SIDE * 2]; } in; __UINT8_TYPE__ y[SIDE + 1]; };
+struct grid_Inner { __UINT8_TYPE__ x[SIDE * 2]; };
+typedef struct grid_Inner grid_Inner;
+struct grid_Nested { struct grid_Inner in; __UINT8_TYPE__ y[SIDE + 1]; };
 typedef struct grid_Nested grid_Nested;
 static __UINT8_TYPE__ grid_table[SIDE];
 struct grid_Board { __UINT8_TYPE__ cells[SIDE * SIDE]; __UINT32_TYPE__ n; };
