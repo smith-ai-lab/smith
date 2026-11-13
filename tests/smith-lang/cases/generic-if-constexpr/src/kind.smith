@@ -26,5 +26,5 @@ export I32 floats_only(constexpr Type T, T value) {
 export I32 bytes(constexpr Type T) {
     if constexpr (alignof(T) > 4 || sizeof(T) >= 16) return 1;
     if constexpr (T == U8) return 2;
-    return 3 + (sizeof(T) != 8);
+    return sizeof(T) != 8 ? 4 : 3;
 }
