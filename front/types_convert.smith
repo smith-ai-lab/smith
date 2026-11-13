@@ -619,6 +619,9 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
         c.target_type = types::element_of(to);
         if (is_invalid_or_auto(c.target_type)) return accept(wrapped(to));
         if (c.target_type == from) return accept(wrapped(to));
+        // `?fn(*T)` from `fn(*const T)`: the function conversion first, then the wrapper (#3326).
+        if (from->kind == .function && c.target_type->kind == .function && function_fits(from, c.target_type))
+            return accept(wrapped(to));
         if (from->kind == .null_type)
             return refuse(&c, "null is not an Option", "write the absent case explicitly: .none");
         Verdict inner = is_wrapper(c.target_type) ? no_rule(&c) : by_target(&c);
