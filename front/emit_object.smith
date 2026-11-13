@@ -30,7 +30,7 @@ typedef Result(Bool, emit::Error) PassResult;
 
 // An LLVM message (consumed: LLVM's string is disposed of) as an Error in the allocator in force.
 static emit::Error llvm_error(Str what, char *text) {
-    emit::Error error = {.message = state::msg(format::push(what, ": ", (const char *)text))};
+    emit::Error error = state::error_of(state::msg(format::push(what, ": ", (const char *)text)));
     c::LLVMDisposeMessage(text);
     return error;
 }
@@ -65,7 +65,7 @@ static PassResult optimize(c::LLVMModuleRef module, c::LLVMTargetMachineRef mach
     c::LLVMErrorRef failed = c::LLVMRunPasses(module, pipeline_of(optimization), machine, passes);
     if (failed != nullptr) {
         char *text = c::LLVMGetErrorMessage(failed); // consumes `failed`
-        emit::Error error = {.message = state::msg(format::push("LLVM's optimizer failed: ", (const char *)text))};
+        emit::Error error = state::error_of(state::msg(format::push("LLVM's optimizer failed: ", (const char *)text)));
         c::LLVMDisposeErrorMessage(text);
         return {.error = error};
     }
@@ -128,7 +128,7 @@ export WriteResult write(c::LLVMModuleRef module, ObjectOptions options, Str pat
     if (c::strcmp(wanted, have) != 0) {
         Str message = state::msg(format::push("the module was emitted for another target: its data layout is \"", have,
                                               "\", the machine's is \"", (const char *)wanted, "\""));
-        return {.error = (emit::Error){.message = message}};
+        return {.error = state::error_of(message)};
     }
     if (options.optimization > 0) {
         PassResult optimized = optimize(module, machine, options.optimization);

@@ -33,7 +33,7 @@ static emit::Error message_of(c::LLVMErrorRef error) {
     char *text = c::LLVMGetErrorMessage(error);
     Str message = state::msg(format::push((const char *)text));
     c::LLVMDisposeErrorMessage(text);
-    return (emit::Error){.message = message};
+    return state::error_of(message);
 }
 
 // LLVM allocates with `malloc`, which reaches the allocator in force: a test calls these (and `emit::module`) with the

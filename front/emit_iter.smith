@@ -47,6 +47,21 @@ struct Plan {
     state::Ty element;    // a slice's or an array's element
 };
 
+// A `Plan` over `counter` with every field written: the construction assigns the ones its iterable has.
+static Plan plan_of(state::Ty counter) {
+    state::Value none = {.llvm = nullptr, .ty = counter};
+    Plan plan = {.counter = counter,
+                 .start = nullptr,
+                 .bound = nullptr,
+                 .is_array = false,
+                 .by_reference = false,
+                 .array = none,
+                 .is_slice = false,
+                 .data = nullptr,
+                 .element = counter};
+    return plan;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Helpers
 
@@ -236,7 +251,7 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
     c::LLVMValueRef turn = nullptr;
     state::Ty turn_ty = turn_value(e, plan, counter, &turn);
     bind_name(e, s, plan, counter, turn_ty, turn);
-    state::ThenBlocks finish = {.run = loop_end, .span = s->span};
+    state::ThenBlocks finish = state::then_blocks(loop_end, s->span);
     finish.blocks[0] = end;
     state::push_then_blocks(e, finish);
     state::ThenGeneral next = state::then_general(loop_step, s->span);
@@ -260,7 +275,10 @@ static state::Status slice_start(state::Emitter *e, const state::ThenGeneral *w,
     c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "slice");
     state::Ty counter = {};
     state::scalar_type(e, "usize", &counter);
-    Plan plan = {.counter = counter, .is_slice = true, .by_reference = w->flag, .element = *slice.element};
+    Plan plan = plan_of(counter);
+    plan.is_slice = true;
+    plan.by_reference = w->flag;
+    plan.element = *slice.element;
     plan.data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
     c::LLVMValueRef count = c::LLVMBuildExtractValue(e->builder, whole, 1, "count");
     plan.bound = c::LLVMBuildIntCast2(e->builder, count, counter.llvm, 0, "");
@@ -286,11 +304,11 @@ static state::Status array_start(state::Emitter *e, const state::ThenGeneral *w)
                                   w->span);
     state::Ty counter = {};
     state::scalar_type(e, "usize", &counter);
-    Plan plan = {.counter = counter,
-                 .is_array = true,
-                 .by_reference = w->flag,
-                 .array = place,
-                 .element = *place.ty.kind.array.element};
+    Plan plan = plan_of(counter);
+    plan.is_array = true;
+    plan.by_reference = w->flag;
+    plan.array = place;
+    plan.element = *place.ty.kind.array.element;
     plan.start = c::LLVMConstInt(counter.llvm, 0, 0);
     plan.bound = c::LLVMConstInt(counter.llvm, place.ty.kind.array.count, 0);
 
@@ -340,7 +358,8 @@ static state::Status range_start(state::Emitter *e, const state::ThenGeneral *w)
     if (has_first) try state::unify_operands(e, &first, &bound, w->span); // `range(count, width)`: usize and u32
     if (has_first && !state::same_type(first.ty, bound.ty))
         return state::failf(w->span, "range bounds of different types: ", first.ty.name, " and ", bound.ty.name);
-    Plan plan = {.counter = bound.ty, .bound = bound.llvm};
+    Plan plan = plan_of(bound.ty);
+    plan.bound = bound.llvm;
     plan.start = has_first ? first.llvm : c::LLVMConstInt(bound.ty.llvm, 0, 0);
     return build_loop(e, w->stmt, plan);
 }

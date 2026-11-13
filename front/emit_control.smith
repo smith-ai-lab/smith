@@ -127,7 +127,7 @@ export state::Status if_stmt(state::Emitter *e, const ast::Stmt *s) {
     c::LLVMBasicBlockRef end_block = new_block(e, "endif");
     if (!has_else) else_block = end_block;
     if (has_else) {
-        state::ThenBlocks end = {.run = if_end, .span = s->span};
+        state::ThenBlocks end = state::then_blocks(if_end, s->span);
         end.blocks[0] = end_block;
         state::push_then_blocks(e, end);
         state::push_statement(e, else_branch);
@@ -166,7 +166,7 @@ export state::Status while_stmt(state::Emitter *e, const ast::Stmt *s) {
     state::push_loop(e, (state::LoopTarget){.break_block = end_block,
                                             .continue_block = condition_block,
                                             .scope_depth = e->scope_count});
-    state::ThenBlocks end = {.run = while_end, .span = s->span};
+    state::ThenBlocks end = state::then_blocks(while_end, s->span);
     end.blocks[0] = condition_block;
     end.blocks[1] = end_block;
     state::push_then_blocks(e, end);
@@ -228,7 +228,7 @@ static state::Status for_step(state::Emitter *e, const state::ThenGeneral *w) {
         jump(e, w->blocks[1]);
         return state::success();
     }
-    state::ThenBlocks back = {.run = for_back, .span = w->span};
+    state::ThenBlocks back = state::then_blocks(for_back, w->span);
     back.blocks[0] = w->blocks[1];
     state::push_then_blocks(e, back);
     state::push_then_none(e, (state::ThenNone){.run = discard, .span = w->span});
@@ -283,7 +283,7 @@ export state::Status for_stmt(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind.for_stmt.is_constexpr) return stop(e, "`for constexpr` belongs to the type checker", s->span);
     state::begin_scope(e);
     c::LLVMBasicBlockRef end_block = new_block(e, "endfor");
-    state::ThenBlocks end = {.run = for_end, .span = s->span};
+    state::ThenBlocks end = state::then_blocks(for_end, s->span);
     end.blocks[0] = end_block;
     state::push_then_blocks(e, end);
     state::ThenGeneral start = state::then_general(for_start, s->span);
@@ -306,7 +306,7 @@ static void leave_loop(state::Emitter *e, c::LLVMBasicBlockRef target, ast::Span
         jump(e, target);
         return;
     }
-    state::ThenBlocks next = {.run = jump_to, .span = span};
+    state::ThenBlocks next = state::then_blocks(jump_to, span);
     next.blocks[0] = target;
     state::push_then_blocks(e, next);
     for (Usize i = first; i < e->defer_count; i++)

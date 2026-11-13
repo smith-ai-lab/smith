@@ -29,6 +29,18 @@ export struct Error {
     Usize instance;
 };
 
+// An `Error` with every field written: no module prefix and no instance, the message and the span given.
+export Error error_at(Str message, ast::Span span) {
+    Error error = {.message = message, .span = span, .module = "", .in_instance = false, .instance = 0};
+    return error;
+}
+
+// An `Error` that has no place in the tree (an LLVM message): the span is empty.
+export Error error_of(Str message) {
+    ast::Span none = {.start = 0, .end = 0};
+    return error_at(message, none);
+}
+
 // What the module is emitted for. The emitter never asks the host: the triple and the data layout come from here.
 // An empty `data_layout` leaves the module's unset.
 export struct Target {
@@ -78,13 +90,13 @@ export Str msg(char chars[:]) {
 // Every `Error.message` is a string of the allocator in force when it was made (the caller of `emit::module` frees it
 // with `mem::free(message.data)` when it is done), never a literal: `fail` copies the text it is given.
 export Status fail(Str message, ast::Span span) {
-    Error error = {.message = msg(format::push(message)), .span = span};
+    Error error = error_at(msg(format::push(message)), span);
     return {.error = error};
 }
 
 // A failure whose message is the pieces `args`, as `format::push` takes them: `failf(span, "unknown name ", name)`.
 export Status failf(ast::Span span, auto... args) {
-    Error error = {.message = msg(format::push(args...)), .span = span};
+    Error error = error_at(msg(format::push(args...)), span);
     return {.error = error};
 }
 
@@ -245,13 +257,13 @@ export Str expr_kind_name(const ast::Expr *x) {
 
 // A type that cannot be made, its message the pieces `args` as `format::push` takes them (#2949).
 export TyResult ty_fail_with(ast::Span span, auto... args) {
-    Error error = {.message = msg(format::push(args...)), .span = span};
+    Error error = error_at(msg(format::push(args...)), span);
     return {.error = error};
 }
 
 // A type that cannot be made.
 export TyResult ty_fail(Str message, ast::Span span) {
-    Error error = {.message = msg(format::push(message)), .span = span};
+    Error error = error_at(msg(format::push(message)), span);
     return {.error = error};
 }
 
@@ -629,6 +641,81 @@ export ThenGeneral then_general(Continuation run, ast::Span span) {
     return item;
 }
 
+// A `ThenBlocks` with every field written: the three blocks are null until the construction assigns them.
+export ThenBlocks then_blocks(BlocksRun run, ast::Span span) {
+    ThenBlocks item = {.run = run, .blocks = {nullptr, nullptr, nullptr}, .span = span};
+    return item;
+}
+
+// A `FieldInfo` with every field written: no default.
+export FieldInfo field_info(Str name, Ty ty) {
+    FieldInfo field = {.name = name, .ty = ty, .default_value = nullptr};
+    return field;
+}
+
+// An `Emitter` for `tree` with every field written: the hooks are null, the stacks empty, the debug info off. The
+// entry point assigns the hooks and the builders it creates.
+export Emitter emitter(c::LLVMContextRef context, c::LLVMModuleRef module, Options options, const ast::Module *tree) {
+    Ty empty = {.kind = {.integer = {}}, .llvm = nullptr, .name = ""};
+    Emitter e = {.context = context,
+                 .module = module,
+                 .builder = nullptr,
+                 .alloca_builder = nullptr,
+                 .target_data = nullptr,
+                 .options = options,
+                 .tree = tree,
+                 .functions = {},
+                 .function_count = 0,
+                 .function = nullptr,
+                 .entry_block = nullptr,
+                 .trap_block = nullptr,
+                 .result = empty,
+                 .locals = {},
+                 .local_count = 0,
+                 .scope_marks = {},
+                 .scope_count = 0,
+                 .loops = {},
+                 .loop_count = 0,
+                 .defers = {},
+                 .defer_count = 0,
+                 .records = {},
+                 .record_count = 0,
+                 .enums = {},
+                 .enum_count = 0,
+                 .lambda_frames = {},
+                 .lambda_frame_count = 0,
+                 .errors = {},
+                 .error_count = 0,
+                 .skipped = {},
+                 .skipped_count = 0,
+                 .instance_scope = "",
+                 .import_scope = "",
+                 .scoped_leaf = nullptr,
+                 .instance = nullptr,
+                 .local_types = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                 nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+                 .local_type_count = 0,
+                 .type_hook = nullptr,
+                 .node_type_hook = nullptr,
+                 .checked_type_hook = nullptr,
+                 .convert_hook = nullptr,
+                 .folding = false,
+                 .fold_hook = nullptr,
+                 .work = {},
+                 .work_count = 0,
+                 .values = {},
+                 .value_count = 0,
+                 .debug_builder = nullptr,
+                 .compile_unit = nullptr,
+                 .file = nullptr,
+                 .scope = nullptr,
+                 .line_starts = {},
+                 .parameters_left = 0,
+                 .next_parameter = 0,
+                 .owned = nullptr};
+    return e;
+}
+
 export void push_then_general(Emitter *e, ThenGeneral item) {
     Then then = {.general = item};
     Work work = {.then = then};
@@ -986,7 +1073,7 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     } else {
         return false;
     }
-    Ty t = {.kind = {.integer = {.bits = bits, .is_signed = signed_int}}, .name = name};
+    Ty t = {.kind = {.integer = {.bits = bits, .is_signed = signed_int}}, .llvm = nullptr, .name = name};
     if (is_bool) t.kind = .boolean;
     t.llvm = c::LLVMIntTypeInContext(e->context, bits);
     *ty = t;
