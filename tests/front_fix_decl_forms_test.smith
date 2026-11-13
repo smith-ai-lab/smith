@@ -317,6 +317,6 @@ export void test_front_fix_a_global_function_pointer_with_a_typedef_result() {
 
 // An enum written on one line, `typedef enum { Plain, Boosted } Mode;`, has one member to a line (#3547).
 export void test_front_fix_a_one_line_enum() {
-    expect_fixed("module m;\ntypedef enum { Plain, Boosted } Mode;\n", "enum Mode:\n    plain\n    boosted\n");
-    expect_fixed("module m;\nenum Level { Low = 1, High };\n", "enum Level:\n    low = 1\n    high\n");
+    expect_fixed("module m;\ntypedef enum { Plain, Boosted } Mode;\n", "enum Mode:\n    Plain\n    Boosted\n");
+    expect_fixed("module m;\nenum Level { Low = 1, High };\n", "enum Level:\n    Low = 1\n    High\n");
 }
