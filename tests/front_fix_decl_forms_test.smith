@@ -199,8 +199,7 @@ export void test_front_fix_leaving_or_chain_binds_every_later_read() {
         "true\n");
 }
 
-// #2647: a second test on a nested field, after the first one became a binding, is a binding too: the rest of the
-// block after `.v(x) := k else:` is a block of no span, and its statements still know where it ends.
+// #2647, #3598: a second test on a nested field after the first stays as written too, and the reads drop the variants.
 export void test_front_fix_leaving_variant_tests_one_after_the_other_are_each_a_binding() {
     expect_fixed("module m;\nexport struct Holder;\nexport struct Pair { Holder *left; };\n"
                  "export struct Holder { Kind kind; };\nexport typedef enum {\n    Pair pair;\n    Usize integer;\n"
@@ -210,8 +209,8 @@ export void test_front_fix_leaving_variant_tests_one_after_the_other_are_each_a_
                  "    return h->kind.pair.left->kind.integer;\n}\n",
                  "pub struct Holder\npub struct Pair:\n    pub left: *Holder\npub struct Holder:\n    pub kind: Kind\n"
                  "pub enum Kind:\n    pair: Pair\n    integer: usize\n    leaf\n"
-                 "fn f(h: *Holder) -> usize:\n    .pair(pair) := h.kind else:\n        return 0\n"
-                 "    .integer(integer) := pair.left.kind else:\n        return 0\n    return integer\n");
+                 "fn f(h: *Holder) -> usize:\n    if h.kind != .pair:\n        return 0\n"
+                 "    if h.kind.left.kind != .integer:\n        return 0\n    return h.kind.left.kind\n");
 }
 
 // A field named `type` is `ty` even when the text has a `ty` of its own, as the uses of it from another file are
