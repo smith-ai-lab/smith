@@ -878,8 +878,13 @@ static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) 
                                 " is given twice");
         seen[field] = true;
     }
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = construct_finish, .expr = x, .ty = record.ty, .number = count, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(construct_finish, x->span);
+        general.expr = x;
+        general.ty = record.ty;
+        general.number = count;
+        state::push_then_general(e, general);
+    }
     for (Usize i = count; i > 0; i--) {
         Usize field = 0;
         field_for(record, args, i - 1, &field);
@@ -1010,10 +1015,12 @@ static state::Status lambda_argument(state::Emitter *e, const state::ThenGeneral
 
 static void push_argument(state::Emitter *e, const ast::Expr *arg, state::Hint hint) {
     const ast::Expr *value = value_of(arg);
-    if (value->kind == .lambda)
-        state::push_then_general(
-            e, (state::ThenGeneral){.run = lambda_argument, .expr = value, .hint = hint, .span = value->span});
-    else
+    if (value->kind == .lambda) {
+        state::ThenGeneral item = state::then_general(lambda_argument, value->span);
+        item.expr = value;
+        item.hint = hint;
+        state::push_then_general(e, item);
+    } else
         state::push_eval(e, value, hint);
 }
 
@@ -1147,8 +1154,12 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
         release(sig);
         return slotted;
     }
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = call_finish, .expr = written, .number = count, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(call_finish, x->span);
+        general.expr = written;
+        general.number = count;
+        state::push_then_general(e, general);
+    }
     // The first argument runs first: it is pushed last.
     for (Usize i = count; i > 0; i--) {
         Bool extra = i - 1 >= countof(sig.params); // a variadic argument has no parameter to give it a type

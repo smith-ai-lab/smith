@@ -78,8 +78,9 @@ static state::Status branch_on_condition(state::Emitter *e, const state::ThenGen
 // Evaluate `condition`, then branch to `yes` or `no` and go on in `yes` (`continue_in` 0) or in `no` (1).
 static void push_condition(state::Emitter *e, const ast::Expr *condition, c::LLVMBasicBlockRef yes,
                            c::LLVMBasicBlockRef no, U64 continue_in) {
-    state::ThenGeneral item = {
-        .run = branch_on_condition, .expr = condition, .number = continue_in, .span = condition->span};
+    state::ThenGeneral item = state::then_general(branch_on_condition, condition->span);
+    item.expr = condition;
+    item.number = continue_in;
     item.blocks[0] = yes;
     item.blocks[1] = no;
     state::push_then_general(e, item);
@@ -131,7 +132,8 @@ export state::Status if_stmt(state::Emitter *e, const ast::Stmt *s) {
         state::push_then_blocks(e, end);
         state::push_statement(e, else_branch);
     }
-    state::ThenGeneral after = {.run = if_after_then, .flag = has_else, .span = s->span};
+    state::ThenGeneral after = state::then_general(if_after_then, s->span);
+    after.flag = has_else;
     after.blocks[0] = else_block;
     after.blocks[1] = end_block;
     state::push_then_general(e, after);
@@ -199,7 +201,8 @@ export state::Status do_while(state::Emitter *e, const ast::Stmt *s) {
     state::push_loop(e, (state::LoopTarget){.break_block = end_block,
                                             .continue_block = condition_block,
                                             .scope_depth = e->scope_count});
-    state::ThenGeneral next = {.run = do_condition, .stmt = s, .span = s->span};
+    state::ThenGeneral next = state::then_general(do_condition, s->span);
+    next.stmt = s;
     next.blocks[0] = body_block;
     next.blocks[1] = condition_block;
     next.blocks[2] = end_block;
@@ -248,7 +251,8 @@ static state::Status for_start(state::Emitter *e, const state::ThenGeneral *w) {
     position(e, condition_block);
     state::push_loop(
         e, (state::LoopTarget){.break_block = end_block, .continue_block = step_block, .scope_depth = e->scope_count});
-    state::ThenGeneral next = {.run = for_step, .stmt = w->stmt, .span = w->span};
+    state::ThenGeneral next = state::then_general(for_step, w->span);
+    next.stmt = w->stmt;
     next.blocks[0] = step_block;
     next.blocks[1] = condition_block;
     state::push_then_general(e, next);
@@ -282,7 +286,8 @@ export state::Status for_stmt(state::Emitter *e, const ast::Stmt *s) {
     state::ThenBlocks end = {.run = for_end, .span = s->span};
     end.blocks[0] = end_block;
     state::push_then_blocks(e, end);
-    state::ThenGeneral start = {.run = for_start, .stmt = s, .span = s->span};
+    state::ThenGeneral start = state::then_general(for_start, s->span);
+    start.stmt = s;
     start.blocks[0] = end_block;
     state::push_then_general(e, start);
     if (init != nullptr) state::push_statement(e, init);
@@ -749,7 +754,8 @@ static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w)
     else
         c::LLVMBuildCondBr(e->builder, left.llvm, end_block, right_block);
     position(e, right_block);
-    state::ThenGeneral finish = {.run = logical_finish, .expr = w->expr, .span = w->span};
+    state::ThenGeneral finish = state::then_general(logical_finish, w->span);
+    finish.expr = w->expr;
     finish.blocks[0] = left_end;
     finish.blocks[1] = end_block;
     state::push_then_general(e, finish);
@@ -816,7 +822,9 @@ static state::Status conditional_middle(state::Emitter *e, const state::ThenGene
     c::LLVMBasicBlockRef chosen_end = c::LLVMGetInsertBlock(e->builder);
     c::LLVMBuildBr(e->builder, w->blocks[1]);
     position(e, w->blocks[0]);
-    state::ThenGeneral finish = {.run = conditional_finish, .ty = chosen.ty, .value = chosen.llvm, .span = w->span};
+    state::ThenGeneral finish = state::then_general(conditional_finish, w->span);
+    finish.ty = chosen.ty;
+    finish.value = chosen.llvm;
     finish.blocks[0] = chosen_end;
     finish.blocks[1] = w->blocks[1];
     state::push_then_general(e, finish);
@@ -837,7 +845,8 @@ export state::Status conditional(state::Emitter *e, const ast::Expr *x, state::H
     c::LLVMBasicBlockRef then_block = new_block(e, "qthen");
     c::LLVMBasicBlockRef else_block = new_block(e, "qelse");
     c::LLVMBasicBlockRef end_block = new_block(e, "qend");
-    state::ThenGeneral middle = {.run = conditional_middle, .expr = x, .span = x->span};
+    state::ThenGeneral middle = state::then_general(conditional_middle, x->span);
+    middle.expr = x;
     middle.blocks[0] = else_block;
     middle.blocks[1] = end_block;
     state::push_then_general(e, middle);

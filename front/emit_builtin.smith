@@ -319,7 +319,12 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     }
     if (values > max_values)
         return state::failf(x->span, entry.name, " takes at most 24 arguments, the call has ", (U64)values);
-    state::push_then_general(e, (state::ThenGeneral){.run = finish, .expr = x, .number = values, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(finish, x->span);
+        general.expr = x;
+        general.number = values;
+        state::push_then_general(e, general);
+    }
     for (Usize i = countof(args); i > 0; i--) {
         state::Hint hint = state::no_hint(); // the format of `__builtin_snprintf` is a C string, not a `str`
         if ((entry.shape == .format || entry.shape == .va_format) && i == 3) {
@@ -421,7 +426,12 @@ export state::Status shaped_alloc(state::Emitter *e, const ast::Expr *x) {
     ast::ExprRef args[:] = x->kind.call.args;
     const ast::Expr *shape = args[countof(args) - 1];
     Usize rank = shape->kind == .array_lit ? countof(shape->kind.array_lit.items) : 1;
-    state::push_then_general(e, (state::ThenGeneral){.run = alloc_finish, .expr = x, .number = rank, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(alloc_finish, x->span);
+        general.expr = x;
+        general.number = rank;
+        state::push_then_general(e, general);
+    }
     for (Usize i = rank; i > 0; i--)
         state::push_eval(e, shape->kind == .array_lit ? shape->kind.array_lit.items[i - 1] : shape, state::no_hint());
     if (countof(args) == 3) state::push_eval(e, args[0], state::no_hint());
@@ -531,7 +541,12 @@ export state::Status filled(state::Emitter *e, const ast::Expr *x) {
     if (typed == .error) return {.error = typed.error};
     state::Ty array = typed.ok;
     if (array.kind != .array) return state::fail("array.filled is not an array", x->span);
-    state::push_then_general(e, (state::ThenGeneral){.run = filled_finish, .expr = x, .ty = array, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(filled_finish, x->span);
+        general.expr = x;
+        general.ty = array;
+        state::push_then_general(e, general);
+    }
     state::SizedTy chain[16];
     Usize n = filled_chain(e, x, array.kind.array, chain);
 

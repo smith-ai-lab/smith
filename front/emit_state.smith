@@ -610,6 +610,25 @@ export void push_then_blocks(Emitter *e, ThenBlocks item) {
     push_work(e, work);
 }
 
+// A `ThenGeneral` with every field written: the ones a continuation does not read are null, false or empty, and the
+// construction assigns the ones it does.
+export ThenGeneral then_general(Continuation run, ast::Span span) {
+    Ty empty = {.kind = {.integer = {}}, .llvm = nullptr, .name = ""};
+    ThenGeneral item = {.run = run,
+                        .branch = nullptr,
+                        .expr = nullptr,
+                        .stmt = nullptr,
+                        .decl = nullptr,
+                        .hint = {.present = false, .ty = empty},
+                        .ty = empty,
+                        .number = 0,
+                        .flag = false,
+                        .blocks = {nullptr, nullptr, nullptr},
+                        .value = nullptr,
+                        .span = span};
+    return item;
+}
+
 export void push_then_general(Emitter *e, ThenGeneral item) {
     Then then = {.general = item};
     Work work = {.then = then};
@@ -623,7 +642,10 @@ export void push_branch(Emitter *e, const ThenGeneral *w, const ast::Stmt *s) {
         push_statement(e, s);
         return;
     }
-    ThenGeneral item = {.run = w->branch, .stmt = s, .ty = w->ty, .value = w->value, .span = s->span};
+    ThenGeneral item = then_general(w->branch, s->span);
+    item.stmt = s;
+    item.ty = w->ty;
+    item.value = w->value;
     push_then_general(e, item);
 }
 

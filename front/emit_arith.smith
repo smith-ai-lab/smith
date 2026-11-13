@@ -956,8 +956,12 @@ export state::Status float_cast(state::Emitter *e, const ast::Expr *x, state::Hi
         return {.error = made.error};
     }
     Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = float_cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(float_cast_finish, x->span);
+        general.ty = made.ok;
+        general.flag = checked;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, operand, state::no_hint());
     return state::success();
 }

@@ -274,8 +274,12 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
     Usize count = countof(items);
     Usize record_at = 0;
     if (record_hint(e, x, hint, &record_at)) {
-        state::push_then_general(
-            e, (state::ThenGeneral){.run = record_finish, .expr = x, .number = (U64)record_at, .span = x->span});
+        {
+            state::ThenGeneral general = state::then_general(record_finish, x->span);
+            general.expr = x;
+            general.number = (U64)record_at;
+            state::push_then_general(e, general);
+        }
         for (Usize i = count; i > 0; i--) {
             const ast::Expr *item = items[i - 1];
             if (!(item->kind == .named_arg)) continue;
@@ -300,7 +304,11 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
     }
     if (ty.kind != .tuple || ty.kind.tuple.part_count != count)
         return state::failf(x->span, "the tuple ", ty.name, " does not have ", count, " elements");
-    state::push_then_general(e, (state::ThenGeneral){.run = literal_finish, .ty = ty, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(literal_finish, x->span);
+        general.ty = ty;
+        state::push_then_general(e, general);
+    }
     for (Usize i = count; i > 0; i--) {
         const ast::Expr *item = items[i - 1];
         if (item->kind == .named_arg) item = item->kind.named_arg.value;
@@ -361,7 +369,11 @@ export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _
     }
     const ast::Expr *base_node = x->kind.member.base;
     Usize index = index_of(e, x->kind.member.name, base_node);
-    state::push_then_general(e, (state::ThenGeneral){.run = member_finish, .number = index, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(member_finish, x->span);
+        general.number = index;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, base_node, state::no_hint());
     return state::success();
 }
@@ -383,7 +395,11 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
     }
     const ast::Expr *base_node = x->kind.member.base;
     Usize index = index_of(e, x->kind.member.name, base_node);
-    state::push_then_general(e, (state::ThenGeneral){.run = place_finish, .number = index, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(place_finish, x->span);
+        general.number = index;
+        state::push_then_general(e, general);
+    }
     state::push_place(e, base_node);
     return state::success();
 }
@@ -426,7 +442,11 @@ export state::Status destructure(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .destructure) {
         return state::fail("not a destructuring declaration", s->span);
     }
-    state::push_then_general(e, (state::ThenGeneral){.run = destructure_finish, .stmt = s, .span = s->span});
+    {
+        state::ThenGeneral general = state::then_general(destructure_finish, s->span);
+        general.stmt = s;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, s->kind.destructure.init, state::no_hint());
     return state::success();
 }

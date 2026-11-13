@@ -566,13 +566,15 @@ static state::Status global_read(state::Emitter *e, const state::ThenGeneral *w)
 
 // A global read by its bare name: the place plus a load.
 export state::Status name_ref(state::Emitter *e, const ast::Expr *x) {
-    state::ThenGeneral w = {.expr = x, .span = x->span};
+    state::ThenGeneral w = state::then_general(nullptr, x->span);
+    w.expr = x;
     return global_read(e, &w);
 }
 
 // A global as a place by its bare name.
 export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
-    state::ThenGeneral w = {.expr = x, .span = x->span};
+    state::ThenGeneral w = state::then_general(nullptr, x->span);
+    w.expr = x;
     return global_place(e, &w);
 }
 
@@ -583,7 +585,11 @@ static void push_place_of(state::Emitter *e, const ast::Expr *x) {
         state::Local local = {};
         if (countof(path.segments) == 1 && !state::find_local(e, path.segments[0].text, &local) &&
             find_global(e, path.segments[0].text) != nullptr) {
-            state::push_then_general(e, (state::ThenGeneral){.run = global_place, .expr = x, .span = x->span});
+            {
+                state::ThenGeneral general = state::then_general(global_place, x->span);
+                general.expr = x;
+                state::push_then_general(e, general);
+            }
             return;
         }
     }
@@ -1040,7 +1046,12 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
     }
     const ast::Expr *base = x->kind.member.base;
     Bool arrow = x->kind.member.arrow;
-    state::push_then_general(e, (state::ThenGeneral){.run = member_finish, .expr = x, .flag = arrow, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(member_finish, x->span);
+        general.expr = x;
+        general.flag = arrow;
+        state::push_then_general(e, general);
+    }
     if (arrow)
         state::push_eval(e, base, state::no_hint());
     else
@@ -1184,14 +1195,22 @@ export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hin
     if (made.ok.kind == .pointer && is_lvalue(operand)) {
         state::TyResult held = state::type_of_node(e, operand);
         if (held == .ok && held.ok.kind == .array) {
-            state::push_then_general(e, (state::ThenGeneral){.run = array_cast_finish, .ty = made.ok, .span = x->span});
+            {
+                state::ThenGeneral general = state::then_general(array_cast_finish, x->span);
+                general.ty = made.ok;
+                state::push_then_general(e, general);
+            }
             push_address(e, operand);
             return state::success();
         }
     }
     Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
-    state::push_then_general(e,
-                             (state::ThenGeneral){.run = cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(cast_finish, x->span);
+        general.ty = made.ok;
+        general.flag = checked;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, operand, hint);
     return state::success();
 }
@@ -1496,7 +1515,11 @@ static state::Status array_slice_finish(state::Emitter *e, const state::ThenGene
 
 // An array that is a place where a slice is expected: `{ address, N }`; the slice ALIASES the array.
 export state::Status array_as_slice(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    state::push_then_general(e, (state::ThenGeneral){.run = array_slice_finish, .ty = hint.ty, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(array_slice_finish, x->span);
+        general.ty = hint.ty;
+        state::push_then_general(e, general);
+    }
     push_place_of(e, x);
     return state::success();
 }
@@ -1665,12 +1688,14 @@ static state::Status compound_store(state::Emitter *e, const state::ThenGeneral 
     if (!state::same_type(want, value.ty))
         return state::failf(items[position].value->span, "initializing ", want.name, " with ", value.ty.name);
     c::LLVMBuildStore(e->builder, value.llvm, part_address(e, w->ty, w->value, part));
-    state::push_then_general(e, (state::ThenGeneral){.run = compound_step,
-                                                     .expr = w->expr,
-                                                     .ty = w->ty,
-                                                     .number = w->number + 1,
-                                                     .value = w->value,
-                                                     .span = w->span});
+    {
+        state::ThenGeneral general = state::then_general(compound_step, w->span);
+        general.expr = w->expr;
+        general.ty = w->ty;
+        general.number = w->number + 1;
+        general.value = w->value;
+        state::push_then_general(e, general);
+    }
     return state::success();
 }
 
@@ -1689,12 +1714,14 @@ static state::Status compound_step(state::Emitter *e, const state::ThenGeneral *
     Usize part = 0;
     state::Ty want = {};
     try item_target(e, w->ty, items[position], position, &part, &want);
-    state::push_then_general(e, (state::ThenGeneral){.run = compound_store,
-                                                     .expr = w->expr,
-                                                     .ty = w->ty,
-                                                     .number = w->number,
-                                                     .value = w->value,
-                                                     .span = w->span});
+    {
+        state::ThenGeneral general = state::then_general(compound_store, w->span);
+        general.expr = w->expr;
+        general.ty = w->ty;
+        general.number = w->number;
+        general.value = w->value;
+        state::push_then_general(e, general);
+    }
     state::push_eval(e, items[position].value, state::hint_of(want));
     return state::success();
 }
@@ -1738,8 +1765,13 @@ export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint
     if (ty.kind != .record && ty.kind != .array) return state::not_emitted("compound literal of this type", x->span);
     c::LLVMValueRef slot = state::new_alloca(e, ty, "compound");
     c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = compound_step, .expr = x, .ty = ty, .value = slot, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(compound_step, x->span);
+        general.expr = x;
+        general.ty = ty;
+        general.value = slot;
+        state::push_then_general(e, general);
+    }
     return state::success();
 }
 
@@ -1803,12 +1835,14 @@ export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state:
     if (shape.count != countof(items)) {
         return state::failf(x->span, "the array has ", shape.count, " elements, the literal ", countof(items));
     }
-    state::push_then_general(e, (state::ThenGeneral){.run = array_literal_finish,
-                                                     .hint = state::hint_of(want),
-                                                     .ty = array,
-                                                     .flag = want.kind == .slice,
-                                                     .number = countof(items),
-                                                     .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(array_literal_finish, x->span);
+        general.hint = state::hint_of(want);
+        general.ty = array;
+        general.flag = want.kind == .slice;
+        general.number = countof(items);
+        state::push_then_general(e, general);
+    }
     for (Usize i = countof(items); i > 0; i--)
         state::push_eval(e, items[i - 1], state::hint_of(*shape.element));
     return state::success();

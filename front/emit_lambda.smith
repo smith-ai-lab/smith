@@ -292,7 +292,11 @@ static state::Status body_return(state::Emitter *e, const state::ThenNone *w) {
         try state::convert(e, value, e->result, w->span, .return_value);
         value = state::pop_value(e);
     }
-    state::push_then_general(e, (state::ThenGeneral){.run = ret_value, .value = value.llvm, .span = w->span});
+    {
+        state::ThenGeneral general = state::then_general(ret_value, w->span);
+        general.value = value.llvm;
+        state::push_then_general(e, general);
+    }
     try control::before_return(e, w->span);
     return state::success();
 }
@@ -326,9 +330,12 @@ static void push_body(state::Emitter *e, const ast::Stmt *body) {
     state::Hint hint = state::hint_of(e->result);
     if (last->kind == .expression)
         state::push_eval(e, last->kind.expression.value, hint);
-    else
-        state::push_then_general(
-            e, (state::ThenGeneral){.run = value_start, .stmt = last, .hint = hint, .span = last->span});
+    else {
+        state::ThenGeneral item = state::then_general(value_start, last->span);
+        item.stmt = last;
+        item.hint = hint;
+        state::push_then_general(e, item);
+    }
     for (Usize i = countof(items) - 1; i > 0; i--)
         state::push_statement(e, items[i - 1]);
 }
@@ -638,8 +645,13 @@ export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty
             return state::fail("a `fn` value takes its arguments by position", arg->span);
         }
     }
-    state::push_then_general(
-        e, (state::ThenGeneral){.run = call_finish, .expr = x, .number = count, .ty = func_ty, .span = x->span});
+    {
+        state::ThenGeneral general = state::then_general(call_finish, x->span);
+        general.expr = x;
+        general.number = count;
+        general.ty = func_ty;
+        state::push_then_general(e, general);
+    }
     for (Usize i = count; i > 0; i--) {
         state::push_eval(e, args[i - 1], state::hint_of(part(shape, i - 1)));
     }
