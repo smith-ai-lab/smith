@@ -7,7 +7,8 @@ module ci_scope_test;
 
 import std::test;
 import scratch;
-import <stdio.h>;
+import std::format;
+import std::mem;
 
 // Cuts the Scope step's script out of the workflow, makes a repository with one commit of a code file and a concept,
 // then for each case: commits the named file, runs the script as `workflow_dispatch` against the commit before it
@@ -74,11 +75,11 @@ static const char *const parity =
     "echo \"hook: $(smith check --plan | grep -E '^(scope|mac_run|docs_tests)=' | paste -sd' ')\"; }; ";
 
 static void check_parity(const char *label, const char *path, const char *answer) {
-    char want[512];
-    char cases[1024];
-    c::snprintf(cases, sizeof cases, "%sparity %s", parity, path);
-    c::snprintf(want, sizeof want, "queue: %s\nhook: %s\n", answer, answer);
-    check(label, cases, want);
+    format::Chars cases = format::push(parity, "parity ", path);
+    format::Chars want = format::push("queue: ", answer, "\nhook: ", answer, "\n");
+    check(label, cases.data, want.data);
+    mem::free(cases.data);
+    mem::free(want.data);
 }
 
 export void test_the_hook_and_the_queue_agree_on_a_diff() {
