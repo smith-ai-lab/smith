@@ -706,8 +706,71 @@ static ast::Stmt *static_assert_statement(parse::Parser *p) {
 // Opening a construct
 
 // `{`, `if`, `while`, `do`, `defer` and `l:` open a frame; they read their header and give the frame.
+// A frame of the kind `kind` that starts at `start`, with every field written: numbers 0, flags false, text empty,
+// slices empty and each pointer null until its construct is read (#3562). A construction sets the fields it uses.
+static Frame frame_of(FrameKind kind, U32 start) {
+    // Positional, in the order of the struct: a designated list this long is over the 200 tokens the old pipeline reads
+    // in an initializer of a struct with slices.
+    ast::StmtRef items[:] = {};
+    ast::SwitchCase cases[:] = {};
+    ast::ExprRef values[:] = {};
+    ast::StmtRef body[:] = {};
+    Link links[:] = {};
+    parse::Edits switch_edits = {};
+    Str empty = "";
+    Frame frame = {
+        kind,                 // kind
+        start,                // start
+        nullptr,              // condition
+        nullptr,              // init
+        nullptr,              // step
+        nullptr,              // range
+        nullptr,              // index
+        nullptr,              // first
+        false,                // is_constexpr
+        empty,                // label
+        items,                // items
+        0,                    // item_count
+        cases,                // cases
+        values,               // values
+        0,                    // value_count
+        body,                 // body
+        0,                    // body_count
+        false,                // case_open
+        false,                // case_default
+        0,                    // case_start
+        false,                // no_body
+        false,                // braced
+        false,                // layout
+        false,                // is_let
+        nullptr,              // lead
+        false,                // value_tail
+        ast::pattern("", ""), // pattern
+        links,                // links
+        false,                // old
+        false,                // has_close
+        false,                // keep_parens
+        false,                // else_wrap
+        0,                    // else_end
+        point(0),             // cut
+        empty,                // head
+        point(0),             // close
+        empty,                // message
+        empty,                // tail
+        0,                    // body_from
+        false,                // wrapped
+        switch_edits,         // switch_edits
+        0,                    // switch_edit_count
+        0,                    // switch_warning
+        0,                    // last_label
+        0,                    // case_from
+        false,                // switch_bad
+    };
+    return frame;
+}
+
 static Frame open_block(parse::Parser *p) {
-    Frame frame = {.kind = block_frame, .start = parse::advance(p).span.start};
+    Frame frame = frame_of(block_frame, parse::advance(p).span.start);
     return frame;
 }
 
@@ -997,7 +1060,8 @@ static Bool refutable_head(const parse::Parser *p) {
 
 // `.tuple(tuple) := base.kind else: return .none`: the pattern, the value and the `else:`; its body follows.
 static Frame open_refutable(parse::Parser *p, Bool parent_layout, Bool tail) {
-    Frame frame = {.kind = bind_else, .start = parse::peek(p).span.start, .is_let = true};
+    Frame frame = frame_of(bind_else, parse::peek(p).span.start);
+    frame.is_let = true;
     frame.pattern = head_pattern(p);
     frame.pattern.refutable = true;
     frame.layout = parent_layout;
@@ -1081,7 +1145,8 @@ static ast::Expr *read_lead(parse::Parser *p, Usize before) {
 // `if c {` and `while c {`, without parentheses. `if x := opt:` and `while item := it.next():` bind (#2316); a
 // `while` that binds is `while true:` around `if PATTERN := value: body else: break` (close_one).
 static Frame open_bare(parse::Parser *p, FrameKind kind) {
-    Frame frame = {.kind = kind, .start = parse::advance(p).span.start, .braced = true};
+    Frame frame = frame_of(kind, parse::advance(p).span.start);
+    frame.braced = true;
     Usize before = countof(p->errors);
     if (!binding_head(p) && !old_let_head(p) && lead_ahead(p)) {
         frame.lead = read_lead(p, before);
@@ -1202,7 +1267,7 @@ static void join_else_fix(parse::Parser *p) {
 static Frame open_if(parse::Parser *p) {
     if (new_header(p)) return open_bare(p, if_then);
     lex::Token keyword = parse::advance(p);
-    Frame frame = {.kind = if_then, .start = keyword.span.start};
+    Frame frame = frame_of(if_then, keyword.span.start);
     U32 cut_start = parse::peek(p).span.start;
     frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
     Header head = header(p);
@@ -1217,7 +1282,7 @@ static Frame open_if(parse::Parser *p) {
 static Frame open_while(parse::Parser *p) {
     if (new_header(p)) return open_bare(p, while_body);
     lex::Token keyword = parse::advance(p);
-    Frame frame = {.kind = while_body, .start = keyword.span.start};
+    Frame frame = frame_of(while_body, keyword.span.start);
     U32 cut_start = parse::peek(p).span.start;
     Header head = header(p);
     frame.condition = head.condition;
@@ -1241,7 +1306,7 @@ static Bool new_for(const parse::Parser *p) {
 // `for x in xs {` and `for (i, x) in xs {`. The node is made here, and its body is set when the block is read
 // (`frame.init` holds it).
 static Frame open_for_in(parse::Parser *p) {
-    Frame frame = {.kind = for_in_body, .start = parse::advance(p).span.start};
+    Frame frame = frame_of(for_in_body, parse::advance(p).span.start);
     Usize before = countof(p->errors);
     Bool is_tuple = parse::accept(p, lex::left_paren);
     ast::Identifier names[:] = {};
@@ -1282,7 +1347,7 @@ static Bool index_for(const parse::Parser *p) {
 // `for i, j:`. The names are new constants of the body: a repeated one, or an empty body, is an error. The node is
 // made here and its body set when the block is read (`frame.init` holds it).
 static Frame open_for_index(parse::Parser *p) {
-    Frame frame = {.kind = for_index_body, .start = parse::advance(p).span.start};
+    Frame frame = frame_of(for_index_body, parse::advance(p).span.start);
     Usize before = countof(p->errors);
     ast::Identifier names[:] = {};
     Usize limit = countof(p->tokens);
@@ -1426,14 +1491,14 @@ static ast::Stmt *match_statement(parse::Parser *p) {
 }
 
 static Frame open_simple(parse::Parser *p, FrameKind kind) {
-    Frame frame = {.kind = kind, .start = parse::advance(p).span.start};
+    Frame frame = frame_of(kind, parse::advance(p).span.start);
     if (kind == do_body) frame.body_from = p->position;
     if (p->layout && kind != do_body) parse::accept(p, lex::colon); // `defer:` and then an indented block
     return frame;
 }
 
 static Frame open_label(parse::Parser *p) {
-    Frame frame = {.kind = label_body, .start = parse::peek(p).span.start};
+    Frame frame = frame_of(label_body, parse::peek(p).span.start);
     warn(p, parse::peek(p).span, "smith has no labels, as it has no goto: use a loop, `break` or `defer`");
     frame.label = parse::text(p, parse::advance(p));
     parse::advance(p);
@@ -1739,7 +1804,7 @@ static ast::Stmt *pointer_statement(parse::Parser *p) {
 static Frame open_for(parse::Parser *p) {
     if (index_for(p)) return open_for_index(p);
     if (new_for(p)) return open_for_in(p);
-    Frame frame = {.kind = for_body, .start = parse::advance(p).span.start};
+    Frame frame = frame_of(for_body, parse::advance(p).span.start);
     U32 cut_start = parse::peek(p).span.start;
     frame.is_constexpr = parse::accept(p, lex::kw_constexpr);
     Usize open = p->position;
@@ -1813,7 +1878,8 @@ static ast::Stmt *open_switch(parse::Parser *p, Stack *stack) {
     Usize warning = countof(p->warnings);
     warn(p, parse::peek(p).span, "`switch` is `match` in smith: write `match v { .a => x }`, one arm per line");
     U32 start = parse::advance(p).span.start;
-    Frame frame = {.kind = switch_frame, .start = start, .switch_warning = warning};
+    Frame frame = frame_of(switch_frame, start);
+    frame.switch_warning = warning;
     Usize group_end = after_group(p, 0);
     Str condition = "";
     if (parse::at(p, lex::left_paren) && group_end >= 3) condition = tokens_text(p, 1, group_end - 2);
@@ -1853,7 +1919,8 @@ static ast::Stmt *layout_line(parse::Parser *p, Stack *stack) {
     if (parse::peek_at(p, 1).kind == lex::indent) {
         parse::advance(p);
         parse::advance(p);
-        Frame frame = {.kind = block_frame, .start = at, .layout = true};
+        Frame frame = frame_of(block_frame, at);
+        frame.layout = true;
         push(stack, frame);
         return nullptr;
     }
