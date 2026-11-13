@@ -233,14 +233,14 @@ static Str node_text() {
     return "struct Node:\n    kind: Kind\n\nenum Kind:\n    next: *Node\n    leaf\n\n";
 }
 
-// A write of the tested name whose right side reads the payload binds it: the binding is a copy taken at the test
-// (#3210).
-export void test_front_fix_guard_a_payload_read_that_moves_the_name_is_a_binding() {
+// A write of the tested name whose right side reads the payload: the read comes before the write, so `n.kind` is the
+// payload still, and it is written direct (#3616; #3210 bound it before the checker narrowed a tested path).
+export void test_front_fix_guard_a_payload_read_that_moves_the_name_is_read_direct() {
     expect_fixed(as_str(format::push(node_text(), "fn last(mut n: *Node) -> bool:\n    while n != nullptr:\n"
                                                   "        if n.kind == .next:\n            n = n.kind.next\n"
                                                   "        else:\n            return false\n    true\n")),
                  as_str(format::push(node_text(), "fn last(mut n: *Node) -> bool:\n    while n != nullptr:\n"
-                                                  "        if .next(next) := n.kind:\n            n = next\n"
+                                                  "        if n.kind == .next:\n            n = n.kind\n"
                                                   "        else:\n            return false\n    true\n")));
 }
 
@@ -266,4 +266,17 @@ export void test_front_fix_guard_a_field_test_is_left_and_the_payload_is_read_di
                                                   "        return 0\n    return n.kind.pair\n")),
                  as_str(format::push(pair_text(), "fn other(n: *Node) -> i32:\n    if n.kind != .pair:\n"
                                                   "        return 0\n    return n.kind\n")));
+}
+
+// A loop that writes the root of a tested path after the reads (#3616): the reads before the write are the payload.
+export void test_front_fix_guard_a_loop_that_writes_the_root_after_the_reads_reads_direct() {
+    expect_fixed(
+        as_str(format::push(pair_text(), "fn run(s: *Node) -> i32:\n    mut c: *Node = s\n    mut k: i32 = 0\n"
+                                         "    while k < 3:\n"
+                                         "        if c.kind != .pair or c.kind.pair == 0 or k == 2:\n"
+                                         "            return 0\n        k += c.kind.pair\n        c = s\n    k\n")),
+        as_str(format::push(pair_text(), "fn run(s: *Node) -> i32:\n    mut c: *Node = s\n    mut k: i32 = 0\n"
+                                         "    while k < 3:\n"
+                                         "        if c.kind != .pair or c.kind == 0 or k == 2:\n"
+                                         "            return 0\n        k += c.kind\n        c = s\n    k\n")));
 }

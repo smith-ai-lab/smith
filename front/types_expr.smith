@@ -4265,7 +4265,6 @@ static void spoil_written(types::Checked *c, const ast::Expr *place) {
         Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
         if (inside && leads_to(place, g->base) && g != kept) {
             g->spoiled = true;
-            g->through = g->through || g->direct; // a write of the root is the text pass's, as for a name (#3210)
         }
     }
     while (place->kind == .member || place->kind == .index) {
