@@ -1,1 +1,1 @@
-str-typedef-lowering/text.smith: error: expected the type's name, found `str` (3:27) [removed_b]
+str-typedef-lowering/text.smith: error: the name `str` is a built-in type; choose another name (3:27) [removed_b]

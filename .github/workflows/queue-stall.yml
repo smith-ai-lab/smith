@@ -1,0 +1,103 @@
+# The merge queue's stall alarm (#3444). On 2026-11-12 the queue merged nothing from 19:17Z for over an hour while main
+# stayed green: a faulty gate refused pull requests, each removal cancelled the run behind it, and each worker saw only its
+# own pull request dropped. Nothing measured whether the queue was merging. When a `merge_group` run of ci finishes, this
+# job reads the last three finished ones; if none ended `success` it opens the issue "The merge queue is stalled" (p0, task)
+# or, when it is open, edits its body (never a second issue, never a comment); when the newest ended `success` it closes it.
+# It only reports: no retry, no dequeue, no setting changed. The decision and the body are scripts/queue_stall.c (tested by
+# tests/queue_stall_test.smith); this file fetches the runs and writes the issue. queue-heal's roadmap sweep puts a p0
+# issue first under the roadmap, so the issue is not placed here. Waking the lead is part 4 of #3444 and not built yet.
+name: queue-stall
+run-name: "queue-stall"
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Read the runs and print the verdict and the body, write no issue (the same convention as queue-heal)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  # one at a time and none cancelled: two runs racing would open two issues
+  group: queue-stall
+  cancel-in-progress: false
+
+jobs:
+  stall:
+    # only the end of a queue run matters; pull request runs of ci are not this job's business
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+      TITLE: The merge queue is stalled
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/queue_stall.c
+          sparse-checkout-cone-mode: false
+      - name: Judge the last three finished queue runs
+        shell: bash
+        run: |
+          set -eu
+          start=$SECONDS
+          cc -std=gnu2x -O1 scripts/queue_stall.c -o "$RUNNER_TEMP/queue_stall"
+          # the three newest finished merge_group runs of ci, newest first by the time they ended
+          runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=completed -f per_page=10 \
+            --jq '.workflow_runs | sort_by(.updated_at) | reverse | .[:3][] | [.id, (.head_branch | capture("pr-(?<n>[0-9]+)-").n // "?"), .conclusion, .html_url] | @tsv')
+          feed=$RUNNER_TEMP/feed; : > "$feed"
+          while IFS=$'\t' read -r id pr conclusion url; do
+            [ -n "$id" ] || continue
+            # the first failing job: a failed one that is not the final `ci` gate, else the gate, else the first cancelled
+            jobs=$(gh api -X GET "repos/$REPO/actions/runs/$id/jobs" -f per_page=100 --paginate \
+              --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | [.conclusion, .name, .id, .started_at] | @tsv' | sort -t$'\t' -k4,4)
+            pick=$(echo "$jobs" | awk -F'\t' '$1 == "failure" && $2 != "ci"' | head -n 1)
+            [ -n "$pick" ] || pick=$(echo "$jobs" | awk -F'\t' '$1 == "failure"' | head -n 1)
+            [ -n "$pick" ] || pick=$(echo "$jobs" | awk -F'\t' '$1 == "cancelled"' | head -n 1)
+            name=; job=
+            if [ -n "$pick" ]; then name=$(echo "$pick" | cut -f2); job=$(echo "$pick" | cut -f3); fi
+            printf 'run\t%s\t%s\t%s\t%s\t%s\n' "$id" "$pr" "$conclusion" "$url" "$name" >> "$feed"
+            if [ -n "$job" ] && [ "$conclusion" != success ]; then
+              # the job's ##[error] lines and, for the count job, the frontend-regressed and frontend-base lines
+              { gh api "repos/$REPO/actions/jobs/$job/logs" 2>/dev/null || true; } \
+                | grep -E '##\[error\]|frontend-regressed|frontend-base' | sed -E 's/^[0-9T:.Z-]+ //' | head -n 8 \
+                | while IFS= read -r l; do printf 'err\t%s\n' "$l"; done >> "$feed" || true
+            fi
+          done <<< "$runs"
+          "$RUNNER_TEMP/queue_stall" < "$feed" > "$RUNNER_TEMP/out"
+          verdict=$(head -n 1 "$RUNNER_TEMP/out")
+          tail -n +2 "$RUNNER_TEMP/out" > "$RUNNER_TEMP/body.md"
+          number=$(gh api -X GET "repos/$REPO/issues" -f labels=p0 -f state=open -f per_page=100 --paginate \
+            --jq ".[] | select(.pull_request | not) | select(.title == \"$TITLE\") | .number" | head -n 1)
+          echo "queue-stall: verdict $verdict, open issue ${number:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
+          dry() { [ "$DRY_RUN" = true ]; }
+          case "$verdict" in
+            stalled)
+              if dry; then echo "dry-run: would write the issue:"; cat "$RUNNER_TEMP/body.md"
+              elif [ -n "$number" ]; then
+                gh api -X PATCH "repos/$REPO/issues/$number" -F body=@"$RUNNER_TEMP/body.md" --silent
+                echo "queue-stall: edited #$number" | tee -a "$GITHUB_STEP_SUMMARY"
+              else
+                n=$(gh api -X POST "repos/$REPO/issues" -f title="$TITLE" -F body=@"$RUNNER_TEMP/body.md" -f 'labels[]=p0' -f 'labels[]=task' --jq .number)
+                echo "queue-stall: opened #$n" | tee -a "$GITHUB_STEP_SUMMARY"
+              fi ;;
+            green)
+              if [ -z "$number" ]; then :
+              elif dry; then echo "dry-run: would close #$number"
+              else
+                gh api -X PATCH "repos/$REPO/issues/$number" -f state=closed -f state_reason=completed --silent
+                echo "queue-stall: closed #$number" | tee -a "$GITHUB_STEP_SUMMARY"
+              fi ;;
+          esac
+          echo "queue-stall: took $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"

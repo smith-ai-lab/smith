@@ -1,0 +1,122 @@
+// scripts/queue_stall.c (issue #3444): the merge queue's stall alarm, replayed with the five `merge_group` runs of ci
+// of 2026-11-12 19:17Z-20:12Z (43288617526, 43290056213, 43291984824, 43294339845, 43296323465: none merged, main
+// green) and with an ordinary hour of green runs. The workflow queue-stall.yml opens the issue on the first `stalled`
+// verdict, edits its body on each later one and closes it on `green`, so the verdicts after each run are the issue's
+// life. Never touches the network. The tool is built with the system's compiler, as CI builds it: clang on macOS, cc as
+// gnu2x on Linux.
+//
+// smith-covers: scripts/queue_stall.c
+module queue_stall_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+// r1..r5 are the five runs, each one `run` record plus its `err` lines (what the jobs' logs held that night); g1..g10
+// are ten green runs. A test feeds the newest runs, newest first, with `cat r3 r2 r1 | ./queue_stall`.
+constexpr const char *setup =
+    "set -e; "
+    "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
+    "$c -x c queue_stall.c -o queue_stall; "
+    "u=https://github.com/smith-ai-lab/smith/actions/runs; "
+    "run() { printf 'run\\t%s\\t%s\\t%s\\t%s/%s\\t%s\\n' \"$2\" \"$3\" \"$4\" \"$u\" \"$2\" \"$5\" > $1; }; "
+    "run r1 43288617526 3423 cancelled 'test-linux (8, 8)'; "
+    "run r2 43290056213 3427 cancelled count; "
+    "printf 'err\\ta CI job result is cancelled, not success or skipped\\n' >> r2; "
+    "run r3 43291984824 3414 failure 'count-shard (7)'; "
+    "printf 'err\\t##[error]The runner has received a shutdown signal.\\n' >> r3; "
+    "printf 'err\\tfrontend-base: 9e877f1\\n' >> r3; "
+    "run r4 43294339845 3429 cancelled count; "
+    "run r5 43296323465 3433 cancelled 'count-shard (3)'; "
+    "i=1; while [ $i -le 10 ]; do run g$i $((43300000000+i)) $((3500+i)) success ''; i=$((i+1)); done; "
+    "printf 'held\\tthe count gate was held in report-only: it would have refused #3414\\n' > held";
+
+static void prepare(const scratch::Project *p) {
+    scratch::copy_tree(p, "scripts/queue_stall.c", "queue_stall.c");
+    scratch::Run made = scratch::sh(p, setup);
+    scratch::expect_status("queue_stall: the tool is built and the runs are written", 0, &made);
+}
+
+static const char *first_line(const char *text) {
+    static char line[32];
+    __builtin_snprintf(line, sizeof line, "%.*s", (I32)__builtin_strcspn(text, "\n"), text);
+    return line;
+}
+
+static const char *verdict(const scratch::Project *p, const char *files) {
+    char command[256];
+    __builtin_snprintf(command, sizeof command, "cat %s | ./queue_stall", files);
+    return scratch::capture(p, command);
+}
+
+export void test_queue_stall_replays_the_night_of_2026_11_12() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::expect_text("queue_stall: one run, nothing yet", "quiet", first_line(verdict(&p, "r1")));
+    scratch::expect_text("queue_stall: two runs, nothing yet", "quiet", first_line(verdict(&p, "r2 r1")));
+    scratch::expect_text("queue_stall: the third run (19:50Z) stalls it", "stalled",
+                         first_line(verdict(&p, "r3 r2 r1")));
+    scratch::expect_text("queue_stall: the fourth keeps it stalled", "stalled", first_line(verdict(&p, "r4 r3 r2")));
+    scratch::expect_text("queue_stall: and the fifth", "stalled", first_line(verdict(&p, "r5 r4 r3")));
+}
+
+export void test_queue_stall_body_names_each_run_its_first_failing_job_and_its_errors() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    const char *body = verdict(&p, "r3 r2 r1");
+    scratch::expect_contains("queue_stall: the pull request of the newest run", body, "#3414");
+    scratch::expect_contains("queue_stall: its link", body, "actions/runs/43291984824");
+    scratch::expect_contains("queue_stall: its conclusion", body, "conclusion: `failure`");
+    scratch::expect_contains("queue_stall: its first failing job", body, "first failing job: count-shard (7)");
+    scratch::expect_contains("queue_stall: its error line", body,
+                             "`##[error]The runner has received a shutdown signal.`");
+    scratch::expect_contains("queue_stall: its frontend-base line", body, "`frontend-base: 9e877f1`");
+    scratch::expect_contains("queue_stall: the oldest of the three", body, "actions/runs/43288617526");
+    scratch::expect_lacks("queue_stall: not a fourth run", body, "43294339845");
+    scratch::expect_lacks("queue_stall: no held gate when none is given", body, "report-only");
+    const char *held = scratch::capture(&p, "cat r3 r2 r1 held | ./queue_stall");
+    scratch::expect_contains("queue_stall: a gate held in report-only is listed", held, "held in report-only");
+}
+
+export void test_queue_stall_is_quiet_on_a_normal_hour_and_closes_on_green() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::expect_text("queue_stall: ten green runs, the newest is green", "green",
+                         first_line(verdict(&p, "g10 g9 g8")));
+    scratch::expect_text("queue_stall: a green run after the stall closes the issue", "green",
+                         first_line(verdict(&p, "g1 r5 r4")));
+    scratch::expect_text("queue_stall: one failure among greens opens nothing", "quiet",
+                         first_line(verdict(&p, "r1 g2 g1")));
+    scratch::expect_text("queue_stall: a success among the newest three, not the newest, opens nothing", "quiet",
+                         first_line(verdict(&p, "r2 g1 r1")));
+    scratch::expect_text("queue_stall: and the stall comes back after it", "stalled",
+                         first_line(verdict(&p, "r5 r4 r3")));
+}
+
+export void test_queue_stall_refuses_arguments() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::Run run = scratch::sh(&p, "./queue_stall extra </dev/null");
+    scratch::expect_status("queue_stall: an argument is a usage error", 2, &run);
+}

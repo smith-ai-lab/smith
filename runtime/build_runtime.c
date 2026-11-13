@@ -3598,18 +3598,33 @@ static size_t smith_shard_file_length(const char *name) {
 static int smith_run_capture(const char *const *argv, const char *const **lines, bool combined);
 static const char *smith_shard_weighed; // the --weigh file this process has made: the split is asked for twice (below)
 
-// Adds the text of `from` to the end of `to` in one write, so that the builds of the test programs of a part, which run
-// together, do not cut each other's lines.
+// Adds `length` bytes of `text` to the end of the file `to` in ONE write() on an O_APPEND descriptor, so that the
+// builds of the test programs of a part, which run together, do not cut each other's lines. A stdio stream cannot
+// promise it: glibc ignores the size of `setvbuf(stream, nullptr, mode, size)` (a null buffer keeps its 4096 bytes), so
+// what looked like one write was a write of 4096 bytes at a time, and eight appenders left cut and glued names in the
+// lists the CI split guard compares (#3444: 226 bad lines of 48000 with eight writers).
+static void smith_shard_append_text(const char *to, const char *text, size_t length) {
+    int fd = open(to, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd < 0) smith_fail("--weigh: cannot write %s", to);
+    size_t done = 0;
+    while (done < length) { // bounded by the text: each pass writes at least a byte or fails
+        ssize_t n = write(fd, text + done, length - done);
+        if (n <= 0) smith_fail("--weigh: cannot write %s", to);
+        done += (size_t)n;
+    }
+    if (close(fd) != 0) smith_fail("--weigh: cannot write %s", to);
+}
+
+// Adds the text of `from` to the end of `to` in one write.
 static void smith_shard_append(const char *to, const char *from) {
     FILE *in = fopen(from, "r");
-    FILE *out = fopen(to, "a");
-    if (in == nullptr || out == nullptr) smith_fail("--weigh: cannot add %s to %s", from, to);
-    setvbuf(out, nullptr, _IOFBF, (size_t)1 << 22);
-    char line[1024];
-    for (size_t guard = 0; guard < ((size_t)1 << 24) && fgets(line, sizeof line, in) != nullptr; guard++)
-        fputs(line, out);
+    if (in == nullptr || fseek(in, 0, SEEK_END) != 0) smith_fail("--weigh: cannot add %s to %s", from, to);
+    long size = ftell(in);
+    if (size < 0 || fseek(in, 0, SEEK_SET) != 0) smith_fail("--weigh: cannot add %s to %s", from, to);
+    char *text = SMITH_ALLOC((size_t)size + 1);
+    size_t length = fread(text, 1, (size_t)size, in);
     fclose(in);
-    fclose(out);
+    smith_shard_append_text(to, text, length);
 }
 
 // The digest of the names of `chosen` and of the kind of run: what names a deal (FNV-1a, 64 bits).
@@ -3661,12 +3676,14 @@ static void smith_shard_weigh(const SmithTestShard *shard, const SmithTestFound 
                                     nullptr};
         (void)smith_run_capture(argv, &lines, false);
     }
-    FILE *out = fopen(shard->weigh, "a");
-    if (out == nullptr) smith_fail("--weigh: cannot write %s", shard->weigh);
-    setvbuf(out, nullptr, _IOFBF, (size_t)1 << 22);
+    size_t answers = 0;
     for (size_t i = 0; lines != nullptr && lines[i] != nullptr; i++)
-        fprintf(out, "%s\n", lines[i]);
-    fclose(out);
+        answers += strlen(lines[i]) + 1;
+    char *joined = SMITH_ALLOC(answers + 1);
+    size_t at = 0;
+    for (size_t i = 0; lines != nullptr && lines[i] != nullptr; i++)
+        at += (size_t)snprintf(joined + at, answers + 1 - at, "%s\n", lines[i]);
+    smith_shard_append_text(shard->weigh, joined, at);
     const char *temp = smith_text("%s.%ld", deal, (long)getpid());
     FILE *made = fopen(temp, "w");
     if (made == nullptr) smith_fail("--weigh: cannot write %s", temp);

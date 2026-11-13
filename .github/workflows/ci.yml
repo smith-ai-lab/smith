@@ -588,6 +588,10 @@ jobs:
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
       runner-check: ${{ steps.runners.outputs.check }}
+      # the test-result store files every part restores (#3471): chosen once here, so the 8 parts deal the tests from the
+      # same store (each choosing at its own start gave two parts a store one commit newer, run 43354617672)
+      store-urls: ${{ steps.store.outputs.urls }}
+      store-from: ${{ steps.store.outputs.from }}
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -606,6 +610,13 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
+      - name: Choose the test store for every part (#3471)
+        id: store
+        continue-on-error: true
+        uses: ./.github/actions/test-cache
+        with:
+          resolve-only: "true"
+          fresh: ${{ github.event_name == 'schedule' }}
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -704,6 +715,8 @@ jobs:
           part: ${{ matrix.shard }}
           count: ${{ matrix.count }}
           flags: ${{ matrix.flags }}
+          store-urls: ${{ needs.build-linux.outputs.store-urls }}
+          store-from: ${{ needs.build-linux.outputs.store-from }}
       - name: Fail fast
         if: failure()
         uses: ./.github/actions/fail-fast
@@ -1033,6 +1046,13 @@ jobs:
           done
           gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
           export SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt"
+          # the log of the last queue runs' outcomes (#3443, item 5): a gate that refused three different pull requests in
+          # a row for the same file demotes itself; the pull request of this queue run is in the ref's name
+          glog="$RUNNER_TEMP/previous/gate-log.tsv"
+          curl -fsSL --retry 3 "https://github.com/$GITHUB_REPOSITORY/releases/download/count-gate-log/gate-log.tsv" >"$glog" 2>/dev/null || : >"$glog"
+          export SMITH_GATE_LOG="$glog"
+          SMITH_GATE_PR=$(printf '%s' "$GITHUB_REF" | sed -n 's#.*/pr-\([0-9][0-9]*\)-.*#\1#p')
+          export SMITH_GATE_PR
           if [ "$prev" = unknown ]; then
             echo "frontend-regressed-count: unknown"
             echo "::warning::no published table of the count among the 20 first parents: nothing to compare with, this table is the base for the next run"
@@ -1045,15 +1065,24 @@ jobs:
             # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
             # gate-begin
             (cd "$gate" && "$SMITH" run -- regressed "$prev" "$now" "$verdict") >"$RUNNER_TEMP/gate-out.txt"
+            # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields, not
+            # its `gate-row` and `gate-log` lines: the gate's own bookkeeping is not a file that regressed)
+            awk -F'\t' 'NF >= 3 && $1 !~ /^gate-/' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/regressed.txt"
             # gate-end
-            # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields)
-            awk -F'\t' 'NF >= 3 && $1 != "gate-row"' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/regressed.txt"
           fi
           awk -F'\t' '$1 == "gate-row" {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/frontend-gate.tsv"
           mode=report-only
           [ "$(awk -F'\t' '{print $5}' "$RUNNER_TEMP/frontend-gate.tsv")" = refusing ] && mode=refusing
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
           echo "frontend-gate: $(tr '\t' ' ' <"$RUNNER_TEMP/frontend-gate.tsv")   (version, run, would refuse, dirty, mode)"
+          # a demotion is printed by the tool as `frontend-gate: demoted (<files>)`; the stall alarm (#3444) lists it
+          grep '^frontend-gate: demoted' "$RUNNER_TEMP/gate-out.txt"
+          # this run's outcome joins the log (the last 50 runs), for the runs behind it
+          awk -F'\t' '$1 == "gate-log" {print $2 "\t" $3 "\t" $4 "\t" $5}' "$RUNNER_TEMP/gate-out.txt" >>"$glog"
+          tail -n 50 "$glog" >"$glog.new" && mv "$glog.new" "$glog"
+          gh release view count-gate-log >/dev/null 2>&1 || gh release create count-gate-log --prerelease --latest=false --title "count gate log" \
+            --notes "The outcome of each queue run of the count's gate (#3443): pull request, gate version, status, files. Not a release of smith." >/dev/null 2>&1
+          gh release upload count-gate-log "$glog" --clobber >/dev/null 2>&1 || echo "::warning::could not save the gate's log"
           # a gate that stays report-only because a dry run would have refused is printed here, as a warning and in the summary
           note=$(grep '^gate-note: ' "$RUNNER_TEMP/gate-out.txt" | tr -d '\r')
           [ -n "$note" ] && echo "::warning::${note#gate-note: }"

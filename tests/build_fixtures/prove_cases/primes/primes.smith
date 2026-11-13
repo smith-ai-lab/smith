@@ -13,7 +13,7 @@ export I32 show(I32 value) {
 
 export I32 sum(Usize count) {
     constexpr I32 first[_] = {2, 3, 5, 7, 11};
-    c::smith_requires(count <= _Countof(first));
+    c::smith_requires(count <= countof(first));
     I32 total = 0;
     for (Usize i = 0; i < count; i++) {
         total += first[i];
