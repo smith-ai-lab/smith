@@ -1174,6 +1174,7 @@ struct Job {
     // the files of a compile that took several (`measure_group`); their rows are cached under `row_path`
     Usize members[batch_max];
     Usize member_count;
+    U64 begun; // clock::monotonic() when the job started, for the cost of a file (#3455)
 };
 
 static struct Job jobs[jobs_max];
@@ -1186,6 +1187,16 @@ static Bool fixed_ok[files_max];
 // runs and reads the imports (#2521).
 static const char *scratch_root = nullptr;
 static const char *pristine_root = nullptr;
+
+// What each file cost in this run (#3455): the milliseconds of the jobs that fixed it and compiled it (a group's time
+// is shared by its files). A file served from a cache has no job and so no cost; it is left out of the costs file.
+static U64 cost_ms[files_max];
+static Bool cost_seen[files_max];
+
+static void add_cost(Usize file, U64 ms) {
+    cost_ms[file] += ms;
+    cost_seen[file] = true;
+}
 
 static void finish_measure(Usize file, const struct Ran *compiled, const struct Job *job);
 static void finish_group(const struct Job *job, const struct Ran *compiled);
@@ -1218,6 +1229,13 @@ static void job_finish() {
     job_count -= 1;
     struct Ran ran = read_job(job);
     entry_file = job->file;
+    U64 took = (clock::monotonic() - job->begun) / clock::millisecond;
+    if (!job->is_fix && job->member_count > 1) {
+        for (Usize k = 0; k < job->member_count; k++)
+            add_cost(job->members[k], took / job->member_count);
+    } else {
+        add_cost(job->file, took);
+    }
     if (!job->is_fix) {
         if (job->member_count > 1) {
             finish_group(job, &ran);
@@ -1267,7 +1285,7 @@ static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const c
     Usize slot = (job_head + job_count) % job_limit;
     job_count += 1;
     struct Job *job = &jobs[slot];
-    *job = (struct Job){.file = file, .is_fix = is_fix};
+    *job = (struct Job){.file = file, .is_fix = is_fix, .begun = clock::monotonic()};
     (void)format::write(job->out, sizeof job->out, job_folder, "/", slot, ".out");
     (void)format::write(job->err, sizeof job->err, job_folder, "/", slot, ".err");
     const char *argv[job_args_max];
@@ -2079,6 +2097,90 @@ static Bool parse_shard(const char list[:], Usize *k, Usize *n) {
     return true;
 }
 
+// The costs file (#3455): `path TAB milliseconds` a line, the cost of each file in the last count. With
+// SMITH_COVERAGE_COSTS naming one, the files are dealt to the shards by cost, so the shards end together; without it,
+// or when it names no tracked file, by the hash of the path above. Every shard reads the same file and the same tree,
+// so they all make the same deal and the merge still checks that a file is in one shard only.
+static Usize dealt_to[files_max];
+static U64 deal_cost[files_max];
+
+// Reads the costs file into `deal_cost`/`seen`; returns how many tracked files it has.
+static Usize read_costs(Bool *seen) {
+    const char *named = c::getenv("SMITH_COVERAGE_COSTS");
+    if (named == nullptr || named[0] == '\0') return 0;
+    files::BytesResult loaded = files::read_file(view_of(named));
+    if (loaded == .error) return 0;
+    defer mem::free(loaded.ok.data);
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    Usize known = 0;
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        typeof(const char[:]) line = text[at:end];
+        at = end + 1;
+        Usize tab = find(line, '\t', 0);
+        if (tab == 0 || tab >= countof(line) || tab + 1 == countof(line)) continue;
+        U64 ms = 0;
+        Bool digits = true;
+        for (Usize i = tab + 1; i < countof(line); i++) {
+            if (!is_digit(line[i])) digits = false;
+            ms = ms * 10 + (U64)(line[i] - '0');
+        }
+        Usize file = tree_find(line[0:tab]);
+        if (!digits || file == tree_count || !is_smith(tree[file]) || seen[file]) continue;
+        deal_cost[file] = ms;
+        seen[file] = true;
+        known += 1;
+    }
+    return known;
+}
+
+// Deals the tracked .smith files to `n` shards, heaviest first to the lightest shard (ties: the lower shard), into
+// `dealt_to`. A file with no cost takes the median of the others'. Returns false (deal by path hash) without costs.
+static Bool deal_by_cost(Usize n) {
+    static Bool seen[files_max];
+    Usize known = read_costs(seen);
+    if (known == 0) return false;
+    U64 sorted[files_max];
+    Usize m = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (!seen[i]) continue;
+        Usize at = m;
+        while (at > 0 && sorted[at - 1] > deal_cost[i]) {
+            sorted[at] = sorted[at - 1];
+            at -= 1;
+        }
+        sorted[at] = deal_cost[i];
+        m += 1;
+    }
+    U64 median = sorted[m / 2];
+    Usize order[files_max];
+    Usize files = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (!is_smith(tree[i])) continue;
+        if (!seen[i]) deal_cost[i] = median;
+        Usize at = files;
+        while (at > 0 && deal_cost[order[at - 1]] < deal_cost[i]) {
+            order[at] = order[at - 1];
+            at -= 1;
+        }
+        order[at] = i;
+        files += 1;
+    }
+    U64 load[1024];
+    for (Usize k = 0; k < n; k++)
+        load[k] = 0;
+    for (Usize q = 0; q < files; q++) {
+        Usize lightest = 0;
+        for (Usize k = 1; k < n; k++) {
+            if (load[k] < load[lightest]) lightest = k;
+        }
+        dealt_to[order[q]] = lightest;
+        load[lightest] += deal_cost[order[q]];
+    }
+    return true;
+}
+
 // Marks the files of shard `k` of `n` as owned, and each of them and what it imports, transitively, as wanted (fixed).
 // Returns how many files the shard owns. A shard used to fix every file of the tree (a serial 6 to 9 minutes in the job
 // before the shards, #3369); the rows of a file made from its closure are the rows of a full run, as in `run ... FILES`
@@ -2086,8 +2188,11 @@ static Bool parse_shard(const char list[:], Usize *k, Usize *n) {
 static Usize mark_shard(Usize k, Usize n) {
     Usize count = 0;
     Usize mine = 0;
+    Bool by_cost = deal_by_cost(n);
     for (Usize i = 0; i < tree_count; i++) {
-        if (!is_smith(tree[i]) || shard_of(text_of(tree[i][0:path_size]), n) != k - 1) continue;
+        if (!is_smith(tree[i])) continue;
+        Usize to = by_cost ? dealt_to[i] : shard_of(text_of(tree[i][0:path_size]), n);
+        if (to != k - 1) continue;
         owned[i] = true;
         mine += 1;
     }
@@ -2288,6 +2393,21 @@ static void fix_in_order(const char *smith, Bool all) {
     }
 }
 
+// SMITH_COVERAGE_COSTS_OUT (#3455): the cost of each owned file this run timed, `path TAB milliseconds` a line, for the
+// next count to deal by. A file served from a cache has no time and no line.
+static void write_costs() {
+    const char *named = c::getenv("SMITH_COVERAGE_COSTS_OUT");
+    if (named == nullptr || named[0] == '\0') return;
+    static char text[files_max * (path_size + 24)];
+    Usize n = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (!is_smith(tree[i]) || !owned[i] || !cost_seen[i]) continue;
+        format::Written w = format::write(text + n, sizeof text - n, (const char *)tree[i], "\t", cost_ms[i], "\n");
+        n += w.length;
+    }
+    (void)files::write_file(view_of(named), ((const U8 *)text)[0:n], files::Replace);
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -2347,6 +2467,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
                          " ms\n");
     keep_owned_rows();
     sort_entries();
+    write_costs();
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");

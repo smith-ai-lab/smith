@@ -200,7 +200,7 @@ jobs:
       - name: Test matrix
         id: linux
         # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
-        # runs the few tests only macOS can run (`--macos-only`, one part). The queue runs everything in 8 parts. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
+        # runs the few tests only macOS can run (`--macos-only`, one part). The queue runs everything in 4 parts. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
         # cache, and the Mac's build and tests (#3172).
         run: |
           flags="${{ steps.scope.outputs.linux_flags }}"
@@ -577,18 +577,18 @@ jobs:
     #
     # It waits for nothing (#3277): `changes` takes 13 s or more, and a queue run always builds. A push to main builds nothing
     # here (its scope is `release` or `none`); a run by hand has the scope `full`; a queue run builds whatever its scope, the
-    # jobs that read the scope below still skip the tests of a documents-only entry. The 8 parts and their flags are constants
+    # jobs that read the scope below still skip the tests of a documents-only entry. The 4 parts and their flags are constants
     # (they were the output `linux` of `changes`, a loop over the same numbers), and the LLVM pack is never built by a run
     # of this workflow (`changes` gives `pack` false), so `pack` is not waited for either.
     if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
-      # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
+      # where the 5 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
       runner-check: ${{ steps.runners.outputs.check }}
-      # the test-result store files every part restores (#3471): chosen once here, so the 8 parts deal the tests from the
+      # the test-result store files every part restores (#3471): chosen once here, so the 4 parts deal the tests from the
       # same store (each choosing at its own start gave two parts a store one commit newer, run 43354617672)
       store-urls: ${{ steps.store.outputs.urls }}
       store-from: ${{ steps.store.outputs.from }}
@@ -635,7 +635,7 @@ jobs:
           compression-level: 0
           retention-days: 1
       - name: Pick the Mac's Linux runners
-        # the choice is made here, when the 9 jobs that need this build (8 test parts, check) are
+        # the choice is made here, when the 5 jobs that need this build (4 test parts, check) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
         # ran hosted while parts waited 5 minutes for a slot). In this job, so no job and no slot is added.
         id: pick
@@ -645,7 +645,7 @@ jobs:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
           fork: false
-          linux-jobs: "9"
+          linux-jobs: "5"
       - name: Give each job its runner
         id: runners
         if: ${{ always() }}
@@ -653,14 +653,14 @@ jobs:
         env:
           MAC: ${{ steps.pick.outputs.linux-mac }}
         run: |
-          # the 8 fixed parts of the run (#3279)
-          MATRIX='{"include":[{"shard":1,"count":8,"flags":"--skip-macos"},{"shard":2,"count":8,"flags":"--skip-macos"},{"shard":3,"count":8,"flags":"--skip-macos"},{"shard":4,"count":8,"flags":"--skip-macos"},{"shard":5,"count":8,"flags":"--skip-macos"},{"shard":6,"count":8,"flags":"--skip-macos"},{"shard":7,"count":8,"flags":"--skip-macos"},{"shard":8,"count":8,"flags":"--skip-macos"}]}'
-          COUNT=8
+          # the 4 fixed parts of the run (#3279, #3455)
+          MATRIX='{"include":[{"shard":1,"count":4,"flags":"--skip-macos"},{"shard":2,"count":4,"flags":"--skip-macos"},{"shard":3,"count":4,"flags":"--skip-macos"},{"shard":4,"count":4,"flags":"--skip-macos"}]}'
+          COUNT=4
           # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then check. An empty
           # or failed pick is 0: everything hosted.
           hosted='"ubuntu-latest"'; mac='["self-hosted","Linux","X64"]'
           n=${MAC:-0}; case "$n" in *[!0-9]*) n=0 ;; esac
-          [ "$n" -gt 9 ] && n=9
+          [ "$n" -gt 5 ] && n=5
           parts=$(( n > COUNT ? COUNT : n )); rest=$(( n - parts ))
           check=$hosted
           [ "$rest" -ge 1 ] && check=$mac
@@ -829,18 +829,18 @@ jobs:
           exit "${PIPESTATUS[0]}"
 
   count-shard:
-    # one eighth of the front-end count (#2697, #3369): `smith build frontend-coverage -Dshard=<k>/8` fixes the files whose
-    # path hashes to k - 1 modulo 8 and the modules they import, and compiles them, with the release smith
+    # one quarter of the front-end count (#2697, #3369): `smith build frontend-coverage -Dshard=<k>/4` fixes the files whose
+    # path hashes to k - 1 modulo 4 and the modules they import, and compiles them, with the release smith
     # `release-pack-linux` built for this very commit, so each file's row is the row of the whole count. `count` joins
-    # the eight tables and refuses a regression. In a queue run only (the count gates what lands, #3369).
+    # the four tables and refuses a regression. In a queue run only (the count gates what lands, #3369).
     needs: [changes, release-pack-linux]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.release-pack-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     permissions:
       contents: write # test-cache/save: `gh release create` of the import cache this shard made (#2891)
       actions: write # fail-fast: `gh run cancel` (#3051)
@@ -882,12 +882,17 @@ jobs:
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
-          # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
+          # a shard takes 3 to 8 minutes at 4 shards (#3455); one that hung sat the whole 30 minutes of the job, failed the entry
           # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
-          # from the diff is deterministic, so there is no retry: the command is bounded to 10 minutes and fails the entry.
-          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          # from the diff is deterministic, so there is no retry: the command is bounded and fails the entry. The 420 s
+          # of 8 shards, twice for twice the work per shard; sized from the measured slowest shard once it is measured.
+          # the files are dealt by the cost the last count measured (.smith/count-costs.tsv, fetched once by
+          # `release-pack-linux`), and the shard writes the cost of what it timed for the next count (#3455)
+          [ -s .smith/count-costs.tsv ] && export SMITH_COVERAGE_COSTS="$PWD/.smith/count-costs.tsv"
+          export SMITH_COVERAGE_COSTS_OUT="$RUNNER_TEMP/coverage/costs.tsv"
+          timeout -k 10 840 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/4 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
-          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 10 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 14 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
@@ -916,7 +921,7 @@ jobs:
         uses: ./.github/actions/fail-fast
 
   count:
-    # the join and the gate of the front-end count (#2697, #3369): the tables of the eight `count-shard` jobs are joined in the
+    # the join and the gate of the front-end count (#2697, #3369): the tables of the four `count-shard` jobs are joined in the
     # order of the files (a file in no part, or in two, is an error; a part that failed or did not finish leaves the
     # count unmeasured and fails the run), and the run is REFUSED when a file that passed on the base no longer passes.
     # The base is the table of the newest commit among this one's first parents that a queue run measured and published
@@ -957,7 +962,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/coverage"
           out="$RUNNER_TEMP/coverage/output.txt"
           tables=
-          parts=8
+          parts=4
           for k in $(seq 1 "$parts"); do
             d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
             if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
@@ -1122,8 +1127,15 @@ jobs:
           tag="test-cache-${GITHUB_SHA:0:7}-count-table"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             cp "$RUNNER_TEMP/coverage/results.tsv" "$RUNNER_TEMP/frontend-coverage-table.tsv"
+            # the costs the next count deals by (#3455): what the 4 shards timed in this run, else the last known cost
+            # (a file a shard served from a cache has no time), for the files of this table only
+            costs="$RUNNER_TEMP/frontend-coverage-costs.tsv"
+            cat .smith/count-costs.tsv "$RUNNER_TEMP"/shards/frontend-coverage-shard-"$GITHUB_SHA"-*/costs.tsv 2>/dev/null \
+              | awk -F'\t' 'NR == FNR { keep[$1] = 1; next } ($1 in keep) { cost[$1] = $2 } END { for (f in cost) print f "\t" cost[f] }' \
+                <(cut -f1 "$RUNNER_TEMP/frontend-coverage-table.tsv" | sort -u) - | sort >"$costs" || : >"$costs"
+            echo "count costs: $(wc -l <"$costs" | tr -d ' ') files (slowest: $(sort -t"$(printf '\t')" -k2 -n -r "$costs" | head -n 3 | tr '\t\n' ' :'))"
             # with the gate's verdict row of this run (#3443): version, run of that version, would refuse, dirty, mode
-            gh release create "$tag" "$RUNNER_TEMP/frontend-coverage-table.tsv" "$RUNNER_TEMP/frontend-gate.tsv" --prerelease --latest=false \
+            gh release create "$tag" "$RUNNER_TEMP/frontend-coverage-table.tsv" "$RUNNER_TEMP/frontend-gate.tsv" "$costs" --prerelease --latest=false \
               --target "$GITHUB_SHA" --title "count table $tag" \
               --notes "The front-end count's table (#3369) of the queue run at $GITHUB_SHA: the base the next queue runs compare with. Not a release of smith."
           fi
@@ -1665,6 +1677,24 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - name: The count's costs, chosen once for the shards (#3455)
+        # the seconds each file took in the last count, from the newest of the 20 first parents that published them
+        # (asset `frontend-coverage-costs.tsv` of the release of its table). The 4 shards deal the files by it and must
+        # all read the same file, so it is fetched here, once, and travels in the build's `.smith`; none found: the
+        # shards deal by the hash of the path, as before.
+        if: ${{ github.event_name == 'merge_group' }}
+        shell: bash
+        run: |
+          rm -f .smith/count-costs.tsv
+          for sha in $(git rev-list --first-parent -n 20 "$GITHUB_SHA" | tail -n +2); do
+            url="https://github.com/$GITHUB_REPOSITORY/releases/download/test-cache-${sha:0:7}-count-table/frontend-coverage-costs.tsv"
+            if curl -fsSL --retry 3 "$url" >.smith/count-costs.tsv 2>/dev/null && [ -s .smith/count-costs.tsv ]; then
+              echo "count costs: ${sha:0:7}, $(wc -l <.smith/count-costs.tsv | tr -d ' ') files" | tee -a "$GITHUB_STEP_SUMMARY"
+              break
+            fi
+            rm -f .smith/count-costs.tsv
+          done
+          [ -s .smith/count-costs.tsv ] || echo "count costs: none published, the shards deal by path" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pack the build for the count's shards (#3369)
         # the release smith this job built is the smith the count measures: `count-shard` restores it, so the count
         # builds nothing of its own

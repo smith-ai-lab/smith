@@ -139,6 +139,43 @@ export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_t
     scratch::release(run.err);
 }
 
+// #3455: with SMITH_COVERAGE_COSTS (`path TAB ms` a line) the shards are dealt by cost, heaviest file first to the
+// lightest shard: a (100) alone in one shard, d (90), b (3) and c (2) in the other (a hash of the paths would not
+// give this); a costs line for a file that is not tracked is ignored, and SMITH_COVERAGE_COSTS_OUT writes the cost of
+// each file the shard timed.
+export void test_frontend_coverage_shards_are_dealt_by_cost_when_a_costs_file_is_given() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir repo");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/a.smith", "pub fn one() -> i32:\n    return 1\n");
+    scratch::write(&p, "repo/b.smith", "pub fn two() -> i32:\n    return 2\n");
+    scratch::write(&p, "repo/c.smith", "pub fn three() -> i32:\n    return 3\n");
+    scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
+    scratch::write(&p, "costs.tsv", "a.smith\t100\nd.smith\t90\nb.smith\t3\nc.smith\t2\nnot_there.smith\t9\n");
+    scratch::Run run = scratch::sh(
+        &p,
+        "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+        "chmod +x $S && git -C repo init -q && git -C repo add -A && export SMITH_COVERAGE_COSTS=$PWD/costs.tsv && "
+        "for k in 1 2; do SMITH_COVERAGE_COSTS_OUT=$PWD/out$k.tsv smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/s$k\" "
+        "shard:$k/2 > s$k.tsv; done; "
+        "echo shard1: $(grep -a '^[a-d]\\.smith' s1.tsv | cut -f1 | sort -u | tr '\\n' ' '); echo shard2: $(grep -a "
+        "'^[a-d]\\.smith' s2.tsv | cut -f1 | sort -u | tr '\\n' ' '); "
+        "echo out1: $(cut -f1 out1.tsv | sort | tr '\\n' ' ')");
+    scratch::expect_contains("frontend_coverage: the two heavy files are in different shards", run.out,
+                             "shard1: a.smith\nshard2: b.smith c.smith d.smith\n");
+    scratch::expect_contains("frontend_coverage: a shard writes the cost of the files it timed", run.out,
+                             "out1: a.smith\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
+
 // #3369: a shard fixes the files it owns and what they import, not the whole tree (the fix used to be a serial job of 6
 // to 9 minutes before the shards). a imports b imports c, and d stands alone: a shard owning only d fixes one file.
 export void test_frontend_coverage_a_shard_fixes_only_its_files_and_what_they_import() {
