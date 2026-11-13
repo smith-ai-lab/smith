@@ -507,3 +507,25 @@ export void test_front_check_types_a_record_whose_field_does_not_convert_is_refu
 export void test_front_check_types_an_errdefer_body_is_checked() {
     fails("fn f() -> i32:\n    errdefer nosuch_fn()\n    return 0\n", "nosuch_fn", "");
 }
+
+// A function that only reads (`*P`) goes where `fn(*mut P)` or `?fn(*mut P)` is wanted; nothing else is relaxed
+// (#3326).
+static Str hooks() {
+    return "struct P:\n    n: i32\n\nstruct Hooks:\n    on_done: ?fn(*mut P) -> i32 = .none\n\n"
+           "fn reads(p: *P) -> i32:\n    p.n\n\n";
+}
+
+export void test_front_check_types_a_reading_function_goes_where_an_optional_writing_one_is_wanted() {
+    clean(join(hooks(), "fn g() -> Hooks:\n    Hooks(on_done = reads)\n"));
+    clean(join(hooks(), "fn h(f: fn(*mut P) -> i32) -> i32:\n    0\n\nfn g() -> i32:\n    h(reads)\n"));
+}
+
+export void test_front_check_types_an_optional_function_of_another_arity_is_refused() {
+    fails(join(hooks(), "fn two(p: *P, q: *P) -> i32:\n    p.n\n\nfn g() -> Hooks:\n    Hooks(on_done = two)\n"),
+          "there is no conversion", "");
+}
+
+export void test_front_check_types_an_optional_function_of_another_parameter_type_is_refused() {
+    fails(join(hooks(), "fn other(p: *i32) -> i32:\n    0\n\nfn g() -> Hooks:\n    Hooks(on_done = other)\n"),
+          "there is no conversion", "");
+}

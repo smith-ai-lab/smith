@@ -92,6 +92,35 @@ export void test_front_fix_blocks_a_second_loop_with_the_same_counter_assigns() 
           "0:\n        b()\n        i -= 1\n");
 }
 
+export void test_front_fix_blocks_a_counter_declared_again_later_is_renamed() {
+    check(
+        "fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a(i)\n    }\n    for i in range(1, n) {\n        b(i)\n"
+        "    }\n}\n",
+        "fn f():\n    mut i_: usize = 9\n    while i_ > 0:\n        a(i_)\n        i_ -= 1\n    for i in range(1, n):\n"
+        "        b(i)\n");
+}
+
+export void test_front_fix_blocks_a_counter_declared_twice_later_is_renamed_once() {
+    check(
+        "fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a(i)\n    }\n    for i in range(1, n) {\n        b(i)\n"
+        "    }\n    mut i = 3\n    c(i)\n}\n",
+        "fn f():\n    mut i_: usize = 9\n    while i_ > 0:\n        a(i_)\n        i_ -= 1\n    for i in range(1, n):\n"
+        "        b(i)\n    mut i = 3\n    c(i)\n");
+}
+
+export void test_front_fix_blocks_a_counter_declared_again_in_a_nested_block_is_renamed() {
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a(i)\n    }\n    if x {\n        for i in range(1, "
+          "n) {\n"
+          "            b(i)\n        }\n    }\n}\n",
+          "fn f():\n    mut i_: usize = 9\n    while i_ > 0:\n        a(i_)\n        i_ -= 1\n    if x:\n"
+          "        for i in range(1, n):\n            b(i)\n");
+}
+
+export void test_front_fix_blocks_a_counter_not_declared_again_keeps_its_name() {
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a(i)\n    }\n    b(i)\n}\n",
+          "fn f():\n    mut i: usize = 9\n    while i > 0:\n        a(i)\n        i -= 1\n    b(i)\n");
+}
+
 export void test_front_fix_blocks_a_c_for_with_a_continue_steps_before_it() {
     check(
         "fn f() {\n    for (usize i = 9; i > 0; i--) {\n        if skip(i) {\n            continue\n        }\n        "
