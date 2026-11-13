@@ -504,6 +504,25 @@ export void test_front_e2e_import_c_names_are_read_through_the_binding() {
     remove_all(folder);
 }
 
+// A C variadic called with a spread of a variadic function's `rest...` (std.test's `detail_add`): the checker records the
+// call with the pack expanded, and its callee is still the header's function (#3540).
+export void test_front_e2e_a_c_variadic_is_called_with_a_spread() {
+    use_header_flags();
+    Str folder = folder_for("c_spread");
+    Str source = "import c <stdio.h>\n\n"
+                 "fn say(out: *mut char, text: *char, rest...) -> i32:\n"
+                 "    return stdio.snprintf(out, 16, text, rest...)\n\n"
+                 "pub fn check() -> i32:\n"
+                 "    mut out: [16]char = undefined\n"
+                 "    n := say(&out[0], \"%d-%d\", 1, 2)\n"
+                 "    if n != 3:\n        return 1\n"
+                 "    0\n";
+    compile::Report report = compile_module(folder, "spread", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
 // A variable and a type of a header through the header's name (#3339): `unistd.optind` written and read, and
 // `sizeof(stdint.uint32_t)`; the emitter once said "unknown name" for both, as it took the header's name for a value.
 export void test_front_e2e_a_header_variable_and_type_are_named_through_the_header() {

@@ -279,8 +279,13 @@ static void check_urls(Client *client) {
     }
 }
 
+static const U8 *bytes_of(const char *text) {
+    const void *raw = text;
+    return (const U8 *)raw;
+}
+
 static void check_local(Client *client) {
-    const U8 bytes[:] = ((const U8 *)"local bytes")[0:11];
+    const U8 bytes[:] = bytes_of("local bytes")[0:11];
     files::CountResult written =
         files::write_file(client->source[0:__builtin_strlen(client->source)], bytes, files::Replace);
     test::check_condition(written == .ok);

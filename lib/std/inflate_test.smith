@@ -64,6 +64,11 @@ static const U8 *load(arena::Arena *store, const char *name, const char *extensi
     }
 }
 
+static const U8 *bytes_of(const char *text) {
+    const void *raw = text;
+    return (const U8 *)raw;
+}
+
 static Bool same(const U8 *a, const U8 *b, Usize size) {
     for (Usize i = 0; i < size; i++) {
         if (a[i] != b[i]) return false;
@@ -361,7 +366,7 @@ export void test_inflate_reads_every_gzip_header_field() {
     expect(inflate::decode(inflate::Gzip, fields, size, output, sizeof output, &used, &produced), inflate::Ok);
     test::check_equal(used, size);
     test::check_equal(produced, 12U);
-    test::check(same(output, (const U8 *)"hello fields", 12));
+    test::check(same(output, bytes_of("hello fields"), 12));
 
     U8 *file = exact_copy(store, fields, size);
     file[12] ^= 1; // a byte of the extra field, which the header's CRC covers

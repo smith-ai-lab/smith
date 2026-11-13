@@ -355,8 +355,12 @@ static Bool method_callee(state::Emitter *e, const ast::Expr *x, const ast::Decl
 static Bool call_target(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *symbol) {
     if (x->kind != .call) return false;
     const ast::Expr *callee = x->kind.call.callee;
-    if (method_form(e, x) != x) return method_callee(e, x, found, symbol);
-    return imported_callee(e, callee, found, symbol);
+    const ast::Expr *made = method_form(e, x);
+    if (made == x) return imported_callee(e, callee, found, symbol);
+    if (method_callee(e, x, found, symbol)) return true;
+    // A call the checker rewrote for a spread (`f(a, rest...)` is `f(a, rest.0, rest.1)`) is no method call: its callee
+    // is the function of a header or of an imported module, as written.
+    return made->kind == .call && imported_callee(e, made->kind.call.callee, found, symbol);
 }
 
 // The instance of a generic function that `x` calls, or null.

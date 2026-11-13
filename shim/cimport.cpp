@@ -331,6 +331,12 @@ uint32_t Reader::convert_inner(clang::QualType type, bool behind) {
     }
     if (const auto *t = type->getAs<clang::RecordType>()) {
         const clang::RecordDecl *decl = t->getDecl();
+        // A transparent union (glibc's `__CONST_SOCKADDR_ARG` of `connect`) is passed as its first member, which is
+        // how C's ABI passes it: the parameter is that member's type.
+        const clang::RecordDecl *definition = decl->getDefinition();
+        if (decl->isUnion() && definition != nullptr && !definition->field_empty() &&
+            definition->hasAttr<clang::TransparentUnionAttr>())
+            return convert(definition->field_begin()->getType(), behind);
         uint32_t index = record(decl);
         return type_node(Struct, flags, index, 0, 0);
     }
@@ -553,6 +559,8 @@ void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macr
             seen[f->getName().str()] = true;
             function(f);
         } else if (const auto *r = llvm::dyn_cast<clang::RecordDecl>(d)) {
+            // A transparent union is read as its first member where a parameter has it, so it is no type of its own.
+            if (r->hasAttr<clang::TransparentUnionAttr>()) continue;
             if (r->isThisDeclarationADefinition() || r->getDefinition() == nullptr) record(r);
         } else if (const auto *e = llvm::dyn_cast<clang::EnumDecl>(d)) {
             enumeration(e);

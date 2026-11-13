@@ -356,7 +356,7 @@ export void test_process_usage_of_a_scripted_child_is_what_its_script_says() {
     process::Usage used = value_usage(process::usage(&child));
     test::check_equal(used.user_ns, 1'500'000'000);
     test::check_equal(used.system_ns, 250'000'000);
-    test::check_equal(used.peak_bytes, 64 << 20);
+    test::check_equal(used.peak_bytes, (U64)64 << 20);
     process::close(&child);
 }
 
