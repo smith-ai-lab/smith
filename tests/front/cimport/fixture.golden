@@ -35,6 +35,7 @@
   (typedef Id from_c (named U64))
   (typedef Compare from_c (applied Fn (type_arg (function_type (pointer (named Void const)) (pointer (named Void const)) (result (named I32))))))
   (typedef Width from_c (named U16))
+  (typedef PointArg from_c (pointer (named Point const)))
   (enum Color from_c
     (named I32)
     (enumerator Red (integer 0))
@@ -47,6 +48,7 @@
   (function origin from_c (result (named Point)))
   (function sort from_c (param holder (pointer mut (named Holder))) (param compare (named Compare)) (result (named Void)))
   (function precise from_c (result (unsupported_c "long double")))
+  (function use_point_arg from_c (param arg (named PointArg)) (result (named I32)))
   (variable Anon_a constexpr from_c (named U32) (integer 0))
   (variable Anon_b constexpr from_c (named U32) (integer 7))
   (variable Limit constexpr from_c (named I32) (integer 99))

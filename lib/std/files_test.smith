@@ -113,7 +113,7 @@ I32 put_text(const char *path, const char *contents, Usize length, files::Mode m
 }
 
 export void test_files_a_whole_file_round_trips_through_the_fake() {
-    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    const U8 hello[:] = bytes_of("hello")[0:5];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -306,7 +306,7 @@ export void test_files_remove_and_move() {
 }
 
 export void test_files_a_map_is_a_view_of_the_bytes() {
-    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    const U8 hello[:] = bytes_of("hello")[0:5];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -326,7 +326,7 @@ export void test_files_a_map_is_a_view_of_the_bytes() {
 }
 
 export void test_files_fake_add_replaces_a_file() {
-    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    const U8 hello[:] = bytes_of("hello")[0:5];
     const U8 hi[:] = ((const U8 *)"hi")[0:2];
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);

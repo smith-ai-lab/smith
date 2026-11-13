@@ -72,3 +72,10 @@ enum { Anon_a, Anon_b = 7 };
 static const int Limit = 99;
 
 typedef unsigned short Width; // no function or struct mentions it
+
+// A transparent union parameter is its first member's type (glibc's connect takes one).
+typedef union {
+    const struct Point *point;
+    const struct Opaque *opaque;
+} PointArg __attribute__((__transparent_union__));
+int use_point_arg(PointArg arg);
