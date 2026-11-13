@@ -324,6 +324,7 @@ export struct RecordType {
     FieldInfo fields[:];
     Bool overlay;    // a C union: every field is at offset 0 of the one array that sizes it (a field is read in place)
     Bool shell;      // named so a record above it can point to it; its fields come when its own declaration is reached
+    Bool forward;    // declared with no body (`struct X;`): the declaration with a body completes it
     Bool owned_name; // an anonymous struct's key (front/emit_record.smith): `release` frees the name with the fields
 };
 
