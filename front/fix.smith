@@ -613,6 +613,20 @@ static Str imp_module_of_chain(Str source, Usize from, types::ModuleLoader load)
     return "";
 }
 
+// Whether the module already has `import <path>` (either spelling of the path): a second line is a second binding.
+static Bool imp_imported(const ast::Module *module, Str path) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .import_module) continue;
+        ast::Identifier segments[:] = d->kind.import_module.path.segments;
+        Str whole = "";
+        for (Usize k = 0; k < countof(segments); k++)
+            whole = types::message_of(format::push(whole, k > 0 ? "." : "", segments[k].text));
+        if (imp_same(whole, path)) return true;
+    }
+    return false;
+}
+
 static core::Errors imp_module_path_fixes(Str source, const ast::Module *module, const types::Checked *checked,
                                           types::ModuleLoader load) {
     core::Errors out = {};
@@ -629,7 +643,7 @@ static core::Errors imp_module_path_fixes(Str source, const ast::Module *module,
         if (from > 0 && (imp_word_char(source[from - 1]) || source[from - 1] == '.')) continue;
         Str path = imp_module_of_chain(source, from, load);
         if (countof(path) == 0) continue;
-        Bool done = false;
+        Bool done = imp_imported(module, path);
         for (Usize k = 0; k < added_count; k++)
             if (imp_same(added[k], path)) done = true;
         if (done || added_count == countof(added)) continue;

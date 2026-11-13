@@ -20,6 +20,16 @@ static Str source_of(Str path) {
                "export struct Error {\n    Str message;\n    Str module;\n    Bool in_instance;\n    Usize instance;\n};\n"
                "export struct Then {\n    Usize run;\n    const int *expr;\n    Bool flag;\n};\n";
     }
+    if (same(path, "front.left_span")) {
+        return "module front::left_span;\nimport front::left_ast;\n"
+               "export struct Error {\n    Str message;\n    left_ast::Span span;\n    Str module;\n};\n";
+    }
+    if (same(path, "front.left_emit")) {
+        return "module front::left_emit;\nimport front::left_span as state;\nexport typedef state::Error Error;\n";
+    }
+    if (same(path, "front.left_ast")) {
+        return "module front::left_ast;\nexport struct Span {\n    Usize start;\n    Usize end;\n};\n";
+    }
     return "";
 }
 
@@ -68,4 +78,18 @@ export void test_front_fix_zero_left_out_a_member_two_records_above_a_pointer_is
                  "void f(void) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
                  "struct Step:\n    name: *char\nstruct Mid:\n    a: i32\n    step: Step = undefined\nstruct Owner:\n    id: i32\n"
                  "    mid: Mid = undefined\nfn f():\n    x := Owner(id = 1)\n    g(&x)\n");
+}
+
+// The module of a left-out field's type is imported once, however many constructions leave the field out.
+export void test_front_fix_zero_left_out_the_import_of_a_field_type_is_written_once() {
+    expect_fixed("module m;\nimport front::left_emit;\nstatic left_emit::Error one(Str m) {\n"
+                 "    left_emit::Error a = {.message = m};\n    return a;\n}\n"
+                 "static left_emit::Error two(Str m) {\n    left_emit::Error b = {.message = m};\n    return b;\n}\n",
+                 "import front.left_ast\nimport front.left_emit\n"
+                 "fn one(m: str) -> left_emit.Error:\n"
+                 "    a := left_emit.Error(message = m, span = left_ast.Span(start = 0, end = 0), module = \"\")\n"
+                 "    return a\n"
+                 "fn two(m: str) -> left_emit.Error:\n"
+                 "    b := left_emit.Error(message = m, span = left_ast.Span(start = 0, end = 0), module = \"\")\n"
+                 "    return b\n");
 }
