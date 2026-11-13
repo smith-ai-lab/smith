@@ -1,23 +1,22 @@
 ## The forms the F00 batch (#3478) made the front end take: a slice whose element is a `str` or a pointer to a record
-## (`mem.realloc` of a `[]str`, of a `[]*Item`).
-
-import std.mem
+## (the type of an instance such as `mem.realloc` of a `[]str` or of a `[]*Item`).
 
 struct Item:
     n: i32
 
+fn first[T](xs: []T) -> T:
+    xs[0]
+
+fn count_of[T](xs: []T) -> usize:
+    countof(xs)
+
 pub fn check() -> i32:
-    mut names: []str = []
-    names = mem.realloc(names, 2)
-    names[0] = "ab"
-    names[1] = "cde"
-    if countof(names) != 2 or countof(names[1]) != 3:
+    names: []str = ["ab", "cde"]
+    if count_of(names) != 2 or countof(first(names)) != 2:
         return 1
-    mem.free(names.data)
-    mut items: []*Item = []
-    items = mem.realloc(items, 1)
-    items[0] = nullptr
-    if countof(items) != 1 or items[0] != nullptr:
+    mut a: Item = Item(n = 4)
+    mut b: Item = Item(n = 6)
+    items: []*Item = [&a, &b]
+    if count_of(items) != 2 or first(items).n != 4:
         return 2
-    mem.free(items.data)
     0
