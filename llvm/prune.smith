@@ -127,8 +127,9 @@ I32 main(Str args[:]) {
     files::EntriesResult builds = files::list(llvm);
     if (builds == .error) return 0;
     for (files::Entry build : builds.ok) {
-        if (build.name[0] == '.' || mem::equal(build.name, keep_name)) continue;
-        Str folder = join(llvm, build.name);
+        Str build_name = build.name;
+        if (build_name[0] == '.' || mem::equal(build_name, keep_name)) continue;
+        Str folder = join(llvm, build_name);
         files::BytesResult id = read_identity(folder);
         if (id == .error) continue;
         const char *first = (const char *)id.ok.data;
@@ -136,7 +137,7 @@ I32 main(Str args[:]) {
         if (mem::equal(identity, keep_identity)) continue;
         remove_tree(folder);
         console::print("removed ", folder, "\n");
-        remove_enzyme(enzyme, build.name);
+        remove_enzyme(enzyme, build_name);
     }
     return 0;
 }
