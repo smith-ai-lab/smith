@@ -4055,8 +4055,8 @@ export Bool expand_reflection(Checked *r, ast::Decl *function) {
     reflecting = r;
     Str none = "";
     Bool unrolled = unroll_enumerated(function, none, 0);
-    ast_clone::set_reflection_source(reflect_count, reflect_at, reflect_fail);
-    Bool expanded = ast_clone::expand_reflection_lists(function) || unrolled;
+    ast_clone::Sources sources = {.count = reflect_count, .at = reflect_at, .fail = reflect_fail};
+    Bool expanded = ast_clone::expand_reflection_lists(function, sources) || unrolled;
     reflecting = nullptr;
     return expanded;
 }

@@ -99,3 +99,27 @@ export void test_front_ast_clone_shares_no_node() {
     test::check_equal(dump_of(original), before);
     test::check(!mem::equal(dump_of(copy), before));
 }
+
+static const ast::Stmt *keep_statement(const ast::Stmt *s) {
+    return s;
+}
+
+static const ast::Expr *two_for_one(const ast::Expr *e) {
+    if (e->kind == .integer && e->kind.integer.value == 1) return ast::integer(2);
+    return e;
+}
+
+// The choosers belong to the copy in progress (#3493): a copy with them rewrites, the plain copy after it does not,
+// and the original is as it was.
+export void test_front_ast_clone_choosers_belong_to_one_copy() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Decl *original = first_decl("I32 f() { return 1; }\n");
+    ast::Decl *rewritten = ast_clone::clone_decl_rewriting(original, keep_statement, two_for_one);
+    ast::Decl *plain = ast_clone::clone_decl(original);
+    test::check_equal(dump_of(rewritten), dump_of(first_decl("I32 f() { return 2; }\n")));
+    test::check_equal(dump_of(plain), dump_of(original));
+    test::check_equal(dump_of(original), dump_of(first_decl("I32 f() { return 1; }\n")));
+}
