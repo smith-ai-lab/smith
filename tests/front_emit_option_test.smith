@@ -457,3 +457,27 @@ export void test_front_emit_option_the_address_of_a_construction_is_a_temporary(
     test::check_equal(total(5), (I32)7);
     emit_jit::stop(&host);
 }
+
+// A narrowed `?fn` local is called through its payload (#3519): `if length != .none:` makes `length(...)` a call of the `fn`.
+export void test_front_emit_option_a_narrowed_option_of_a_function_is_called() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn twice(x: i32) -> i32:\n"
+                     "    x * 2\n"
+                     "fn pick(n: i32) -> ?fn(i32) -> i32:\n"
+                     "    if n < 0:\n"
+                     "        return .none\n"
+                     "    return twice\n"
+                     "pub fn run(n: i32) -> i32:\n"
+                     "    length := pick(n)\n"
+                     "    if length != .none:\n"
+                     "        return length(n) + 1\n"
+                     "    99\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick run = (Pick)symbol_of(&host, "run");
+    test::check_equal(run(4), (I32)9);
+    test::check_equal(run(-4), (I32)99);
+    c::LLVMDisposeMessage(ir);
+    emit_jit::stop(&host);
+}
