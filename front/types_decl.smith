@@ -2124,7 +2124,7 @@ static syntax::Edits path_reads(const types::Guard *g) {
             stop += 1;
         if (stop == word || types::same_text(fixed_source[word:stop], g->variant)) continue;
         out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = edit_of(at, next, g->bound);
+        out[countof(out) - 1] = edit_of((U32)at, (U32)next, g->bound);
     }
     return out;
 }
