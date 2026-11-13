@@ -855,8 +855,8 @@ static I32 summarize(const char file[:], const char *smith) {
 // The gate's version (#3443): bumped by any change to the comparison below or to the CI step that calls it. The
 // fingerprint is the hash `gate-check` prints for the text between the gate-begin and gate-end lines of this file and
 // of ci.yml; the test `the_gate_version_moves_with_the_comparison` fails when they differ, and says what to write.
-constexpr U64 gate_version = 4;
-constexpr U64 gate_fingerprint = 3098037309174690426ULL;
+constexpr U64 gate_version = 5;
+constexpr U64 gate_fingerprint = 9742430355599004601ULL;
 constexpr U64 gate_dry_runs = 10;
 
 // The files the comparison named, as `,a,b,` (the verdict log keeps them, #3443).
@@ -876,11 +876,37 @@ static void note_named(const char path[:]) {
     named_files[named_files_length] = '\0';
 }
 
+// Whether the row is a crash of the compiler (a stage's message starts with this, `compiled->status >= 127`).
+static Bool is_crash(const struct Entry *entry) {
+    typeof(const char[:]) message = text_of(entry->message[0:message_size]);
+    typeof(const char[:]) head = "the compiler crashed";
+    return countof(message) >= countof(head) && same(message[0:countof(head)], head);
+}
+
+// The index of the crash row of `path` among the rows from `from` (the file's first row in the NOW table) when the file
+// has rows in the BASE table (the first `base_rows`) and none of them is a crash; else `entry_count`. A crash that was
+// there before is not named, and a file with no row in the base did not change into one (#3606).
+static Usize new_crash(const char path[:], Usize from, Usize base_rows) {
+    Bool known = false;
+    for (Usize i = 0; i < base_rows; i++) {
+        if (!same(path, text_of(entries[i].path[0:path_size]))) continue;
+        if (is_crash(&entries[i])) return entry_count;
+        known = true;
+    }
+    if (!known) return entry_count;
+    for (Usize j = from; j < entry_count && same(path, text_of(entries[j].path[0:path_size])); j++) {
+        if (is_crash(&entries[j])) return j;
+    }
+    return entry_count;
+}
+
 // gate-begin
 // The queue's gate (#3369): prints `path TAB stage TAB message` for each file that passed in the BASE table and fails
 // in the NOW table, whatever the totals do (owner, 2026-11-12). A file the change lists in the excluded list (the
 // reason is the way out), a file gone from the tree and a file that starts to pass are not named; the table compared
-// with is the one it is given (the base's), never an older green run's.
+// with is the one it is given (the base's), never an older green run's. A file that has rows in the BASE table, none of
+// them a crash, and a crash in the NOW table is named too, with its crash row (#3606); a crash already in the base is
+// not.
 static Usize named_count = 0;
 
 static I32 regressed(const char base[:], const char now[:]) {
@@ -903,9 +929,14 @@ static I32 regressed(const char base[:], const char now[:]) {
         for (Usize i = 0; i < base_rows; i++) {
             if (is_pass(&entries[i]) && same(path, text_of(entries[i].path[0:path_size]))) passed_on_base = true;
         }
-        if (!passed_on_base) continue;
-        console::print((const char *)entries[j].path, "\t", (const char *)entries[j].stage, "\t",
-                       (const char *)entries[j].message, "\n");
+        // The row named: the file's first, or the row of its crash (#3606).
+        Usize shown = j;
+        if (!passed_on_base) {
+            shown = new_crash(path, j, base_rows);
+            if (shown == entry_count) continue;
+        }
+        console::print((const char *)entries[shown].path, "\t", (const char *)entries[shown].stage, "\t",
+                       (const char *)entries[shown].message, "\n");
         named_count += 1;
         note_named(path);
     }
@@ -1704,6 +1735,10 @@ static Usize resolve_import(Usize file, const char name[:]) {
         if (slash == 0) break;
         slash -= 1;
     }
+    // `import scratch;` of a file of lib/std/: the scratch tree links `lib/scratch.smith` to tests/scratch.smith
+    // (`link_scratch_module`, #3214), a file git does not track, so the closure of the file holds it only by its
+    // target; without it a run of one file left scratch and what it imports unfixed (#3609).
+    if (same(name, "scratch")) return tree_find("tests/scratch.smith");
     return tree_count;
 }
 
@@ -2872,15 +2907,21 @@ static Bool demoted_by(const char log[:]) {
 static Usize table_state(const char name[:], Usize from, Usize to) {
     for (Usize i = from; i < to; i++) {
         if (!same(name, text_of(entries[i].path[0:path_size]))) continue;
-        return is_pass(&entries[i]) ? 1 : 2;
+        if (is_pass(&entries[i])) return 1;
+        // 3: the file crashed the compiler (a row of its own, #3606), 2: it fails otherwise
+        for (Usize k = i; k < to && same(name, text_of(entries[k].path[0:path_size])); k++) {
+            if (is_crash(&entries[k])) return 3;
+        }
+        return 2;
     }
     return 0;
 }
 
 // Item 2 of #3509: whether every file of the list `,a,b,` that a would-refuse named is shown true by the published
 // tables: `pass` in BEFORE (the table of that run's base) and not `pass` in AFTER (the table of the commit it merged),
-// both read as published, not from the gate's own comparison. A table that is missing or a file with no row in
-// either shows nothing, and the would-refuse counts against the gate as before.
+// both read as published, not from the gate's own comparison (or failing without a crash in BEFORE and crashing in
+// AFTER, #3606). A table that is missing or a file with no row in either shows nothing, and the would-refuse counts
+// against the gate as before.
 static Bool refusal_true(const char files[:], const char before[:], const char after[:]) {
     if (countof(before) == 0 || countof(after) == 0) return false;
     entry_count = 0;
@@ -2895,7 +2936,10 @@ static Bool refusal_true(const char files[:], const char before[:], const char a
         from = i + 1;
         if (countof(name) == 0) continue;
         any = true;
-        if (table_state(name, 0, split) != 1 || table_state(name, split, entry_count) != 2) return false;
+        Usize was = table_state(name, 0, split);
+        Usize now = table_state(name, split, entry_count);
+        // a file that passed and fails now, or that failed without a crash and crashes now (#3606)
+        if (!((was == 1 && now >= 2) || (was == 2 && now == 3))) return false;
     }
     return any;
 }

@@ -269,3 +269,20 @@ export void test_front_fix_guard_a_payload_read_after_the_name_moves_is_left() {
                                                  "        n = n.kind.next\n        return n.kind.next\n    n\n"));
     expect_fixed(stale, stale);
 }
+
+static Str pair_text() {
+    return "struct Node:\n    kind: Kind\n\nenum Kind:\n    pair: i32\n    leaf\n\n";
+}
+
+// A test of a field path stays as written and the read after it drops the variant (#3598): `n.kind` is the payload
+// where the test narrowed it, whichever test it was (`==`, `!=` with an early `return`).
+export void test_front_fix_guard_a_field_test_is_left_and_the_payload_is_read_direct() {
+    expect_fixed(as_str(format::push(pair_text(), "fn size(n: *Node) -> i32:\n    if n.kind == .pair:\n"
+                                                  "        return n.kind.pair + 1\n    return 0\n")),
+                 as_str(format::push(pair_text(), "fn size(n: *Node) -> i32:\n    if n.kind == .pair:\n"
+                                                  "        return n.kind + 1\n    return 0\n")));
+    expect_fixed(as_str(format::push(pair_text(), "fn other(n: *Node) -> i32:\n    if n.kind != .pair:\n"
+                                                  "        return 0\n    return n.kind.pair\n")),
+                 as_str(format::push(pair_text(), "fn other(n: *Node) -> i32:\n    if n.kind != .pair:\n"
+                                                  "        return 0\n    return n.kind\n")));
+}

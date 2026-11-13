@@ -1636,6 +1636,11 @@ export struct Guard {
     syntax::Edits head;    // the edits that write the test itself
     Bool head_sent;        // the first read carries them
     Bool spoiled;          // a write through `k.v`, a change of `k` or a local named `v` leaves the site (#2503)
+    // A test of a field path, `if a.kind == .v:` (#3598): the checker narrows the path, so the fixer leaves the test
+    // and writes each read `a.kind.v.f` as `a.kind.f`; no binding. `through` is set by a write through the payload
+    // (`a.kind.v.f = x`, `&a.kind.v.f`), whose site `fix_place` binds to a pointer, so its reads keep their form.
+    Bool direct;
+    Bool through;
     // A test of an option field, `if a.f != nullptr:` or `if a.f == nullptr: return` (#2557): `variant` is the field,
     // the fix binds it, `if f := a.f:` or `f := a.f else: return`, and each read `a.f` is `f`.
     Bool option;
@@ -3855,8 +3860,9 @@ static const Slot *visible_at(const Ty *record, Usize at) {
     return nullptr;
 }
 
-// The type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`, `str`).
-static Str written_name(TypeRef t) {
+// The base of a type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`,
+// `str`).
+static Str written_base(TypeRef t) {
     Str shown = show(t);
     if (t->kind != .integer && t->kind != .floating && t->kind != .bool_type && t->kind != .text) return shown;
     char lowered[:] = mem::alloc_slice(char, countof(shown));
@@ -3865,6 +3871,34 @@ static Str written_name(TypeRef t) {
         lowered[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch - 'A' + 'a') : ch;
     }
     Str text = lowered;
+    return text;
+}
+
+// The type as smith's own syntax writes it: a pointer `*T` or `*mut T`, a slice `[]T` or `[]mut T`, an array `[N]T`,
+// peeled from the outside in (#3609: a field of `fields(T)` is read back as this text, so `F64[:]` must be `[]mut
+// f64`).
+static Str written_name(TypeRef t) {
+    Str prefix = "";
+    for (Usize depth = 0; depth < 64; depth++) {
+        if (t->kind == .pointer) {
+            char grown[:] = format::push(prefix, t->kind.pointer.pointee_const ? "*" : "*mut ");
+            prefix = grown;
+            t = t->kind.pointer.element;
+        } else if (t->kind == .slice) {
+            char grown[:] = format::push(prefix, t->kind.slice.pointee_const ? "[]" : "[]mut ");
+            prefix = grown;
+            t = t->kind.slice.element;
+        } else if (t->kind == .array) {
+            char grown[:] = format::push(prefix, "[", t->kind.array.count, "]");
+            prefix = grown;
+            t = t->kind.array.element;
+        } else {
+            break;
+        }
+    }
+    if (countof(prefix) == 0) return written_base(t);
+    char joined[:] = format::push(prefix, written_base(t));
+    Str text = joined;
     return text;
 }
 
@@ -4199,6 +4233,22 @@ export Bool expand_reflection(Checked *r, ast::Decl *function) {
     return expanded;
 }
 
+// Whether a type a call binds is not known: the invalid type or `Auto`, or a tuple (a pack) that holds one. The
+// argument that has it failed to be typed, and said why.
+static Bool binds_unknown(const Checked *r, Binding given[:]) {
+    for (Usize i = 0; i < countof(given); i++) {
+        TypeRef t = given[i].type;
+        if (!given[i].is_type || t == nullptr) continue;
+        if (t == r->table.invalid || t == r->table.automatic) return true;
+        if (t->kind != .tuple) continue;
+        for (Usize k = 0; k < countof(t->kind.tuple.slots); k++) {
+            TypeRef element = t->kind.tuple.slots[k].type;
+            if (element == r->table.invalid || element == r->table.automatic) return true;
+        }
+    }
+    return false;
+}
+
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
@@ -4315,7 +4365,7 @@ static Shape shape_of(const ast::Decl *d) {
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
-export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Binding given[:]) {
+static Usize make_instance(Checked *r, const ast::Decl *template, Str prefix, Binding given[:]) {
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
     if (!shape_of(template).ok) return max_instances;
@@ -4383,6 +4433,16 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
     r->instances[r->instance_count] = made;
     r->instance_count += 1;
     return r->instance_count - 1;
+}
+
+export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Binding given[:]) {
+    Usize found = find_instance(r, template, given);
+    if (found < r->instance_count) return found;
+    // An argument whose type is not known after an error was reported (a struct that is not typed yet): no instance
+    // is made for it, which would check the body with a type that is not known and report each comparison of it
+    // (#3609).
+    if (r->error_count > 0 && binds_unknown(r, given)) return max_instances;
+    return make_instance(r, template, prefix, given);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
