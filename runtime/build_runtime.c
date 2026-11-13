@@ -3991,16 +3991,22 @@ static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const
 // The runner's options that choose the tests and the part, out of the arguments of `smith test`, for the scan step's
 // .args (it sees nothing else of the build); empty when they choose no part and no test (#2998).
 static const char *const *smith_tests_shard_args(SmithBuild *b) {
+    // SMITH_TESTS_WHOLE (#3458): the build ignores the part and the --test values: it compiles every file and the table
+    // lists every test the macOS choice leaves (the table of 0 of 0), and the runner splits and selects at run time.
+    // A CI part sets it so the runner a job built once is the runner every part runs, not one more compile and link
+    // of its own subset.
+    const char *whole = getenv("SMITH_TESTS_WHOLE");
+    bool every = whole != nullptr && whole[0] != '\0';
     const char *const *given = smith_args(b);
     const char **kept = SMITH_NEW_LIST(smith_count(given));
     size_t used = 0;
     bool selected = false;
     for (size_t i = 0; given[i] != nullptr; i++) { // bounded by smith_args
-        selected = selected || strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
-                   strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
         bool flag = strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
-        bool option = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--costs") == 0 ||
-                      strcmp(given[i], "--test") == 0 || strcmp(given[i], "--weigh") == 0;
+        selected =
+            selected || flag || (!every && (strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0));
+        bool option = !every && (strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--costs") == 0 ||
+                                 strcmp(given[i], "--test") == 0 || strcmp(given[i], "--weigh") == 0);
         if (flag) kept[used++] = given[i];
         if (option && given[i + 1] != nullptr) {
             kept[used++] = given[i];

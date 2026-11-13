@@ -56,7 +56,7 @@ once, packs `build/`, `.smith/` and the generated `tree-sitter/src` with `tar --
 `smith/shim-pch` folder of the cache: both are inputs of smith's own steps, and without them every shard generated the
 parser and compiled the header, the 8 shims and the link of smith again, 16 steps and 26 s, #3458), and uploads it as the artifact
 `build-linux` (1 day); each shard restores it (`setup-smith` with `artifact: build-linux`), gives the checkout's sources an old time so none is newer than
-the build (the build's own files keep their times: touching them made every step run again, #2833), and runs its tests. Measurement before and after (3 queue runs, 3 pull request runs): in the PR of #1758.
+the build (the build's own files keep their times: touching them made every step run again, #2833), and runs its tests. Measurement before and after (3 queue runs, 3 pull request runs): in the PR of #1758. **One runner for every part** (#3458): a part used to compile and link a runner of its own for the files that hold its tests (`smith test --shard`, #1200: 18 to 39 s). `build-linux` builds the runner with `--skip-macos` (every test the Linux parts run) and `test-part` sets `SMITH_TESTS_WHOLE=1`, so the build ignores `--shard`, `--costs`, `--weigh` and `--test` (it keeps `--skip-macos` and `--macos-only`), compiles and links nothing, and the runner deals and selects at run time; the parts list the same tests as before.
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.

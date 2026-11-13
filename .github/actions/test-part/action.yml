@@ -50,6 +50,9 @@ runs:
         COUNT: ${{ inputs.count }}
         FLAGS: ${{ inputs.flags }}
         SMITH_OUTPUT: full
+        # #3458: the runner `build-linux` built (every test, the macOS choice of the flags) is the runner of every part;
+        # the runner reads the part's `--shard` at run time, so the part compiles and links no runner of its own
+        SMITH_TESTS_WHOLE: "1"
       run: |
         start=$(date +%s)
         rc=0
