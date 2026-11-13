@@ -162,6 +162,26 @@ export void test_front_reflect_type_of_an_entry() {
     test::check_equal(run(source, "front::test::run"), (I32)13);
 }
 
+export void test_front_reflect_type_of_an_entry_is_written_ty() {
+    // #3609: `type` is reserved, so the fixer writes `f.ty`; a slice field is `[]mut f64` and a type compared with it
+    // is decided in the instance, the branch not taken is not checked (`n` is not indexable).
+    Str source = "struct Table:\n"
+                 "    xs: []mut f64\n"
+                 "    n: i32\n"
+                 "\n"
+                 "fn slices(T: type) -> i32:\n"
+                 "    mut total := 0\n"
+                 "    for f in fields(T):\n"
+                 "        if is_slice(f.ty):\n"
+                 "            if typeof(f.ty) == []mut f64:\n"
+                 "                total = total + 1\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    slices(Table)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)1);
+}
+
 export void test_front_reflect_doc_of_an_entry() {
     Str source = "struct Documented:\n"
                  "    ## width\n"
