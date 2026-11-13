@@ -47,7 +47,7 @@ static void put(const char *dir, const char *name, const char *text, I64 time) {
 // outputs a command leaves as they are, `depends` what the depfile of an output names.
 static Build build(const char *dir, const char *const *targets, I64 time, const char *const *unchanged,
                    const char *const *depends) {
-    c::SmithCorePlan plan = {0};
+    c::SmithCorePlan plan = {};
     plan.folder = dir;
     plan.manifest = ".smith/build.ninja";
     plan.targets = targets;
