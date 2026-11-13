@@ -330,7 +330,7 @@ export void test_front_fix_zero_a_tested_function_pointer_is_an_option() {
                  "Handler := fn(i32)\nstruct Hooks:\n    count: i32\n"
                  "    on_exit: ?Handler = .none\nfn quiet() -> Hooks:\n"
                  "    return Hooks(count = 0)\nfn leave(h: *Hooks, code: i32):\n"
-                 "    if on_exit := h.on_exit:\n        on_exit(code)\n");
+                 "    on_exit := h.on_exit\n    if on_exit != .none:\n        on_exit(code)\n");
 }
 
 // A file that imports the struct reads it as the struct's own fix writes it (#2557): the module, read from its
