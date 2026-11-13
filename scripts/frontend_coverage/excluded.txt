@@ -19,6 +19,8 @@ tests/affine/affine_second_use.smith	error-fixture
 tests/affine/affine_slice_bad_index.smith	error-fixture
 tests/affine/affine_slice_elements.smith	error-fixture
 tests/affine/affine_slice_two_uses.smith	error-fixture
+tests/affine/enum_narrowed.smith	old-form: a payload read with `.` after a variant test (bindings)
+tests/affine/enum_narrowing_ends.smith	old-form: a payload read with `.` after a variant test (bindings)
 tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
 tests/build_fixtures/std_scope/affine_twice.smith	error-fixture
 tests/front/corpus/error-array-length/src/main.smith	error-fixture
@@ -253,3 +255,5 @@ tests/smith-lang/cases/generic-auto-vector/src/main.smith	old-form: vector type 
 tests/smith-lang/cases/generic-concept-local/src/main.smith	old-form: concept names as variable types (smith-dev-syntax-generics)
 tests/prove/geometry/restrict_slices.smith	old-form: restrict on slices (#3221 table, #3190 item 41)
 tests/smith-lang/cases/void-pointer-plain/src/main.smith	old-form: void * converts to T * implicitly outside a module (#398)
+tests/affine/enum_read_unchecked.smith	error-fixture
+tests/build_fixtures/dap/slices2/main.smith	old-form: restrict on slices (#3221 table, #3190 item 41)

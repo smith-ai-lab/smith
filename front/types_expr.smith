@@ -6347,6 +6347,16 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
                     clash = (types::Unified){};
                     continue;
                 }
+                // `check_equal(some, &value)`: a `*mut T` and a `*T` to the same `T` agree as the read-only one, as a
+                // `*mut T` converts to a `*T` anywhere.
+                if (written != nullptr && written->kind == .named && clash.before != nullptr &&
+                    clash.before->kind == .pointer && clash.now->kind == .pointer &&
+                    clash.before->kind.pointer.element == clash.now->kind.pointer.element &&
+                    !clash.before->kind.pointer.pointee_volatile && !clash.now->kind.pointer.pointee_volatile) {
+                    bound[clash.generic].type = types::pointer_to(&c->table, clash.before->kind.pointer.element, true);
+                    clash = (types::Unified){};
+                    continue;
+                }
                 types::failf(c, arg->span, "`", generics[clash.generic].name, "` is `", types::show(clash.before),
                              "` from an earlier argument and `", types::show(clash.now),
                              "` from this one; make the arguments agree, or write `", template->name, "[...]`");
