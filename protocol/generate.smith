@@ -55,13 +55,38 @@ typedef enum {
     GenKind_Pending, // a slot whose node has not been read yet
 } GenKind;
 
-// The first six kinds are the types every schema starts from: their type ids are the kinds, and they have no slot.
-constexpr I32 gen_primitives = 6;
+// A type is one of two things, and a reference says which: a primitive (the first six kinds: the types every schema
+// starts from, which have no slot, so a primitive is named by its kind) or a slot of the table (named by its position).
+// "None" is an option of it. An enumeration is not an index: a kind never names a place in the table.
+typedef enum {
+    GenKind primitive;
+    I32 slot;
+} GenRef;
+
+typedef Option(GenRef) GenMaybe;
+typedef Option(GenKind) GenPrimitive;
+
+GenMaybe gen_some(GenRef ref) {
+    return ref;
+}
+
+GenMaybe gen_none() {
+    return .none;
+}
+
+// A type that is a slot of the table, and a primitive.
+GenRef gen_slot_ref(I32 id) {
+    return {.slot = id};
+}
+
+GenRef gen_primitive_ref(GenKind kind) {
+    return {.primitive = kind};
+}
 
 typedef struct {
     const char *json;  // the member's name in the schema
     const char *ident; // as a C member
-    I32 type;
+    GenRef type;
     bool required;
 } GenField;
 
@@ -82,8 +107,8 @@ typedef struct {
     Usize field_count;
     bool extras; // the schema allows members it does not list
     // Array, Map and Nullable: the element. Union: the alternatives.
-    I32 element;
-    I32 *alts;
+    GenMaybe element;
+    GenRef *alts;
     Usize alt_count;
     const char **alt_tags;    // Pascal case, for the kind enum
     const char **alt_members; // snake case, for the union
@@ -94,15 +119,20 @@ typedef struct {
     I32 visit;
 } GenType;
 
+// The type a definition of the schema is, or none while it is a $ref that has not been followed yet.
+typedef struct {
+    GenMaybe type;
+} GenDefinition;
+
 typedef struct {
     arena::Arena arena;
     const char *schema;      // dap
     const char *prefix;      // SmithDap
     const char *stem_prefix; // smith_dap_
     const c::SmithJsonValue *definitions;
-    I32 *definition_type;
+    GenDefinition definition[gen_types_max]; // by the position of the definition in the schema
     GenType types[gen_types_max];
-    I32 redirect[gen_types_max];
+    GenRef redirect[gen_types_max];
     Usize type_count;
     I32 order[gen_types_max];
     Usize order_count;
@@ -301,35 +331,74 @@ bool gen_is_any_list(const c::SmithJsonValue *list) {
            gen_list_has(list, "boolean") && (gen_list_has(list, "number") || gen_list_has(list, "integer"));
 }
 
-I32 gen_primitive_named(const c::SmithJsonValue *type) {
-    if (gen_is_string(type, "string")) return GenKind_String;
-    if (gen_is_string(type, "integer")) return GenKind_Integer;
-    if (gen_is_string(type, "number")) return GenKind_Number;
-    if (gen_is_string(type, "boolean")) return GenKind_Boolean;
-    if (gen_is_string(type, "object")) return GenKind_Object;
-    return -1;
+GenPrimitive gen_primitive_named(const c::SmithJsonValue *type) {
+    if (gen_is_string(type, "string")) return {.some = GenKind_String};
+    if (gen_is_string(type, "integer")) return {.some = GenKind_Integer};
+    if (gen_is_string(type, "number")) return {.some = GenKind_Number};
+    if (gen_is_string(type, "boolean")) return {.some = GenKind_Boolean};
+    if (gen_is_string(type, "object")) return {.some = GenKind_Object};
+    return .none;
 }
 
 const char *const gen_structural[_] = {"$ref",  "allOf", "anyOf",      "oneOf", "enum",
                                        "_enum", "const", "properties", "items"};
 
-// The primitive type a node is, or -1 when it needs a type of its own.
-I32 gen_node_primitive(const c::SmithJsonValue *node) {
-    if (node->kind == c::SmithJsonKind_True) return GenKind_Any;
+// The primitive type a node is, or none when it needs a type of its own.
+GenPrimitive gen_node_primitive(const c::SmithJsonValue *node) {
+    if (node->kind == c::SmithJsonKind_True) return {.some = GenKind_Any};
     if (node->kind != c::SmithJsonKind_Object)
         gen_die("a schema is an object or true, not kind %d at byte %zu", (I32)node->kind, node->offset);
     for (Usize i = 0; i < sizeof gen_structural / sizeof gen_structural[0]; i++) { // bounded by the table
-        if (gen_get(node, gen_structural[i]) != nullptr) return -1;
+        if (gen_get(node, gen_structural[i]) != nullptr) return .none;
     }
     const c::SmithJsonValue *type = gen_get(node, "type");
     const c::SmithJsonValue *more = gen_get(node, "additionalProperties");
-    if (more != nullptr && more->kind == c::SmithJsonKind_Object && more->count > 0) return -1;
-    if (type == nullptr) return GenKind_Any;
-    if (type->kind == c::SmithJsonKind_Array) return gen_is_any_list(type) ? GenKind_Any : -1;
-    I32 primitive = gen_primitive_named(type);
-    if (primitive >= 0) return primitive;
-    if (gen_is_string(type, "array")) return -1;
+    if (more != nullptr && more->kind == c::SmithJsonKind_Object && more->count > 0) return .none;
+    if (type == nullptr) return {.some = GenKind_Any};
+    if (type->kind == c::SmithJsonKind_Array) {
+        if (gen_is_any_list(type)) return {.some = GenKind_Any};
+        return .none;
+    }
+    GenPrimitive named = gen_primitive_named(type);
+    if (named == .some) return named;
+    if (gen_is_string(type, "array")) return .none;
     gen_die("the type at byte %zu is not one this generator knows", type->offset);
+}
+
+// Whether a node is the primitive `kind` (a $ref or anything that needs a type of its own is not).
+bool gen_node_is(const c::SmithJsonValue *node, GenKind kind) {
+    GenPrimitive named = gen_node_primitive(node);
+    if (named == .none) return false;
+    return named.some == kind;
+}
+
+// Whether a reference is the primitive `kind`.
+bool gen_is_primitive(GenRef ref, GenKind kind) {
+    if (ref != .primitive) return false;
+    return ref.primitive == kind;
+}
+
+// Whether a reference is the slot `id`.
+bool gen_is_slot(GenRef ref, I32 id) {
+    if (ref != .slot) return false;
+    return ref.slot == id;
+}
+
+// Whether two references are the same type: the same primitive, or the same slot.
+bool gen_same_ref(GenRef a, GenRef b) {
+    switch (a) {
+    case .primitive:
+        return gen_is_primitive(b, a.primitive);
+    case .slot:
+        return gen_is_slot(b, a.slot);
+    }
+    return false;
+}
+
+// The slot's type a reference names, or nullptr for a primitive (it has none).
+const GenType *gen_slot_type(const Generator *g, GenRef ref) {
+    if (ref == .slot) return &g->types[ref.slot];
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -355,12 +424,13 @@ I32 gen_new_type(Generator *g, GenKind kind, const char *hint, const c::SmithJso
     gen_assert(g->type_count < gen_types_max, "g->type_count < gen_types_max");
     I32 id = (I32)g->type_count++;
     GenType *t = &g->types[id];
-    *t = (GenType){.kind = kind, .node = node, .hint = hint, .element = -1};
+    *t = (GenType){.kind = kind, .node = node, .hint = hint};
+    t->element = .none;
     if (hint != nullptr) {
         t->name = gen_claim(g, hint);
         t->label = hint;
     }
-    g->redirect[id] = id;
+    g->redirect[id] = gen_slot_ref(id);
     return id;
 }
 
@@ -372,7 +442,7 @@ I32 gen_definition_index(const Generator *g, struct smith_array_const_char_n nam
     return -1;
 }
 
-I32 gen_reference(const Generator *g, const c::SmithJsonValue *node) {
+GenMaybe gen_reference(const Generator *g, const c::SmithJsonValue *node) {
     const c::SmithJsonValue *ref = gen_get(node, "$ref");
     if (ref->kind != c::SmithJsonKind_String) gen_die("a $ref at byte %zu is not a string", ref->offset);
     struct smith_array_const_char_n name = ref->text;
@@ -382,22 +452,22 @@ I32 gen_reference(const Generator *g, const c::SmithJsonValue *node) {
     name = (struct smith_array_const_char_n){.data = name.data + slash, .count = {name.count[0] - slash}};
     I32 index = gen_definition_index(g, name);
     if (index < 0) gen_die("the reference at byte %zu names no definition", ref->offset);
-    return g->definition_type[index];
+    return g->definition[index].type;
 }
 
 // The type of a node: a primitive, a definition, or a slot (made now, built when the worklist reaches it).
-I32 gen_slot_for(Generator *g, const c::SmithJsonValue *node, const char *hint) {
+GenRef gen_slot_for(Generator *g, const c::SmithJsonValue *node, const char *hint) {
     if (gen_get(node, "$ref") != nullptr) {
-        I32 id = gen_reference(g, node);
-        gen_assert(id >= 0, "id >= 0");
-        return id;
+        GenMaybe found = gen_reference(g, node);
+        if (found == .some) return found.some;
+        gen_die("the reference at byte %zu has no type", node->offset);
     }
-    I32 primitive = gen_node_primitive(node);
-    if (primitive >= 0) return primitive;
+    GenPrimitive named = gen_node_primitive(node);
+    if (named == .some) return gen_primitive_ref(named.some);
     for (Usize i = 0; i < g->type_count; i++) { // bounded by the table
-        if (g->types[i].node == node) return (I32)i;
+        if (g->types[i].node == node) return gen_slot_ref((I32)i);
     }
-    return gen_new_type(g, GenKind_Pending, hint, node);
+    return gen_slot_ref(gen_new_type(g, GenKind_Pending, hint, node));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -411,7 +481,10 @@ void gen_build_array(Generator *g, I32 id) {
     GenType *t = &g->types[id];
     const c::SmithJsonValue *items = gen_get(t->node, "items");
     t->kind = GenKind_Array;
-    t->element = items != nullptr ? gen_slot_for(g, items, gen_hint(g, t->hint, "Item")) : GenKind_Any;
+    if (items != nullptr)
+        t->element = gen_slot_for(g, items, gen_hint(g, t->hint, "Item"));
+    else
+        t->element = gen_primitive_ref(GenKind_Any);
 }
 
 void gen_build_map(Generator *g, I32 id) {
@@ -468,7 +541,7 @@ bool gen_union_is_enum(Generator *g, I32 id, const c::SmithJsonValue *alts) {
         const c::SmithJsonValue *alt = alts->items[i];
         const c::SmithJsonValue *list = gen_get(alt, "enum");
         const c::SmithJsonValue *constant = gen_get(alt, "const");
-        if (list == nullptr && constant == nullptr && gen_node_primitive(alt) == GenKind_String &&
+        if (list == nullptr && constant == nullptr && gen_node_is(alt, GenKind_String) &&
             gen_get(alt, "$ref") == nullptr) {
             plain_string = true;
             continue;
@@ -502,11 +575,19 @@ void gen_build_union(Generator *g, I32 id) {
         gen_die("the alternatives at byte %zu are not a list of 1 to %zu", alts->offset, gen_alts_max);
     if (gen_union_is_enum(g, id, alts)) return;
     t->kind = GenKind_Union;
-    t->alts = push_block(g, I32, alts->count);
+    t->alts = push_block(g, GenRef, alts->count);
     t->alt_count = alts->count;
     for (Usize i = 0; i < alts->count; i++) { // bounded by the alternatives
         t->alts[i] = gen_slot_for(g, alts->items[i], gen_format(g, "%s%zu", t->hint, i + 1));
     }
+}
+
+// The primitive a name in a type list is: its own, or any JSON for "array".
+GenKind gen_list_kind(const c::SmithJsonValue *list, const c::SmithJsonValue *item) {
+    GenPrimitive named = gen_primitive_named(item);
+    if (named == .some) return named.some;
+    if (gen_is_string(item, "array")) return GenKind_Any;
+    gen_die("the type list at byte %zu names a type this generator does not know", list->offset);
 }
 
 // "type": ["string", "null"], ["integer", "string"]: one type with null allowed, or a union of the primitives.
@@ -514,7 +595,7 @@ void gen_build_type_list(Generator *g, I32 id) {
     contract::trusted(); // the edge: it reads the JSON tree or reports and exits, both C
     GenType *t = &g->types[id];
     const c::SmithJsonValue *list = gen_get(t->node, "type");
-    I32 found[gen_alts_max];
+    GenRef found[gen_alts_max];
     Usize count = 0;
     bool nullable = false;
     for (Usize i = 0; i < list->count && count < gen_alts_max; i++) { // bounded by the list
@@ -522,10 +603,7 @@ void gen_build_type_list(Generator *g, I32 id) {
             nullable = true;
             continue;
         }
-        I32 primitive = gen_primitive_named(list->items[i]);
-        if (primitive < 0 && gen_is_string(list->items[i], "array")) primitive = GenKind_Any;
-        if (primitive < 0) gen_die("the type list at byte %zu names a type this generator does not know", list->offset);
-        found[count++] = primitive;
+        found[count++] = gen_primitive_ref(gen_list_kind(list, list->items[i]));
     }
     gen_assert(count > 0, "count > 0");
     if (count == 1 && !nullable) {
@@ -539,8 +617,9 @@ void gen_build_type_list(Generator *g, I32 id) {
     }
     if (nullable) gen_die("a nullable union of primitives (byte %zu) is not supported", list->offset);
     t->kind = GenKind_Union;
-    t->alts = push_block(g, I32, count);
-    mem::copy(t->alts[0:count], found[0:count]);
+    t->alts = push_block(g, GenRef, count);
+    for (Usize k = 0; k < count; k++)
+        t->alts[k] = found[k]; // bounded by the list
     t->alt_count = count;
 }
 
@@ -562,7 +641,7 @@ typedef struct {
 void gen_add_property(Generator *g, GenCollect *collect, const char *owner, struct smith_array_const_char_n name,
                       const c::SmithJsonValue *schema) {
     const char *json = gen_text(g, name);
-    I32 type = gen_slot_for(g, schema, gen_hint(g, owner, json));
+    GenRef type = gen_slot_for(g, schema, gen_hint(g, owner, json));
     for (Usize i = 0; i < collect->count; i++) { // bounded by the members so far
         if (__builtin_strcmp(collect->fields[i].json, json) == 0) {
             collect->fields[i].type = type; // a derived schema overrides its base's member
@@ -671,43 +750,49 @@ void gen_build(Generator *g, I32 id) {
 // slot built; building makes more slots, so the loop runs to the end of a table that grows.
 void gen_read(Generator *g, const c::SmithJsonValue *definitions) {
     g->definitions = definitions;
-    g->definition_type = push_block(g, I32, definitions->count + 1);
+    gen_assert(definitions->count <= gen_types_max, "definitions->count <= gen_types_max");
     for (Usize i = 0; i < definitions->count; i++)
-        g->definition_type[i] = -1;
+        g->definition[i].type = gen_none();
     for (Usize i = 0; i < definitions->count; i++) { // bounded by the definitions
         const c::SmithJsonValue *node = definitions->items[i];
         if (gen_get(node, "$ref") != nullptr) continue;
-        I32 primitive = gen_node_primitive(node);
-        if (primitive >= 0) {
-            g->definition_type[i] = primitive;
+        GenPrimitive named = gen_node_primitive(node);
+        if (named == .some) {
+            g->definition[i].type = gen_some(gen_primitive_ref(named.some));
             continue;
         }
         I32 id = gen_new_type(g, GenKind_Pending, gen_pascal(g, gen_text(g, definitions->items[i]->key)), node);
         g->types[id].is_definition = true;
-        g->definition_type[i] = id;
+        g->definition[i].type = gen_some(gen_slot_ref(id));
     }
     for (Usize pass = 0; pass < definitions->count; pass++) { // a chain of references is at most this long
         for (Usize i = 0; i < definitions->count; i++) {      // bounded by the definitions
-            if (g->definition_type[i] >= 0) continue;
-            I32 target = gen_reference(g, definitions->items[i]);
-            g->definition_type[i] = target;
+            if (g->definition[i].type == .some) continue;
+            g->definition[i].type = gen_reference(g, definitions->items[i]);
         }
     }
-    for (Usize i = 0; i < definitions->count; i++) { // a reference to a reference is left at -1 by the loop above
-        if (g->definition_type[i] < 0)
+    for (Usize i = 0; i < definitions->count; i++) { // a reference to a reference is left at none by the loop above
+        if (g->definition[i].type == .none)
             gen_die("the definition %s is a reference that never ends", gen_text(g, definitions->items[i]->key));
     }
-    for (Usize i = gen_primitives; i < g->type_count; i++)
+    for (Usize i = 0; i < g->type_count; i++)
         gen_build(g, (I32)i); // type_count grows as slots are built
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Merging equal types
 
-I32 gen_final(const Generator *g, I32 id) {
+// Where a reference was merged to: a primitive stays, a slot goes where its redirect says.
+GenRef gen_redirected(const Generator *g, GenRef ref) {
+    if (ref != .slot) return ref;
+    return g->redirect[ref.slot];
+}
+
+GenRef gen_final(const Generator *g, GenRef ref) {
     for (Usize hops = 0; hops < g->type_count + 1; hops++) { // bounded: a chain is no longer than the table
-        if (g->redirect[id] == id) return id;
-        id = g->redirect[id];
+        GenRef next = gen_redirected(g, ref);
+        if (gen_same_ref(next, ref)) return ref;
+        ref = next;
     }
     gen_die("a redirect loops");
 }
@@ -715,14 +800,22 @@ I32 gen_final(const Generator *g, I32 id) {
 void gen_remap(Generator *g) {
     for (Usize i = 0; i < g->type_count; i++) { // bounded by the table
         GenType *t = &g->types[i];
-        if (t->element >= 0) t->element = gen_final(g, t->element);
+        GenMaybe element = t->element;
+        if (element == .some) t->element = gen_some(gen_final(g, element.some));
         for (Usize j = 0; j < t->field_count; j++)
             t->fields[j].type = gen_final(g, t->fields[j].type);
         for (Usize j = 0; j < t->alt_count; j++)
             t->alts[j] = gen_final(g, t->alts[j]);
     }
-    for (Usize i = 0; i < g->definitions->count; i++)
-        g->definition_type[i] = gen_final(g, g->definition_type[i]);
+    for (Usize i = 0; i < g->definitions->count; i++) {
+        GenMaybe type = g->definition[i].type;
+        if (type == .some) g->definition[i].type = gen_some(gen_final(g, type.some));
+    }
+}
+
+bool gen_same_maybe(GenMaybe a, GenMaybe b) {
+    if (a == .none || b == .none) return a == .none && b == .none;
+    return gen_same_ref(a.some, b.some);
 }
 
 bool gen_same(const GenType *a, const GenType *b) {
@@ -731,7 +824,7 @@ bool gen_same(const GenType *a, const GenType *b) {
     case GenKind_Array:
     case GenKind_Map:
     case GenKind_Nullable:
-        return a->element == b->element;
+        return gen_same_maybe(a->element, b->element);
     case GenKind_Enum:
     case GenKind_OpenEnum:
         if (a->value_count != b->value_count) return false;
@@ -751,10 +844,11 @@ void gen_merge(Generator *g) {
     for (Usize pass = 0; pass < 16; pass++) { // a list of lists merges one level a pass
         bool merged = false;
         for (Usize i = 0; i < g->type_count; i++) { // bounded by the table
-            if (g->redirect[i] != (I32)i) continue;
+            if (!gen_same_ref(g->redirect[i], gen_slot_ref((I32)i))) continue;
             for (Usize j = i + 1; j < g->type_count; j++) { // bounded by the table
-                if (g->redirect[j] != (I32)j || !gen_same(&g->types[i], &g->types[j])) continue;
-                g->redirect[j] = (I32)i;
+                if (!gen_same_ref(g->redirect[j], gen_slot_ref((I32)j)) || !gen_same(&g->types[i], &g->types[j]))
+                    continue;
+                g->redirect[j] = gen_slot_ref((I32)i);
                 merged = true;
             }
         }
@@ -771,10 +865,17 @@ bool gen_is_wrapper(const GenType *t) {
     return t->kind == GenKind_Array || t->kind == GenKind_Map || t->kind == GenKind_Nullable;
 }
 
+// The element of an array, a map or a nullable.
+GenRef gen_element(const GenType *t) {
+    GenMaybe element = t->element;
+    if (element == .some) return element.some;
+    gen_die("%s has no element", t->name);
+}
+
 // 0: not a constant member. 1: a string constant (a one-value enum). 2: an integer constant.
 I32 gen_field_constant(const Generator *g, const GenField *field) {
-    if (field->type < gen_primitives) return 0;
-    const GenType *t = &g->types[field->type];
+    const GenType *t = gen_slot_type(g, field->type);
+    if (t == nullptr) return 0;
     if (t->kind == GenKind_Enum && t->value_count == 1) return 1;
     return t->kind == GenKind_ConstInteger ? 2 : 0;
 }
@@ -795,33 +896,31 @@ Usize gen_edge_count(const GenType *t) {
 }
 
 // The type edge i of t leads to; a constant member leads to nothing.
-I32 gen_edge_get(const Generator *g, const GenType *t, Usize i) {
-    switch (t->kind) {
-    case GenKind_Struct:
-        return gen_field_constant(g, &t->fields[i]) != 0 ? GenKind_String : t->fields[i].type;
-    case GenKind_Union:
-        return t->alts[i];
-    default:
-        return t->element;
+GenRef gen_edge_get(const Generator *g, const GenType *t, Usize i) {
+    if (t->kind == GenKind_Struct) {
+        if (gen_field_constant(g, &t->fields[i]) != 0) return gen_primitive_ref(GenKind_String);
+        return t->fields[i].type;
     }
+    if (t->kind == GenKind_Union) return t->alts[i];
+    return gen_element(t);
 }
 
 void gen_edge_cut(GenType *t, Usize i) {
     switch (t->kind) {
     case GenKind_Struct:
-        t->fields[i].type = GenKind_Any;
+        t->fields[i].type = gen_primitive_ref(GenKind_Any);
         break;
     case GenKind_Union:
-        t->alts[i] = GenKind_Any;
+        t->alts[i] = gen_primitive_ref(GenKind_Any);
         break;
     default:
-        t->element = GenKind_Any;
+        t->element = gen_primitive_ref(GenKind_Any);
         break;
     }
 }
 
 typedef struct {
-    I32 type;
+    I32 type; // a slot
     Usize edge;
 } GenVisit;
 
@@ -854,8 +953,10 @@ void gen_visit(Generator *g, I32 root) {
             depth--;
             continue;
         }
-        I32 target = gen_edge_get(g, t, top->edge++);
-        if (target < gen_primitives || g->types[target].visit == 2) continue;
+        GenRef edge = gen_edge_get(g, t, top->edge++);
+        if (edge != .slot) continue;
+        I32 target = edge.slot;
+        if (g->types[target].visit == 2) continue;
         if (g->types[target].visit == 0) {
             g->types[target].visit = 1;
             gen_assert(depth < gen_types_max, "depth < gen_types_max");
@@ -874,8 +975,8 @@ bool gen_collapse(Generator *g) {
     for (Usize k = 0; k < g->order_count; k++) { // bounded by the types
         const GenType *t = &g->types[g->order[k]];
         for (Usize j = 0; t->kind == GenKind_Union && j < t->alt_count; j++) { // bounded by the alternatives
-            if (t->alts[j] != GenKind_Any) continue;
-            g->redirect[g->order[k]] = GenKind_Any;
+            if (!gen_is_primitive(t->alts[j], GenKind_Any)) continue;
+            g->redirect[g->order[k]] = gen_primitive_ref(GenKind_Any);
             changed = true;
             break;
         }
@@ -888,10 +989,14 @@ void gen_settle(Generator *g) {
     for (Usize round = 0; round < 16; round++) { // each round collapses a union, so a few settle it
         gen_merge(g);
         g->order_count = 0;
-        for (Usize i = gen_primitives; i < g->type_count; i++)
+        for (Usize i = 0; i < g->type_count; i++)
             g->types[i].visit = 0;
         for (Usize i = 0; i < g->definitions->count; i++) { // every definition is a root of the order
-            if (g->definition_type[i] >= gen_primitives) gen_visit(g, g->definition_type[i]);
+            GenMaybe type = g->definition[i].type;
+            if (type == .none) continue;
+            GenRef root = type.some;
+            if (root != .slot) continue;
+            gen_visit(g, root.slot);
         }
         if (!gen_collapse(g)) return;
     }
@@ -901,13 +1006,56 @@ void gen_settle(Generator *g) {
 // ---------------------------------------------------------------------------------------------------------------
 // Names, tags and the order a union tries its alternatives in
 
-const char *const gen_primitive_names[_] = {"Boolean", "Integer", "Number", "String", "Any", "Object"};
-const char *const gen_primitive_stems[_] = {"boolean", "integer", "number", "string", "any", "object"};
+// What a primitive is called: by its kind, never by a place in a table.
+const char *gen_primitive_name(GenKind kind) {
+    switch (kind) {
+    case GenKind_Boolean:
+        return "Boolean";
+    case GenKind_Integer:
+        return "Integer";
+    case GenKind_Number:
+        return "Number";
+    case GenKind_String:
+        return "String";
+    case GenKind_Any:
+        return "Any";
+    case GenKind_Object:
+        return "Object";
+    default:
+        break;
+    }
+    gen_die("kind %d is not a primitive", (I32)kind);
+}
+
+const char *gen_primitive_stem(GenKind kind) {
+    switch (kind) {
+    case GenKind_Boolean:
+        return "boolean";
+    case GenKind_Integer:
+        return "integer";
+    case GenKind_Number:
+        return "number";
+    case GenKind_String:
+        return "string";
+    case GenKind_Any:
+        return "any";
+    case GenKind_Object:
+        return "object";
+    default:
+        break;
+    }
+    gen_die("kind %d is not a primitive", (I32)kind);
+}
 
 // The name of a type without the schema's prefix.
-const char *gen_short(const Generator *g, I32 id) {
-    if (id < gen_primitives) return gen_primitive_names[id];
-    return g->types[id].name + __builtin_strlen(g->prefix);
+const char *gen_short(const Generator *g, GenRef ref) {
+    switch (ref) {
+    case .primitive:
+        return gen_primitive_name(ref.primitive);
+    case .slot:
+        return g->types[ref.slot].name + __builtin_strlen(g->prefix);
+    }
+    return nullptr;
 }
 
 void gen_name_wrappers(Generator *g) {
@@ -915,9 +1063,9 @@ void gen_name_wrappers(Generator *g) {
         GenType *t = &g->types[g->order[k]];
         const char *suffix = t->kind == GenKind_Array ? "List" : t->kind == GenKind_Map ? "Map" : nullptr;
         if (t->kind == GenKind_Nullable) {
-            t->name = gen_claim(g, gen_format(g, "Nullable%s", gen_short(g, t->element)));
+            t->name = gen_claim(g, gen_format(g, "Nullable%s", gen_short(g, gen_element(t))));
         } else if (suffix != nullptr) {
-            t->name = gen_claim(g, gen_format(g, "%s%s", gen_short(g, t->element), suffix));
+            t->name = gen_claim(g, gen_format(g, "%s%s", gen_short(g, gen_element(t)), suffix));
         }
         if (t->label == nullptr) t->label = t->name + __builtin_strlen(g->prefix);
         t->stem = gen_snake(g, t->name);
@@ -933,17 +1081,28 @@ constexpr U32 gen_mask_array = 16;
 constexpr U32 gen_mask_object = 32;
 constexpr U32 gen_mask_any = 63;
 
-U32 gen_mask(const Generator *g, I32 id) {
-    U32 null = 0;
-    for (Usize hops = 0; hops < g->type_count; hops++) { // a nullable of a nullable ends in a type that is not
-        if (id < gen_primitives || g->types[id].kind != GenKind_Nullable) break;
-        null = gen_mask_null;
-        id = g->types[id].element;
+U32 gen_primitive_mask(GenKind kind) {
+    switch (kind) {
+    case GenKind_Boolean:
+        return gen_mask_bool;
+    case GenKind_Integer:
+    case GenKind_Number:
+        return gen_mask_number;
+    case GenKind_String:
+        return gen_mask_string;
+    case GenKind_Any:
+        return gen_mask_any;
+    case GenKind_Object:
+        return gen_mask_object;
+    default:
+        break;
     }
-    const U32 primitive[_] = {gen_mask_bool,   gen_mask_number, gen_mask_number,
-                              gen_mask_string, gen_mask_any,    gen_mask_object};
-    if (id < gen_primitives) return null | primitive[id];
-    switch (g->types[id].kind) {
+    gen_die("kind %d is not a primitive", (I32)kind);
+}
+
+// What a slot's type takes; `null` is added when it was reached through a nullable.
+U32 gen_slot_mask(const GenType *t, U32 null) {
+    switch (t->kind) {
     case GenKind_Enum:
     case GenKind_OpenEnum:
         return null | gen_mask_string;
@@ -957,6 +1116,23 @@ U32 gen_mask(const Generator *g, I32 id) {
     default:
         return gen_mask_any;
     }
+}
+
+U32 gen_mask(const Generator *g, GenRef ref) {
+    U32 null = 0;
+    for (Usize hops = 0; hops < g->type_count; hops++) { // a nullable of a nullable ends in a type that is not
+        const GenType *held = gen_slot_type(g, ref);
+        if (held == nullptr || held->kind != GenKind_Nullable) break;
+        null = gen_mask_null;
+        ref = gen_element(held);
+    }
+    switch (ref) {
+    case .primitive:
+        return null | gen_primitive_mask(ref.primitive);
+    case .slot:
+        return gen_slot_mask(&g->types[ref.slot], null);
+    }
+    return gen_mask_any;
 }
 
 const char *gen_mask_text(Generator *g, U32 mask) {
@@ -990,24 +1166,34 @@ const GenField *gen_constant_member(const Generator *g, const GenType *t, const 
 }
 
 const char *gen_constant_value(const Generator *g, const GenField *field) {
-    return g->types[field->type].values[0];
+    const GenType *t = gen_slot_type(g, field->type);
+    if (t == nullptr) gen_die("the member %s is not a constant", field->json);
+    return t->values[0];
+}
+
+// The value of an integer constant member.
+I64 gen_constant_integer(const Generator *g, const GenField *field) {
+    const GenType *t = gen_slot_type(g, field->type);
+    if (t == nullptr) gen_die("the member %s is not a constant", field->json);
+    return t->constant;
 }
 
 // Alternatives that are all structs with a string constant of one name, each its own, are told apart by it.
 const char *gen_find_tag(const Generator *g, const GenType *t) {
     for (Usize i = 0; i < t->alt_count; i++) {
-        if (t->alts[i] < gen_primitives || g->types[t->alts[i]].kind != GenKind_Struct) return nullptr;
+        const GenType *alt = gen_slot_type(g, t->alts[i]);
+        if (alt == nullptr || alt->kind != GenKind_Struct) return nullptr;
     }
-    const GenType *first = &g->types[t->alts[0]];
+    const GenType *first = gen_slot_type(g, t->alts[0]);
     for (Usize f = 0; t->alt_count > 1 && f < first->field_count; f++) { // bounded by the first alternative's members
         if (gen_field_constant(g, &first->fields[f]) != 1) continue;
         const char *json = first->fields[f].json;
         bool tells = true;
         for (Usize i = 0; i < t->alt_count && tells; i++) { // bounded by the alternatives
-            const GenField *a = gen_constant_member(g, &g->types[t->alts[i]], json);
+            const GenField *a = gen_constant_member(g, gen_slot_type(g, t->alts[i]), json);
             tells = a != nullptr;
             for (Usize j = 0; tells && j < i; j++) { // bounded by the alternatives before
-                const GenField *b = gen_constant_member(g, &g->types[t->alts[j]], json);
+                const GenField *b = gen_constant_member(g, gen_slot_type(g, t->alts[j]), json);
                 tells = b != nullptr && __builtin_strcmp(gen_constant_value(g, a), gen_constant_value(g, b)) != 0;
             }
         }
@@ -1021,8 +1207,10 @@ bool gen_tried_before(const Generator *g, const GenType *t, Usize a, Usize b) {
     bool any_a = gen_mask(g, t->alts[a]) == gen_mask_any;
     bool any_b = gen_mask(g, t->alts[b]) == gen_mask_any;
     if (any_a != any_b) return any_b;
-    Usize need_a = t->alts[a] < gen_primitives ? 0 : gen_required_count(&g->types[t->alts[a]]);
-    Usize need_b = t->alts[b] < gen_primitives ? 0 : gen_required_count(&g->types[t->alts[b]]);
+    const GenType *alt_a = gen_slot_type(g, t->alts[a]);
+    const GenType *alt_b = gen_slot_type(g, t->alts[b]);
+    Usize need_a = alt_a == nullptr ? 0 : gen_required_count(alt_a);
+    Usize need_b = alt_b == nullptr ? 0 : gen_required_count(alt_b);
     return need_a > need_b;
 }
 
@@ -1049,11 +1237,11 @@ void gen_finish_union(Generator *g, I32 id) {
 }
 
 // Whether every document of type y is refused by type x: their JSON kinds differ, or x requires a member y has none of.
-bool gen_rejects(const Generator *g, I32 x, I32 y) {
+bool gen_rejects(const Generator *g, GenRef x, GenRef y) {
     if ((gen_mask(g, x) & gen_mask(g, y)) == 0) return true;
-    if (x < gen_primitives || y < gen_primitives) return false;
-    const GenType *a = &g->types[x];
-    const GenType *b = &g->types[y];
+    const GenType *a = gen_slot_type(g, x);
+    const GenType *b = gen_slot_type(g, y);
+    if (a == nullptr || b == nullptr) return false;
     if (a->kind != GenKind_Struct || b->kind != GenKind_Struct) return false;
     for (Usize i = 0; i < a->field_count; i++) { // bounded by the members
         if (!a->fields[i].required) continue;
@@ -1071,8 +1259,8 @@ void gen_mark_ambiguous(Generator *g) {
     for (Usize k = 0; k < g->order_count; k++) { // the types a type holds come before it
         GenType *t = &g->types[g->order[k]];
         for (Usize i = 0; i < gen_edge_count(t); i++) { // bounded by the edges
-            I32 target = gen_edge_get(g, t, i);
-            if (target >= gen_primitives && g->types[target].ambiguous) t->ambiguous = true;
+            const GenType *target = gen_slot_type(g, gen_edge_get(g, t, i));
+            if (target != nullptr && target->ambiguous) t->ambiguous = true;
         }
         if (t->kind != GenKind_Union || t->tag != nullptr) continue;
         for (Usize a = 0; a < t->alt_count; a++) {         // bounded by the alternatives
@@ -1131,27 +1319,54 @@ void gen_literal(Sink *s, const char *text) {
     gen_emit(s, "\"");
 }
 
-const char *gen_ctype(const Generator *g, I32 id) {
-    const char *const primitive[_] = {
-        "bool", "int64_t", "double", "struct smith_array_const_char_n", "SmithProtocolAny", "SmithProtocolAny"};
-    return id < gen_primitives ? primitive[id] : g->types[id].name;
+const char *gen_primitive_ctype(GenKind kind) {
+    switch (kind) {
+    case GenKind_Boolean:
+        return "bool";
+    case GenKind_Integer:
+        return "int64_t";
+    case GenKind_Number:
+        return "double";
+    case GenKind_String:
+        return "struct smith_array_const_char_n";
+    case GenKind_Any:
+    case GenKind_Object:
+        return "SmithProtocolAny";
+    default:
+        break;
+    }
+    gen_die("kind %d is not a primitive", (I32)kind);
 }
 
-const char *gen_fn(Generator *g, I32 id, const char *verb) {
-    char *slot = g->ring[g->ring_next++ % gen_names_max];
-    if (id < gen_primitives)
-        __builtin_snprintf(slot, sizeof g->ring[0], "smith_protocol_%s_%s", gen_primitive_stems[id], verb);
-    else
-        __builtin_snprintf(slot, sizeof g->ring[0], "%s_%s", g->types[id].stem, verb);
-    return slot;
+const char *gen_ctype(const Generator *g, GenRef ref) {
+    switch (ref) {
+    case .primitive:
+        return gen_primitive_ctype(ref.primitive);
+    case .slot:
+        return g->types[ref.slot].name;
+    }
+    return nullptr;
+}
+
+const char *gen_fn(Generator *g, GenRef ref, const char *verb) {
+    char *out = g->ring[g->ring_next++ % gen_names_max];
+    switch (ref) {
+    case .primitive:
+        __builtin_snprintf(out, sizeof g->ring[0], "smith_protocol_%s_%s", gen_primitive_stem(ref.primitive), verb);
+        break;
+    case .slot:
+        __builtin_snprintf(out, sizeof g->ring[0], "%s_%s", g->types[ref.slot].stem, verb);
+        break;
+    }
+    return out;
 }
 
 // The head of one of a type's four functions, as a prototype (header) or the start of the definition (source).
 void gen_head(Generator *g, Sink *s, I32 id, const char *verb, bool definition) {
-    const char *c = gen_ctype(g, id);
+    const char *c = gen_ctype(g, gen_slot_ref(id));
     const char *m = definition ? "[[maybe_unused]] " : "";
     const char *n = definition ? "" : "[[nodiscard]] ";
-    const char *name = gen_fn(g, id, verb);
+    const char *name = gen_fn(g, gen_slot_ref(id), verb);
     if (__builtin_strcmp(verb, "parse") == 0)
         gen_emit(s, "%sbool %s(%sSmithArena *arena, const SmithJsonValue *value, %s *out, SmithProtocolError *error)",
                  n, name, m, c);
@@ -1213,7 +1428,7 @@ void gen_decl_enum(Generator *g, Sink *s, I32 id) {
 
 void gen_decl_wrapper(Generator *g, Sink *s, I32 id) {
     const GenType *t = &g->types[id];
-    const char *e = gen_ctype(g, t->element);
+    const char *e = gen_ctype(g, gen_element(t));
     if (t->kind == GenKind_Array)
         gen_emit(s, "typedef struct %s {\n    const %s *items;\n    size_t count;\n} %s;\n\n", t->name, e, t->name);
     else if (t->kind == GenKind_Map)
@@ -1259,7 +1474,8 @@ void gen_declare(Generator *g, Sink *s, I32 id) {
 // ---- structs
 
 const char *gen_presence(const Generator *g, const GenField *f) {
-    bool plain = f->type == GenKind_Any || (f->type >= gen_primitives && g->types[f->type].kind == GenKind_Nullable);
+    const GenType *held = gen_slot_type(g, f->type);
+    bool plain = gen_is_primitive(f->type, GenKind_Any) || (held != nullptr && held->kind == GenKind_Nullable);
     return plain ? "member != nullptr" : "smith_protocol_present(member)";
 }
 
@@ -1270,7 +1486,7 @@ void gen_constant_check(Generator *g, Sink *s, const GenField *f) {
         gen_emit(s, ", error)");
     } else {
         char number[24];
-        gen_decimal(number, g->types[f->type].constant);
+        gen_decimal(number, gen_constant_integer(g, f));
         gen_emit(s, "smith_protocol_const_integer(member, %s, error)", number);
     }
 }
@@ -1332,7 +1548,7 @@ void gen_write_member(Generator *g, Sink *s, const GenField *f) {
         gen_emit(s, "));\n");
     } else if (constant == 2) {
         char number[24];
-        gen_decimal(number, g->types[f->type].constant);
+        gen_decimal(number, gen_constant_integer(g, f));
         gen_emit(s, "%ssmith_json_write_i64(writer, %s);\n", indent, number);
     } else {
         gen_emit(s, "%s%s(writer, &value->%s);\n", indent, gen_fn(g, f->type, "write"), f->ident);
@@ -1453,7 +1669,7 @@ void gen_source_enum(Generator *g, Sink *s, I32 id) {
 
 void gen_source_array(Generator *g, Sink *s, I32 id) {
     const GenType *t = &g->types[id];
-    const char *e = gen_ctype(g, t->element);
+    const char *e = gen_ctype(g, gen_element(t));
     gen_head(g, s, id, "parse", true);
     gen_emit(s, "    void *block;\n");
     gen_emit(
@@ -1462,29 +1678,30 @@ void gen_source_array(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "    %s *items = block;\n", e);
     gen_emit(s, "    for (size_t i = 0; i < value->count; i++) { // bounded by the array\n");
     gen_emit(s, "        if (!%s(arena, value->items[i], &items[i], error)) return false;\n    }\n",
-             gen_fn(g, t->element, "parse"));
+             gen_fn(g, gen_element(t), "parse"));
     gen_emit(s, "    out->items = items;\n    out->count = value->count;\n    return true;\n}\n\n");
     gen_head(g, s, id, "write", true);
     gen_emit(s, "    smith_json_write_array_begin(writer);\n");
     gen_emit(s, "    for (size_t i = 0; i < value->count; i++) { // bounded by the array\n");
     gen_emit(s, "        %s(writer, &value->items[i]);\n    }\n    smith_json_write_array_end(writer);\n}\n\n",
-             gen_fn(g, t->element, "write"));
+             gen_fn(g, gen_element(t), "write"));
     gen_head(g, s, id, "equal", true);
     gen_emit(s, "    if (a->count != b->count) return false;\n");
     gen_emit(s, "    for (size_t i = 0; i < a->count; i++) { // bounded by the array\n");
     gen_emit(s, "        if (!%s(&a->items[i], &b->items[i])) return false;\n    }\n    return true;\n}\n\n",
-             gen_fn(g, t->element, "equal"));
+             gen_fn(g, gen_element(t), "equal"));
     gen_head(g, s, id, "random", true);
     gen_emit(s, "    size_t count = smith_protocol_count(smith_protocol_take(stream));\n");
     gen_emit(s, "    %s *items = smith_protocol_block(arena, sizeof(%s), alignof(%s), count);\n", e, e, e);
     gen_emit(s, "    for (size_t i = 0; i < count; i++) { // bounded by the count\n");
-    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &items[i]);\n    }\n", gen_fn(g, t->element, "random"));
+    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &items[i]);\n    }\n",
+             gen_fn(g, gen_element(t), "random"));
     gen_emit(s, "    out->items = items;\n    out->count = count;\n}\n\n");
 }
 
 void gen_source_map(Generator *g, Sink *s, I32 id) {
     const GenType *t = &g->types[id];
-    const char *e = gen_ctype(g, t->element);
+    const char *e = gen_ctype(g, gen_element(t));
     gen_head(g, s, id, "parse", true);
     gen_emit(s, "    struct smith_array_const_char_n *keys;\n    void *block;\n");
     gen_emit(s, "    if (!smith_protocol_map_parse(arena, value, sizeof(%s), alignof(%s), &keys, &block, error))\n", e,
@@ -1492,7 +1709,7 @@ void gen_source_map(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "        return false;\n    %s *items = block;\n", e);
     gen_emit(s, "    for (size_t i = 0; i < value->count; i++) { // bounded by the object\n");
     gen_emit(s, "        if (!%s(arena, value->items[i], &items[i], error)) return false;\n    }\n",
-             gen_fn(g, t->element, "parse"));
+             gen_fn(g, gen_element(t), "parse"));
     gen_emit(
         s, "    out->keys = keys;\n    out->values = items;\n    out->count = value->count;\n    return true;\n}\n\n");
     gen_head(g, s, id, "write", true);
@@ -1500,14 +1717,14 @@ void gen_source_map(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "    for (size_t i = 0; i < value->count; i++) { // bounded by the map\n");
     gen_emit(s,
              "        smith_json_write_key(writer, value->keys[i]);\n        %s(writer, &value->values[i]);\n    }\n",
-             gen_fn(g, t->element, "write"));
+             gen_fn(g, gen_element(t), "write"));
     gen_emit(s, "    smith_json_write_object_end(writer);\n}\n\n");
     gen_head(g, s, id, "equal", true);
     gen_emit(s, "    if (a->count != b->count) return false;\n");
     gen_emit(s, "    for (size_t i = 0; i < a->count; i++) { // bounded by the map\n");
     gen_emit(s, "        if (!smith_protocol_string_equal(&a->keys[i], &b->keys[i])) return false;\n");
     gen_emit(s, "        if (!%s(&a->values[i], &b->values[i])) return false;\n    }\n    return true;\n}\n\n",
-             gen_fn(g, t->element, "equal"));
+             gen_fn(g, gen_element(t), "equal"));
     gen_head(g, s, id, "random", true);
     gen_emit(s, "    size_t count = smith_protocol_count(smith_protocol_take(stream));\n");
     gen_emit(s, "    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct "
@@ -1515,7 +1732,8 @@ void gen_source_map(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "    %s *items = smith_protocol_block(arena, sizeof(%s), alignof(%s), count);\n", e, e, e);
     gen_emit(s, "    for (size_t i = 0; i < count; i++) { // bounded by the count\n");
     gen_emit(s, "        keys[i] = smith_protocol_name(arena, i);\n");
-    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &items[i]);\n    }\n", gen_fn(g, t->element, "random"));
+    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &items[i]);\n    }\n",
+             gen_fn(g, gen_element(t), "random"));
     gen_emit(s, "    out->keys = keys;\n    out->values = items;\n    out->count = count;\n}\n\n");
 }
 
@@ -1525,19 +1743,19 @@ void gen_source_nullable(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "    *out = (%s){};\n", t->name);
     gen_emit(
         s, "    if (value->kind == SmithJsonKind_Null) {\n        out->is_null = true;\n        return true;\n    }\n");
-    gen_emit(s, "    return %s(arena, value, &out->value, error);\n}\n\n", gen_fn(g, t->element, "parse"));
+    gen_emit(s, "    return %s(arena, value, &out->value, error);\n}\n\n", gen_fn(g, gen_element(t), "parse"));
     gen_head(g, s, id, "write", true);
     gen_emit(s,
              "    if (value->is_null)\n        smith_json_write_null(writer);\n    else\n        %s(writer, "
              "&value->value);\n}\n\n",
-             gen_fn(g, t->element, "write"));
+             gen_fn(g, gen_element(t), "write"));
     gen_head(g, s, id, "equal", true);
     gen_emit(s, "    if (a->is_null != b->is_null) return false;\n");
-    gen_emit(s, "    return a->is_null || %s(&a->value, &b->value);\n}\n\n", gen_fn(g, t->element, "equal"));
+    gen_emit(s, "    return a->is_null || %s(&a->value, &b->value);\n}\n\n", gen_fn(g, gen_element(t), "equal"));
     gen_head(g, s, id, "random", true);
     gen_emit(s, "    *out = (%s){};\n    out->is_null = smith_protocol_coin(smith_protocol_take(stream));\n", t->name);
     gen_emit(s, "    if (!out->is_null) %s(arena, smith_protocol_take(stream), &out->value);\n}\n\n",
-             gen_fn(g, t->element, "random"));
+             gen_fn(g, gen_element(t), "random"));
 }
 
 // ---- unions
@@ -1552,7 +1770,7 @@ void gen_union_parse_tagged(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "        (void)smith_protocol_fail(error, SmithProtocolReason_WrongType, tag);\n");
     gen_emit(s, "        return smith_protocol_in(error, \"%s\", \"%s\");\n    }\n", t->label, t->tag);
     for (Usize i = 0; i < t->alt_count; i++) { // bounded by the alternatives
-        const GenField *f = gen_constant_member(g, &g->types[t->alts[i]], t->tag);
+        const GenField *f = gen_constant_member(g, gen_slot_type(g, t->alts[i]), t->tag);
         gen_emit(s, "    if (smith_protocol_text_is(tag->text, ");
         gen_literal(s, gen_constant_value(g, f));
         gen_emit(s, ")) {\n        out->kind = %sKind_%s;\n", t->name, t->alt_tags[i]);
@@ -1644,9 +1862,9 @@ void gen_test_prologue(Generator *g, Sink *s, I32 id, const char *what) {
     const GenType *t = &g->types[id];
     gen_emit(s, "void test_%s_%s_%s(SmithKey key) {\n", g->schema, what, t->stem + __builtin_strlen(g->stem_prefix));
     gen_emit(s, "    SmithArena arena = smith_test_arena(1 << 23);\n    %s value;\n", t->name);
-    gen_emit(s, "    %s(&arena, key, &value);\n", gen_fn(g, id, "random"));
+    gen_emit(s, "    %s(&arena, key, &value);\n", gen_fn(g, gen_slot_ref(id), "random"));
     gen_emit(s, "    SmithJsonWriter writer = protocol_test_writer(&arena);\n    %s(&writer, &value);\n",
-             gen_fn(g, id, "write"));
+             gen_fn(g, gen_slot_ref(id), "write"));
 }
 
 void gen_test_round_trip(Generator *g, Sink *s, I32 id) {
@@ -1655,19 +1873,21 @@ void gen_test_round_trip(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "    struct smith_array_const_char_n text = protocol_test_text(&writer);\n");
     gen_emit(s, "    const SmithJsonValue *tree = protocol_test_parse(&arena, text);\n");
     gen_emit(s, "    %s back;\n    SmithProtocolError error = {};\n", t->name);
-    gen_emit(s, "    protocol_test_accepted(%s(&arena, tree, &back, &error), &error);\n", gen_fn(g, id, "parse"));
+    gen_emit(s, "    protocol_test_accepted(%s(&arena, tree, &back, &error), &error);\n",
+             gen_fn(g, gen_slot_ref(id), "parse"));
     if (t->ambiguous) {
         gen_emit(s, "    // The schema does not tell some alternatives of a union in it apart: the document may be "
                     "read as another\n");
         gen_emit(s, "    // than the one written. What is read once is the value, and it must come back as itself.\n");
         gen_emit(s, "    value = back;\n    writer = protocol_test_writer(&arena);\n    %s(&writer, &value);\n",
-                 gen_fn(g, id, "write"));
+                 gen_fn(g, gen_slot_ref(id), "write"));
         gen_emit(s, "    text = protocol_test_text(&writer);\n    tree = protocol_test_parse(&arena, text);\n");
-        gen_emit(s, "    protocol_test_accepted(%s(&arena, tree, &back, &error), &error);\n", gen_fn(g, id, "parse"));
+        gen_emit(s, "    protocol_test_accepted(%s(&arena, tree, &back, &error), &error);\n",
+                 gen_fn(g, gen_slot_ref(id), "parse"));
     }
-    gen_emit(s, "    protocol_test_equal(%s(&value, &back), text);\n", gen_fn(g, id, "equal"));
+    gen_emit(s, "    protocol_test_equal(%s(&value, &back), text);\n", gen_fn(g, gen_slot_ref(id), "equal"));
     gen_emit(s, "    SmithJsonWriter again = protocol_test_writer(&arena);\n    %s(&again, &back);\n",
-             gen_fn(g, id, "write"));
+             gen_fn(g, gen_slot_ref(id), "write"));
     gen_emit(s, "    protocol_test_same_text(text, protocol_test_text(&again));\n}\n\n");
 }
 
@@ -1687,7 +1907,7 @@ void gen_test_missing(Generator *g, Sink *s, I32 id) {
     gen_emit(s, "        const SmithJsonValue *cut = protocol_test_without(&arena, tree, required[i]);\n");
     gen_emit(s, "        %s back;\n        SmithProtocolError error = {};\n", t->name);
     gen_emit(s, "        protocol_test_refused(%s(&arena, cut, &back, &error), &error, required[i]);\n    }\n}\n\n",
-             gen_fn(g, id, "parse"));
+             gen_fn(g, gen_slot_ref(id), "parse"));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1804,11 +2024,7 @@ void gen_prepare(Generator *g, const char *name, struct smith_array_const_char_n
     const c::SmithJsonValue *definitions = gen_get(root, "definitions");
     if (definitions == nullptr) definitions = gen_get(root, "$defs");
     if (definitions == nullptr) gen_die("the schema has no definitions or $defs");
-    for (I32 p = 0; p < gen_primitives; p++) { // table entries 0 to 5 are the primitives, so slots start at 6
-        g->types[p] = (GenType){.kind = (GenKind)p, .element = -1, .visit = 2};
-        g->redirect[p] = p;
-    }
-    g->type_count = gen_primitives;
+    g->type_count = 0;
     gen_read(g, definitions);
     gen_settle(g);
     gen_name_wrappers(g);
