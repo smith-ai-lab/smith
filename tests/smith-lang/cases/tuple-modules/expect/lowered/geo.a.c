@@ -11,8 +11,7 @@ return t[0] + (__INT32_TYPE__)t[1];
 }
 geo_a_Reach geo_a_reach(geo_a_Meters m) __asm__("_geo::a::reach");
 geo_a_Reach geo_a_reach(geo_a_Meters m) {
-geo_a_Reach r = {m, 1.0f};
-return r;
+return {m, 1.0f};
 }
 struct smith_tuple_geo_a_Meters__f32 { geo_a_Meters _0; float _1; } geo_a_reach2(geo_a_Meters m) __asm__("_geo::a::reach2");
 struct smith_tuple_geo_a_Meters__f32 { geo_a_Meters _0; float _1; } geo_a_reach2(geo_a_Meters m) {

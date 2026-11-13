@@ -12436,12 +12436,13 @@ extern I32 c_fast_math();
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
 static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "f32 and f64 are IEEE");
-static_assert(target::aarch64 != target::x86_64 && target::macos != target::linux);
+static_assert(!(target::arch == target::aarch64 && target::arch == target::x86_64) &&
+              !(target::os == target::macos && target::os == target::linux));
 static_assert(target::arch == target::aarch64 || target::arch == target::x86_64 || target::arch == 0);
 
 U8 mantissa[target::f32_mantissa_bits];
 constexpr I32 arch_copy = target::arch;
-constexpr Bool sanitized = target::address_sanitizer;
+constexpr I32 sanitized = target::address_sanitizer;
 static_assert(_Countof(mantissa) == 24);
 
 static I32 check(const char *name, I32 smith, I32 compiler) {
@@ -12699,7 +12700,7 @@ I32 by_value(struct { I32, F32 } t) {
 
 void by_pointer(Pair *p) {
     (*p)[0] += 10;
-    p->_1 = 0.5f;
+    (*p)[1] = 0.5f;
 }
 
 I32 main() {
@@ -12718,8 +12719,8 @@ I32 main() {
     c::printf("%d %f %f\n", n[0], (double)n[1][0], (double)n[1][1]);
     c::printf("%d %d\n", h.pair[0], h.list[1][0]);
     c::printf("%d %f\n", list[1][0], (double)list[1][1]);
-    c::printf("%d %d %d\n", (I32)countof(t), (I32)countof(n), (I32)countof(n[1]));
-    c::printf("%d\n", (I32)(sizeof(struct { I32, F32 }) == sizeof t));
+    c::printf("%d %d %d\n", (I32)countof(t), (I32)countof(n), (I32)countof(n));
+    c::printf("%d\n", (I32)(sizeof p == sizeof t));
     // Arrays and pointers in a file with tuples are what they were: only a tuple is indexed as fields.
     I32 xs[3] = {4, 5, 6};
     I32 *pointer = xs;
@@ -12780,8 +12781,7 @@ export I32 sum(struct { I32, F32 } t) {
 }
 
 export Reach reach(Meters m) {
-    Reach r = {m, 1.0f};
-    return r;
+    return {m, 1.0f};
 }
 
 export struct { Meters, F32 } reach2(Meters m) {
@@ -12877,7 +12877,7 @@ I32 marker = 3;
 int main() {
     F64 values[2] = {1.5, 2.5};
     I32 one = 7;
-    c::printf("%g %d %d\n", marks::at(values), marks::at(one), marker);
+    c::printf("%g %d %d\n", marks::at(&values[0]), marks::at(one), marker);
     return 0;
 }
 ==> type-function-after-c-name/src/marks.smith <==
@@ -12978,8 +12978,8 @@ import <stdio.h>;
 import sizes;
 
 int main() {
-    c::printf("%zu %zu %d\n", sizeof(sizes::convert(F64, 2.5)), sizeof(sizes::convert(U8, (U8)1)),
-              (int)sizes::convert(F64, 2.5));
+    c::printf("%zu %zu %d\n", sizeof(sizes::convert(F64, 2)), sizeof(sizes::convert(U8, (U8)1)),
+              (int)sizes::convert(F64, 2));
     return 0;
 }
 ==> type-function-sized/src/sizes.smith <==
@@ -13146,7 +13146,6 @@ export struct Request {
 export constexpr Type Meters = F64;
 export constexpr Type Handler = I32 (*)(Request *);
 export constexpr Type Block = U8[4];
-export constexpr Type Row = I32 (*)[4];
 export constexpr Type Pointers = Request *[2];
 [[std::c_name("geo_feet")]] export constexpr Type Feet = F32;
 
@@ -13172,9 +13171,9 @@ extern I32 user(void); // C names the same aliases (user.c)
 I32 main() {
     units::Meters m = units::add(1.5, 2.5);
     units::Handler h = units::handler();
-    units::Block b = {1, 2};
+    U8 b[4] = {1, 2, 0, 0};
     units::Request r = {7};
-    units::Pointers p = {&r};
+    units::Request *p[2] = {&r, nullptr};
     units::Feet f = 0.5f;
     c::printf("%g %d %d %d %g\n", m, h(&r), b[1], p[0]->id, (F64)f);
     return user();

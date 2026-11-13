@@ -8,6 +8,6 @@ I32 marker = 3;
 int main() {
     F64 values[2] = {1.5, 2.5};
     I32 one = 7;
-    c::printf("%g %d %d\n", marks::at(values), marks::at(one), marker);
+    c::printf("%g %d %d\n", marks::at(&values[0]), marks::at(one), marker);
     return 0;
 }

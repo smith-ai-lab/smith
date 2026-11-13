@@ -12,8 +12,7 @@ export I32 sum(struct { I32, F32 } t) {
 }
 
 export Reach reach(Meters m) {
-    Reach r = {m, 1.0f};
-    return r;
+    return {m, 1.0f};
 }
 
 export struct { Meters, F32 } reach2(Meters m) {

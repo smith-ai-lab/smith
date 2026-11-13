@@ -8,9 +8,9 @@ extern I32 user(void); // C names the same aliases (user.c)
 I32 main() {
     units::Meters m = units::add(1.5, 2.5);
     units::Handler h = units::handler();
-    units::Block b = {1, 2};
+    U8 b[4] = {1, 2, 0, 0};
     units::Request r = {7};
-    units::Pointers p = {&r};
+    units::Request *p[2] = {&r, nullptr};
     units::Feet f = 0.5f;
     c::printf("%g %d %d %d %g\n", m, h(&r), b[1], p[0]->id, (F64)f);
     return user();

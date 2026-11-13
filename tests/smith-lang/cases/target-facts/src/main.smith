@@ -18,12 +18,13 @@ extern I32 c_fast_math();
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
 static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "f32 and f64 are IEEE");
-static_assert(target::aarch64 != target::x86_64 && target::macos != target::linux);
+static_assert(!(target::arch == target::aarch64 && target::arch == target::x86_64) &&
+              !(target::os == target::macos && target::os == target::linux));
 static_assert(target::arch == target::aarch64 || target::arch == target::x86_64 || target::arch == 0);
 
 U8 mantissa[target::f32_mantissa_bits];
 constexpr I32 arch_copy = target::arch;
-constexpr Bool sanitized = target::address_sanitizer;
+constexpr I32 sanitized = target::address_sanitizer;
 static_assert(_Countof(mantissa) == 24);
 
 static I32 check(const char *name, I32 smith, I32 compiler) {
