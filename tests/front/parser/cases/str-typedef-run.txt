@@ -1,1 +1,1 @@
-str-typedef-run/main.smith: error: expected the type's name, found `str` (7:20) [removed_b]
+str-typedef-run/main.smith: error: the name `str` is a built-in type; choose another name (7:20) [removed_b]

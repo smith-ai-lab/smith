@@ -2953,6 +2953,18 @@ static ast::Decl *parse_opaque_typedef(parse::Parser *p, const Prefixes *pre, U3
     return make(p, start, pre, kind);
 }
 
+// The name a `typedef T name;` gives: a capitalized name, or a lowercase one that is no built-in type. A built-in
+// type's name (`str`, `u32`) is reserved (#3272): the error names the way out, and the fixer renames such a binding.
+static lex::Token typedef_name(parse::Parser *p) {
+    lex::Token token = parse::peek(p);
+    if (token.kind != lex::name) return parse::expect(p, lex::type_name, "the type's name");
+    parse::advance(p);
+    if (!parse_type::is_builtin_name(parse::text(p, token))) return token;
+    char message[:] = format::push("the name `", parse::text(p, token), "` is a built-in type; choose another name");
+    parse::error(p, token.span, message);
+    return token;
+}
+
 // `typedef struct {...} Name;`, `typedef enum {...} Name;` and `typedef T Name;` (a tuple is a type: `typedef struct {
 // I32, F32 } Pair;`).
 static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start) {
@@ -2993,8 +3005,8 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
         recover(p);
         return nullptr;
     }
-    lex::Token alias = parse::expect(p, lex::type_name, "the type's name");
-    if (alias.kind != lex::type_name) {
+    lex::Token alias = typedef_name(p);
+    if (alias.kind != lex::type_name && alias.kind != lex::name) {
         recover(p);
         return nullptr;
     }

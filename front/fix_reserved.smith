@@ -1,0 +1,226 @@
+// front::fix_reserved, the fixer's rename of a binding that takes a built-in type's name (#3272, count cause C6).
+//
+//   typedef const char str[:];     typedef const char str_[:];
+//   int u8 = 4;                    int u8_ = 4;
+//   text::str s = "x";             text::str_ s = "x";
+//
+// A built-in type's name (`i8` to `u64`, `isize`, `usize`, `f32`, `f64`, `str`) is reserved in smith's own syntax
+// (#3259, item 50): a typedef, a variable, a parameter or a function may not be called `str` or `u8`. The C text names
+// them so, and the new front end would read each as the type. This pass runs on the text before the others:
+//
+//   * a name of that kind that a declaration binds (a type, or `*` and a type, before it; `=`, `;`, `,`, `)`, `[` or
+//     `(` after it; not a field, and not after `.` or `->`) is written with a `_` at the end, with every other use of
+//     the name in the file;
+//   * a name after `module::` (`text::str`, the typedef another file exports) is written the same way in every file,
+//     so an importer agrees with the file that declares it.
+//
+// The new name is the name and a `_` for each try until the file has no such name (`str_`, then `str__`). A file
+// that binds none and names none after `::` is returned as it is, so a text in smith's own syntax (`x: u32`, where a
+// `:` stands before the type) is not touched. `bool` and `char` are C keywords and are never renamed.
+//
+//   fix_reserved::rename(source)   `source` with the reserved names it binds, and `module::name`, renamed
+module front::fix_reserved;
+
+import front::lex;
+import front::parse_type;
+import std::arena;
+import std::format;
+import std::mem;
+
+constexpr Usize names_max = 16;
+constexpr Usize depth_max = 64;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// Whether token `i` is a field or a method: it follows `.` or `->`.
+static Bool is_member(lex::Tokens tokens, Usize i) {
+    return i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow);
+}
+
+// Whether the `{` at `tokens[j]` opens the body of a `struct` or a `union`.
+static Bool opens_record(lex::Tokens tokens, Usize j) {
+    if (j == 0) return false;
+    lex::TokenKind last = tokens[j - 1].kind;
+    if (last == lex::kw_struct || last == lex::kw_union) return true;
+    return j >= 2 && (last == lex::name || last == lex::type_name) &&
+           (tokens[j - 2].kind == lex::kw_struct || tokens[j - 2].kind == lex::kw_union);
+}
+
+// Whether a token of this kind can end the type that a declaration starts with.
+static Bool ends_type(lex::TokenKind kind) {
+    return kind == lex::kw_int || kind == lex::kw_char || kind == lex::kw_unsigned || kind == lex::kw_long ||
+           kind == lex::kw_short || kind == lex::kw_signed || kind == lex::kw_float || kind == lex::kw_double ||
+           kind == lex::kw_void || kind == lex::kw_bool || kind == lex::type_name;
+}
+
+// Whether the reserved name at `tokens[i]` is declared there: a type before it, and a token after it that ends a
+// declarator.
+static Bool is_declaration(lex::Tokens tokens, Usize i) {
+    if (i == 0 || i + 1 >= countof(tokens)) return false;
+    lex::TokenKind next = tokens[i + 1].kind;
+    if (next != lex::equal && next != lex::semicolon && next != lex::comma && next != lex::right_paren &&
+        next != lex::left_bracket && next != lex::left_paren)
+        return false;
+    Usize j = i - 1;
+    Bool stars = false;
+    while (j > 0 && tokens[j].kind == lex::star) {
+        stars = true;
+        j -= 1;
+    }
+    lex::TokenKind before = tokens[j].kind;
+    if (ends_type(before)) return true;
+    return !stars && before == lex::name;
+}
+
+static Bool is_reserved(Str source, lex::Token token) {
+    return token.kind == lex::name && parse_type::is_builtin_name(lex::text(source, token));
+}
+
+// Whether `tokens[i]` is a module's member: `text::str`, with a module (not the C namespace `c`) before the `::`.
+static Bool after_module(Str source, lex::Tokens tokens, Usize i) {
+    if (i < 2 || tokens[i - 1].kind != lex::colon_colon) return false;
+    lex::Token module = tokens[i - 2];
+    if (module.kind != lex::name && module.kind != lex::type_name) return false;
+    Str c_word = "c";
+    return !mem::equal(lex::text(source, module), c_word);
+}
+
+static Bool has_name(Str source, lex::Tokens tokens, Str word) {
+    for (Usize i = 0; i < countof(tokens); i++)
+        if ((tokens[i].kind == lex::name || tokens[i].kind == lex::type_name) &&
+            mem::equal(lex::text(source, tokens[i]), word))
+            return true;
+    return false;
+}
+
+// Whether the declaration that holds `tokens[i]` is a `typedef`: its first token, after the last `;`, `{` or `}`.
+static Bool in_typedef(lex::Tokens tokens, Usize i) {
+    while (i > 0) {
+        lex::TokenKind before = tokens[i - 1].kind;
+        if (before == lex::kw_typedef) return true;
+        if (before == lex::semicolon || before == lex::left_brace || before == lex::right_brace) return false;
+        i -= 1;
+    }
+    return false;
+}
+
+// The new spelling of `word`: a `_` is added until the file has no such name. A type's name starts with a capital
+// letter in today's syntax (the parser reads `str_ *p` as a product), so the name of a typedef gets one: `Str_`.
+static Str renamed_word(Str source, lex::Tokens tokens, Str word, Bool capital) {
+    Str renamed = word;
+    if (capital && countof(word) > 0 && word[0] >= 'a' && word[0] <= 'z') {
+        Str capitals = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        Usize letter = (Usize)(word[0] - 'a');
+        renamed = as_str(format::push(capitals[letter:letter + 1], word[1:countof(word)]));
+    }
+    renamed = as_str(format::push(renamed, "_"));
+    while (has_name(source, tokens, renamed))
+        renamed = as_str(format::push(renamed, "_"));
+    return renamed;
+}
+
+// The reserved names that declarations bind, no name twice; `count` of them.
+static Usize declared_names(Str source, lex::Tokens tokens, Str names[names_max], Bool types[names_max]) {
+    Usize count = 0;
+    Bool in_record[depth_max];
+    Usize depth = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::right_brace && depth > 0) depth -= 1;
+        if (tokens[i].kind == lex::left_brace) {
+            if (depth < depth_max) in_record[depth] = opens_record(tokens, i);
+            depth += 1;
+        }
+        if (!is_reserved(source, tokens[i]) || is_member(tokens, i) || after_module(source, tokens, i)) continue;
+        if (depth > 0 && depth <= depth_max && in_record[depth - 1]) continue; // a field is no binding
+        if (!is_declaration(tokens, i)) continue;
+        Str word = lex::text(source, tokens[i]);
+        Bool known = false;
+        for (Usize k = 0; k < count; k++)
+            if (mem::equal(names[k], word)) known = true;
+        if (known || count == names_max) continue;
+        names[count] = word;
+        types[count] = in_typedef(tokens, i);
+        count += 1;
+    }
+    return count;
+}
+
+// `source` with each preprocessor line (`#include <stdio.h>`, and the lines a `\` continues) written as spaces, which
+// the lexer reads: every other byte stays where it was, so the tokens' offsets are the text's.
+static Str without_directives(Str source) {
+    Bool any = false;
+    for (Usize k = 0; k < countof(source); k++)
+        if (source[k] == '#') any = true;
+    if (!any) return source;
+    // One block, written in place: a text of a few hundred thousand bytes must not be copied once a line.
+    char text[:] = mem::alloc_slice(char, countof(source));
+    Usize at = 0;
+    Bool continued = false;
+    while (at < countof(source)) {
+        Usize end = at;
+        while (end < countof(source) && source[end] != '\n')
+            end += 1;
+        Usize first = at;
+        while (first < end && (source[first] == ' ' || source[first] == '\t'))
+            first += 1;
+        Bool directive = continued || (first < end && source[first] == '#');
+        continued = directive && end > at && source[end - 1] == '\\';
+        for (Usize k = at; k < end; k++)
+            text[k] = directive ? ' ' : source[k];
+        if (end < countof(source)) text[end] = '\n';
+        at = end + 1;
+    }
+    Str masked = text;
+    return masked;
+}
+
+// Whether the text is in smith's own syntax already: a `fn name` or a `mut` in front of a name. Its types stand after a
+// `:` or an `->`, and `*mut u8)` is no declaration of `u8`.
+static Bool is_own_syntax(Str source, lex::Tokens tokens) {
+    Str fn_word = "fn";
+    Str mut_word = "mut";
+    for (Usize i = 0; i + 1 < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name && tokens[i].kind != lex::kw_fn && tokens[i].kind != lex::kw_mut) continue;
+        Str word = lex::text(source, tokens[i]);
+        if (!mem::equal(word, fn_word) && !mem::equal(word, mut_word)) continue;
+        lex::TokenKind next = tokens[i + 1].kind;
+        if (next == lex::name || next == lex::type_name || next == lex::kw_mut) return true;
+    }
+    return false;
+}
+
+export Str rename(Str source) {
+    Str masked = without_directives(source);
+    lex::Lexed lexed = lex::tokenize(masked);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    if (is_own_syntax(source, tokens)) return source;
+    Str names[names_max];
+    Bool types[names_max];
+    Usize count = declared_names(source, tokens, names, types);
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (!is_reserved(source, tokens[i]) || is_member(tokens, i)) continue;
+        Str word = lex::text(source, tokens[i]);
+        Bool capital = false;
+        Bool bound = false;
+        for (Usize k = 0; k < count; k++) {
+            if (!mem::equal(names[k], word)) continue;
+            bound = true;
+            capital = types[k];
+        }
+        if (after_module(source, tokens, i)) {
+            // `text::str(...)` is a call: a function or a variable; any other use of a module's member here is a type
+            bound = true;
+            capital = !(i + 1 < countof(tokens) && tokens[i + 1].kind == lex::left_paren);
+        }
+        if (!bound) continue;
+        out = as_str(format::push(out, source[at:tokens[i].span.start], renamed_word(source, tokens, word, capital)));
+        at = tokens[i].span.end;
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
+}

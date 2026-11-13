@@ -1,0 +1,63 @@
+// Tests of the rename of a binding that takes a built-in type's name (#3272, count cause C6): `typedef ... str;` is
+// `Str_`, `int u8 = 4;` is `u8_`, and `text::str` in an importer is `text::Str_`.
+module front_fix_reserved_test;
+
+import front::fix_reserved;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(fix_reserved::rename(before), want);
+}
+
+export void test_front_fix_reserved_a_typedef_and_its_uses_are_renamed() {
+    expect(
+        "typedef const char str[:];\nstatic Usize length(str xs) {\n    str s = \"a\";\n    return countof(xs);\n}\n",
+        "typedef const char Str_[:];\nstatic Usize length(Str_ xs) {\n    Str_ s = \"a\";\n    return "
+        "countof(xs);\n}\n");
+}
+
+export void test_front_fix_reserved_a_variable_is_renamed() {
+    expect("I32 main() {\n    int u8 = 4;\n    return u8 + 1;\n}\n",
+           "I32 main() {\n    int u8_ = 4;\n    return u8_ + 1;\n}\n");
+}
+
+export void test_front_fix_reserved_a_typedef_of_its_own_name() {
+    expect("typedef unsigned u32;\nI32 main() {\n    u32 a = 3;\n    return 0;\n}\n",
+           "typedef unsigned U32_;\nI32 main() {\n    U32_ a = 3;\n    return 0;\n}\n");
+}
+
+export void test_front_fix_reserved_the_name_has_a_new_spelling_that_is_free() {
+    expect("int u8 = 4;\nint u8_ = 5;\n", "int u8__ = 4;\nint u8_ = 5;\n");
+}
+
+export void test_front_fix_reserved_a_call_after_a_module_keeps_its_lowercase_name() {
+    expect("I32 main() {\n    return text::u8(1);\n}\n", "I32 main() {\n    return text::u8_(1);\n}\n");
+}
+
+export void test_front_fix_reserved_a_preprocessor_line_does_not_stop_the_rename() {
+    expect("#include <stdio.h>\nint u8 = 4;\n", "#include <stdio.h>\nint u8_ = 4;\n");
+}
+
+export void test_front_fix_reserved_a_name_after_a_module_is_renamed() {
+    expect("text::str s = \"x\";\ntext::str *p = &s;\n", "text::Str_ s = \"x\";\ntext::Str_ *p = &s;\n");
+}
+
+export void test_front_fix_reserved_a_field_and_a_member_are_left() {
+    expect("struct P {\n    int u8;\n};\nvoid f(struct P *p) {\n    p->u8 = 1;\n}\n",
+           "struct P {\n    int u8;\n};\nvoid f(struct P *p) {\n    p->u8 = 1;\n}\n");
+}
+
+export void test_front_fix_reserved_a_text_in_smiths_own_syntax_is_left() {
+    expect("fn f(a: u32, b: *u8) -> str:\n    x: u32 = 3\n    return \"a\"\n",
+           "fn f(a: u32, b: *u8) -> str:\n    x: u32 = 3\n    return \"a\"\n");
+}
+
+export void test_front_fix_reserved_the_c_namespace_is_left() {
+    expect("void f() {\n    c::u8 x = 0;\n}\n", "void f() {\n    c::u8 x = 0;\n}\n");
+}
