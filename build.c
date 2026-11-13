@@ -1613,14 +1613,42 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                           smith_cat(b, flags, smith_list(b, "-I", "runtime/protocol", nullptr), nullptr));
 }
 
-// One argument of `smith test` as SMITH_ARGS carries it: "%", ";" and newline as %25, %3B and %0A.
+// One argument of `smith test` as SMITH_ARGS carries it: "%", ";" and newline as %25, %3B and %0A. One pass into a
+// buffer and one copy: appending a character at a time copied the whole string each time, which for the 9 KB --test
+// list of a selection of 395 files used 40 MB of the build's arena (#3453).
 static const char *build_encode_argument(SmithBuild *b, const char *argument) {
-    const char *encoded = "";
-    for (const char *at = argument; *at != '\0'; at++) {
-        const char *piece = *at == '%' ? "%25" : *at == ';' ? "%3B" : *at == '\n' ? "%0A" : smith_fmt(b, "%c", *at);
-        encoded = smith_fmt(b, "%s%s", encoded, piece);
+    static char buffer[1U << 20];
+    size_t used = 0;
+    for (const char *at = argument; *at != '\0'; at++) { // bounded by the argument
+        const char *piece = *at == '%' ? "%25" : *at == ';' ? "%3B" : *at == '\n' ? "%0A" : nullptr;
+        size_t size = piece != nullptr ? 3 : 1;
+        if (used + size >= sizeof buffer) {
+            fprintf(stderr, "smith test: an argument is longer than %zu bytes\n", sizeof buffer);
+            exit(1);
+        }
+        if (piece != nullptr)
+            memcpy(buffer + used, piece, size);
+        else
+            buffer[used] = *at;
+        used += size;
     }
-    return encoded;
+    buffer[used] = '\0';
+    return smith_fmt(b, "%s", buffer);
+}
+
+// With a --shard or a selection (--test, --macos-only, --skip-macos), a project's build compiles only the test files of
+// the part or the chosen tests (#1200, #2998, #3179): the build there reads the arguments as `smith test` does, as the
+// option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A). Empty for neither.
+static const char *build_units_selection(SmithBuild *b, const char *const *given) {
+    bool selects = false;
+    for (size_t i = 0; given[i] != nullptr; i++) // bounded by the arguments
+        selects = selects || strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                  strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+    if (!selects) return "";
+    const char *encoded = "";
+    for (size_t k = 0; given[k] != nullptr; k++) // every argument, once however many select
+        encoded = smith_fmt(b, "%s;%s", encoded, build_encode_argument(b, given[k]));
+    return smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
 }
 
 // The folder that holds the smith under test and its smith-cc. With no LLVM install to link smith from (a
@@ -1660,19 +1688,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", running ? home : folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
-    // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
-    // `smith test` does, as the option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B
-    // and %0A).
-    const char *shard_option = "";
-    for (size_t i = 0; given[i] != nullptr; i++) {
-        if (strcmp(given[i], "--shard") != 0) continue;
-        const char *encoded = "";
-        for (size_t k = 0; given[k] != nullptr; k++) {
-            const char *argument = build_encode_argument(b, given[k]);
-            encoded = smith_fmt(b, "%s;%s", encoded, argument);
-        }
-        shard_option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
-    }
+    const char *shard_option = build_units_selection(b, given);
     SmithStep build_step = {
         .command = (const char *[]){"sh", "-c",
                                     smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
@@ -1728,14 +1744,15 @@ static void build_front_units(SmithBuild *b, const BuildConfig *config, const ch
         smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\" SMITH_LLVM=\"%s\"", folder, self,
                   config->llvm);
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    const char *const *given = smith_args(b);
     SmithStep build_step = {
-        .command =
-            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
-                             "sh", folder, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
+                                              build_units_selection(b, given)),
+                                    "sh", folder, nullptr},
         .inputs = inputs,
     };
     smith_task(b, "front-build", &build_step);
-    const char *const *given = smith_args(b);
     const char *quoted[256];
     size_t quoted_count = 0;
     if (getenv("SMITH_TEST_STATS") != nullptr) quoted[quoted_count++] = "'--stats'";
@@ -3580,13 +3597,14 @@ static void build_nvim_task(SmithBuild *b) {
     smith_task(b, "nvim", &task);
 }
 
-// ---- The docs gate (#313): a change that adds something updates its skill and its concept in the same
-// commit; this makes `smith check` say so. The commits on the branch since the base, taken together, must change
-// something under .agents/skills/ or knowledge/ when any of them has a subject starting with `feat`. On main itself,
+// ---- The docs gate (#313): a change that adds something updates its concept in the same commit; this makes
+// `smith check` say so. The commits on the branch since the base, taken together, must change something under
+// knowledge/ or plugin/knowledge/ when any of them has a subject starting with `feat`: a new verb or feature always has
+// a "what", and a change to a skill alone (a "how") no longer counts (#3411). On main itself,
 // with no `feat` commit, or when the base cannot be resolved (a shallow clone), it passes, and says so in the last
 // case.
-static const char *const build_gate_message = "feat commits need their skill and concept updated; none of "
-                                              ".agents/skills/ or knowledge/ changed since";
+static const char *const build_gate_message = "feat commits need their concept updated (a skill alone is a how, not "
+                                              "the what); none of knowledge/ or plugin/knowledge/ changed since";
 
 // The lines `git -C dir args...` prints, or nullptr when git fails.
 static const char *const *build_gate_git(SmithRun *run, const char *dir, const char *const *args) {
@@ -3618,10 +3636,10 @@ static const char *build_gate_feat_commits(SmithRun *run, const char *dir, const
 
 // The gate reads commits (base...HEAD), never the working tree: skill and concept files that are edited, staged or
 // untracked count only once committed. One line of "  <git status code> <path>" for each such file under
-// .agents/skills and knowledge, or "" when there is none.
+// knowledge and plugin/knowledge, or "" when there is none.
 static const char *build_gate_uncommitted(SmithRun *run, const char *dir) {
     const char *const *status = build_gate_git(
-        run, dir, (const char *[]){"status", "--porcelain", "-uall", "--", ".agents/skills", "knowledge", nullptr});
+        run, dir, (const char *[]){"status", "--porcelain", "-uall", "--", "knowledge", "plugin/knowledge", nullptr});
     const char *found = "";
     for (size_t i = 0; status != nullptr && status[i] != nullptr; i++)
         found = smith_fmt(run->b, "%s  %s\n", found, status[i]);
@@ -3641,14 +3659,14 @@ static int build_gate_run(SmithRun *run, const char *dir, const char *base) {
     if (feats[0] == '\0') return 0;
     const char *const *changed =
         build_gate_git(run, dir,
-                       (const char *[]){"diff", "--name-only", smith_fmt(run->b, "%s...HEAD", base), "--",
-                                        ".agents/skills", "knowledge", nullptr});
+                       (const char *[]){"diff", "--name-only", smith_fmt(run->b, "%s...HEAD", base), "--", "knowledge",
+                                        "plugin/knowledge", nullptr});
     if (changed != nullptr && changed[0] != nullptr) return 0;
     fprintf(stderr, "%s %s\nthe feat commits:\n%s", build_gate_message, base, feats);
     const char *waiting = build_gate_uncommitted(run, dir);
     if (waiting[0] != '\0')
         fprintf(stderr,
-                "these skill and concept files are not committed, and the gate reads commits only: commit them "
+                "these concept files are not committed, and the gate reads commits only: commit them "
                 "(or `git add` and commit):\n%s",
                 waiting);
     return 1;
@@ -3717,8 +3735,24 @@ static bool build_gate_other_untouched(SmithRun *run, const char *other, const c
            (dirty == nullptr || dirty[0] == nullptr);
 }
 
-// The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill or concept change
-// makes it pass, a base that cannot be resolved passes.
+// A skill change alone (of either set) does not satisfy the gate; a plugin concept does (#3411). 0 when all hold.
+static int build_gate_skill_cases(SmithRun *run, const char *dir) {
+    int status = build_gate_commit(dir, ".agents/skills/x/SKILL.md", "docs: the skill");
+    if (status == 0) {
+        fputs("(the next gate failure is the one under test)\n", stderr);
+        if (build_gate_run(run, dir, "main") == 0) return build_gate_fail("gate: a skill change alone must fail\n");
+    }
+    status = status != 0 ? status : build_gate_commit(dir, "plugin/skills/y/SKILL.md", "docs: the plugin skill");
+    if (status == 0 && build_gate_run(run, dir, "main") == 0)
+        return build_gate_fail("gate: a plugin skill change alone must fail\n");
+    status = status != 0 ? status : build_gate_commit(dir, "plugin/knowledge/y.md", "docs: the plugin concept");
+    if (status == 0 && build_gate_run(run, dir, "main") != 0)
+        return build_gate_fail("gate: a plugin concept change must pass\n");
+    return status;
+}
+
+// The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill change alone still
+// fails, a concept change (knowledge/ or plugin/knowledge/) makes it pass, a base that cannot be resolved passes.
 static int build_docs_gate_test(SmithRun *run) {
     char dir[PATH_MAX];
     snprintf(dir, sizeof dir, "%s/smith-gate-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
@@ -3739,10 +3773,7 @@ static int build_docs_gate_test(SmithRun *run) {
         fputs("(the next gate failure is the one under test)\n", stderr);
         if (build_gate_run(run, dir, "main") == 0) failed = build_gate_fail("gate: a feat with no docs must fail\n");
     }
-    status = failed != 0 ? failed : build_gate_commit(dir, ".agents/skills/x/SKILL.md", "docs: the skill");
-    failed = failed != 0 ? failed : status;
-    if (failed == 0 && build_gate_run(run, dir, "main") != 0)
-        failed = build_gate_fail("gate: a skill change must pass\n");
+    failed = failed != 0 ? failed : build_gate_skill_cases(run, dir);
     if (failed == 0 && build_gate_run(run, dir, "nowhere") != 0)
         failed = build_gate_fail("gate: an unknown base must pass\n");
     // A branch that merged a feat branch whose squash is already on main, and adds only a test, passes; its own feat
@@ -3960,6 +3991,38 @@ static void build_stage0_steps(SmithBuild *b, const char *os, const char *commit
     }
 }
 
+// The execution records of main (#3434): a nightly COVERAGE=1 run publishes `.smith/records/*.rec` as the prerelease
+// `test-records-<sha7>` (asset smith-test-records.tar.gz), and `./.github/actions/test-cache` restores the newest one
+// in CI; this is the same restore for a clone, so the test key (#3387) finds a fresh record for the tests that run
+// smith. The newest one among HEAD's last 200 first-parent commits is unpacked into `.smith/records`. It only fills a
+// folder: none published or a failed download leaves it empty (the key falls back to the whole smith) and never fails
+// the task.
+static void build_stage0_records(SmithBuild *b) {
+    const char *tags = smith_capture_or(
+        b, (const char *[]){"git", "ls-remote", "--tags", "origin", "refs/tags/test-records-*", nullptr}, "");
+    const char *commits =
+        smith_capture_or(b, (const char *[]){"git", "rev-list", "--first-parent", "-n", "200", "HEAD", nullptr}, "");
+    for (const char *at = commits; strlen(at) >= 40; at += 40 + strspn(at + 40, "\n")) {
+        const char *tag = smith_fmt(b, "refs/tags/test-records-%.7s\n", at);
+        if (strstr(smith_fmt(b, "%s\n", tags), tag) == nullptr) continue;
+        const char *url = smith_fmt(b,
+                                    "https://github.com/smith-ai-lab/smith/releases/download/test-records-%.7s/"
+                                    "smith-test-records.tar.gz",
+                                    at);
+        const char *joined = ".smith/test-records.tar.gz";
+        const char *const *fetch = smith_list(b, "curl", "-fsL", "--retry", "3", "-o", joined, url, nullptr);
+        int status = build_exec(fetch);
+        if (status == 0) status = build_exec(smith_list(b, "tar", "-C", ".smith", "-xzf", joined, nullptr));
+        (void)build_remove(b, joined);
+        if (status == 0) {
+            fprintf(stderr, "smith: execution records: test-records-%.7s, unpacked into .smith/records\n", at);
+            return;
+        }
+    }
+    fprintf(stderr, "smith: execution records: none among the last 200 commits of HEAD (tests that run smith are keyed "
+                    "by the whole smith)\n");
+}
+
 // Downloads the release under `base` into .smith/stage0/ and checks its .sha256. Both files are saved under their
 // published names, because the checksum tool finds the tarball only under the name its .sha256 lists (#2232).
 static int build_stage0_install(SmithBuild *b, const char *base, const char *name) {
@@ -4012,11 +4075,13 @@ static int build_stage0(SmithRun *run) {
                 "takes the newest release and no cache); put .smith/stage0/bin first on PATH\n",
                 release, cache);
         build_stage0_steps(b, os, cache);
+        build_stage0_records(b);
         return 0;
     }
     status = build_stage0_install(b, smith_fmt(b, "%s/latest/download", site), name);
     if (status != 0) return status;
     fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    build_stage0_records(b);
     if (strcmp(run->args[0], "0") != 0) {
         fprintf(stderr, "smith: step cache: none (%s)\n",
                 cache == nullptr ? "no published one for the last 20 commits of HEAD"
@@ -4245,7 +4310,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep gate = {
         .run = build_docs_gate,
         .args = smith_list(b, "origin/main", nullptr),
-        .description = "checking that feat commits update their skill and concept",
+        .description = "checking that feat commits update their concept",
         .test = true, // part of `smith check`
     };
     smith_task(b, "check-docs-gate", &gate);

@@ -4,7 +4,7 @@
 // used as arenas). Ported from virtual-cell's docs_check; the rules, the fixtures and the skill smith-docs describe it.
 //
 //   smith docs [--type <name>]... [--require <type>:<field>[=<value>,...]]...
-//              [--depfile <path> --target <path>] [<root>]       root is the project, "." by default
+//              [--max-skills <n>] [--depfile <path> --target <path>] [<root>]   root is the project, "." by default
 //
 // - Every concept, knowledge/<name>.md other than index.md and log.md, has a kebab-case file name and frontmatter
 //   holding type, title and description, and its type is one the project allows: `types:` in the frontmatter of
@@ -12,7 +12,13 @@
 //   `requires:` there (or --require) makes a field a must for a type, optionally from a list of values.
 // - knowledge/index.md has okf_version in its frontmatter and lists exactly the concepts on disk, each as a list item
 //   "- [Title](name.md): description" whose description is the concept's own, word for word.
-// - Every skill, .agents/skills/<name>/SKILL.md, has frontmatter with a name matching its folder and a description.
+// - Every skill, .agents/skills/<name>/SKILL.md and plugin/skills/<name>/SKILL.md, has frontmatter with a name matching
+//   its folder and a description of at most 300 characters that names its trigger ("Load when", "Load before", "Load
+//   on" or "Load for"). Together they number at most 20 (the ratchet in docs_ratchet.h, lowered as skills merge).
+// - plugin/knowledge/, when it exists, is a graph like knowledge/ (an index listing each concept), and each document in
+// it
+//   is at most 4,000 bytes; the concepts of knowledge/ over that limit are in the ratchet and may not grow.
+// - A document under plugin/ links nothing outside plugin/, and one under plugin/knowledge/ links no skill.
 // - .claude/skills, when there are skills, is a symlink to ../.agents/skills.
 // - .claude-plugin/plugin.json, when it lists skills, lists exactly the skills that are not named <plugin>-dev or
 //   <plugin>-dev-* (the plugin's name is its "name"): those are for changing the project and never ship.
@@ -26,6 +32,7 @@
 // written as "\ ", # as "\#" and $ as "$$". A build.c step reruns the check when one of them changes.
 #include "docs.h"
 #include "core.h"
+#include "docs_ratchet.h"
 #include "main.h"
 
 #include <dirent.h>
@@ -108,6 +115,10 @@ typedef struct {
     uint32_t depended_count;
     uint32_t problems;
     uint32_t concepts;
+    uint32_t skills;               // every skill found, in .agents/skills and plugin/skills
+    uint32_t skill_limit;          // the most skills allowed: the ratchet, or --max-skills
+    uint32_t grandfathered;        // skills let through by the description ratchet
+    bool declared_on_command_line; // --type or --require given: they replace what any index declares
 } SmithDocs;
 
 static void *smith_docs_push(SmithDocsArena *arena, size_t bytes) {
@@ -538,7 +549,8 @@ static bool smith_docs_in_folder(const char *path, const char *folder) {
 static bool smith_docs_links_skill(const char *joined) {
     char normal[smith_docs_path_capacity];
     return smith_docs_normalize(joined, normal, sizeof normal) &&
-           (smith_docs_in_folder(normal, ".agents/skills") || smith_docs_in_folder(normal, ".claude/skills"));
+           (smith_docs_in_folder(normal, ".agents/skills") || smith_docs_in_folder(normal, ".claude/skills") ||
+            smith_docs_in_folder(normal, "plugin/skills"));
 }
 
 // The path a link in the document points at: relative to the document's folder, or as written for an absolute link.
@@ -552,7 +564,16 @@ static void smith_docs_join(const char *relative, SmithDocsText target, uint64_t
     }
 }
 
-// Checks one link of the document: that it resolves, and that knowledge does not link a skill.
+// Whether a link of a document under plugin/ stays inside plugin/: an installed plugin is a copy of its folder only, so
+// a link out of it points at nothing on a user's machine. An absolute link never does.
+static bool smith_docs_stays_in_plugin(const char *joined, SmithDocsText target) {
+    char normal[smith_docs_path_capacity];
+    return target.begin[0] != '/' && smith_docs_normalize(joined, normal, sizeof normal) &&
+           smith_docs_in_folder(normal, "plugin");
+}
+
+// Checks one link of the document: that it resolves, that knowledge does not link a skill, and that the plugin does not
+// link out of its folder.
 static void smith_docs_link(SmithDocs *docs, const char *relative, SmithDocsText target) {
     if (smith_docs_has_scheme(target) || target.begin[0] == '#') return;
     uint64_t path_length = 0;
@@ -565,9 +586,15 @@ static void smith_docs_link(SmithDocs *docs, const char *relative, SmithDocsText
     bool found = target.begin[0] == '/' ? smith_docs_stat(docs, joined) : smith_docs_exists(docs, joined);
     if (!found) {
         smith_docs_report(docs, "%s: broken link %.*s", relative, (int)path_length, target.begin);
-    } else if (strncmp(relative, "knowledge/", 10) == 0 && target.begin[0] != '/' && smith_docs_links_skill(joined)) {
+    } else if ((strncmp(relative, "knowledge/", 10) == 0 || strncmp(relative, "plugin/knowledge/", 17) == 0) &&
+               target.begin[0] != '/' && smith_docs_links_skill(joined)) {
         smith_docs_report(docs, "%s: links the skill %.*s; knowledge never links skills", relative, (int)path_length,
                           target.begin);
+    } else if (strncmp(relative, "plugin/", 7) == 0 && !smith_docs_stays_in_plugin(joined, target)) {
+        smith_docs_report(docs,
+                          "%s: links %.*s, outside plugin/; an installed plugin is a copy of its folder only, so the "
+                          "link points at nothing on a user's machine: link inside plugin/ or write the fact here",
+                          relative, (int)path_length, target.begin);
     }
 }
 
@@ -600,10 +627,10 @@ static void smith_docs_conflicts(SmithDocs *docs, const char *relative, SmithDoc
 
 // ---- Concepts
 
-// The concepts, knowledge/<name>.md other than index.md and log.md, sorted by name.
-static uint32_t smith_docs_concepts(SmithDocs *docs, const char **names) {
+// The concepts, <base>/<name>.md other than index.md and log.md, sorted by name.
+static uint32_t smith_docs_concepts(SmithDocs *docs, const char *base, const char **names) {
     SmithDocsEntry *entries = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
-    uint32_t total = smith_docs_list(docs, "knowledge", entries);
+    uint32_t total = smith_docs_list(docs, base, entries);
     uint32_t count = 0;
     for (uint32_t i = 0; i < total; i++) {
         SmithDocsText name = smith_docs_text(entries[i].name);
@@ -714,12 +741,45 @@ static void smith_docs_requirements(SmithDocs *docs, const char *relative, const
     }
 }
 
-static void smith_docs_concept(SmithDocs *docs, const char *name) {
+// The recorded size of a concept of knowledge/ that was over the limit when the ratchet was made, or 0.
+static uint32_t smith_docs_recorded_size(const char *name) {
+    for (size_t i = 0; i < sizeof smith_docs_size_ratchet / sizeof smith_docs_size_ratchet[0]; i++) {
+        if (strcmp(smith_docs_size_ratchet[i].name, name) == 0) return smith_docs_size_ratchet[i].bytes;
+    }
+    return 0;
+}
+
+constexpr uint64_t smith_docs_concept_max = 4000;
+
+// A concept is read whole by an agent, so it stays small: one fact in one home, found by its name in the index. The
+// concepts of knowledge/ over the limit when the rule began are in the ratchet (smith_docs_size_ratchet): one that
+// grows is warned about, and none may be added. Every document of plugin/knowledge/ is held to the limit with no
+// ratchet.
+static void smith_docs_concept_size(SmithDocs *docs, const char *relative, uint64_t size) {
+    if (size <= smith_docs_concept_max) return;
+    bool plugin = strncmp(relative, "plugin/", 7) == 0;
+    uint32_t recorded = plugin ? 0 : smith_docs_recorded_size(relative + strlen("knowledge/"));
+    if (recorded == 0) {
+        smith_docs_report(docs,
+                          "%s: %llu bytes, over %llu; an agent reads a concept whole, so keep one fact in one home and "
+                          "split the rest into concepts of their own",
+                          relative, (unsigned long long)size, (unsigned long long)smith_docs_concept_max);
+    } else if (size > recorded) { // a warning only: other pull requests keep working while the list is converted
+        fprintf(docs->errors,
+                "docs: warning: %s grew from %u to %llu bytes; it is over the %llu limit and may only shrink: move "
+                "the new fact into a concept of its own\n",
+                relative, recorded, (unsigned long long)size, (unsigned long long)smith_docs_concept_max);
+    }
+}
+
+static void smith_docs_concept(SmithDocs *docs, const char *base, const char *name) {
     char relative[smith_docs_path_capacity];
-    snprintf(relative, sizeof(relative), "knowledge/%s", name);
+    snprintf(relative, sizeof(relative), "%s/%s", base, name);
     if (!smith_docs_kebab(smith_docs_text(name))) smith_docs_report(docs, "%s: file name is not kebab-case", relative);
+    SmithDocsText text = smith_docs_read(docs, relative);
+    if (text.begin != nullptr && strcmp(base, "knowledge") == 0) smith_docs_concept_size(docs, relative, text.length);
     SmithDocsFields fields;
-    if (!smith_docs_frontmatter(smith_docs_read(docs, relative), &fields)) {
+    if (!smith_docs_frontmatter(text, &fields)) {
         smith_docs_report(docs, "%s: no frontmatter", relative);
         return;
     }
@@ -769,7 +829,7 @@ static bool smith_docs_item(SmithDocsText line, SmithDocsItem *item) {
 }
 
 // Index items by file; a file listed again replaces the earlier item (smith_docs_index_order reports it).
-static uint32_t smith_docs_items(SmithDocs *docs, SmithDocsText index, SmithDocsItem *items) {
+static uint32_t smith_docs_items(SmithDocs *docs, const char *base, SmithDocsText index, SmithDocsItem *items) {
     SmithDocsText body = smith_docs_body(docs, index);
     uint32_t count = 0;
     SmithDocsText line = {};
@@ -781,8 +841,7 @@ static uint32_t smith_docs_items(SmithDocs *docs, SmithDocsText index, SmithDocs
             if (smith_docs_same(items[i].target, item.target)) at = i;
         }
         if (at == count) {
-            if (count == smith_docs_listed_max)
-                smith_docs_too_many("index entries", smith_docs_listed_max, "knowledge/index.md");
+            if (count == smith_docs_listed_max) smith_docs_too_many("index entries", smith_docs_listed_max, base);
             count += 1;
         }
         items[at] = item;
@@ -812,7 +871,7 @@ static bool smith_docs_is_fence(SmithDocsText line) {
 
 // Reports, with the line, an item listed twice and an item that sorts before the one above it in the same section (a
 // run of item lines): the entries are one to a line, sorted by file name, so a bad merge shows at once.
-static void smith_docs_index_order(SmithDocs *docs, SmithDocsText index) {
+static void smith_docs_index_order(SmithDocs *docs, const char *base, SmithDocsText index) {
     SmithDocsItem *seen = SMITH_DOCS_PUSH(&docs->arena, SmithDocsItem, smith_docs_listed_max);
     uint32_t count = 0;
     SmithDocsText previous = {};
@@ -830,17 +889,17 @@ static void smith_docs_index_order(SmithDocs *docs, SmithDocsText index) {
             twice = twice || smith_docs_same(seen[i].target, item.target);
         }
         if (twice) {
-            smith_docs_report(docs, "knowledge/index.md:%u: %.*s is listed twice; remove one", number,
+            smith_docs_report(docs, "%s/index.md:%u: %.*s is listed twice; remove one", base, number,
                               (int)item.target.length, item.target.begin);
         } else if (previous.begin != nullptr && smith_docs_less(item.target, previous)) {
             smith_docs_report(docs,
-                              "knowledge/index.md:%u: entry %.*s is out of order; sort the entries of each section by "
+                              "%s/index.md:%u: entry %.*s is out of order; sort the entries of each section by "
                               "file name (after %.*s)",
-                              number, (int)item.target.length, item.target.begin, (int)previous.length, previous.begin);
+                              base, number, (int)item.target.length, item.target.begin, (int)previous.length,
+                              previous.begin);
         }
         if (!twice) {
-            if (count == smith_docs_listed_max)
-                smith_docs_too_many("index entries", smith_docs_listed_max, "knowledge/index.md");
+            if (count == smith_docs_listed_max) smith_docs_too_many("index entries", smith_docs_listed_max, base);
             seen[count++] = item;
         }
         previous = item.target;
@@ -848,8 +907,8 @@ static void smith_docs_index_order(SmithDocs *docs, SmithDocsText index) {
 }
 
 // Reports each item that is no concept on disk, in the order of the targets.
-static void smith_docs_index_ghosts(SmithDocs *docs, const SmithDocsItem *items, uint32_t count, const char **names,
-                                    uint32_t name_count) {
+static void smith_docs_index_ghosts(SmithDocs *docs, const char *base, const SmithDocsItem *items, uint32_t count,
+                                    const char **names, uint32_t name_count) {
     uint32_t *order = SMITH_DOCS_PUSH(&docs->arena, uint32_t, smith_docs_listed_max);
     for (uint32_t i = 0; i < count; i++) { // the items' indexes, sorted by target
         uint32_t at = i;
@@ -865,7 +924,7 @@ static void smith_docs_index_ghosts(SmithDocs *docs, const SmithDocsItem *items,
             concept = concept || smith_docs_is(item->target, names[j]);
         }
         if (!concept) {
-            smith_docs_report(docs, "knowledge/index.md: lists %.*s, which is not a concept on disk",
+            smith_docs_report(docs, "%s/index.md: lists %.*s, which is not a concept on disk", base,
                               (int)item->target.length, item->target.begin);
         }
     }
@@ -873,45 +932,107 @@ static void smith_docs_index_ghosts(SmithDocs *docs, const SmithDocsItem *items,
 
 // The index must list exactly the concepts: report a file not listed, an item that is no concept (sorted), and an item
 // whose description is not the concept's own.
-static void smith_docs_index(SmithDocs *docs, const char **names, uint32_t name_count) {
-    SmithDocsText index = smith_docs_read(docs, "knowledge/index.md");
+static void smith_docs_index(SmithDocs *docs, const char *base, const char **names, uint32_t name_count) {
+    char index_path[smith_docs_path_capacity];
+    snprintf(index_path, sizeof index_path, "%s/index.md", base);
+    SmithDocsText index = smith_docs_read(docs, index_path);
     if (index.begin == nullptr) {
-        if (name_count > 0) smith_docs_report(docs, "knowledge/index.md: missing");
+        if (name_count > 0) smith_docs_report(docs, "%s: missing", index_path);
         return;
     }
     SmithDocsFields own_fields;
     (void)smith_docs_frontmatter(index, &own_fields);
     if (smith_docs_get(&own_fields, "okf_version").length == 0) {
-        smith_docs_report(docs, "knowledge/index.md: frontmatter lacks okf_version");
+        smith_docs_report(docs, "%s: frontmatter lacks okf_version", index_path);
     }
-    smith_docs_index_order(docs, index);
+    smith_docs_index_order(docs, base, index);
     SmithDocsItem *items = SMITH_DOCS_PUSH(&docs->arena, SmithDocsItem, smith_docs_listed_max);
-    uint32_t count = smith_docs_items(docs, index, items);
+    uint32_t count = smith_docs_items(docs, base, index, items);
     for (uint32_t i = 0; i < name_count; i++) {
         if (smith_docs_find(items, count, names[i]) == count) {
-            smith_docs_report(docs, "knowledge/index.md: does not list %s", names[i]);
+            smith_docs_report(docs, "%s: does not list %s", index_path, names[i]);
         }
     }
-    smith_docs_index_ghosts(docs, items, count, names, name_count);
+    smith_docs_index_ghosts(docs, base, items, count, names, name_count);
     for (uint32_t i = 0; i < name_count; i++) {
         uint32_t at = smith_docs_find(items, count, names[i]);
         if (at == count) continue;
         char relative[smith_docs_path_capacity];
-        snprintf(relative, sizeof(relative), "knowledge/%s", names[i]);
+        snprintf(relative, sizeof(relative), "%s/%s", base, names[i]);
         SmithDocsFields fields;
         (void)smith_docs_frontmatter(smith_docs_read(docs, relative), &fields);
         SmithDocsText own = smith_docs_get(&fields, "description");
         if (own.begin == nullptr || !smith_docs_same(items[at].description, own)) {
-            smith_docs_report(docs, "knowledge/index.md: description of %s differs from its own", names[i]);
+            smith_docs_report(docs, "%s: description of %s differs from its own", index_path, names[i]);
         }
     }
 }
 
 // ---- Skills
 
-static void smith_docs_skill(SmithDocs *docs, const char *folder) {
+constexpr uint64_t smith_docs_description_max = 300;
+constexpr uint32_t smith_docs_skills_target = 20;
+
+// The characters of the text, counting a multi-byte UTF-8 character once.
+static uint64_t smith_docs_characters(SmithDocsText text) {
+    uint64_t count = 0;
+    for (uint64_t i = 0; i < text.length; i++) {
+        count += ((unsigned char)text.begin[i] & 0xC0) != 0x80;
+    }
+    return count;
+}
+
+static bool smith_docs_has_trigger(SmithDocsText description) {
+    static const char *const triggers[] = {"Load when", "Load before", "Load on", "Load for"};
+    for (size_t t = 0; t < sizeof triggers / sizeof triggers[0]; t++) {
+        uint64_t length = strlen(triggers[t]);
+        for (uint64_t at = 0; at + length <= description.length; at++) {
+            if (memcmp(description.begin + at, triggers[t], length) == 0) return true;
+        }
+    }
+    return false;
+}
+
+static bool smith_docs_in_description_ratchet(const char *folder) {
+    for (size_t i = 0; i < sizeof smith_docs_description_ratchet / sizeof smith_docs_description_ratchet[0]; i++) {
+        if (strcmp(smith_docs_description_ratchet[i], folder) == 0) return true;
+    }
+    return false;
+}
+
+// An agent picks a skill from its name and description alone, and the listing has a budget of about 1% of the context
+// window: a long description is dropped and the skill is never matched. So a description is at most 300 characters and
+// names its trigger ("Load when ...", "Load before ...", "Load on ...", "Load for ..."). The skills of .agents/skills
+// that broke this when the rule began are in the ratchet (smith_docs_description_ratchet); the plugin's have none.
+static void smith_docs_skill_description(SmithDocs *docs, const char *relative, const char *base, const char *folder,
+                                         SmithDocsText description) {
+    uint64_t characters = smith_docs_characters(description);
+    bool long_one = characters > smith_docs_description_max;
+    bool no_trigger = !smith_docs_has_trigger(description);
+    if (!long_one && !no_trigger) return;
+    if (strcmp(base, ".agents/skills") == 0 && smith_docs_in_description_ratchet(folder)) {
+        docs->grandfathered += 1;
+        return;
+    }
+    if (long_one) {
+        smith_docs_report(docs,
+                          "%s: description is %llu characters, over %llu; an agent picks a skill from its description "
+                          "alone and the listing has a budget of about 1%% of the context, so over it descriptions are "
+                          "dropped: say when to load it, and move the rest into the skill",
+                          relative, (unsigned long long)characters, (unsigned long long)smith_docs_description_max);
+    }
+    if (no_trigger) {
+        smith_docs_report(docs,
+                          "%s: description names no trigger; an agent matches a skill by when to load it, so write "
+                          "\"Load when ...\", \"Load before ...\", \"Load on ...\" or \"Load for ...\"",
+                          relative);
+    }
+}
+
+static void smith_docs_skill(SmithDocs *docs, const char *base, const char *folder) {
     char relative[smith_docs_path_capacity];
-    snprintf(relative, sizeof(relative), ".agents/skills/%s/SKILL.md", folder);
+    snprintf(relative, sizeof(relative), "%s/%s/SKILL.md", base, folder);
+    docs->skills += 1;
     if (!smith_docs_exists(docs, relative)) {
         smith_docs_report(docs, "%s: missing", relative);
         return;
@@ -927,16 +1048,38 @@ static void smith_docs_skill(SmithDocs *docs, const char *folder) {
     } else if (!smith_docs_is(name, folder)) {
         smith_docs_report(docs, "%s: name '%.*s' does not match its folder", relative, (int)name.length, name.begin);
     }
-    if (smith_docs_get(&fields, "description").length == 0) {
+    SmithDocsText description = smith_docs_get(&fields, "description");
+    if (description.length == 0) {
         smith_docs_report(docs, "%s: frontmatter lacks description", relative);
+    } else {
+        smith_docs_skill_description(docs, relative, base, folder, description);
     }
 }
 
+// The skills of the repo set (.agents/skills) and of the plugin set (plugin/skills), counted together: a session lists
+// at most 20 of them. While the old skills are converted the limit is the ratchet, which only goes down.
 static void smith_docs_skills(SmithDocs *docs) {
+    static const char *const bases[] = {".agents/skills", "plugin/skills"};
     SmithDocsEntry *entries = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
-    uint32_t count = smith_docs_list(docs, ".agents/skills", entries);
-    for (uint32_t i = 0; i < count; i++) {
-        if (entries[i].directory) smith_docs_skill(docs, entries[i].name);
+    for (size_t b = 0; b < sizeof bases / sizeof bases[0]; b++) {
+        uint32_t count = smith_docs_list(docs, bases[b], entries);
+        for (uint32_t i = 0; i < count; i++) {
+            if (entries[i].directory) smith_docs_skill(docs, bases[b], entries[i].name);
+        }
+    }
+    if (docs->skills > smith_docs_skills_target) {
+        fprintf(docs->errors,
+                "docs: %u skills (target %u, allowed now %u), %u of them with a description over %llu "
+                "characters or without a trigger\n",
+                docs->skills, smith_docs_skills_target, docs->skill_limit, docs->grandfathered,
+                (unsigned long long)smith_docs_description_max);
+    }
+    if (docs->skills > docs->skill_limit) {
+        smith_docs_report(docs,
+                          "docs: %u skills in .agents/skills and plugin/skills, more than the %u allowed; a session "
+                          "lists at most %u skills (an agent chooses from the listing, which has a budget of about 1%% "
+                          "of the context), so merge this skill into one that exists",
+                          docs->skills, docs->skill_limit, smith_docs_skills_target);
     }
 }
 
@@ -1081,28 +1224,52 @@ static void smith_docs_claude_link(SmithDocs *docs) {
 
 // ---- Documents
 
-// Every .md under knowledge/ and under .agents/skills/, each folder's sorted.
+// Every .md under knowledge/, under .agents/skills/ and under plugin/, each folder's sorted.
 static uint32_t smith_docs_documents(SmithDocs *docs, const char **paths) {
     uint32_t count = 0;
     smith_docs_collect(docs, "knowledge", paths, &count);
     smith_docs_collect(docs, ".agents/skills", paths, &count);
+    smith_docs_collect(docs, "plugin", paths, &count);
     return count;
 }
 
-static void smith_docs_run(SmithDocs *docs) {
-    const char **names = SMITH_DOCS_PUSH(&docs->arena, const char *, smith_docs_entries_max);
-    docs->concepts = smith_docs_concepts(docs, names);
-    for (uint32_t i = 0; i < docs->concepts; i++) {
-        smith_docs_concept(docs, names[i]);
+// The documents of plugin/knowledge/ at any depth, other than its index and log, are concepts: each stays small.
+static void smith_docs_plugin_sizes(SmithDocs *docs, const char *relative, SmithDocsText text) {
+    if (strncmp(relative, "plugin/knowledge/", 17) != 0) return;
+    if (strcmp(relative, "plugin/knowledge/index.md") == 0 || strcmp(relative, "plugin/knowledge/log.md") == 0) return;
+    smith_docs_concept_size(docs, relative, text.length);
+}
+
+static void smith_docs_declared(SmithDocs *docs, const char *base);
+
+// One graph of concepts, at <base>: each concept, then its index. The plugin's graph is checked only when it exists.
+static void smith_docs_graph(SmithDocs *docs, const char *base) {
+    if (strcmp(base, "knowledge") != 0 && !docs->declared_on_command_line) { // the plugin's index declares its own
+        docs->type_count = 0;
+        docs->requirement_count = 0;
+        smith_docs_declared(docs, base);
     }
-    smith_docs_index(docs, names, docs->concepts);
+    const char **names = SMITH_DOCS_PUSH(&docs->arena, const char *, smith_docs_entries_max);
+    uint32_t count = smith_docs_concepts(docs, base, names);
+    for (uint32_t i = 0; i < count; i++) {
+        smith_docs_concept(docs, base, names[i]);
+    }
+    smith_docs_index(docs, base, names, count);
+    docs->concepts += count;
+}
+
+static void smith_docs_run(SmithDocs *docs) {
+    smith_docs_graph(docs, "knowledge");
+    if (smith_docs_exists(docs, "plugin/knowledge")) smith_docs_graph(docs, "plugin/knowledge");
     smith_docs_skills(docs);
     smith_docs_plugin(docs);
     smith_docs_claude_link(docs);
-    const char **documents = SMITH_DOCS_PUSH(&docs->arena, const char *, smith_docs_paths_max * 2 + 1);
+    const char **documents = SMITH_DOCS_PUSH(&docs->arena, const char *, smith_docs_paths_max * 3 + 1);
     uint32_t count = smith_docs_documents(docs, documents);
     for (uint32_t i = 0; i < count; i++) {
-        smith_docs_links(docs, documents[i], smith_docs_read(docs, documents[i]));
+        SmithDocsText text = smith_docs_read(docs, documents[i]);
+        smith_docs_links(docs, documents[i], text);
+        smith_docs_plugin_sizes(docs, documents[i], text);
     }
     for (uint32_t i = 0; i < count; i++) {
         smith_docs_conflicts(docs, documents[i], smith_docs_read(docs, documents[i]));
@@ -1114,7 +1281,7 @@ static void smith_docs_run(SmithDocs *docs) {
 [[noreturn]] static void smith_docs_usage(void) {
     smith_die(smith_exit_usage, "usage:",
               "smith docs [--type <name>]... [--require <type>:<field>[=<value>,...]]... "
-              "[--depfile <path> --target <path>] [<root>]");
+              "[--max-skills <n>] [--depfile <path> --target <path>] [<root>]");
 }
 
 // "type:field" or "type:field=a,b,c".
@@ -1139,6 +1306,15 @@ typedef struct {
     const char *target;
 } SmithDocsOutput;
 
+// The number after --max-skills: it replaces the ratchet, to hold a project to a lower count.
+static uint32_t smith_docs_parse_limit(const char *value) {
+    char *end = nullptr;
+    unsigned long parsed = strtoul(value, &end, 10);
+    if (end == value || *end != '\0' || parsed > 100000)
+        smith_die(smith_exit_usage, "docs: --max-skills takes a number, not", value);
+    return (uint32_t)parsed;
+}
+
 // Reads the arguments into docs and the depfile's names; the first without a dash is the root.
 static SmithDocsOutput smith_docs_arguments(SmithDocs *docs, int count, char **args) {
     SmithDocsOutput output = {};
@@ -1146,12 +1322,15 @@ static SmithDocsOutput smith_docs_arguments(SmithDocs *docs, int count, char **a
     for (int i = 0; i < count; i++) {
         const char *flag = args[i];
         bool valued = strcmp(flag, "--depfile") == 0 || strcmp(flag, "--target") == 0 || strcmp(flag, "--type") == 0 ||
-                      strcmp(flag, "--require") == 0;
+                      strcmp(flag, "--require") == 0 || strcmp(flag, "--max-skills") == 0;
         if (valued && i + 1 < count) {
             const char *value = args[++i];
             if (strcmp(flag, "--depfile") == 0) output.depfile = value;
             if (strcmp(flag, "--target") == 0) output.target = value;
+            docs->declared_on_command_line =
+                docs->declared_on_command_line || strcmp(flag, "--type") == 0 || strcmp(flag, "--require") == 0;
             if (strcmp(flag, "--require") == 0) smith_docs_add_requirement(docs, value);
+            if (strcmp(flag, "--max-skills") == 0) docs->skill_limit = smith_docs_parse_limit(value);
             if (strcmp(flag, "--type") == 0) {
                 if (docs->type_count == smith_docs_types_max)
                     smith_docs_too_many("--type options", smith_docs_types_max, "the command line");
@@ -1201,16 +1380,18 @@ static const char *smith_docs_next_item(SmithDocs *docs, SmithDocsText *rest, ch
 // `types` lists the allowed types (without it: convention, architecture, contract and design), and `requires` the
 // fields a type must have, each optionally from a list of values, the requirements separated by ";". The command line's
 // --type and --require replace what the index declares.
-static void smith_docs_declared(SmithDocs *docs) {
-    if (!smith_docs_exists(docs, "knowledge/index.md")) return;
+static void smith_docs_declared(SmithDocs *docs, const char *base) {
+    char index_path[smith_docs_path_capacity];
+    snprintf(index_path, sizeof index_path, "%s/index.md", base);
+    if (!smith_docs_exists(docs, index_path)) return;
     SmithDocsFields fields;
-    if (!smith_docs_frontmatter(smith_docs_read(docs, "knowledge/index.md"), &fields)) return;
+    if (!smith_docs_frontmatter(smith_docs_read(docs, index_path), &fields)) return;
     if (docs->type_count == 0) {
         SmithDocsText types = smith_docs_get(&fields, "types");
         for (const char *type = smith_docs_next_item(docs, &types, ','); type != nullptr;
              type = smith_docs_next_item(docs, &types, ',')) {
             if (docs->type_count == smith_docs_types_max)
-                smith_docs_too_many("types", smith_docs_types_max, "knowledge/index.md");
+                smith_docs_too_many("types", smith_docs_types_max, index_path);
             docs->types[docs->type_count++] = type;
         }
     }
@@ -1249,13 +1430,13 @@ static const char *smith_docs_find_root(void) {
 }
 
 int smith_docs_check(int count, char **args) {
-    SmithDocs docs = {.root = nullptr, .errors = stderr};
+    SmithDocs docs = {.root = nullptr, .errors = stderr, .skill_limit = smith_docs_skills_ratchet};
     SmithDocsOutput output = smith_docs_arguments(&docs, count, args);
     if (docs.root == nullptr) docs.root = smith_docs_find_root();
     docs.arena = smith_docs_map(smith_docs_memory_size);
     docs.depends = smith_docs_map(smith_docs_depends_size);
     docs.depended = SMITH_DOCS_PUSH(&docs.depends, const char *, smith_docs_depends_max);
-    smith_docs_declared(&docs);
+    smith_docs_declared(&docs, "knowledge");
     smith_docs_run(&docs);
     printf("smith docs: %u concepts, %u problems\n", docs.concepts, docs.problems);
     if (output.depfile != nullptr && !smith_docs_write_depfile(&docs, output.depfile, output.target)) {
@@ -1275,11 +1456,11 @@ int smith_docs_main(int count, char **args) {
 bool smith_core_docs_check(const char *folder, char *out, size_t out_size) {
     FILE *text = fmemopen(out, out_size, "w");
     if (text == nullptr) return false;
-    SmithDocs docs = {.root = folder, .errors = text};
+    SmithDocs docs = {.root = folder, .errors = text, .skill_limit = smith_docs_skills_ratchet};
     docs.arena = smith_docs_map(smith_docs_memory_size);
     docs.depends = smith_docs_map(smith_docs_depends_size);
     docs.depended = SMITH_DOCS_PUSH(&docs.depends, const char *, smith_docs_depends_max);
-    smith_docs_declared(&docs);
+    smith_docs_declared(&docs, "knowledge");
     smith_docs_run(&docs);
     fprintf(text, "smith docs: %u concepts, %u problems\n", docs.concepts, docs.problems);
     bool fits = ferror(text) == 0;

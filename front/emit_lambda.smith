@@ -651,3 +651,44 @@ export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty
     state::push_eval(e, x->kind.call.callee, state::no_hint());
     return state::success();
 }
+
+// A function that takes a context first and drops it, calling `target` with the rest: the code of a `fn` value made
+// from a function's name. One per function.
+export c::LLVMValueRef function_thunk(state::Emitter *e, c::LLVMValueRef target) {
+    Usize length = 0;
+    const char *own = c::LLVMGetValueName2(target, &length);
+    Str label = state::msg(format::push(own, ".thunk"));
+    char *name = state::cstr(label);
+    state::free_text(label);
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(e->module, name);
+    if (found != nullptr) {
+        mem::free(name);
+        return found;
+    }
+    c::LLVMTypeRef inner = c::LLVMGlobalGetValueType(target);
+    U32 count = c::LLVMCountParamTypes(inner);
+    c::LLVMTypeRef given[65];
+    c::LLVMTypeRef wrapped[65];
+    if (count > 64) count = 64;
+    c::LLVMGetParamTypes(inner, given);
+    wrapped[0] = c::LLVMPointerTypeInContext(e->context, 0);
+    for (U32 i = 0; i < count; i++)
+        wrapped[i + 1] = given[i];
+    c::LLVMTypeRef result = c::LLVMGetReturnType(inner);
+    c::LLVMTypeRef outer = c::LLVMFunctionType(result, wrapped, count + 1, 0);
+    c::LLVMValueRef thunk = c::LLVMAddFunction(e->module, name, outer);
+    mem::free(name);
+    c::LLVMSetLinkage(thunk, c::LLVMInternalLinkage);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, thunk, "entry"));
+    c::LLVMValueRef args[64];
+    for (U32 i = 0; i < count; i++)
+        args[i] = c::LLVMGetParam(thunk, i + 1);
+    c::LLVMValueRef called = c::LLVMBuildCall2(b, inner, target, args, count, "");
+    if (c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind)
+        c::LLVMBuildRetVoid(b);
+    else
+        c::LLVMBuildRet(b, called);
+    c::LLVMDisposeBuilder(b);
+    return thunk;
+}

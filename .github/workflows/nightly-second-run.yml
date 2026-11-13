@@ -64,3 +64,56 @@ jobs:
             echo "::error::the second check was not free: $(wc -l <"$RUNNER_TEMP/ran.txt") steps ran (first exit $rc1, second exit $rc2); the list is in the run's summary"
             exit 1
           fi
+
+  records:
+    # #3434: the execution records of #456/#3387, which key a test that runs smith by the smith functions it executed.
+    # Only a coverage run writes them (`COVERAGE=1 smith build test-units`, about 10 minutes of test stage, an
+    # instrumented build of about 6.8 GB), so this job does, on main, once a night (they go stale about 2.8% in 10
+    # merges, #3387). They are published as the prerelease `test-records-<sha7>` with one asset,
+    # `smith-test-records.tar.gz` (`records/*.rec`), which `./.github/actions/test-cache` and `smith build stage0` unpack
+    # into `.smith/records`. Releases are immutable, so a new tag a night; the 3 newest are kept. It gates nothing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write # `gh release create` of the records
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - name: Free disk for the instrumented build
+        run: |
+          free=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
+          echo "disk: ${free} GB free before the coverage run" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$free" -lt 10 ]; then
+            echo "::error::only ${free} GB free; the coverage run needs more than 5 GB (the instrumented units runner and front-project are about 6.8 GB)"
+            exit 1
+          fi
+      - name: The coverage run
+        run: |
+          start=$SECONDS
+          COVERAGE=1 "$SMITH" build test-units 2>&1 | tail -n 40
+          n=$(find .smith/records -name '*.rec' 2>/dev/null | wc -l)
+          echo "records: $n written, $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$n" -lt 1000 ]; then echo "::error::the coverage run wrote only $n records"; exit 1; fi
+      - name: Publish the records
+        run: |
+          set -eu
+          tag="test-records-${GITHUB_SHA:0:7}"
+          out="$RUNNER_TEMP/records"; mkdir -p "$out"
+          tar -C .smith -c records | gzip -6 >"$out/smith-test-records.tar.gz"
+          echo "$GITHUB_SHA" >"$out/smith-test-records.sha"
+          if gh release view "$tag" >/dev/null 2>&1; then gh release delete "$tag" --cleanup-tag --yes; fi
+          gh release create "$tag" "$out/smith-test-records.tar.gz" "$out/smith-test-records.sha" --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "test records $tag" \
+            --notes "The execution records (.smith/records/*.rec) of a COVERAGE=1 run at $GITHUB_SHA (#3434). Not a release of smith."
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^test-records-[0-9a-f]{7}$"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"; done
+          echo "records: published $tag, $(find .smith/records -name '*.rec' | wc -l) files, $(du -h "$out/smith-test-records.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"

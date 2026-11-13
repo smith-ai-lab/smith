@@ -320,6 +320,18 @@ export void test_build_smith_check_names_the_parts_that_did_not_run_and_require_
     scratch::expect_status("check: --base alone is a usage error", 2, &lonely);
     scratch::expect_contains("check: ... that says what it needs", lonely.err, "--base needs --changed");
     // On Linux the macOS parts cannot run: they are named, and `--require all` fails the check for them.
+    scratch::Run part_bad = scratch::sh(&p, "env SMITH_OUTPUT=full smith check --part nonsense");
+    scratch::expect_status("check: --part names a part that exists", 2, &part_bad);
+    scratch::expect_contains("check: ... and the message says which option", part_bad.err,
+                             "--part: 'nonsense' is no part");
+    // --part runs only the parts it names: the others are left out, and a macOS part it names is reported as not run
+    scratch::Run part =
+        scratch::sh(&p, "[ \"$(uname -s)\" = Linux ] || { echo 'smith check: not run here: macos-tests' >&2; "
+                        "echo 'smith check: 0 ok, 0 failed, 1 not run here' >&2; exit 0; }; "
+                        "env SMITH_OUTPUT=full smith check --part macos-tests");
+    scratch::expect_status("check: a --part run of a part this host cannot run passes", 0, &part);
+    scratch::expect_contains("check: ... it names it", part.err, "smith check: not run here: macos-tests");
+    scratch::expect_contains("check: ... runs nothing else", part.err, "smith check: 0 ok, 0 failed, 1 not run here");
     scratch::Run linux = scratch::sh(
         &p,
         "[ \"$(uname -s)\" = Linux ] || { echo 'smith check: not run here: macos-lint, macos-tests' >&2; exit 1; }; "
@@ -330,6 +342,23 @@ export void test_build_smith_check_names_the_parts_that_did_not_run_and_require_
     scratch::expect_contains("check: ... with a count", linux.err, "not run here\n");
 }
 
+// the history the plan tests read: base, docs, none, code, own and notes
+static scratch::Run plan_history(scratch::Project *p) {
+    scratch::Run made = scratch::sh(
+        p,
+        "git init -q . && git config user.email t@t && git config user.name t && mkdir -p knowledge .github/workflows "
+        "&& "
+        "echo a >README.md && git add -A && git commit -qm base && git tag base && "
+        "echo b >>README.md && echo b >knowledge/a.md && git add -A && git commit -qm docs && git tag docs && "
+        "echo c >LICENSE && echo d >.github/workflows/queue-heal.yml && git add -A && git commit -qm none && git tag "
+        "none && "
+        "echo e >x.c && git add -A && git commit -qm code && git tag code && "
+        "git checkout -q none && echo y >.github/workflows/ci.yml && git add -A && git commit -qm own && git tag own "
+        "&& "
+        "git checkout -q -b notes && echo n >knowledge/b.md && git add -A && git commit -qm notes && git tag notes");
+    return made;
+}
+
 // smith check --plan reads the scope of a change from git (#3163): the one rule CI's `changes` job and the hook share.
 export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
     scratch::Project p = scratch::make("planned", "smith_checked");
@@ -338,16 +367,7 @@ export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run made = scratch::sh(
-        &p,
-        "git init -q . && git config user.email t@t && git config user.name t && mkdir -p knowledge .github/workflows "
-        "&& "
-        "echo a >README.md && git add -A && git commit -qm base && git tag base && "
-        "echo b >>README.md && echo b >knowledge/a.md && git add -A && git commit -qm docs && git tag docs && "
-        "echo c >LICENSE && echo d >.github/workflows/queue-heal.yml && git add -A && git commit -qm none && git tag "
-        "none && "
-        "echo e >x.c && git add -A && git commit -qm code && git tag code && "
-        "git checkout -q none && echo y >.github/workflows/ci.yml && git add -A && git commit -qm own && git tag own");
+    scratch::Run made = plan_history(&p);
     scratch::expect_status("plan: the scratch repository is made", 0, &made);
     scratch::Run docs = scratch::sh(&p, "git checkout -q docs && smith check --plan --base base");
     scratch::expect_contains("plan: documentation only is scope docs", docs.out,
@@ -381,12 +401,31 @@ export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
     scratch::Run unread_push = scratch::sh(&p, "smith check --plan --base nonsense --event push");
     scratch::expect_contains("plan: a push whose range cannot be read stays a release", unread_push.out,
                              "scope=release\n");
-    // smith check --changed leaves out the stages the plan does (#3163), and says so
+}
+
+// smith check --changed leaves out the stages the plan does (#3163), and says so
+export void test_build_smith_check_changed_names_the_stages_the_plan_left_out() {
+    scratch::Project p = scratch::make("planned_out", "smith_checked");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run made = plan_history(&p);
+    scratch::expect_status("plan: the scratch repository is made", 0, &made);
     scratch::Run only_docs =
         scratch::sh(&p, "git checkout -q docs && env SMITH_OUTPUT=full smith check --changed --base base");
     scratch::expect_contains("plan: ... runs the docs check, and only it", only_docs.err, "smith check: docs ");
+    scratch::expect_contains("plan: ... and, for README.md, the tests of README.md and the skills (#3160)",
+                             only_docs.err, "smith check: test ");
     scratch::expect_contains(
         "plan: ... and names what the plan left out", only_docs.err,
+        "smith check: skipped by the plan (scope docs, documentation only): fmt, lint, prove, macos-lint, macos-tests, "
+        "and the other tests");
+    scratch::Run notes =
+        scratch::sh(&p, "git checkout -q notes && env SMITH_OUTPUT=full smith check --changed --base own");
+    scratch::expect_contains(
+        "plan: a change of knowledge/ alone runs no test", notes.err,
         "smith check: skipped by the plan (scope docs, documentation only): fmt, lint, test, prove");
     scratch::Run no_docs =
         scratch::sh(&p, "git checkout -q none && env SMITH_OUTPUT=full smith check --changed --base docs");

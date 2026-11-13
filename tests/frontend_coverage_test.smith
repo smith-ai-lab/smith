@@ -267,6 +267,132 @@ export void test_frontend_coverage_excluded_files_leave_the_total() {
     scratch::release(run.err);
 }
 
+// #3369: the queue's gate refuses a file that passed on the base and fails now, whatever the total does. A file the
+// change lists in excluded.txt has no row (the tool takes it out), a file gone from the tree has none, a file that
+// starts to pass and a new file that never passed are not reported. The comparison is with the table it is given (the
+// base's).
+export void test_frontend_coverage_the_gate_names_only_files_that_passed_on_the_base_and_fail_now() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "excluded.txt", "d.smith\terror-fixture\n");
+    // the base: a, b, c, d, g pass; e fails
+    scratch::write(&p, "base.tsv",
+                   "a.smith\tpass\t\t\nb.smith\tpass\t\t\nc.smith\tpass\t\t\nd.smith\tpass\t\t\n"
+                   "e.smith\tcheck\tunknown name\t1\ng.smith\tpass\t\t\n");
+    // an older table, the last green run on a red main: g failed there, so a comparison with it would miss g
+    scratch::write(&p, "old.tsv", "g.smith\tcheck\tunknown name\t1\n");
+    // now: b and g fail, c is gone, d is listed in excluded.txt (its row is in the raw table), e starts to pass, f is
+    // new and fails
+    scratch::write(&p, "now.tsv",
+                   "a.smith\tpass\t\t\nb.smith\tcheck\texpected <n> arguments\t4\nd.smith\tcheck\tthe error the test "
+                   "expects\t1\ne.smith\tpass\t\t\n"
+                   "f.smith\tparse\tbad token\t2\ng.smith\temit\tno lowering\t3\n");
+    // as ci.yml runs it: the rows are the lines with three fields (`smith run` prints its build lines first)
+    scratch::Run run = scratch::sh(
+        &p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed base.tsv now.tsv | awk -F'\\t' 'NF >= 3'");
+    scratch::expect_status("frontend_coverage: the gate runs", 0, &run);
+    scratch::expect_contains("frontend_coverage: the files that passed on the base and fail now, with stage and cause",
+                             run.out, "b.smith\tcheck\texpected <n> arguments\ng.smith\temit\tno lowering\n");
+    scratch::expect_lacks("frontend_coverage: the build lines of smith run are not rows", run.out, "compile");
+    scratch::expect_lacks("frontend_coverage: a file listed in excluded.txt is not a regression", run.out,
+                          "\nd.smith\t");
+    scratch::expect_lacks("frontend_coverage: a file gone from the tree is not a regression", run.out, "\nc.smith\t");
+    scratch::expect_lacks("frontend_coverage: a file that starts to pass is not a regression", run.out, "\ne.smith\t");
+    scratch::expect_lacks("frontend_coverage: a new file that never passed is not a regression", run.out,
+                          "\nf.smith\t");
+    scratch::release(run.out);
+    scratch::release(run.err);
+    scratch::Run older =
+        scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed old.tsv now.tsv");
+    scratch::expect_lacks("frontend_coverage: against the older table g is not named (the base is what counts)",
+                          older.out, "\ng.smith\t");
+    scratch::release(older.out);
+    scratch::release(older.err);
+}
+
+// #3443: the gate runs report-only for the first 10 queue runs of its version. The loop is the ci.yml step's: each run
+// reads the row the run before it published (version, run of the version, would refuse, dirty, mode) and publishes its
+// own. A gate that would refuse every file (a deliberately wrong change) is never live, not even from the 11th run; a
+// correct one reports 0 for runs 1 to 10 and refuses a seeded regression from the 11th.
+export void test_frontend_coverage_a_new_gate_reports_for_ten_runs_and_a_wrong_one_never_goes_live() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "excluded.txt", "");
+    scratch::write(&p, "base.tsv", "a.smith\tpass\t\t\nb.smith\tpass\t\t\n");
+    scratch::write(&p, "good.tsv", "a.smith\tpass\t\t\nb.smith\tpass\t\t\n");
+    scratch::write(&p, "bad.tsv", "a.smith\tcheck\tunknown name\t1\nb.smith\tcheck\tunknown name\t1\n");
+    // 11 runs, the table of run N is `$2`; the 11th run of the correct gate meets a seeded regression
+    scratch::write(
+        &p, "runs.sh",
+        "export SMITH_COVERAGE_EXCLUDED=excluded.txt\n"
+        "rm -f prev; : >base-row\n"
+        "for i in 1 2 3 4 5 6 7 8 9 10 11; do\n"
+        "  now=$1; [ $i = 11 ] && now=$2\n"
+        "  smith run -- regressed base.tsv $now prev >out 2>&1 || { cat out; exit 1; }\n"
+        "  awk -F'\\t' '$1 == \"gate-row\" {print $2 \"\\t\" $3 \"\\t\" $4 \"\\t\" $5 \"\\t\" $6}' out >prev\n"
+        "  echo \"run $i: $(tr '\\t' ' ' <prev)\"\n"
+        "done\n");
+    scratch::Run good = scratch::sh(&p, "sh runs.sh good.tsv bad.tsv");
+    scratch::expect_status("frontend_coverage: the correct gate runs 11 times", 0, &good);
+    scratch::expect_contains("frontend_coverage: run 1 reports", good.out, "run 1: 1 1 0 0 report-only\n");
+    scratch::expect_contains("frontend_coverage: run 10 still reports", good.out, "run 10: 1 10 0 0 report-only\n");
+    scratch::expect_contains("frontend_coverage: run 11 refuses the seeded regression (would refuse 2)", good.out,
+                             "run 11: 1 11 2 0 refusing\n");
+    scratch::release(good.out);
+    scratch::release(good.err);
+    scratch::Run wrong = scratch::sh(&p, "sh runs.sh bad.tsv bad.tsv");
+    scratch::expect_status("frontend_coverage: the wrong gate runs 11 times", 0, &wrong);
+    scratch::expect_contains("frontend_coverage: run 1 would have refused both files, and reports", wrong.out,
+                             "run 1: 1 1 2 1 report-only\n");
+    scratch::expect_contains("frontend_coverage: run 10 reports", wrong.out, "run 10: 1 10 2 1 report-only\n");
+    scratch::expect_contains("frontend_coverage: run 11 does not go live by itself", wrong.out,
+                             "run 11: 1 11 2 1 report-only\n");
+    scratch::expect_lacks("frontend_coverage: the wrong gate never refuses", wrong.out, "refusing");
+    scratch::release(wrong.out);
+    scratch::release(wrong.err);
+}
+
+// #3443: a change to the comparison (the `regressed` function, or the lines of the ci.yml step between its gate-begin
+// and gate-end lines) must bump `gate_version`: `gate-check` hashes both and the fingerprint in the source says which
+// text the version is for. A change outside the markers (a comment of the tool, the summary text) is free.
+export void test_frontend_coverage_the_gate_version_moves_with_the_comparison() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::copy_tree(&p, ".github/workflows/ci.yml", "ci.yml");
+    scratch::Run same = scratch::sh(&p, "smith run -- gate-check main.smith ci.yml");
+    scratch::expect_status("frontend_coverage: the tree's gate has the version of its comparison", 0, &same);
+    scratch::release(same.out);
+    scratch::release(same.err);
+    scratch::Run step = scratch::sh(&p, "sed 's/\"\\$prev\" \"\\$now\"/\"\\$now\" \"\\$prev\"/' ci.yml >ci2.yml && "
+                                        "! cmp -s ci.yml ci2.yml && smith run -- gate-check main.smith ci2.yml");
+    scratch::expect_status("frontend_coverage: a changed CI comparison without a new version fails", 1, &step);
+    scratch::expect_contains("frontend_coverage: the failure says what to write", step.err, "gate_fingerprint");
+    scratch::release(step.out);
+    scratch::release(step.err);
+    scratch::Run tool =
+        scratch::sh(&p, "sed 's/if (is_pass(&entries\\[j\\])) continue;/if (!is_pass(\\&entries[j])) continue;/' "
+                        "main.smith >m2.smith && ! cmp -s main.smith m2.smith && mkdir t && cp m2.smith t/main.smith "
+                        "&& cd t && smith run -- gate-check main.smith ../ci.yml");
+    scratch::expect_status("frontend_coverage: a changed comparison in the tool without a new version fails", 1, &tool);
+    scratch::release(tool.out);
+    scratch::release(tool.err);
+}
+
 // #3037: a listed fixture that compiles is a failure that stays in the total (#3207); a listed fixture whose compile
 // crashed and a bad line are errors of the job.
 export void test_frontend_coverage_excluded_list_errors_fail_the_job() {
