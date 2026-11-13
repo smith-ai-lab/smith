@@ -10,7 +10,7 @@ void test_passing(void) {
     test::check_near(0.1 + 0.2, 0.3, 1e-9);
     test::check_near(1.0f, 1.0001f, 0.001f);
     I32 array[3] = {1, 2, 3};
-    test::check_equal(array, &array[0]);
+    test::check_equal(&array[0], &array[0]);
     test::expect_abort();
     c::assert(false);
 }

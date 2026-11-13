@@ -7,9 +7,9 @@ import std::test;
 
 void test_checked_1_clean(void) {
     I32 *one = mem::alloc(I32);
-    F32 grid[:][:] = mem::alloc_slice(F32, 3, 4);
+    auto grid = mem::alloc_slice(F32, 3, 4);
     *one = 7;
-    mem::free(grid.data);
+    mem::free(&grid[0][0]);
     mem::free(one);
 }
 
@@ -38,7 +38,7 @@ void test_checked_5_use_after_free(void) {
 }
 
 void test_checked_6_overflow(void) {
-    volatile U8 *four = mem::alloc_raw(4, 1);
+    volatile U8 *four = (volatile U8 *)mem::alloc_raw(4, 1);
     four[4] = 1; // overflow
     mem::free((void *)four);
 }

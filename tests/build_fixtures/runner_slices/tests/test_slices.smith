@@ -8,7 +8,8 @@ void test_same(void) {
     test::check_equal(a, b);
     F32 rows[2][2] = {{1, 2}, {3, 4}};
     F32 grid[:][2] = rows;
-    test::check_equal(grid[1], grid[1]);
+    F32 row[:] = grid[1];
+    test::check_equal(row, row);
 }
 
 void test_element(void) {
@@ -29,5 +30,7 @@ void test_count(void) {
 void test_row(void) {
     F32 rows[2][2] = {{1, 2}, {3, 4}};
     F32 grid[:][2] = rows;
-    test::check_equal(grid[0], grid[1]);
+    F32 first[:] = grid[0];
+    F32 second[:] = grid[1];
+    test::check_equal(first, second);
 }
