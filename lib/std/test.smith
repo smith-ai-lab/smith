@@ -4386,7 +4386,13 @@ void write_part(const Plan *plan, const Options *options) {
     __builtin_snprintf(path, sizeof path, "%s.part", options->costs);
     c::FILE *part = c::fopen(path, "a");
     if (part == nullptr) return;
-    c::setvbuf(part, nullptr, 0, 1U << 22);
+    // The buffer is ours and holds the whole text: glibc ignores the size of `setvbuf(part, nullptr, ...)` and writes
+    // 4096 bytes at a time, and the runners of a part, which append together, then cut each other's lines (#3444).
+    Usize total = 1;
+    for (Usize i = 0; i < plan->count; i++)
+        total += c::strlen(plan->tests[i]->name) + 1;
+    char *buffer = (char *)map_bytes(total, map_private);
+    c::setvbuf(part, buffer, 0, total);
     for (Usize i = 0; i < plan->count; i++) {
         c::fputs(plan->tests[i]->name, part);
         c::fputs("\n", part);
