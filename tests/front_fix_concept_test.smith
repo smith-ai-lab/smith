@@ -69,3 +69,10 @@ export void test_front_fix_concept_two_autos_with_their_own_types_in_the_signatu
     expect_fixed("module m;\nexport typeof(a) first(auto a, auto b, typeof(b) c) {\n    return a;\n}\n",
                  "pub fn first[T, U](a: T, b: U, c: U) -> T:\n    return a\n");
 }
+
+export void test_front_fix_concept_int_and_float_after_a_colon_stay_concepts() {
+    expect_fixed("module m;\nexport typeof(a) add(Int a, typeof(a) b) {\n    return a;\n}\n",
+                 "pub fn add[T: int](a: T, b: typeof(a)) -> typeof(a):\n    return a\n");
+    expect_fixed("pub fn half[T: float](x: T, y: float) -> T:\n    return x\n",
+                 "pub fn half[T: float](x: T, y: float) -> T:\n    return x\n");
+}
