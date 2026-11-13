@@ -882,17 +882,18 @@ jobs:
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
-          # a shard takes 3 to 8 minutes at 4 shards (#3455); one that hung sat the whole 30 minutes of the job, failed the entry
+          # a shard takes 3 to 6 minutes at 4 shards (#3455); one that hung sat the whole 30 minutes of the job, failed the entry
           # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
-          # from the diff is deterministic, so there is no retry: the command is bounded and fails the entry. The 420 s
-          # of 8 shards, twice for twice the work per shard; sized from the measured slowest shard once it is measured.
+          # from the diff is deterministic, so there is no retry: the command is bounded and fails the entry. The limit is
+          # twice the slowest of this step in the 24 shards of 6 queue runs at 4 shards, 367 s (runs 43403072461 to
+          # 43423999530, 2026-11-13), 734 s, up to the minute: 780 s (#3455).
           # the files are dealt by the cost the last count measured (.smith/count-costs.tsv, fetched once by
           # `release-pack-linux`), and the shard writes the cost of what it timed for the next count (#3455)
           [ -s .smith/count-costs.tsv ] && export SMITH_COVERAGE_COSTS="$PWD/.smith/count-costs.tsv"
           export SMITH_COVERAGE_COSTS_OUT="$RUNNER_TEMP/coverage/costs.tsv"
-          timeout -k 10 840 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/4 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          timeout -k 10 780 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/4 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
-          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 14 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 13 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
