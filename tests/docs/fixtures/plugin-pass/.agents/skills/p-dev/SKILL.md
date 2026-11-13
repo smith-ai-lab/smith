@@ -1,4 +1,4 @@
 ---
 name: p-dev
-description: when to load p-dev
+description: Load when p-dev is wanted
 ---
