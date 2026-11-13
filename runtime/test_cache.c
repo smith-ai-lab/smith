@@ -23,6 +23,7 @@
 #include <dirent.h>
 #include <ftw.h>
 #include <sys/stat.h>
+#include <time.h>
 
 constexpr size_t smith_tc_tests_max = (size_t)1 << 14;
 constexpr size_t smith_tc_name_max = 256;
@@ -1041,9 +1042,21 @@ static bool smith_tc_flip_weights(void) {
     return true;
 }
 
+// The seconds since `*mark`, which moves to now: the phases of the ask, printed on stderr (#3458), so a log says
+// which of them a slow deal spends its time in.
+static double smith_tc_lap(struct timespec *mark) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double seconds = (double)(now.tv_sec - mark->tv_sec) + (double)(now.tv_nsec - mark->tv_nsec) / 1e9;
+    *mark = now;
+    return seconds;
+}
+
 static int smith_tc_weights_main(const char *names_file, int macos) {
     static double weight[smith_tc_tests_max];
     char here[PATH_MAX];
+    struct timespec mark;
+    clock_gettime(CLOCK_MONOTONIC, &mark);
     smith_tc_load_names_file(names_file); // the file of the tests, one a line
     if (smith_tc_flip_weights()) return 0;
     if (getcwd(here, sizeof here) == nullptr || !smith_tc_store_folder() || !smith_tc_last_run(macos) ||
@@ -1051,6 +1064,7 @@ static int smith_tc_weights_main(const char *names_file, int macos) {
         printf("# no stored run to weigh by: every test weighs the same\n");
         return 0;
     }
+    double opened = smith_tc_lap(&mark);
     char self_path[PATH_MAX];
     const char *self = getenv("SMITH_SELF");
     ssize_t linked =
@@ -1062,14 +1076,22 @@ static int smith_tc_weights_main(const char *names_file, int macos) {
     if (self != nullptr && self[0] != '\0' && !smith_tc_self_digest(self, smith_tc_self_hex))
         smith_tc_self_hex[0] = '\0';
     smith_tc_load_records();
+    double records = smith_tc_lap(&mark);
     smith_tc_make_base();
+    double base = smith_tc_lap(&mark);
     smith_tc_index_functions();
+    double functions = smith_tc_lap(&mark);
     for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
         const char *why = "";
         smith_tc_tests[i].cacheable = smith_tc_key(&smith_tc_tests[i], &why);
     }
+    double keys = smith_tc_lap(&mark);
     size_t served = 0;
     smith_tc_weigh(weight, &served);
+    fprintf(stderr,
+            "weights: %zu tests; store and project %.1f s, records %.1f s, base %.1f s, functions %.1f s, keys %.1f s, "
+            "weighing %.1f s\n",
+            smith_tc_test_count, opened, records, base, functions, keys, smith_tc_lap(&mark));
     if (chdir(here) != 0) return 0;
     printf("# %zu tests, %zu served by the store\n", smith_tc_test_count, served);
     for (size_t i = 0; i < smith_tc_test_count; i++)
