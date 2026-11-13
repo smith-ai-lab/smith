@@ -71,9 +71,9 @@ typedef struct {
 constexpr Usize cache_capacity = 1U << 16;
 
 // `smith cache <args>` in process on the project's cache folder.
-static CacheRun cache(const scratch::Project *p, I32 count, char **args) {
+static CacheRun cache(const scratch::Project *p, I32 count, const char *const *args) {
     char *out = mem::alloc_slice(char, cache_capacity).data;
-    I32 status = c::smith_core_cache(p->cache, nullptr, count, args, out, cache_capacity);
+    I32 status = c::smith_core_cache(p->cache, nullptr, count, (char **)(Usize)args, out, cache_capacity);
     return (CacheRun){.status = status, .out = out};
 }
 
@@ -186,7 +186,7 @@ export void test_cache_lists_nothing_with_nothing_cached() {
 export void test_cache_clean_with_nothing_cached_exits_zero() {
     scratch::Project p = cache_project();
     defer finish(&p);
-    char *args[1] = {"clean"};
+    const char *args[1] = {"clean"};
     CacheRun cleaned = cache(&p, 1, args);
     test::check_equal(cleaned.status, 0); // with nothing cached
 }
@@ -194,7 +194,7 @@ export void test_cache_clean_with_nothing_cached_exits_zero() {
 export void test_cache_an_unknown_word_is_a_usage_error() {
     scratch::Project p = cache_project();
     defer finish(&p);
-    char *args[1] = {"bogus"};
+    const char *args[1] = {"bogus"};
     CacheRun bogus = cache(&p, 1, args);
     test::check_equal(bogus.status, 2);
     scratch::expect_contains("cache: and the usage is shown", bogus.out, "usage: smith cache");
@@ -203,21 +203,21 @@ export void test_cache_an_unknown_word_is_a_usage_error() {
 export void test_cache_clean_an_unknown_cache_is_a_usage_error() {
     scratch::Project p = cache_project();
     defer finish(&p);
-    char *args[2] = {"clean", "everything"};
+    const char *args[2] = {"clean", "everything"};
     test::check_equal(cache(&p, 2, args).status, 2);
 }
 
 export void test_cache_clean_too_many_arguments_are_a_usage_error() {
     scratch::Project p = cache_project();
     defer finish(&p);
-    char *args[3] = {"clean", "modules", "extra"};
+    const char *args[3] = {"clean", "modules", "extra"};
     test::check_equal(cache(&p, 3, args).status, 2);
 }
 
 export void test_cache_verbose_takes_nothing_else() {
     scratch::Project p = cache_project();
     defer finish(&p);
-    char *args[2] = {"-v", "extra"};
+    const char *args[2] = {"-v", "extra"};
     test::check_equal(cache(&p, 2, args).status, 2);
 }
 
@@ -231,7 +231,7 @@ export void test_cache_lists_fetched_packages() {
                                   "$(exists \"$packages/$(hex 3).used\")\""));
     CacheRun listed = cache(&p, 0, nullptr);
     scratch::expect_contains("cache: three packages", listed.out, "3 entries");
-    char *verbose_args[1] = {"-v"};
+    const char *verbose_args[1] = {"-v"};
     CacheRun verbose = cache(&p, 1, verbose_args);
     scratch::expect_contains("cache -v: lists the first package", verbose.out, text(&p, "hex 1 | cut -c1-16"));
     scratch::expect_contains("cache -v: and its last use", verbose.out,
