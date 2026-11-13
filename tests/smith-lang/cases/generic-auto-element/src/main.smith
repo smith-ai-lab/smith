@@ -22,9 +22,9 @@ I32 main() {
     U8 small = 7;
     stats::bump(&small, 1);
     c::printf("%d %d %d\n", n, small, stats::read(&n));
-    c::printf("%d %d %d\n", stats::third(raw), stats::second(raw), stats::read(&raw[0]));
+    c::printf("%d %d %d\n", stats::third(raw), stats::second(&raw[0]), stats::read(&raw[0]));
     struct Point points[2] = {{1, 2}, {3, 4}};
     struct Point ps[:] = points;
-    c::printf("%d %d\n", stats::count(ps) == 2, stats::second(points).y);
+    c::printf("%d %d\n", stats::count(ps) == 2, stats::second(&points[0]).y);
     return 0;
 }

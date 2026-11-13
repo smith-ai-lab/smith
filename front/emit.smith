@@ -1838,6 +1838,16 @@ static Bool slice_element_of_checked(state::Emitter *e, types::TypeRef element, 
         *inner = emit_memory::slice_type(e, character, "str");
         return true;
     }
+    if (element->kind == .slice) { // a slice of slices (`F32[:][:]`): the inner slice's element is one level, as above
+        state::Ty row = {};
+        types::TypeRef leaf = types::element_of(element);
+        Bool row_known = scalar_of_checked(e, leaf, &row);
+        row_known = row_known || (leaf->kind == .record && find_record_by_name(e, types::name_of(leaf), &row));
+        row_known = row_known || (leaf->kind == .enumeration && matching::type_enum(e, types::name_of(leaf), &row));
+        if (!row_known) return false;
+        *inner = emit_memory::slice_type(e, row, "slice");
+        return true;
+    }
     if (element->kind != .pointer) return false;
     types::TypeRef pointee = types::element_of(element);
     state::Ty held = {};
