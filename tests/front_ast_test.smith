@@ -163,9 +163,9 @@ export void test_front_ast_dump_of_types_and_if_constexpr() {
     pure->attributes[0] = ast::attribute("std::pure");
     ast::DeclRef then_decls[1] = {ast::type_alias("Maybe", option)};
     ast::DeclRef else_decls[1] = {pure};
-    ast::Decl *branch = ast::decl((ast::Decl){}, {.if_constexpr = {.condition = ast::name("target::linux"),
-                                                                   .then_decls = then_decls[0:1],
-                                                                   .else_decls = else_decls[0:1]}});
+    ast::Decl *branch = ast::plain_decl({.if_constexpr = {.condition = ast::name("target::linux"),
+                                                          .then_decls = then_decls[0:1],
+                                                          .else_decls = else_decls[0:1]}});
     ast::DeclRef decls[4] = {ast::type_alias("Bytes", pointer), slice_alias, ast::type_alias("Four", array), branch};
     ast::Module m = ast::new_module("kinds", decls);
     test::golden("tests/front/ast/kinds.txt", ast::dump(&m));

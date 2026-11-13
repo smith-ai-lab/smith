@@ -108,6 +108,19 @@ export struct Slot {
     const ast::TypeExpr *written;   // a field written in smith's own syntax: its type as written (for a fix-it)
 };
 
+// A `Slot` with every field written: the ones a construction does not set are zero, false, empty or null, and the
+// construction assigns the ones it does (`value` of an enumerator, `written`).
+export Slot make_slot(Str name, TypeRef type) {
+    Slot slot = {.name = name,
+                 .type = type,
+                 .value = 0,
+                 .is_pub = false,
+                 .default_value = nullptr,
+                 .doc = "",
+                 .written = nullptr};
+    return slot;
+}
+
 // One variant per kind of type, each holding only the fields its kind uses (D17, #2673).
 export typedef enum {
     invalid;
@@ -3371,7 +3384,8 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
             carried = item->payload != nullptr ? resolve(r, item->payload) : r->table.void_type;
             r->new_syntax = false;
         }
-        items[i] = (Slot){.name = item->name, .type = carried, .value = next};
+        items[i] = make_slot(item->name, carried);
+        items[i].value = next;
         // The payload as written, for a fix that edits it (`*T` to `*mut T`, #2647): only where the source being
         // mended is the module's own, so the span reaches the right text.
         if (has_payload && countof(r->prefix) == 0) items[i].written = item->payload;
@@ -3578,7 +3592,7 @@ static Bool is_template(const ast::Decl *d, ast::Param list[:], const ast::TypeE
 static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Param list[:]) {
     Slot params[:] = mem::alloc_slice(Slot, countof(list));
     for (Usize i = 0; i < countof(list); i++) {
-        params[i] = (Slot){.name = list[i].name, .type = r->table.invalid};
+        params[i] = make_slot(list[i].name, r->table.invalid);
     }
     TypeRef type = function_of(&r->table, params, r->table.invalid, false);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
@@ -3995,7 +4009,7 @@ static ast::Stmt *enumerated_binding(ast::Identifier name, Usize at, Str pack) {
     ast::DeclKind kind = {
         .variable = {
             .name = name.text, .type = type, .init = init, .is_constexpr = countof(pack) == 0, .is_new = true}};
-    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    ast::Decl *d = ast::plain_decl(kind);
     d->span = name.span;
     ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
     s->span = name.span;

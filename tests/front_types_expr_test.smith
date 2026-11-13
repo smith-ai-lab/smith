@@ -130,7 +130,7 @@ static ast::Expr *list(ast::TypeExpr *type, ast::Initializer items[:]) {
 }
 
 static types::Slot slot(Str name, types::TypeRef type) {
-    return (types::Slot){.name = name, .type = type};
+    return types::make_slot(name, type);
 }
 
 // `struct Point { I32 x; I32 y; }`, declared as a type and as the variable `p` and a pointer `pp`.
@@ -466,9 +466,7 @@ export void test_front_types_expr_calls_use_the_callees_function_type() {
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
     types::TypeRef int32 = ty(&r, "I32");
-    types::Slot params[2] = {};
-    params[0] = slot("", int32);
-    params[1] = slot("", ty(&r, "U8"));
+    types::Slot params[2] = {slot("", int32), slot("", ty(&r, "U8"))};
     types::TypeRef signature = types::function_of(&r.table, params, r.table.bool_type, false);
     declare(&r, "add", .function_symbol, signature, false);
     declare(&r, "callback", .variable, types::fn_value_of(&r.table, signature), false);
@@ -633,9 +631,7 @@ export void test_front_types_expr_a_lambda_takes_its_parameter_types_from_the_ex
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
     types::TypeRef int32 = ty(&r, "I32");
-    types::Slot params[2] = {};
-    params[0] = slot("", int32);
-    params[1] = slot("", int32);
+    types::Slot params[2] = {slot("", int32), slot("", int32)};
     types::TypeRef signature = types::function_of(&r.table, params, r.table.bool_type, false);
     types::TypeRef expected = types::fn_value_of(&r.table, signature);
     ast::Param names[2] = {ast::param("a", nullptr), ast::param("b", nullptr)};
@@ -681,11 +677,9 @@ export void test_front_types_expr_a_stored_lambda_passes_where_a_function_type_i
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
-    types::Slot params[1] = {};
-    params[0] = slot("", ty(&r, "I32"));
+    types::Slot params[1] = {slot("", ty(&r, "I32"))};
     types::TypeRef signature = types::function_of(&r.table, params, ty(&r, "I32"), false);
-    types::Slot other_params[1] = {};
-    other_params[0] = slot("", ty(&r, "F64"));
+    types::Slot other_params[1] = {slot("", ty(&r, "F64"))};
     types::TypeRef other = types::function_of(&r.table, other_params, ty(&r, "I32"), false);
     declare(&r, "dbl", .variable, types::fn_value_of(&r.table, signature), false);
     declare(&r, "wide", .variable, types::fn_value_of(&r.table, other), false);
@@ -1185,7 +1179,7 @@ export void test_front_types_expr_an_array_literal_splices_a_tuple_or_an_array()
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
     types::TypeRef int32 = ty(&r, "I32");
-    types::Slot two[2] = {{.type = int32}, {.type = int32}};
+    types::Slot two[2] = {slot("", int32), slot("", int32)};
     declare(&r, "pair", .variable, types::tuple_of(&r.table, two), false);
     declare(&r, "xs", .variable, types::array_of(&r.table, int32, 3, false), false);
     var(&r, "n", "I32");
@@ -1210,7 +1204,7 @@ export void test_front_types_expr_a_bracket_list_where_a_tuple_is_expected_is_fi
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
-    types::Slot two[2] = {{.type = ty(&r, "I32")}, {.type = ty(&r, "F32")}};
+    types::Slot two[2] = {slot("", ty(&r, "I32")), slot("", ty(&r, "F32"))};
     types::TypeRef pair = types::tuple_of(&r.table, two);
     ast::ExprRef items[2] = {num(1), real(2.0)};
     ast::Expr *list_expr = ast::array_literal(items);
@@ -1342,7 +1336,7 @@ export void test_front_types_expr_a_field_of_a_pointer_returned_by_a_call_needs_
     types::Checked r = fresh();
     types::TypeRef pt = point(&r);
     types::TypeRef int32 = ty(&r, "I32");
-    types::Slot none[1] = {};
+    types::Slot none[1] = {slot("", int32)};
     types::TypeRef signature = types::function_of(&r.table, none[0:0], types::pointer_to(&r.table, pt, true), false);
     declare(&r, "unerase", .function_symbol, signature, false);
     ast::ExprRef no_args[1] = {};
@@ -1435,11 +1429,11 @@ export void test_front_types_expr_a_tuple_has_a_type_elements_and_equality() {
     types::Checked r = fresh();
     types::TypeRef int32 = ty(&r, "I32");
     types::TypeRef flag = ty(&r, "Bool");
-    types::Slot two[2] = {{.type = int32}, {.type = flag}};
+    types::Slot two[2] = {slot("", int32), slot("", flag)};
     types::TypeRef shape = types::tuple_of(&r.table, two);
     test::check_condition(shape == types::tuple_of(&r.table, two));
     test::check_condition(says(types::show(shape), "(I32, Bool)"));
-    types::Slot one[1] = {{.type = int32}};
+    types::Slot one[1] = {slot("", int32)};
     test::check_condition(says(types::show(types::tuple_of(&r.table, one)), "(I32,)"));
     declare(&r, "f", .variable, shape, false);
     ast::Expr *first = member(ast::name("f"), "0", false);

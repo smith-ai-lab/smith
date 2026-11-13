@@ -970,7 +970,7 @@ static ast::Decl *take_function(const Tables *t, Cursor *r) {
     ast::TypeExpr *result = type_at(t, r, take_u32(r));
     Bool variadic = take_bool(r);
     ast::DeclKind kind = {.function = {.name = name, .params = params, .result = result, .variadic = variadic}};
-    return ast::decl((ast::Decl){}, kind);
+    return ast::plain_decl(kind);
 }
 
 static ast::Decl *take_record(const Tables *t, Cursor *r) {
@@ -986,7 +986,7 @@ static ast::Decl *take_record(const Tables *t, Cursor *r) {
         take_place(r, &fields[i].place, &fields[i].doc);
     }
     ast::DeclKind kind = {.record = {.name = name, .is_union = is_union, .opaque = opaque, .fields = fields}};
-    return ast::decl((ast::Decl){}, kind);
+    return ast::plain_decl(kind);
 }
 
 static ast::Decl *take_enumeration(const Tables *t, Cursor *r) {
