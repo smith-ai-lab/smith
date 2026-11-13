@@ -4,8 +4,8 @@
 //
 // Today's `pattern...` writes the pattern once for each element of a pack: `plus(rest, off)...` is `plus(rest.0, off),
 // plus(rest.1, off), ...`. The language has one spread, of a name (`rest...`); applying a function to each element
-// is `map`, so the pattern becomes the body of a lambda whose parameter stands for the element: every word `rest` of the
-// pattern is replaced by `each`. The checker reads `map(rest, f)...` as the arguments `f(rest.0), f(rest.1), ...`
+// is `map`, so the pattern becomes the body of a lambda whose parameter stands for the element: every word `rest` of
+// the pattern is replaced by `each`. The checker reads `map(rest, f)...` as the arguments `f(rest.0), f(rest.1), ...`
 // (`spread_value` in `types_expr`).
 //
 // The pack is the `name...` parameter of the function the expansion is in. An expansion whose pattern is a name or a
@@ -57,15 +57,19 @@ static Usize line_end(Str source, Usize at) {
 
 // The pack parameter `name...` of the function that holds `at`: the nearest line above, at column 0 or after `pub `,
 // `export `, `static `, that starts a `fn` and has a parameter written `name...`. Empty when there is none.
+static Usize skip_word(Str line, Usize k, Str word) {
+    if (starts_with(line[k:countof(line)], word)) return k + countof(word);
+    return k;
+}
+
 static Str pack_of(Str source, Usize at) {
     Usize here = line_start(source, at);
-    while (true) {
+    for (Usize guard = 0; guard <= countof(source); guard++) {
         Usize end = line_end(source, here);
         Str line = source[here:end];
-        Usize k = 0;
-        while (k < countof(line) && (starts_with(line[k:countof(line)], "pub ") || starts_with(line[k:countof(line)], "export ") ||
-                                     starts_with(line[k:countof(line)], "static ")))
-            k += line[k] == 'p' ? 4 : (line[k] == 'e' ? 7 : 7);
+        Usize k = skip_word(line, 0, "pub ");
+        k = skip_word(line, k, "export ");
+        k = skip_word(line, k, "static ");
         if (starts_with(line[k:countof(line)], "fn ")) {
             for (Usize i = k; i + 3 <= countof(line); i++) {
                 if (!dots_at(line, i) || i == 0 || !word_char(line[i - 1])) continue;
@@ -79,6 +83,7 @@ static Str pack_of(Str source, Usize at) {
         if (here == 0) return "";
         here = line_start(source, here - 1);
     }
+    return "";
 }
 
 // The start of the pattern that ends at `end`: back over a balanced run of text to the `,`, `(`, `[` or `{` before it.

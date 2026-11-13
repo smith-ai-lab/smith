@@ -3707,8 +3707,7 @@ static Usize find_instance(const Checked *r, const ast::Decl *template, Binding 
             // A constant (`const n: usize`) is given with no type: the instance holds the parameter's own, so the
             // value is all there is to compare, or no call of a template with a constant would find its instance.
             if (x->bindings[k].is_type != given[k].is_type ||
-                (given[k].is_type && x->bindings[k].type != given[k].type) ||
-                x->bindings[k].value != given[k].value) {
+                (given[k].is_type && x->bindings[k].type != given[k].type) || x->bindings[k].value != given[k].value) {
                 same = false;
             }
         }
