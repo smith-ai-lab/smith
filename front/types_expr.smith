@@ -4415,12 +4415,16 @@ static Bool narrowed_variant_read(types::Checked *c, Frame f) {
     }
     if (!variant || typ(c, base) != s->type) return false;
     syntax::Edits fix = guarded_read(c, e, false);
-    if (countof(fix) > 0) {
-        types::fail_fix(c, e->span,
-                        msg(format::push("`", types::show(own->type),
-                                         "` is a payload enumeration, so a payload can't be read with `.`; test the "
-                                         "variant first, with `if .variant(v) := x:` or a `match`")),
-                        fix);
+    if (countof(fix) > 0 || guard_of(c, e) != nullptr) {
+        // a test the binding of the fixer covers keeps that one fix: two ways to mend one read would meet
+        Str shown = msg(format::push("`", types::show(own->type),
+                                     "` is a payload enumeration, so a payload can't be read with `.`; test the "
+                                     "variant first, with `if .variant(v) := x:` or a `match`"));
+        if (countof(fix) > 0) {
+            types::fail_fix(c, e->span, shown, fix);
+        } else {
+            types::fail(c, e->span, shown);
+        }
     } else {
         syntax::Edits edits = {};
         edits = mem::realloc(edits, 1);
