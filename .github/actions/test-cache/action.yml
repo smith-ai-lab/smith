@@ -214,7 +214,7 @@ runs:
           cp -a "$stage/steps/." "$byhand/" && cp -a "$stage/steps/." "$tests/"
         fi
         if [ "$got" -gt 0 ]; then
-          echo "test store: restored $(find "$stage/steps" -type f 2>/dev/null | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "test store: restored $(find "$stage/steps" -type f 2>/dev/null | wc -l) entries from $got of $(printf '%s\n' $urls | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         else
           echo "test store: none, every test runs ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
