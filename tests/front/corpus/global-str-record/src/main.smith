@@ -1,0 +1,26 @@
+import c <stdio.h>
+
+struct State:
+    count: i32
+    name: str
+    items: []mut i32
+
+mut state := State(count = 0, name = "start", items = [])
+mut source: str = ""
+
+fn bump() -> i32:
+    state.count += 1
+    state.count
+
+fn set_source(text: str):
+    source = text
+
+# A `mut` global record with a `str` field and an empty slice, and a global `str`, each read and written from the
+# functions below it (#3594).
+pub fn main() -> i32:
+    first := bump()
+    second := bump()
+    state.name = "later"
+    set_source("hello")
+    _ := stdio.printf("%d %d %zu %zu %zu\n", first, second, countof(state.name), countof(source), countof(state.items))
+    0
