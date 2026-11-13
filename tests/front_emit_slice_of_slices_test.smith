@@ -1,0 +1,71 @@
+// Tests of a slice whose element is a `str` or a pointer, built from the checker's type in the emitter (#3493):
+// `Str[:]` and `T *[:]` are the element types of the lists in front/parse.smith and front/when.smith (`std::mem`'s
+// `realloc` instances). Sources are today's syntax.
+module front_emit_slice_of_slices_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*Run)();
+
+// Parses, checks, emits and runs `symbol`, as front_emit_auto_test.smith does; returns -1 when anything fails.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parser::parse_file("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_emit_slice_of_slices_a_slice_of_str_is_read() {
+    Str source = "export I32 run() {\n"
+                 "    Str words[2] = {\"ab\", \"cde\"};\n"
+                 "    auto list = words[0:2];\n"
+                 "    return (I32)(countof(list[0]) + countof(list[1]));\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)5);
+}
+
+export void test_front_emit_slice_of_slices_a_slice_of_pointers_is_read() {
+    Str source = "export I32 run() {\n"
+                 "    I32 a = 4;\n"
+                 "    I32 b = 9;\n"
+                 "    I32 *pair[2] = {&a, &b};\n"
+                 "    auto list = pair[0:2];\n"
+                 "    return *list[0] + *list[1];\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)13);
+}
