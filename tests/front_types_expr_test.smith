@@ -1391,6 +1391,42 @@ export void test_front_types_expr_a_named_tuple_is_a_record_with_those_fields() 
     test::check_condition(types_expr::check(&r, ast::tuple_literal(wrong), shape) == r.table.invalid);
 }
 
+// `Shape(circle = (x = 1, y = 2))`: the payload as written is typed as the struct it carries, not only the list the
+// checker builds from it, for the emitter reads the call as written (#3328).
+export void test_front_types_expr_a_named_tuple_payload_of_a_variant_has_the_payload_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef at = point(&r);
+    types::Ty *plain = types::new_record(&r.table, "Plain", false);
+    types::Slot plain_fields[:] = mem::alloc_slice(types::Slot, 2);
+    plain_fields[0] = slot("a", ty(&r, "I32"));
+    plain_fields[1] = slot("b", ty(&r, "Bool"));
+    types::set_fields(plain, plain_fields);
+    types::Ty *shape = types::new_enumeration(&r.table, "Shape", ty(&r, "U8"));
+    types::Slot items[:] = mem::alloc_slice(types::Slot, 3);
+    items[0] = slot("circle", at);
+    items[1] = slot("empty", r.table.void_type);
+    items[2] = slot("plain", plain);
+    types::set_payload(shape, true);
+    types::set_fields(shape, items);
+    declare(&r, "Shape", .type_name, shape, false);
+    ast::ExprRef both[2] = {named("x", num(1)), named("y", num(2))};
+    ast::Expr *written = ast::tuple_literal(both);
+    ast::ExprRef args[1] = {named("circle", written)};
+    test::check_condition(types_expr::infer(&r, ast::call(ast::name("Shape"), args)) == shape);
+    expect(r.error_count, 0);
+    test::check_condition(types::type_of(&r, written) == at);
+    // a field left out of the tuple (`b` here) is the checker's to report, or the tuple still has the struct's type
+    ast::ExprRef one[1] = {named("a", num(1))};
+    ast::Expr *partial = ast::tuple_literal(one);
+    ast::ExprRef plain_args[1] = {named("plain", partial)};
+    types_expr::infer(&r, ast::call(ast::name("Shape"), plain_args));
+    test::check_condition(r.error_count > 0 || types::type_of(&r, partial) == plain);
+}
+
 export void test_front_types_expr_a_tuple_has_a_type_elements_and_equality() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

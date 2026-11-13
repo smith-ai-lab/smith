@@ -1,0 +1,21 @@
+# `Shape(circle = (radius = 3))` leaves a field of the payload out: the field is zero, as in `{.radius = 3}`.
+import c <stdio.h>
+
+pub struct Circle:
+    pub radius: i32
+    pub flag: bool
+    pub scale: i32
+
+pub enum Shape:
+    circle: Circle
+    empty
+
+fn describe(s: Shape) -> i32:
+    match s:
+        .circle(circle): return circle.radius + circle.scale
+        .empty: return 0
+
+fn main() -> i32:
+    s := Shape(circle = (scale = 4, radius = 3))
+    _ := stdio.printf("described %d\n", describe(s))
+    return 0

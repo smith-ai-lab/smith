@@ -25,7 +25,7 @@ import <llvm-c/Core.h>;
 
 typedef I32 (*Narrow)(I32);
 typedef U32 (*Byte)(U8);
-typedef I64 (*Unsigned)(U32);
+typedef I64 (*WidenU32)(U32);
 typedef I64 (*Wide)(I32);
 
 struct Scenario {
@@ -170,7 +170,7 @@ export void test_front_emit_wave3_a_narrower_integer_is_widened_where_the_types_
     Wide widen = (Wide)symbol_of(&host, "widen");
     Wide local = (Wide)symbol_of(&host, "via_local");
     Byte byte = (Byte)symbol_of(&host, "byte_up");
-    Unsigned unsigned_to_wide = (Unsigned)symbol_of(&host, "u32_up");
+    WidenU32 unsigned_to_wide = (WidenU32)symbol_of(&host, "u32_up");
     Wide assigned = (Wide)symbol_of(&host, "via_assign");
     test::check_equal(widen(-5), (I64)-5);
     test::check_equal(local(-7), (I64)-7);

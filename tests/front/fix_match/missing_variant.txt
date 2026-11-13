@@ -1,0 +1,8 @@
+enum Color { red
+ green
+ blue }
+fn note(c: Color, n: *mut i32):
+    match c:
+        .red: n.* = 1
+        .green: n.* = 2
+        _: ()
