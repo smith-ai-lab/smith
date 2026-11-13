@@ -267,3 +267,15 @@ export void test_front_emit_lambda_the_wrong_argument_count_names_both() {
                "    f(1, 2)\n",
                false, "a fn value takes 1 arguments, the call has 2", "f(1, 2)");
 }
+
+export void test_front_emit_lambda_a_fn_type_may_take_a_str() {
+    passes("pub struct Hooks:\n"
+           "    measure: fn(str) -> i32\n"
+           "fn four(s: str) -> i32:\n"
+           "    4\n"
+           "pub fn check() -> i32:\n"
+           "    hooks := Hooks(measure = four)\n"
+           "    if hooks.measure(\"abcd\") != 4:\n"
+           "        return 1\n"
+           "    0\n");
+}
