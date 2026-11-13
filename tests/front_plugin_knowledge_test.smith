@@ -70,7 +70,9 @@ static void write_text(Str path, Str text) {
 // The bundle has no problem: `smith docs plugin` checks plugin/knowledge/ with the types its index declares.
 export void test_plugin_knowledge_smith_docs_passes() {
     const char *self = c::getenv("SMITH_SELF");
-    Str command = as_str(format::push(self != nullptr ? self : "smith", " docs ", repo(), "/plugin"));
+    const char *program = "smith";
+    if (self != nullptr) program = self;
+    Str command = as_str(format::push(program, " docs ", repo(), "/plugin"));
     const char *const argv[4] = {"sh", "-c", command.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
     test::check_equal(done == .ok, true);

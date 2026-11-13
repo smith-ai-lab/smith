@@ -78,7 +78,7 @@ static ast::TypeExpr *stub_base(parse::Parser *p) {
     ast::TypeKind kind = {.named = {.path = path}};
     ast::TypeExpr *type = ast::new_type((ast::TypeExpr){.kind = kind});
     while (parse::accept(p, lex::star)) {
-        ast::TypeKind pointer = {.pointer = {.pointee = type}};
+        ast::TypeKind pointer = {.pointer = {.pointee = type, .is_mut = false}};
         type = ast::new_type((ast::TypeExpr){.kind = pointer});
     }
     type->qualifiers.is_const = is_const;
@@ -97,7 +97,7 @@ static ast::TypeExpr *stub_type(parse::Parser *p) {
     ast::TypeExpr *result = stub_base(p);
     TypeRefList params = stub_params(p);
     parse::expect(p, lex::right_paren, "`)`");
-    ast::TypeKind function = {.function = {.params = params, .result = result}};
+    ast::TypeKind function = {.function = {.params = params, .result = result, .variadic = false, .is_once = false}};
     ast::TypeArg args[:] = mem::alloc_slice(ast::TypeArg, 1);
     ast::TypeArg arg = {.type = {.type = ast::new_type((ast::TypeExpr){.kind = function})}};
     args[0] = arg;

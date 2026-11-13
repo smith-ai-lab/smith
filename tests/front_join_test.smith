@@ -321,7 +321,9 @@ export void test_front_join_the_real_ascii_module_reports_where_it_stops() {
     Str folder = folder_for("real");
     compile::Report report =
         compile::file("lib/std/ascii.smith", as_str(format::push(folder, "/ascii.o")), "", roots::default_roots());
-    c::printf("front-join lib/std/ascii.smith: %s", report.ok ? "compiled\n" : report.text.data);
+    const char *shown = report.text.data;
+    if (report.ok) shown = "compiled\n";
+    c::printf("front-join lib/std/ascii.smith: %s", shown);
     remove_all(folder);
 }
 
@@ -363,7 +365,9 @@ export void test_front_join_compile_time_comparison_is_printed() {
 // the program. The build file is the only place that says so.
 export void test_front_join_the_front_end_is_built_by_plain_steps_so_prove_leaves_it_out() {
     const char *repo = c::getenv("SMITH_REPO");
-    Str path = as_str(format::push(repo != nullptr ? repo : ".", "/build.c"));
+    const char *root = ".";
+    if (repo != nullptr) root = repo;
+    Str path = as_str(format::push(root, "/build.c"));
     files::BytesResult loaded = files::read_file(path);
     test::check_equal(loaded == .ok, true);
     if (loaded == .error) return;
