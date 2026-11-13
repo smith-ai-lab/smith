@@ -1,0 +1,99 @@
+// scripts/mac_dropped.c (issue #3589): which jobs of a push run on main GitHub dropped without a runner, and so are
+// started again by queue-heal.yml. Replays run 43493532610 (2ced93c, 2026-11-13: `macos` cancelled with no runner, 0
+// steps, 901 s) and the cases that must not be started again. Never touches the network. Built with the system's
+// compiler, as CI builds it: clang on macOS, cc as gnu2x on Linux.
+//
+// smith-covers: scripts/mac_dropped.c
+module mac_dropped_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+static void prepare(const scratch::Project *p) {
+    scratch::copy_tree(p, "scripts/mac_dropped.c", "mac_dropped.c");
+    scratch::Run made =
+        scratch::sh(p, "set -e; if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
+                       "$c -x c mac_dropped.c -o mac_dropped");
+    scratch::expect_status("mac_dropped: the tool is built", 0, &made);
+}
+
+// `feed` is the records, written with printf; the answer is the whole output.
+static const char *judge(const scratch::Project *p, const char *feed) {
+    char command[1024];
+    __builtin_snprintf(command, sizeof command, "printf '%s' | ./mac_dropped", feed);
+    return scratch::capture(p, command);
+}
+
+export void test_mac_dropped_starts_again_the_job_of_2026_11_13() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    const char *out = judge(&p, "run\\t43493532610\\t1\\t0\\njob\\t132120952579\\tmacos\\tcancelled\\t\\t0\\t901\\n"
+                                "job\\t1\\trelease\\tsuccess\\tGitHub Actions 4\\t12\\t300\\n");
+    scratch::expect_contains("mac_dropped: the dropped macos is started again", out, "rerun\n");
+    scratch::expect_contains("mac_dropped: the line names job and wait", out, "drop\t132120952579\tmacos\t901");
+    const char *dependents = judge(&p, "run\\t2\\t1\\t0\\njob\\t3\\trelease\\tcancelled\\t\\t0\\t901\\n"
+                                       "job\\t4\\twarm (macos-26)\\tfailure\\tGitHub Actions 2\\t5\\t20\\n"
+                                       "job\\t5\\tpublish\\tskipped\\t\\t0\\t0\\n");
+    scratch::expect_contains("mac_dropped: warm failing on a dropped release is its consequence", dependents,
+                             "rerun\n");
+}
+
+export void test_mac_dropped_never_starts_again_what_ran_or_what_we_cancelled() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::expect_text("mac_dropped: a job that ran and failed", "none\n",
+                         judge(&p, "run\\t1\\t1\\t0\\njob\\t1\\tmacos\\tfailure\\tGitHub Actions 1\\t9\\t700\\n"));
+    scratch::expect_text("mac_dropped: cancelled after it got a runner", "none\n",
+                         judge(&p, "run\\t1\\t1\\t0\\njob\\t1\\tmacos\\tcancelled\\tGitHub Actions 1\\t3\\t901\\n"));
+    scratch::expect_text("mac_dropped: warm replaced by a newer push (23 min)", "none\n",
+                         judge(&p, "run\\t1\\t1\\t1\\njob\\t1\\twarm (macos-26)\\tcancelled\\t\\t0\\t1411\\n"));
+    scratch::expect_text("mac_dropped: warm replaced at exactly 15 min while a newer push exists", "none\n",
+                         judge(&p, "run\\t1\\t1\\t1\\njob\\t1\\twarm (macos-26)\\tcancelled\\t\\t0\\t901\\n"));
+    scratch::expect_text("mac_dropped: cancelled early with no runner", "none\n",
+                         judge(&p, "run\\t1\\t1\\t0\\njob\\t1\\tmacos\\tcancelled\\t\\t0\\t120\\n"));
+    scratch::expect_text("mac_dropped: a real failure beside a drop starts nothing", "none\n",
+                         judge(&p, "run\\t1\\t1\\t0\\njob\\t1\\tmacos\\tcancelled\\t\\t0\\t901\\n"
+                                   "job\\t2\\trelease\\tfailure\\tGitHub Actions 1\\t7\\t60\\n"));
+    scratch::expect_text("mac_dropped: an all-green run", "none\n",
+                         judge(&p, "run\\t1\\t1\\t0\\njob\\t1\\tmacos\\tsuccess\\tGitHub Actions 1\\t9\\t700\\n"));
+}
+
+export void test_mac_dropped_stops_after_three_restarts() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    const char *job = "job\\t1\\tmacos\\tcancelled\\t\\t0\\t902\\n";
+    char feed[256];
+    __builtin_snprintf(feed, sizeof feed, "run\\t1\\t3\\t0\\n%s", job);
+    scratch::expect_contains("mac_dropped: the third restart is still made (attempt 3)", judge(&p, feed), "rerun\n");
+    __builtin_snprintf(feed, sizeof feed, "run\\t1\\t4\\t0\\n%s", job);
+    scratch::expect_contains("mac_dropped: the bound is reached at attempt 4", judge(&p, feed), "bound\n");
+}
+
+export void test_mac_dropped_refuses_unknown_records() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::Run run = scratch::sh(&p, "echo nonsense | ./mac_dropped");
+    scratch::expect_status("mac_dropped: an unknown record is a usage error", 2, &run);
+}
