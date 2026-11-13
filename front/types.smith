@@ -4226,6 +4226,22 @@ export Bool expand_reflection(Checked *r, ast::Decl *function) {
     return expanded;
 }
 
+// Whether a type a call binds is not known: the invalid type or `Auto`, or a tuple (a pack) that holds one. The argument
+// that has it failed to be typed, and said why.
+static Bool binds_unknown(const Checked *r, Binding given[:]) {
+    for (Usize i = 0; i < countof(given); i++) {
+        TypeRef t = given[i].type;
+        if (!given[i].is_type || t == nullptr) continue;
+        if (t == r->table.invalid || t == r->table.automatic) return true;
+        if (t->kind != .tuple) continue;
+        for (Usize k = 0; k < countof(t->kind.tuple.slots); k++) {
+            TypeRef element = t->kind.tuple.slots[k].type;
+            if (element == r->table.invalid || element == r->table.automatic) return true;
+        }
+    }
+    return false;
+}
+
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
@@ -4346,6 +4362,9 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
     if (!shape_of(template).ok) return max_instances;
+    // An argument whose type is not known after an error was reported (a struct that is not typed yet): no instance
+    // is made for it, which would check the body with a type that is not known and report each comparison of it (#3609).
+    if (r->error_count > 0 && binds_unknown(r, given)) return max_instances;
     if (r->instance_count == max_instances) {
         failf(r, template->span, "`", shape_of(template).name, "` has more than ", max_instances,
               " instances; a generic function that calls itself with ever larger types never ends");

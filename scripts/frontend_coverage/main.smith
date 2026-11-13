@@ -1704,6 +1704,10 @@ static Usize resolve_import(Usize file, const char name[:]) {
         if (slash == 0) break;
         slash -= 1;
     }
+    // `import scratch;` of a file of lib/std/: the scratch tree links `lib/scratch.smith` to tests/scratch.smith
+    // (`link_scratch_module`, #3214), a file git does not track, so the closure of the file holds it only by its
+    // target; without it a run of one file left scratch and what it imports unfixed (#3609).
+    if (same(name, "scratch")) return tree_find("tests/scratch.smith");
     return tree_count;
 }
 
