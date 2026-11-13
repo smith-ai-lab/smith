@@ -474,7 +474,7 @@ static ast::Decl *record_decl(const Table *t, U32 index, TypeList types) {
         }
     }
     ast::DeclKind kind = {.record = {.name = s->name, .is_union = s->is_union, .opaque = s->opaque, .fields = fields}};
-    return placed(from_c(ast::decl((ast::Decl){}, kind)), place_of(t, place_struct, index));
+    return placed(from_c(ast::plain_decl(kind)), place_of(t, place_struct, index));
 }
 
 static ast::Decl *function_decl(const Table *t, U32 index, TypeList types) {
@@ -485,7 +485,7 @@ static ast::Decl *function_decl(const Table *t, U32 index, TypeList types) {
     }
     ast::DeclKind kind = {
         .function = {.name = f->name, .params = params, .result = types[f->result], .variadic = f->variadic}};
-    return placed(from_c(ast::decl((ast::Decl){}, kind)), place_of(t, place_function, index));
+    return placed(from_c(ast::plain_decl(kind)), place_of(t, place_function, index));
 }
 
 // A value as an expression: an integer literal, a floating literal or a string, negated when it is below zero.
