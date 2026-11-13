@@ -309,7 +309,7 @@ static state::Status yield_finish(state::Emitter *e, const state::ThenNone *w) {
     c::LLVMBasicBlockRef closed = c::LLVMAppendBasicBlockInContext(e->context, e->function, "yield.closed");
     c::LLVMBuildCondBr(e->builder, again, go_on, closed);
     c::LLVMPositionBuilderAtEnd(e->builder, closed);
-    state::ThenBlocks resume = {.run = position_then, .span = w->span};
+    state::ThenBlocks resume = state::then_blocks(position_then, w->span);
     resume.blocks[0] = go_on;
     state::push_then_blocks(e, resume);
     return end_body(e, w->span);

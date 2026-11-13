@@ -804,7 +804,7 @@ static state::Status let_branch(state::Emitter *e, const state::ThenGeneral *w) 
     if (o.ty.kind == .variant_enum) bind_variant(e, o, pattern.name, pattern.binding);
     if (through) bind_variant_address(e, subject, o.llvm, pattern.name, pattern.binding);
     if (has_else) {
-        state::ThenBlocks end = {.run = let_branch_end, .span = s->span};
+        state::ThenBlocks end = state::then_blocks(let_branch_end, s->span);
         end.blocks[0] = end_block;
         state::push_then_blocks(e, end);
         state::push_branch(e, w, else_branch);

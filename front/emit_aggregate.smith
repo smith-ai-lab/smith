@@ -68,6 +68,27 @@ struct Lowering {
     c::LLVMValueRef result;   // its `sret` parameter, or null
 };
 
+// A `Lowering` of `module` with every field written: the builder, the layout and the lists come as the lowering goes.
+static Lowering lowering_of(c::LLVMModuleRef module) {
+    Home homes[:] = {};
+    Moved moved[:] = {};
+    Item doomed[:] = {};
+    Lowering l = {.module = module,
+                  .context = c::LLVMGetModuleContext(module),
+                  .layout = nullptr,
+                  .b = nullptr,
+                  .byval = false,
+                  .homes = homes,
+                  .home_count = 0,
+                  .moved = moved,
+                  .moved_count = 0,
+                  .doomed = doomed,
+                  .doomed_count = 0,
+                  .function = nullptr,
+                  .result = nullptr};
+    return l;
+}
+
 static Bool is_big(Lowering *l, c::LLVMTypeRef type) {
     c::LLVMTypeKind kind = c::LLVMGetTypeKind(type);
     if (kind == c::LLVMStructTypeKind) {
@@ -597,7 +618,7 @@ static Values functions_of(c::LLVMModuleRef module) {
 // Applies the rule of this file to `module`: every function type, call and instruction with an aggregate of more
 // than `big_bytes` bytes is rewritten to keep it in memory.
 export void lower(c::LLVMModuleRef module) {
-    Lowering l = {.module = module, .context = c::LLVMGetModuleContext(module)};
+    Lowering l = lowering_of(module);
     l.layout = c::LLVMGetModuleDataLayout(module);
     l.byval = byval_target(module);
     l.b = c::LLVMCreateBuilderInContext(l.context);

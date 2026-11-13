@@ -741,7 +741,7 @@ static state::Status increment_finish(state::Emitter *e, const state::ThenExpr *
     Bool postfix = which == .post_increment || which == .post_decrement;
     state::Ty ty = place.ty;
     c::LLVMValueRef old = c::LLVMBuildLoad2(e->builder, ty.llvm, place.llvm, "");
-    state::Value one = {.ty = ty};
+    state::Value one = {.llvm = nullptr, .ty = ty};
     if (ty.kind == .floating) {
         one.llvm = c::LLVMConstReal(ty.llvm, 1.0);
     } else if (ty.kind == .integer) {
@@ -783,7 +783,7 @@ export Bool type_float(state::Emitter *e, Str name, state::Ty *ty) {
         bits = 64;
     else
         return false;
-    state::Ty made = {.kind = {.floating = {.bits = bits}}, .name = name};
+    state::Ty made = {.kind = {.floating = {.bits = bits}}, .llvm = nullptr, .name = name};
     if (brain)
         made.llvm = c::LLVMBFloatTypeInContext(e->context);
     else if (bits == 16)

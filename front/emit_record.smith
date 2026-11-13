@@ -107,7 +107,7 @@ static state::TyResult made(state::Emitter *e, const Str *names, const state::Ty
     }
     state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, countof(fields) + 1);
     for (Usize i = 0; i < countof(fields); i++)
-        infos[i] = (state::FieldInfo){.name = names[i], .ty = fields[i]};
+        infos[i] = state::field_info(names[i], fields[i]);
     state::Ty ty = {.kind = .record, .llvm = named, .name = key};
     emit_memory::add_record(
         e, (state::RecordType){
