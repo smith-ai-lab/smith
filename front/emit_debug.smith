@@ -145,7 +145,8 @@ static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
 // test of its kind holds for the reads (the loop's `base` changes every pass).
 static Bool pointee(state::Ty ty, state::PointerTy *step, state::Ty *next) {
     if (ty.kind == .pointer && ty.kind.pointer.element != nullptr) {
-        *step = ty.kind.pointer;
+        step->element = ty.kind.pointer.element;
+        step->address_space = ty.kind.pointer.address_space;
         *next = *ty.kind.pointer.element;
         return true;
     }
