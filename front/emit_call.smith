@@ -54,8 +54,9 @@ export typedef Result(Signature, state::Error) SignatureResult;
 
 // A `Signature` with every field written: the construction assigns the ones it knows.
 static Signature signature_of(state::Ty result) {
+    state::Ty params[:] = {};
     Signature sig = {
-        .function = nullptr, .type = nullptr, .result = result, .params = {}, .owned = false, .variadic = false};
+        .function = nullptr, .type = nullptr, .result = result, .params = params, .owned = false, .variadic = false};
     return sig;
 }
 

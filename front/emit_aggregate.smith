@@ -70,16 +70,19 @@ struct Lowering {
 
 // A `Lowering` of `module` with every field written: the builder, the layout and the lists come as the lowering goes.
 static Lowering lowering_of(c::LLVMModuleRef module) {
+    Home homes[:] = {};
+    Moved moved[:] = {};
+    Item doomed[:] = {};
     Lowering l = {.module = module,
                   .context = c::LLVMGetModuleContext(module),
                   .layout = nullptr,
                   .b = nullptr,
                   .byval = false,
-                  .homes = {},
+                  .homes = homes,
                   .home_count = 0,
-                  .moved = {},
+                  .moved = moved,
                   .moved_count = 0,
-                  .doomed = {},
+                  .doomed = doomed,
                   .doomed_count = 0,
                   .function = nullptr,
                   .result = nullptr};
