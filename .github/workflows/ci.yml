@@ -1052,9 +1052,10 @@ jobs:
             # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
             # gate-begin
             (cd "$gate" && "$SMITH" run -- regressed "$prev" "$now" "$verdict") >"$RUNNER_TEMP/gate-out.txt"
+            # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields, not
+            # its `gate-row` and `gate-log` lines: the gate's own bookkeeping is not a file that regressed)
+            awk -F'\t' 'NF >= 3 && $1 !~ /^gate-/' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/regressed.txt"
             # gate-end
-            # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields)
-            awk -F'\t' 'NF >= 3 && $1 != "gate-row"' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/regressed.txt"
           fi
           awk -F'\t' '$1 == "gate-row" {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/frontend-gate.tsv"
           mode=report-only
