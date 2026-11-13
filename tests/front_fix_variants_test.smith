@@ -223,3 +223,34 @@ export void test_front_fix_variants_a_qualified_use_of_an_imported_variant() {
     Str want = "int main() {\n    printf(\"%d %d\", area::square, area::other);\n}\n";
     test::check_equal(out[0].text, want);
 }
+
+// Every variant of an enum body is declared, whatever line it is on and whether it has a value: `Round = 5` and `Other`
+// after the first variant on its line (#3325).
+export void test_front_fix_variants_a_body_with_values_on_several_lines() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "pub enum Kind { Square\n Round = 5\n Other }\npub sides: u32 = 4\n";
+    fix_variants::Found found = fix_variants::collect(source);
+    test::check_equal(countof(found.names), (Usize)3);
+    Str old_form = "export enum Kind { Square, Round = 5, Other };\n";
+    fix_variants::Found old = fix_variants::collect(old_form);
+    test::check_equal(countof(old.names), (Usize)3);
+}
+
+// A module the fixer has already mended has its variants in lower case; a file fixed after it still writes
+// `area::Square` as `area::square`, as when it is fixed before (#3325).
+export void test_front_fix_variants_an_imported_enum_already_in_lower_case() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str area = "pub enum Kind { square\n round = 5\n other }\n";
+    Str user = "int main() {\n    printf(\"%d %d\", area::Square, area::Other);\n}\n";
+    fix_variants::Word sources[1] = {word(user)};
+    fix_variants::Word imported[1] = {word(area)};
+    fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
+    Str want = "int main() {\n    printf(\"%d %d\", area::square, area::other);\n}\n";
+    test::check_equal(out[0].text, want);
+}

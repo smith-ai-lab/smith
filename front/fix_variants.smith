@@ -130,8 +130,8 @@ static void note(Found *found, Str source, lex::Token token) {
 
 // Whether token `i` starts an entry of the body: first after the `{` or a `,`, first on its line, or after the `]]`
 // of an attribute.
-static Bool starts_entry(lex::Tokens tokens, Usize i, Usize first) {
-    if (tokens[i].kind != lex::type_name) return false;
+static Bool starts_entry(lex::Tokens tokens, Usize i, Usize first, lex::TokenKind want) {
+    if (tokens[i].kind != want) return false;
     // A name after `.`, `::`, `*` or `:` is part of a type (`*ast.TypeExpr`, `ast::Decl *decl`), never a variant: a
     // qualified or payload type that ends its line used to count as an entry (#2400).
     if (i > first) {
@@ -139,18 +139,19 @@ static Bool starts_entry(lex::Tokens tokens, Usize i, Usize first) {
         if (prev == lex::dot || prev == lex::colon_colon || prev == lex::star || prev == lex::colon) return false;
     }
     // `T some;` is a variant with a payload, written type first: the type is no variant (`Option`'s `T`, #2224).
-    if (i + 1 < countof(tokens)) {
+    if (want == lex::type_name && i + 1 < countof(tokens)) {
         lex::TokenKind next = tokens[i + 1].kind;
         Bool same_line = !tokens[i + 1].line_break;
         if (same_line && (next == lex::name || next == lex::star || next == lex::colon_colon)) return false;
     }
     if (i == first || tokens[i].line_break) return true;
     lex::TokenKind before = tokens[i - 1].kind;
-    return before == lex::comma || before == lex::right_bracket;
+    // the token before ends its line: a variant on a line of its own, in a body the fixer has half converted (#3325)
+    return before == lex::comma || before == lex::right_bracket || tokens[i - 1].line_break;
 }
 
 // The variants of the enum whose keyword is token `at`, added to `found`.
-static void read_body(Found *found, Str source, lex::Tokens tokens, Usize at) {
+static void read_body(Found *found, Str source, lex::Tokens tokens, Usize at, lex::TokenKind want) {
     Bool braced = false;
     Usize first = body_start(tokens, at, &braced);
     Usize base = indent_of(source, tokens[at].span.start);
@@ -160,15 +161,16 @@ static void read_body(Found *found, Str source, lex::Tokens tokens, Usize at) {
         if (!braced && t.line_break && indent_of(source, t.span.start) <= base) break;
         if (braced && is_close(t.kind) && depth == 1) break;
         Usize entry_depth = braced ? 1 : 0;
-        if (depth == entry_depth && starts_entry(tokens, i, first)) note(found, source, t);
+        if (depth == entry_depth && starts_entry(tokens, i, first, want)) note(found, source, t);
         if (is_open(t.kind)) depth += 1;
         if (is_close(t.kind) && depth > 0) depth -= 1;
     }
 }
 
 // The variants the enums of `source` declare, in smith's own syntax or today's. Text that does not tokenize declares
-// none.
-export Found collect(Str source) {
+// none. `want` is `type_name` for the capitalized variants of today's syntax, `name` for the lower-case ones of a file
+// the fixer has already mended (#3325).
+static Found collect_kind(Str source, lex::TokenKind want) {
     Found found = {};
     lex::Lexed read = lex::tokenize_new(source);
     // An imported module as its file has it, still in today's syntax (`// ...`), reads with today's lexer (#3027).
@@ -176,9 +178,13 @@ export Found collect(Str source) {
     if (read == .error) return found;
     lex::Tokens tokens = read.ok;
     for (Usize i = 0; i < countof(tokens); i++) {
-        if (tokens[i].kind == lex::kw_enum) read_body(&found, source, tokens, i);
+        if (tokens[i].kind == lex::kw_enum) read_body(&found, source, tokens, i, want);
     }
     return found;
+}
+
+export Found collect(Str source) {
+    return collect_kind(source, lex::type_name);
 }
 
 static Words push_word(Words list, Str text) {
@@ -330,6 +336,35 @@ static Words add_variants(Words names, Words *tags, Words texts) {
     return names;
 }
 
+// `kept` with the capitalized names that `sources` write through a module (`area.Square`) for a variant that a module
+// in `imported` already has in lower case (`square`): the result does not depend on which file was fixed first
+// (#3325).
+static Words add_mended_uses(Words kept, Words tags, Words sources, Words imported) {
+    Words lowers = {};
+    for (Usize i = 0; i < countof(imported); i++) {
+        Found found = collect_kind(imported[i].text, lex::name);
+        for (Usize j = 0; j < countof(found.names); j++) {
+            if (!has(lowers, found.names[j].text)) lowers = push_word(lowers, found.names[j].text);
+        }
+    }
+    if (countof(lowers) == 0) return kept;
+    for (Usize i = 0; i < countof(sources); i++) {
+        Str text = sources[i].text;
+        lex::Lexed read = lex::tokenize_new(text);
+        if (read == .error) read = lex::tokenize(text);
+        if (read == .error) continue;
+        lex::Tokens tokens = read.ok;
+        for (Usize k = 1; k < countof(tokens); k++) {
+            if (tokens[k].kind != lex::type_name) continue;
+            if (tokens[k - 1].kind != lex::dot && tokens[k - 1].kind != lex::colon_colon) continue;
+            Str name = lex::text(text, tokens[k]);
+            if (has(kept, name) || has(tags, name) || !has(lowers, snake(name))) continue;
+            kept = push_word(kept, name);
+        }
+    }
+    return kept;
+}
+
 // `sources` with the variants of all of them, and of the modules they import (`imported`, as their files have them),
 // renamed in each: a file fixed alone writes `console::Closed` as `.closed`, as `console.smith` declares it once
 // fixed (#3027).
@@ -344,6 +379,7 @@ export Words rename_all_with(Words sources, Words imported) {
     for (Usize i = 0; i < countof(names); i++) {
         if (!has(tags, names[i].text)) kept = push_word(kept, names[i].text);
     }
+    kept = add_mended_uses(kept, tags, sources, imported);
     Words renamed = mem::alloc_slice(Word, countof(sources));
     for (Usize i = 0; i < countof(sources); i++)
         renamed[i].text = rename_owned(sources[i].text, kept, owned);
