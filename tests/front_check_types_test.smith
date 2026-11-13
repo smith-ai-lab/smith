@@ -397,9 +397,10 @@ export void test_front_check_types_a_mut_name_is_narrowed_by_is_and_a_field_is_n
 
 // An assignment to the name, or to a part of it, drops what the test proved (exclusive access, item 41).
 export void test_front_check_types_an_assignment_to_a_mut_name_drops_its_narrowing() {
-    clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x = x + 1\n    x = .none\n    0\n");
-    fails("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x = .none\n    x + 1\n",
-          "", "");
+    clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x = x + 1\n    x = .none\n "
+          "   0\n");
+    fails("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x = .none\n    x + 1\n", "",
+          "");
     fails(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n"
                      "    x = Kind(name = 1)\n    x.op\n"),
           "payload enumeration", "");

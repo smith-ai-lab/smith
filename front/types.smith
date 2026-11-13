@@ -1429,7 +1429,8 @@ export Bool is_local(const Scopes *s, Str name) {
 // The declaration of `name` under the narrowings that were added over it: null when there is none.
 export const Symbol *declared(const Scopes *s, Str name) {
     Usize at = find_below(s, name, s->count);
-    while (at > 0 && is_narrowing(&s->symbols[at - 1])) at = find_below(s, name, at - 1);
+    while (at > 0 && is_narrowing(&s->symbols[at - 1]))
+        at = find_below(s, name, at - 1);
     return at == 0 ? nullptr : &s->symbols[at - 1];
 }
 
