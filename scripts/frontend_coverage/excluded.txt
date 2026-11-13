@@ -164,6 +164,9 @@ tests/smith-lang/cases/header-include-chain/src/main.smith	old-form: imports a m
 tests/smith-lang/cases/lowered-directives/src/demo/dir.smith	old-form: #pragma
 tests/smith-lang/cases/module-c-features/src/kit/things.smith	old-form: function-like #define
 tests/smith-lang/cases/module-c-features/src/main.smith	old-form: function-like #define
+tests/smith-lang/cases/plain-include-keeps-c-names/src/main.smith	old-form: C macro read through c:: (item 59 not built)
+tests/smith-lang/cases/plain-names/src/main.smith	old-form: a keyword of the new syntax as a name (#2455)
+tests/smith-lang/cases/postfix-after-compound-literal/src/main.smith	old-form: attributes (#3221 table, #3190 item 47)
 tests/smith-lang/cases/module-shadow-names/src/main.smith	old-form: [[gnu::x]] attributes (#3221 table, #3190 item 47)
 tests/smith-lang/cases/reflection-doc-if-constexpr/src/main.smith	old-form: fields(T) reflection (#3221 dropped table)
 tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
