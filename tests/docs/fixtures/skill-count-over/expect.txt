@@ -1,0 +1,3 @@
+docs: 21 skills (target 20, allowed now 20), 0 of them with a description over 300 characters or without a trigger
+docs: 21 skills in .agents/skills and plugin/skills, more than the 20 allowed; a session lists at most 20 skills (an agent chooses from the listing, which has a budget of about 1% of the context), so merge this skill into one that exists
+smith docs: 0 concepts, 1 problems

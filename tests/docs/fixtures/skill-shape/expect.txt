@@ -1,0 +1,4 @@
+.agents/skills/no-trigger/SKILL.md: description names no trigger; an agent matches a skill by when to load it, so write "Load when ...", "Load before ...", "Load on ..." or "Load for ..."
+.agents/skills/too-long/SKILL.md: description is 301 characters, over 300; an agent picks a skill from its description alone and the listing has a budget of about 1% of the context, so over it descriptions are dropped: say when to load it, and move the rest into the skill
+plugin/skills/plugin-long/SKILL.md: description is 301 characters, over 300; an agent picks a skill from its description alone and the listing has a budget of about 1% of the context, so over it descriptions are dropped: say when to load it, and move the rest into the skill
+smith docs: 0 concepts, 3 problems
