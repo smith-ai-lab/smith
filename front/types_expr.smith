@@ -2796,6 +2796,8 @@ static void assign_value_done(types::Checked *c, Frame f) {
     }
     if (op != .plain) {
         ast::BinaryOp as_binary = binary_of(op);
+        // `x += 100` on a float: the integer literal takes the target's type, as in `x = 100` (#3487).
+        if (tt->kind == .floating && vt->kind == .integer && plain_integer(e->kind.assign.value)) vt = tt;
         if (widen_assigned(c, e, as_binary, tt, vt)) {
             poison(c, e);
             return;

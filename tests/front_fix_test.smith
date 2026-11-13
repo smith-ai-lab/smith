@@ -1011,3 +1011,22 @@ export void test_a_tuple_index_is_an_element_in_a_file_with_other_errors() {
     test::check_condition(contains_text(fixed.text, "t.0"));
     test::check_condition(!contains_text(fixed.text, "t[0]"));
 }
+
+// C2y's `_Countof(x)` is `countof(x)` even when a wider fix takes its statement first (#3487): the later passes read
+// the new syntax, where `_Countof` is a plain name and nothing would mend it.
+export void test_countof_c2y_spelling_is_countof_after_a_wider_fix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "I32 f(I32 xs[4]) {\n    Usize n = _Countof(xs);\n    return (I32)n;\n}\n");
+    test::check_condition(contains_text(fixed.text, "countof(xs)"));
+    test::check_condition(!contains_text(fixed.text, "_Countof"));
+    // The same in a file that still has a `#include` (the plain lexer of the first rename stops at the `#`).
+    fix::Fixed plain =
+        fix::fix_text("t.smith", "#include <stdio.h>\nI32 main() {\n    I32 xs[2] = {1, 2};\n"
+                                 "    auto n = _Countof(xs);\n    printf(\"%zu\", n);\n    return 0;\n}\n");
+    test::check_condition(contains_text(plain.text, "countof(xs)"));
+    test::check_condition(!contains_text(plain.text, "_Countof"));
+}
