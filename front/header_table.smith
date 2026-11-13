@@ -35,8 +35,10 @@ static Bool header_arena_made = false;
 // header (an angled one does not look there), and the flags. The key is text compared whole, never a hash alone.
 constexpr Usize shared_headers_max = 512;
 static Str shared_header_keys[shared_headers_max];
-typedef const ast::Module *ModuleRef;
-static ModuleRef shared_header_modules[shared_headers_max];
+struct ModuleSlot {
+    const ast::Module *module;
+};
+static ModuleSlot shared_header_modules[shared_headers_max];
 static Usize shared_header_count = 0;
 
 // A header's file can change while the process lives (the editor's next request, a test that writes it
@@ -152,7 +154,7 @@ static Bool header_holds(Usize i) {
 static void forget_header(Usize i) {
     shared_header_count -= 1;
     shared_header_keys[i] = shared_header_keys[shared_header_count];
-    shared_header_modules[i] = shared_header_modules[shared_header_count];
+    shared_header_modules[i].module = shared_header_modules[shared_header_count].module;
     shared_header_kept[i] = shared_header_kept[shared_header_count];
 }
 
@@ -172,7 +174,7 @@ export const ast::Module *read(Str header, Bool angled, Str importer, Str flags)
     Str key = header_key(header, angled, importer, flags);
     for (Usize i = 0; i < shared_header_count; i++) {
         if (!mem::equal(shared_header_keys[i], key)) continue;
-        if (header_holds(i)) return shared_header_modules[i];
+        if (header_holds(i)) return shared_header_modules[i].module;
         forget_header(i);
         break;
     }
@@ -211,7 +213,7 @@ export const ast::Module *read(Str header, Bool angled, Str importer, Str flags)
     if (module == nullptr) return nullptr;
     if (shared_header_count < shared_headers_max) {
         shared_header_keys[shared_header_count] = kept_key;
-        shared_header_modules[shared_header_count] = module;
+        shared_header_modules[shared_header_count].module = module;
         shared_header_kept[shared_header_count] = kept;
         shared_header_count += 1;
     }
