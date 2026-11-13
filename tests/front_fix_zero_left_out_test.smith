@@ -17,7 +17,8 @@ static Bool same(Str a, Str b) {
 static Str source_of(Str path) {
     if (same(path, "front.left_out")) {
         return "module front::left_out;\n"
-               "export struct Error {\n    Str message;\n    Str module;\n    Bool in_instance;\n    Usize instance;\n};\n"
+               "export struct Error {\n    Str message;\n    Str module;\n    Bool in_instance;\n    Usize "
+               "instance;\n};\n"
                "export struct Then {\n    Usize run;\n    const int *expr;\n    Bool flag;\n};\n";
     }
     if (same(path, "front.left_span")) {
@@ -76,7 +77,8 @@ export void test_front_fix_zero_left_out_a_member_two_records_above_a_pointer_is
     expect_fixed("module m;\nstruct Step {\n    const char *name;\n};\nstruct Mid {\n    int a;\n    Step step;\n};\n"
                  "struct Owner {\n    int id;\n    Mid mid;\n};\n"
                  "void f(void) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
-                 "struct Step:\n    name: *char\nstruct Mid:\n    a: i32\n    step: Step = undefined\nstruct Owner:\n    id: i32\n"
+                 "struct Step:\n    name: *char\nstruct Mid:\n    a: i32\n    step: Step = undefined\nstruct Owner:\n  "
+                 "  id: i32\n"
                  "    mid: Mid = undefined\nfn f():\n    x := Owner(id = 1)\n    g(&x)\n");
 }
 
