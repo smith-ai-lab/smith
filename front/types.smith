@@ -2461,7 +2461,12 @@ static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
     }
     if (node->kind == .auto_type) return r->table.automatic;
     if (node->kind == .type_of) {
-        return type_of_operand(r, node);
+        // The emitter reads the type of a `typeof` from its operand's record (#3615): the operand of `typeof(str)`,
+        // `typeof(Symbol[:])` or `typeof(p)` is a type or a parameter, which no expression check records.
+        const ast::Expr *operand = node->kind.type_of.operand;
+        TypeRef made = type_of_operand(r, node);
+        if (made != r->table.invalid && type_of(r, operand) == nullptr) set_type(r, operand, made);
+        return made;
     } else if (node->kind == .unsupported_c) {
         failf(r, node->span, "the C type `", node->kind.unsupported_c.spelling,
               "` has no smith type; use a fixed-size type such as `F64` or `I64`");
