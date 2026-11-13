@@ -246,6 +246,12 @@ runs:
         # than that: touching the files made all 318 steps run, 3 minutes), and the checkout's sources, the same
         # commit's, get an old time so that they are not newer than the build (#2833)
         tar -x --zstd -f "$RUNNER_TEMP/smith-build/build.tar.zst"
+        # the shim's precompiled-header source lives in the cache folder: without it the header, the shims and smith's
+        # link run again in this job (#3458); an artifact made without it (`build-linux-release`) restores as before
+        if [ -f "$RUNNER_TEMP/smith-build/shim-pch.tar.zst" ]; then
+          cache="${XDG_CACHE_HOME:-$HOME/.cache}"; mkdir -p "$cache"
+          tar -x --zstd -f "$RUNNER_TEMP/smith-build/shim-pch.tar.zst" -C "$cache"
+        fi
         git ls-files -z | xargs -0 touch -c -h -d '2001-01-01 00:00:00'
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"

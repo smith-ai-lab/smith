@@ -585,14 +585,26 @@ jobs:
         shell: bash
         run: |
           start=$(date +%s)
-          tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
-          ls -l "$RUNNER_TEMP/build.tar.zst"
+          # `tree-sitter/src` (generated, not tracked) and the shim's precompiled-header source (a file in the cache
+          # folder, not in the checkout) are inputs of smith's own steps: left out, every job that restores the build
+          # generates the parser and compiles the header, the 8 shims and the link of smith again (16 steps, 26 s of
+          # each test part, #3458)
+          tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith tree-sitter/src
+          cache="${XDG_CACHE_HOME:-$HOME/.cache}"
+          # (no folder, no file: the restore then goes without it, as before)
+          if [ -d "$cache/smith/shim-pch" ]; then
+            tar -c --zstd -f "$RUNNER_TEMP/shim-pch.tar.zst" -C "$cache" smith/shim-pch
+          fi
+          ls -l "$RUNNER_TEMP"/build.tar.zst "$RUNNER_TEMP"/shim-pch.tar.zst || true
           echo "pack: $(( $(date +%s) - start )) s ($(du -h "$RUNNER_TEMP/build.tar.zst" | cut -f1))" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the build for the shards
         uses: actions/upload-artifact@v4
         with:
           name: build-linux
-          path: ${{ runner.temp }}/build.tar.zst
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/build.tar.zst
+            ${{ runner.temp }}/shim-pch.tar.zst
           compression-level: 0
           retention-days: 1
       - name: Pick the Mac's Linux runners
