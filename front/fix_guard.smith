@@ -843,6 +843,19 @@ static core::Errors match_emit(core::Errors out, Str source, Usize head, Usize b
     return out;
 }
 
+// Whether a fix already in `out` inside `source[start:stop]` declares `bound` with a `match`: the source still has the
+// old name free, so two tests in one function would both pick it and the second would hide the first.
+static Bool match_bound_in(core::Errors out, Usize start, Usize stop, Str bound) {
+    Str declared = types::message_of(format::push(bound, " := match "));
+    for (Usize i = 0; i < countof(out); i++) {
+        core::Edits fix = out[i].fix;
+        if (out[i].span.start >= start && out[i].span.start < stop && countof(fix) == 1 &&
+            starts_with(fix[0].text, declared))
+            return true;
+    }
+    return false;
+}
+
 // The fixes that turn the test of `name`'s error above the read `name.ok` at `at` into a `match`, added to `out`.
 static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name) {
     Usize read_line = line_above(source, at + 1);
@@ -886,7 +899,7 @@ static core::Errors match_edits(core::Errors out, Str source, Usize at, Str name
     Str region = source[start:stop];
     // the declared name and the arm's binding: `ok` and `value`, or `ok_value` and `payload` where those are taken
     Str bound = "ok";
-    if (code_word_at(region, bound) < countof(region)) bound = "ok_value";
+    if (code_word_at(region, bound) < countof(region) || match_bound_in(out, start, stop, bound)) bound = "ok_value";
     Str arm = "value";
     if (code_word_at(region, arm) < countof(region)) arm = "payload";
     if (code_word_at(region, bound) < countof(region) || code_word_at(region, arm) < countof(region)) return out;
