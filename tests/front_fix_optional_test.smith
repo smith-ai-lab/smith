@@ -64,9 +64,8 @@ export void test_front_fix_optional_a_some_read_is_the_value() {
                as_str(format::push(box, "fn read(b: Box) -> i32:\n    if v := b.v:\n        return v\n    0\n")));
 }
 
-// A read of an option the checker cannot narrow is named first (#3211): a `mut` name under its test, a `match` arm, and
-// a Result's error where `error` is a local.
-export void test_front_fix_optional_a_mut_option_is_named_before_its_test_and_read() {
+// A `mut` name narrows like any other (#3438): the read of its payload loses `.some`, no copy is named.
+export void test_front_fix_optional_a_mut_option_is_narrowed_by_its_test() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -74,7 +73,7 @@ export void test_front_fix_optional_a_mut_option_is_named_before_its_test_and_re
     check_text(fixed_text("fn read() -> i32:\n    i: ?i32 = find(1)\n    mut j: ?i32 = .none\n    j = find(2)\n"
                           "    if i != .none and j != .none:\n        return i + j.some\n    0\n"),
                "fn read() -> i32:\n    i: ?i32 = find(1)\n    mut j: ?i32 = .none\n    j = find(2)\n"
-               "    j_value := j\n    if i != .none and j_value != .none:\n        return i + j_value\n    0\n");
+               "    if i != .none and j != .none:\n        return i + j\n    0\n");
 }
 
 export void test_front_fix_optional_a_match_arm_binds_the_option_value() {
@@ -100,8 +99,8 @@ export void test_front_fix_optional_an_error_read_binds_error_value_where_error_
         "        error = error_value\n    error\n");
 }
 
-// An option used as a value under its test (#3228): a `mut` name is named first, the copy is tested and returned.
-export void test_front_fix_optional_a_mut_option_used_as_a_value_is_named_before_its_test() {
+// An option used as a value under its test (#3228): a `mut` name narrows, so the value is read as it is (#3438).
+export void test_front_fix_optional_a_mut_option_used_as_a_value_under_its_test_is_read_as_it_is() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -109,8 +108,7 @@ export void test_front_fix_optional_a_mut_option_used_as_a_value_is_named_before
     check_text(fixed_text("fn second() -> usize:\n    mut c: Option(usize) = .some(3)\n    c = .none\n"
                           "    if c == .none:\n        c = .some(4)\n    if c != .none:\n        return c\n    0\n"),
                "fn second() -> usize:\n    mut c: Option(usize) = .some(3)\n    c = .none\n"
-               "    if c == .none:\n        c = .some(4)\n    c_value := c\n    if c_value != .none:\n"
-               "        return c_value\n    0\n");
+               "    if c == .none:\n        c = .some(4)\n    if c != .none:\n        return c\n    0\n");
 }
 
 // A function held in an option field is named first, the copy is tested and called (#3230).

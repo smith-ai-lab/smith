@@ -386,12 +386,51 @@ export void test_front_check_types_equality_with_a_symbol_narrows_an_option() {
     clean("fn f(o: ?i32) -> i32:\n    if o is i32:\n        return o\n    0\n");
 }
 
-export void test_front_check_types_a_mut_name_or_a_field_is_not_narrowed_by_is() {
-    fails(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n    x.op\n"),
-          "payload enumeration", "name the value first");
+// Item 55 of #3284 (#3438): narrowing works the same on a `mut` name; a field is still not narrowed.
+export void test_front_check_types_a_mut_name_is_narrowed_by_is_and_a_field_is_not() {
+    clean(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n    x.op\n"));
+    clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x + 1\n");
     fails(with_kinds("pub struct Holder:\n    pub kind: Kind\n\nfn f(h: Holder) -> i32:\n"
                      "    if h.kind is not .unary:\n        return 0\n    h.kind.op\n"),
           "payload enumeration", "name the value first");
+}
+
+// An assignment to the name, or to a part of it, drops what the test proved (exclusive access, item 41).
+export void test_front_check_types_an_assignment_to_a_mut_name_drops_its_narrowing() {
+    clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x = x + 1\n    x = .none\n "
+          "   0\n");
+    fails("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x = .none\n    x + 1\n", "",
+          "");
+    fails(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n"
+                     "    x = Kind(name = 1)\n    x.op\n"),
+          "payload enumeration", "");
+}
+
+// The address of the name lets a pointer write it.
+export void test_front_check_types_the_address_of_a_mut_name_drops_its_narrowing() {
+    fails("fn take(p: *mut ?i32):\n    p.* = .none\n\nfn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n"
+          "        return 0\n    take(&x)\n    x + 1\n",
+          "", "");
+}
+
+// Writing a part of a payload keeps the narrowing: only the name itself, assigned, changes its case (#3438).
+export void test_front_check_types_writing_a_part_of_a_payload_keeps_its_narrowing() {
+    clean(with_kinds("fn f(x: Kind):\n    mut y := x\n    if y is .unary:\n        y.op = 1\n        y.op = 2\n"));
+}
+
+// Both forms of reading a payload agree on a `mut` name.
+export void test_front_check_types_a_binding_and_a_test_agree_on_a_mut_name() {
+    clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    v := x else:\n        return 0\n    v\n");
+    clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x\n");
+}
+
+// A narrowing made before a loop is dropped when the body assigns the name: the next turn reads the new value.
+export void test_front_check_types_a_loop_that_assigns_a_mut_name_drops_its_narrowing() {
+    clean("fn g(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    mut n := 0\n"
+          "    while n < 3:\n        n += x\n        n += 1\n    n\n");
+    fails("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    mut n := 0\n"
+          "    while n < 3:\n        n += x\n        x = .none\n    n\n",
+          "", "");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
