@@ -1508,7 +1508,9 @@ static void finish_measure(Usize file, const struct Ran *compiled, const struct 
 
 // Records the result of one file of a group, from the lines of its block (its diagnostics, then its stage line).
 // `status` 1 is what the file's own compile ends with when it fails, so the row is the one a compile alone gives.
-static void finish_member(Usize file, const char block[:], I32 status) {
+// `note`, when not empty, is added to the message of each row the file gets, and the rows are not cached: it says that
+// the compile of the group died (#3527), which depends on the machine.
+static void finish_member(Usize file, const char block[:], I32 status, const char note[:]) {
     char stage[stage_size];
     Usize first_row = entry_count;
     entry_file = file;
@@ -1518,7 +1520,31 @@ static void finish_member(Usize file, const char block[:], I32 status) {
         stage_named(block, stage[0:stage_size]);
         (void)record_errors(tree[file], block, text_of(stage[0:stage_size]), status);
     }
+    if (countof(note) > 0) {
+        for (Usize i = first_row; i < entry_count; i++) {
+            Usize used = 0;
+            while (used < message_size && entries[i].message[used] != '\0')
+                used += 1;
+            if (used + countof(note) < message_size) copy_text(entries[i].message[used:message_size], note);
+        }
+        return;
+    }
     save_rows_to(text_of(row_path[file][0:path_size * 2]), status, first_row);
+}
+
+// What a group's compile that died by a signal says about itself (#3527): the batch's size, the file that was being
+// checked (`k` of `count`, from 1), the one before it, and the signal. The row of the crashed file carries it, so the
+// count's log shows which batch crashed and in what order, and the whole batch and the dead process's error stream go
+// to this tool's standard error as `frontend-crash:` lines.
+static void note_crash(const Usize members[:], Usize k, I32 status, const char output[:], char note[:]) {
+    char text[message_size];
+    typeof(const char[:]) before = k > 0 ? view_of(tree[members[k - 1]]) : view_of("none");
+    (void)format::write(text, sizeof text, "; batch of ", countof(members), ", file ", k + 1, ", after ", before,
+                        ", status ", status);
+    copy_text(note, text_of(text[0:message_size]));
+    for (Usize m = 0; m < countof(members); m++)
+        console::print_error("frontend-crash: batch member ", m + 1, ": ", view_of(tree[members[m]]), "\n");
+    console::print_error("frontend-crash: output of the dead process (status ", status, "):\n", output, "\n");
 }
 
 // The result of a compile of a group of files. A file that failed has its diagnostics and then the line
@@ -1548,7 +1574,12 @@ static void finish_group(const struct Job *job, const struct Ran *compiled) {
             if (!known[k] && same(line[0:named], text_of(member_names[k][0:path_size + 8]))) {
                 known[k] = true;
                 lined = true;
-                finish_member(members[k], text[block:end < countof(text) ? end + 1 : end], 1);
+                typeof(const char[:]) own = text[block:end < countof(text) ? end + 1 : end];
+                char note[message_size];
+                note[0] = '\0';
+                if (compiled->status >= 127 && find_text(own, "crashed (") < countof(own))
+                    note_crash(members[0:count], k, compiled->status, text, note[0:message_size]);
+                finish_member(members[k], own, 1, text_of(note[0:message_size]));
                 block = end + 1;
             }
         }
@@ -1560,7 +1591,7 @@ static void finish_group(const struct Job *job, const struct Ran *compiled) {
     for (Usize k = 0; k < count; k++) {
         if (known[k]) continue;
         if (complete) {
-            finish_member(members[k], text[0:0], 0);
+            finish_member(members[k], text[0:0], 0, "");
         } else {
             again[again_count] = members[k];
             again_count += 1;

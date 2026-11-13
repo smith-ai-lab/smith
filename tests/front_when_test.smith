@@ -195,3 +195,19 @@ export void test_when_a_function_without_target_is_marked_by_the_parser() {
     Str none = "";
     test::check_equal(errors_of(&r), none);
 }
+
+// #3527: the boolean constants a condition may name are the module's own. `uses_when` read the ones left by the module
+// before it: a text of a module the compiler had freed (a SIGSEGV in the check of lib/std/slice.smith after
+// lib/std/mem.smith, in one process), and in this test the wrong answer for a `wide` that is a parameter here.
+export void test_when_uses_when_reads_the_constants_of_its_own_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed first =
+        parser::parse_new("a.smith", "const wide: bool = true\n\n@when(wide)\nfn f() -> i32:\n    1\n");
+    parser::Parsed second = parser::parse_new(
+        "b.smith", "fn g(wide: bool) -> i32:\n    if wide && target.os == .macos:\n        return 1\n    return 2\n");
+    (void)when::live_module(&first.module, when::host()); // leaves `wide` as a known constant
+    test::check_condition(!when::uses_when(&second.module));
+}
