@@ -49,6 +49,11 @@ typedef enum {
 struct Work {
     Node data[:];
     Usize length;
+    // What a statement and an expression are copied as (`clone_decl_choosing`, `clone_decl_rewriting`): the node itself
+    // (`keep_stmt`, `keep_expr`), or another in its place. A copy in progress owns its choosers, so a chooser that
+    // starts another copy needs no save and restore.
+    Choose choose;
+    ChooseExpr choose_expr;
 };
 
 static void add(Work *work, Node node) {
@@ -69,13 +74,10 @@ static void add(Work *work, Node node) {
 // ---------------------------------------------------------------------------------------------------------------
 // A child: a copy of the node, queued so that its own children are copied later. Null stays null.
 
-static ChooseExpr choosing_expr = nullptr;
-
-static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
-    if (old == nullptr) return nullptr;
+static ast::Expr *take_chosen_expr(Work *work, const ast::Expr *old) {
     const ast::Expr *current = old;
-    for (Usize k = 0; choosing_expr != nullptr && k < 64; k++) {
-        const ast::Expr *chosen = choosing_expr(current);
+    for (Usize k = 0; k < 64; k++) {
+        const ast::Expr *chosen = work->choose_expr(current);
         if (chosen == current) break;
         current = chosen;
     }
@@ -84,17 +86,20 @@ static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
     return copy;
 }
 
-// What a statement is copied as, when set (`clone_decl_choosing`): the statement itself, or another in its place.
-static Choose choosing = nullptr;
+static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
+    if (old == nullptr) return nullptr;
+    return take_chosen_expr(work, old);
+}
 
 static ast::Stmt *take_stmt(Work *work, const ast::Stmt *old) {
     if (old == nullptr) return nullptr;
-    for (Usize k = 0; choosing != nullptr && k < 64; k++) {
-        const ast::Stmt *chosen = choosing(old);
-        if (chosen == old) break;
-        old = chosen;
+    const ast::Stmt *current = old;
+    for (Usize k = 0; k < 64; k++) {
+        const ast::Stmt *chosen = work->choose(current);
+        if (chosen == current) break;
+        current = chosen;
     }
-    ast::Stmt *copy = ast::new_stmt(*old);
+    ast::Stmt *copy = ast::new_stmt(*current);
     add(work, {.stmt = copy});
     return copy;
 }
@@ -241,7 +246,7 @@ static MatchArmList take_arms(Work *work, ast::MatchArm list[:]) {
         ast::Pattern target[:] = mem::alloc_slice(ast::Pattern, countof(source));
         for (Usize k = 0; k < countof(source); k++) {
             target[k] = source[k];
-            if (source[k].constant != nullptr) target[k].constant = take_expr(work, source[k].constant);
+            target[k].constant = take_expr(work, source[k].constant); // null stays null
         }
         copy[i].patterns = target;
     }
@@ -501,49 +506,51 @@ static void drain(Work *work) {
     }
 }
 
-// A deep copy of `d`, a function, a variable or any other declaration, in the current allocator. The copy shares no
-// node, list or path with `d`; texts still point into the source.
-export ast::Decl *clone_decl(const ast::Decl *d) {
+// The choosers of a copy that changes nothing.
+static const ast::Stmt *keep_stmt(const ast::Stmt *s) {
+    return s;
+}
+
+static const ast::Expr *keep_expr(const ast::Expr *e) {
+    return e;
+}
+
+// The copy of `d` with the choosers given.
+static ast::Decl *clone_decl_with(const ast::Decl *d, Choose choose, ChooseExpr choose_expr) {
     Work work = {};
+    work.choose = choose;
+    work.choose_expr = choose_expr;
     ast::Decl *root = take_decl(&work, d);
     drain(&work);
     return root;
 }
 
+// A deep copy of `d`, a function, a variable or any other declaration, in the current allocator. The copy shares no
+// node, list or path with `d`; texts still point into the source.
+export ast::Decl *clone_decl(const ast::Decl *d) {
+    return clone_decl_with(d, keep_stmt, keep_expr);
+}
+
 // `clone_decl`, with each statement copied as what `choose` gives for it (the statements of the branch chosen are
 // copied the same way).
 export ast::Decl *clone_decl_choosing(const ast::Decl *d, Choose choose) {
-    choosing = choose;
-    ast::Decl *copy = clone_decl(d);
-    choosing = nullptr;
-    return copy;
+    return clone_decl_with(d, choose, keep_expr);
 }
 
 // `clone_decl`, with each statement and each expression copied as what `choose` and `choose_expr` give for it (#2295).
 // A chooser may itself call this (a `for f in fields(T)` is copied as a block of the body, rewritten once for each
-// field): the choosers of the copy in progress are put back after.
+// field): each copy has its own choosers.
 export ast::Decl *clone_decl_rewriting(const ast::Decl *d, Choose choose, ChooseExpr choose_expr) {
-    Choose outer = choosing;
-    ChooseExpr outer_expr = choosing_expr;
-    choosing = choose;
-    choosing_expr = choose_expr;
-    ast::Decl *copy = clone_decl(d);
-    choosing = outer;
-    choosing_expr = outer_expr;
-    return copy;
+    return clone_decl_with(d, choose, choose_expr);
 }
 
 // A deep copy of the statement `s`, rewritten as `clone_decl_rewriting` does.
 export ast::Stmt *clone_stmt_rewriting(const ast::Stmt *s, Choose choose, ChooseExpr choose_expr) {
-    Choose outer = choosing;
-    ChooseExpr outer_expr = choosing_expr;
-    choosing = choose;
-    choosing_expr = choose_expr;
     Work work = {};
+    work.choose = choose;
+    work.choose_expr = choose_expr;
     ast::Stmt *root = take_stmt(&work, s);
     drain(&work);
-    choosing = outer;
-    choosing_expr = outer_expr;
     return root;
 }
 
