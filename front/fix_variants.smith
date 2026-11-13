@@ -190,6 +190,8 @@ static Words push_word(Words list, Str text) {
 // `tags` with the names `source` declares as a struct, enum or union tag added.
 static Words add_tags(Words tags, Str source) {
     lex::Lexed read = lex::tokenize_new(source);
+    // An imported module still in today's syntax (`// ...`) reads with today's lexer, as `collect` does (#3325).
+    if (read == .error) read = lex::tokenize(source);
     if (read == .error) return tags;
     lex::Tokens tokens = read.ok;
     for (Usize i = 0; i + 1 < countof(tokens); i++) {

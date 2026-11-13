@@ -145,18 +145,19 @@ export void test_front_emit_fn_attributes_without_a_namespace() {
     test::check_equal(f_with("cold", true, "cold"), true);
 }
 
+// Static storage: the tree built by `c_named` outlives it.
+static ast::ExprRef c_name_args[1];
+static ast::Attribute c_name_attributes[1];
+
 // `@c_name(<argument>)` on a function that returns its first parameter.
 static ast::Module c_named(ast::Expr *argument) {
     ast::StmtRef items[1] = {expression(name("a"))};
     ast::Decl *f = add_function("f", items);
-    // Static storage: the tree outlives this function.
-    static ast::ExprRef args[1];
-    static ast::Attribute attributes[1];
-    args[0] = argument;
-    attributes[0] = ast::attribute("c_name");
-    attributes[0].args = args;
-    attributes[0].span.start = 7;
-    f->attributes = attributes;
+    c_name_args[0] = argument;
+    c_name_attributes[0] = ast::attribute("c_name");
+    c_name_attributes[0].args = c_name_args;
+    c_name_attributes[0].span.start = 7;
+    f->attributes = c_name_attributes;
     ast::DeclRef decls[1] = {f};
     return module_of(decls);
 }

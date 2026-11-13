@@ -14,11 +14,12 @@ __INT32_TYPE__ heads_run(void) __asm__("_heads::run");
 __INT32_TYPE__ heads_run(void) {
 __SIZE_TYPE__ xs[4] = {2, 4, 5, 6};
 __SIZE_TYPE__ total = 0;
-for (__SIZE_TYPE__ i = 0; i < 4; i++)
+__SIZE_TYPE__ four = 4;
+for (__SIZE_TYPE__ i = 0; i < four; i++)
 if (smith_call_failed) total += i;
-for (__SIZE_TYPE__ i = 0; i < 4; i++)
+for (__SIZE_TYPE__ i = 0; i < four; i++)
 total +=smith_call_failed ? 1u : 0u;
-for (__SIZE_TYPE__ i = 0; i < 4; i++) total +=smith_call_failed ? 1u : 0u;
+for (__SIZE_TYPE__ i = 0; i < four; i++) total +=smith_call_failed ? 1u : 0u;
 for (__SIZE_TYPE__ i = 0; i < 2; i++)
 for (__SIZE_TYPE__ j = 0; j < 2; j++)
 if (smith_call_failed) total += 10;

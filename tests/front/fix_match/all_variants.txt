@@ -1,0 +1,8 @@
+enum Color { red
+ green
+ blue }
+fn code(c: Color) -> i32:
+    match c:
+        .red: return 1
+        .green: return 2
+        .blue: return 3

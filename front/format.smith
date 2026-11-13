@@ -369,10 +369,11 @@ static Bool has_new_line(Str text) {
 static void say_number(I32 fd, Usize value) {
     char digits[24];
     Usize at = sizeof digits;
-    do {
+    for (Usize used = 0; used < sizeof digits; used++) {
         digits[--at] = (char)('0' + value % 10);
         value /= 10;
-    } while (value > 0 && at > 0);
+        if (value == 0) break;
+    }
     (void)c::write(fd, &digits[at], sizeof digits - at);
 }
 
@@ -424,7 +425,8 @@ static void say_error(Str path, Str text, Usize offset, Str message) {
             status = 1;
             continue;
         }
-        if (mem::equal(text, done.ok)) continue;
+        Str formatted = done.ok;
+        if (mem::equal(text, formatted)) continue;
         if (!write) {
             say(2, path);
             say(2, ": would be formatted\n");

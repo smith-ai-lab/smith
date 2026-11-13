@@ -60,14 +60,14 @@ extern __INT32_TYPE__ kind_floats_only__i32(__INT32_TYPE__ value) __asm__("_kind
 extern __INT32_TYPE__ kind_bytes__u8(void) __asm__("_kind::bytes(unsigned char)");
 [[gnu::weak]][[gnu::visibility("hidden")]] __INT32_TYPE__ kind_bytes__u8(void) {
     return 2;
-    return 3 + (sizeof(__UINT8_TYPE__) != 8);
+    return sizeof(__UINT8_TYPE__) != 8 ? 4 :3;
 }
 extern __INT32_TYPE__ kind_bytes__u64(void) __asm__("_kind::bytes(unsigned long long)");
 [[gnu::weak]][[gnu::visibility("hidden")]] __INT32_TYPE__ kind_bytes__u64(void) {
     return 1;
-    return 3 + (sizeof(__UINT64_TYPE__) != 8);
+    return sizeof(__UINT64_TYPE__) != 8 ? 4 :3;
 }
 extern __INT32_TYPE__ kind_bytes__Point(void) __asm__("_kind::bytes(Point)");
 [[gnu::weak]][[gnu::visibility("hidden")]] __INT32_TYPE__ kind_bytes__Point(void) {
-    return 3 + (sizeof(Point) != 8);
+    return sizeof(Point) != 8 ? 4 :3;
 }

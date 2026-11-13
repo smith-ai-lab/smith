@@ -3,7 +3,7 @@ import std::build;
 void build(build::Build *b) {
     build::Step step = {.command = build::list(b, "true", nullptr)};
     build::task(b, "lint", &step);
-    build::alias(b, "fmt", step.outputs);
+    build::alias(b, "fmt", build::list(b, "lint", nullptr));
     build::Step other = {.command = build::list(b, "true", nullptr)};
     build::task(b, "release", &other);
     build::App app = {.entry = "prog.c"};

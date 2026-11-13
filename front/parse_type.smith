@@ -1384,6 +1384,14 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
         t->end < countof(p->tokens) && p->tokens[t->end].kind == lex::left_paren) {
         return;
     }
+    // `[T: int]`, `y: float)`: the keyword after a `:` and closed by `]`, `,` or `)` is a built-in concept, not the C
+    // type to write as `i32` or `f32` (#3258).
+    if (t->first > 0 && t->end - t->first == 1 && is_keyword_type(p->tokens[t->first].kind) &&
+        p->tokens[t->first - 1].kind == lex::colon && t->end < countof(p->tokens) &&
+        (p->tokens[t->end].kind == lex::right_bracket || p->tokens[t->end].kind == lex::comma ||
+         p->tokens[t->end].kind == lex::right_paren)) {
+        return;
+    }
     char none[:] = format::push("");
     Rewrite r = {.prefix = none,
                  .run = none,

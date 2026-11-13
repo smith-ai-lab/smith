@@ -1,0 +1,5 @@
+fn note(v: i32, n: *mut i32):
+    match v:
+        1: n.* = 1
+        2: n.* = 2
+        _: ()
