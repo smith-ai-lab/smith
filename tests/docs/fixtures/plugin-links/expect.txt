@@ -1,0 +1,4 @@
+plugin/knowledge/a.md: links ../../knowledge/x.md, outside plugin/; an installed plugin is a copy of its folder only, so the link points at nothing on a user's machine: link inside plugin/ or write the fact here
+plugin/knowledge/a.md: links the skill ../skills/p/SKILL.md; knowledge never links skills
+plugin/skills/p/SKILL.md: links ../../../knowledge/x.md, outside plugin/; an installed plugin is a copy of its folder only, so the link points at nothing on a user's machine: link inside plugin/ or write the fact here
+smith docs: 3 concepts, 3 problems

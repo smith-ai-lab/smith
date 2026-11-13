@@ -1,0 +1,3 @@
+plugin/knowledge/index.md: does not list unlisted.md
+plugin/knowledge/big.md: 4001 bytes, over 4000; an agent reads a concept whole, so keep one fact in one home and split the rest into concepts of their own
+smith docs: 3 concepts, 2 problems
