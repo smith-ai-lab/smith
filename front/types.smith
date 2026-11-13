@@ -1414,6 +1414,38 @@ export void narrow(Scopes *s, Symbol symbol) {
     s->count += 1;
 }
 
+// Whether `symbol` is a narrowing `narrow` added over a name, not the name's own declaration.
+static Bool is_narrowing(const Symbol *symbol) {
+    return symbol->narrowed || symbol->excluded != 0;
+}
+
+// Whether the newest `name` is a local of the function being checked (a parameter, a local, a binding), not a global.
+export Bool is_local(const Scopes *s, Str name) {
+    Usize at = find_below(s, name, s->count);
+    if (at == 0 || s->depth == 0) return false;
+    return at > s->marks[0] && at > s->floor;
+}
+
+// The declaration of `name` under the narrowings that were added over it: null when there is none.
+export const Symbol *declared(const Scopes *s, Str name) {
+    Usize at = find_below(s, name, s->count);
+    while (at > 0 && is_narrowing(&s->symbols[at - 1])) at = find_below(s, name, at - 1);
+    return at == 0 ? nullptr : &s->symbols[at - 1];
+}
+
+// Drops what a test proved about `name`: every narrowing over it becomes the declaration again, in the scope that holds
+// it, so the end of the scope that assigned does not bring it back (#3438, item 55 of #3284).
+export void unnarrow(Scopes *s, Str name) {
+    Usize top = find_below(s, name, s->count);
+    if (top == 0 || !is_narrowing(&s->symbols[top - 1])) return;
+    const Symbol *base = declared(s, name);
+    if (base == nullptr) return;
+    Symbol own = *base;
+    for (Usize at = top; at > 0 && is_narrowing(&s->symbols[at - 1]); at = find_below(s, name, at - 1)) {
+        s->symbols[at - 1] = own;
+    }
+}
+
 export Bool is_public(const Symbol *s);
 
 static Bool has_separator(Str name) {

@@ -2073,8 +2073,21 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// A loop runs its body again after the last statement of it: a name that a test narrowed before the loop and that the
+// loop may write is not narrowed in the loop, nor after it (#3438, item 55 of #3284).
+static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
+    Bool loop = s->kind == .while_stmt || s->kind == .do_while || s->kind == .for_stmt || s->kind == .for_in;
+    if (!loop) return;
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const types::Symbol *symbol = &r->scopes.symbols[i];
+        if (symbol->kind != .variable || (!symbol->narrowed && symbol->excluded == 0)) continue;
+        if (types_undefined::may_write(symbol->name, s)) types::unnarrow(&r->scopes, symbol->name);
+    }
+}
+
 // Reads one statement: does what needs no children now, and pushes the children.
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
+    drop_loop_narrowing(r, s);
     state.prev_decl = state.last_decl;
     state.last_decl = nullptr;
     // The line a binding for an `if` used as a value goes before: the start of the statement that holds it (#2647).

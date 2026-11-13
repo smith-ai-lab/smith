@@ -1673,6 +1673,8 @@ static void unary_before(types::Checked *c, Work *w, Frame f) {
     push(w, operand, nullptr, 0);
 }
 
+static Str place_root(const ast::Expr *e);
+
 static void unary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .unary)) {
@@ -1685,6 +1687,9 @@ static void unary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    // `&x` lets the pointer write `x`, so what a test proved about it is dropped (the pointer is read-only in `*T`, but
+    // a `*mut T` may be made from it)
+    if (op == .address_of) types::unnarrow(&c->scopes, place_root(operand));
     types::TypeRef result = unary_type(c, e, op, operand, t);
     if (result == invalid(c)) {
         poison(c, e);
@@ -2181,8 +2186,10 @@ static Str single_name(const ast::Expr *name) {
 // What `test` proves about names when it is true (`when_true`) or false (#3225, item 27 of #3190): the symbols of the
 // same names with the narrower type. The tests are `==` and `!=` over a symbol, `is` and `is not` over a variant or a
 // type; `and` proves both sides when true, `or` proves the negation of both when false, `not` flips what is proved.
-// Only names that cannot change narrow: a parameter or a local without `mut`, never a field or a `mut` name (they can
-// change through a pointer). Returns how many symbols were written to `out`.
+// Narrowing works the same on every name (item 55 of #3284): a parameter, a local with or without `mut`; never a field
+// or a global. A `mut` name has exclusive access (item 41), so what a test proved holds until the next assignment that
+// could change its case (`unnarrow`, called where the checker meets one). Returns how many symbols were written to
+// `out`.
 export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true, types::Symbol out[:]) {
     Usize count = 0;
     const ast::Expr *items[16] = {};
@@ -2217,7 +2224,8 @@ export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true,
         if (!name_test(c, item, &t)) continue;
         Str name = single_name(t.name);
         const types::Symbol *s = types::lookup(&c->scopes, name);
-        if (s == nullptr || s->kind != .variable || !s->is_const || !s->is_new) continue;
+        if (s == nullptr || s->kind != .variable || !s->is_new) continue;
+        if (!s->is_const && !types::is_local(&c->scopes, name)) continue;
         Usize at = found_at(out, count, name);
         types::Symbol next = at < count ? out[at] : *s;
         if (!narrow_symbol(&t, t.positive == truth, &next)) {
@@ -2730,6 +2738,20 @@ static ast::BinaryOp binary_of(ast::AssignOp op) {
 
 static Bool literal_branches(const types::Checked *c, const ast::Expr *e);
 
+// The name a place is built on, `x` in `x`, `x.f`, `x[i]`, `x[a:b]`; the empty text when it is built on anything else.
+static Str place_root(const ast::Expr *e) {
+    while (e->kind == .member || e->kind == .index || e->kind == .slice_of) {
+        if (e->kind == .member) {
+            e = e->kind.member.base;
+        } else if (e->kind == .index) {
+            e = e->kind.index.base;
+        } else if (e->kind == .slice_of) {
+            e = e->kind.slice_of.base;
+        }
+    }
+    return single_name(e);
+}
+
 // Stage 1: the target is typed; the value is wanted as the target's type.
 static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -2740,6 +2762,14 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *target = e->kind.assign.target;
     const ast::Expr *value = e->kind.assign.value;
     types::TypeRef tt = typ(c, target);
+    // `x = v` over a narrowed name writes the name's own type, `.none` included; its value still reads it narrowed
+    if (op == .plain && target->kind == .name && tt != invalid(c)) {
+        const types::Symbol *own = types::declared(&c->scopes, single_name(target));
+        if (own != nullptr && own->type != tt && types::lookup(&c->scopes, single_name(target))->narrowed) {
+            tt = own->type;
+            types::set_type(c, target, tt);
+        }
+    }
     spoil_written(c, target);
     if (target->kind == .index && typ(c, target->kind.index.base)->kind == .vector &&
         types::element_of(typ(c, target->kind.index.base))->kind == .bool_type) {
@@ -2790,6 +2820,7 @@ static void assign_value_done(types::Checked *c, Frame f) {
     ast::AssignOp op = e->kind.assign.op;
     types::TypeRef tt = typ(c, e->kind.assign.target);
     types::TypeRef vt = typ(c, e->kind.assign.value);
+    types::unnarrow(&c->scopes, place_root(e->kind.assign.target)); // what a test proved may not hold after it
     if (vt == invalid(c)) {
         poison(c, e);
         return;
@@ -4160,13 +4191,11 @@ static Bool unchanging_name(types::Checked *c, const ast::Expr *e) {
     const ast::Expr *base = e->kind.member.base;
     if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
     const types::Symbol *s = types::lookup(&c->scopes, base->kind.name.path.segments[0].text);
-    return s != nullptr && s->kind == .variable && s->is_const;
+    return s != nullptr && s->kind == .variable;
 }
 
 static Str unchanging_hint() {
-    return "; `x is .variant` narrows only a name that cannot change, not a `mut` name or a field: name the value "
-           "first, "
-           "`n = x`, and test `n`";
+    return "; `x is .variant` narrows only a name, not a field: name the value first, `n = x`, and test `n`";
 }
 
 // The read of the value of an option that a `match` arm of it binds (#3211).
