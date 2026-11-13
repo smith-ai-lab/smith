@@ -7,12 +7,13 @@
 //
 // A `Result` is read with `.ok` only after a test, and the test that leaves the block is a binding with an `else`
 // (smith-dev-syntax-bindings). `try` is for a guard that passes the error up unchanged, which the checker writes
-// (`note_try_guard`); this pass is for the other guards: a body that leaves (`return`, `continue`, `break`) and does not
-// read a part of the result. The body may use the result as a whole value (`result = r`, `return unknown(r)`: in the
-// `else` the name is the result still); `return r` alone is `try`'s, unless `r` is `mut`. The mirror, `if r == .ok:` or
-// `if r != .error:` that leaves with `r.error` read below, is `.error(error) := r else:` the same way. The binding takes
-// the variant's name; a name the function holds already makes it `ok_value` (`error_value`), and one guard of a function
-// is bound in a pass (the next pass finds the first one's name in scope). Tests: `tests/front_fix_guard_test.smith`.
+// (`note_try_guard`); this pass is for the other guards: a body that leaves (`return`, `continue`, `break`) and does
+// not read a part of the result. The body may use the result as a whole value (`result = r`, `return unknown(r)`: in
+// the `else` the name is the result still); `return r` alone is `try`'s, unless `r` is `mut`. The mirror, `if r ==
+// .ok:` or `if r != .error:` that leaves with `r.error` read below, is `.error(error) := r else:` the same way. The
+// binding takes the variant's name; a name the function holds already makes it `ok_value` (`error_value`), and one
+// guard of a function is bound in a pass (the next pass finds the first one's name in scope). Tests:
+// `tests/front_fix_guard_test.smith`.
 //
 //   fix_guard::edits(source)   the fixes for the guards of `source`
 module front::fix_guard;
@@ -174,10 +175,10 @@ static Bool leaves(Str text) {
 static Usize code_word_at(Str text, Str name);
 static Usize variant_read_at(Str text, Usize from, Str name, Str variant);
 
-// Whether a body that mentions the result `name` is another fix's: it reads a part of it (`r.error`, which the binding's
-// `else` cannot), or it ends by returning the whole result, which `try` passes up. A body that uses the result as a
-// value (`result = r`, `return unknown(r)`) is not: in the `else` the name is the result still. `try` takes only a
-// result declared once (`mut` is not), so `return r` of a `mut r` is the binding's too.
+// Whether a body that mentions the result `name` is another fix's: it reads a part of it (`r.error`, which the
+// binding's `else` cannot), or it ends by returning the whole result, which `try` passes up. A body that uses the
+// result as a value (`result = r`, `return unknown(r)`) is not: in the `else` the name is the result still. `try` takes
+// only a result declared once (`mut` is not), so `return r` of a `mut r` is the binding's too.
 static Bool body_keeps(Str body, Str name, Bool mutable) {
     Usize from = 0;
     Usize at = code_word_at(body, name);
@@ -186,8 +187,10 @@ static Bool body_keeps(Str body, Str name, Bool mutable) {
         if (after < countof(body) && body[after] == '.') return true;
         from = after;
         at = code_word_at(body[from:countof(body)], name);
-        if (at < countof(body) - from) at += from;
-        else at = countof(body);
+        if (at < countof(body) - from)
+            at += from;
+        else
+            at = countof(body);
     }
     Usize stop = countof(body);
     while (stop > 0 && (body[stop - 1] == ' ' || body[stop - 1] == '\n'))

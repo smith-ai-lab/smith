@@ -307,7 +307,8 @@ export void test_files_remove_and_move() {
     files::DoneResult check14 = files::make_folder("folder");
     test::check_condition(check14 == .ok);
     files::DoneResult folder = files::remove("folder");
-    test::check_condition(folder == .error && failure_done(folder) == files::Denied); // a folder is not removed as a file
+    test::check_condition(folder == .error &&
+                          failure_done(folder) == files::Denied); // a folder is not removed as a file
     files::DoneResult check15 = files::remove("to.txt");
     test::check_condition(check15 == .ok);
     files::BytesResult check16 = files::read_file("to.txt");
