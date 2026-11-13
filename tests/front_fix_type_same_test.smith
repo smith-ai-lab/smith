@@ -1,0 +1,39 @@
+// Tests of the fix-it for C's `__builtin_types_compatible_p` (#3593): two types are compared as values with `==`.
+module front_fix_type_same_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after, Usize applied) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    test::check_equal(first.applied, applied);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, first.text);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_type_same_a_builtin_is_written_as_a_type_comparison() {
+    expect("fn check(a: auto):\n    static_assert(__builtin_types_compatible_p(typeof(a), i32), \"i32\")\n",
+           "fn check(a: auto):\n    static_assert(typeof(a) == i32, \"i32\")\n", 1);
+}
+
+export void test_front_fix_type_same_a_call_over_two_lines_with_a_function_type() {
+    expect(
+        "fn spawn(f: auto, arg: *auto):\n    static_assert(__builtin_types_compatible_p(typeof(f), fn(typeof(arg))),\n"
+        "                  \"f must take the T * of arg\")\n",
+        "fn spawn(f: auto, arg: *auto):\n    static_assert(typeof(f) == fn(typeof(arg)),\n"
+        "                  \"f must take the T * of arg\")\n",
+        1);
+}
+
+export void test_front_fix_type_same_a_call_inside_a_condition_is_in_parentheses() {
+    expect("fn f(a: auto) -> bool:\n    return __builtin_types_compatible_p(typeof(a), i32) and true\n",
+           "fn f(a: auto) -> bool:\n    return (typeof(a) == i32) and true\n", 1);
+}

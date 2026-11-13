@@ -26,6 +26,7 @@ import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
 import front::fix_equal;
+import front::fix_type_same;
 import front::fix_concept;
 import front::fix_generic_c;
 import front::fix_generic_mut;
@@ -1053,6 +1054,7 @@ static Bool places_are_bound() {
 
 static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
+    out = append(out, fix_type_same::edits(source));
     out = append(out, fix_payload::edits(source, checked));
     out = append(out, fix_array::edits(source, checked));
     out = append(out, fix_struct_list::edits(source, checked));

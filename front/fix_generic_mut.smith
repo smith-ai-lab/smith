@@ -6,10 +6,11 @@
 // the name (`padded.width = w`) only when the declared type is a plain one: not a pointer, a slice, `auto` or `typeof`.
 //
 // The same holds for a pointer parameter: `fn write(buffer: *char, args...)` whose body writes through `buffer`
-// (`buffer[i] = c`, `buffer.* = c`, `buffer.n = 1`) or passes it whole where a `*mut` is wanted (`Writer(buffer, ..)`
-// with a `*mut char` field, `put(buffer, ..)` with a `*mut` parameter, both of this module) is `*mut char` (#2668):
-// the checker's own fix for a write through a `*T` never sees the body of a template that no call of this module
-// instantiates, and an instance from another module carries no fix.
+// (`buffer[i] = c`, `buffer.* = c`, `buffer.n = 1`), casts it to a `*mut` when it points to `auto` (`arg.cast(*mut
+// void)`) or passes it whole where a `*mut` is wanted (`Writer(buffer, ..)` with a `*mut char` field, `put(buffer, ..)`
+// with a `*mut` parameter, both of this module) is `*mut char` (#2668): the checker's own fix for a write through a
+// `*T` never sees the body of a template that no call of this module instantiates, and an instance from another module
+// carries no fix.
 //
 //   fix_generic_mut::edits(source, module)   one fix for each local of a generic function's body that is assigned,
 //                                            and for each pointer parameter that is written through
@@ -331,7 +332,7 @@ static Bool wanted_mut(const ast::Module *module, Str source, Usize at, Usize fl
 }
 
 // Whether the body (from `start` to `end`) writes through the pointer called `name`, or hands it whole to a `*mut`.
-static Bool pointer_written(const ast::Module *module, Str source, Usize start, Usize end, Str name) {
+static Bool pointer_written(const ast::Module *module, Str source, Usize start, Usize end, Str name, Bool cast_counts) {
     for (Usize at = start; at < end; at++) {
         if (at + countof(name) > end) break;
         if (!starts_word(source[at]) || !is_whole_word(source, at, countof(name), start)) continue;
@@ -339,6 +340,7 @@ static Bool pointer_written(const ast::Module *module, Str source, Usize start, 
         Usize after = at + countof(name);
         Usize steps = skip_steps(source, after, end);
         if (steps != after && is_assign_op(source, skip_space(source, steps, end), end)) return true;
+        if (cast_counts && lit_at(source, after, end, ".cast(*mut ")) return true; // reinterpreted as a mutable one
         Usize back = at;
         while (back > start && (source[back - 1] == ' ' || source[back - 1] == '\t' || source[back - 1] == '\n'))
             back -= 1;
@@ -371,7 +373,7 @@ static core::Errors pointer_params(const ast::Module *module, Str source, ast::P
         if (type == nullptr || type->kind != .pointer || type->kind.pointer.is_mut) continue;
         Usize star = type->span.start;
         if (star >= countof(source) || source[star] != '*') continue;
-        if (!pointer_written(module, source, body, end, params[i].name)) continue;
+        if (!pointer_written(module, source, body, end, params[i].name, types::is_auto_pointer(type))) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = mut_pointer_fix(star);
     }
@@ -439,7 +441,7 @@ static core::Errors scan(const ast::Module *module, Str source, Usize start, Usi
         }
         // A pointer local handed whole to a `*mut` parameter is `*mut T` (`memory: *char = ..`, `write(memory, ..)`).
         Usize star = local_pointer_star(source, at + name_len, end);
-        if (star < countof(source) && pointer_written(module, source, at + name_len, end, name)) {
+        if (star < countof(source) && pointer_written(module, source, at + name_len, end, name, false)) {
             out = mem::realloc(out, countof(out) + 1);
             out[countof(out) - 1] = mut_pointer_fix(star);
         }

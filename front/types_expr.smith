@@ -6626,7 +6626,9 @@ static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::E
         t = types::auto_binding(c, &params[i], t);
         if (t == nullptr) {
             types::failf(c, args[i]->span, "`", params[i].name,
-                         "` is a slice of `auto`, but this argument is not a slice");
+                         types::is_auto_pointer(params[i].type)
+                             ? "` is a pointer to `auto`, but this argument is not a pointer"
+                             : "` is a slice of `auto`, but this argument is not a slice");
             return false;
         }
         given[*bound] = (types::Binding){.is_type = true, .type = t};
