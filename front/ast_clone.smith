@@ -866,7 +866,7 @@ static const ast::Expr *member_value(Reflection *st, const ast::Expr *e) {
     if (same(which, "name")) return at_span(ast::string(entry.name), e->span);
     if (same(which, "doc")) return at_span(ast::string(entry.doc), e->span);
     if (same(which, "default")) return default_of(st, e, entry);
-    if (same(which, "type")) {
+    if (same(which, "type") || same(which, "ty")) { // `type` is reserved: the fixer writes `ty` (#1901)
         ast::Expr *value = ast::expr({.type_value = {.type = ast::named(entry.type_name)}});
         return at_span(value, e->span);
     }
