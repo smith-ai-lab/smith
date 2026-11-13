@@ -685,7 +685,7 @@ export Decl *decl(Decl base, DeclKind kind) {
 
 // A declaration with no flags set, no attributes, no place and no doc: every field is written, since a `Decl` has no
 // zero value in the new syntax (`kind` and the strings have none).
-static Decl *plain_decl(DeclKind kind) {
+export Decl *plain_decl(DeclKind kind) {
     Place place = {.file = "", .line = 0, .column = 0};
     Span span = {.start = 0, .end = 0};
     return new_decl((Decl){.span = span,
@@ -718,7 +718,7 @@ static ParamList copy_params(Param list[:]) {
 
 static ExprRefList copy_exprs(ExprRef list[:]) {
     // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
-    ExprRef *block = (ExprRef *)mem::alloc_array_raw(sizeof(ExprRef), countof(list), alignof(ExprRef));
+    ExprRef *block = (ExprRef *)mem::alloc_array_raw(sizeof(Expr *), countof(list), alignof(Expr *));
     for (Usize i = 0; i < countof(list); i++)
         block[i] = list[i];
     ExprRefList copy = block[0:countof(list)];
@@ -727,7 +727,7 @@ static ExprRefList copy_exprs(ExprRef list[:]) {
 
 static StmtRefList copy_stmts(StmtRef list[:]) {
     // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
-    StmtRef *block = (StmtRef *)mem::alloc_array_raw(sizeof(StmtRef), countof(list), alignof(StmtRef));
+    StmtRef *block = (StmtRef *)mem::alloc_array_raw(sizeof(Stmt *), countof(list), alignof(Stmt *));
     for (Usize i = 0; i < countof(list); i++)
         block[i] = list[i];
     StmtRefList copy = block[0:countof(list)];
@@ -736,7 +736,7 @@ static StmtRefList copy_stmts(StmtRef list[:]) {
 
 static DeclRefList copy_decls(DeclRef list[:]) {
     // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
-    DeclRef *block = (DeclRef *)mem::alloc_array_raw(sizeof(DeclRef), countof(list), alignof(DeclRef));
+    DeclRef *block = (DeclRef *)mem::alloc_array_raw(sizeof(Decl *), countof(list), alignof(Decl *));
     for (Usize i = 0; i < countof(list); i++)
         block[i] = list[i];
     DeclRefList copy = block[0:countof(list)];
@@ -783,7 +783,8 @@ export Expr *name(Str text) {
 }
 
 export Expr *integer(U64 value) {
-    ExprKind kind = {.integer = {.value = value}};
+    Text no_suffix = "";
+    ExprKind kind = {.integer = {.value = value, .suffix = no_suffix}};
     return expr(kind);
 }
 
@@ -834,12 +835,27 @@ export Param param(Str text, TypeExpr *type) {
 // Declarations by name (a string literal cannot be written inside a nested initializer of a payload enum today, so
 // the helpers take the names as arguments). Set `exported` and the other flags on the result.
 export Decl *variable(Str text, TypeExpr *type, Expr *init) {
-    DeclKind kind = {.variable = {.name = text, .type = type, .init = init}};
+    DeclKind kind = {.variable = {.name = text,
+                                  .type = type,
+                                  .init = init,
+                                  .is_constexpr = false,
+                                  .is_thread_local = false,
+                                  .is_mut = false,
+                                  .is_new = false,
+                                  .name_at = 0}};
     return plain_decl(kind);
 }
 
 export Decl *function(Str text, Param params[:], TypeExpr *result, Stmt *body) {
-    DeclKind kind = {.function = {.name = text, .params = copy_params(params), .result = result, .body = body}};
+    ParamList no_generics = {};
+    DeclKind kind = {.function = {.name = text,
+                                  .params = copy_params(params),
+                                  .generics = no_generics,
+                                  .result = result,
+                                  .body = body,
+                                  .variadic = false,
+                                  .is_new = false,
+                                  .no_target = false}};
     return plain_decl(kind);
 }
 
@@ -858,7 +874,7 @@ export FieldDecl field(Str text, TypeExpr *type) {
 }
 
 export Decl *record_decl(Str text, FieldDecl members[:]) {
-    DeclKind kind = {.record = {.name = text, .fields = copy_fields(members)}};
+    DeclKind kind = {.record = {.name = text, .is_union = false, .opaque = false, .fields = copy_fields(members)}};
     return plain_decl(kind);
 }
 
@@ -880,13 +896,16 @@ export Decl *type_alias(Str text, TypeExpr *type) {
 
 // `import std::arena;`
 export Decl *import_module(Str text) {
-    DeclKind kind = {.import_module = {.path = path(text)}};
+    Text no_alias = "";
+    DeclKind kind = {.import_module = {.path = path(text), .alias = no_alias}};
     return plain_decl(kind);
 }
 
 // `import <stdio.h>;` (angled) and `import "x.h";`.
 export Decl *import_c(Str header, Bool angled) {
-    DeclKind kind = {.import_c = {.header = header, .angled = angled}};
+    Text no_language = "";
+    Text no_alias = "";
+    DeclKind kind = {.import_c = {.header = header, .angled = angled, .language = no_language, .alias = no_alias}};
     return plain_decl(kind);
 }
 
@@ -955,10 +974,11 @@ export TypeExpr *block_of(TypeExpr *element, ExprRef dims[:]) {
 
 // `fn(A) -> R`, or `fn_once(A) -> R` when `is_once`.
 export TypeExpr *function_type(TypeRef params[:], TypeExpr *result, Bool is_once) {
-    TypeRef *block = (TypeRef *)mem::alloc_array_raw(sizeof(TypeRef), countof(params), alignof(TypeRef));
+    TypeRef *block = (TypeRef *)mem::alloc_array_raw(sizeof(TypeExpr *), countof(params), alignof(TypeExpr *));
     for (Usize i = 0; i < countof(params); i++)
         block[i] = params[i];
-    TypeKind kind = {.function = {.params = block[0:countof(params)], .result = result, .is_once = is_once}};
+    TypeKind kind = {
+        .function = {.params = block[0:countof(params)], .result = result, .variadic = false, .is_once = is_once}};
     return make_type(kind);
 }
 
@@ -995,7 +1015,8 @@ export Expr *deref(Expr *operand) {
 
 // `x as T`.
 export Expr *as_cast(Expr *operand, TypeExpr *type) {
-    ExprKind kind = {.cast = {.type = type, .operand = operand}};
+    CastForm form = .convert;
+    ExprKind kind = {.cast = {.type = type, .operand = operand, .form = form}};
     return expr(kind);
 }
 

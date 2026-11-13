@@ -73,12 +73,13 @@ static ChooseExpr choosing_expr = nullptr;
 
 static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
     if (old == nullptr) return nullptr;
+    const ast::Expr *current = old;
     for (Usize k = 0; choosing_expr != nullptr && k < 64; k++) {
-        const ast::Expr *chosen = choosing_expr(old);
-        if (chosen == old) break;
-        old = chosen;
+        const ast::Expr *chosen = choosing_expr(current);
+        if (chosen == current) break;
+        current = chosen;
     }
-    ast::Expr *copy = ast::new_expr(*old);
+    ast::Expr *copy = ast::new_expr(*current);
     add(work, {.expr = copy});
     return copy;
 }
@@ -557,12 +558,19 @@ static ast::Stmt *element_binding(ast::Identifier name, Str pack, Usize at) {
     char chars[:] = format::push(at);
     Str index = chars;
     ast::Expr *base = ast::name(pack);
-    ast::Expr *element = ast::expr({.member = {.base = base, .name = index}});
+    ast::Expr *element = ast::expr({.member = {.base = base, .name = index, .arrow = false}});
     element->span = name.span;
-    ast::TypeExpr *automatic = ast::make_type((ast::TypeKind){});
-    automatic->kind = .auto_type;
-    ast::DeclKind kind = {.variable = {.name = name.text, .type = automatic, .init = element, .is_new = true}};
-    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    ast::TypeKind auto_kind = .auto_type;
+    ast::TypeExpr *automatic = ast::make_type(auto_kind);
+    ast::DeclKind kind = {.variable = {.name = name.text,
+                                       .type = automatic,
+                                       .init = element,
+                                       .is_constexpr = false,
+                                       .is_thread_local = false,
+                                       .is_mut = false,
+                                       .is_new = true,
+                                       .name_at = 0}};
+    ast::Decl *d = ast::plain_decl(kind);
     d->span = name.span;
     ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
     s->span = name.span;
@@ -780,10 +788,17 @@ static ast::Stmt *empty_block(ast::Span span) {
 
 // `let name = value`.
 static ast::Stmt *binding(Str name, ast::Expr *value, ast::Span span) {
-    ast::TypeExpr *automatic = ast::make_type((ast::TypeKind){});
-    automatic->kind = .auto_type;
-    ast::DeclKind kind = {.variable = {.name = name, .type = automatic, .init = value, .is_new = true}};
-    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    ast::TypeKind auto_kind = .auto_type;
+    ast::TypeExpr *automatic = ast::make_type(auto_kind);
+    ast::DeclKind kind = {.variable = {.name = name,
+                                       .type = automatic,
+                                       .init = value,
+                                       .is_constexpr = false,
+                                       .is_thread_local = false,
+                                       .is_mut = false,
+                                       .is_new = true,
+                                       .name_at = 0}};
+    ast::Decl *d = ast::plain_decl(kind);
     d->span = span;
     ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
     s->span = span;
