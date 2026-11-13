@@ -146,8 +146,10 @@ tests/smith-lang/cases/generic-for-range-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-function-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-function-generic-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-function-generic-error/src/order.smith	error-fixture
+tests/smith-lang/cases/generic-if-constexpr-c-type/src/main.smith	old-form: vector type c::F4 (item 60, #3516)
 tests/smith-lang/cases/generic-if-constexpr-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-pack-error/src/main.smith	error-fixture
+tests/smith-lang/cases/generic-pack-expand-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-rest-error/src/bad.smith	error-fixture
 tests/smith-lang/cases/generic-rest-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-slice-const/src/main.smith	old-form: restrict on slices (#3221 table, #3190 item 41)

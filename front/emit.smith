@@ -1958,6 +1958,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         base = next;
     }
     state::Ty ty = {};
+    ensure_enum(e, base); // a private enumeration of the module whose generic is being instanced
     Bool known = scalar_of_checked(e, base, &ty);
     if (!known && records::is_anonymous(base)) { // `struct { a: i32 }` as the checker names it: front::emit_record
         state::TyResult anonymous = records::from_checked(e, base, span);

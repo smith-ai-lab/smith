@@ -2595,6 +2595,15 @@ static Bool ends_variant(lex::TokenKind kind) {
            kind == lex::newline || kind == lex::dedent;
 }
 
+// Whether the `{` of the enum is on the line of the member at `start`: `enum Mode { Plain, Boosted }`.
+static Bool opens_on_line(const parse::Parser *p, U32 start) {
+    for (U32 i = start; i > 0; i--) {
+        if (p->source[i - 1] == '\n') return false;
+        if (p->source[i - 1] == '{') return true;
+    }
+    return false;
+}
+
 // An old member of an enum, `red,` or `Circle circle;`: the `,` or `;` goes (a line break stands for it when more
 // follows on the line), and a payload is `circle: Circle`.
 static void fix_enumerator(parse::Parser *p, U32 start, Bool plain, lex::Token name, lex::Token ender) {
@@ -2610,6 +2619,9 @@ static void fix_enumerator(parse::Parser *p, U32 start, Bool plain, lex::Token n
     } else if (!plain) {
         return;
     }
+    // `enum Mode { Plain, Boosted }` on one line: the block fixer puts each member on its own line with the braces, and
+    // a line break written here first would leave a `{` it cannot mend.
+    if (plain && countof(stand_in) > 0 && opens_on_line(p, start)) return;
     edits = with_edit(edits, edit(ender.span.start, ender.span.end, stand_in));
     warn(p, start, ender.span.end, message, edits);
 }

@@ -2990,6 +2990,12 @@ export Bool field_visible(const Ty *record, const Slot *field) {
     return field->is_pub || countof(owner_of(record)) == 0;
 }
 
+// The same, for code checked in the module `current` (`Checked.prefix`): the body of a generic's instance is checked
+// while the importer's file is open, and it may name the private fields of the module that wrote it.
+export Bool field_visible_from(const Ty *record, const Slot *field, Str current) {
+    return field_visible(record, field) || (countof(current) > 0 && same_text(owner_of(record), current));
+}
+
 static Bool starts_with(Str text, Str prefix) {
     if (countof(prefix) > countof(text)) return false;
     for (Usize i = 0; i < countof(prefix); i++) {

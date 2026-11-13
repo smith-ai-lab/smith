@@ -3637,7 +3637,7 @@ static Bool private_construction(types::Checked *c, const ast::Expr *e, ast::Exp
     for (Usize i = 0; i < countof(types::slots_of(record).items); i++) {
         const types::Slot *slot = &types::slots_of(record).items[i];
         if (slot->default_value != nullptr && !gives_field(args, i, slot->name)) continue;
-        if (!types::field_visible(record, slot)) {
+        if (!types::field_visible_from(record, slot, c->prefix)) {
             types::private_build(c, e->span, record);
             return false;
         }
@@ -4352,7 +4352,7 @@ static void member_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (!types::field_visible(record, field)) {
+    if (!types::field_visible_from(record, field, c->prefix)) {
         types::private_field(c, e->span, record, name);
         poison(c, e);
         return;
@@ -4506,7 +4506,7 @@ static types::TypeRef record_item(types::Checked *c, types::TypeRef t, const ast
             types::failf(c, span, "`", types::show(t), "` has no field `", name, "`; write one of its fields");
             return nullptr;
         }
-        if (!types::field_visible(t, field)) {
+        if (!types::field_visible_from(t, field, c->prefix)) {
             types::private_field(c, span, t, name);
             return nullptr;
         }
