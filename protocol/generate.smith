@@ -351,11 +351,39 @@ const char *gen_claim(Generator *g, const char *base) {
     return name;
 }
 
+// A `GenType` with every field written: the ones a kind does not use are null, zero or false, and the element is -1
+// (none). The construction passes what it knows.
+static GenType gen_type_of(GenKind kind, const c::SmithJsonValue *node, const char *hint, I32 visit) {
+    GenType t = {.kind = kind,
+                 .name = nullptr,
+                 .label = nullptr,
+                 .stem = nullptr,
+                 .node = node,
+                 .hint = hint,
+                 .is_definition = false,
+                 .values = nullptr,
+                 .value_count = 0,
+                 .constant = 0,
+                 .fields = nullptr,
+                 .field_count = 0,
+                 .extras = false,
+                 .element = -1,
+                 .alts = nullptr,
+                 .alt_count = 0,
+                 .alt_tags = nullptr,
+                 .alt_members = nullptr,
+                 .attempt = nullptr,
+                 .tag = nullptr,
+                 .ambiguous = false,
+                 .visit = visit};
+    return t;
+}
+
 I32 gen_new_type(Generator *g, GenKind kind, const char *hint, const c::SmithJsonValue *node) {
     gen_assert(g->type_count < gen_types_max, "g->type_count < gen_types_max");
     I32 id = (I32)g->type_count++;
     GenType *t = &g->types[id];
-    *t = (GenType){.kind = kind, .node = node, .hint = hint, .element = -1};
+    *t = gen_type_of(kind, node, hint, 0);
     if (hint != nullptr) {
         t->name = gen_claim(g, hint);
         t->label = hint;
@@ -1805,7 +1833,7 @@ void gen_prepare(Generator *g, const char *name, struct smith_array_const_char_n
     if (definitions == nullptr) definitions = gen_get(root, "$defs");
     if (definitions == nullptr) gen_die("the schema has no definitions or $defs");
     for (I32 p = 0; p < gen_primitives; p++) { // table entries 0 to 5 are the primitives, so slots start at 6
-        g->types[p] = (GenType){.kind = (GenKind)p, .element = -1, .visit = 2};
+        g->types[p] = gen_type_of((GenKind)p, nullptr, nullptr, 2);
         g->redirect[p] = p;
     }
     g->type_count = gen_primitives;
