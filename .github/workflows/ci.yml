@@ -867,10 +867,8 @@ jobs:
         with:
           label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
-        # restores no store (#3347); it sets SMITH_IMPORT_CACHE_LOG, from which the save below prints the hits
-        with:
-          tests: "false"
-          fresh: "true"
+        # restores the one store (#3457): the count's fixed files and rows are answers in it (`steps/a`), keyed by what
+        # each read, so a file the smith and its imports leave as they were is served; it also sets SMITH_IMPORT_CACHE_LOG
       - name: API budget (after test-cache)
         uses: ./.github/actions/api-budget
         with:
@@ -907,13 +905,13 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
-      - name: Report the import-cache hits
-        # the shard's hits (the save publishes no store for tests: false, #3347)
+      - name: Publish the answers this shard added
+        # the answers this shard added (#3457), as the test parts publish theirs: `-linux-` in the name puts them in the
+        # additions every restore reads and in the whole file of main (.github/actions/test-cache/whole)
         if: always()
         uses: ./.github/actions/test-cache/save
         with:
-          name: count-${{ matrix.shard }}
-          tests: "false"
+          name: linux-count${{ matrix.shard }}of4
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget

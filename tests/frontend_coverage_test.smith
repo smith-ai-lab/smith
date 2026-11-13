@@ -139,6 +139,48 @@ export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_t
     scratch::release(run.err);
 }
 
+// #3457: a count served from the store equals a counted one. The same tree is counted twice (the second time every fix
+// and row is an answer in the store, none is fixed or measured), and the two tables are the same lines, a failing
+// file's stage and cause included. A change to one file reruns it and the files that read it: d, which reads nothing of
+// c, is served. The store is the scratch project's XDG_CACHE_HOME (`steps/a`), where the other answers are kept.
+export void test_frontend_coverage_a_count_served_from_the_store_equals_a_counted_one() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir repo");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/a.smith", "import b\n\nfn main() -> i32:\n    return b.one()\n");
+    scratch::write(&p, "repo/b.smith", "import c\n\npub fn one() -> i32:\n    return c.two() - 1\n");
+    scratch::write(&p, "repo/c.smith", "pub fn two() -> i32:\n    return nothing_here\n");
+    scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
+    scratch::Run run = scratch::sh(
+        &p,
+        "S=$PWD/smith-launcher && printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$(command -v smith)\" > $S && "
+        "chmod +x $S && git -C repo init -q && git -C repo add -A && "
+        "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/first\" > first.tsv 2> first.err; "
+        "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/second\" > second.tsv 2> second.err; "
+        "grep -v '^\\[' first.tsv > first_rows.tsv; grep -v '^\\[' second.tsv > second_rows.tsv; "
+        "cmp first_rows.tsv second_rows.tsv && echo SAME; "
+        "ls \"$XDG_CACHE_HOME/smith/steps/a\" | head -n 1 | grep -c .; "
+        "sed -n 's/^frontend_coverage: row cache: \\([0-9]*\\) files reused, \\([0-9]*\\) measured.*/row \\1 \\2/p' "
+        "first.err second.err | tr '\\n' ' '; echo; "
+        "printf 'pub fn two() -> i32:\\n    return 2\\n' > repo/c.smith && git -C repo add -A && "
+        "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/third\" > third.tsv 2> third.err; "
+        "sed -n 's/^frontend_coverage: row cache: \\([0-9]*\\) files reused, \\([0-9]*\\) measured.*/row \\1 \\2/p' "
+        "third.err; grep -c 'pass' third.tsv");
+    scratch::expect_contains("frontend_coverage: the second count has the lines of the first", run.out, "SAME\n1\n");
+    scratch::expect_contains("frontend_coverage: the first measures the files that fix, the second serves them all, a "
+                             "change to c reruns its readers",
+                             run.out, "row 0 4 row 4 0 \nrow 1 3\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
+
 // #3455: with SMITH_COVERAGE_COSTS (`path TAB ms` a line) the shards are dealt by cost, heaviest file first to the
 // lightest shard: a (100) alone in one shard, d (90), b (3) and c (2) in the other (a hash of the paths would not
 // give this); a costs line for a file that is not tracked is ignored, and SMITH_COVERAGE_COSTS_OUT writes the cost of
@@ -651,7 +693,8 @@ export void test_frontend_coverage_import_resolves_from_the_folder_above_the_fil
 
 // #3527: a compile of a group of files that dies by a signal says, on the row of the file it died in, the size of the
 // batch, the file's place in it, the file before it and the status; and the tool's standard error lists the whole batch
-// in order, with what the dead process printed.
+// in order, with what the dead process printed. It has a store of its own (#3457): rows of these two files from an
+// earlier run would be served, and nothing would crash.
 export void test_frontend_coverage_a_crashed_batch_names_its_members_and_order() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
@@ -673,9 +716,10 @@ export void test_frontend_coverage_a_crashed_batch_names_its_members_and_order()
                    "if [ $n -ge 2 ]; then echo \"$f:1:1: error: the compiler crashed (SIGSEGV) in the check stage\" "
                    ">&2; echo \"$f: stage: check\" >&2; kill -SEGV $$; fi; fi\n"
                    "exec \"$REAL_SMITH\" \"$@\"\n");
-    scratch::Run run = scratch::sh(&p, "chmod +x launcher.sh && git -C repo init -q && git -C repo add -A && "
-                                       "REAL_SMITH=\"$(command -v smith)\" smith run -- run \"$PWD/launcher.sh\" "
-                                       "\"$PWD/repo\" \"$PWD/all\" > all.tsv 2> all.err; cat all.tsv all.err");
+    scratch::Run run = scratch::sh(
+        &p, "chmod +x launcher.sh && git -C repo init -q && git -C repo add -A && "
+            "XDG_CACHE_HOME=\"$PWD/store\" REAL_SMITH=\"$(command -v smith)\" smith run -- run \"$PWD/launcher.sh\" "
+            "\"$PWD/repo\" \"$PWD/all\" > all.tsv 2> all.err; cat all.tsv all.err");
     scratch::expect_contains("frontend_coverage: the crashed file's row names its batch and the file before it",
                              run.out, "the compiler crashed (SIGSEGV) in the check stage; batch of 2, file 2, after ");
     scratch::expect_contains("frontend_coverage: the batch is listed in order on standard error", run.out,
