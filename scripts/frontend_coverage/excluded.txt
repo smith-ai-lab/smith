@@ -229,6 +229,7 @@ tests/smith-lang/cases/array-infer-run/src/main.smith	old-form: array literal pa
 tests/smith-lang/cases/enum-type-function-export/src/main.smith	old-form: array literal passed to a bare pointer parameter
 tests/smith-lang/cases/constexpr-import-result-type/src/main.smith	old-form: a type value sliced step by step
 tests/smith-lang/cases/filescope-if-type-function/src/main.smith	old-form: a type value sliced step by step
+tests/smith-lang/cases/type-value-import/src/main.smith	old-form: a type value sliced step by step
 tests/smith-lang/cases/enum-c-rule/src/main.smith	old-form: C enumerator as an int
 tests/smith-lang/cases/filescope-if-dropped-macro/src/errors.smith	old-form: C macro read through c:: (item 59 not built)
 tests/smith-lang/cases/countof-fixed-array/src/main.smith	old-form: a C cast applied over a pack expansion
