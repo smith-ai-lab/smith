@@ -2081,7 +2081,11 @@ static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
     for (Usize i = 0; i < r->scopes.count; i++) {
         const types::Symbol *symbol = &r->scopes.symbols[i];
         if (symbol->kind != .variable || (!symbol->narrowed && symbol->excluded == 0)) continue;
-        if (types_undefined::may_write(symbol->name, s)) types::unnarrow(&r->scopes, symbol->name);
+        // a field path (`a.kind`) is written by what writes the name it starts from, or a part of it (#3587)
+        Usize root = 0;
+        while (root < countof(symbol->name) && symbol->name[root] != '.')
+            root += 1;
+        if (types_undefined::may_write(symbol->name[0:root], s)) types::unnarrow(&r->scopes, symbol->name);
     }
 }
 

@@ -852,8 +852,39 @@ static Bool conform(types::Checked *c, const ast::Expr *e, types::TypeRef from, 
 }
 
 // Records `found` for `e` and checks it against `expected` (null: nothing to check).
+static Str place_key(const ast::Expr *e);
+static types::TypeRef callable(types::TypeRef t);
+
+// A call that is passed a writable pointer to a field path, or a path to a method, may write it: what tests proved
+// about the path and the paths under it is dropped (item 68 of #3516, point 2). A read-only pointer cannot.
+static void drop_call_writes(types::Checked *c, const ast::Expr *e) {
+    if (c->paths == 0 || e->kind != .call) return;
+    types::TypeRef callee_type = types::type_of(c, e->kind.call.callee);
+    types::TypeRef signature = callee_type == nullptr ? nullptr : callable(callee_type);
+    for (Usize i = 0; i < countof(e->kind.call.args); i++) {
+        const ast::Expr *arg = e->kind.call.args[i];
+        if (arg->kind == .named_arg) arg = arg->kind.named_arg.value;
+        types::TypeRef t = types::type_of(c, arg);
+        // the parameter says what the callee may do; the argument's own type when it has none
+        if (signature != nullptr && i < countof(types::slots_of(signature).items)) {
+            t = types::slots_of(signature).items[i].type;
+        }
+        Str key = place_key(arg);
+        if (t == nullptr || countof(key) == 0 || t->kind != .pointer || types::points_to_const(t)) continue;
+        types::unnarrow_under(&c->scopes, key);
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind != .member) return;
+    const ast::Expr *receiver = callee->kind.member.base;
+    types::TypeRef rt = types::type_of(c, receiver);
+    Str key = place_key(receiver);
+    if (rt == nullptr || countof(key) == 0 || (rt->kind == .pointer && types::points_to_const(rt))) return;
+    types::unnarrow_under(&c->scopes, key);
+}
+
 static void finish(types::Checked *c, const ast::Expr *e, types::TypeRef found, types::TypeRef expected) {
     types::set_type(c, e, found);
+    drop_call_writes(c, e);
     types::TypeRef bad = c->table.invalid;
     if (expected == nullptr || found == bad || expected == bad || found == expected) {
         return;
@@ -1641,6 +1672,49 @@ static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::Una
 
 static Str place_root(const ast::Expr *e);
 
+// The text of a field path: `a.kind` for `a.kind` and `a->kind`, `a` for a name; empty for anything else (an index, a
+// call, a name of several segments). A path is narrowed under this text (#3587, item 68 of #3516).
+static Str place_key(const ast::Expr *e) {
+    Str parts[8] = {};
+    Usize count = 0;
+    const ast::Expr *at = e;
+    while (at->kind == .member) {
+        if (count == 8) return "";
+        parts[count] = at->kind.member.name;
+        count += 1;
+        at = at->kind.member.base;
+    }
+    if (at->kind != .name || countof(at->kind.name.path.segments) != 1) return "";
+    Str root = at->kind.name.path.segments[0].text;
+    Usize total = countof(root);
+    for (Usize i = 0; i < count; i++) {
+        total += 1 + countof(parts[i]);
+    }
+    char out[:] = mem::alloc_slice(char, total);
+    Usize put = 0;
+    for (Usize i = 0; i < countof(root); i++) {
+        out[put] = root[i];
+        put += 1;
+    }
+    for (Usize k = count; k > 0; k--) {
+        out[put] = '.';
+        put += 1;
+        for (Usize i = 0; i < countof(parts[k - 1]); i++) {
+            out[put] = parts[k - 1][i];
+            put += 1;
+        }
+    }
+    return out;
+}
+
+// What a write to `target` (`x`, `x.f`, `p.*`) changes about the narrowed paths: the path and every path under it.
+static void unnarrow_written(types::Checked *c, const ast::Expr *target) {
+    const ast::Expr *place = target;
+    if (target->kind == .unary && target->kind.unary.op == .dereference) place = target->kind.unary.operand;
+    Str key = place_key(place);
+    if (countof(key) > 0) types::unnarrow_under(&c->scopes, key);
+}
+
 static void unary_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .unary)) {
@@ -1649,7 +1723,10 @@ static void unary_before(types::Checked *c, Work *w, Frame f) {
     ast::UnaryOp op = e->kind.unary.op;
     const ast::Expr *operand = e->kind.unary.operand;
     // `&x` is the address of the name as declared, and lets the pointer write it: what a test proved is dropped first
-    if (op == .address_of) types::unnarrow(&c->scopes, place_root(operand));
+    if (op == .address_of) {
+        types::unnarrow(&c->scopes, place_root(operand));
+        unnarrow_written(c, operand);
+    }
     if (op == .negate && wants_integer(f.expected) && operand->kind == .integer) {
         U64 value = operand->kind.integer.value;
         if (fit(c, e->span, value, true, f.expected)) {
@@ -2101,7 +2178,7 @@ static Bool name_test(types::Checked *c, const ast::Expr *item, NameTest *out) {
     } else {
         return false;
     }
-    if (left->kind != .name || countof(left->kind.name.path.segments) != 1) return false;
+    if (countof(place_key(left)) == 0) return false;
     out->name = left;
     out->variant = "";
     out->type = nullptr;
@@ -2161,10 +2238,10 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
     return true;
 }
 
-// The place of the symbol named `name` in `out[0:count]`, or `count`.
+// The place of the newest symbol named `name` in `out[0:count]`, or `count`.
 static Usize found_at(types::Symbol out[:], Usize count, Str name) {
-    for (Usize i = 0; i < count; i++) {
-        if (same_text(out[i].name, name)) return i;
+    for (Usize i = count; i > 0; i--) {
+        if (same_text(out[i - 1].name, name)) return i - 1;
     }
     return count;
 }
@@ -2180,6 +2257,15 @@ static Bool joins(const ast::Expr *item, Bool truth) {
 static Str single_name(const ast::Expr *name) {
     if (!(name->kind == .name)) return "";
     return name->kind.name.path.segments[0].text;
+}
+
+// The name a field path starts from: `a` for `a.kind`.
+static Str root_name(const ast::Expr *e) {
+    const ast::Expr *at = e;
+    while (at->kind == .member) {
+        at = at->kind.member.base;
+    }
+    return single_name(at);
 }
 
 // What `test` proves about names when it is true (`when_true`) or false (#3225, item 27 of #3190): the symbols of the
@@ -2221,25 +2307,55 @@ export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true,
         }
         NameTest t = {};
         if (!name_test(c, item, &t)) continue;
-        Str name = single_name(t.name);
-        const types::Symbol *s = types::lookup(&c->scopes, name);
-        if (s == nullptr || s->kind != .variable || !s->is_new) continue;
-        if (!s->is_const && !types::is_local(&c->scopes, name)) continue;
+        Str name = place_key(t.name);
+        if (countof(name) == 0 || count + 2 > countof(out)) continue;
+        Str root = root_name(t.name);
+        const types::Symbol *r = types::lookup(&c->scopes, root);
+        if (r == nullptr || r->kind != .variable || !r->is_new) continue;
+        if (!r->is_const && !types::is_local(&c->scopes, root)) continue;
+        Bool path = !same_text(name, root);
+        if (path) t.by_is = true; // a field path is narrowed by `==` too (item 68 of #3516)
+        const types::Symbol *s = path ? types::lookup(&c->scopes, name) : r;
         Usize at = found_at(out, count, name);
-        types::Symbol next = at < count ? out[at] : *s;
+        types::Symbol next = {};
+        Bool fresh = false;
+        if (at < count) {
+            next = out[at];
+        } else if (s != nullptr) {
+            next = *s;
+        } else {
+            types::TypeRef own = types::type_of(c, t.name);
+            if (own == nullptr || own == invalid(c)) continue;
+            next = *r; // the path's own declaration, which a narrowing goes over and `unnarrow` goes back to
+            next.name = name;
+            next.type = own;
+            next.narrowed = false;
+            next.excluded = 0;
+            fresh = true;
+        }
+        types::Symbol base = next;
         if (!narrow_symbol(&t, t.positive == truth, &next)) {
             continue;
         }
-        out[at] = next;
-        if (at == count) count += 1;
+        if (fresh) {
+            out[count] = base;
+            count += 1;
+            c->paths += 1;
+        }
+        if (fresh || at == count) {
+            out[count] = next;
+            count += 1;
+        } else {
+            out[at] = next;
+        }
     }
     return count;
 }
 
 // Narrows what `test` proves (see `narrowing`) in the innermost scope.
 export void narrow_scope(types::Checked *c, const ast::Expr *test, Bool when_true) {
-    types::Symbol found[8] = {};
-    Usize count = narrowing(c, test, when_true, found[0:8]);
+    types::Symbol found[16] = {};
+    Usize count = narrowing(c, test, when_true, found[0:16]);
     for (Usize i = 0; i < count; i++) {
         types::narrow(&c->scopes, found[i]);
     }
@@ -2761,6 +2877,16 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
             types::set_type(c, target, tt);
         }
     }
+    // the same for a field path: `a.kind = v` writes the field's own type
+    if (op == .plain && target->kind == .member && tt != invalid(c) && countof(place_key(target)) > 0) {
+        Str key = place_key(target);
+        const types::Symbol *own = types::declared(&c->scopes, key);
+        const types::Symbol *now = types::lookup(&c->scopes, key);
+        if (own != nullptr && now != nullptr && now->narrowed && own->type != tt) {
+            tt = own->type;
+            types::set_type(c, target, tt);
+        }
+    }
     spoil_written(c, target);
     if (target->kind == .index && typ(c, target->kind.index.base)->kind == .vector &&
         types::element_of(typ(c, target->kind.index.base))->kind == .bool_type) {
@@ -2815,6 +2941,7 @@ static void assign_value_done(types::Checked *c, Frame f) {
         &c->scopes,
         place_root(
             e->kind.assign.target)); // what a test proved may not hold after it (the name itself, not a part of it)
+    unnarrow_written(c, e->kind.assign.target); // and the path, and the paths under it (#3587)
     if (vt == invalid(c)) {
         poison(c, e);
         return;
@@ -4177,21 +4304,6 @@ export void drop_spoiled(types::Checked *c, Usize from) {
     }
 }
 
-// The record a member access reads: `.` on a record, `->` on a pointer to one; reports what to write otherwise.
-// Whether the base of the member `e` is a name that cannot change (a parameter or a local without `mut`): only such a
-// name is narrowed by `x is .v` (#3225).
-static Bool unchanging_name(types::Checked *c, const ast::Expr *e) {
-    if (e->kind != .member) return true;
-    const ast::Expr *base = e->kind.member.base;
-    if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
-    const types::Symbol *s = types::lookup(&c->scopes, base->kind.name.path.segments[0].text);
-    return s != nullptr && s->kind == .variable;
-}
-
-static Str unchanging_hint() {
-    return "; `x is .variant` narrows only a name, not a field: name the value first, `n = x`, and test `n`";
-}
-
 // The read of the value of an option that a `match` arm of it binds (#3211).
 static syntax::Edits arm_value_fix(types::Checked *c, const ast::Expr *e, types::TypeRef base) {
     syntax::Edits none = {};
@@ -4201,6 +4313,7 @@ static syntax::Edits arm_value_fix(types::Checked *c, const ast::Expr *e, types:
     return guarded_read(c, e, false);
 }
 
+// The record a member access reads: `.` on a record, `->` on a pointer to one; reports what to write otherwise.
 static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::TypeRef base, Bool arrow) {
     Bool through_pointer = base->kind == .pointer && types::element_of(base)->kind == .record;
     if (arrow && through_pointer) {
@@ -4238,7 +4351,6 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     syntax::Edits value_fix = arm_value_fix(c, e, base);
     if (base->kind == .enumeration && types::is_payload_enum(base)) {
         Str hint = "";
-        if (!unchanging_name(c, e)) hint = unchanging_hint();
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
                                      "`; test the variant first, with `if .variant(v) := x:` or a `match`", hint));
@@ -4273,19 +4385,70 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     return nullptr;
 }
 
+// The type of the field path `e` that tests narrowed (`a.kind` after `a.kind == .v`, `p.next` after `p.next != .none`),
+// else `own`, the field's type (#3587, item 68 of #3516). The same narrowing as a name's, found under the path's text.
+static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, types::TypeRef own) {
+    if (c->paths == 0) return own;
+    Str key = place_key(e);
+    if (countof(key) == 0) return own;
+    const types::Symbol *s = types::lookup(&c->scopes, key);
+    if (s == nullptr || !s->narrowed) return own;
+    return s->type;
+}
+
+// `a.kind.v` where the path `a.kind` was narrowed to the variant `v`, by a name or by a field path: `a.kind` is the
+// payload already. A test of the read that the fixer binds keeps its own fix; else the fix deletes `.v`.
+static Bool narrowed_variant_read(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .member)) return false;
+    const ast::Expr *base = e->kind.member.base;
+    Str variant_name = e->kind.member.name;
+    Str key = place_key(base);
+    if (countof(key) == 0) return false;
+    const types::Symbol *s = types::lookup(&c->scopes, key);
+    const types::Symbol *own = types::declared(&c->scopes, key);
+    if (s == nullptr || !s->narrowed || own == nullptr || !types::is_payload_enum(own->type)) return false;
+    Bool variant = false;
+    for (Usize i = 0; i < countof(types::slots_of(own->type).items); i++) {
+        const types::Slot *slot = &types::slots_of(own->type).items[i];
+        if (same_text(slot->name, variant_name) && slot->type == s->type) variant = true;
+    }
+    if (!variant || typ(c, base) != s->type) return false;
+    syntax::Edits fix = guarded_read(c, e, false);
+    if (countof(fix) > 0) {
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", types::show(own->type),
+                                         "` is a payload enumeration, so a payload can't be read with `.`; test the "
+                                         "variant first, with `if .variant(v) := x:` or a `match`")),
+                        fix);
+    } else {
+        syntax::Edits edits = {};
+        edits = mem::realloc(edits, 1);
+        Str nothing = "";
+        edits[0] = (syntax::Edit){.span = {.start = base->span.end, .end = e->span.end}, .text = nothing};
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", key, "` is `.", variant_name, "` here, so it is the payload already; write `",
+                                         key, "`, not `", key, ".", variant_name, "`")),
+                        edits);
+    }
+    finish(c, e, s->type, f.expected);
+    return true;
+}
+
 // `x.some` where `x` was narrowed to a `T`: `x` is the payload already; the fix deletes `.some` (#2481).
 static Bool narrowed_payload(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) return false;
     const ast::Expr *base = e->kind.member.base;
-    if (e->kind.member.arrow || !same_text(e->kind.member.name, "some") || !(base->kind == .name)) return false;
-    const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.name.path);
-    if (s == nullptr || !s->narrowed || typ(c, base) != s->type || !(base->kind == .name)) return false;
+    if (e->kind.member.arrow || !same_text(e->kind.member.name, "some")) return false;
+    Str shown = place_key(base);
+    if (countof(shown) == 0) return false;
+    const types::Symbol *s = types::lookup(&c->scopes, shown);
+    if (s == nullptr || !s->narrowed || typ(c, base) != s->type) return false;
     Str nothing = "";
     syntax::Edits edits = {};
     edits = mem::realloc(edits, 1);
     edits[0] = (syntax::Edit){.span = {.start = base->span.end, .end = base->span.end + 5}, .text = nothing};
-    Str shown = path_str(base->kind.name.path);
     types::fail_fix(c, e->span,
                     msg(format::push("`", shown, "` is not `.none` here, so it is the value already; write `", shown,
                                      "`, not `.some`")),
@@ -4334,7 +4497,7 @@ static void member_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (narrowed_payload(c, f)) {
+    if (narrowed_payload(c, f) || narrowed_variant_read(c, f)) {
         return;
     }
     if (base->kind == .tuple && !e->kind.member.arrow) {
@@ -4380,7 +4543,7 @@ static void member_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    finish(c, e, field->type, f.expected);
+    finish(c, e, narrowed_field(c, e, field->type), f.expected);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
