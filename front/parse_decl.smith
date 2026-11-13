@@ -2610,6 +2610,9 @@ static void fix_enumerator(parse::Parser *p, U32 start, Bool plain, lex::Token n
     } else if (!plain) {
         return;
     }
+    // `enum Mode { Plain, Boosted }` on one line: the block fixer puts each member on its own line with the braces, and
+    // a line break written here first would leave a `{` it cannot mend.
+    if (plain && countof(stand_in) > 0) return;
     edits = with_edit(edits, edit(ender.span.start, ender.span.end, stand_in));
     warn(p, start, ender.span.end, message, edits);
 }

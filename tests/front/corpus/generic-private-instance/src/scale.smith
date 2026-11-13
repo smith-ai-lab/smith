@@ -1,0 +1,8 @@
+# The body of an exported generic names the private fields of its own module, though it is instanced in the importer.
+struct Range:
+    low: i32
+    high: i32
+
+pub fn span[T](x: T) -> T:
+    r: Range = Range(1, 5)
+    return x + r.high.to(T) - r.low.to(T)

@@ -1,0 +1,6 @@
+import c <stdio.h>
+import scale
+
+pub fn main() -> i32:
+    stdio.printf("%d %.1f\n", scale.span(10), scale.span(0.5))
+    return 0
