@@ -400,6 +400,56 @@ export void test_frontend_coverage_the_gate_names_only_files_that_passed_on_the_
     scratch::release(older.err);
 }
 
+// #3606: a file that fails on the base without a crash and crashes the compiler now is refused like a passing file that
+// fails: the queue's count let a crash in (the crash hid the file's 140 error rows, so the total fell). A crash that
+// was already in the base is not a refusal, and neither is a file with no row in the base. The printed row is the
+// crash's, so the would-refuse line says crash. Run 11 of the gate's version refuses it (the dry runs are the same as
+// for any comparison).
+export void test_frontend_coverage_the_gate_names_a_file_that_goes_from_errors_to_a_crash() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "excluded.txt", "");
+    // the base: a fails with two errors, b crashed already, c fails, d passes
+    scratch::write(&p, "base.tsv",
+                   "a.smith\tcheck\tunknown name\t1\na.smith\tcheck\texpected <n> arguments\t4\n"
+                   "b.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n"
+                   "c.smith\tcheck\tunknown name\t1\nd.smith\tpass\t\t\n");
+    // now: a crashes, b crashes again, c still fails, d crashes, e is new and crashes
+    scratch::write(&p, "now.tsv",
+                   "a.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage; batch of 29, file 22\t\n"
+                   "b.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n"
+                   "c.smith\tcheck\tunknown name\t1\n"
+                   "d.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n"
+                   "e.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n");
+    scratch::Run run = scratch::sh(
+        &p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed base.tsv now.tsv | awk -F'\\t' 'NF >= 3'");
+    scratch::expect_status("frontend_coverage: the gate runs", 0, &run);
+    scratch::expect_contains(
+        "frontend_coverage: errors to a crash is named, with the crash row, as is a pass to a crash", run.out,
+        "a.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage; batch of 29, file "
+        "22\nd.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\n");
+    scratch::expect_lacks("frontend_coverage: a crash that was in the base is not a refusal", run.out, "\nb.smith\t");
+    scratch::expect_lacks("frontend_coverage: errors that stay errors are not a refusal", run.out, "\nc.smith\t");
+    scratch::expect_lacks("frontend_coverage: a new file that crashes has no row in the base to change from", run.out,
+                          "\ne.smith\t");
+    scratch::release(run.out);
+    scratch::release(run.err);
+    // the gate's check of a would-refuse by the published tables (item 2 of #3509): the run before named a.smith; the
+    // base's table (older) has errors for it and the merged commit's (now) a crash, so the would-refuse was true
+    scratch::write(&p, "prev", "5\t3\t1\t0\treport-only\t,a.smith,\n");
+    scratch::Run shown = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed now.tsv "
+                                         "now.tsv prev base.tsv");
+    scratch::expect_contains("frontend_coverage: a would-refuse of errors to a crash is shown true, dirty stays 0",
+                             shown.out, "gate-row\t5\t4\t0\t0\treport-only\t,\n");
+    scratch::release(shown.out);
+    scratch::release(shown.err);
+}
+
 // #3443: the gate runs report-only for the first 10 queue runs of its version. The loop is the ci.yml step's: each run
 // reads the row the run before it published (version, run of the version, would refuse, dirty, mode) and publishes its
 // own. A gate that would refuse every file (a deliberately wrong change) is never live, not even from the 11th run; a
@@ -432,22 +482,22 @@ export void test_frontend_coverage_a_new_gate_reports_for_ten_runs_and_a_wrong_o
                    "done\n");
     scratch::Run good = scratch::sh(&p, "sh runs.sh good.tsv bad.tsv");
     scratch::expect_status("frontend_coverage: the correct gate runs 11 times", 0, &good);
-    scratch::expect_contains("frontend_coverage: run 1 reports", good.out, "run 1: 4 1 0 0 report-only ,\n");
-    scratch::expect_contains("frontend_coverage: run 10 still reports", good.out, "run 10: 4 10 0 0 report-only ,\n");
+    scratch::expect_contains("frontend_coverage: run 1 reports", good.out, "run 1: 5 1 0 0 report-only ,\n");
+    scratch::expect_contains("frontend_coverage: run 10 still reports", good.out, "run 10: 5 10 0 0 report-only ,\n");
     scratch::expect_contains("frontend_coverage: run 11 refuses the seeded regression (would refuse 2)", good.out,
-                             "run 11: 4 11 2 0 refusing ,a.smith,b.smith,\n");
+                             "run 11: 5 11 2 0 refusing ,a.smith,b.smith,\n");
     scratch::release(good.out);
     scratch::release(good.err);
     scratch::Run wrong = scratch::sh(&p, "sh runs.sh bad.tsv bad.tsv");
     scratch::expect_status("frontend_coverage: the wrong gate runs 11 times", 0, &wrong);
     scratch::expect_contains("frontend_coverage: run 1 would have refused both files, and reports", wrong.out,
-                             "run 1: 4 1 2 0 report-only ,a.smith,b.smith,\n");
+                             "run 1: 5 1 2 0 report-only ,a.smith,b.smith,\n");
     scratch::expect_contains("frontend_coverage: run 2 finds run 1's would-refuse false (the base still passes them)",
-                             wrong.out, "run 2: 4 2 2 1 report-only ,a.smith,b.smith,\n");
+                             wrong.out, "run 2: 5 2 2 1 report-only ,a.smith,b.smith,\n");
     scratch::expect_contains("frontend_coverage: run 10 reports", wrong.out,
-                             "run 10: 4 10 2 1 report-only ,a.smith,b.smith,\n");
+                             "run 10: 5 10 2 1 report-only ,a.smith,b.smith,\n");
     scratch::expect_contains("frontend_coverage: run 11 does not go live by itself", wrong.out,
-                             "run 11: 4 11 2 1 report-only ,a.smith,b.smith,\n");
+                             "run 11: 5 11 2 1 report-only ,a.smith,b.smith,\n");
     scratch::expect_lacks("frontend_coverage: the wrong gate never refuses", wrong.out, "refusing");
     scratch::release(wrong.out);
     scratch::release(wrong.err);
@@ -465,27 +515,27 @@ export void test_frontend_coverage_a_true_would_refuse_leaves_the_gate_clean_and
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
     scratch::write(&p, "excluded.txt", "");
-    // the run before: its 3rd run of version 4 would have refused x.smith; its base's table (older) has x passing
-    scratch::write(&p, "prev", "4\t3\t1\t0\treport-only\t,x.smith,\n");
+    // the run before: its 3rd run of version 5 would have refused x.smith; its base's table (older) has x passing
+    scratch::write(&p, "prev", "5\t3\t1\t0\treport-only\t,x.smith,\n");
     scratch::write(&p, "older.tsv", "x.smith\tpass\t\t\ny.smith\tpass\t\t\n");
     scratch::write(&p, "failed.tsv", "x.smith\tcheck\tunknown name\t1\ny.smith\tpass\t\t\n");
     scratch::write(&p, "passed.tsv", "x.smith\tpass\t\t\ny.smith\tpass\t\t\n");
     scratch::Run clean = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed failed.tsv "
                                          "failed.tsv prev older.tsv");
     scratch::expect_contains("frontend_coverage: a true would-refuse leaves dirty 0", clean.out,
-                             "gate-row\t4\t4\t0\t0\treport-only\t,\n");
+                             "gate-row\t5\t4\t0\t0\treport-only\t,\n");
     scratch::release(clean.out);
     scratch::release(clean.err);
     scratch::Run wrong = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed passed.tsv "
                                          "passed.tsv prev older.tsv");
     scratch::expect_contains("frontend_coverage: a false would-refuse (x still passes in the base) sets dirty",
-                             wrong.out, "gate-row\t4\t4\t0\t1\treport-only\t,\n");
+                             wrong.out, "gate-row\t5\t4\t0\t1\treport-only\t,\n");
     scratch::release(wrong.out);
     scratch::release(wrong.err);
     scratch::Run missing = scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed failed.tsv "
                                            "failed.tsv prev nowhere.tsv");
     scratch::expect_contains("frontend_coverage: a would-refuse that cannot be checked counts as before", missing.out,
-                             "gate-row\t4\t4\t0\t1\treport-only\t,\n");
+                             "gate-row\t5\t4\t0\t1\treport-only\t,\n");
     scratch::release(missing.out);
     scratch::release(missing.err);
 }
@@ -540,7 +590,7 @@ export void test_frontend_coverage_a_gate_that_refused_three_pull_requests_for_o
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
     // the base's row: version 2, its 12th run, would refuse 0, clean, refusing
-    scratch::write(&p, "prev", "4\t12\t0\t0\trefusing\t,\n");
+    scratch::write(&p, "prev", "5\t12\t0\t0\trefusing\t,\n");
     scratch::write(&p, "shared.log",
                    "11\t2\tok\t,\n1\t2\trefused\t,a.smith,b.smith,\n2\t2\trefused\t,b.smith,\n"
                    "3\t2\trefused\t,b.smith,c.smith,\n");
@@ -556,31 +606,31 @@ export void test_frontend_coverage_a_gate_that_refused_three_pull_requests_for_o
     scratch::expect_contains("frontend_coverage: the fourth run names the shared file", demoted.out,
                              "frontend-gate: demoted (b.smith)\n");
     scratch::expect_contains("frontend_coverage: the fourth run only reports, the count of runs starts again",
-                             demoted.out, "gate-row\t4\t0\t1\t0\treport-only\t,\n");
+                             demoted.out, "gate-row\t5\t0\t1\t0\treport-only\t,\n");
     scratch::expect_contains("frontend_coverage: the demotion joins the log", demoted.out,
-                             "gate-log\t4\t4\tdemoted\t,\n");
+                             "gate-log\t4\t5\tdemoted\t,\n");
     scratch::release(demoted.out);
     scratch::release(demoted.err);
-    scratch::Run next = scratch::sh(&p, "printf '4\\t0\\t0\\t0\\treport-only\\t,\\n' >prev2 && "
+    scratch::Run next = scratch::sh(&p, "printf '5\\t0\\t0\\t0\\treport-only\\t,\\n' >prev2 && "
                                         "env SMITH_GATE_LOG=shared.log SMITH_GATE_PR=5 smith run -- gate prev2 0");
     scratch::expect_contains("frontend_coverage: the next run is the demoted gate's first", next.out,
-                             "gate-row\t4\t1\t0\t0\treport-only\t,\n");
+                             "gate-row\t5\t1\t0\t0\treport-only\t,\n");
     scratch::release(next.out);
     scratch::release(next.err);
     scratch::Run apart = scratch::sh(&p, "env SMITH_GATE_LOG=apart.log SMITH_GATE_PR=4 smith run -- gate prev 1");
     scratch::expect_contains("frontend_coverage: three refusals without a shared file keep refusing", apart.out,
-                             "gate-row\t4\t13\t1\t0\trefusing\t,\n");
+                             "gate-row\t5\t13\t1\t0\trefusing\t,\n");
     scratch::expect_lacks("frontend_coverage: and do not demote", apart.out, "demoted");
     scratch::release(apart.out);
     scratch::release(apart.err);
     scratch::Run same_pr = scratch::sh(&p, "env SMITH_GATE_LOG=same_pr.log SMITH_GATE_PR=4 smith run -- gate prev 1");
     scratch::expect_contains("frontend_coverage: refusals of one pull request are not three", same_pr.out,
-                             "gate-row\t4\t13\t1\t0\trefusing\t,\n");
+                             "gate-row\t5\t13\t1\t0\trefusing\t,\n");
     scratch::release(same_pr.out);
     scratch::release(same_pr.err);
     scratch::Run broken = scratch::sh(&p, "env SMITH_GATE_LOG=broken.log SMITH_GATE_PR=4 smith run -- gate prev 1");
     scratch::expect_contains("frontend_coverage: a run that passed in between breaks the row", broken.out,
-                             "gate-row\t4\t13\t1\t0\trefusing\t,\n");
+                             "gate-row\t5\t13\t1\t0\trefusing\t,\n");
     scratch::release(broken.out);
     scratch::release(broken.err);
 }
