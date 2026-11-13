@@ -59,9 +59,9 @@ export void test_front_fix_optional_a_some_read_is_the_value() {
     check_text(fixed_text("fn get(o: ?i32) -> i32:\n    if o != .none:\n        return o.some\n    0\n"),
                "fn get(o: ?i32) -> i32:\n    if o != .none:\n        return o\n    0\n");
     Str box = "struct Box:\n    v: ?i32\n";
-    check_text(fixed_text(as_str(format::push(box, "fn read(b: Box) -> i32:\n    if b.v == .some:\n"
+    check_text(fixed_text(as_str(format::push(box, "fn read(b: Box) -> i32:\n    if b.v != .none:\n"
                                                    "        return b.v.some\n    0\n"))),
-               as_str(format::push(box, "fn read(b: Box) -> i32:\n    if v := b.v:\n        return v\n    0\n")));
+               as_str(format::push(box, "fn read(b: Box) -> i32:\n    if b.v != .none:\n        return b.v\n    0\n")));
 }
 
 // A `mut` name narrows like any other (#3438): the read of its payload loses `.some`, no copy is named.
@@ -111,7 +111,7 @@ export void test_front_fix_optional_a_mut_option_used_as_a_value_under_its_test_
                "    if c == .none:\n        c = .some(4)\n    if c != .none:\n        return c\n    0\n");
 }
 
-// A function held in an option field is named first, the copy is tested and called (#3230).
+// A function held in an option field is tested and called as it is: the tested field narrows (#3587).
 export void test_front_fix_optional_a_call_of_an_option_field_is_named_before_its_test() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -120,8 +120,8 @@ export void test_front_fix_optional_a_call_of_an_option_field_is_named_before_it
     Str shape = "struct E:\n    hook: ?fn(i32) -> i32 = .none\n";
     check_text(fixed_text(as_str(format::push(shape, "fn run(e: E, x: i32) -> i32:\n    if e.hook != .none:\n"
                                                      "        return e.hook(x)\n    0\n"))),
-               as_str(format::push(shape, "fn run(e: E, x: i32) -> i32:\n    hook := e.hook\n"
-                                          "    if hook != .none:\n        return hook(x)\n    0\n")));
+               as_str(format::push(shape, "fn run(e: E, x: i32) -> i32:\n    if e.hook != .none:\n"
+                                          "        return e.hook(x)\n    0\n")));
 }
 
 // A parameter of option type that a test narrows is called directly (#3230).

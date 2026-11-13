@@ -264,9 +264,9 @@ export void test_front_fix_zero_a_tested_pointer_is_an_option_and_its_tested_rea
                  "struct Holder:\n    head: ?NodeRef = .none\n    n: i32\n"
                  "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
                  "fn hold() -> Holder:\n    return Holder(n = 1)\n"
-                 "fn first(n: *Node) -> i32:\n    if next := n.next:\n"
-                 "        return next.value\n    return 0\nfn second(h: *Holder) -> i32:\n"
-                 "    head := h.head else:\n        return 0\n    return head.value\n"
+                 "fn first(n: *Node) -> i32:\n    if n.next != .none:\n"
+                 "        return n.next.value\n    return 0\nfn second(h: *Holder) -> i32:\n"
+                 "    if h.head == .none:\n        return 0\n    return h.head.value\n"
                  "fn clear(n: *mut Node):\n    n.next = .none\n");
 }
 
@@ -302,8 +302,8 @@ export void test_front_fix_zero_a_tested_pointer_in_an_or_chain_that_returns_bin
                  "    return n->next->value;\n}\n",
                  "struct Node:\n    value: i32\n    next: ?*Node = .none\n"
                  "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
-                 "fn first(n: *Node, k: i32) -> i32:\n    if k == 0:\n        return 0\n    \n"
-                 "    next := n.next else:\n        return 0\n    return next.value\n");
+                 "fn first(n: *Node, k: i32) -> i32:\n    if k == 0 or n.next == .none:\n        return 0\n"
+                 "    return n.next.value\n");
 }
 
 // A read of the option with no test before it is left as it is (#2557): it is an error to mend by hand.
@@ -315,8 +315,8 @@ export void test_front_fix_zero_a_read_with_no_test_is_not_unwrapped() {
                  "I32 unchecked(const Node *n) {\n    return n->next->value;\n}\n",
                  "struct Node:\n    value: i32\n    next: ?*Node = .none\n"
                  "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
-                 "fn first(n: *Node) -> i32:\n    if next := n.next:\n"
-                 "        return next.value\n    return 0\nfn unchecked(n: *Node) -> i32:\n"
+                 "fn first(n: *Node) -> i32:\n    if n.next != .none:\n"
+                 "        return n.next.value\n    return 0\nfn unchecked(n: *Node) -> i32:\n"
                  "    return n.next.value\n");
 }
 
@@ -330,7 +330,7 @@ export void test_front_fix_zero_a_tested_function_pointer_is_an_option() {
                  "Handler := fn(i32)\nstruct Hooks:\n    count: i32\n"
                  "    on_exit: ?Handler = .none\nfn quiet() -> Hooks:\n"
                  "    return Hooks(count = 0)\nfn leave(h: *Hooks, code: i32):\n"
-                 "    on_exit := h.on_exit\n    if on_exit != .none:\n        on_exit(code)\n");
+                 "    if h.on_exit != .none:\n        h.on_exit(code)\n");
 }
 
 // A file that imports the struct reads it as the struct's own fix writes it (#2557): the module, read from its
@@ -364,7 +364,7 @@ export void test_front_fix_zero_an_importer_binds_the_reads_of_an_option_field()
         char chars[:] = mem::view(bytes, char);
         Str got = chars;
         Str want = "import front_fix_zero_list\nfn second(n: *front_fix_zero_list.Node) -> i32:\n"
-                   "    next := n.next else:\n        return 0\n    return next.value\n";
+                   "    if n.next == .none:\n        return 0\n    return n.next.value\n";
         test::check_equal(got, want);
     }
 }
@@ -448,7 +448,7 @@ export void test_front_fix_zero_a_local_of_an_option_field_gets_the_question_mar
                  "    return e->value;\n}\n",
                  "struct Node:\n    value: i32\n    next: ?*Node = .none\n"
                  "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
-                 "fn first(n: *Node) -> i32:\n    if next := n.next:\n        return next.value\n    return 0\n"
+                 "fn first(n: *Node) -> i32:\n    if n.next != .none:\n        return n.next.value\n    return 0\n"
                  "fn second(n: *Node) -> i32:\n    e: ?*Node = n.next\n    if e == .none:\n        return 0\n"
                  "    return e.value\n");
 }

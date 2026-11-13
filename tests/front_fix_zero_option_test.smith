@@ -34,9 +34,9 @@ export void test_front_fix_zero_option_a_field_given_to_a_parameter_that_tests_n
                  "pub fn make(v: i32) -> Node:\n"
                  "    return Node(v = v)\n"
                  "pub fn last(n: *Node) -> i32:\n"
-                 "    next := n.next else:\n"
+                 "    if n.next == .none:\n"
                  "        return n.v\n"
-                 "    return last(next)\n"
+                 "    return last(n.next)\n"
                  "pub fn f(n: *Node) -> i32:\n"
                  "    return count(n.next)\n");
 }
