@@ -46,6 +46,56 @@ typedef enum {
     ast::TypeExpr *type;
 } Node;
 
+// One entry of a list: a field of a struct, or a parameter of a function.
+export struct Entry {
+    Str name;
+    Str type_name;
+    Str doc;
+    ast::Attribute attributes[:];
+    const ast::Expr *default_value; // `f.default`: the field's default (null when it has none, #2543)
+};
+
+// The number of entries of the list `kind` ("fields" or "parameters") of the type or function `subject`; false when
+// the subject is not known here (a generic function not yet instantiated, a name that is neither).
+export typedef Bool (*Count)(Str kind, Str subject, Usize *count);
+export typedef Entry (*At)(Str kind, Str subject, Usize at);
+export typedef void (*Fail)(ast::Span span, Str message);
+
+// An entry: the list it is in and its index.
+struct Ref {
+    Bool known;
+    Str kind;
+    Str subject;
+    Usize at;
+};
+
+// A name bound to an entry: the variable of an unrolled `for`, or `first := fields(T)[0]`.
+struct Alias {
+    Str name;
+    Ref entry;
+};
+
+// The state of a copy that rewrites the compile-time lists (`fields(T)`, `parameters(F)`) or unrolls a pack: carried by
+// the copy in progress (`Work`), not kept in a global, so a rewrite that starts another one (a nested list) shares it.
+export struct Sources {
+    Count count;
+    At at;
+    Fail fail;
+};
+
+struct Reflection {
+    Bool packed; // unrolling `for x in pack` (the pack and its size below), else rewriting the lists
+    Str pack;
+    Usize pack_count;
+    Sources sources;
+    Alias aliases[32];
+    Usize alias_count;
+    Bool rewrote;
+};
+
+typedef const ast::Stmt *(*ReflectStmt)(Reflection *st, const ast::Stmt *s);
+typedef const ast::Expr *(*ReflectExpr)(Reflection *st, const ast::Expr *e);
+
 struct Work {
     Node data[:];
     Usize length;
@@ -54,6 +104,9 @@ struct Work {
     // starts another copy needs no save and restore.
     Choose choose;
     ChooseExpr choose_expr;
+    Reflection *reflection;   // null for a copy that is not a reflection rewrite
+    ReflectStmt reflect_stmt; // what the reflection rewrite copies a statement as (a rewrite may start another copy)
+    ReflectExpr reflect_expr;
 };
 
 static void add(Work *work, Node node) {
@@ -74,10 +127,25 @@ static void add(Work *work, Node node) {
 // ---------------------------------------------------------------------------------------------------------------
 // A child: a copy of the node, queued so that its own children are copied later. Null stays null.
 
+static const ast::Stmt *reflect_stmt(Reflection *st, const ast::Stmt *s);
+static const ast::Expr *reflect_expr(Reflection *st, const ast::Expr *e);
+static ast::Stmt *clone_stmt_reflecting(Reflection *st, const ast::Stmt *s);
+static void reflect_with(Work *work, Reflection *st);
+
+static const ast::Stmt *chosen_stmt(Work *work, const ast::Stmt *s) {
+    if (work->reflection != nullptr) return work->reflect_stmt(work->reflection, s);
+    return work->choose(s);
+}
+
+static const ast::Expr *chosen_expr(Work *work, const ast::Expr *e) {
+    if (work->reflection != nullptr) return work->reflect_expr(work->reflection, e);
+    return work->choose_expr(e);
+}
+
 static ast::Expr *take_chosen_expr(Work *work, const ast::Expr *old) {
     const ast::Expr *current = old;
     for (Usize k = 0; k < 64; k++) {
-        const ast::Expr *chosen = work->choose_expr(current);
+        const ast::Expr *chosen = chosen_expr(work, current);
         if (chosen == current) break;
         current = chosen;
     }
@@ -95,7 +163,7 @@ static ast::Stmt *take_stmt(Work *work, const ast::Stmt *old) {
     if (old == nullptr) return nullptr;
     const ast::Stmt *current = old;
     for (Usize k = 0; k < 64; k++) {
-        const ast::Stmt *chosen = work->choose(current);
+        const ast::Stmt *chosen = chosen_stmt(work, current);
         if (chosen == current) break;
         current = chosen;
     }
@@ -557,9 +625,6 @@ export ast::Stmt *clone_stmt_rewriting(const ast::Stmt *s, Choose choose, Choose
 // ---------------------------------------------------------------------------------------------------------------
 // Unrolling `for x in rest` over a pack (#2293, part of #1821)
 
-static Str unrolled_pack;
-static Usize unrolled_count = 0;
-
 // The statement `let name = pack.at`.
 static ast::Stmt *element_binding(ast::Identifier name, Str pack, Usize at) {
     char chars[:] = format::push(at);
@@ -585,10 +650,10 @@ static ast::Stmt *element_binding(ast::Identifier name, Str pack, Usize at) {
 }
 
 // One copy of the body of the loop `s`, for the element `at` of the pack: a block with the binding and the body.
-static ast::Stmt *unrolled_copy(const ast::Stmt *s, Usize at) {
+static ast::Stmt *unrolled_copy(Reflection *st, const ast::Stmt *s, Usize at) {
     if (!(s->kind == .for_in)) return nullptr;
     ast::StmtRef *block = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 2, alignof(ast::StmtRef));
-    block[0] = element_binding(s->kind.for_in.names[0], unrolled_pack, at);
+    block[0] = element_binding(s->kind.for_in.names[0], st->pack, at);
     block[1] = s->kind.for_in.body;
     StmtRefList items = block[0:2];
     ast::Stmt *copy = ast::block(items);
@@ -597,21 +662,21 @@ static ast::Stmt *unrolled_copy(const ast::Stmt *s, Usize at) {
 }
 
 // A `for x in <pack>` becomes a block with one copy of the body for each element of the pack.
-static const ast::Stmt *unroll(const ast::Stmt *s) {
+static const ast::Stmt *unroll(Reflection *st, const ast::Stmt *s) {
     if (s->kind != .for_in || s->kind.for_in.is_tuple || countof(s->kind.for_in.names) != 1) return s;
     const ast::Expr *iterable = s->kind.for_in.iterable;
     if (iterable->kind != .name || countof(iterable->kind.name.path.segments) != 1) return s;
     Str written = iterable->kind.name.path.segments[0].text;
-    if (countof(written) != countof(unrolled_pack)) return s;
+    if (countof(written) != countof(st->pack)) return s;
     for (Usize i = 0; i < countof(written); i++) {
-        if (written[i] != unrolled_pack[i]) return s;
+        if (written[i] != st->pack[i]) return s;
     }
     ast::StmtRef *block =
-        (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), unrolled_count, alignof(ast::StmtRef));
-    for (Usize at = 0; at < unrolled_count; at++) {
-        block[at] = unrolled_copy(s, at);
+        (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), st->pack_count, alignof(ast::StmtRef));
+    for (Usize at = 0; at < st->pack_count; at++) {
+        block[at] = unrolled_copy(st, s, at);
     }
-    StmtRefList items = block[0:unrolled_count];
+    StmtRefList items = block[0:st->pack_count];
     ast::Stmt *all = ast::block(items);
     all->span = s->span;
     return all;
@@ -620,12 +685,15 @@ static const ast::Stmt *unroll(const ast::Stmt *s) {
 // `clone_decl`, with each `for x in pack` of the body unrolled into `count` copies of its body, one for each element
 // of the pack, which is `pack.0`, `pack.1`, ... (the loop variable is bound to it in each copy).
 export ast::Decl *clone_decl_unrolling(const ast::Decl *d, Str pack, Usize count) {
-    unrolled_pack = pack;
-    unrolled_count = count;
-    ast::Decl *copy = clone_decl_choosing(d, unroll);
-    Str none = {};
-    unrolled_pack = none;
-    return copy;
+    Reflection st = {};
+    st.packed = true;
+    st.pack = pack;
+    st.pack_count = count;
+    Work work = {};
+    reflect_with(&work, &st);
+    ast::Decl *root = take_decl(&work, d);
+    drain(&work);
+    return root;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -644,55 +712,13 @@ export ast::Decl *clone_decl_unrolling(const ast::Decl *d, Str pack, Usize count
 //   if let .some(a) = f.attr(X): then else: other    `then` with `a = X(...)` (the attribute written on the field),
 //                               or `other` when the field has none
 //
-// The entries come from the checker through `set_reflection_source` (this module cannot import it). `fields(T)` in
-// another module lists only the `pub` fields (#1787). Nothing here is recursive: a rewrite of the body is a clone of it
-// with the two choosers below, and a nested list is a clone inside a chooser (the outer choosers are put back after).
-
-// One entry of a list: a field of a struct, or a parameter of a function.
-export struct Entry {
-    Str name;
-    Str type_name;
-    Str doc;
-    ast::Attribute attributes[:];
-    const ast::Expr *default_value; // `f.default`: the field's default (null when it has none, #2543)
-};
-
-// The number of entries of the list `kind` ("fields" or "parameters") of the type or function `subject`; false when
-// the subject is not known here (a generic function not yet instantiated, a name that is neither).
-export typedef Bool (*Count)(Str kind, Str subject, Usize *count);
-export typedef Entry (*At)(Str kind, Str subject, Usize at);
-export typedef void (*Fail)(ast::Span span, Str message);
-
-static Count count_source = nullptr;
-static At entry_source = nullptr;
-static Fail fail_sink = nullptr;
-
-export void set_reflection_source(Count count, At at, Fail fail) {
-    count_source = count;
-    entry_source = at;
-    fail_sink = fail;
-}
+// The entries come from the checker through the `Sources` given to `expand_reflection_lists` (this module cannot import
+// the checker). `fields(T)` in another module lists only the `pub` fields (#1787). Nothing here is recursive: a rewrite
+// of the body is a clone of it with the two choosers below, and a nested list is a clone inside a chooser (the outer
+// choosers are put back after).
 
 // ---------------------------------------------------------------------------------------------------------------
 // What a name stands for
-
-// An entry: the list it is in and its index.
-struct Ref {
-    Bool known;
-    Str kind;
-    Str subject;
-    Usize at;
-};
-
-// A name bound to an entry: the variable of an unrolled `for`, or `first := fields(T)[0]`.
-struct Alias {
-    Str name;
-    Ref entry;
-};
-
-static Alias aliases[32];
-static Usize alias_count = 0;
-static Bool rewrote = false;
 
 static Bool same(Str a, Str b) {
     if (countof(a) != countof(b)) return false;
@@ -739,18 +765,18 @@ static Bool list_call(const ast::Expr *e, Str *kind, Str *subject) {
 }
 
 // The number of entries of the list `e` is, when it is one and its subject is known.
-static Bool list_count(const ast::Expr *e, Str *kind, Str *subject, Usize *count) {
-    if (count_source == nullptr || !list_call(e, kind, subject)) return false;
-    return count_source(*kind, *subject, count);
+static Bool list_count(Reflection *st, const ast::Expr *e, Str *kind, Str *subject, Usize *count) {
+    if (!list_call(e, kind, subject)) return false;
+    return st->sources.count(*kind, *subject, count);
 }
 
 // The entry an expression names: an alias, or `fields(T)[2]`.
-static Ref ref_of(const ast::Expr *e) {
+static Ref ref_of(Reflection *st, const ast::Expr *e) {
     Ref none = {};
     Str name = single_name(e);
     if (countof(name) > 0) {
-        for (Usize i = alias_count; i > 0; i--) {
-            if (same(aliases[i - 1].name, name)) return aliases[i - 1].entry;
+        for (Usize i = st->alias_count; i > 0; i--) {
+            if (same(st->aliases[i - 1].name, name)) return st->aliases[i - 1].entry;
         }
         return none;
     }
@@ -758,20 +784,20 @@ static Ref ref_of(const ast::Expr *e) {
     Str kind = {};
     Str subject = {};
     Usize count = 0;
-    if (!list_count(e->kind.index.base, &kind, &subject, &count)) return none;
+    if (!list_count(st, e->kind.index.base, &kind, &subject, &count)) return none;
     U64 at = e->kind.index.index->kind.integer.value;
     if (at >= count) return none;
     return (Ref){.known = true, .kind = kind, .subject = subject, .at = at};
 }
 
-static void push_alias(Str name, Ref entry) {
-    if (alias_count == countof(aliases)) return;
-    aliases[alias_count] = (Alias){.name = name, .entry = entry};
-    alias_count += 1;
+static void push_alias(Reflection *st, Str name, Ref entry) {
+    if (st->alias_count == countof(st->aliases)) return;
+    st->aliases[st->alias_count] = (Alias){.name = name, .entry = entry};
+    st->alias_count += 1;
 }
 
-static Entry entry_of(Ref r) {
-    return entry_source(r.kind, r.subject, r.at);
+static Entry entry_of(Reflection *st, Ref r) {
+    return st->sources.at(r.kind, r.subject, r.at);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -821,27 +847,25 @@ static ast::Expr *at_span(ast::Expr *e, ast::Span span) {
 // The choosers
 
 // `entry.default`: the field's default, copied into the body; with none, an error.
-static const ast::Expr *default_of(const ast::Expr *e, Entry entry) {
+static const ast::Expr *default_of(Reflection *st, const ast::Expr *e, Entry entry) {
     if (entry.default_value != nullptr) return entry.default_value;
-    if (fail_sink != nullptr) {
-        char text[:] = format::push("`", entry.name, "` has no default");
-        Str message = text;
-        fail_sink(e->span, message);
-    }
+    char text[:] = format::push("`", entry.name, "` has no default");
+    Str message = text;
+    st->sources.fail(e->span, message);
     return nullptr;
 }
 
 // `entry.name`, `entry.doc`, `entry.type` and `entry.default` of an entry, as the value they stand for; null for
 // another member.
-static const ast::Expr *member_value(const ast::Expr *e) {
+static const ast::Expr *member_value(Reflection *st, const ast::Expr *e) {
     if (e->kind != .member) return nullptr;
-    Ref r = ref_of(e->kind.member.base);
+    Ref r = ref_of(st, e->kind.member.base);
     if (!r.known || e->kind.member.arrow) return nullptr;
     Str which = e->kind.member.name;
-    Entry entry = entry_of(r);
+    Entry entry = entry_of(st, r);
     if (same(which, "name")) return at_span(ast::string(entry.name), e->span);
     if (same(which, "doc")) return at_span(ast::string(entry.doc), e->span);
-    if (same(which, "default")) return default_of(e, entry);
+    if (same(which, "default")) return default_of(st, e, entry);
     if (same(which, "type")) {
         ast::Expr *value = ast::expr({.type_value = {.type = ast::named(entry.type_name)}});
         return at_span(value, e->span);
@@ -850,9 +874,9 @@ static const ast::Expr *member_value(const ast::Expr *e) {
 }
 
 // `sizeof(f.type)` and the like: the query of the type the entry has.
-static ast::Expr *queried(const ast::Expr *e) {
+static ast::Expr *queried(Reflection *st, const ast::Expr *e) {
     if (e->kind != .query || e->kind.query.operand == nullptr || e->kind.query.operand->kind != .member) return nullptr;
-    const ast::Expr *type = member_value(e->kind.query.operand);
+    const ast::Expr *type = member_value(st, e->kind.query.operand);
     if (type == nullptr || type->kind != .type_value) return nullptr;
     ast::Expr *asked =
         ast::expr({.query = {.op = e->kind.query.op, .type = type->kind.type_value.type, .operand = nullptr}});
@@ -860,33 +884,33 @@ static ast::Expr *queried(const ast::Expr *e) {
 }
 
 // `value.[f]`: the field the entry `f` names.
-static ast::Expr *reflected_member(const ast::Expr *e) {
+static ast::Expr *reflected_member(Reflection *st, const ast::Expr *e) {
     if (e->kind != .reflect_member) return nullptr;
-    Ref r = ref_of(e->kind.reflect_member.field);
+    Ref r = ref_of(st, e->kind.reflect_member.field);
     if (!r.known) return nullptr;
-    Entry entry = entry_of(r);
+    Entry entry = entry_of(st, r);
     ast::Expr *member = ast::expr(
         {.member = {.base = e->kind.reflect_member.base, .name = entry.name, .arrow = e->kind.reflect_member.arrow}});
     return at_span(member, e->span);
 }
 
 // `countof(fields(T))`.
-static ast::Expr *counted(const ast::Expr *e) {
+static ast::Expr *counted(Reflection *st, const ast::Expr *e) {
     if (e->kind != .query || e->kind.query.op != .count_of || e->kind.query.operand == nullptr) return nullptr;
     Str kind = {};
     Str subject = {};
     Usize count = 0;
-    if (!list_count(e->kind.query.operand, &kind, &subject, &count)) return nullptr;
+    if (!list_count(st, e->kind.query.operand, &kind, &subject, &count)) return nullptr;
     return at_span(ast::integer(count), e->span);
 }
 
 // `fields(T)[i]` with an index that is not a number written in the code, or past the end: a compile error.
-static void check_index(const ast::Expr *e) {
-    if (e->kind != .index || fail_sink == nullptr) return;
+static void check_index(Reflection *st, const ast::Expr *e) {
+    if (e->kind != .index) return;
     Str kind = {};
     Str subject = {};
     Usize count = 0;
-    if (!list_count(e->kind.index.base, &kind, &subject, &count)) return;
+    if (!list_count(st, e->kind.index.base, &kind, &subject, &count)) return;
     char written[:] = format::push(kind, "(", subject, ")");
     Str shown = written;
     const ast::Expr *position = e->kind.index.index;
@@ -894,31 +918,32 @@ static void check_index(const ast::Expr *e) {
         char text[:] = format::push("the index of `", shown, "` must be a number written in the code: the list exists ",
                                     "only at compile time; for a list that is indexed at run time use a slice `[]T`");
         Str message = text;
-        fail_sink(position->span, message);
-    } else if (position->kind.integer.value >= count) {
+        st->sources.fail(position->span, message);
+        return;
+    }
+    if (position->kind.integer.value >= count) {
         char text[:] = format::push("`", shown, "` has ", count, " entries, but this index is ",
                                     position->kind.integer.value, "; the first is 0");
         Str message = text;
-        fail_sink(position->span, message);
+        st->sources.fail(position->span, message);
     }
 }
 
-static const ast::Expr *rewrite_expr(const ast::Expr *e) {
-    check_index(e);
+static const ast::Expr *reflect_expr(Reflection *st, const ast::Expr *e) {
+    if (st->packed) return e;
+    check_index(st, e);
     const ast::Expr *replacement = nullptr;
-    if (e->kind == .member) replacement = member_value(e);
-    if (e->kind == .reflect_member) replacement = reflected_member(e);
-    if (e->kind == .query) replacement = counted(e);
-    if (e->kind == .query && replacement == nullptr) replacement = queried(e);
+    if (e->kind == .member) replacement = member_value(st, e);
+    if (e->kind == .reflect_member) replacement = reflected_member(st, e);
+    if (e->kind == .query) replacement = counted(st, e);
+    if (e->kind == .query && replacement == nullptr) replacement = queried(st, e);
     if (replacement == nullptr) return e;
-    rewrote = true;
+    st->rewrote = true;
     return replacement;
 }
 
-static const ast::Stmt *rewrite_stmt(const ast::Stmt *s);
-
 // `for f in fields(T): body` as a block of one rewritten copy of the body for each entry.
-static const ast::Stmt *unrolled(const ast::Stmt *s, Usize count) {
+static const ast::Stmt *unrolled(Reflection *st, const ast::Stmt *s, Usize count) {
     if (s->kind != .for_in) return s;
     Str kind = {};
     Str subject = {};
@@ -926,9 +951,9 @@ static const ast::Stmt *unrolled(const ast::Stmt *s, Usize count) {
     Str variable = s->kind.for_in.names[0].text;
     ast::StmtRef *copies = room(count);
     for (Usize at = 0; at < count; at++) {
-        push_alias(variable, (Ref){.known = true, .kind = kind, .subject = subject, .at = at});
-        copies[at] = clone_stmt_rewriting(s->kind.for_in.body, rewrite_stmt, rewrite_expr);
-        alias_count -= 1;
+        push_alias(st, variable, (Ref){.known = true, .kind = kind, .subject = subject, .at = at});
+        copies[at] = clone_stmt_reflecting(st, s->kind.for_in.body);
+        st->alias_count -= 1;
     }
     ast::Stmt *all = block_of(copies, count);
     all->span = s->span;
@@ -947,7 +972,7 @@ static const ast::Attribute *attribute_named(Entry entry, const ast::Expr *wante
 }
 
 // `if let .some(a) = f.attr(X): then else: other` is decided now: `then` with `a = X(...)`, or `other`.
-static const ast::Stmt *attribute_branch(const ast::Stmt *s) {
+static const ast::Stmt *attribute_branch(Reflection *st, const ast::Stmt *s) {
     if (s->kind != .if_let) return s;
     const ast::Expr *value = s->kind.if_let.value;
     if (value->kind != .call || value->kind.call.callee->kind != .member || countof(value->kind.call.args) != 1) {
@@ -956,11 +981,11 @@ static const ast::Stmt *attribute_branch(const ast::Stmt *s) {
     const ast::Expr *callee = value->kind.call.callee;
     if (callee->kind != .member) return s;
     if (!same(callee->kind.member.name, "attr")) return s;
-    Ref r = ref_of(callee->kind.member.base);
+    Ref r = ref_of(st, callee->kind.member.base);
     if (!r.known || !same(s->kind.if_let.pattern.name, "some")) return s;
     const ast::Expr *wanted = value->kind.call.args[0];
-    const ast::Attribute *found = attribute_named(entry_of(r), wanted);
-    rewrote = true;
+    const ast::Attribute *found = attribute_named(entry_of(st, r), wanted);
+    st->rewrote = true;
     if (found == nullptr) {
         if (s->kind.if_let.else_branch == nullptr) return empty_block(s->span);
         return s->kind.if_let.else_branch;
@@ -974,36 +999,61 @@ static const ast::Stmt *attribute_branch(const ast::Stmt *s) {
     return both;
 }
 
-static const ast::Stmt *rewrite_stmt(const ast::Stmt *s) {
+static const ast::Stmt *reflect_stmt(Reflection *st, const ast::Stmt *s) {
+    if (st->packed) return unroll(st, s);
     if (s->kind == .for_in && !s->kind.for_in.is_tuple && countof(s->kind.for_in.names) == 1) {
         Str kind = {};
         Str subject = {};
         Usize count = 0;
-        if (!list_count(s->kind.for_in.iterable, &kind, &subject, &count)) return s;
-        rewrote = true;
-        return unrolled(s, count);
+        if (!list_count(st, s->kind.for_in.iterable, &kind, &subject, &count)) return s;
+        st->rewrote = true;
+        return unrolled(st, s, count);
     }
-    if (s->kind == .declaration && s->kind.declaration.decl->kind == .variable) {
+    if (s->kind == .declaration) {
         const ast::Decl *d = s->kind.declaration.decl;
-        if (d->kind != .variable) return s;
-        Ref r = ref_of(d->kind.variable.init);
-        if (!r.known) return s;
-        push_alias(d->kind.variable.name, r);
-        rewrote = true;
-        return empty_block(s->span);
+        if (d->kind == .variable) {
+            Ref r = ref_of(st, d->kind.variable.init);
+            if (!r.known) return s;
+            push_alias(st, d->kind.variable.name, r);
+            st->rewrote = true;
+            return empty_block(s->span);
+        }
     }
-    if (s->kind == .if_let) return attribute_branch(s);
+    if (s->kind == .if_let) return attribute_branch(st, s);
     return s;
 }
 
-// Expands the lists of the function `d` in place, when it names any whose subject is known; whether it did.
-export Bool expand_reflection_lists(ast::Decl *d) {
-    if (count_source == nullptr || d->kind != .function || d->kind.function.body == nullptr) return false;
-    rewrote = false;
-    alias_count = 0;
-    ast::Decl *copy = clone_decl_rewriting(d, rewrite_stmt, rewrite_expr);
-    alias_count = 0;
-    if (!rewrote) return false;
+// A copy that rewrites as `st` says.
+static void reflect_with(Work *work, Reflection *st) {
+    work->choose = keep_stmt;
+    work->choose_expr = keep_expr;
+    work->reflection = st;
+    work->reflect_stmt = reflect_stmt;
+    work->reflect_expr = reflect_expr;
+}
+
+// A deep copy of the statement `s` with the lists rewritten as `st` says (the aliases in force stay in `st`).
+static ast::Stmt *clone_stmt_reflecting(Reflection *st, const ast::Stmt *s) {
+    Work work = {};
+    reflect_with(&work, st);
+    ast::Stmt *root = take_stmt(&work, s);
+    drain(&work);
+    return root;
+}
+
+// Expands the lists of the function `d` in place, when it names any whose subject is known (`sources` says how many
+// entries a list has and what they are); whether it did.
+export Bool expand_reflection_lists(ast::Decl *d, Sources sources) {
+    const ast::Decl *source = d; // `d` is written below, so a payload is read through a name that is not
+    if (source->kind != .function) return false;
+    if (source->kind.function.body == nullptr) return false;
+    Reflection st = {};
+    st.sources = sources;
+    Work work = {};
+    reflect_with(&work, &st);
+    ast::Decl *copy = take_decl(&work, d);
+    drain(&work);
+    if (!st.rewrote) return false;
     *d = *copy;
     return true;
 }
