@@ -669,3 +669,15 @@ export void test_front_check_types_an_optional_function_of_another_parameter_typ
     fails(join(hooks(), "fn other(p: *i32) -> i32:\n    0\n\nfn g() -> Hooks:\n    Hooks(on_done = other)\n"),
           "there is no conversion", "");
 }
+
+// #3613: a tested pointer field handed to a function that takes a writable pointer stays narrowed: the callee writes
+// what the pointer points at, not the field that holds it; a pointer to the record that holds the field drops it.
+export void test_front_check_types_a_pointer_field_handed_out_as_a_value_stays_narrowed() {
+    Str head = "struct Conn:\n    session: ?*mut i32\n\nfn put(p: *mut i32):\n    p.* = 1\n\nfn wipe(c: *mut Conn):\n"
+               "    c.session = .none\n\n";
+    clean(join(head, "fn f(c: *Conn):\n    if c.session == .none:\n        return\n    put(c.session)\n"
+                     "    put(c.session)\n"));
+    fails(join(head, "fn f(c: *mut Conn):\n    if c.session == .none:\n        return\n    wipe(c)\n"
+                     "    put(c.session)\n"),
+          "", "");
+}
