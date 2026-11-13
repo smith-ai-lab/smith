@@ -3849,19 +3849,24 @@ static const char *const *smith_tests_macos_args(SmithBuild *b, const char *cons
     return kept;
 }
 
+// Parses the options and chooses the tests to keep; a whole build (SMITH_TESTS_WHOLE) deals first, which writes the
+// weights and the suite of --weigh, then keeps what the macOS choice leaves.
+static void smith_tests_deal(SmithRun *run, SmithTestShard *shard, size_t count, bool *keep) {
+    smith_shard_parse(shard, smith_tests_found, count, run->args);
+    smith_shard_keep(shard, smith_tests_found, count, keep);
+    if (!smith_tests_whole()) return;
+    smith_shard_parse(shard, smith_tests_found, count, smith_tests_macos_args(run->b, run->args));
+    smith_shard_keep(shard, smith_tests_found, count, keep);
+}
+
 static int smith_tests_scan(SmithRun *run) {
     SmithTestFound *found = smith_tests_found;
     size_t count = 0;
     SMITH_ASSERT(run->outputs[0] != nullptr && run->outputs[1] != nullptr);
     if (!smith_tests_find(run, found, &count)) return 1;
     SmithTestShard *shard = SMITH_ALLOC(sizeof *shard);
-    smith_shard_parse(shard, found, count, run->args);
     bool *keep = SMITH_ALLOC(count + 1);
-    smith_shard_keep(shard, found, count, keep); // the deal: the weights and the suite of --weigh
-    if (smith_tests_whole()) {
-        smith_shard_parse(shard, found, count, smith_tests_macos_args(run->b, run->args));
-        smith_shard_keep(shard, found, count, keep);
-    }
+    smith_tests_deal(run, shard, count, keep);
     // A prototype for every test found: a file kept for one chosen test defines its others too, and
     // -Werror=missing-prototypes wants each declared (#2998). The table lists only the chosen ones.
     const char **prototypes = SMITH_NEW_LIST(count);
