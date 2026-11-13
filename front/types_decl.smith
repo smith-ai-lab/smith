@@ -2268,6 +2268,29 @@ static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// A local of the binding's name, anywhere in the body, makes the guard bind another name or leaves its site (#2503).
+static void rename_taken(types::Checked *r, Usize first_error, Usize first_local) {
+    for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
+        for (Usize k = first_local; k < state.local_count; k++) {
+            Str bound = r->guards[i].variant;
+            Str named = r->guards[i].bound;
+            if (countof(named) > 0) {
+                bound = named;
+            }
+            if (!types::same_text(state.locals[k].name, bound)) continue;
+            // a Result's `ok` declared further down: the guard binds `ok_value` (#3205)
+            Str other = msg(format::push(r->guards[i].variant, "_value"));
+            Bool moved = types::same_text(bound, r->guards[i].variant) && !r->guards[i].option &&
+                         types::same_text(bound, "ok") && !local_named(first_local, other);
+            if (moved) {
+                types_expr::rebind_guard(r, &r->guards[i], first_error, other);
+            } else {
+                r->guards[i].spoiled = true;
+            }
+        }
+    }
+}
+
 // Walks `root` with the function's result type `result`.
 static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result) {
     types::TypeRef outer = state.result;
@@ -2307,26 +2330,8 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             enter_statement(r, f.stmt);
         }
     }
-    affine::check_body(r, root);                 // after the walk: it reads the types the walk recorded
-    for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
-        for (Usize k = first_local; k < state.local_count; k++) {
-            Str bound = r->guards[i].variant;
-            Str named = r->guards[i].bound;
-            if (countof(named) > 0) {
-                bound = named;
-            }
-            if (!types::same_text(state.locals[k].name, bound)) continue;
-            // a Result's `ok` declared further down: the guard binds `ok_value` (#3205)
-            Str other = msg(format::push(r->guards[i].variant, "_value"));
-            Bool moved = types::same_text(bound, r->guards[i].variant) && !r->guards[i].option &&
-                         types::same_text(bound, "ok") && !local_named(first_local, other);
-            if (moved) {
-                types_expr::rebind_guard(r, &r->guards[i], first_error, other);
-            } else {
-                r->guards[i].spoiled = true;
-            }
-        }
-    }
+    affine::check_body(r, root); // after the walk: it reads the types the walk recorded
+    rename_taken(r, first_error, first_local);
     for (Usize i = 0; i < r->guard_count; i++) {
         if (r->guards[i].direct && !r->guards[i].through) bind_dropped(r, &r->guards[i], first_error);
     }
