@@ -25,9 +25,13 @@
     (field data (pointer mut (named I32)))
     (field count (array (named U64) (integer 1)))
     (field extra (named I32)))
+  (struct smith_array_const_u8_n from_c
+    (field data (pointer (named U8 const)))
+    (field count (array (named Id) (integer 1))))
   (struct Text from_c
     (field name (slice (named Char const)))
-    (field buffer (slice (named Char))))
+    (field buffer (slice (named Char)))
+    (field bytes (slice (named U8 const))))
   (typedef Id from_c (named U64))
   (typedef Compare from_c (applied Fn (type_arg (function_type (pointer (named Void const)) (pointer (named Void const)) (result (named I32))))))
   (typedef Width from_c (named U16))

@@ -347,6 +347,8 @@ static I64 slice_pointee(const Table *t, U32 index) {
     CType count = t->types[s->fields[1].type];
     if (data.kind != kind_pointer || count.kind != kind_array || count.b != 1) return -1;
     CType item = t->types[count.a];
+    for (U32 depth = 0; item.kind == kind_typedef && depth < 8; depth++)
+        item = t->types[item.a]; // `size_t count[1]`, as the generated headers write it
     if (item.kind != kind_integer || item.a != 64 || item.b != 0) return -1;
     return (I64)data.a;
 }

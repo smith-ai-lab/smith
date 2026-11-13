@@ -38,9 +38,14 @@ struct smith_array_odd_n {
     unsigned long count[1];
     int extra;
 };
+struct smith_array_const_u8_n {
+    const unsigned char *data;
+    Id count[1]; // a typedef of `unsigned long`, as the generated headers write `size_t`
+};
 struct Text {
     struct smith_array_const_char_n name;
     struct smith_array_char_n buffer;
+    struct smith_array_const_u8_n bytes;
 };
 struct smith_array_const_char_n label(struct smith_array_const_char_n text, struct smith_array_odd_n odd);
 
