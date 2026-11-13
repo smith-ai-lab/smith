@@ -830,12 +830,12 @@ static const ast::Expr *member_value(const ast::Expr *e) {
     if (e->kind != .member) return nullptr;
     Ref r = ref_of(e->kind.member.base);
     if (!r.known || e->kind.member.arrow) return nullptr;
-    Str member = e->kind.member.name;
+    Str which = e->kind.member.name;
     Entry entry = entry_of(r);
-    if (same(member, "name")) return at_span(ast::string(entry.name), e->span);
-    if (same(member, "doc")) return at_span(ast::string(entry.doc), e->span);
-    if (same(member, "default")) return default_of(e, entry);
-    if (same(member, "type")) {
+    if (same(which, "name")) return at_span(ast::string(entry.name), e->span);
+    if (same(which, "doc")) return at_span(ast::string(entry.doc), e->span);
+    if (same(which, "default")) return default_of(e, entry);
+    if (same(which, "type")) {
         ast::Expr *value = ast::expr({.type_value = {.type = ast::named(entry.type_name)}});
         return at_span(value, e->span);
     }
@@ -847,8 +847,9 @@ static ast::Expr *queried(const ast::Expr *e) {
     if (e->kind != .query || e->kind.query.operand == nullptr || e->kind.query.operand->kind != .member) return nullptr;
     const ast::Expr *type = member_value(e->kind.query.operand);
     if (type == nullptr || type->kind != .type_value) return nullptr;
-    ast::Expr *query = ast::expr({.query = {.op = e->kind.query.op, .type = type->kind.type_value.type}});
-    return at_span(query, e->span);
+    ast::Expr *asked =
+        ast::expr({.query = {.op = e->kind.query.op, .type = type->kind.type_value.type, .operand = nullptr}});
+    return at_span(asked, e->span);
 }
 
 // `value.[f]`: the field the entry `f` names.
@@ -881,17 +882,17 @@ static void check_index(const ast::Expr *e) {
     if (!list_count(e->kind.index.base, &kind, &subject, &count)) return;
     char written[:] = format::push(kind, "(", subject, ")");
     Str shown = written;
-    const ast::Expr *index = e->kind.index.index;
-    if (index->kind != .integer) {
+    const ast::Expr *position = e->kind.index.index;
+    if (position->kind != .integer) {
         char text[:] = format::push("the index of `", shown, "` must be a number written in the code: the list exists ",
                                     "only at compile time; for a list that is indexed at run time use a slice `[]T`");
         Str message = text;
-        fail_sink(index->span, message);
-    } else if (index->kind.integer.value >= count) {
+        fail_sink(position->span, message);
+    } else if (position->kind.integer.value >= count) {
         char text[:] = format::push("`", shown, "` has ", count, " entries, but this index is ",
-                                    index->kind.integer.value, "; the first is 0");
+                                    position->kind.integer.value, "; the first is 0");
         Str message = text;
-        fail_sink(index->span, message);
+        fail_sink(position->span, message);
     }
 }
 
