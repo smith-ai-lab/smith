@@ -53,6 +53,13 @@ export void test_front_fix_reserved_a_field_and_a_member_are_left() {
            "struct P {\n    int u8;\n};\nvoid f(struct P *p) {\n    p->u8 = 1;\n}\n");
 }
 
+export void test_front_fix_reserved_a_field_named_like_a_type_keeps_its_name_beside_a_local() {
+    expect("struct Holder {\n    const char *str;\n};\nint main() {\n    const char *str = \"a\";\n"
+           "    struct Holder h = {.str = str};\n    return h.str[0];\n}\n",
+           "struct Holder {\n    const char *str;\n};\nint main() {\n    const char *str_ = \"a\";\n"
+           "    struct Holder h = {.str = str_};\n    return h.str[0];\n}\n");
+}
+
 export void test_front_fix_reserved_a_text_in_smiths_own_syntax_is_left() {
     expect("fn f(a: u32, b: *u8) -> str:\n    x: u32 = 3\n    return \"a\"\n",
            "fn f(a: u32, b: *u8) -> str:\n    x: u32 = 3\n    return \"a\"\n");
