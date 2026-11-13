@@ -257,3 +257,4 @@ tests/prove/geometry/restrict_slices.smith	old-form: restrict on slices (#3221 t
 tests/smith-lang/cases/void-pointer-plain/src/main.smith	old-form: void * converts to T * implicitly outside a module (#398)
 tests/affine/enum_read_unchecked.smith	error-fixture
 tests/build_fixtures/dap/slices2/main.smith	old-form: restrict on slices (#3221 table, #3190 item 41)
+tests/smith-lang/cases/typetag-run/src/main.smith	old-form: union declared in .smith (C unions come from a C header, item 47)
