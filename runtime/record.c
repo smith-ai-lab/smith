@@ -463,17 +463,61 @@ static bool smith_rec_outside_now(const char *path, uint64_t *hash) {
     return ok;
 }
 
+// The verdicts on `fn` lines already given (#3458). A line says the same in every record that holds it (most records
+// run the same functions), and its verdict depends on the tree and the touched list alone, both fixed while the records
+// are read; without this each record loads and parses again every file it names, for a one-file cache that the next
+// file evicts: 26 s for 1855 records. A line is known by two hashes of its fields, so a collision needs both.
+enum { smith_rec_verdict_ok = 1, smith_rec_verdict_gone = 2, smith_rec_verdict_stale = 3 };
+constexpr size_t smith_rec_verdict_slots = (size_t)1 << 18;
+static uint64_t smith_rec_verdict_key[smith_rec_verdict_slots];
+static uint64_t smith_rec_verdict_check[smith_rec_verdict_slots];
+static unsigned char smith_rec_verdict_of[smith_rec_verdict_slots];
+
+static const char *smith_rec_fn_verdict_text(unsigned char verdict, const char *name) {
+    if (verdict == smith_rec_verdict_gone) return "a file it executed is gone";
+    return verdict == smith_rec_verdict_stale ? smith_cov_copy(name) : nullptr;
+}
+
+// The verdict on an `fn` line: its file is gone, its function changed or touched, or it holds.
+static const char *smith_rec_fn_line(char *const *field) {
+    uint64_t one = smith_rec_seed;
+    uint64_t two = smith_rec_fnv("fn-line", 8, 7);
+    for (size_t i = 1; i < 6; i++) { // each field, with its end
+        size_t length = strlen(field[i]) + 1;
+        one = smith_rec_fnv(field[i], length, one);
+        two = smith_rec_fnv(field[i], length, two * 31 + 1);
+    }
+    size_t slot = (size_t)one % smith_rec_verdict_slots;
+    for (size_t probe = 0; probe < 64; probe++, slot = (slot + 1) % smith_rec_verdict_slots) { // bounded by the probes
+        if (smith_rec_verdict_of[slot] == 0) break;
+        if (smith_rec_verdict_key[slot] == one && smith_rec_verdict_check[slot] == two)
+            return smith_rec_fn_verdict_text(smith_rec_verdict_of[slot], field[2]);
+    }
+    unsigned char verdict = smith_rec_verdict_ok;
+    if (!smith_rec_load_source(field[1])) {
+        verdict = smith_rec_verdict_gone;
+    } else {
+        bool found = smith_rec_find(strtoull(field[5], nullptr, 16), strtoul(field[3], nullptr, 10),
+                                    strtoull(field[4], nullptr, 16));
+        if (!found || smith_rec_touched(field[1], field[2])) verdict = smith_rec_verdict_stale;
+    }
+    for (size_t probe = 0; probe < 64; probe++, slot = (slot + 1) % smith_rec_verdict_slots) { // bounded by the probes
+        if (smith_rec_verdict_of[slot] != 0) continue;
+        smith_rec_verdict_key[slot] = one;
+        smith_rec_verdict_check[slot] = two;
+        smith_rec_verdict_of[slot] = verdict;
+        break;
+    }
+    return smith_rec_fn_verdict_text(verdict, field[2]);
+}
+
 static const char *smith_rec_stale_line(char *const *field, size_t count) {
     uint64_t hash = 0;
     if (count >= 2 && strcmp(field[0], "result") == 0)
         return strcmp(field[1], "pass") == 0 ? nullptr : "it failed last time";
     if (count >= 6 && strcmp(field[0], "fn") == 0) {
         smith_rec_mention(field[1]);
-        if (!smith_rec_load_source(field[1])) return "a file it executed is gone";
-        bool found = smith_rec_find(strtoull(field[5], nullptr, 16), strtoul(field[3], nullptr, 10),
-                                    strtoull(field[4], nullptr, 16));
-        if (found && smith_rec_touched(field[1], field[2])) return smith_cov_copy(field[2]);
-        return found ? nullptr : smith_cov_copy(field[2]);
+        return smith_rec_fn_line(field);
     }
     if (count >= 3 && strcmp(field[0], "outside") == 0) {
         smith_rec_mention(field[1]);
@@ -580,6 +624,7 @@ const SmithRecResult *smith_rec_result_of(const char *name) {
 size_t smith_rec_check_folder(const char *folder) {
     DIR *dir = opendir(folder);
     if (dir == nullptr) return 0;
+    memset(smith_rec_verdict_of, 0, sizeof smith_rec_verdict_of); // the tree and the touched list may differ since
     struct dirent *entry = nullptr;
     for (size_t guard = 0; (entry = readdir(dir)) != nullptr && guard < (size_t)1 << 20; guard++) { // the folder
         char path[PATH_MAX];
