@@ -176,7 +176,10 @@ export void test_frontend_coverage_a_count_served_from_the_store_equals_a_counte
         "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/third\" > third.tsv 2> third.err; "
         "sed -n 's/^frontend_coverage: row cache: \\([0-9]*\\) files reused, \\([0-9]*\\) measured.*/row \\1 \\2/p' "
         "third.err; grep -c 'pass' third.tsv");
-    scratch::expect_contains("frontend_coverage: the second count has the lines of the first", run.out, "SAME\n1\n");
+    scratch::expect_contains("frontend_coverage: the second count has the lines of the first", run.out,
+                             "SAME\n1\nlisted ");
+    scratch::expect_contains("frontend_coverage: the entries a count lists are in the store, 4 fixes and 4 rows",
+                             run.out, "listed 12 0\nrow ");
     scratch::expect_contains("frontend_coverage: the first measures the files that fix, the second serves them all, a "
                              "change to c reruns its readers",
                              run.out, "row 0 4 row 4 0 \nrow 1 3\n");
