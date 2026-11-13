@@ -451,6 +451,8 @@ static state::Status compare_finish(state::Emitter *e, const state::ThenExpr *w)
     ast::BinaryOp op = w->expr->kind.binary.op;
     state::Value right = state::pop_value(e);
     state::Value left = state::pop_value(e);
+    // An operand that failed earlier (the run goes on after an error) has no value to compare.
+    if (left.llvm == nullptr || right.llvm == nullptr) return state::fail("operand has no value", w->span);
     try state::unify_operands(e, &left, &right, w->span);
     // A `fn` value against `nullptr`: its code word is the pointer that is compared.
     if (left.ty.kind == .fn_value && right.ty.kind == .pointer)
