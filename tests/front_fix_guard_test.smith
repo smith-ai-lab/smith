@@ -210,15 +210,15 @@ export void test_front_fix_guard_an_error_body_that_returns_is_a_match_arm() {
                   "        .error(error): return error * 2\n    ok + 1\n"));
 }
 
-// Two such tests in one function do not both declare `ok`: the second is `ok_value`, which shadowing would refuse (#3478).
+// Two such tests in one function do not both declare `ok`: the second is `ok_value`, which shadowing would refuse
+// (#3478).
 export void test_front_fix_guard_a_second_match_in_a_function_does_not_hide_the_first() {
-    expect_fixed(
-        with_half("fn twice(n: i32) -> i32:\n    r := half(n)\n    if r == .error:\n        return r.error\n"
-                  "    s := half(r.ok)\n    if s == .error:\n        return s.error\n    s.ok\n"),
-        with_half("fn twice(n: i32) -> i32:\n    r := half(n)\n    ok := match r:\n        .ok(value): value\n"
-                  "        .error(error): return error\n    s := half(ok)\n"
-                  "    ok_value := match s:\n        .ok(value): value\n        .error(error): return error\n"
-                  "    ok_value\n"));
+    expect_fixed(with_half("fn twice(n: i32) -> i32:\n    r := half(n)\n    if r == .error:\n        return r.error\n"
+                           "    s := half(r.ok)\n    if s == .error:\n        return s.error\n    s.ok\n"),
+                 with_half("fn twice(n: i32) -> i32:\n    r := half(n)\n    ok := match r:\n        .ok(value): value\n"
+                           "        .error(error): return error\n    s := half(ok)\n"
+                           "    ok_value := match s:\n        .ok(value): value\n        .error(error): return error\n"
+                           "    ok_value\n"));
 }
 
 // A body that does not leave keeps the test, and the read below it stays for the next fix.

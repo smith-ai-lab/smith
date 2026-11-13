@@ -849,8 +849,8 @@ static Bool match_bound_in(core::Errors out, Usize start, Usize stop, Str bound)
     Str declared = types::message_of(format::push(bound, " := match "));
     for (Usize i = 0; i < countof(out); i++) {
         core::Edits fix = out[i].fix;
-        if (out[i].span.start >= start && out[i].span.start < stop && countof(fix) == 1
-            && starts_with(fix[0].text, declared))
+        if (out[i].span.start >= start && out[i].span.start < stop && countof(fix) == 1 &&
+            starts_with(fix[0].text, declared))
             return true;
     }
     return false;
