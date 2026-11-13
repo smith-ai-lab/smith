@@ -504,8 +504,8 @@ export void test_front_e2e_import_c_names_are_read_through_the_binding() {
     remove_all(folder);
 }
 
-// A C variadic called with a spread of a variadic function's `rest...` (std.test's `detail_add`): the checker records the
-// call with the pack expanded, and its callee is still the header's function (#3540).
+// A C variadic called with a spread of a variadic function's `rest...` (std.test's `detail_add`): the checker records
+// the call with the pack expanded, and its callee is still the header's function (#3540).
 export void test_front_e2e_a_c_variadic_is_called_with_a_spread() {
     use_header_flags();
     Str folder = folder_for("c_spread");
