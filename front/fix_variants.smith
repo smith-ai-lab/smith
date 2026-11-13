@@ -194,6 +194,12 @@ static Words add_tags(Words tags, Str source) {
     lex::Tokens tokens = read.ok;
     for (Usize i = 0; i + 1 < countof(tokens); i++) {
         lex::TokenKind k = tokens[i].kind;
+        // `typedef struct {...} Output;` names its type after the closing brace (#3325)
+        if (k == lex::right_brace && tokens[i + 1].kind == lex::type_name) {
+            Str alias = lex::text(source, tokens[i + 1]);
+            if (!has(tags, alias)) tags = push_word(tags, alias);
+            continue;
+        }
         if (k != lex::kw_struct && k != lex::kw_enum && k != lex::kw_union) continue;
         if (tokens[i + 1].kind != lex::type_name) continue;
         Str name = lex::text(source, tokens[i + 1]);
