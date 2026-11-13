@@ -42,15 +42,15 @@ __INT32_TYPE__ kind_opaque(__INT32_TYPE__ value) __asm__("_kind::opaque");
 __INT32_TYPE__ kind_opaque(__INT32_TYPE__ value) {
 #if SMITH_TARGET_ARCH == 1
  {
-__asm__("" : "+w"(value));
+value += 0;
 }
 #elif SMITH_TARGET_ARCH == 2
  {
-__asm__("" : "+r"(value));
+value += 0;
 }
 #else
  {
-__asm__("" : "+nonsense"(value));
+undeclared_function();
 }
 #endif
 

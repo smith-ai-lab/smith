@@ -1268,6 +1268,15 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
                                    : block_type(e, *block.element, block.count - 1);
             return state::success();
         }
+        if (node->kind == .index &&
+            ty->kind == .tuple) { // `sizeof(rest[0])`: the index is a number in the code (#3485)
+            const ast::Expr *at = node->kind.index.index;
+            state::PartsTy tuple = ty->kind.tuple;
+            if (at->kind != .integer || at->kind.integer.value >= tuple.part_count)
+                return state::fail("a tuple is indexed by a number known at compile time", node->span);
+            *ty = tuple.parts[at->kind.integer.value];
+            return state::success();
+        }
         state::Ty *element = nullptr;
         if (ty->kind == .pointer) element = ty->kind.pointer.element;
         if (ty->kind == .array) element = ty->kind.array.element;

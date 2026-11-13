@@ -1,0 +1,18 @@
+import c <stdio.h>
+
+# An option of a slice (#3485): `?[]mut i32` where `?[]i32` is wanted keeps its layout and gains const; a name narrowed
+# by `!= .none` is indexed and counted like the slice it holds.
+fn view(xs: *mut i32, n: usize) -> ?[]mut i32:
+    if n == 0:
+        return .none
+    return .some(xs[0:n])
+
+pub fn main() -> i32:
+    mut xs: [3]i32 = [4, 5, 6]
+    a: ?[]i32 = view(&xs[0], 3)
+    b: ?[]i32 = view(&xs[0], 0)
+    if a != .none:
+        _ := stdio.printf("%zu %d\n", countof(a), a[1])
+    if b == .none:
+        _ := stdio.printf("none\n")
+    return 0

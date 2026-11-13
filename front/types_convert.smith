@@ -614,6 +614,15 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
              .lit = lit,
              .pointer_bits = t->target.pointer_bytes * 8,
              .char_type = types::builtin(t, "Char")};
+    // `?[]mut T` where `?[]T` is wanted (#3485): the layout is the same, and the payload only gains const.
+    if (from->kind == .option && to->kind == .option) {
+        types::TypeRef have = types::element_of(from);
+        types::TypeRef want = types::element_of(to);
+        Bool gains_const = types::points_to_const(want) || !types::points_to_const(have);
+        if (have->kind == .slice && want->kind == .slice && types::element_of(have) == types::element_of(want) &&
+            gains_const)
+            return accept(identity);
+    }
     if (is_wrapper(from)) return from_wrapper(&c);
     if (is_wrapper(to)) {
         c.target_type = types::element_of(to);
