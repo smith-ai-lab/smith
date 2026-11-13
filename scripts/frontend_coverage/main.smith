@@ -980,8 +980,20 @@ static void list_projects(const char *root) {
         typeof(const char[:]) base = line[slash:countof(line)];
         Bool named = same(base, "build.c") || same(base, "build.smith") || same(base, "main.smith");
         Bool again = project_count > 1 && same(text_of(projects[project_count - 1][0:path_size]), line[0:slash - 1]);
-        if (slash > 1 && named && !library && !again) {
-            copy_text(projects[project_count][0:path_size], line[0:slash - 1]);
+        // A main.smith below a `src` folder (`case/src/game/main.smith`) is a module of the project that holds that
+        // `src` (`case`): its source root is `case/src`, so `import lib.text` finds `case/src/lib/text.smith`.
+        Usize folder_end = slash > 0 ? slash - 1 : 0;
+        for (Usize k = 0; k + 5 <= folder_end; k++) {
+            Bool at_start = k == 0 || line[k - 1] == '/';
+            if (at_start && same(line[k:k + 4], "src/") && k + 5 < folder_end) {
+                folder_end = k > 0 ? k - 1 : 0;
+                break;
+            }
+        }
+        Bool again_nested = project_count > 1 && folder_end < slash - 1 &&
+                            same(text_of(projects[project_count - 1][0:path_size]), line[0:folder_end]);
+        if (slash > 1 && named && !library && !again && !again_nested && folder_end > 0) {
+            copy_text(projects[project_count][0:path_size], line[0:folder_end]);
             project_count += 1;
         }
         at = end + 1;

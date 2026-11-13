@@ -266,3 +266,17 @@ export void test_front_fix_variants_the_line_after_an_indented_body_is_no_varian
     fix_variants::Found found = fix_variants::collect(source);
     test::check_equal(countof(found.names), (Usize)0);
 }
+
+// A typedef is a type, not a variant: `Read` stays when an enum of the tree has a variant `Read` (#3544,
+// front_emit_record_test).
+export void test_front_fix_variants_a_name_that_is_a_typedef_stays() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str mode = "enum Mode:\n    Read\n    Write\n";
+    Str user = "Read := fn(i32) -> i64\n\nfn f():\n    r: Read = undefined\n";
+    fix_variants::Word sources[2] = {word(mode), word(user)};
+    fix_variants::Words out = fix_variants::rename_all(sources);
+    test::check_equal(out[1].text, user);
+}
