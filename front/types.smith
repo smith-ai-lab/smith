@@ -3855,8 +3855,8 @@ static const Slot *visible_at(const Ty *record, Usize at) {
     return nullptr;
 }
 
-// The type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`, `str`).
-static Str written_name(TypeRef t) {
+// The base of a type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`, `str`).
+static Str written_base(TypeRef t) {
     Str shown = show(t);
     if (t->kind != .integer && t->kind != .floating && t->kind != .bool_type && t->kind != .text) return shown;
     char lowered[:] = mem::alloc_slice(char, countof(shown));
@@ -3865,6 +3865,33 @@ static Str written_name(TypeRef t) {
         lowered[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch - 'A' + 'a') : ch;
     }
     Str text = lowered;
+    return text;
+}
+
+// The type as smith's own syntax writes it: a pointer `*T` or `*mut T`, a slice `[]T` or `[]mut T`, an array `[N]T`,
+// peeled from the outside in (#3609: a field of `fields(T)` is read back as this text, so `F64[:]` must be `[]mut f64`).
+static Str written_name(TypeRef t) {
+    Str prefix = "";
+    while (true) {
+        if (t->kind == .pointer) {
+            char grown[:] = format::push(prefix, t->kind.pointer.pointee_const ? "*" : "*mut ");
+            prefix = grown;
+            t = t->kind.pointer.element;
+        } else if (t->kind == .slice) {
+            char grown[:] = format::push(prefix, t->kind.slice.pointee_const ? "[]" : "[]mut ");
+            prefix = grown;
+            t = t->kind.slice.element;
+        } else if (t->kind == .array) {
+            char grown[:] = format::push(prefix, "[", t->kind.array.count, "]");
+            prefix = grown;
+            t = t->kind.array.element;
+        } else {
+            break;
+        }
+    }
+    if (countof(prefix) == 0) return written_base(t);
+    char joined[:] = format::push(prefix, written_base(t));
+    Str text = joined;
     return text;
 }
 
