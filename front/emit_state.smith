@@ -176,11 +176,11 @@ export typedef enum {
     SizedTy vector; // `vec(T, N)`
     PartsTy result; // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
     variant_enum; // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
-} TyKind;
+} TyShape;
 
 // A type as the emitter knows it: the LLVM type, the name as written and what LLVM's does not say, by kind.
 export struct Ty {
-    TyKind kind;
+    TyShape kind;
     c::LLVMTypeRef llvm;
     Str name;
 };
@@ -324,6 +324,7 @@ export struct RecordType {
     FieldInfo fields[:];
     Bool overlay;    // a C union: every field is at offset 0 of the one array that sizes it (a field is read in place)
     Bool shell;      // named so a record above it can point to it; its fields come when its own declaration is reached
+    Bool forward;    // declared with no body (`struct X;`): the declaration with a body completes it
     Bool owned_name; // an anonymous struct's key (front/emit_record.smith): `release` frees the name with the fields
 };
 

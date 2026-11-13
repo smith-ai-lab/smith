@@ -3062,14 +3062,12 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
         push_arguments(w, args, nullptr);
         return;
     }
-    syntax::Edits bound = {};
-    if (signature == nullptr && ct->kind == .option) bound = guarded_read(c, callee, true);
-    if (countof(bound) > 0) { // `a.f(x)` where a test of the option field `a.f` guards the call: `f(x)` (#2557)
-        types::fail_fix(
-            c, callee->span,
-            msg(format::push("`", types::show(ct), "` may be `.none`: bind it where it is tested, with `if ",
-                             bound[0].text, " := ...:`")),
-            bound);
+    if (signature == nullptr &&
+        ct->kind == .option) { // a function held in an option does not narrow as a field (#3230)
+        Str held = "hook";
+        if (callee->kind == .member) held = callee->kind.member.name;
+        types::failf(c, callee->span, "`", types::show(ct), "` may be `.none`: name it first (`", held,
+                     " := ...`, the field on the right), test the name with `!= .none`, then call it");
         push_arguments(w, args, nullptr);
         return;
     }
@@ -6890,12 +6888,28 @@ static void spread_resolved(types::Checked *c, Work *w, Frame f) {
 }
 
 // The variant built in the place of `E(name = payload)` is typed: the call takes its type (stage 11).
+// The payload as the program wrote it, `(a = 1, b = 2)`: the twin carries it as the struct list `payload_value` made
+// (#2434), so the written node gets the twin payload's type too; the emitter reads the call as written (#3328).
+static void written_payload_typed(types::Checked *c, const ast::Expr *written, const ast::Expr *twin) {
+    const ast::Expr *given = nullptr;
+    if (written->kind == .call && countof(written->kind.call.args) == 1) {
+        const ast::Expr *arg = written->kind.call.args[0];
+        given = arg->kind == .named_arg ? arg->kind.named_arg.value : nullptr;
+    } else if (written->kind == .compound && countof(written->kind.compound.items) == 1) {
+        given = written->kind.compound.items[0].value;
+    }
+    if (given == nullptr || given->kind != .tuple_lit || twin->kind != .variant) return;
+    types::TypeRef made = types::type_of(c, twin->kind.variant.payload);
+    if (made != nullptr && made != invalid(c) && types::type_of(c, given) == nullptr) types::set_type(c, given, made);
+}
+
 static void enum_variant_after(types::Checked *c, Frame f) {
     types::TypeRef t = types::type_of(c, f.twin);
     if (t == nullptr || t == invalid(c)) {
         poison(c, f.node);
         return;
     }
+    written_payload_typed(c, f.node, f.twin);
     finish(c, f.node, t, f.expected);
 }
 

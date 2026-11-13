@@ -1041,9 +1041,21 @@ jobs:
               prev="$RUNNER_TEMP/previous/results.tsv"; base=${sha:0:7}
               # the verdict row the run of the base published (none: the base ran an older gate, this is its first run)
               curl -fsSL --retry 3 "${url%frontend-coverage-table.tsv}frontend-gate.tsv" >"$verdict" 2>/dev/null || rm -f "$verdict"
+              first=$sha
               break
             fi
           done
+          # the table of the base's own base (#3509): with the base's table it shows whether a file the base's run would
+          # have refused really passed before and failed after; none: that would-refuse cannot be checked
+          older="$RUNNER_TEMP/previous/older.tsv"
+          rm -f "$older"
+          if [ -n "$base" ]; then
+            for sha in $(git rev-list --first-parent -n 20 "$first" | tail -n +2); do
+              url="https://github.com/$GITHUB_REPOSITORY/releases/download/test-cache-${sha:0:7}-count-table/frontend-coverage-table.tsv"
+              curl -fsSL --retry 3 "$url" >"$older" 2>/dev/null && [ -s "$older" ] && break
+              rm -f "$older"
+            done
+          fi
           gate="$RUNNER_TEMP/gate"; mkdir -p "$gate"; cp scripts/frontend_coverage/main.smith "$gate/"
           export SMITH_COVERAGE_EXCLUDED="$GITHUB_WORKSPACE/scripts/frontend_coverage/excluded.txt"
           # the log of the last queue runs' outcomes (#3443, item 5): a gate that refused three different pull requests in
@@ -1064,13 +1076,13 @@ jobs:
             # has no row here (`regressed` of the count's tool, with its test)
             # (the tool alone in a folder, as its tests run it; the excluded list is the change's own)
             # gate-begin
-            (cd "$gate" && "$SMITH" run -- regressed "$prev" "$now" "$verdict") >"$RUNNER_TEMP/gate-out.txt"
+            (cd "$gate" && "$SMITH" run -- regressed "$prev" "$now" "$verdict" "$older") >"$RUNNER_TEMP/gate-out.txt"
             # (`smith run` prints its build lines first; the rows of the tool are the lines with three fields, not
             # its `gate-row` and `gate-log` lines: the gate's own bookkeeping is not a file that regressed)
             awk -F'\t' 'NF >= 3 && $1 !~ /^gate-/' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/regressed.txt"
             # gate-end
           fi
-          awk -F'\t' '$1 == "gate-row" {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/frontend-gate.tsv"
+          awk -F'\t' '$1 == "gate-row" {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/frontend-gate.tsv"
           mode=report-only
           [ "$(awk -F'\t' '{print $5}' "$RUNNER_TEMP/frontend-gate.tsv")" = refusing ] && mode=refusing
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
@@ -1146,7 +1158,7 @@ jobs:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
     # The front-end count is here (#3369): `count-shard` and `count` are owed by a full queue run, and `count` refuses a regression.
-    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check, release-pack-linux, count-shard, count]
+    needs: [changes, pack, macos, macos-lint, docs-linux, build-linux, test-linux, check, release-pack-linux, release-package-linux, count-shard, count]
     # not on a push to main (#3172): no required check reads that run, whose own jobs fail it when they fail
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
@@ -1174,6 +1186,7 @@ jobs:
           TEST_LINUX: ${{ needs.test-linux.result }}
           CHECK: ${{ needs.check.result }}
           RELEASE_PACK_LINUX: ${{ needs.release-pack-linux.result }}
+          RELEASE_PACKAGE_LINUX: ${{ needs.release-package-linux.result }}
           COUNT_SHARD: ${{ needs.count-shard.result }}
           COUNT: ${{ needs.count.result }}
           PRS: ${{ needs.changes.outputs.prs }}
@@ -1214,7 +1227,7 @@ jobs:
           esac
           if [ "$MAC_RUN" = true ]; then owed="$owed MACOS MACOS_LINT"; fi
           # a full merge group builds the Linux release main will publish (#2832): one that does not build fails the entry
-          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_LINUX"; fi
+          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed RELEASE_PACK_LINUX RELEASE_PACKAGE_LINUX"; fi
           # and counts the files the new front end compiles, and refuses a change that makes a passing file fail (#3369)
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed COUNT_SHARD COUNT"; fi
           for name in $owed; do
@@ -1645,11 +1658,10 @@ jobs:
   release-pack-linux:
     # the Linux release of the commit a queue run tests (#2832), as `release` builds the macOS one on the push (#3172): the
     # tarball, its checksum and the release tool `publish` and `prune` run, in this run's artifact
-    # `stage0-<commit>-linux-x86_64` (3 days). It was packed in the background of `frontend-coverage-build`, whose warm
-    # runs then waited 1.6 to 1.8 minutes for it (#3052); here it is beside the tests and off the count's path. Its
-    # release build is served by the release steps main's `warm` saves. `ci` owes it, so a release that does not build
-    # fails the queue run. It also packs the build for the count's shards (#3369): the release smith is the one the count
-    # measures.
+    # `stage0-<commit>-linux-x86_64` (3 days). Here it only builds the release smith (served by the release steps
+    # main's `warm` saves) and saves the build for the count's shards (#3369): the release smith is the one the count
+    # measures. The packaging is `release-package-linux`, which starts from that build, so the shards do not wait for
+    # it. `ci` owes both, so a release that does not build or package fails the queue run.
     needs: [changes, pack]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
@@ -1665,6 +1677,43 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - name: Pack the build for the count's shards (#3369)
+        # the release smith this job built is the smith the count measures: `count-shard` restores it, so the count
+        # builds nothing of its own
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - name: Save the build for the count's shards
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
+
+  release-package-linux:
+    # the Linux release tarball of the commit a queue run tests (#2832): packaged here, off the count's path (#3369).
+    # `release-pack-linux` ends once it has saved the build the count's shards restore; the packaging (2.3 minutes of
+    # a 4.2-minute job) took the shards' start from 2 to 4.4 minutes into the run. This job restores that same build, so
+    # the tarball is of the release smith the count measures. `ci` owes it, so a release that does not package fails
+    # the queue run.
+    needs: [changes, release-pack-linux]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.release-pack-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux-release
       - name: Package the release
         run: |
           start=$SECONDS
@@ -1688,18 +1737,6 @@ jobs:
           path: ${{ runner.temp }}/stage0
           compression-level: 0
           retention-days: 3
-      - name: Pack the build for the count's shards (#3369)
-        # the release smith this job built is the smith the count measures: `count-shard` restores it, so the count
-        # builds nothing of its own
-        shell: bash
-        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
-      - name: Save the build for the count's shards
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-release
-          path: ${{ runner.temp }}/build.tar.zst
-          compression-level: 0
-          retention-days: 1
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash

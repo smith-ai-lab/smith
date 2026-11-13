@@ -8,7 +8,7 @@ import std::test;
 
 struct Bag {
     I32 items[:];
-    char name[:];
+    const char name[:];
 };
 
 static I32 sum(I32 xs[:]) {
@@ -65,7 +65,7 @@ export void test_slice_an_empty_slice_has_a_null_pointer() {
 }
 
 export void test_slice_a_text_literal_has_no_terminating_zero() {
-    char word[:] = "abc";
+    const char word[:] = "abc";
     test::check_equal(countof(word), 3);
     char with_zero[_] = "abc";
     char again[:] = with_zero;
@@ -86,9 +86,9 @@ export void test_slice_results_fields_and_nested_chains() {
 }
 
 export void test_slice_a_slice_passes_to_c_as_a_pointer() {
-    char word[:] = "hello";
-    test::check_equal(c::strncmp(word, "hello", countof(word)), 0);
-    test::check_equal(c::strncmp(word, "help!", countof(word)) > 0, false);
+    const char word[:] = "hello";
+    test::check_equal(c::strncmp(&word[0], "hello", countof(word)), 0);
+    test::check_equal(c::strncmp(&word[0], "help!", countof(word)) > 0, false);
 }
 
 export void test_slice_an_index_past_the_end_stops() {

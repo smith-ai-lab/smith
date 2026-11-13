@@ -192,8 +192,8 @@ export core::Errors edits(Str source, const ast::Module *module) {
         Usize body = function_body->span.start;
         if (body >= end) continue;
         Bool has_element = false;
-        for (Usize k = d->span.start; k + 3 < body; k++)
-            if (at(source, k, "[T]")) has_element = true;
+        for (Usize scan = d->span.start; scan + 3 < body; scan++)
+            if (at(source, scan, "[T]")) has_element = true;
         for (Usize k = 0; k < countof(params); k++) {
             const ast::TypeExpr *type = params[k].type;
             if (type == nullptr || type->kind != .auto_type || params[k].is_pack || params[k].is_rest) continue;

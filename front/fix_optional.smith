@@ -361,8 +361,7 @@ static Usize block_end(Str source, Usize line) {
 // A read `name.some` of a name the checker cannot narrow (a `mut` name, assigned after its declaration) under an `if`
 // that tests it: the value is named first, `v := name` above the `if`, and the test and the read use `v` (item 27,
 // #3211). The `if` is the first read's; its other reads are single edits. Not when the block writes the name.
-static core::Errors named_copy(core::Errors out, Str source, Usize line, ast::Span read, Str name) {
-    Str copy = types::message_of(format::push(name, "_value"));
+static core::Errors named_copy(core::Errors out, Str source, Usize line, ast::Span read, Str name, Str copy) {
     if (assigned_in(source, line, block_end(source, line), name)) return out;
     for (Usize i = 0; i < countof(out); i++)
         if (out[i].span.start == read.start) return out;
@@ -414,7 +413,26 @@ static core::Errors value_read(core::Errors out, Str source, types::Error e) {
         !has_text(e.message, "a value that may be absent (`?T`) is not a `T`"))
         return out;
     Usize line = test_line(source, e.span.start, base);
-    if (line < countof(source)) out = named_copy(out, source, line, e.span, base);
+    if (line < countof(source))
+        out = named_copy(out, source, line, e.span, base, types::message_of(format::push(base, "_value")));
+    return out;
+}
+
+// A call `e.hook(x)` of a function held in an option field, under an `if` that tests the field (item 27, #3230): the
+// field does not narrow, so it is named first, `hook := e.hook` above the `if`, and the test and the call use `hook`.
+// The checker reports the call with "name it first". A call with no test above it stays an error.
+static core::Errors hook_call(core::Errors out, Str source, types::Error e) {
+    Str chain = source[e.span.start:e.span.end];
+    if (!member_chain(chain)) return out;
+    Usize dot = countof(chain);
+    while (dot > 0 && chain[dot - 1] != '.')
+        dot -= 1;
+    Str copy = chain[dot:countof(chain)];
+    Usize function = enclosing_function(source, e.span.start);
+    Str named = types::message_of(format::push(copy, " :="));
+    if (has_text(source[function:e.span.start], named)) return out;
+    Usize line = test_line(source, e.span.start, chain);
+    if (line < countof(source)) out = named_copy(out, source, line, e.span, chain, copy);
     return out;
 }
 
@@ -423,6 +441,10 @@ export core::Errors some_reads(Str source, const types::Checked *c) {
     Str lead = "`.` needs a record, found `";
     for (Usize i = 0; i < c->error_count; i++) {
         types::Error e = c->errors[i];
+        if (countof(e.fix) == 0 && countof(e.fix_module) == 0 && e.span.end <= countof(source) &&
+            e.span.start < e.span.end && has_text(e.message, "may be `.none`: name it first (") &&
+            has_text(e.message, "then call it"))
+            out = hook_call(out, source, e);
         if (countof(e.fix) == 0 && countof(e.fix_module) == 0 && e.span.end <= countof(source) &&
             e.span.start < e.span.end && !starts_with(e.message, lead))
             out = value_read(out, source, e);
@@ -443,7 +465,8 @@ export core::Errors some_reads(Str source, const types::Checked *c) {
             out = some_fix(out, e.span.end - 5, e.span.end, "", why);
         } else if (option && name) {
             Usize line = test_line(source, e.span.start, base);
-            if (line < countof(source)) out = named_copy(out, source, line, e.span, base);
+            if (line < countof(source))
+                out = named_copy(out, source, line, e.span, base, types::message_of(format::push(base, "_value")));
         } else if (option && member_chain(base)) {
             out = field_tests(out, source, enclosing_function(source, e.span.start), e.span.start, base);
         }

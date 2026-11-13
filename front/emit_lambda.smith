@@ -219,7 +219,7 @@ export state::TyResult pointer_from_checked(state::Emitter *e, types::TypeRef t)
     if (made == .error) return made;
     state::Ty ty = made.ok;
     if (ty.kind == .fn_value) {
-        state::TyKind bare = {.fn_pointer = ty.kind.fn_value};
+        state::TyShape bare = {.fn_pointer = ty.kind.fn_value};
         ty.kind = bare;
     }
     ty.llvm = state::pointer_type(e, 0);

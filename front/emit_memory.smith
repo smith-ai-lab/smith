@@ -221,15 +221,18 @@ static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str n
     Usize at = 0;
     c::LLVMTypeRef named = nullptr;
     if (find_record_named(e, name, &at)) {
-        if (!e->records[at].shell) return state::failf(d->span, name, " is declared twice");
-        named = e->records[at].ty.llvm; // named ahead by `record_shell`: its fields are set now
+        if (opaque) return state::success(); // a second forward declaration, or one after the definition
+        if (!e->records[at].shell && !e->records[at].forward) return state::failf(d->span, name, " is declared twice");
+        named =
+            e->records[at].ty.llvm; // named ahead by `record_shell` or a forward declaration: its fields are set now
         e->records[at].shell = false;
+        e->records[at].forward = false;
     } else {
         const char *text = label.data;
         named = c::LLVMStructCreateNamed(e->context, text);
         state::Ty ty = {.kind = .record, .llvm = named, .name = name};
         at = e->record_count;
-        add_record(e, (state::RecordType){.name = name, .ty = ty});
+        add_record(e, (state::RecordType){.name = name, .ty = ty, .forward = opaque});
     }
     if (opaque) {
         return state::success();

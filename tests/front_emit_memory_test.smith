@@ -353,6 +353,26 @@ export void test_front_emit_memory_record_read_through_a_pointer() {
     emit_jit::stop(&host);
 }
 
+// A record declared with no body (`struct Point;`, a forward declaration) and then with its body is one record, not
+// "declared twice" (#3493: front/ast.smith declares `Expr` ahead of its definition).
+export void test_front_emit_memory_forward_declaration_then_definition() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Decl *ahead = point_record();
+    test::check_equal(ahead->kind == .record, true);
+    if (ahead->kind == .record) ahead->kind.record.opaque = true;
+    ast::StmtRef items[1] = {give(binary(.add, arrow(name("p"), "x"), arrow(name("p"), "y")))};
+    ast::Param params[1] = {ast::param("p", pointer_type(ast::named("Point")))};
+    ast::Module m = module3(ahead, point_record(), function_of("sum", params, i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    LengthFn sum = (LengthFn)symbol_of(&host, "front::test::sum");
+    Point p = {.x = 3, .y = 4};
+    test::check_equal(sum(&p), 7);
+    emit_jit::stop(&host);
+}
+
 // A record with mixed sizes, written by the emitted code and read by a struct the C compiler laid out.
 // I32 fill(Mixed *m) { m->a = 1; m->b = 2; m->c = 3; m->d = 4; return 0; }
 export void test_front_emit_memory_record_layout_matches_the_c_compilers() {
