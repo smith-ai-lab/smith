@@ -10951,9 +10951,10 @@ import <math.h>;
 int main() {
     rp::Handle handle = {.fd = 5};
     rp::Replay replay = rp::open(&handle, "last.replay");
+    rp::Mode mode = rp::Slow;
     F32 root = c::sqrtf(16.0f);
     c::printf("frames=%llu name=%s length=%zu version=%u mode=%d root=%.1f eof=%d\n", (unsigned long long)replay.frames,
-              replay.name.data, text::length(replay.name), (unsigned)rp::version, rp::Slow, (double)root, c::EOF);
+              replay.name.data, text::length(replay.name), (unsigned)rp::version, (int)mode, (double)root, -1);
     c::printf("counter=%u\n", rp::counter);
     U8 bytes[3] = {1, 2, 3};
     c::printf("checksum=%llu\n", (unsigned long long)rp::checksum(bytes, 3));
