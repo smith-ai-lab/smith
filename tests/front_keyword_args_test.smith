@@ -88,8 +88,6 @@ static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
 
 typedef I32 (*Pick)(I32);
 
-typedef I32 (*Pick)(I32);
-
 // The checker's first error message for `source` ("" when it has none).
 static Str first_error(Str source) {
     Scenario s = {};

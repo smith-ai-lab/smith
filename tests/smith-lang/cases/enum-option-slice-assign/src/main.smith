@@ -7,8 +7,9 @@ typedef Option(Text) MaybeText; // names the struct once, as the first mention o
 static Usize first_len(Text word, Bool b) {
     Option(Text) found = .none;
     if (b) found = word[0:1];
-    if (found == .none) return 9;
-    return countof(found.some);
+    Option(Text) seen = found;
+    if (seen == .none) return 9;
+    return countof(seen.some);
 }
 
 static Usize typeof_len(Text word) {

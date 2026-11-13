@@ -1822,6 +1822,29 @@ static state::Ty pointer_to(state::Emitter *e, state::Ty *inner) {
 static Str bare_name(Str name);
 static void ensure_enum(state::Emitter *e, types::TypeRef t);
 
+// The type of a slice's element when it is a scalar, a record, an enumeration, a `str`, or a pointer to one of those
+// (`Decl *[:]`, `Str[:]`, #3478): one level, no recursion.
+static Bool slice_element_of_checked(state::Emitter *e, types::TypeRef element, state::Ty *inner) {
+    if (scalar_of_checked(e, element, inner)) return true;
+    if (element->kind == .record && find_record_by_name(e, types::name_of(element), inner)) return true;
+    if (element->kind == .enumeration && matching::type_enum(e, types::name_of(element), inner)) return true;
+    if (element->kind == .text) {
+        state::Ty character = {};
+        state::scalar_type(e, "char", &character);
+        *inner = emit_memory::slice_type(e, character, "str");
+        return true;
+    }
+    if (element->kind != .pointer) return false;
+    types::TypeRef pointee = types::element_of(element);
+    state::Ty held = {};
+    Bool known = scalar_of_checked(e, pointee, &held);
+    known = known || (pointee->kind == .record && find_record_by_name(e, types::name_of(pointee), &held));
+    known = known || (pointee->kind == .enumeration && matching::type_enum(e, types::name_of(pointee), &held));
+    if (!known) return false;
+    *inner = pointer_to(e, own_type(e, held));
+    return true;
+}
+
 // A slice, `str` or block (`[,]T`, `mem.alloc(T, [a, b])`'s) the checker names, when its element is a scalar, a record
 // or an enumeration.
 static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *ty) {
@@ -1835,9 +1858,7 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
     types::TypeRef element = types::element_of(base);
     state::Ty inner = {};
     ensure_enum(e, element); // an enumeration of another module is declared when the type that holds it is needed
-    Bool known = scalar_of_checked(e, element, &inner);
-    known = known || (element->kind == .record && find_record_by_name(e, types::name_of(element), &inner));
-    known = known || (element->kind == .enumeration && matching::type_enum(e, types::name_of(element), &inner));
+    Bool known = slice_element_of_checked(e, element, &inner);
     known =
         known || (element->kind == .enumeration && matching::type_enum(e, bare_name(types::name_of(element)), &inner));
     if (!known && element->kind == .record && e->options.checked != nullptr) { // a record of an imported module
@@ -1850,22 +1871,6 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
                 known = true;
             }
         }
-    }
-    if (!known && element->kind == .pointer) { // a slice of pointers to a scalar, record or enumeration
-        types::TypeRef target = types::element_of(element);
-        state::Ty pointee = {};
-        Bool seen = scalar_of_checked(e, target, &pointee);
-        seen = seen || (target->kind == .record && find_record_by_name(e, types::name_of(target), &pointee));
-        seen = seen || (target->kind == .enumeration && matching::type_enum(e, types::name_of(target), &pointee));
-        if (seen) {
-            inner = pointer_to(e, own_type(e, pointee));
-            known = true;
-        }
-    }
-    if (!known && element->kind == .text) { // a slice of `str`: the element is the slice type of `char`
-        state::scalar_type(e, "char", &character);
-        inner = emit_memory::slice_type(e, character, "str");
-        known = true;
     }
     if (!known) return false;
     *ty = base->kind == .block ? emit_memory::block_type(e, inner, types::count_of(base))

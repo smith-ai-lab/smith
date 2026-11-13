@@ -176,11 +176,11 @@ export typedef enum {
     SizedTy vector; // `vec(T, N)`
     PartsTy result; // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
     variant_enum; // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
-} TyKind;
+} TyShape;
 
 // A type as the emitter knows it: the LLVM type, the name as written and what LLVM's does not say, by kind.
 export struct Ty {
-    TyKind kind;
+    TyShape kind;
     c::LLVMTypeRef llvm;
     Str name;
 };

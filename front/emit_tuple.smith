@@ -259,7 +259,7 @@ static Bool record_hint(state::Emitter *e, const ast::Expr *x, state::Hint hint,
     }
     for (Usize i = 0; i < e->record_count; i++) {
         state::RecordType record = e->records[i];
-        if (record.ty.llvm != hint.ty.llvm || countof(record.fields) != countof(items)) continue;
+        if (record.ty.llvm != hint.ty.llvm || countof(items) > countof(record.fields)) continue;
         *at = i;
         return true;
     }
@@ -281,7 +281,7 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
             if (!(item->kind == .named_arg)) continue;
             state::RecordType record = e->records[record_at];
             Usize field = 0;
-            for (Usize k = 0; k < count; k++) {
+            for (Usize k = 0; k < countof(record.fields); k++) {
                 if (state::same_text(record.fields[k].name, item->kind.named_arg.name)) field = k;
             }
             state::push_eval(e, item->kind.named_arg.value, state::hint_of(record.fields[field].ty));

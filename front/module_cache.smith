@@ -137,8 +137,17 @@ static Usize region_size(mem::Allocator *self, const void *block) {
     return *(const Usize *)((const U8 *)block - block_header);
 }
 
-static mem::Allocator region_allocator = {
-    .alloc = region_alloc, .realloc = region_realloc, .free = region_free, .owns = region_owns, .size = region_size};
+static mem::Allocator region_allocator;
+
+// The allocator of the regions, its functions put in before each use.
+static mem::Allocator *region_allocator_ready() {
+    region_allocator.alloc = region_alloc;
+    region_allocator.realloc = region_realloc;
+    region_allocator.free = region_free;
+    region_allocator.owns = region_owns;
+    region_allocator.size = region_size;
+    return &region_allocator;
+}
 
 export Str key(Str kind, Str path, Str named, Str source) {
     format::Chars material = format::push("smith-module 1\n", kind, "\n", path, "\n", named, "\n", source);
@@ -170,7 +179,7 @@ export Bool begin(Usize size) {
     }
     current = &regions[region_count];
     region_count += 1;
-    before_begin = mem::set_allocator(&region_allocator);
+    before_begin = mem::set_allocator(region_allocator_ready());
     return true;
 }
 

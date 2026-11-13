@@ -619,9 +619,11 @@ export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
 static Bool filled_dimension(types::Checked *c, const ast::Expr *node, U64 *count) {
     U64 folded = *count;
     folded = 0;
-    if (c->options.length != nullptr && c->options.length(c, node, "", &folded)) {
-        *count = folded;
-        return true;
+    if (c->options.length != nullptr) {
+        if (c->options.length(c, node, "", &folded)) {
+            *count = folded;
+            return true;
+        }
     }
     types::fail(c, node->span,
                 "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");
@@ -766,8 +768,9 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
 // Whether `text` is Str and `other` a read-only slice of char: one type to `typeof(x) == T` (#2853). A string piece of
 // std.format is `const char[:]` in today's syntax and `[]char` once fixed, and a `str` argument meets that rule.
 static Bool text_and_chars(const types::Checked *c, types::TypeRef text, types::TypeRef other) {
-    if (text->kind != .text || other->kind != .slice) return false;
-    return other->kind.slice.pointee_const && other->kind.slice.element == named(c, "Char");
+    if (text->kind != .text) return false;
+    if (other->kind == .slice) return other->kind.slice.pointee_const && other->kind.slice.element == named(c, "Char");
+    return false;
 }
 
 // `typeof(x) == f32` (or `!=`): two types written as values are the same type or they are not. False when it is no

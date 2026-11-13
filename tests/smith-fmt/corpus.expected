@@ -201,10 +201,11 @@ typedef struct {
     U8 cells[c::SIDE][c::depth];
     U32 n;
 } Typed;
+struct Inner {
+    U8 x[c::SIDE * 2];
+};
 struct Nested {
-    struct {
-        U8 x[c::SIDE * 2];
-    } in;
+    struct Inner in;
     U8 y[c::SIDE + 1];
 };
 U8 table[c::SIDE];
@@ -1419,8 +1420,9 @@ typedef Option(Text) MaybeText; // names the struct once, as the first mention o
 static Usize first_len(Text word, Bool b) {
     Option(Text) found = .none;
     if (b) found = word[0:1];
-    if (found == .none) return 9;
-    return countof(found.some);
+    Option(Text) seen = found;
+    if (seen == .none) return 9;
+    return countof(seen.some);
 }
 
 static Usize typeof_len(Text word) {
@@ -1634,22 +1636,22 @@ static Bool is_empty(Shape s) {
 }
 
 static Bool is_big_circle(Shape s) {
-    return s == .circle && s.circle.radius > 1.0f;
+    if (s == .circle) return s.circle.radius > 1.0f;
+    return false;
 }
 
-static void grow(Shape *p) {
-    switch (*p) {
+static Shape grown(Shape s) {
+    switch (s) {
     case .circle:
-        p->circle.radius *= 2;
-        break;
+        return {.circle = {.radius = s.circle.radius * 2}};
     case .rect:
-        p->rect.w *= 2;
-        p->rect.h *= 2;
-        break;
+        return {.rect = {.w = s.rect.w * 2, .h = s.rect.h * 2}};
     case .inline_one:
+        return s;
     case .empty:
-        break;
+        return s;
     }
+    return s;
 }
 
 static Token flip(Token t) {
@@ -1669,8 +1671,8 @@ I32 main() {
     d = .empty;
     d = {.inline_one = {.a = 5}};
     c::printf("%g %g %g %g %d %d\n", area(a), area(b), area(c), area(d), is_empty(b), is_empty(a));
-    grow(&a);
-    grow(&c);
+    a = grown(a);
+    c = grown(c);
     Shape *p = &b;
     c::printf("%g %g %d %d\n", area(a), area(c), is_big_circle(a), *p == .empty);
     c::printf("%g %d %d\n", twice(.empty), .empty == b, twice({.circle = {.radius = 1}}) > 5);
@@ -5893,11 +5895,12 @@ static Bool fifth(Option(Usize) at) {
 export I32 run(void) {
     Usize xs[4] = {2, 4, 5, 6};
     Usize total = 0;
-    for (Usize i = 0; i < 4; i++)
+    Usize four = 4;
+    for (Usize i = 0; i < four; i++)
         if (same::equal(i, xs[i] - 4)) total += i;
-    for (Usize i = 0; i < 4; i++)
+    for (Usize i = 0; i < four; i++)
         total += same::equal(xs[i], xs[i]) ? 1u : 0u;
-    for (Usize i = 0; i < 4; i++)
+    for (Usize i = 0; i < four; i++)
         total += same::equal(i, i) ? 1u : 0u;
     for (Usize i = 0; i < 2; i++)
         for (Usize j = 0; j < 2; j++)
@@ -7451,12 +7454,12 @@ static I32 plus(I32 a, I32 b) {
 int main() {
     I32 a = apply::twice(inc, 5);
     I32 b = apply::twice(apply::triple, 2);
-    F64 c = apply::twice(half, 10.0);
+    F64 h = apply::twice(half, 10.0);
     I32 d = apply::twice(c::abs, -3);
     I32 e = apply::again(inc, 0);
     Usize f = apply::address_matches(inc, 1);
     F64 g = apply::call_with_pair(plus, 3, 4);
-    c::printf("%d %d %.2f %d %d %zu %.1f\n", a, b, c, d, e, f, g);
+    c::printf("%d %d %.2f %d %d %zu %.1f\n", a, b, h, d, e, f, g);
     return 0;
 }
 ==> generic-gradient-shape/src/main.smith <==
@@ -7633,7 +7636,7 @@ export I32 floats_only(constexpr Type T, T value) {
 export I32 bytes(constexpr Type T) {
     if constexpr (alignof(T) > 4 || sizeof(T) >= 16) return 1;
     if constexpr (T == U8) return 2;
-    return 3 + (sizeof(T) != 8);
+    return sizeof(T) != 8 ? 4 : 3;
 }
 ==> generic-if-constexpr/src/main.smith <==
 import kind;

@@ -15,5 +15,5 @@ void build(build::Build *b) {
         .objects = &program_objects[0],
     };
     build::program(b, &program);
-    build::default_targets(b, program.step.outputs);
+    build::default_targets(b, build::list(b, "build/plain", nullptr));
 }

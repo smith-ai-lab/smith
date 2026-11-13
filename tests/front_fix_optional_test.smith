@@ -112,3 +112,27 @@ export void test_front_fix_optional_a_mut_option_used_as_a_value_is_named_before
                "    if c == .none:\n        c = .some(4)\n    c_value := c\n    if c_value != .none:\n"
                "        return c_value\n    0\n");
 }
+
+// A function held in an option field is named first, the copy is tested and called (#3230).
+export void test_front_fix_optional_a_call_of_an_option_field_is_named_before_its_test() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str shape = "struct E:\n    hook: ?fn(i32) -> i32 = .none\n";
+    check_text(fixed_text(as_str(format::push(shape, "fn run(e: E, x: i32) -> i32:\n    if e.hook != .none:\n"
+                                                     "        return e.hook(x)\n    0\n"))),
+               as_str(format::push(shape, "fn run(e: E, x: i32) -> i32:\n    hook := e.hook\n"
+                                          "    if hook != .none:\n        return hook(x)\n    0\n")));
+}
+
+// A parameter of option type that a test narrows is called directly (#3230).
+export void test_front_fix_optional_a_tested_option_parameter_is_called_directly() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source =
+        "fn run(hook: ?fn(i32) -> i32, x: i32) -> i32:\n    if hook != .none:\n        return hook(x)\n    0\n";
+    check_text(fixed_text(source), source);
+}
