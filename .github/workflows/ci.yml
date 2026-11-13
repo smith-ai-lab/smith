@@ -889,6 +889,7 @@ jobs:
           # `release-pack-linux`), and the shard writes the cost of what it timed for the next count (#3455)
           [ -s .smith/count-costs.tsv ] && export SMITH_COVERAGE_COSTS="$PWD/.smith/count-costs.tsv"
           export SMITH_COVERAGE_COSTS_OUT="$RUNNER_TEMP/coverage/costs.tsv"
+          export SMITH_COVERAGE_ENTRIES_OUT="$RUNNER_TEMP/coverage/entries.txt"
           timeout -k 10 780 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/4 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
           [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 13 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -912,6 +913,7 @@ jobs:
         uses: ./.github/actions/test-cache/save
         with:
           name: linux-count${{ matrix.shard }}of4
+          list: ${{ runner.temp }}/coverage/entries.txt
       - name: API budget (last)
         if: always()
         uses: ./.github/actions/api-budget
