@@ -12,7 +12,21 @@ description: >
   SMITH_IMPORT_CACHE_LOG, from which `./.github/actions/test-cache/save` (or `./.github/actions/test-cache/report`)
   prints the job's import-cache hits.
 
+  A queue run's Linux jobs restore one list (#3471): `build-linux` runs this action with `resolve-only: true`, which
+  chooses the store files (the whole file and the additions) and restores nothing, and each part is handed that list
+  (`urls`, `from`), so every part deals the tests from the same store. Left to itself each part chose at its own start,
+  and a commit that published its additions between two parts' starts gave them different stores and so different deals.
+
 inputs:
+  resolve-only:
+    description: '"true" chooses the list of store files and outputs it (`urls`, `from`); nothing is downloaded'
+    default: "false"
+  urls:
+    description: the list chosen by an earlier run of this action (`urls` output, space separated); with `from`, nothing is chosen again
+    default: ""
+  from:
+    description: the description of that list (`from` output); empty means choose here
+    default: ""
   os:
     description: the OS of the store, "linux" or "macos"
     default: linux
@@ -23,6 +37,14 @@ inputs:
     description: '"false" restores nothing (a job that runs no test, the count)'
     default: "true"
 
+outputs:
+  urls:
+    description: the store files chosen (resolve-only), space separated
+    value: ${{ steps.list.outputs.urls }}
+  from:
+    description: where the list came from (resolve-only), for the restore line
+    value: ${{ steps.list.outputs.from }}
+
 runs:
   using: composite
   steps:
@@ -31,7 +53,7 @@ runs:
       # every smith of the job appends its import-cache counts here (#2891); the save or report step prints them
       run: echo "SMITH_IMPORT_CACHE_LOG=$RUNNER_TEMP/import-cache.log" >>"$GITHUB_ENV"
     - name: Find the newest commit's sets
-      if: inputs.fresh != 'true' && inputs.tests == 'true'
+      if: inputs.fresh != 'true' && inputs.tests == 'true' && inputs.from == ''
       shell: bash
       env:
         OS: ${{ inputs.os }}
@@ -80,7 +102,7 @@ runs:
           back=$((back + 1))
         done <"$t/commits"
     - name: Find the whole file (Linux test store)
-      if: inputs.fresh != 'true' && inputs.tests == 'true' && inputs.os == 'linux'
+      if: inputs.fresh != 'true' && inputs.tests == 'true' && inputs.os == 'linux' && inputs.from == ''
       shell: bash
       env:
         REPO: ${{ github.repository }}
@@ -126,8 +148,18 @@ runs:
             echo "$(cat "$t/tests-from"), plus $n additions of the newer commits" >"$t/tests-from"
           fi
         fi
+    - name: The list of store files (for the jobs that are handed it)
+      id: list
+      if: inputs.resolve-only == 'true'
+      shell: bash
+      run: |
+        # one line each, so a job output carries it (a few URLs, far below the size limit of an output)
+        urls=$(cat "$RUNNER_TEMP/tests-urls" 2>/dev/null | tr '\n' ' ' || true)
+        from=$(cat "$RUNNER_TEMP/tests-from" 2>/dev/null || true)
+        { echo "urls=$urls"; echo "from=$from"; } >>"$GITHUB_OUTPUT"
+        echo "test store list: ${from:-none} ($(printf '%s\n' "$urls" | wc -w) files)" | tee -a "$GITHUB_STEP_SUMMARY"
     - name: Restore the execution records
-      if: inputs.fresh != 'true' && inputs.tests == 'true' && inputs.os == 'linux'
+      if: inputs.fresh != 'true' && inputs.tests == 'true' && inputs.os == 'linux' && inputs.resolve-only != 'true'
       continue-on-error: true
       shell: bash
       env:
@@ -150,10 +182,12 @@ runs:
         done
         echo "records: none among the last 200 commits" | tee -a "$GITHUB_STEP_SUMMARY"
     - name: Restore the test-result store
-      if: inputs.tests == 'true'
+      if: inputs.tests == 'true' && inputs.resolve-only != 'true'
       shell: bash
       env:
         FRESH: ${{ inputs.fresh }}
+        GIVEN_URLS: ${{ inputs.urls }}
+        GIVEN_FROM: ${{ inputs.from }}
       run: |
         if [ "$FRESH" = true ]; then echo "test store: fresh run, nothing restored" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         # every store of the commit the step above found: one per job that ran tests (a part's store holds what it
@@ -161,7 +195,9 @@ runs:
         # (retried: release downloads return 504 now and then, #2792; a plain download URL, no token and no API call, #2978).
         # Only the one store (`steps/a`, #3177) is taken from a tarball; a set published before #3347 also holds the old
         # per-tool folder, which nothing reads, and it is left in the tarball.
-        urls=$(cat "$RUNNER_TEMP/tests-urls"); from=$(cat "$RUNNER_TEMP/tests-from")
+        urls=$(cat "$RUNNER_TEMP/tests-urls" 2>/dev/null || true); from=$(cat "$RUNNER_TEMP/tests-from" 2>/dev/null || true)
+        # the list `build-linux` chose for the whole run (#3471) replaces the one this job would choose
+        if [ -n "$GIVEN_FROM" ]; then urls=$GIVEN_URLS; from="$GIVEN_FROM (chosen once for the run)"; fi
         stage="$RUNNER_TEMP/test-store-stage"; mkdir -p "$stage"
         got=0
         for url in $urls; do

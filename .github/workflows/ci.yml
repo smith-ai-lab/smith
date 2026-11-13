@@ -588,6 +588,10 @@ jobs:
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
       runner-check: ${{ steps.runners.outputs.check }}
+      # the test-result store files every part restores (#3471): chosen once here, so the 8 parts deal the tests from the
+      # same store (each choosing at its own start gave two parts a store one commit newer, run 43354617672)
+      store-urls: ${{ steps.store.outputs.urls }}
+      store-from: ${{ steps.store.outputs.from }}
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -606,6 +610,13 @@ jobs:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
+      - name: Choose the test store for every part (#3471)
+        id: store
+        continue-on-error: true
+        uses: ./.github/actions/test-cache
+        with:
+          resolve-only: "true"
+          fresh: ${{ github.event_name == 'schedule' }}
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -704,6 +715,8 @@ jobs:
           part: ${{ matrix.shard }}
           count: ${{ matrix.count }}
           flags: ${{ matrix.flags }}
+          store-urls: ${{ needs.build-linux.outputs.store-urls }}
+          store-from: ${{ needs.build-linux.outputs.store-from }}
       - name: Fail fast
         if: failure()
         uses: ./.github/actions/fail-fast
