@@ -2246,7 +2246,7 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         if (payload == nullptr || payload->kind == .void_type) return false;
         s->type = payload;
         s->narrowed = true;
-        s->by_equal = test->equal;
+        s->by_equal = test->equal && test->name->kind == .name; // a field path is read directly: no binding (#3598)
         return true;
     }
     if (mask == s->excluded) return false;
@@ -4205,7 +4205,7 @@ static types::Guard *guard_of(types::Checked *c, const ast::Expr *e) {
 static Bool guard_covers(types::Checked *c, const ast::Expr *base, Str name) {
     for (Usize i = 0; i < c->guard_count; i++) {
         const types::Guard *g = &c->guards[i];
-        if (!g->option && same_text(g->variant, name) && same_place(g->base, base)) return true;
+        if (!g->option && !g->direct && same_text(g->variant, name) && same_place(g->base, base)) return true;
     }
     return false;
 }
@@ -4215,7 +4215,7 @@ static Bool guard_covers(types::Checked *c, const ast::Expr *base, Str name) {
 static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e, Bool option) {
     syntax::Edits none = {};
     types::Guard *g = guard_of(c, e);
-    if (g == nullptr || g->spoiled || g->option != option) {
+    if (g == nullptr || g->spoiled || g->direct || g->option != option) {
         return none;
     }
     syntax::Edits fix = {};
@@ -4274,11 +4274,17 @@ static void spoil_written(types::Checked *c, const ast::Expr *place) {
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
-        if (inside && leads_to(place, g->base) && g != kept) g->spoiled = true;
+        if (inside && leads_to(place, g->base) && g != kept) {
+            g->spoiled = true;
+            g->through = g->through || g->direct; // a write of the root is the text pass's, as for a name (#3210)
+        }
     }
     while (place->kind == .member || place->kind == .index) {
         types::Guard *g = guard_of(c, place);
-        if (g != nullptr && g != kept) g->spoiled = true;
+        if (g != nullptr && g != kept) {
+            g->spoiled = true;
+            g->through = true;
+        }
         if (place->kind == .member) {
             place = place->kind.member.base;
         } else if (place->kind == .index) {
@@ -4320,10 +4326,27 @@ export void rebind_guard(types::Checked *c, types::Guard *g, Usize from, Str oth
     g->bound = other;
 }
 
+// The fixes that delete the variant of the reads a direct test of a path guards, from the error `from` on, are taken
+// back when the payload is written through (`a.kind.v.f = x`): `fix_place` binds a pointer there and rewrites every
+// `a.kind.v` itself, so the reads must still have that form (#3598).
+static void take_back_direct(types::Checked *c, const types::Guard *g, Usize from) {
+    for (Usize k = from; k < c->error_count; k++) {
+        types::Error *e = &c->errors[k];
+        Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+        if (!inside || countof(e->fix) != 1 || !same_text(e->fix[0].text, "")) continue;
+        if (text_at(e->message, "so it is the payload already") == countof(e->message)) continue;
+        Str here = msg(format::push("is `.", g->variant, "` here"));
+        if (text_at(e->message, here) == countof(e->message)) continue;
+        syntax::Edits none = {};
+        e->fix = none;
+    }
+}
+
 // The fixes of the reads of a spoiled test, from the error `from` on, are taken back: the site stays as it is.
 export void drop_spoiled(types::Checked *c, Usize from) {
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
+        if (g->direct && g->through) take_back_direct(c, g, from);
         if (!g->spoiled || !g->head_sent) continue;
         for (Usize k = from; k < c->error_count; k++) {
             types::Error *e = &c->errors[k];
@@ -4430,7 +4453,7 @@ static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, type
 
 // `a.kind.v` where the path `a.kind` was narrowed to the variant `v`, by a name or by a field path: `a.kind` is the
 // payload already. A test of the read that the fixer binds keeps its own fix; else the fix deletes `.v`.
-static Bool narrowed_variant_read(types::Checked *c, Frame f) {
+static Bool narrowed_variant_read(types::Checked *c, Frame f, const ast::Expr *outer) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) return false;
     const ast::Expr *base = e->kind.member.base;
@@ -4446,10 +4469,22 @@ static Bool narrowed_variant_read(types::Checked *c, Frame f) {
         if (same_text(slot->name, variant_name) && slot->type == s->type) variant = true;
     }
     if (!variant || typ(c, base) != s->type) return false;
+    // A payload with a field named like its variant (`e.kind.index.index`, #3598): `e.kind.index` is the variant read
+    // only when the member read from it is a field of the payload; else it is the field, which narrowing leaves as it
+    // is.
+    if (types::member(s->type, variant_name) != nullptr) {
+        Bool reads_field = outer != nullptr && outer->kind == .member && outer->kind.member.base == e &&
+                           types::member(s->type, outer->kind.member.name) != nullptr;
+        if (!reads_field) return false;
+    }
     syntax::Edits fix = guarded_read(c, e, false);
-    // A test written `==` or `!=` is the fixer's to bind, so its read keeps the binding's fix or none: a second fix
-    // that deletes the variant would meet it in another round and leave both (#3587).
-    if (countof(fix) > 0 || s->by_equal || guard_covers(c, base, variant_name)) {
+    // A test of a path whose payload is written through (`a.kind.v.f = x`, `&a.kind.v.f`) is `fix_place`'s: it binds a
+    // pointer and rewrites every read `a.kind.v` itself, so a read keeps its form here (#3598).
+    const types::Guard *direct = guard_of(c, e);
+    Bool leave = direct != nullptr && direct->direct && direct->through;
+    // A test of a name written `==` or `!=` is the fixer's to bind, so its read keeps the binding's fix or none: a
+    // second fix that deletes the variant would meet it in another round and leave both (#3587).
+    if (countof(fix) > 0 || s->by_equal || leave || guard_covers(c, base, variant_name)) {
         // a test the binding of the fixer covers keeps that one fix: two ways to mend one read would meet
         Str shown = msg(format::push("`", types::show(own->type),
                                      "` is a payload enumeration, so a payload can't be read with `.`; test the "
@@ -4525,7 +4560,7 @@ static Bool builtin_member(types::Checked *c, Frame f, types::TypeRef base, Str 
     return false;
 }
 
-static void member_after(types::Checked *c, Frame f) {
+static void member_after(types::Checked *c, Frame f, const ast::Expr *outer) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) {
         return;
@@ -4536,7 +4571,7 @@ static void member_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (narrowed_payload(c, f) || narrowed_variant_read(c, f)) {
+    if (narrowed_payload(c, f) || narrowed_variant_read(c, f, outer)) {
         return;
     }
     if (base->kind == .tuple && !e->kind.member.arrow) {
@@ -7733,7 +7768,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .slice_of) {
         slice_after(c, f);
     } else if (e->kind == .member) {
-        member_after(c, f);
+        const ast::Expr *outer = w->count > 0 ? w->items[w->count - 1].node : nullptr;
+        member_after(c, f, outer);
     } else if (e->kind == .cast) {
         cast_after(c, f);
     } else if (e->kind == .array_lit) {
