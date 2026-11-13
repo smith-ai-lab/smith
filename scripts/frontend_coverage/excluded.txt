@@ -233,6 +233,9 @@ tests/front/corpus/session-keyword-name/src/main.smith	old-form: a C keyword as 
 tests/smith-lang/cases/session-keyword-name/src/main.smith	old-form: a C keyword as a name is an error only in today's language
 tests/front/eval/with_dims_count.smith	error-fixture
 tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	old-form: an error only in today's lowering
+tests/affine/affine_loop_outer.smith	error-fixture
+tests/affine/affine_random_misuse.smith	error-fixture
+tests/autodiff/wrong/main.smith	tool-fixture
 tests/smith-lang/cases/generic-print-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-static-assert/src/main.smith	error-fixture
 tests/autodiff/wrong/map.smith	error-fixture

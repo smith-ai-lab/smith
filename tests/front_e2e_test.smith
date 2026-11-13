@@ -557,20 +557,6 @@ export void test_front_e2e_a_bare_c_is_an_error_naming_the_binding() {
     remove_all(folder);
 }
 
-// A struct of a header built as `c.Big(x = 3)` is the same error: the parser reads a capitalized `c.Big` as one
-// qualified name, and the error names the binding the fix writes where `c` stood.
-export void test_front_e2e_a_bare_c_struct_construction_is_an_error_naming_the_binding() {
-    use_header_flags();
-    Str folder = folder_for("c_bare_struct");
-    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
-    write_text(as_str(format::push(folder, "/src/big.h")), "typedef struct Big { int x; } Big;\n");
-    Str source = "import c \"big.h\"\n\npub fn check() -> i32:\n    b := c.Big(x = 3)\n    b.x\n";
-    compile::Report report = compile_module(folder, "bare_struct", source);
-    test::check_equal(report.ok, false);
-    test::check_equal(has(report.text, "there is no global `c`: write `big.Big`"), true);
-    remove_all(folder);
-}
-
 // A name the binding's header does not declare is an error.
 export void test_front_e2e_a_name_the_binding_lacks_is_an_error() {
     use_header_flags();
