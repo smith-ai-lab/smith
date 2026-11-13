@@ -252,6 +252,26 @@ struct Seen {
     I32 b_errno;
 };
 
+// A `Seen` with every field written: the pointers are null and the rest zero; a test assigns what it sets.
+Seen seen_of() {
+    Seen seen = {.console = nullptr,
+                 .arena = nullptr,
+                 .thread_allocator = nullptr,
+                 .a_installed = false,
+                 .b_saw_no_console = false,
+                 .b_saw_no_allocator = false,
+                 .b_allocated = false,
+                 .a_kept_console = false,
+                 .a_kept_allocator = false,
+                 .a_written = 0,
+                 .child_inherited_console = false,
+                 .child_inherited_allocator = false,
+                 .a_kept_after_child = false,
+                 .a_errno = 0,
+                 .b_errno = 0};
+    return seen;
+}
+
 // Task A installs a fake console and an arena allocator, pauses, and checks they are still its own when it resumes.
 void run_installer(Seen *seen) {
     arena::ArenaAllocator allocator = arena::allocator(seen->arena);
@@ -286,7 +306,10 @@ export void test_task_each_task_has_its_own_handlers_across_a_switch() {
     alignas(arena::align_max) static U8 memory[arena_bytes];
     arena::Arena local = arena::fixed(memory, arena_bytes);
     CountingConsole fake = make_console();
-    Seen seen = {.console = &fake, .arena = &local, .thread_allocator = mem::allocator()};
+    Seen seen = seen_of();
+    seen.console = &fake;
+    seen.arena = &local;
+    seen.thread_allocator = mem::allocator();
     task::Group group = {};
     defer task::wait(&group);
     task::spawn(&group, run_installer, &seen);
@@ -326,7 +349,9 @@ export void test_task_a_spawned_task_starts_with_its_spawners_handlers() {
     alignas(arena::align_max) static U8 memory[arena_bytes];
     arena::Arena local = arena::fixed(memory, arena_bytes);
     CountingConsole fake = make_console();
-    Seen seen = {.console = &fake, .arena = &local};
+    Seen seen = seen_of();
+    seen.console = &fake;
+    seen.arena = &local;
     task::Group group = {};
     task::spawn(&group, run_spawner, &seen);
     task::wait(&group);
@@ -364,7 +389,7 @@ void run_errno_b(Seen *seen) {
 }
 
 export void test_task_each_task_has_its_own_errno_across_a_switch() {
-    Seen seen = {};
+    Seen seen = seen_of();
     task::Group group = {};
     defer task::wait(&group);
     task::spawn(&group, run_errno_a, &seen);
@@ -679,6 +704,13 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         Usize rounds_at_read; // and where it was when the reader got its bytes
     };
 
+    // A `Link` with every field written; a test assigns the descriptors and the log it uses.
+    Link link_of(I32 reader, I32 writer, Log *log) {
+        Link pair = {
+            .reader = reader, .writer = writer, .log = log, .buffer = {}, .got = 0, .rounds = 0, .rounds_at_read = 0};
+        return pair;
+    }
+
     // Reads with nothing to read yet: the task parks here and its worker runs the writer.
     void run_blocked_reader(Link *pair) {
         log_mark(pair->log, 'a');
@@ -721,7 +753,7 @@ export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
-        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        Link pair = link_of(fds[0], fds[1], &log);
         run_link(&pair, run_writer);
         check_marks(&log, "abwr"); // the reader parked, the writer ran, the reader came back with the bytes
         test::check_equal((I32)pair.got, 2);
@@ -763,7 +795,7 @@ export void test_task_a_recv_on_a_socket_parks_the_task_and_the_worker_runs_the_
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
-        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        Link pair = link_of(fds[0], fds[1], &log);
         run_receive_link(&pair);
         check_marks(&log, "abwr");
         test::check_equal((I32)pair.got, 2);
@@ -791,7 +823,7 @@ export void test_task_a_net_handler_that_is_set_answers_recv_in_a_task_instead_o
     if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
-        Link pair = {.reader = fds[0], .writer = fds[1]};
+        Link pair = link_of(fds[0], fds[1], nullptr);
         c::SmithNetHandler fake = {};
         fake.recv = fake_recv;
         task::use(nullptr);
@@ -816,7 +848,7 @@ export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_anothe
         I32 fds[2] = {};
         test::check_equal(c::pipe(fds), 0); // NOLINT(smith-effects)
         Log log = {};
-        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        Link pair = link_of(fds[0], fds[1], &log);
         run_link(&pair, run_writer);
         check_marks(&log, "abwr");
         test::check_equal((I32)pair.got, 2);
@@ -830,7 +862,7 @@ export void test_task_a_task_that_pauses_in_a_loop_does_not_starve_a_task_waitin
         I32 fds[2] = {};
         test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
         Log log = {};
-        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        Link pair = link_of(fds[0], fds[1], &log);
         run_link(&pair, run_busy_writer);
         test::check_equal((I32)pair.got, 2);
         test::check(pair.rounds_at_read < 100); // the reader ran at the writer's first pauses, not after its 2000
@@ -848,6 +880,12 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 connected;
         Log *log;
     };
+
+    // A `Meeting` with every field written; a test assigns the log it uses.
+    Meeting meeting_of(Log *log) {
+        Meeting meeting = {.address = {}, .listener = 0, .accepted = 0, .connected = 0, .log = log};
+        return meeting;
+    }
 
     void run_acceptor(Meeting *meeting) {
         log_mark(meeting->log, 'a');
@@ -869,7 +907,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
 export void test_task_an_accept_and_a_connect_in_two_tasks_on_one_worker_both_complete() {
     if constexpr (target::os == target::macos || target::os == target::linux) {
         Log log = {};
-        Meeting meeting = {.log = &log};
+        Meeting meeting = meeting_of(&log);
         meeting.address.sun_family = unix_family;
         const char *path = "/tmp/smith_task_test_accept"; // one test uses it, and it is removed at the end
         for (Usize i = 0; path[i] != 0; i++)

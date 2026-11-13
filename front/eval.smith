@@ -331,6 +331,31 @@ struct Run {
     Run *outer; // the run that asked the checker for something that needed this one (a type a function writes)
 };
 
+// A `Run` with every field written: empty stacks, nothing known, no outer run. The construction assigns what it needs.
+static Run run_of(types::Checked *r, Bool typed_only, Bool lenient, Run *outer) {
+    Outcome out = {.known = false, .value = nothing_value(), .failed = false, .at = {.start = 0, .end = 0}, .why = ""};
+    Run run = {.r = r,
+               .steps = {},
+               .top = 0,
+               .values = {},
+               .have = 0,
+               .ran = 0,
+               .depth = 0,
+               .scopes = 0,
+               .stopped = false,
+               .typed_only = typed_only,
+               .lenient = lenient,
+               .out = out,
+               .locals = {},
+               .local_count = 0,
+               .frames = {},
+               .frame_count = 0,
+               .loops = {},
+               .loop_count = 0,
+               .outer = outer};
+    return run;
+}
+
 // The run in progress, so that a run started inside it (the checker resolving `[n]T` in a function being run) reads
 // the function's locals.
 static Run *current = nullptr;
@@ -2210,7 +2235,10 @@ static Loop loop_here(const Run *run, Step s, U32 again) {
                   .values = run->have,
                   .locals = run->local_count,
                   .scopes = run->scopes,
-                  .body = run->local_count};
+                  .body = run->local_count,
+                  .at = whole(0, false),
+                  .limit = whole(0, false),
+                  .type = nullptr};
 }
 
 // `while c: body`. Phase 1 has the condition, phase 2 the body's value.
@@ -2825,7 +2853,7 @@ static Str endless(const Run *run) {
 
 // The value of `e` at compile time, in the scopes `r` is in. See the top of the file for what is read.
 static Outcome compute(types::Checked *r, const ast::Expr *e, Bool typed_only, Bool lenient) {
-    Run run = {.r = r, .typed_only = typed_only, .lenient = lenient, .outer = current};
+    Run run = run_of(r, typed_only, lenient, current);
     if (current == nullptr) heap = (Heap){}; // the heap belongs to the outermost evaluation
     Str outside = r->prefix;
     if (e == nullptr) return (Outcome){.known = false, .value = boolean_value(false), .why = "there is no value here"};
@@ -2933,7 +2961,7 @@ static Bool makes_type(Run *run, const ast::Expr *e) {
 // `types::Options.held`: the type the call `e` is when it calls a type function (`Pair(i32)`); null when `e` is no
 // such call. A call that gives no type is reported, and the invalid type given.
 export types::TypeRef held_for(types::Checked *r, const ast::Expr *e) {
-    Run look = {.r = r};
+    Run look = run_of(r, false, false, nullptr);
     if (!makes_type(&look, e)) return nullptr;
     Outcome found = compute(r, e, false, false);
     Value v = found.value;
