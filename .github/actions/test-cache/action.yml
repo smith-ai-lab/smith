@@ -36,6 +36,11 @@ inputs:
   tests:
     description: '"false" restores nothing (a job that runs no test, the count)'
     default: "true"
+  only:
+    description: >
+      the name of one job's additions (`count1of4`, #3457): restore only the newest `test-cache-<sha7>-linux-<only>` of
+      the commits tried, not the whole file; for a job that reads a small known part of the store
+    default: ""
 
 outputs:
   urls:
@@ -106,7 +111,25 @@ runs:
       shell: bash
       env:
         REPO: ${{ github.repository }}
+        ONLY: ${{ inputs.only }}
       run: |
+        # #3457: a job that names its own additions (the count shard) restores the newest of those and nothing else:
+        # they hold every entry that job looked up (hits and misses), about 1 MB, not the 335,000 entries of the whole file
+        if [ -n "$ONLY" ]; then
+          t="$RUNNER_TEMP"; back=0; : >"$t/tests-urls"; echo "no store of $ONLY in the commits tried" >"$t/tests-from"
+          while read -r sha; do
+            s=${sha:0:7}
+            if grep -qx "test-cache-$s-linux-$ONLY" "$t/tags"; then
+              url="https://github.com/$REPO/releases/download/test-cache-$s-linux-$ONLY/smith-tests-added-linux.tar.gz"
+              code=$(curl -sIL -o /dev/null -w '%{http_code}' --retry 2 "$url" 2>/dev/null || true)
+              if [ "$code" = 200 ]; then
+                printf '%s\n' "$url" >"$t/tests-urls"; echo "$ONLY of ${s}, $back first parents back" >"$t/tests-from"; break
+              fi
+            fi
+            back=$((back + 1))
+          done <"$t/commits"
+          exit 0
+        fi
         # #3281: the Linux test store is one whole file per commit of main (`test-store-<sha7>`, asset
         # `smith-tests-store-linux.tar.gz`, built by `./.github/actions/test-cache/whole` after the merge) plus the small
         # additions of every commit newer than it (`test-cache-<sha7>-linux-NofM`, asset `smith-tests-added-linux.tar.gz`,
