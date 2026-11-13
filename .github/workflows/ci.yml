@@ -469,8 +469,8 @@ jobs:
             echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           }
           macos_tests() {
-            # shellcheck disable=SC2086
-            "$SMITH" test $MACFLAGS --weigh "$RUNNER_TEMP/weights.tsv"
+            # the part `macos-tests` of smith check (#3163): `smith test --macos-only --shard 1/1`, required here
+            "$SMITH" check --part macos-tests --require macos-tests
           }
           # fmt, docs, lint and prove run on Linux (`check`, #2234); lint runs on the Mac too, since each sees
           # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there):
@@ -559,7 +559,8 @@ jobs:
         run: |
           start=$SECONDS
           code=0
-          "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
+          # the part `macos-lint` of smith check (#3163): `smith lint` on a Mac, required here
+          "$SMITH" check --part macos-lint --require macos-lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
           echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$code" != 0 ]; then
             tail -n 60 "$RUNNER_TEMP/lint.log"
@@ -822,7 +823,7 @@ jobs:
     needs: [changes, release-pack-linux]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.release-pack-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -871,7 +872,7 @@ jobs:
           # a shard takes 2 minutes (1.7 to 2.4); one that hung sat the whole 30 minutes of the job, failed the entry
           # and every group queued on it (#3051: runs 42924697431 and 42930758168, 45 minutes each). A hang that comes
           # from the diff is deterministic, so there is no retry: the command is bounded to 10 minutes and fails the entry.
-          timeout -k 10 600 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          timeout -k 10 420 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
           [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 10 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"

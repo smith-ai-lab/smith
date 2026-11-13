@@ -508,6 +508,20 @@ export void test_build_step_cache_serves_the_build_program_to_a_second_folder() 
     scratch::expect_status("program: and its objects are the first's", 0, &same);
 }
 
+constexpr char copy_results[_] = "find \"$(dirname \"$XDG_CACHE_HOME\")/elsewhere/cache/smith/steps/r\" "
+                                 "-mindepth 2 -maxdepth 2 | wc -l | tr -d ' '";
+
+// The count of the steps in b's folders, a's steps being `copied` of them when b started. The store of the machine is
+// shared with the tests that run beside this one, so a's live count is not compared (#3456).
+static const char *stored_in_b(const char *copied) {
+    return format::push("n=$(", copy_results, "); echo $n; if [ \"$n\" != \"", copied,
+                        "\" ]; then echo 'steps of b whose key a did not have:'; "
+                        "awk 'NR == FNR { if ($1 == \"key\") seen[$2] = 1; next } { block = block $0 \"\\n\" } "
+                        "$1 == \"key\" { if (!($2 in seen)) printf \"%s\", block; block = \"\" }' ../a/keys.txt "
+                        "keys.txt; fi")
+        .data;
+}
+
 // One store (#3300): a step's key does not hold the cache folder, the data folder (where clang's own headers are
 // unpacked) or the folder of a checkout, which differ on every machine. The steps of one machine, copied to another
 // whose cache and data folders are named otherwise, serve every compile there, and a served object is the one a
@@ -520,7 +534,7 @@ export void test_build_step_cache_the_same_steps_are_served_in_other_cache_and_d
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Project b = sibling(&a, "b");
-    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 smith build -v >log.txt 2>&1");
+    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 SMITH_STEP_KEY_LOG=\"$PWD/keys.txt\" smith build -v >log.txt 2>&1");
     // the store of a, in a cache folder and a data folder of other names, where b builds. The store of the machine is
     // shared with the tests that run beside this one, so the count to compare is the copy's, taken before b builds.
     constexpr char elsewhere[_] =
@@ -528,16 +542,14 @@ export void test_build_step_cache_the_same_steps_are_served_in_other_cache_and_d
         "\"$E/data\" && cp -R \"$XDG_CACHE_HOME/smith/steps\" \"$E/cache/smith/steps\"";
     scratch::Run copied = scratch::sh(&b, elsewhere);
     scratch::expect_status("folders: the steps of a are copied", 0, &copied);
-    constexpr char copy_results[_] = "find \"$(dirname \"$XDG_CACHE_HOME\")/elsewhere/cache/smith/steps/r\" "
-                                     "-mindepth 2 -maxdepth 2 | wc -l | tr -d ' '";
     const char *first = scratch::capture(&b, copy_results);
     scratch::Run second = scratch::sh(
-        &b, "E=$(dirname \"$XDG_CACHE_HOME\")/elsewhere; env SMITH_STEP_CACHE=1 XDG_CACHE_HOME=\"$E/cache\" "
-            "XDG_DATA_HOME=\"$E/data\" smith build -v >log.txt 2>&1");
+        &b, "E=$(dirname \"$XDG_CACHE_HOME\")/elsewhere; env SMITH_STEP_CACHE=1 SMITH_STEP_KEY_LOG=\"$PWD/keys.txt\" "
+            "XDG_CACHE_HOME=\"$E/cache\" XDG_DATA_HOME=\"$E/data\" smith build -v >log.txt 2>&1");
     scratch::expect_status("folders: b builds in the other folders", 0, &second);
     scratch::expect_text("folders: its three compiles are served", "3",
                          scratch::capture(&b, "grep -c '(cached)' log.txt"));
-    scratch::expect_text("folders: it stores nothing of its own", first, scratch::capture(&b, copy_results));
+    scratch::expect_text("folders: it stores nothing of its own", first, scratch::capture(&b, stored_in_b(first)));
     scratch::Run same = scratch::sh(&b, "cmp build/debug/main.o ../a/build/debug/main.o");
     scratch::expect_status("folders: and its objects are a's", 0, &same);
 }

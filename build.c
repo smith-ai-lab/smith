@@ -1613,33 +1613,42 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
                           smith_cat(b, flags, smith_list(b, "-I", "runtime/protocol", nullptr), nullptr));
 }
 
-// One argument of `smith test` as SMITH_ARGS carries it: "%", ";" and newline as %25, %3B and %0A.
+// One argument of `smith test` as SMITH_ARGS carries it: "%", ";" and newline as %25, %3B and %0A. One pass into a
+// buffer and one copy: appending a character at a time copied the whole string each time, which for the 9 KB --test
+// list of a selection of 395 files used 40 MB of the build's arena (#3453).
 static const char *build_encode_argument(SmithBuild *b, const char *argument) {
-    const char *encoded = "";
-    for (const char *at = argument; *at != '\0'; at++) {
-        const char *piece = *at == '%' ? "%25" : *at == ';' ? "%3B" : *at == '\n' ? "%0A" : smith_fmt(b, "%c", *at);
-        encoded = smith_fmt(b, "%s%s", encoded, piece);
+    static char buffer[1U << 20];
+    size_t used = 0;
+    for (const char *at = argument; *at != '\0'; at++) { // bounded by the argument
+        const char *piece = *at == '%' ? "%25" : *at == ';' ? "%3B" : *at == '\n' ? "%0A" : nullptr;
+        size_t size = piece != nullptr ? 3 : 1;
+        if (used + size >= sizeof buffer) {
+            fprintf(stderr, "smith test: an argument is longer than %zu bytes\n", sizeof buffer);
+            exit(1);
+        }
+        if (piece != nullptr)
+            memcpy(buffer + used, piece, size);
+        else
+            buffer[used] = *at;
+        used += size;
     }
-    return encoded;
+    buffer[used] = '\0';
+    return smith_fmt(b, "%s", buffer);
 }
 
 // With a --shard or a selection (--test, --macos-only, --skip-macos), a project's build compiles only the test files of
 // the part or the chosen tests (#1200, #2998, #3179): the build there reads the arguments as `smith test` does, as the
 // option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A). Empty for neither.
 static const char *build_units_selection(SmithBuild *b, const char *const *given) {
-    const char *option = "";
-    for (size_t i = 0; given[i] != nullptr; i++) {
-        bool selects = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
-                       strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
-        if (!selects) continue;
-        const char *encoded = "";
-        for (size_t k = 0; given[k] != nullptr; k++) {
-            const char *argument = build_encode_argument(b, given[k]);
-            encoded = smith_fmt(b, "%s;%s", encoded, argument);
-        }
-        option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
-    }
-    return option;
+    bool selects = false;
+    for (size_t i = 0; given[i] != nullptr; i++) // bounded by the arguments
+        selects = selects || strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                  strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+    if (!selects) return "";
+    const char *encoded = "";
+    for (size_t k = 0; given[k] != nullptr; k++) // every argument, once however many select
+        encoded = smith_fmt(b, "%s;%s", encoded, build_encode_argument(b, given[k]));
+    return smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
 }
 
 // The folder that holds the smith under test and its smith-cc. With no LLVM install to link smith from (a
