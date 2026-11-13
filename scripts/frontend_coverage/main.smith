@@ -852,8 +852,8 @@ static I32 summarize(const char file[:], const char *smith) {
 // The gate's version (#3443): bumped by any change to the comparison below or to the CI step that calls it. The
 // fingerprint is the hash `gate-check` prints for the text between the gate-begin and gate-end lines of this file and
 // of ci.yml; the test `the_gate_version_moves_with_the_comparison` fails when they differ, and says what to write.
-constexpr U64 gate_version = 2;
-constexpr U64 gate_fingerprint = 14142060457059869624ULL;
+constexpr U64 gate_version = 3;
+constexpr U64 gate_fingerprint = 8397174399189343438ULL;
 constexpr U64 gate_dry_runs = 10;
 
 // The files the comparison named, as `,a,b,` (the verdict log keeps them, #3443).
