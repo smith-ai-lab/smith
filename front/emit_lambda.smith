@@ -687,3 +687,41 @@ export c::LLVMValueRef function_thunk(state::Emitter *e, c::LLVMValueRef target)
     c::LLVMDisposeBuilder(b);
     return thunk;
 }
+
+// A function that takes no context, calling `target` (which takes one first) with a null one: the code a C function
+// pointer holds for a lambda that captures nothing. One per function.
+export c::LLVMValueRef bare_thunk(state::Emitter *e, c::LLVMValueRef target) {
+    Usize length = 0;
+    const char *own = c::LLVMGetValueName2(target, &length);
+    Str label = state::msg(format::push(own, ".bare"));
+    char *name = state::cstr(label);
+    state::free_text(label);
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(e->module, name);
+    if (found != nullptr) {
+        mem::free(name);
+        return found;
+    }
+    c::LLVMTypeRef inner = c::LLVMGlobalGetValueType(target);
+    U32 count = c::LLVMCountParamTypes(inner);
+    c::LLVMTypeRef given[65];
+    if (count > 64) count = 64;
+    c::LLVMGetParamTypes(inner, given);
+    c::LLVMTypeRef result = c::LLVMGetReturnType(inner);
+    c::LLVMTypeRef outer = c::LLVMFunctionType(result, given + 1, count - 1, 0);
+    c::LLVMValueRef thunk = c::LLVMAddFunction(e->module, name, outer);
+    mem::free(name);
+    c::LLVMSetLinkage(thunk, c::LLVMInternalLinkage);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, thunk, "entry"));
+    c::LLVMValueRef args[64];
+    args[0] = c::LLVMConstNull(c::LLVMPointerTypeInContext(e->context, 0));
+    for (U32 i = 1; i < count; i++)
+        args[i] = c::LLVMGetParam(thunk, i - 1);
+    c::LLVMValueRef called = c::LLVMBuildCall2(b, inner, target, args, count, "");
+    if (c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind)
+        c::LLVMBuildRetVoid(b);
+    else
+        c::LLVMBuildRet(b, called);
+    c::LLVMDisposeBuilder(b);
+    return thunk;
+}

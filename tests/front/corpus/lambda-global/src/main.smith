@@ -1,0 +1,15 @@
+import c <stdio.h>
+
+struct Op:
+    name: *char
+    call: fn(i32, i32) -> i32
+
+square: fn(i32) -> i32 = fn(a: i32) -> i32: a * a
+
+ops: [2]Op = [Op("plus", fn(a: i32, b: i32) -> i32: a + b), Op("minus", fn(a: i32, b: i32) -> i32: a - b)]
+
+# A lambda that captures nothing is the initializer of a global, alone or in a table.
+pub fn main() -> i32:
+    let _ = stdio.printf("%d\n", square(7))
+    let _ = stdio.printf("%s %d\n", ops[1].name, ops[1].call(9, 4))
+    0

@@ -1,0 +1,9 @@
+import c <stdio.h>
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32:
+    f(x)
+
+# A lambda parameter written `auto` or as a concept takes the type the expected function gives it.
+pub fn main() -> i32:
+    let _ = stdio.printf("%d %d\n", apply(fn(a: auto): a * 5, 4), apply(fn(a: num): a + 1, 4))
+    0

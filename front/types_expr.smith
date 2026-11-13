@@ -4748,7 +4748,12 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
         if (item->kind == .expand) {
             push(w, item->kind.expand.pattern, nullptr, 0); // `[a..., b]`: the pack or array is read, then spliced
         } else {
-            push(w, items[i - 1], wanted, 0);
+            types::TypeRef item_wanted = wanted;
+            // A list where a struct is wanted (the fix-it makes it `T(a, b)`): each item meets its field's type.
+            if (f.expected != nullptr && f.expected->kind == .record &&
+                countof(items) == countof(types::slots_of(f.expected).items))
+                item_wanted = types::slots_of(f.expected).items[i - 1].type;
+            push(w, items[i - 1], item_wanted, 0);
         }
     }
 }
@@ -4816,6 +4821,12 @@ static void array_literal_after(types::Checked *c, Frame f) {
                 ok = false;
             } else if (t != element && !(expected != nullptr && expected->kind != .automatic && element != nullptr &&
                                          types::element_of(expected) == element)) {
+                if (expected != nullptr && expected->kind == .record) { // a struct's fields, which differ in type
+                    types::failf(c, e->span, "expected ", types::show(expected), ", found a list of ", total,
+                                 " values: a struct's value is written `", types::show(expected), "(a, b)`");
+                    ok = false;
+                    break;
+                }
                 types::failf(c, items[i]->span, "the elements of `[...]` have one type: element ", i + 1, " is `",
                              types::show(t), "` but the first is `", types::show(element), "`; convert it with `.to(",
                              types::show(element), ")`");
@@ -4854,6 +4865,20 @@ static void named_argument_alone(types::Checked *c, const ast::Expr *e) {
 // ---------------------------------------------------------------------------------------------------------------
 // Lambdas
 
+// Whether a lambda parameter written as `written` (`auto`, a concept like `num`, a pointer to one) is satisfied by the
+// type `given` that the expected function has there: the parameter then takes `given`.
+static Bool refines(types::TypeRef written, types::TypeRef given) {
+    while (written != given && written->kind == .pointer && given->kind == .pointer) {
+        if (!written->kind.pointer.pointee_const && given->kind.pointer.pointee_const) return false;
+        written = written->kind.pointer.element;
+        given = given->kind.pointer.element;
+    }
+    if (written == given) return true;
+    if (written->kind == .automatic) return true;
+    if (written->kind == .concept_type) return types::concept_holds(written->kind.concept_type.name, given);
+    return false;
+}
+
 // The type of parameter `i` of a lambda: the one written, else the expected function's; null (reported) when neither.
 static types::TypeRef lambda_param(types::Checked *c, const ast::Param *p, types::TypeRef signature, Usize i) {
     types::TypeRef given = nullptr;
@@ -4868,6 +4893,9 @@ static types::TypeRef lambda_param(types::Checked *c, const ast::Param *p, types
         return given;
     }
     types::TypeRef written = resolve_written(c, p->type);
+    if (given != nullptr && refines(written, given)) {
+        return given; // `a: auto` or `a: num` takes the type the expected function gives it
+    }
     if (given != nullptr && written != given && written != invalid(c)) {
         types::failf(c, p->span, "the lambda parameter `", p->name, "` is `", types::show(written), "` but `",
                      types::show(given), "` is expected; write `", types::show(given), "` or leave the type out");
@@ -6977,24 +7005,6 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
     }
 }
 
-// `c.SmithCorePlan(folder = dir)`: a type of an imported C header built through the old global `c`. The parser reads a
-// capitalized `c.Thing` as one qualified name, so `c_member_error` never sees it; the error carries the fix that
-// writes the header's binding where `c` stood, as it does for a function (`smith lint --fix`).
-static Bool header_type_callee_error(types::Checked *c, const ast::Expr *e, const ast::Expr *callee) {
-    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 2) return false;
-    ast::Identifier first = callee->kind.name.path.segments[0];
-    Str name = callee->kind.name.path.segments[1].text;
-    if (!types::same_text(first.text, "c") || types::scoped(c, "c") != nullptr) return false;
-    Str binding = types::c_binding_of(c, name);
-    if (countof(binding) == 0) return false;
-    syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
-    fix[0] = (syntax::Edit){.span = first.span, .text = binding};
-    types::fail_fix(c, callee->span, msg(format::push("there is no global `c`: write `", binding, ".", name, "`")),
-                    fix);
-    poison(c, e);
-    return true;
-}
-
 static Bool computed_call(types::Checked *c, Frame f);
 static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee);
 
@@ -7035,7 +7045,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         }
     }
     ast::ExprRef given[:] = e->kind.call.args;
-    if (header_type_callee_error(c, e, callee) || made_callee_failed(c, e, callee)) return;
+    if (made_callee_failed(c, e, callee)) return;
     types::TypeRef record = constructed_call(c, callee, given);
     if (record != nullptr) {
         construct_before(w, f, record);

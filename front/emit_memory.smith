@@ -376,6 +376,10 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     }
     const types::Symbol *named = imported_by_name(e, name);
     if (named != nullptr) return imported_record(e, named->decl, types::name_of(named->type));
+    if (e->options.checked != nullptr) { // an alias (`Unary := fn(i32) -> i32`) as the element of an array or pointer
+        const types::Symbol *alias = types::lookup(&e->options.checked->scopes, name);
+        if (alias != nullptr && alias->kind == .type_name) return state::type_of_checked(e, alias->type, base->span);
+    }
     return ty_failf(base->span, "unknown type ", name);
 }
 
@@ -2012,6 +2016,7 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     if (ty.kind == .pointer && global_address(e, x, out)) return state::success();
     // `~0.to(u64)`, `small(i16) or tiny(i64)`, `ratio * 2.0`: computed by the compiler (#3039), else built and folded
     if (ty.kind == .integer || ty.kind == .boolean || ty.kind == .floating) return state::fold(e, x, ty, out);
+    if (ty.kind == .fn_value && x->kind == .lambda) return state::fold(e, x, ty, out); // `{ code, null }`
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 

@@ -1,0 +1,12 @@
+import c <stdio.h>
+import c <stdlib.h>
+
+# A lambda that captures nothing is given where C takes a function pointer.
+pub fn main() -> i32:
+    let mut values: [4]i32 = [3, 1, 4, 2]
+    stdlib.qsort(&values[0], 4, sizeof(i32)) fn(a: *void, b: *void) -> i32:
+        let left: *i32 = a.cast(*i32)
+        let right: *i32 = b.cast(*i32)
+        left.* - right.*
+    let _ = stdio.printf("%d %d %d %d\n", values[0], values[1], values[2], values[3])
+    0

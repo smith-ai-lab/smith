@@ -1,0 +1,13 @@
+import c <stdio.h>
+
+Size := fn() -> i32
+
+# A generic of smith's own returns a function as a `fn` value, so a lambda is its result.
+fn size_of_type(T: type) -> Size:
+    return fn() -> i32: sizeof(T).to(i32)
+
+pub fn main() -> i32:
+    let a: Size = size_of_type(i16)
+    let b: Size = size_of_type(f64)
+    let _ = stdio.printf("%d %d\n", a(), b())
+    0

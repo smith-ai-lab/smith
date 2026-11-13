@@ -1383,7 +1383,11 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
     state::Ty result = void_type(e);
     if (types::element_of(signature) != nullptr &&
         types::element_of(signature) != e->options.checked->table.void_type) {
-        state::TyResult made_result = type_of_checked(e, types::element_of(signature), d->span);
+        types::TypeRef wanted = types::element_of(signature);
+        // A generic of smith's own returns a function as a `fn` value (`-> fn(i32) -> i32`, `-> Call`), never as the
+        // bare pointer a C header's function type is.
+        state::TyResult made_result =
+            wanted->kind == .function ? lambdas::from_checked(e, wanted) : type_of_checked(e, wanted, d->span);
         if (made_result == .error) {
             return {.error = made_result.error};
         }
@@ -2236,6 +2240,16 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         state::push_value(e, (state::Value){.llvm = made, .ty = to});
         return state::success();
     }
+    if (to.kind == .fn_pointer && from.kind == .fn_value) {
+        // A lambda given to a C function pointer (`qsort`'s comparison): its code takes a context first, so a lambda
+        // that captures nothing is wrapped in a function that passes a null one.
+        c::LLVMValueRef code = c::LLVMBuildExtractValue(e->builder, value.llvm, 0, "code");
+        c::LLVMValueRef context = c::LLVMBuildExtractValue(e->builder, value.llvm, 1, "context");
+        if (c::LLVMIsAFunction(code) == nullptr || c::LLVMIsNull(context) == 0)
+            return state::failf(span, "not emitted yet: a lambda that captures, given to a C function pointer");
+        state::push_value(e, (state::Value){.llvm = lambdas::bare_thunk(e, code), .ty = to});
+        return state::success();
+    }
     if (to.kind == .pointer && to.kind.pointer.element == nullptr && from.kind == .fn_value) {
         // A `fn` value given to a callback parameter of C: the bare code address.
         c::LLVMValueRef code = c::LLVMBuildExtractValue(e->builder, value.llvm, 0, "code");
@@ -2408,7 +2422,12 @@ static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state:
     state::Status result = ran;
     if (ran != .error) {
         state::Value value = state::pop_value(e);
-        if (c::LLVMIsAConstantInt(value.llvm) == nullptr) {
+        if (to.kind == .fn_value) { // a lambda that captures nothing: its code and a null context
+            if (c::LLVMIsConstant(value.llvm) == 0)
+                result = state::failf(x->span, "the initializer of a global is a lambda that captures nothing");
+            else
+                *out = value.llvm;
+        } else if (c::LLVMIsAConstantInt(value.llvm) == nullptr) {
             result = state::failf(x->span, "the initializer of a global is a constant known at compile time (", to.name,
                                   ")");
         } else if (state::same_type(value.ty, to)) {

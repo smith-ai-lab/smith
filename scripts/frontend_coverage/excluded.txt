@@ -167,6 +167,7 @@ tests/smith-lang/cases/module-c-features/src/main.smith	old-form: function-like 
 tests/smith-lang/cases/plain-include-keeps-c-names/src/main.smith	old-form: C macro read through c:: (item 59 not built)
 tests/smith-lang/cases/plain-names/src/main.smith	old-form: a keyword of the new syntax as a name (#2455)
 tests/smith-lang/cases/postfix-after-compound-literal/src/main.smith	old-form: attributes (#3221 table, #3190 item 47)
+tests/smith-lang/cases/module-shadow-names/src/main.smith	old-form: [[gnu::x]] attributes (#3221 table, #3190 item 47)
 tests/smith-lang/cases/reflection-doc-if-constexpr/src/main.smith	old-form: fields(T) reflection (#3221 dropped table)
 tests/smith-lang/cases/session-missing-module/src/main.smith	error-fixture
 tests/smith-lang/cases/sized-error-message/src/main.smith	error-fixture
@@ -235,6 +236,9 @@ tests/front/corpus/session-keyword-name/src/main.smith	old-form: a C keyword as 
 tests/smith-lang/cases/session-keyword-name/src/main.smith	old-form: a C keyword as a name is an error only in today's language
 tests/front/eval/with_dims_count.smith	error-fixture
 tests/smith-lang/cases/error-lambda-generic-nested/src/main.smith	old-form: an error only in today's lowering
+tests/affine/affine_loop_outer.smith	error-fixture
+tests/affine/affine_random_misuse.smith	error-fixture
+tests/autodiff/wrong/main.smith	tool-fixture
 tests/smith-lang/cases/generic-print-error/src/main.smith	error-fixture
 tests/smith-lang/cases/generic-static-assert/src/main.smith	error-fixture
 tests/autodiff/wrong/map.smith	error-fixture

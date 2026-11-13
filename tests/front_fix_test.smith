@@ -1030,3 +1030,28 @@ export void test_countof_c2y_spelling_is_countof_after_a_wider_fix() {
     test::check_condition(contains_text(plain.text, "countof(xs)"));
     test::check_condition(!contains_text(plain.text, "_Countof"));
 }
+
+export void test_front_fix_two_quoted_headers_each_bind_their_own_name() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str folder = "/tmp/front_fix_two_quoted_headers";
+    files::DoneResult made = files::make_folder(folder);
+    (void)made;
+    Str first = "int c_value(void);\n";
+    Str second = "int d_value(void);\n";
+    const U8 *first_bytes = (const U8 *)first.data;
+    const U8 *second_bytes = (const U8 *)second.data;
+    files::CountResult wrote_first =
+        files::write_file("/tmp/front_fix_two_quoted_headers/c.h", first_bytes[0:countof(first)], files::Replace);
+    test::check_condition(wrote_first == .ok);
+    files::CountResult wrote_second =
+        files::write_file("/tmp/front_fix_two_quoted_headers/d.h", second_bytes[0:countof(second)], files::Replace);
+    test::check_condition(wrote_second == .ok);
+    fix::Fixed fixed = fix::fix_text("/tmp/front_fix_two_quoted_headers/main.smith",
+                                     "import c \"c.h\"\nimport c \"d.h\"\nfn main() -> i32:\n"
+                                     "    return c.c_value() + c.d_value()\n");
+    check_text(fixed.text, "import c \"c.h\"\nimport c \"d.h\"\nfn main() -> i32:\n"
+                           "    return c.c_value() + d.d_value()\n");
+}
