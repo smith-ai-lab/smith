@@ -165,7 +165,8 @@ static const char *smith_tc_env_identity(const char *entry, char *buffer, size_t
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s", entry + sizeof llvm - 1);
     size_t length = strlen(path);
-    while (length > 1 && path[length - 1] == '/') path[--length] = '\0';
+    while (length > 1 && path[length - 1] == '/')
+        path[--length] = '\0';
     static const char install[] = "/install";
     if (length > sizeof install - 1 && strcmp(path + length - (sizeof install - 1), install) == 0)
         path[length - (sizeof install - 1)] = '\0';
