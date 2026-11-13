@@ -1996,6 +1996,30 @@ static Bool global_address(state::Emitter *e, const ast::Expr *x, c::LLVMValueRe
     return true;
 }
 
+// A `str` from a string literal (`{ address, count }`) or an empty slice from `[]`, as a global's initializer or a
+// field of one: `mut text: str = "abc"`, `State(name = "", items = [])` (#3594). False for any other value.
+static Bool slice_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (ty.kind != .slice) return false;
+    if (x->kind == .string) {
+        Str bytes = x->kind.string.bytes;
+        c::LLVMValueRef text = c::LLVMConstStringInContext2(e->context, bytes.data, countof(bytes), 0);
+        c::LLVMValueRef global = c::LLVMAddGlobal(
+            e->module, c::LLVMArrayType2(c::LLVMInt8TypeInContext(e->context), countof(bytes) + 1), ".str");
+        c::LLVMSetInitializer(global, text);
+        c::LLVMSetGlobalConstant(global, 1);
+        c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
+        c::LLVMValueRef parts[2] = {global, c::LLVMConstInt(index_word(e), countof(bytes), 0)};
+        *out = c::LLVMConstNamedStruct(ty.llvm, parts, 2);
+        return true;
+    }
+    if ((x->kind == .array_lit && countof(x->kind.array_lit.items) == 0) ||
+        (x->kind == .compound && countof(x->kind.compound.items) == 0)) {
+        *out = c::LLVMConstNull(ty.llvm); // `[]`: no address, no elements
+        return true;
+    }
+    return false;
+}
+
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer)) {
@@ -2032,24 +2056,7 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         *out = global;
         return state::success();
     }
-    if (ty.kind == .slice &&
-        x->kind == .string) { // `mut text: str = "abc"` and a `str` field: `{ address, count }` (#3594)
-        Str bytes = x->kind.string.bytes;
-        c::LLVMValueRef text = c::LLVMConstStringInContext2(e->context, bytes.data, countof(bytes), 0);
-        c::LLVMValueRef global = c::LLVMAddGlobal(
-            e->module, c::LLVMArrayType2(c::LLVMInt8TypeInContext(e->context), countof(bytes) + 1), ".str");
-        c::LLVMSetInitializer(global, text);
-        c::LLVMSetGlobalConstant(global, 1);
-        c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
-        c::LLVMValueRef parts[2] = {global, c::LLVMConstInt(index_word(e), countof(bytes), 0)};
-        *out = c::LLVMConstNamedStruct(ty.llvm, parts, 2);
-        return state::success();
-    }
-    if (ty.kind == .slice && ((x->kind == .array_lit && countof(x->kind.array_lit.items) == 0) ||
-                              (x->kind == .compound && countof(x->kind.compound.items) == 0))) {
-        *out = c::LLVMConstNull(ty.llvm); // `[]`: no address, no elements (#3594)
-        return state::success();
-    }
+    if (slice_constant(e, ty, x, out)) return state::success();
     if ((ty.kind == .fn_pointer || ty.kind == .pointer) && x->kind == .name &&
         countof(x->kind.name.path.segments) == 1) {
         // A function's name in a table of callbacks (`Scheduler(spawn = inline_spawn, ...)`): its address (#2643).
