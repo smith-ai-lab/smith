@@ -458,7 +458,8 @@ export void test_front_emit_option_the_address_of_a_construction_is_a_temporary(
     emit_jit::stop(&host);
 }
 
-// A narrowed `?fn` local is called through its payload (#3519): `if length != .none:` makes `length(...)` a call of the `fn`.
+// A narrowed `?fn` local is called through its payload (#3519): `if length != .none:` makes `length(...)` a call of the
+// `fn`.
 export void test_front_emit_option_a_narrowed_option_of_a_function_is_called() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
