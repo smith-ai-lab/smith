@@ -1069,8 +1069,14 @@ static Bool local_function_value(state::Emitter *e, const ast::Expr *callee, sta
     if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return false;
     state::Local local = {};
     if (!state::find_local(e, callee->kind.name.path.segments[0].text, &local)) return false;
-    if (local.ty.kind != .fn_value && local.ty.kind != .fn_pointer) return false;
-    *held = local.ty;
+    state::Ty seen = local.ty;
+    if (seen.kind == .option && seen.kind.option.element != nullptr && e->options.checked != nullptr) {
+        // A `?fn` the checker narrowed to the `fn` (`if length != .none:`, item 27): the call is through the payload.
+        types::TypeRef narrowed = types::type_of(e->options.checked, callee);
+        if (narrowed != nullptr && narrowed->kind != .option) seen = *seen.kind.option.element;
+    }
+    if (seen.kind != .fn_value && seen.kind != .fn_pointer) return false;
+    *held = seen;
     return true;
 }
 
