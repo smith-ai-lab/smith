@@ -1639,6 +1639,8 @@ static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::Una
     return unary_step(c, e, operand, op, t);
 }
 
+static Str place_root(const ast::Expr *e);
+
 static void unary_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .unary)) {
@@ -1646,6 +1648,8 @@ static void unary_before(types::Checked *c, Work *w, Frame f) {
     }
     ast::UnaryOp op = e->kind.unary.op;
     const ast::Expr *operand = e->kind.unary.operand;
+    // `&x` is the address of the name as declared, and lets the pointer write it: what a test proved is dropped first
+    if (op == .address_of) types::unnarrow(&c->scopes, place_root(operand));
     if (op == .negate && wants_integer(f.expected) && operand->kind == .integer) {
         U64 value = operand->kind.integer.value;
         if (fit(c, e->span, value, true, f.expected)) {
@@ -1673,8 +1677,6 @@ static void unary_before(types::Checked *c, Work *w, Frame f) {
     push(w, operand, nullptr, 0);
 }
 
-static Str place_root(const ast::Expr *e);
-
 static void unary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .unary)) {
@@ -1687,9 +1689,6 @@ static void unary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    // `&x` lets the pointer write `x`, so what a test proved about it is dropped (the pointer is read-only in `*T`, but
-    // a `*mut T` may be made from it)
-    if (op == .address_of) types::unnarrow(&c->scopes, place_root(operand));
     types::TypeRef result = unary_type(c, e, op, operand, t);
     if (result == invalid(c)) {
         poison(c, e);
