@@ -65,6 +65,7 @@ import std::format;
 import std::mem;
 import std::process;
 import <stdlib.h>;
+import <sys/time.h>;
 import <unistd.h>;
 
 constexpr Usize files_max = 4096;
@@ -1831,21 +1832,57 @@ static Usize cache_hits = 0;
 static Usize cache_misses = 0;
 static const char *cache_folder = nullptr;
 
+// What the cache entries are: answers in the one store (#3457, steps/a, the folder of the solvers' answers, the tests'
+// results and the imports, #3177), named as the store names them, `<xx>/<64 hex digits>` of a key. The key is the
+// 128-bit hash of what the entry read (fix_key, row_key) mixed with the kind of the entry and the format of its bytes,
+// twice with different constants for the 64 digits. A change to how an entry is read or written bumps cache_format.
+constexpr U64 cache_format = 2;
+constexpr U64 kind_fix = 1;
+constexpr U64 kind_row = 2;
+
+// A hit makes its entry the newest (as the store's other answers do), so the entries a count uses stay while the ones
+// nothing reads age out (the store drops what was unused for 14 days).
+static void touch_entry(const char entry[:]) {
+    (void)c::utimes((const char *)entry, nullptr);
+}
+
+// Writes the path of the entry of `key` and `kind` (and `suffix`, `.fail` beside a fix) to `out`, making its folder.
+// Returns the length of the path.
+static Usize store_entry(char out[:], struct Hash key, U64 kind, const char *suffix) {
+    struct Hash first = hash_number(hash_number(hash_number(key, kind), cache_format), 1);
+    struct Hash second = hash_number(hash_number(hash_number(key, cache_format), kind), 0x5bd1e995);
+    char head[33];
+    char tail[33];
+    hex_of(head[0:33], first);
+    hex_of(tail[0:33], second);
+    char name[65];
+    for (Usize k = 0; k < 32; k++) {
+        name[k] = head[k];
+        name[32 + k] = tail[k];
+    }
+    name[64] = '\0';
+    char shard[3] = {head[0], head[1], '\0'};
+    char folder[path_size * 2];
+    format::Written made = format::write(folder, sizeof folder, cache_folder, "/", (const char *)shard);
+    (void)files::make_folder(folder[0:made.length]);
+    format::Written w = format::write(out, countof(out), (const char *)folder, "/", (const char *)name, suffix);
+    return w.length;
+}
+
 // Fixes the copy of file `i` (the process is in the scratch tree) with the fixer, or with a cache entry made by a
 // fixer that read the same files. A failure is recorded (and fixed_ok cleared) when the fixer's job finishes. A file
 // that fails to fix is never cached.
 static void fix_cached(const char *smith, Usize i) {
-    char name[33];
     char entry[path_size * 2];
-    hex_of(name[0:33], fix_key(i));
-    format::Written e = format::write(entry, sizeof entry, cache_folder, "/", (const char *)name);
-    files::BytesResult cached = files::read_file(entry[0:e.length]);
+    Usize entry_length = store_entry(entry[0:path_size * 2], fix_key(i), kind_fix, "");
+    files::BytesResult cached = files::read_file(entry[0:entry_length]);
     if (cached != .error) {
         defer mem::free(cached.ok.data);
         char to[path_size];
         copy_text(to[0:path_size], text_of(tree[i][0:path_size]));
         files::CountResult put = files::write_file(view_of(to), cached.ok, files::Replace);
         if (put != .error) {
+            touch_entry(entry[0:entry_length]);
             cache_hits += 1;
             return;
         }
@@ -1866,7 +1903,7 @@ static void fix_cached(const char *smith, Usize i) {
         return;
     }
     cache_misses += 1;
-    fix(smith, i, entry[0:e.length]);
+    fix(smith, i, entry[0:entry_length]);
 }
 
 static Usize row_hits = 0;
@@ -1882,21 +1919,20 @@ static struct Hash row_key(Usize i) {
 // Measures file `i`, or replays the rows a compile of the same inputs made (#2832). A cache entry never changes a
 // result: the nightly count without the cache (#2833) is the check.
 static void measure_cached(Usize i) {
-    char name[33];
     char entry[path_size * 2];
-    hex_of(name[0:33], row_key(i));
-    format::Written e = format::write(entry, sizeof entry, cache_folder, "/", (const char *)name, ".row");
-    files::BytesResult cached = files::read_file(entry[0:e.length]);
+    Usize entry_length = store_entry(entry[0:path_size * 2], row_key(i), kind_row, "");
+    files::BytesResult cached = files::read_file(entry[0:entry_length]);
     if (cached != .error) {
         defer mem::free(cached.ok.data);
         entry_file = i;
         typeof(char[:]) saved_rows = mem::view(cached.ok, char);
         parse_rows(text_of(saved_rows));
+        touch_entry(entry[0:entry_length]);
         row_hits += 1;
         return;
     }
     row_misses += 1;
-    copy_text(row_path[i][0:path_size * 2], entry[0:e.length]);
+    copy_text(row_path[i][0:path_size * 2], entry[0:entry_length]);
     pending[i] = true;
 }
 
@@ -1918,11 +1954,9 @@ static Bool ends_with(const char text[:], const char tail[:]) {
 // keyed by the text the importer read, which is the fixed one (#2669, #2924). The cache entry of its fix is made
 // again from the result.
 static void fix_again(const char *smith, Usize i) {
-    char name[33];
     char entry[path_size * 2];
-    hex_of(name[0:33], fix_key(i));
-    format::Written e = format::write(entry, sizeof entry, cache_folder, "/", (const char *)name);
-    fix(smith, i, entry[0:e.length]);
+    Usize entry_length = store_entry(entry[0:path_size * 2], fix_key(i), kind_fix, "");
+    fix(smith, i, entry[0:entry_length]);
 }
 
 // A fix the checker finds in an instance of another module's generic belongs to that module and is found only while an
@@ -2349,11 +2383,9 @@ static Bool fix_only_done() {
     Usize total = 0;
     for (Usize i = 0; i < tree_count; i++) {
         if (!fixed_ok[i] || !owned[i]) continue;
-        char name[33];
         char entry[path_size * 2];
-        hex_of(name[0:33], row_key(i));
-        format::Written e = format::write(entry, sizeof entry, cache_folder, "/", (const char *)name, ".row");
-        files::BytesResult cached = files::read_file(entry[0:e.length]);
+        Usize entry_length = store_entry(entry[0:path_size * 2], row_key(i), kind_row, "");
+        files::BytesResult cached = files::read_file(entry[0:entry_length]);
         total += 1;
         if (cached == .error) {
             missing += 1;
@@ -2447,6 +2479,23 @@ static void write_costs() {
     (void)files::write_file(view_of(named), ((const U8 *)text)[0:n], files::Replace);
 }
 
+// The folder of the entries (#3457): the answers of the one store, `<cache>/smith/steps/a` of XDG_CACHE_HOME (or
+// HOME/.cache), where `smith` keeps the others and `.github/actions/test-cache` restores and publishes them. With the
+// store off (SMITH_STEP_CACHE=0 or off, as smith reads it) the entries go in a folder of the scratch tree's parent.
+static void store_folder(char out[:], const char *scratch) {
+    const char *setting = c::getenv("SMITH_STEP_CACHE");
+    const char *xdg = c::getenv("XDG_CACHE_HOME");
+    const char *home = c::getenv("HOME");
+    Bool off = setting != nullptr && (same(view_of(setting), "0") || same(view_of(setting), "off"));
+    if (!off && xdg != nullptr && xdg[0] == '/') {
+        (void)format::write(out, countof(out), xdg, "/smith/steps/a");
+    } else if (!off && home != nullptr && home[0] == '/') {
+        (void)format::write(out, countof(out), home, "/.cache/smith/steps/a");
+    } else {
+        (void)format::write(out, countof(out), scratch, "/../fixed");
+    }
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -2461,7 +2510,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     char pristine[path_size * 2];
     if (!make_pristine(root, scratch, pristine[0:path_size * 2])) return 1;
     char folder[path_size * 2];
-    (void)format::write(folder, sizeof folder, scratch, "/../fixed");
+    store_folder(folder[0:path_size * 2], scratch);
     cache_folder = folder;
     (void)files::make_folder(view_of(folder));
     if (!index_tree(root) || !hash_smith(smith)) {
