@@ -1421,6 +1421,25 @@ static Str rename_target_systems(Str source) {
     return as_str(format::push(out, source[at:countof(source)]));
 }
 
+// C2y's `_Countof(x)` is `countof(x)`. The parser mends it only in today's syntax, and a wider fix takes the statement
+// first, so the later passes (which read the new syntax, where it is a plain name) would never see it (#3487). Plain
+// text, since a file with a directive or a `#` comment does not lex.
+static Str rename_countof(Str source) {
+    Str word = "_Countof(";
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i + countof(word) <= countof(source); i++) {
+        if (!mem::equal(source[i:i + countof(word)], word)) continue;
+        if (i > 0 && (source[i - 1] == '_' || (source[i - 1] >= '0' && source[i - 1] <= '9') ||
+                      (source[i - 1] >= 'a' && source[i - 1] <= 'z') || (source[i - 1] >= 'A' && source[i - 1] <= 'Z')))
+            continue;
+        out = as_str(format::push(out, source[at:i], "countof("));
+        at = i + countof(word);
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
 // The passes of `fix_text`: parse, apply the fixes, parse the result again, until a pass applies none.
 static void mend_passes(Str file, Fixed *total, Bool with_checker) {
     for (Usize pass = 0; pass < fix_passes; pass++) {
@@ -1609,6 +1628,8 @@ export Fixed fix_text(Str file, Str source) {
     // A header kept from an earlier `fix_text` is checked against its files first; one `fix_run` is one generation.
     if (!within_run) header_table::next_generation();
     mend_passes(file, &total, true);
+    // A file with a directive was not lexed above, so its `_Countof` is still there.
+    if (total.applied > 0) total.text = rename_countof(total.text);
     // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
     if (total.applied > 0) total.text = hash_comments(total.text);
     // The blocks last (#2014): the passes above read their own output with braces, so only now do `:` and the
