@@ -1240,6 +1240,7 @@ export struct Symbol {
     Bool narrowed;  // a `?T` name known not to be `.none` here, typed `T` (#2481): `x.some` is `x`
     Bool loop_name; // the name of a `for x in xs` (`at` is its span): `*x` of it is `for mut x`, `x` (#3251)
     U64 excluded;   // a payload enumeration name known not to be some variants here: bit `i` is the slot `i` (#3225)
+    Bool by_equal;  // the narrowing was made by `==` or `!=`, which the fixer writes as a binding, not by `is` (#3587)
 };
 
 // An index of the names of `symbols[0:indexed)` (#2888): a module that imports std holds tens of thousands of symbols
@@ -1457,6 +1458,25 @@ export void unnarrow(Scopes *s, Str name) {
     Symbol own = *base;
     for (Usize at = top; at > 0 && is_narrowing(&s->symbols[at - 1]); at = find_below(s, name, at - 1)) {
         s->symbols[at - 1] = own;
+    }
+}
+
+// Whether `name` is `prefix` or a field path under it (`a.kind.b` under `a.kind` and under `a`).
+static Bool is_under(Str name, Str prefix) {
+    if (countof(name) < countof(prefix)) return false;
+    for (Usize i = 0; i < countof(prefix); i++) {
+        if (name[i] != prefix[i]) return false;
+    }
+    return countof(name) == countof(prefix) || name[countof(prefix)] == '.';
+}
+
+// Drops what tests proved about the field path `prefix` and every path under it (#3587, item 68 of #3516): the path
+// was written, or a pointer to it or to a part of it was handed out.
+export void unnarrow_under(Scopes *s, Str prefix) {
+    for (Usize at = s->count; at > 0; at--) {
+        const Symbol *symbol = &s->symbols[at - 1];
+        if (!is_narrowing(symbol) || !is_under(symbol->name, prefix)) continue;
+        unnarrow(s, symbol->name);
     }
 }
 
@@ -1745,6 +1765,8 @@ export struct Checked {
     Usize error_count;
     Guard guards[:]; // the variant tests of the function being checked (#2494)
     Usize guard_count;
+    Usize paths; // the field paths (`a.kind`) a test narrowed so far in this module: zero means no read looks for one
+                 // (#3587)
     MadeType made[:]; // the types the type functions made so far
     Usize made_count;
     const ast::Module *module; // the module as checked for the system smith runs on (`when::live_module`), null when

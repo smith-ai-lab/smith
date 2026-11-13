@@ -41,6 +41,7 @@ import front::emit_arith as arith;
 import front::emit_builtin as builtin;
 import front::emit_lambda as lambdas;
 import front::emit_match as matching;
+import front::emit_option;
 import front::emit_state as state;
 import front::types;
 import std::arena;
@@ -1059,8 +1060,33 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
     return state::success();
 }
 
+// The value of a field the checker narrowed by a test of its path (`if p.next != .none:`, `if k.kind is .v:`, #3587):
+// the payload, as a name narrowed the same way reads it (`name_ref`). The place of a part of it is `member_finish`'s.
+static state::Status member_load_finish(state::Emitter *e, const state::ThenGeneral *w) {
+    state::Value place = state::pop_value(e);
+    if (place.ty.kind == .array)
+        return state::fail("an array is not a value yet; index it or take its address", w->span);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
+    state::Value value = {.llvm = loaded, .ty = place.ty};
+    if (e->options.checked != nullptr && place.ty.kind == .option && place.ty.kind.option.element != nullptr) {
+        types::TypeRef seen = types::type_of(e->options.checked, w->expr);
+        if (seen != nullptr && seen->kind != .option) {
+            value = emit_option::payload(e, value, place.ty.kind.option);
+        }
+    }
+    if (e->options.checked != nullptr && place.ty.kind == .variant_enum) {
+        types::TypeRef seen = types::type_of(e->options.checked, w->expr);
+        if (seen != nullptr && !types::is_payload_enum(seen))
+            value = matching::narrowed_payload(e, value, seen, w->span);
+    }
+    state::push_value(e, value);
+    return state::success();
+}
+
 export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _) {
-    state::push_then_none(e, (state::ThenNone){.run = load_finish, .span = x->span});
+    state::ThenGeneral general = state::then_general(member_load_finish, x->span);
+    general.expr = x;
+    state::push_then_general(e, general);
     return place_member(e, x);
 }
 

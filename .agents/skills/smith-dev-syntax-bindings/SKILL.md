@@ -25,7 +25,7 @@ started := process.start(cmd)
 - The binding takes the variant's name: `.tuple(tuple)`, `.error(error)`, `.ok(ok)`. If that name is in scope (shadowing is an error) or is a keyword, the fixer leaves the site as it is.
 - A pattern that can fail **must** have `else` and one that always matches (`(q, r) := divmod(a, b)`) **must not**: "this pattern always matches: remove `else`". The `else` is one line or indented and ends in `return`, `break`, `continue` or a call that never returns: "the `else` of a binding must leave: end it with `return`, ...". The names do not exist inside the `else`.
 - Passing an error up stays `try`: `child := try process.start(cmd)`.
-- Reading a payload with `.` is an error (`kind.tuple.elements`). The fixer rewrites, each read `k.v` becoming `v`:
+- Reading a payload with `.` is an error (`kind.tuple.elements`). A test narrows a field path as it does a name (#3587: `if p.kind is not .v: return`, then `p.kind.f` reads the payload of `.v`); `p.kind.v.f` after such a test is an error whose fix writes `p.kind.f`. The fixer rewrites, each read `k.v` becoming `v`:
   - `if k == .v:` with reads in the `then` → `if .v(v) := k:`, with or without an `else`: each test of an `else if` chain binds its own payload.
   - Through a pointer: `if p.* == .v:` or `match p.*:` with reads `p.v` → `if .v(v) := p.*:` and `.v(v):` (#2494).
   - `if k != .v: return X` (or `break`, `continue`) with reads to the end of the block → `.v(v) := k else: return X` (#2503). Only once the text reads `if test:`: while it still has C's parentheses the statement's span does not start at its `if`.

@@ -386,13 +386,105 @@ export void test_front_check_types_equality_with_a_symbol_narrows_an_option() {
     clean("fn f(o: ?i32) -> i32:\n    if o is i32:\n        return o\n    0\n");
 }
 
-// Item 55 of #3284 (#3438): narrowing works the same on a `mut` name; a field is still not narrowed.
-export void test_front_check_types_a_mut_name_is_narrowed_by_is_and_a_field_is_not() {
+// Item 55 of #3284 (#3438): narrowing works the same on a `mut` name.
+export void test_front_check_types_a_mut_name_is_narrowed_by_is() {
     clean(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n    x.op\n"));
     clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    x + 1\n");
-    fails(with_kinds("pub struct Holder:\n    pub kind: Kind\n\nfn f(h: Holder) -> i32:\n"
-                     "    if h.kind is not .unary:\n        return 0\n    h.kind.op\n"),
-          "payload enumeration", "name the value first");
+}
+
+static Str holder() {
+    return join(kinds(), "pub struct Holder:\n    pub kind: Kind\n    pub next: ?i32\n\n");
+}
+
+static Str with_holder(Str body) {
+    return join(holder(), body);
+}
+
+// Item 68 of #3516 (#3587): a test of a field path narrows the path as a test of a name narrows the name, through a
+// value or a read-only pointer, with `==`, `!=`, `is`, an early `return` and `and`.
+export void test_front_check_types_a_tested_field_narrows_like_a_name() {
+    clean(with_holder("fn f(h: Holder) -> i32:\n    if h.kind is not .unary:\n        return 0\n    h.kind.op\n"));
+    clean(with_holder("fn f(h: Holder) -> i32:\n    if h.kind == .unary:\n        return h.kind.op\n    0\n"));
+    clean(with_holder("fn f(h: Holder) -> i32:\n    if h.kind != .binary:\n        return 0\n    h.kind.left\n"));
+    clean(with_holder("fn f(h: Holder) -> bool:\n    return h.kind is .unary and h.kind.op > 0\n"));
+    clean(
+        with_holder("fn f(h: Holder) -> i32:\n    if h.kind is .unary:\n        return h.kind.op\n"
+                    "    else if h.kind is .binary:\n        return h.kind.left\n    else:\n        return h.kind\n"));
+}
+
+// A read-only pointer to the holder: nothing changes the field between the test and the use.
+export void test_front_check_types_a_field_through_a_pointer_narrows() {
+    clean(with_holder("fn f(h: *Holder) -> i32:\n    if h.kind is not .unary:\n        return 0\n    h.kind.op\n"));
+    clean(with_holder("fn f(h: *Holder) -> i32:\n    if h.next == .none:\n        return 0\n    h.next + 1\n"));
+}
+
+// An option field narrows the same way.
+export void test_front_check_types_a_tested_option_field_narrows() {
+    clean(with_holder("fn f(h: Holder) -> i32:\n    if h.next == .none:\n        return 0\n    h.next + 1\n"));
+    clean(with_holder("fn f(h: Holder) -> i32:\n    if h.next != .none:\n        return h.next\n    0\n"));
+    fails(with_holder("fn f(h: Holder) -> i32:\n    h.next + 1\n"), "", "");
+}
+
+// The path is not the name: a test of another path, or of the name, narrows nothing here.
+export void test_front_check_types_a_narrowed_field_is_only_that_field() {
+    fails(with_holder("fn f(h: Holder, g: Holder) -> i32:\n    if g.kind is not .unary:\n        return 0\n"
+                      "    h.kind.op\n"),
+          "payload enumeration", "");
+}
+
+// The read of the payload with the variant's name, `h.kind.unary.op`, is the fix of the narrowed read: it deletes
+// `.unary`.
+export void test_front_check_types_a_narrowed_field_read_with_its_variant_has_a_fix() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r =
+        check_text(with_holder("fn f(h: Holder) -> i32:\n    if h.kind is not .unary:\n        return 0\n"
+                               "    h.kind.unary.op\n"));
+    test::check_equal(r.error_count, (Usize)1);
+    parse::Edits fix = r.errors[0].fix;
+    test::check_equal(countof(fix), (Usize)1);
+}
+
+// An assignment to the path, to a part before it or to the name it starts from drops the narrowing; a write below it
+// does not.
+export void test_front_check_types_a_write_drops_a_narrowed_field() {
+    fails(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+                      "    m.kind = Kind(name = 1)\n    m.kind.op\n"),
+          "payload enumeration", "");
+    fails(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+                      "    m = h\n    m.kind.op\n"),
+          "payload enumeration", "");
+    fails(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.next == .none:\n        return 0\n"
+                      "    m.next = .none\n    m.next + 1\n"),
+          "", "");
+    clean(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+                      "    m.kind.op = 2\n    m.kind.op\n"));
+    clean(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+                      "    m.next = .none\n    m.kind.op\n"));
+}
+
+// A pointer to the path, or a call that is passed a writable pointer through which it can be written, drops it.
+export void test_front_check_types_a_pointer_to_a_narrowed_field_drops_it() {
+    fails(with_holder("fn put(k: *mut Kind):\n    k.* = Kind(name = 1)\n\nfn f(h: Holder) -> i32:\n    mut m := h\n"
+                      "    if m.kind is not .unary:\n        return 0\n    put(&m.kind)\n    m.kind.op\n"),
+          "payload enumeration", "");
+    fails(with_holder("fn put(k: *mut Holder):\n    k.kind = Kind(name = 1)\n\nfn f(h: *mut Holder) -> i32:\n"
+                      "    if h.kind is not .unary:\n        return 0\n    put(h)\n    h.kind.op\n"),
+          "payload enumeration", "");
+    clean(with_holder("fn look(k: *Holder) -> i32:\n    0\n\nfn f(h: *mut Holder) -> i32:\n"
+                      "    if h.kind is not .unary:\n        return 0\n    _ := look(h)\n    h.kind.op\n"));
+}
+
+// A narrowing made before a loop is dropped when the body writes the path.
+export void test_front_check_types_a_loop_that_writes_a_field_drops_its_narrowing() {
+    fails(with_holder(
+              "fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+              "    mut n := 0\n    while n < 3:\n        n += m.kind.op\n        m.kind = Kind(name = 1)\n    n\n"),
+          "payload enumeration", "");
+    clean(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+                      "    mut n := 0\n    while n < 3:\n        n += m.kind.op\n    n\n"));
 }
 
 // An assignment to the name, or to a part of it, drops what the test proved (exclusive access, item 41).
@@ -547,11 +639,12 @@ export void test_front_check_types_an_errdefer_body_is_checked() {
     fails("fn f() -> i32:\n    errdefer nosuch_fn()\n    return 0\n", "nosuch_fn", "");
 }
 
-// A function held in an option field is named first, then tested and called (#3230); a tested name is called as is.
+// A function held in an option field is tested, then called (#3230, #3587); an untested one is named first.
 export void test_front_check_types_a_call_of_an_option_field_asks_to_name_it_first() {
     Str holder = "struct E:\n    hook: ?fn(i32) -> i32 = .none\n";
-    fails(join(holder, "fn run(e: E, x: i32) -> i32:\n    if e.hook != .none:\n        return e.hook(x)\n    0\n"),
+    fails(join(holder, "fn run(e: E, x: i32) -> i32:\n    return e.hook(x)\n"),
           "may be `.none`: name it first (`hook := ...`", "then call it");
+    clean(join(holder, "fn run(e: E, x: i32) -> i32:\n    if e.hook != .none:\n        return e.hook(x)\n    0\n"));
     clean("fn run(hook: ?fn(i32) -> i32, x: i32) -> i32:\n    if hook != .none:\n        return hook(x)\n    0\n");
 }
 
