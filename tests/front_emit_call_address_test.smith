@@ -78,8 +78,8 @@ static Str error_of(Str source, emit_jit::Jit *host, Scenario *s) {
     c::LLVMContextRef context = c::LLVMContextCreate();
     emit::Options options = {.target = host->target, .checked = &s->checked};
     emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options);
-    if (emitted == .ok) return "";
-    return emitted.error.message;
+    if (emitted == .error) return emitted.error.message;
+    return "";
 }
 
 // Whether `text` holds `part`.

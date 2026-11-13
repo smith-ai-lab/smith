@@ -60,14 +60,33 @@ export void test_front_fix_guard_a_body_that_mentions_the_result_is_left() {
            "fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        return r.error\n    use(r.ok)\n");
 }
 
+export void test_front_fix_guard_a_body_that_uses_the_result_as_a_value_is_a_binding_with_an_else() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        out = r\n        break\n    use(r.ok)\n",
+           "fn f(s: Str):\n    r := g(s)\n    .ok(ok) := r else:\n        out = r\n        break\n    use(ok)\n");
+}
+
+export void test_front_fix_guard_returning_a_mut_result_is_a_binding_with_an_else() {
+    expect("fn f(s: Str):\n    mut r := g(s)\n    if r == .error: return r\n    use(r.ok)\n",
+           "fn f(s: Str):\n    mut r := g(s)\n    .ok(ok) := r else: return r\n    use(ok)\n");
+}
+
+export void test_front_fix_guard_a_value_that_leaves_binds_the_error_of_the_rest() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .ok:\n        return r\n    use(r.error)\n",
+           "fn f(s: Str):\n    r := g(s)\n    .error(error) := r else:\n        return r\n    use(error)\n");
+    expect("fn f(s: Str):\n    r := g(s)\n    if r != .error: return r\n    mut error: Error = r.error\n",
+           "fn f(s: Str):\n    r := g(s)\n    .error(error_value) := r else: return r\n    mut error: Error = error_value\n");
+}
+
 export void test_front_fix_guard_a_body_that_does_not_leave_is_left() {
     expect("fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        log(s)\n    use(r.ok)\n",
            "fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        log(s)\n    use(r.ok)\n");
 }
 
-export void test_front_fix_guard_a_name_ok_in_the_function_leaves_the_site() {
+export void test_front_fix_guard_a_name_ok_in_the_function_makes_the_binding_ok_value() {
     expect("fn f(s: Str):\n    ok := 1\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n",
-           "fn f(s: Str):\n    ok := 1\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n");
+           "fn f(s: Str):\n    ok := 1\n    r := g(s)\n    .ok(ok_value) := r else: return\n    use(ok_value)\n");
+    expect("fn f(s: Str):\n    ok := 1\n    ok_value := 2\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n",
+           "fn f(s: Str):\n    ok := 1\n    ok_value := 2\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n");
 }
 
 export void test_front_fix_guard_a_call_named_like_return_is_not_a_leave() {

@@ -973,11 +973,15 @@ static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w)
     if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     ast::ExprRef args[:] = filled_arguments(e, key, written_args, imported);
     SignatureResult found = find(e, key, callee->span, imported);
-    if (found == .error) {
+    Signature sig = {};
+    switch (found) {
+    case .ok:
+        sig = found.ok;
+        break;
+    case .error:
         state::free_text(key);
         return {.error = found.error};
     }
-    Signature sig = found.ok;
     Usize slot[64];
     state::Status slotted = assign_slots(e, key, args, slot, imported);
     if (slotted == .error) {
@@ -1079,7 +1083,8 @@ export Bool module_function_value(state::Emitter *e, const ast::Expr *x, state::
 static Bool is_global_function_value(state::Emitter *e, const ast::Expr *callee) {
     if (callee->kind != .name || !emit_memory::is_global_name(e, callee)) return false;
     state::TyResult held = state::type_of_node(e, callee);
-    return held != .error && (held.ok.kind == .fn_value || held.ok.kind == .fn_pointer);
+    if (held == .error) return false;
+    return held.ok.kind == .fn_value || held.ok.kind == .fn_pointer;
 }
 
 static state::Status call_global_function_value(state::Emitter *e, const ast::Expr *x, const ast::Expr *callee) {
