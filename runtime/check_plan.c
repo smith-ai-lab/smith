@@ -175,7 +175,7 @@ int smith_check_plan_print(const char *base, const char *event) {
     else
         puts("changed=unknown");
     // Linux carries the tests: --skip-macos in parts; the Mac runs the few tests only macOS can run, in one part
-    puts("test_parts=8\nlinux_flags=--skip-macos\nmac_flags=--macos-only --shard 1/1");
+    puts("test_parts=4\nlinux_flags=--skip-macos\nmac_flags=--macos-only --shard 1/1");
     return 0;
 }
 

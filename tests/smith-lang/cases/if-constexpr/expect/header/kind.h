@@ -15,7 +15,7 @@ extern "C" {
 // A chain: the branches not taken are never given to the parser, so they may be anything.
 int32_t kind_arch_name() __asm__("_kind::arch_name");
 
-// The constraint for another architecture would not compile here.
+// The branch for another architecture would not compile here.
 int32_t kind_opaque(int32_t value) __asm__("_kind::opaque");
 
 // Nested blocks, constants of the file and of the function, and a condition of literals.

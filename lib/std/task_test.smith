@@ -468,23 +468,17 @@ export void test_task_a_task_spawned_under_a_scheduler_that_spawns_again_is_coun
     test::check_equal(counting.spawns, 2);
 }
 
-// The threads of this process, counted through the system.
-Usize thread_count() {
-    // NOLINTBEGIN(smith-effects): the system is asked, which is the point
-    if constexpr (target::os == target::macos) {
+// macOS only: the threads of this process, counted through the system. Linux lists a joined thread for a moment after
+// pthread_join returns, so a count from /proc/self/task is not a promise (#1172, #3468, #3512): the tests there ask the
+// library (`task::workers_running`) and the states of the threads (`sleeping_threads`).
+if constexpr (target::os == target::macos) {
+    Usize thread_count() {
+        // NOLINTBEGIN(smith-effects): the system is asked, which is the point
         struct c::proc_taskinfo info = {};
         c::proc_pidinfo(c::getpid(), process_task_info, 0, &info, (I32)sizeof(info));
         return (Usize)info.pti_threadnum;
-    } else {
-        c::DIR *folder = c::opendir("/proc/self/task");
-        Usize count = 0;
-        for (struct c::dirent *entry = c::readdir(folder); entry != nullptr; entry = c::readdir(folder)) {
-            if (entry->d_name[0] != '.') count += 1;
-        }
-        c::closedir(folder);
-        return count;
+        // NOLINTEND(smith-effects)
     }
-    // NOLINTEND(smith-effects)
 }
 
 // Linux only: the macOS check counts every thread (see the test below).
@@ -523,8 +517,13 @@ Usize processors() {
     return (Usize)c::sysconf(processors_name); // NOLINT(smith-effects)
 }
 
+// What the task sees of the threads: the library's own count (main's thread and the workers), on every system, and on
+// macOS also the system's.
 void run_count_threads(Usize *seen) {
-    *seen = thread_count();
+    seen[0] = task::workers_running() + 1;
+    if constexpr (target::os == target::macos) {
+        seen[1] = thread_count();
+    }
     task::pause();
 }
 
@@ -549,13 +548,16 @@ export void test_task_a_program_that_never_spawns_has_one_thread() {
 
 export void test_task_workers_start_at_the_first_spawn_and_end_with_the_last_task() {
     check_only_this_thread();
-    Usize seen = 0;
+    Usize seen[2] = {};
     {
         task::Group group = {};
         defer task::wait(&group);
-        task::spawn(&group, run_count_threads, &seen);
+        task::spawn(&group, run_count_threads, seen);
     }
-    test::check_equal(seen, processors()); // one thread per core, the first being main's
+    test::check_equal(seen[0], processors()); // one thread per core, the first being main's
+    if constexpr (target::os == target::macos) {
+        test::check_equal(seen[1], processors());
+    }
     // `wait` has joined every worker before it returned: the library says so, with nothing to wait for.
     test::check_equal(task::workers_running(), (Usize)0);
     check_only_this_thread();

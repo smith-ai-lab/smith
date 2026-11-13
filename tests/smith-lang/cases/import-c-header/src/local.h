@@ -1,1 +1,1 @@
-static inline int local_value(void) { return 99; }
+#define LOCAL_VALUE 99

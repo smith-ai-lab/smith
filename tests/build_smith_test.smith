@@ -397,7 +397,7 @@ export void test_build_smith_check_plan_prints_the_scope_of_the_change() {
     scratch::expect_contains("plan: a queue run has no macOS job", queued.out,
                              "scope=full\ndocs_tests=false\ndocs_push=false\nmac_run=false\n");
     scratch::expect_contains("plan: ... and the shape of the tests", queued.out,
-                             "test_parts=8\nlinux_flags=--skip-macos\nmac_flags=--macos-only --shard 1/1\n");
+                             "test_parts=4\nlinux_flags=--skip-macos\nmac_flags=--macos-only --shard 1/1\n");
     scratch::Run unread_push = scratch::sh(&p, "smith check --plan --base nonsense --event push");
     scratch::expect_contains("plan: a push whose range cannot be read stays a release", unread_push.out,
                              "scope=release\n");
