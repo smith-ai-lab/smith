@@ -194,14 +194,18 @@ export void test_front_fix_variants_a_typedef_struct_of_an_imported_module_stays
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str process = "// What a finished program wrote.\n[[std::c_name(\"SmithProcessOutput\")]] export typedef struct "
+    Str process = "// std::process\nmodule std::process;\n// What a finished program "
+                  "wrote.\n[[std::c_name(\"SmithProcessOutput\")]] export typedef struct "
                   "{\n    Exit exit;\n    Bytes output;\n    Bytes errors;\n} Output;\n";
     Str console = "export typedef enum {\n    Input,\n    Output,\n} Stream;\n";
-    Str user = "fn none() -> process.Output:\n    return process.Output(exit = 0)\n";
+    Str user = "fn none() -> process.Output:\n    return process.Output(exit = 0)\n"
+               "fn out() -> console.Stream:\n    return console.Output\n";
     fix_variants::Word sources[1] = {word(user)};
     fix_variants::Word imported[2] = {word(process), word(console)};
     fix_variants::Words out = fix_variants::rename_all_with(sources, imported);
-    test::check_equal(out[0].text, user);
+    Str want = "fn none() -> process.Output:\n    return process.Output(exit = 0)\n"
+               "fn out() -> console.Stream:\n    return console.output\n";
+    test::check_equal(out[0].text, want);
 }
 
 // A variant of an exported enum used through a module path, `area::Square`, is written as the declaration is once
