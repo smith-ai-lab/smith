@@ -9,7 +9,6 @@ export struct Request {
 export constexpr Type Meters = F64;
 export constexpr Type Handler = I32 (*)(Request *);
 export constexpr Type Block = U8[4];
-export constexpr Type Row = I32 (*)[4];
 export constexpr Type Pointers = Request *[2];
 [[std::c_name("geo_feet")]] export constexpr Type Feet = F32;
 

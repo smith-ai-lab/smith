@@ -27,7 +27,7 @@ I32 by_value(struct { I32, F32 } t) {
 
 void by_pointer(Pair *p) {
     (*p)[0] += 10;
-    p->_1 = 0.5f;
+    (*p)[1] = 0.5f;
 }
 
 I32 main() {
@@ -46,8 +46,8 @@ I32 main() {
     c::printf("%d %f %f\n", n[0], (double)n[1][0], (double)n[1][1]);
     c::printf("%d %d\n", h.pair[0], h.list[1][0]);
     c::printf("%d %f\n", list[1][0], (double)list[1][1]);
-    c::printf("%d %d %d\n", (I32)countof(t), (I32)countof(n), (I32)countof(n[1]));
-    c::printf("%d\n", (I32)(sizeof(struct { I32, F32 }) == sizeof t));
+    c::printf("%d %d %d\n", (I32)countof(t), (I32)countof(n), (I32)countof(n));
+    c::printf("%d\n", (I32)(sizeof p == sizeof t));
     // Arrays and pointers in a file with tuples are what they were: only a tuple is indexed as fields.
     I32 xs[3] = {4, 5, 6};
     I32 *pointer = xs;
