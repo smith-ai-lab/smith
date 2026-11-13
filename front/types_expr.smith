@@ -2737,17 +2737,9 @@ static ast::BinaryOp binary_of(ast::AssignOp op) {
 
 static Bool literal_branches(const types::Checked *c, const ast::Expr *e);
 
-// The name a place is built on, `x` in `x`, `x.f`, `x[i]`, `x[a:b]`; the empty text when it is built on anything else.
+// The name a place is, `x` in `x`; the empty text when it is a part of a value (`x.f`, `x[i]`) or anything else:
+// writing a part of a payload or taking its address does not change the case of the name that was tested.
 static Str place_root(const ast::Expr *e) {
-    while (e->kind == .member || e->kind == .index || e->kind == .slice_of) {
-        if (e->kind == .member) {
-            e = e->kind.member.base;
-        } else if (e->kind == .index) {
-            e = e->kind.index.base;
-        } else if (e->kind == .slice_of) {
-            e = e->kind.slice_of.base;
-        }
-    }
     return single_name(e);
 }
 
@@ -2819,7 +2811,10 @@ static void assign_value_done(types::Checked *c, Frame f) {
     ast::AssignOp op = e->kind.assign.op;
     types::TypeRef tt = typ(c, e->kind.assign.target);
     types::TypeRef vt = typ(c, e->kind.assign.value);
-    types::unnarrow(&c->scopes, place_root(e->kind.assign.target)); // what a test proved may not hold after it
+    types::unnarrow(
+        &c->scopes,
+        place_root(
+            e->kind.assign.target)); // what a test proved may not hold after it (the name itself, not a part of it)
     if (vt == invalid(c)) {
         poison(c, e);
         return;

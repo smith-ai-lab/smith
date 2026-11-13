@@ -413,6 +413,11 @@ export void test_front_check_types_the_address_of_a_mut_name_drops_its_narrowing
           "", "");
 }
 
+// Writing a part of a payload keeps the narrowing: only the name itself, assigned, changes its case (#3438).
+export void test_front_check_types_writing_a_part_of_a_payload_keeps_its_narrowing() {
+    clean(with_kinds("fn f(x: Kind):\n    mut y := x\n    if y is .unary:\n        y.op = 1\n        y.op = 2\n"));
+}
+
 // Both forms of reading a payload agree on a `mut` name.
 export void test_front_check_types_a_binding_and_a_test_agree_on_a_mut_name() {
     clean("fn f(o: ?i32) -> i32:\n    mut x := o\n    v := x else:\n        return 0\n    v\n");
