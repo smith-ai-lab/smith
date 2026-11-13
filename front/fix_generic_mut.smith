@@ -285,7 +285,8 @@ static Bool is_whole_word(Str source, Usize at, Usize len, Usize floor) {
 
 // The `*mut` of the parameter or field `type`: true when it is a pointer written `*mut T`.
 static Bool is_mut_pointer(const ast::TypeExpr *type) {
-    return type != nullptr && type->kind == .pointer && type->kind.pointer.is_mut;
+    if (type != nullptr && type->kind == .pointer) return type->kind.pointer.is_mut;
+    return false;
 }
 
 // Whether the argument at `at` of a call or construction is wanted as a `*mut` by a function or a struct of this

@@ -187,7 +187,7 @@ export const ast::Module *read(Str header, Bool angled, Str importer, Str flags)
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
     ast::Module *module = nullptr;
     Str kept_key = "";
-    HeaderKept kept = {.request = {.name = nullptr}};
+    HeaderKept kept = {.request = {.name = nullptr, .quoted = 0, .folder = nullptr, .flags = nullptr}};
     if (countof(got.error) == 0) {
         module = mem::alloc(ast::Module);
         module->decls = got.decls;

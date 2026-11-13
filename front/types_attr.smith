@@ -366,9 +366,10 @@ export void check_module(types::Checked *r, const ast::Module *m) {
     }
 }
 
-const Str when_place =
-    "`@when` is for an import, function, variable, struct, enum or typedef at the top level, and for a "
-    "struct's field; inside a function choose with `if constexpr`";
+static Str when_place() {
+    return "`@when` is for an import, function, variable, struct, enum or typedef at the top level, and for a "
+           "struct's field; inside a function choose with `if constexpr`";
+}
 
 // One `@when(cond)`: exactly one argument, and a condition the checker can read.
 static void check_when_one(types::Checked *r, const ast::Attribute *a) {
@@ -386,7 +387,7 @@ static void check_when_one(types::Checked *r, const ast::Attribute *a) {
 // Where `@when` may not be written: on anything but a declaration or a field.
 static void refuse_when(types::Checked *r, ast::Attribute list[:]) {
     const ast::Attribute *a = when::find(list);
-    if (a != nullptr) types::fail(r, a->span, when_place);
+    if (a != nullptr) types::fail(r, a->span, when_place());
 }
 
 // `@when` on a module's declarations, fields, enumerators and parameters (a statement takes no attribute: the parser
@@ -400,7 +401,7 @@ export void check_when(types::Checked *r, const ast::Module *m) {
             Bool is_import = d->kind == .import_c || d->kind == .import_module || d->kind == .import_from;
             Bool is_unnamed = d->kind == .asm_decl || d->kind == .static_assert_decl; // chosen by `@when` too (#2636)
             if (countof(when::name_of(d)) == 0 && !is_import && !is_unnamed) {
-                types::fail(r, a->span, when_place);
+                types::fail(r, a->span, when_place());
             } else {
                 check_when_one(r, a);
             }
