@@ -156,7 +156,7 @@ export void test_front_undefined_a_debug_build_reads_0xaa() {
             test::check_equal(emit_jit::add(&host, context, emitted.ok) == .ok, true);
             emit_jit::AddressResult found = emit_jit::lookup(&host, "peek");
             test::check_equal(found == .ok, true);
-            if (found == .ok) test::check_equal(((Nullary)found.ok)(), (I32)0xAAAAAAAA);
+            if (found == .ok) test::check_equal(((Nullary)found.ok)(), -1431655766);
         }
         emit_jit::stop(&host);
     }
