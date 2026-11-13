@@ -76,9 +76,9 @@ static const char *text(const scratch::Project *p, const char *body) {
 constexpr Usize cache_capacity = 1U << 16;
 
 // `smith cache <args>` in process on the project's cache folder.
-static I32 cache(const scratch::Project *p, I32 count, char **args, const char **out) {
+static I32 cache(const scratch::Project *p, I32 count, const char *const *args, const char **out) {
     char *text_out = mem::alloc_slice(char, cache_capacity).data;
-    I32 status = c::smith_core_cache(p->cache, nullptr, count, args, text_out, cache_capacity);
+    I32 status = c::smith_core_cache(p->cache, nullptr, count, (char **)(Usize)args, text_out, cache_capacity);
     *out = text_out;
     return status;
 }
@@ -118,7 +118,7 @@ static const char *modules_and_packages(const scratch::Project *p) {
 export void test_cache_clean_modules_removes_the_modules_and_keeps_the_packages() {
     scratch::Project p = filled_project();
     defer finish(&p);
-    char *args[2] = {"clean", "modules"};
+    const char *args[2] = {"clean", "modules"};
     const char *out;
     test::check_equal(cache(&p, 2, args, &out), 0);
     scratch::expect_contains("cache clean modules: says what it removed", out,
@@ -132,7 +132,7 @@ export void test_cache_clean_modules_removes_the_modules_and_keeps_the_packages(
 export void test_cache_a_second_clean_in_one_process_is_not_refused() {
     scratch::Project p = filled_project();
     defer finish(&p);
-    char *args[1] = {"clean"};
+    const char *args[1] = {"clean"};
     const char *first;
     const char *second;
     test::check_equal(cache(&p, 1, args, &first), 0);
@@ -156,7 +156,7 @@ export void test_cache_modules_are_built_again_after_a_clean() {
 export void test_cache_clean_packages_removes_the_packages_and_keeps_the_modules() {
     scratch::Project p = filled_project();
     defer finish(&p);
-    char *args[2] = {"clean", "packages"};
+    const char *args[2] = {"clean", "packages"};
     const char *out;
     test::check_equal(cache(&p, 2, args, &out), 0);
     scratch::expect_text("cache clean packages: the packages are gone", "no", text(&p, "exists \"$packages\""));
@@ -166,7 +166,7 @@ export void test_cache_clean_packages_removes_the_packages_and_keeps_the_modules
 export void test_cache_clean_removes_both_and_a_package_is_fetched_again() {
     scratch::Project p = filled_project();
     defer finish(&p);
-    char *args[1] = {"clean"};
+    const char *args[1] = {"clean"};
     const char *out;
     test::check_equal(cache(&p, 1, args, &out), 0);
     scratch::expect_text("cache clean: both", "no no", modules_and_packages(&p));
