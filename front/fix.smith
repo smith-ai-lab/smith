@@ -274,7 +274,8 @@ static Str database_flags() {
             } else if (matched && inside) {
                 Bool pair = is_flag(previous, "-I") || is_flag(previous, "-isystem") || is_flag(previous, "-D") ||
                             is_flag(previous, "-isysroot");
-                if (pair) out = as_str(format::push(out, previous, "\n", from_directory(previous, directory, value), "\n"));
+                if (pair)
+                    out = as_str(format::push(out, previous, "\n", from_directory(previous, directory, value), "\n"));
                 if (!pair && (starts_with_text(value, "-I") || starts_with_text(value, "-D")) && countof(value) > 2)
                     out = as_str(format::push(out, attached_flag(directory, value), "\n"));
                 previous = value;
