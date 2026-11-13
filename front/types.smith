@@ -3671,7 +3671,10 @@ static Usize find_instance(const Checked *r, const ast::Decl *template, Binding 
         if (x->template != template || countof(x->bindings) != countof(given)) continue;
         Bool same = true;
         for (Usize k = 0; k < countof(given); k++) {
-            if (x->bindings[k].is_type != given[k].is_type || x->bindings[k].type != given[k].type ||
+            // A constant (`const n: usize`) is given with no type: the instance holds the parameter's own, so the
+            // value is all there is to compare, or no call of a template with a constant would find its instance.
+            if (x->bindings[k].is_type != given[k].is_type ||
+                (given[k].is_type && x->bindings[k].type != given[k].type) ||
                 x->bindings[k].value != given[k].value) {
                 same = false;
             }
@@ -3853,6 +3856,7 @@ static Str single_name_of(const ast::Expr *e) {
 }
 
 static Usize typed_subjects = 0;
+static const ast::Decl *expanding = nullptr; // the function whose lists `expand_reflection` is rewriting
 
 // The type of the variable `typeof(v)` names, or null: the new syntax may read the operand `v` as a type name.
 static TypeRef typeof_variable(const Checked *r, const ast::Expr *operand) {
@@ -3864,12 +3868,36 @@ static TypeRef typeof_variable(const Checked *r, const ast::Expr *operand) {
         name = operand->kind.type_value.type->kind.named.path.segments[0].text;
     }
     if (countof(name) == 0) return nullptr;
-    const Symbol *found = lookup(&r->scopes, name);
+    // A parameter written with a type of the instance (`x: U`, `U` bound here): its type, resolved in the instance. It
+    // is the variable `x` the body means, whatever a function being checked around this one calls `x`.
+    ast::Param params[:] = {};
+    const ast::Decl *decl = expanding;
+    if (decl != nullptr) {
+        if (decl->kind == .function) params = decl->kind.function.params;
+    }
+    {
+        for (Usize i = 0; i < countof(params); i++) {
+            if (!same_text(params[i].name, name) || params[i].type == nullptr || is_auto_param(&params[i])) continue;
+            if (params[i].is_pack || params[i].is_rest) continue;
+            Checked *m = reflecting;
+            if (m == nullptr) continue;
+            Usize errors = m->error_count;
+            Bool was_new = m->new_syntax;
+            m->new_syntax = true;
+            TypeRef t = resolve(m, params[i].type);
+            m->new_syntax = was_new;
+            m->error_count = errors;
+            if (t != nullptr && t != r->table.invalid) return t;
+        }
+    }
+    // Before an instance's parameters are declared, an `auto` parameter `v` is bound as `$auto.v` (`bind_given`). It
+    // comes first: an instance made while another is being checked (a walk that calls itself with a field's type)
+    // would otherwise find the variable `v` of the outer instance, and read the fields of the wrong type.
+    const Symbol *found = lookup(&r->scopes, msg(format::push("$auto.", name)));
+    if (found != nullptr) return found->type;
+    found = lookup(&r->scopes, name);
     if (found != nullptr && found->kind == .variable) return found->type;
-    // Before an instance's parameters are declared, an `auto` parameter `v` is bound as `$auto.v` (`bind_given`).
-    found = lookup(&r->scopes, msg(format::push("$auto.", name)));
-    if (found == nullptr) return nullptr;
-    return found->type;
+    return nullptr;
 }
 
 // The type of `v`, `p.*` or `p.f` (a field through a pointer too), a few steps from a variable: the subject of
@@ -3950,6 +3978,27 @@ static const ast::Expr *typed_subject(const ast::Expr *e) {
     call->span = e->span;
     enumerated_any = true;
     return call;
+}
+
+// `fields(T)[i]` where `i` is a compile-time parameter bound in this instance (`fn name_at(p: auto, const i: usize)`):
+// the index written as the number the call passed, which is what the lists are read by. Any other expression is
+// `typed_subject`'s.
+static const ast::Expr *bound_index(const ast::Expr *e) {
+    if (reflecting == nullptr || e->kind != .index) return typed_subject(e);
+    const ast::Expr *base = e->kind.index.base;
+    if (base->kind != .call) return typed_subject(e);
+    Str kind = single_name_of(base->kind.call.callee);
+    if (!same_text(kind, "fields") && !same_text(kind, "parameters")) return typed_subject(e);
+    Str name = single_name_of(e->kind.index.index);
+    if (countof(name) == 0) return typed_subject(e);
+    const Symbol *bound = lookup(&reflecting->scopes, name);
+    if (bound == nullptr || !bound->has_value) return typed_subject(e);
+    ast::Expr *position = ast::integer(bound->value);
+    position->span = e->kind.index.index->span;
+    ast::Expr *indexed = ast::expr({.index = {.base = e->kind.index.base, .index = position}});
+    indexed->span = e->span;
+    enumerated_any = true;
+    return indexed;
 }
 
 // The number of elements of the list of an enumerated loop, when it is the pack or a reflection list known here.
@@ -4063,7 +4112,7 @@ static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
     enumerated_pack = pack;
     enumerated_count = count;
     enumerated_any = false;
-    ast::Decl *copy = ast_clone::clone_decl_rewriting(d, enumerated, typed_subject);
+    ast::Decl *copy = ast_clone::clone_decl_rewriting(d, enumerated, bound_index);
     Str none = "";
     enumerated_pack = none;
     if (enumerated_any) *d = *copy;
@@ -4073,11 +4122,13 @@ static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
 // Expands the `fields(T)` and `parameters(F)` of a function in place, with the names of the scopes now in force.
 export Bool expand_reflection(Checked *r, ast::Decl *function) {
     reflecting = r;
+    expanding = function;
     Str none = "";
     Bool unrolled = unroll_enumerated(function, none, 0);
     ast_clone::Sources sources = {.count = reflect_count, .at = reflect_at, .fail = reflect_fail};
     Bool expanded = ast_clone::expand_reflection_lists(function, sources) || unrolled;
     reflecting = nullptr;
+    expanding = nullptr;
     return expanded;
 }
 

@@ -1,0 +1,21 @@
+import c <stdio.h>
+
+fn sq(x: i32) -> i32:
+    return x * x
+
+fn plus(a: i32, b: i32) -> i32:
+    return a + b
+
+fn total3(a: i32, b: i32, c: i32) -> i32:
+    return a * 100 + b * 10 + c
+
+# `map(rest, f)...` applies `f` to each element of the pack and spreads the results into the call.
+fn squares(rest...) -> i32:
+    return total3(map(rest, sq)...)
+
+fn shifted(off: i32, rest...) -> i32:
+    return total3(map(rest, fn(each): plus(each, off))...)
+
+pub fn main() -> i32:
+    _ := stdio.printf("%d %d\n", squares(1, 2, 3), shifted(1, 1, 2, 3))
+    return 0

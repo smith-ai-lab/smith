@@ -1,0 +1,30 @@
+import c <stdio.h>
+
+pub struct Inner:
+    pub a: f64
+    pub b: f64
+
+pub struct Outer:
+    pub inner: Inner
+    pub scale: f64
+    pub steps: i32
+
+# The name of field `i` of what `p` points to: `i` is a compile-time parameter.
+fn name_at(p: auto, const i: usize) -> str:
+    return fields(typeof(p.*))[i].name
+
+# Walks the fields of `*p` and recurses into a field that is a struct: each instance reads its own `T`'s fields.
+fn walk(p: auto):
+    if is_record(typeof(p.*)):
+        for (i, fld) in enumerate(fields(typeof(p.*))):
+            _ := stdio.printf("%s ", name_at(p, i).data)
+            walk(&p.[fld])
+        _ := stdio.printf("| ")
+    else:
+        _ := stdio.printf("leaf ")
+
+pub fn main() -> i32:
+    mut o := Outer(inner = Inner(a = 1.0, b = 2.0), scale = 3.0, steps = 4)
+    walk(&o)
+    _ := stdio.printf("\n")
+    return 0

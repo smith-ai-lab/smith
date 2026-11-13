@@ -1,0 +1,60 @@
+// Tests of the fix-it for a pack expansion with a pattern (item 45 of #3235): `plus(rest, off)...` becomes
+// `map(rest, fn(each): plus(each, off))...`.
+module front_fix_pack_test;
+
+import front::fix;
+import front::fix_pack;
+import front::parse as core;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Str applied(Str source) {
+    core::Errors found = fix_pack::edits(source);
+    Str text = source;
+    for (Usize k = 0; k < countof(found); k++) {
+        core::Edits fix = found[k].fix;
+        for (Usize m = 0; m < countof(fix); m++) {
+            Usize best = m;
+            for (Usize j = m + 1; j < countof(fix); j++)
+                if (fix[j].span.start > fix[best].span.start) best = j;
+            core::Edit pick = fix[best];
+            fix[best] = fix[m];
+            fix[m] = pick;
+        }
+        for (Usize m = 0; m < countof(fix); m++) {
+            Str before = text[0:fix[m].span.start];
+            Str after = text[fix[m].span.end:countof(text)];
+            text = as_str(format::push(before, fix[m].text, after));
+        }
+    }
+    return text;
+}
+
+static void expect(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(applied(before), want);
+}
+
+export void test_front_fix_pack_a_pattern_becomes_a_map_over_the_pack() {
+    expect("fn f(off: i32, rest...):\n    return g(plus(rest, off)...)\n",
+           "fn f(off: i32, rest...):\n    return g(map(rest, fn(each): plus(each, off))...)\n");
+}
+
+export void test_front_fix_pack_a_member_of_the_pack_name_is_left() {
+    expect("fn f(rest...):\n    return g(h(x.rest, rest)...)\n",
+           "fn f(rest...):\n    return g(map(rest, fn(each): h(x.rest, each))...)\n");
+}
+
+export void test_front_fix_pack_the_name_alone_and_a_map_are_left() {
+    expect("fn f(rest...):\n    return g(rest..., map(rest, h)...)\n",
+           "fn f(rest...):\n    return g(rest..., map(rest, h)...)\n");
+}
