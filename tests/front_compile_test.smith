@@ -155,3 +155,16 @@ export void test_front_compile_a_callers_function_does_not_hide_a_question_in_an
     test::check_equal(made.ok, true);
     remove_all(folder);
 }
+
+// A function of the module named like a builtin is the module's own, in the emitter too (#3606): `is_integer` below is
+// not the type question, and its call is lowered as a call (it used to push a value with no LLVM value, and `not`
+// of it crashed the compiler).
+export void test_front_compile_a_function_named_like_a_builtin_is_called_not_lowered_as_it() {
+    Str folder = folder_for("shadowed_builtin");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "fn is_integer(t: i32) -> bool:\n    return t == 1\n\n"
+               "pub fn f(l: i32) -> bool:\n    if not is_integer(l):\n        return false\n    return true\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}
