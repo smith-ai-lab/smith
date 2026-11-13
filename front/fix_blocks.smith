@@ -17,7 +17,8 @@
 //   (#2225);
 //                                      the names already declared in the scope get an assignment instead of a
 //                                      declaration; a loop with a `continue`, a comma, or a body on the header's line
-//                                      is left
+//                                      is left; a counter whose name is declared again later in the block is
+//                                      renamed to the name and `_` (#3320)
 //   "a"\n"b"          ("a"\n"b")        adjacent literals on several lines are one parenthesized expression
 //   void f(auto x) {                   a C signature the fixer did not convert is left with its braces, all of it:
 //                                      a signature is converted whole or not at all
@@ -1318,7 +1319,91 @@ static Str join_value_ifs(Str source) {
     return as_str(format::push(out, source[kept:at]));
 }
 
+// Whether the token `at` declares its name in smith's own syntax: `mut i`, `i := v`, `i: T = v` at the start of a line,
+// or the counter of `for i in`.
+static Bool declares_name(lex::Tokens tokens, Usize at) {
+    if (at > 0 && tokens[at - 1].kind == lex::dot) return false;
+    if (at > 0 && tokens[at - 1].kind == lex::kw_mut) return true;
+    if (at > 0 && tokens[at - 1].kind == lex::kw_for && at + 1 < countof(tokens) && tokens[at + 1].kind == lex::kw_in)
+        return true;
+    if (at + 1 >= countof(tokens)) return false;
+    if (tokens[at + 1].kind == lex::colon_equal) return true;
+    return tokens[at + 1].kind == lex::colon && (at == 0 || tokens[at - 1].line_break);
+}
+
+// The first token at or after `from` whose offset is `offset` or more.
+static Usize token_at(lex::Tokens tokens, Usize from, Usize offset) {
+    while (from < countof(tokens) && tokens[from].span.start < offset)
+        from += 1;
+    return from;
+}
+
+// The counter's new name: `name` and `_`s, none of the text's tokens.
+static Str unused_name(Str source, lex::Tokens tokens, Str name) {
+    Str candidate = name;
+    for (Usize tries = 0; tries < 8; tries++) {
+        candidate = as_str(format::push(candidate, "_"));
+        Bool used = false;
+        for (Usize i = 0; i < countof(tokens); i++) {
+            if (mem::equal(source[tokens[i].span.start:tokens[i].span.end], candidate)) used = true;
+        }
+        if (!used) break;
+    }
+    return candidate;
+}
+
+// The token after the last of the loop whose header closes at `close` (its braces, or its unbraced lines).
+static Usize loop_end(Str source, lex::Tokens tokens, Braces braces, Usize at, Usize close) {
+    if (close + 1 < countof(tokens) && tokens[close + 1].kind == lex::left_brace) {
+        Usize which = brace_at(braces, close + 1);
+        return which == countof(braces) ? close + 1 : braces[which].close + 1;
+    }
+    Usize body_indent = 0;
+    Usize end = unbraced_end(source, tokens[close].span.end, indent_of(source, tokens[at].span.start), &body_indent);
+    return end == 0 ? close + 1 : token_at(tokens, close + 1, end);
+}
+
+// A `for (T i = a; c; s)` is written as `mut i: T = a` and `while`, so its counter outlives the loop (#3320). When the
+// name is declared again later in the same block (a `for i in range(..)` an earlier pass wrote, a local), the counter
+// of the loop, its condition, step and body, gets the name and a `_` (`i_`), a name nothing else in the text has. A
+// name not declared again, and a loop that is left (a `continue`, a comma), keep their text.
+static Str rename_counters(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Braces braces = braces_of(tokens);
+    Cuts cuts = {};
+    Usize renamed_to = 0;
+    for (Usize at = 0; at < countof(tokens); at++) {
+        if (tokens[at].kind != lex::kw_for || in_skipped(braces, at)) continue;
+        if (at > 0 && !tokens[at - 1].line_break) continue;
+        if (at < renamed_to) continue;
+        Header h = read_header(source, tokens, at);
+        if (!h.ok || !h.has_type || countof(h.more) > 0) continue;
+        Usize end = loop_end(source, tokens, braces, at, h.close);
+        if (has_continue(tokens, at, end)) continue;
+        Usize scope = scope_of(braces, tokens[at].span.start);
+        Usize stop = scope == 0 ? countof(tokens) : braces[scope - 1].close;
+        Bool again = false;
+        for (Usize i = end; i < stop && !again; i++) {
+            again = tokens[i].kind == lex::name && declares_name(tokens, i) &&
+                    mem::equal(source[tokens[i].span.start:tokens[i].span.end], h.name);
+        }
+        if (!again) continue;
+        Str fresh = unused_name(source, tokens, h.name);
+        for (Usize i = at + 2; i < end; i++) {
+            if (tokens[i].kind != lex::name || (i > 0 && tokens[i - 1].kind == lex::dot)) continue;
+            if (!mem::equal(source[tokens[i].span.start:tokens[i].span.end], h.name)) continue;
+            add_cut(&cuts, tokens[i].span.start, tokens[i].span.end, fresh);
+        }
+        renamed_to = end;
+    }
+    if (countof(cuts) == 0) return source;
+    return apply(source, cuts);
+}
+
 static Str convert_once(Str source) {
+    source = rename_counters(source);
     for (Usize round = 0; round < 8; round++) {
         Str plain = plain_forms(source);
         if (mem::equal(plain, source)) break;
