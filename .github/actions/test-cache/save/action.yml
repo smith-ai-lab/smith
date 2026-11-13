@@ -50,29 +50,46 @@ runs:
         # the test results of the smith run by hand are answers in the same folder (#3177): `steps/a` of the cache, joined
         # with the tests' own, so the tarball below holds both
         byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps/a"
-        if [ -d "$byhand" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
-        # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
-        [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
         # #3281: a Linux part publishes only what it added (newer than the mark `./.github/actions/test-cache` set after
         # the restore; the hits count, a hit touches its entry); the whole file of main has the rest. No mark (the
         # nightly restored nothing) or another OS: the whole store, as before.
         mark="$RUNNER_TEMP/test-store-mark"; newer=()
         if [ "$OS" = linux ] && [ -f "$mark" ]; then newer=(-newer "$mark"); fi
         out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
+        phase=$SECONDS
+        if [ "${#newer[@]}" -gt 0 ]; then
+          # #3458: the restore made the tests' folder out of hard links to the by-hand one, so the two hold the same
+          # old entries; only the entries of the by-hand folder written or touched since the restore are joined (one walk,
+          # not a copy of 347,000 files), and the 14-day prune is the whole file's (`whole`), not each part's
+          if [ -d "$byhand" ]; then
+            mkdir -p "$answers/a"
+            (cd "$byhand" && find . -type f -newer "$mark" -print0) >"$out/byhand-newer"
+            if [ -s "$out/byhand-newer" ]; then tar -C "$byhand" --null -T "$out/byhand-newer" -c | tar -x -C "$answers/a"; fi
+          fi
+        else
+          if [ -d "$byhand" ]; then mkdir -p "$answers/a"; cp -a "$byhand/." "$answers/a/"; fi
+          # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
+          [ -d "$answers/a" ] && find "$answers/a" -type f -mtime +14 -delete
+        fi
+        echo "publish: joined the folders in $((SECONDS - phase)) s" >&2; phase=$SECONDS
         if [ -n "$LIST" ] && [ -s "$LIST" ] && [ "$OS" = linux ] && [ -f "$mark" ]; then
           # the entries the job named (#3457), the ones that exist; the hits among them are published too, so their
           # time is renewed in the whole file
           (cd "${answers%/steps}/steps" && while read -r rel; do [ -f "$rel" ] && echo "steps/$rel"; done <"$LIST") >"$out/list-steps" || true
           n=$(wc -l <"$out/list-steps" | tr -d ' ')
+        elif [ "${#newer[@]}" -gt 0 ] && [ "$TESTS" = true ] && [ -d "$answers/a" ]; then
+          # the one walk of the part's additions: the list is the tarball's member list, and the count is its length
+          (cd "${answers%/steps}" && find steps/a -type f -newer "$mark") >"$out/list-steps"
+          n=$(wc -l <"$out/list-steps" | tr -d ' ')
         else
           n=$( [ -d "$answers/a" ] && [ "$TESTS" = true ] && find "$answers/a" -type f ${newer[@]+"${newer[@]}"} | wc -l || echo 0)
         fi
+        echo "publish: listed $n entries in $((SECONDS - phase)) s" >&2; phase=$SECONDS
         if [ "$n" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         assets=("$out/smith-tests.sha")
         if [ "${#newer[@]}" -gt 0 ]; then
           # their own asset name (#3281): a release of additions is never read as a whole store
           file="smith-tests-added-$OS.tar.gz"
-          [ -n "$LIST" ] && [ -s "$LIST" ] || (cd "${answers%/steps}" && find steps/a -type f -newer "$mark") >"$out/list-steps"
           tar -C "${answers%/steps}" -c -T "$out/list-steps" | gzip -1 >"$out/$file"
         else
           file="smith-tests-$OS.tar.gz"

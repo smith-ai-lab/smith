@@ -221,24 +221,35 @@ runs:
         urls=$(cat "$RUNNER_TEMP/tests-urls" 2>/dev/null || true); from=$(cat "$RUNNER_TEMP/tests-from" 2>/dev/null || true)
         # the list `build-linux` chose for the whole run (#3471) replaces the one this job would choose
         if [ -n "$GIVEN_FROM" ]; then urls=$GIVEN_URLS; from="$GIVEN_FROM (chosen once for the run)"; fi
-        stage="$RUNNER_TEMP/test-store-stage"; mkdir -p "$stage"
-        got=0
+        # #3458: each tarball is extracted straight into the folder the smith run by hand reads (`smith/steps` of the
+        # cache), not into a stage that was then copied twice, counted and deleted (347,508 files, 4 passes, 200 s of a
+        # part). The tests' folder is the same files by hard links (Linux; macOS copies), made in one pass; the entries
+        # a job adds are new files in one folder or the other, and `save` joins them.
+        byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps"; mkdir -p "$byhand"
+        tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"; mkdir -p "$tests"
+        got=0; entries=0; start_at=$SECONDS; phase=$SECONDS; fetched=0
         for url in $urls; do
-          curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
-            tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$stage" steps && got=$((got + 1))
+          curl -fsSL --retry 3 "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null || continue
+          fetched=$((fetched + SECONDS - phase)); phase=$SECONDS
+          # the members are `steps/...`; the old per-tool folder some sets still hold is left in the tarball
+          if tar -xzvf "$RUNNER_TEMP/tests.tar.gz" -C "${byhand%/steps}" steps >"$RUNNER_TEMP/members.txt"; then
+            n=$(grep -vc '/$' "$RUNNER_TEMP/members.txt" || true)
+            got=$((got + 1)); entries=$((entries + n))
+          fi
+          phase=$SECONDS
         done
+        rm -f "$RUNNER_TEMP/members.txt"
+        rm -f "$RUNNER_TEMP/tests.tar.gz"
+        extracted=$SECONDS
         # the mark of the additions (#3281): what a part adds is newer than this file, and `save` publishes only that
         touch "$RUNNER_TEMP/test-store-mark"
         # the answers go where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
         # and where the smith run by hand looks (#3177)
-        if [ -d "$stage/steps/a" ]; then
-          tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/steps"; mkdir -p "$tests"
-          byhand="${XDG_CACHE_HOME:-$HOME/.cache}/smith/steps"; mkdir -p "$byhand"
-          cp -a "$stage/steps/." "$byhand/" && cp -a "$stage/steps/." "$tests/"
+        if [ -d "$byhand/a" ]; then
+          if [ "$(uname -s)" = Linux ]; then cp -alf "$byhand/." "$tests/"; else cp -a "$byhand/." "$tests/"; fi
         fi
         if [ "$got" -gt 0 ]; then
-          echo "test store: restored $(find "$stage/steps" -type f 2>/dev/null | wc -l) entries from $got of $(printf '%s\n' $urls | grep -c .) stores ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "test store: restored $entries entries from $got of $(printf '%s\n' $urls | grep -c .) stores ($from); downloads $fetched s, extraction $((extracted - fetched - start_at)) s, tests' folder $((SECONDS - extracted)) s" | tee -a "$GITHUB_STEP_SUMMARY"
         else
           echo "test store: none, every test runs ($from)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-        rm -rf "$stage"
