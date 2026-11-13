@@ -12,10 +12,10 @@ import std::test;
 
 // A wait status as every POSIX system encodes it: the low seven bits are the signal that ended the child (0 for a
 // normal exit, 0x7f for a stop) and the next byte is the exit code. <sys/wait.h> has these as function-like macros.
-constexpr I32 status_signal_mask = 0x7f;
+constexpr U32 status_signal_mask = 0x7f;
 
 I32 terminating_signal(I32 status) {
-    return status & status_signal_mask;
+    return (I32)((U32)status & status_signal_mask);
 }
 
 Bool exited(I32 status) {
@@ -23,11 +23,11 @@ Bool exited(I32 status) {
 }
 
 Bool killed_by_signal(I32 status) {
-    return terminating_signal(status) != 0 && terminating_signal(status) != status_signal_mask;
+    return terminating_signal(status) != 0 && terminating_signal(status) != (I32)status_signal_mask;
 }
 
 I32 exit_code(I32 status) {
-    return (status >> 8) & 0xff;
+    return (I32)(((U32)status >> 8) & 0xffU);
 }
 
 export void test_wait_a_child_that_never_ends_is_killed_after_the_grace() {
