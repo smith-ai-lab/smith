@@ -508,6 +508,18 @@ export void test_build_step_cache_serves_the_build_program_to_a_second_folder() 
     scratch::expect_status("program: and its objects are the first's", 0, &same);
 }
 
+// The count of the steps b stored in the other folders; when it is not a's (#3456), the lines after it name each step
+// of b's key log (SMITH_STEP_KEY_LOG) whose key a's log does not have, with what its key is made of, so the failure
+// says which steps differ and why.
+constexpr char stored_in_b[_] =
+    "n=$(find \"$(dirname \"$XDG_CACHE_HOME\")/elsewhere/cache/smith/steps/r\" -mindepth 2 -maxdepth 2 | wc -l | tr -d "
+    "' '); "
+    "echo $n; if [ \"$n\" != \"$(find \"$XDG_CACHE_HOME/smith/steps/r\" -mindepth 2 -maxdepth 2 | wc -l | tr -d ' ')\" "
+    "]; "
+    "then echo 'steps of b whose key a did not have:'; "
+    "awk 'NR == FNR { if ($1 == \"key\") seen[$2] = 1; next } { block = block $0 \"\\n\" } "
+    "$1 == \"key\" { if (!($2 in seen)) printf \"%s\", block; block = \"\" }' ../a/keys.txt keys.txt; fi";
+
 // One store (#3300): a step's key does not hold the cache folder, the data folder (where clang's own headers are
 // unpacked) or the folder of a checkout, which differ on every machine. The steps of one machine, copied to another
 // whose cache and data folders are named otherwise, serve every compile there, and a served object is the one a
@@ -520,22 +532,21 @@ export void test_build_step_cache_the_same_steps_are_served_in_other_cache_and_d
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     scratch::Project b = sibling(&a, "b");
-    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 smith build -v >log.txt 2>&1");
+    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 SMITH_STEP_KEY_LOG=\"$PWD/keys.txt\" smith build -v >log.txt 2>&1");
     const char *first = scratch::capture(&a, results);
     // the store of a, in a cache folder and a data folder of other names, where b builds
     constexpr char elsewhere[_] =
         "E=$(dirname \"$XDG_CACHE_HOME\")/elsewhere; rm -rf \"$E\"; mkdir -p \"$E/cache/smith\" "
         "\"$E/data\" && cp -R \"$XDG_CACHE_HOME/smith/steps\" \"$E/cache/smith/steps\"; ";
-    scratch::Run second = scratch::sh(
-        &b, format::push(elsewhere, "env SMITH_STEP_CACHE=1 XDG_CACHE_HOME=\"$E/cache\" XDG_DATA_HOME=\"$E/data\" "
-                                    "smith build -v >log.txt 2>&1")
-                .data);
+    scratch::Run second =
+        scratch::sh(&b, format::push(elsewhere, "env SMITH_STEP_CACHE=1 SMITH_STEP_KEY_LOG=\"$PWD/keys.txt\" "
+                                                "XDG_CACHE_HOME=\"$E/cache\" XDG_DATA_HOME=\"$E/data\" "
+                                                "smith build -v >log.txt 2>&1")
+                            .data);
     scratch::expect_status("folders: b builds in the other folders", 0, &second);
     scratch::expect_text("folders: its three compiles are served", "3",
                          scratch::capture(&b, "grep -c '(cached)' log.txt"));
-    scratch::expect_text("folders: it stores nothing of its own", first,
-                         scratch::capture(&b, "find \"$(dirname \"$XDG_CACHE_HOME\")/elsewhere/cache/smith/steps/r\" "
-                                              "-mindepth 2 -maxdepth 2 | wc -l | tr -d ' '"));
+    scratch::expect_text("folders: it stores nothing of its own", first, scratch::capture(&b, stored_in_b));
     scratch::Run same = scratch::sh(&b, "cmp build/debug/main.o ../a/build/debug/main.o");
     scratch::expect_status("folders: and its objects are a's", 0, &same);
 }
