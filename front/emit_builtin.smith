@@ -22,10 +22,16 @@ static Bool entry_of(const ast::Expr *x, table::Entry *found) {
     return countof(path.segments) == 1 && table::find(path.segments[0].text, found);
 }
 
-// Whether the call `x` is a call of a builtin of the table.
-export Bool is_call(const ast::Expr *x) {
+// Whether the call `x` is a call of a builtin of the table. A function of the module with the builtin's name is not
+// one (#3606): `is_integer(t)` of `front::types_expr` is its own function, and lowered as the type question it would
+// push a value with no LLVM value.
+export Bool is_call(const state::Emitter *e, const ast::Expr *x) {
     table::Entry found = {};
-    return entry_of(x, &found);
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (!entry_of(x, &found)) return false;
+    if (e->options.checked == nullptr) return true;
+    return table::callee_entry(e->options.checked, callee, &found);
 }
 
 // A call of the LLVM intrinsic `name`, overloaded on `over` (null for one that is not). The call's value.

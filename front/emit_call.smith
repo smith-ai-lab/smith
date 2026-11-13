@@ -1131,7 +1131,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     if (expected_record(e, callee, hint, &record) || made_record(e, x, &record)) return construct(e, x, record);
     if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
     if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
-    if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)
+    if (builtin::is_call(e, x)) return builtin::call(e, x);             // a clang builtin (#2286)
     state::Ty held_local = {};
     if (local_function_value(e, callee, &held_local)) return lambdas::call_value(e, x, held_local);
     if (callee->kind == .name && streams::is_call(x)) return streams::call(e, x);
