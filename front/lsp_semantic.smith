@@ -21,7 +21,7 @@ import std::mem;
 
 // The token types, in the order of the legend; the protocol's standard names, so every editor colours them.
 // NOLINTBEGIN(readability-identifier-naming)
-enum Type {
+enum TokenType {
     namespace_type,
     type_type,
     function_type,
@@ -47,7 +47,7 @@ constexpr U32 default_library_bit = 4;
 struct Entry {
     U32 start;
     U32 end;
-    U32 type;
+    TokenType type;
     U32 modifiers;
 };
 
@@ -72,7 +72,7 @@ static void add(Found *found, Entry entry) {
 }
 
 // A token of the bytes `start` to `end`, cut at each line break (a client wants a token on one line).
-static void add_lines(Found *found, Str source, U32 start, U32 end, U32 type, U32 modifiers) {
+static void add_lines(Found *found, Str source, U32 start, U32 end, TokenType type, U32 modifiers) {
     U32 from = start;
     for (U32 i = start; i < end && i < countof(source); i++) {
         if (source[i] != '\n') continue;
@@ -372,7 +372,7 @@ static void put_number(Text *text, U64 value) {
     }
 }
 
-// The legend, the same order as `Type` and the modifier bits.
+// The legend, the same order as `TokenType` and the modifier bits.
 export Str legend() {
     return "{\"tokenTypes\":[\"namespace\",\"type\",\"function\",\"method\",\"parameter\",\"variable\",\"property\","
            "\"enumMember\",\"keyword\",\"comment\",\"string\",\"number\",\"decorator\"],"
@@ -409,7 +409,7 @@ export Str result(Str path, Str source, U32 from, U32 to) {
         put_char(&out, ',');
         put_number(&out, e.end - e.start);
         put_char(&out, ',');
-        put_number(&out, e.type);
+        put_number(&out, (U32)e.type);
         put_char(&out, ',');
         put_number(&out, e.modifiers);
         first = false;

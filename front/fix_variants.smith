@@ -315,6 +315,16 @@ static Bool used_as_type(Str source, lex::Tokens tokens, Usize i) {
     return head >= 2 && tokens[head - 2].kind == lex::type_name;
 }
 
+// The index of the first token of the module path before the qualified name at `i` (`std.files.` in
+// `std.files.NotFound`), or `i` when what stands before it is not a module: a lower-case name is a module, a
+// capitalized one a type.
+static Usize module_head(lex::Tokens tokens, Usize i) {
+    Usize head = i;
+    while (head >= 2 && tokens[head - 1].kind == lex::dot && tokens[head - 2].kind == lex::name)
+        head -= 2;
+    return head;
+}
+
 // The same, but a use written through a module that declares the type (`owned`, `module.Name`) stays.
 static Str rename_owned(Str source, Words names, Words owned) {
     lex::Lexed read = lex::tokenize_new(source);
@@ -334,8 +344,19 @@ static Str rename_owned(Str source, Words names, Words owned) {
             has(owned, as_str(format::push(lex::text(source, tokens[i - 2]), ".", name))))
             continue;
         Str spelled = snake(name);
+        Usize from = t.span.start;
+        if (before == lex::dot) {
+            // `files.NotFound`: an enumerator is no member of a module, it is `.not_found` where the type is known
+            // (#3584); a type before the name (`Error.NotFound`) keeps its dot. The old `files::NotFound` stays: the
+            // later passes read it.
+            Usize head = module_head(tokens, i);
+            if (head < i) {
+                from = tokens[head].span.start;
+                spelled = as_str(format::push(".", spelled));
+            }
+        }
         if (!qualified && !declared_at(here, t.span.start)) spelled = as_str(format::push(".", spelled));
-        out = as_str(format::push(out, source[copied:t.span.start], spelled));
+        out = as_str(format::push(out, source[copied:from], spelled));
         copied = t.span.end;
     }
     return as_str(format::push(out, source[copied:countof(source)]));
