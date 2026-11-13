@@ -93,9 +93,10 @@ static Bool same(Str a, Str b) {
 
 // Whether a field can be named in `T(f = 0)`: a keyword of smith's own syntax (`in`) cannot.
 static Bool nameable(Str field) {
-    lex::Lexed lexed = lex::tokenize_new(field);
+    // read where it is written, as an argument name: `module` and `type` are names there (`Error(module = "")`)
+    lex::Lexed lexed = lex::tokenize_new(types::message_of(format::push("(", field, " = 0)")));
     if (lexed == .error) return false;
-    Bool ok = countof(lexed.ok) > 0 && lexed.ok[0].kind == lex::name;
+    Bool ok = countof(lexed.ok) > 3 && lexed.ok[1].kind == lex::name;
     mem::free(lexed.ok.data);
     return ok;
 }
@@ -1327,15 +1328,32 @@ static Bool needs_pointer(core::ParseError fix) {
     return countof(fix.fix) > 0 && mentions(fix.fix[0].text, "nullptr");
 }
 
-// Whether a field of the record is a pointer or a function that stays one: it has no zero, so a value of the record
-// cannot be built from defaults.
+// Whether a field of the record is a pointer or a function that stays one, or a record of this module that holds one,
+// as far down as it goes: it has no zero, so a value of the record cannot be built from defaults.
 static Bool has_plain_pointer(const ast::Module *module, types::Checked *c, const Wanted *w, Usize e) {
-    U64 nulls = nullable(module, w, e); // those are options, with a default of their own
-    ast::FieldDecl fields[:] = w->records[e].fields;
-    for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
-        if (fields[k].type == nullptr || (nulls & ((U64)1 << k)) != 0) continue;
-        types::TypeRef t = field_type(c, &fields[k]);
-        if (t != nullptr && t->kind == .pointer) return true;
+    Usize stack[records_max] = {};
+    Bool seen[records_max] = {};
+    Usize top = 1;
+    stack[0] = e;
+    seen[e] = true;
+    while (top > 0) {
+        top -= 1;
+        Usize r = stack[top];
+        U64 nulls = nullable(module, w, r); // those are options, with a default of their own
+        ast::FieldDecl fields[:] = w->records[r].fields;
+        for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
+            if (fields[k].type == nullptr || (nulls & ((U64)1 << k)) != 0) continue;
+            types::TypeRef t = field_type(c, &fields[k]);
+            if (t == nullptr) continue;
+            if (t->kind == .pointer) return true;
+            if (t->kind != .record || countof(types::owner_of(t)) > 0) continue;
+            Usize inner = record_index(w, types::name_of(t));
+            if (inner < w->count && !seen[inner]) {
+                seen[inner] = true;
+                stack[top] = inner;
+                top += 1;
+            }
+        }
     }
     return false;
 }
@@ -1726,6 +1744,7 @@ static core::Errors module_edits(Str source, const ast::Module *module, types::C
         types::Error error = c->errors[i];
         types::TypeRef record = error.left_out_record;
         if (error.left_out_call == nullptr || error.left_out_call == last || record == nullptr) continue;
+        if (countof(error.module) > 0) continue; // the span is in the text of another module: its own fix mends it
         Bool from_header = same(types::owner_of(record), "c::");
         Usize own = record_index(&local, types::name_of(record));
         if (!from_header && countof(types::owner_of(record)) == 0 && own < local.count &&
