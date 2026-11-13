@@ -267,6 +267,16 @@ export void test_front_widening_generic_arguments_with_no_common_type_are_refuse
           "from an earlier argument");
 }
 
+export void test_front_widening_a_mutable_and_a_read_only_pointer_agree_as_the_read_only_one() {
+    clean("fn same[T](a: T, b: T) -> bool:\n    return a == b\nfn f(p: *i32, q: *mut i32) -> bool:\n    return same(p, "
+          "q)\n");
+    clean("fn same[T](a: T, b: T) -> bool:\n    return a == b\nfn f(p: *i32, q: *mut i32) -> bool:\n    return same(q, "
+          "p)\n");
+    fails("fn same[T](a: T, b: T) -> bool:\n    return a == b\nfn f(p: *i32, q: *mut u32) -> bool:\n    return same(p, "
+          "q)\n",
+          "from an earlier argument");
+}
+
 export void test_front_widening_branches_of_a_value_take_the_wider_type() {
     clean("fn f(c: bool, a: u32, b: usize) -> usize:\n    v := if c: a else: b\n    return v\n");
     clean("fn f(c: bool, a: usize, b: u32) -> usize:\n    v := if c: a else: b\n    return v\n");
