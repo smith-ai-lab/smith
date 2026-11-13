@@ -17,7 +17,7 @@ int main() {
     printf("%u\n", pick::larger(count, 037777777777));
     printf("%u\n", pick::larger(count, (U32)c::Style_Count - 1));
     printf("%u\n", pick::larger(count, c::Style_B));
-    printf("%u\n", pick::larger(small, (U32)c::Style_Count - 1));
+    printf("%u\n", pick::larger(small, (U8)c::Style_Count - 1));
     printf("%llu\n", pick::larger(wide, 18446744073709551615ull));
     return 0;
 }
