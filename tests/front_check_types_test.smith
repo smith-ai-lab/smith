@@ -407,8 +407,9 @@ export void test_front_check_types_a_tested_field_narrows_like_a_name() {
     clean(with_holder("fn f(h: Holder) -> i32:\n    if h.kind == .unary:\n        return h.kind.op\n    0\n"));
     clean(with_holder("fn f(h: Holder) -> i32:\n    if h.kind != .binary:\n        return 0\n    h.kind.left\n"));
     clean(with_holder("fn f(h: Holder) -> bool:\n    return h.kind is .unary and h.kind.op > 0\n"));
-    clean(with_holder("fn f(h: Holder) -> i32:\n    if h.kind is .unary:\n        return h.kind.op\n"
-                      "    else if h.kind is .binary:\n        return h.kind.left\n    else:\n        return h.kind\n"));
+    clean(
+        with_holder("fn f(h: Holder) -> i32:\n    if h.kind is .unary:\n        return h.kind.op\n"
+                    "    else if h.kind is .binary:\n        return h.kind.left\n    else:\n        return h.kind\n"));
 }
 
 // A read-only pointer to the holder: nothing changes the field between the test and the use.
@@ -431,20 +432,23 @@ export void test_front_check_types_a_narrowed_field_is_only_that_field() {
           "payload enumeration", "");
 }
 
-// The read of the payload with the variant's name, `h.kind.unary.op`, is the fix of the narrowed read: it deletes `.unary`.
+// The read of the payload with the variant's name, `h.kind.unary.op`, is the fix of the narrowed read: it deletes
+// `.unary`.
 export void test_front_check_types_a_narrowed_field_read_with_its_variant_has_a_fix() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    types::Checked r = check_text(with_holder("fn f(h: Holder) -> i32:\n    if h.kind is not .unary:\n        return 0\n"
-                                              "    h.kind.unary.op\n"));
+    types::Checked r =
+        check_text(with_holder("fn f(h: Holder) -> i32:\n    if h.kind is not .unary:\n        return 0\n"
+                               "    h.kind.unary.op\n"));
     test::check_equal(r.error_count, (Usize)1);
     parse::Edits fix = r.errors[0].fix;
     test::check_equal(countof(fix), (Usize)1);
 }
 
-// An assignment to the path, to a part before it or to the name it starts from drops the narrowing; a write below it does not.
+// An assignment to the path, to a part before it or to the name it starts from drops the narrowing; a write below it
+// does not.
 export void test_front_check_types_a_write_drops_a_narrowed_field() {
     fails(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
                       "    m.kind = Kind(name = 1)\n    m.kind.op\n"),
@@ -475,8 +479,9 @@ export void test_front_check_types_a_pointer_to_a_narrowed_field_drops_it() {
 
 // A narrowing made before a loop is dropped when the body writes the path.
 export void test_front_check_types_a_loop_that_writes_a_field_drops_its_narrowing() {
-    fails(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
-                      "    mut n := 0\n    while n < 3:\n        n += m.kind.op\n        m.kind = Kind(name = 1)\n    n\n"),
+    fails(with_holder(
+              "fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
+              "    mut n := 0\n    while n < 3:\n        n += m.kind.op\n        m.kind = Kind(name = 1)\n    n\n"),
           "payload enumeration", "");
     clean(with_holder("fn f(h: Holder) -> i32:\n    mut m := h\n    if m.kind is not .unary:\n        return 0\n"
                       "    mut n := 0\n    while n < 3:\n        n += m.kind.op\n    n\n"));
@@ -664,4 +669,3 @@ export void test_front_check_types_an_optional_function_of_another_parameter_typ
     fails(join(hooks(), "fn other(p: *i32) -> i32:\n    0\n\nfn g() -> Hooks:\n    Hooks(on_done = other)\n"),
           "there is no conversion", "");
 }
-

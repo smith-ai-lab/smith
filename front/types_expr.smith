@@ -2155,6 +2155,7 @@ struct NameTest {
     Str variant;
     types::TypeRef type;
     Bool positive;
+    Bool equal; // written with `==` / `!=`, whatever `by_is` was made to say
     Bool by_is; // written with `is` / `is not`; `==` over a payload enumeration stays the fixer's to rewrite (#3211)
 };
 
@@ -2167,6 +2168,7 @@ static Bool name_test(types::Checked *c, const ast::Expr *item, NameTest *out) {
     if (op == .is || op == .is_not) {
         out->positive = op == .is;
         out->by_is = true;
+        out->equal = false;
     } else if (is_equality(op)) {
         if (right->kind != .variant) {
             const ast::Expr *swap = left;
@@ -2175,6 +2177,7 @@ static Bool name_test(types::Checked *c, const ast::Expr *item, NameTest *out) {
         }
         out->positive = op == .equal;
         out->by_is = false;
+        out->equal = true;
     } else {
         return false;
     }
@@ -2231,6 +2234,7 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         if (payload == nullptr || payload->kind == .void_type) return false;
         s->type = payload;
         s->narrowed = true;
+        s->by_equal = test->equal;
         return true;
     }
     if (mask == s->excluded) return false;
@@ -2266,6 +2270,55 @@ static Str root_name(const ast::Expr *e) {
         at = at->kind.member.base;
     }
     return single_name(at);
+}
+
+// What one test `item` proves, read as true (`truth`) or false, written to `out[count:]`: the new count. A field path
+// that has no declaration in scope gets its own first, which a narrowing goes over and `unnarrow` goes back to.
+static Usize narrow_test(types::Checked *c, const ast::Expr *item, Bool truth, types::Symbol out[:], Usize count) {
+    NameTest t = {};
+    if (!name_test(c, item, &t)) return count;
+    Str name = place_key(t.name);
+    if (countof(name) == 0 || count + 2 > countof(out)) return count;
+    Str root = root_name(t.name);
+    const types::Symbol *r = types::lookup(&c->scopes, root);
+    if (r == nullptr || r->kind != .variable || !r->is_new) return count;
+    if (!r->is_const && !types::is_local(&c->scopes, root)) return count;
+    Bool path = !same_text(name, root);
+    if (path) t.by_is = true; // a field path is narrowed by `==` too (item 68 of #3516)
+    const types::Symbol *s = path ? types::lookup(&c->scopes, name) : r;
+    Usize at = found_at(out, count, name);
+    types::Symbol next = {};
+    Bool fresh = false;
+    if (at < count) {
+        next = out[at];
+    } else if (s != nullptr) {
+        next = *s;
+    } else {
+        types::TypeRef own = types::type_of(c, t.name);
+        if (own == nullptr || own == invalid(c)) return count;
+        next = *r; // the path's own declaration, which a narrowing goes over and `unnarrow` goes back to
+        next.name = name;
+        next.type = own;
+        next.narrowed = false;
+        next.excluded = 0;
+        fresh = true;
+    }
+    types::Symbol base = next;
+    if (!narrow_symbol(&t, t.positive == truth, &next)) {
+        return count;
+    }
+    if (fresh) {
+        out[count] = base;
+        count += 1;
+        c->paths += 1;
+    }
+    if (fresh || at == count) {
+        out[count] = next;
+        count += 1;
+    } else {
+        out[at] = next;
+    }
+    return count;
 }
 
 // What `test` proves about names when it is true (`when_true`) or false (#3225, item 27 of #3190): the symbols of the
@@ -2305,49 +2358,7 @@ export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true,
                 continue;
             }
         }
-        NameTest t = {};
-        if (!name_test(c, item, &t)) continue;
-        Str name = place_key(t.name);
-        if (countof(name) == 0 || count + 2 > countof(out)) continue;
-        Str root = root_name(t.name);
-        const types::Symbol *r = types::lookup(&c->scopes, root);
-        if (r == nullptr || r->kind != .variable || !r->is_new) continue;
-        if (!r->is_const && !types::is_local(&c->scopes, root)) continue;
-        Bool path = !same_text(name, root);
-        if (path) t.by_is = true; // a field path is narrowed by `==` too (item 68 of #3516)
-        const types::Symbol *s = path ? types::lookup(&c->scopes, name) : r;
-        Usize at = found_at(out, count, name);
-        types::Symbol next = {};
-        Bool fresh = false;
-        if (at < count) {
-            next = out[at];
-        } else if (s != nullptr) {
-            next = *s;
-        } else {
-            types::TypeRef own = types::type_of(c, t.name);
-            if (own == nullptr || own == invalid(c)) continue;
-            next = *r; // the path's own declaration, which a narrowing goes over and `unnarrow` goes back to
-            next.name = name;
-            next.type = own;
-            next.narrowed = false;
-            next.excluded = 0;
-            fresh = true;
-        }
-        types::Symbol base = next;
-        if (!narrow_symbol(&t, t.positive == truth, &next)) {
-            continue;
-        }
-        if (fresh) {
-            out[count] = base;
-            count += 1;
-            c->paths += 1;
-        }
-        if (fresh || at == count) {
-            out[count] = next;
-            count += 1;
-        } else {
-            out[at] = next;
-        }
+        count = narrow_test(c, item, truth, out, count);
     }
     return count;
 }
@@ -4178,6 +4189,15 @@ static types::Guard *guard_of(types::Checked *c, const ast::Expr *e) {
     return nullptr;
 }
 
+// Whether a test of `base` against the variant `name` is one the fixer writes as a binding, wherever its reads are.
+static Bool guard_covers(types::Checked *c, const ast::Expr *base, Str name) {
+    for (Usize i = 0; i < c->guard_count; i++) {
+        const types::Guard *g = &c->guards[i];
+        if (!g->option && same_text(g->variant, name) && same_place(g->base, base)) return true;
+    }
+    return false;
+}
+
 // `k.v` where a test guards the read: the read is the binding `v`, and the first one of a test also writes the test as
 // `.v(v) := k`. No edits when no test guards it, or the site is spoiled.
 static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e, Bool option) {
@@ -4415,7 +4435,9 @@ static Bool narrowed_variant_read(types::Checked *c, Frame f) {
     }
     if (!variant || typ(c, base) != s->type) return false;
     syntax::Edits fix = guarded_read(c, e, false);
-    if (countof(fix) > 0 || guard_of(c, e) != nullptr) {
+    // A test written `==` or `!=` is the fixer's to bind, so its read keeps the binding's fix or none: a second fix
+    // that deletes the variant would meet it in another round and leave both (#3587).
+    if (countof(fix) > 0 || s->by_equal || guard_covers(c, base, variant_name)) {
         // a test the binding of the fixer covers keeps that one fix: two ways to mend one read would meet
         Str shown = msg(format::push("`", types::show(own->type),
                                      "` is a payload enumeration, so a payload can't be read with `.`; test the "
@@ -4430,10 +4452,11 @@ static Bool narrowed_variant_read(types::Checked *c, Frame f) {
         edits = mem::realloc(edits, 1);
         Str nothing = "";
         edits[0] = (syntax::Edit){.span = {.start = base->span.end, .end = e->span.end}, .text = nothing};
-        types::fail_fix(c, e->span,
-                        msg(format::push("`", key, "` is `.", variant_name, "` here, so it is the payload already; write `",
-                                         key, "`, not `", key, ".", variant_name, "`")),
-                        edits);
+        types::fail_fix(
+            c, e->span,
+            msg(format::push("`", key, "` is `.", variant_name, "` here, so it is the payload already; write `", key,
+                             "`, not `", key, ".", variant_name, "`")),
+            edits);
     }
     finish(c, e, s->type, f.expected);
     return true;
