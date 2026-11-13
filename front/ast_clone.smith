@@ -73,12 +73,13 @@ static ChooseExpr choosing_expr = nullptr;
 
 static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
     if (old == nullptr) return nullptr;
+    const ast::Expr *current = old;
     for (Usize k = 0; choosing_expr != nullptr && k < 64; k++) {
-        const ast::Expr *chosen = choosing_expr(old);
-        if (chosen == old) break;
-        old = chosen;
+        const ast::Expr *chosen = choosing_expr(current);
+        if (chosen == current) break;
+        current = chosen;
     }
-    ast::Expr *copy = ast::new_expr(*old);
+    ast::Expr *copy = ast::new_expr(*current);
     add(work, {.expr = copy});
     return copy;
 }
@@ -557,12 +558,19 @@ static ast::Stmt *element_binding(ast::Identifier name, Str pack, Usize at) {
     char chars[:] = format::push(at);
     Str index = chars;
     ast::Expr *base = ast::name(pack);
-    ast::Expr *element = ast::expr({.member = {.base = base, .name = index}});
+    ast::Expr *element = ast::expr({.member = {.base = base, .name = index, .arrow = false}});
     element->span = name.span;
-    ast::TypeExpr *automatic = ast::make_type((ast::TypeKind){});
-    automatic->kind = .auto_type;
-    ast::DeclKind kind = {.variable = {.name = name.text, .type = automatic, .init = element, .is_new = true}};
-    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    ast::TypeKind auto_kind = .auto_type;
+    ast::TypeExpr *automatic = ast::make_type(auto_kind);
+    ast::DeclKind kind = {.variable = {.name = name.text,
+                                       .type = automatic,
+                                       .init = element,
+                                       .is_constexpr = false,
+                                       .is_thread_local = false,
+                                       .is_mut = false,
+                                       .is_new = true,
+                                       .name_at = 0}};
+    ast::Decl *d = ast::plain_decl(kind);
     d->span = name.span;
     ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
     s->span = name.span;
@@ -780,10 +788,17 @@ static ast::Stmt *empty_block(ast::Span span) {
 
 // `let name = value`.
 static ast::Stmt *binding(Str name, ast::Expr *value, ast::Span span) {
-    ast::TypeExpr *automatic = ast::make_type((ast::TypeKind){});
-    automatic->kind = .auto_type;
-    ast::DeclKind kind = {.variable = {.name = name, .type = automatic, .init = value, .is_new = true}};
-    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    ast::TypeKind auto_kind = .auto_type;
+    ast::TypeExpr *automatic = ast::make_type(auto_kind);
+    ast::DeclKind kind = {.variable = {.name = name,
+                                       .type = automatic,
+                                       .init = value,
+                                       .is_constexpr = false,
+                                       .is_thread_local = false,
+                                       .is_mut = false,
+                                       .is_new = true,
+                                       .name_at = 0}};
+    ast::Decl *d = ast::plain_decl(kind);
     d->span = span;
     ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
     s->span = span;
@@ -815,12 +830,12 @@ static const ast::Expr *member_value(const ast::Expr *e) {
     if (e->kind != .member) return nullptr;
     Ref r = ref_of(e->kind.member.base);
     if (!r.known || e->kind.member.arrow) return nullptr;
-    Str member = e->kind.member.name;
+    Str which = e->kind.member.name;
     Entry entry = entry_of(r);
-    if (same(member, "name")) return at_span(ast::string(entry.name), e->span);
-    if (same(member, "doc")) return at_span(ast::string(entry.doc), e->span);
-    if (same(member, "default")) return default_of(e, entry);
-    if (same(member, "type")) {
+    if (same(which, "name")) return at_span(ast::string(entry.name), e->span);
+    if (same(which, "doc")) return at_span(ast::string(entry.doc), e->span);
+    if (same(which, "default")) return default_of(e, entry);
+    if (same(which, "type")) {
         ast::Expr *value = ast::expr({.type_value = {.type = ast::named(entry.type_name)}});
         return at_span(value, e->span);
     }
@@ -832,8 +847,9 @@ static ast::Expr *queried(const ast::Expr *e) {
     if (e->kind != .query || e->kind.query.operand == nullptr || e->kind.query.operand->kind != .member) return nullptr;
     const ast::Expr *type = member_value(e->kind.query.operand);
     if (type == nullptr || type->kind != .type_value) return nullptr;
-    ast::Expr *query = ast::expr({.query = {.op = e->kind.query.op, .type = type->kind.type_value.type}});
-    return at_span(query, e->span);
+    ast::Expr *asked =
+        ast::expr({.query = {.op = e->kind.query.op, .type = type->kind.type_value.type, .operand = nullptr}});
+    return at_span(asked, e->span);
 }
 
 // `value.[f]`: the field the entry `f` names.
@@ -866,17 +882,17 @@ static void check_index(const ast::Expr *e) {
     if (!list_count(e->kind.index.base, &kind, &subject, &count)) return;
     char written[:] = format::push(kind, "(", subject, ")");
     Str shown = written;
-    const ast::Expr *index = e->kind.index.index;
-    if (index->kind != .integer) {
+    const ast::Expr *position = e->kind.index.index;
+    if (position->kind != .integer) {
         char text[:] = format::push("the index of `", shown, "` must be a number written in the code: the list exists ",
                                     "only at compile time; for a list that is indexed at run time use a slice `[]T`");
         Str message = text;
-        fail_sink(index->span, message);
-    } else if (index->kind.integer.value >= count) {
+        fail_sink(position->span, message);
+    } else if (position->kind.integer.value >= count) {
         char text[:] = format::push("`", shown, "` has ", count, " entries, but this index is ",
-                                    index->kind.integer.value, "; the first is 0");
+                                    position->kind.integer.value, "; the first is 0");
         Str message = text;
-        fail_sink(index->span, message);
+        fail_sink(position->span, message);
     }
 }
 
