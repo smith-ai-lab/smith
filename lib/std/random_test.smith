@@ -305,7 +305,8 @@ export void test_random_permutations_of_four_are_uniform(random::Key key) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The logarithm: within 1 ulp of libm's log and logf over about 1e6 inputs, across exponents and subnormals.
+// The logarithm: within 1 ulp of libm's log (the float one against log of the same value, rounded) over about 1e6
+// inputs, across exponents and subnormals.
 
 static I64 log_worst_double() {
     I64 worst = 0;
@@ -361,13 +362,13 @@ static I64 log_worst_float() {
             x = 0.5F + 1.5F * random::key_unit_float(parts[1]);
             break;
         default:
-            x = 1.0F + c::ldexpf(random::key_unit_float(parts[1]), -(I32)(bits % 24));
+            x = 1.0F + math::ldexp(random::key_unit_float(parts[1]), -(I32)(bits % 24));
             break;
         }
         if (!__builtin_isfinite(x) || x == 0.0F) {
             continue;
         }
-        I64 distance = ulps_float(math::log(x), c::logf(x));
+        I64 distance = ulps_float(math::log(x), (F32)c::log(x));
         if (distance > worst) {
             worst = distance;
         }
@@ -403,9 +404,9 @@ export void test_random_log_special_values() {
     test::check_equal(math::log(1.0), 0.0);
     test::check_equal(math::log(1.0F), 0.0F);
     test::check_less_equal(ulps_double(math::log(0x1p-1074), c::log(0x1p-1074)), 1); // the smallest subnormal
-    test::check_less_equal(ulps_float(math::log(0x1p-149F), c::logf(0x1p-149F)), 1);
+    test::check_less_equal(ulps_float(math::log(0x1p-149F), (F32)c::log(0x1p-149F)), 1);
     test::check_less_equal(ulps_double(math::log(0x1.fffffffffffffp+1023), c::log(0x1.fffffffffffffp+1023)), 1);
-    test::check_less_equal(ulps_float(math::log(0x1.fffffep+127F), c::logf(0x1.fffffep+127F)), 1);
+    test::check_less_equal(ulps_float(math::log(0x1.fffffep+127F), (F32)c::log(0x1.fffffep+127F)), 1);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

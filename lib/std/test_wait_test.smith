@@ -4,12 +4,32 @@
 module std::test_wait_test;
 
 import <signal.h>;
-import <sys/wait.h>;
 import <unistd.h>;
 import std::clock;
 import std::test;
 
 // NOLINTBEGIN(smith-effects, smith-preprocessor): a forked child is the process the runner waits for
+
+// A wait status as every POSIX system encodes it: the low seven bits are the signal that ended the child (0 for a
+// normal exit, 0x7f for a stop) and the next byte is the exit code. <sys/wait.h> has these as function-like macros.
+constexpr I32 status_signal_mask = 0x7f;
+
+I32 terminating_signal(I32 status) {
+    return status & status_signal_mask;
+}
+
+Bool exited(I32 status) {
+    return terminating_signal(status) == 0;
+}
+
+Bool killed_by_signal(I32 status) {
+    return terminating_signal(status) != 0 && terminating_signal(status) != status_signal_mask;
+}
+
+I32 exit_code(I32 status) {
+    return (status >> 8) & 0xff;
+}
+
 export void test_wait_a_child_that_never_ends_is_killed_after_the_grace() {
     I32 child = c::fork();
     test::check(child >= 0);
@@ -23,8 +43,8 @@ export void test_wait_a_child_that_never_ends_is_killed_after_the_grace() {
     Bool ended = test::bounded_wait(child, "a child that never ends", "std::test_wait_test", 0.3, &status);
     U64 took = clock::monotonic() - began;
     test::check_equal(ended, false);
-    test::check(c::WIFSIGNALED(status));
-    I32 signal_number = c::WTERMSIG(status);
+    test::check(killed_by_signal(status));
+    I32 signal_number = terminating_signal(status);
     test::check_equal(signal_number, (I32)c::SIGKILL);
     test::check_less(took, 5 * clock::second);
 }
@@ -36,8 +56,8 @@ export void test_wait_a_child_that_ends_in_time_is_not_killed() {
     I32 status = 0;
     Bool ended = test::bounded_wait(child, "a child that ends", "std::test_wait_test", 30.0, &status);
     test::check_equal(ended, true);
-    test::check(c::WIFEXITED(status));
-    I32 code = c::WEXITSTATUS(status);
+    test::check(exited(status));
+    I32 code = exit_code(status);
     test::check_equal(code, 7);
 }
 // NOLINTEND(smith-effects, smith-preprocessor)

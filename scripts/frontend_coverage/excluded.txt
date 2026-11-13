@@ -19,6 +19,8 @@ tests/affine/affine_second_use.smith	error-fixture
 tests/affine/affine_slice_bad_index.smith	error-fixture
 tests/affine/affine_slice_elements.smith	error-fixture
 tests/affine/affine_slice_two_uses.smith	error-fixture
+tests/affine/enum_narrowed.smith	old-form: a payload read with `.` after a variant test (bindings)
+tests/affine/enum_narrowing_ends.smith	old-form: a payload read with `.` after a variant test (bindings)
 tests/build_fixtures/lint_smith/pre/bad.smith	old-form: #pragma
 tests/build_fixtures/std_scope/affine_twice.smith	error-fixture
 tests/front/corpus/error-array-length/src/main.smith	error-fixture
