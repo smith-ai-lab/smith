@@ -158,7 +158,9 @@ static void read_body(Found *found, Str source, lex::Tokens tokens, Usize at, le
     Usize depth = braced ? 1 : 0;
     for (Usize i = first; i < countof(tokens) && tokens[i].kind != lex::end_of_file; i++) {
         lex::Token t = tokens[i];
-        if (!braced && t.line_break && indent_of(source, t.span.start) <= base) break;
+        // the first token of a line less indented than the `enum` ends the body (not the last token of the line: the
+        // first would already have been taken for a variant, #3325)
+        if (!braced && i > first && tokens[i - 1].line_break && indent_of(source, t.span.start) <= base) break;
         if (braced && is_close(t.kind) && depth == 1) break;
         Usize entry_depth = braced ? 1 : 0;
         if (depth == entry_depth && starts_entry(tokens, i, first, want)) note(found, source, t);
