@@ -528,16 +528,27 @@ void run_count_threads(Usize *seen) {
     task::pause();
 }
 
+// No thread but the caller is alive. macOS counts every thread. Linux lets pthread_join return a moment before it drops
+// the thread from /proc/self/task (#1172, #3468), so the count of threads can still include one that is joined, whether
+// it was started by this test or by an earlier one in the same process: a worker that was not joined would sleep.
+void check_only_this_thread() {
+    if constexpr (target::os == target::macos) {
+        test::check_equal(thread_count(), (Usize)1);
+    } else {
+        test::check_equal(sleeping_threads(), (Usize)0);
+    }
+}
+
 export void test_task_a_program_that_never_spawns_has_one_thread() {
-    test::check_equal(thread_count(), (Usize)1);
+    check_only_this_thread();
     task::pause();
     task::Group group = {};
     task::wait(&group);
-    test::check_equal(thread_count(), (Usize)1);
+    check_only_this_thread();
 }
 
 export void test_task_workers_start_at_the_first_spawn_and_end_with_the_last_task() {
-    test::check_equal(thread_count(), (Usize)1);
+    check_only_this_thread();
     Usize seen = 0;
     {
         task::Group group = {};
@@ -547,13 +558,7 @@ export void test_task_workers_start_at_the_first_spawn_and_end_with_the_last_tas
     test::check_equal(seen, processors()); // one thread per core, the first being main's
     // `wait` has joined every worker before it returned: the library says so, with nothing to wait for.
     test::check_equal(task::workers_running(), (Usize)0);
-    if constexpr (target::os == target::macos) {
-        test::check_equal(thread_count(), (Usize)1);
-    } else {
-        // Linux lets pthread_join return a moment before it drops the thread from /proc/self/task (#1172), so the
-        // count of threads can still include one that is joined. A worker that was not joined would sleep.
-        test::check_equal(sleeping_threads(), (Usize)0);
-    }
+    check_only_this_thread();
 }
 
 // CPU time of the calling thread, in nanoseconds.
