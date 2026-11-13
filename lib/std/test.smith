@@ -4648,6 +4648,8 @@ void say_built_for() {
         say_usage(runner, false);
         return usage_status;
     }
+    // read by the build of a part (#3458), not by what a test starts: a smith a test runs builds its own runner
+    c::unsetenv("SMITH_TESTS_WHOLE");
     F64 start = seconds();
     if (built_shard_count > 0 && !shard_built(&options)) {
         say("this runner holds only part %zu of %zu of the tests: run it with --shard %zu/%zu, or build every test\n",
