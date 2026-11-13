@@ -5410,9 +5410,9 @@ int main() {
     printf("%u\n", pick::larger(count, 4294967295ull));
     printf("%u\n", pick::larger(count, 4294967295l));
     printf("%u\n", pick::larger(count, 037777777777));
-    printf("%u\n", pick::larger(count, c::Style_Count - 1));
+    printf("%u\n", pick::larger(count, (U32)c::Style_Count - 1));
     printf("%u\n", pick::larger(count, c::Style_B));
-    printf("%u\n", pick::larger(small, c::Style_Count - 1));
+    printf("%u\n", pick::larger(small, (U8)c::Style_Count - 1));
     printf("%llu\n", pick::larger(wide, 18446744073709551615ull));
     return 0;
 }
@@ -5477,10 +5477,10 @@ I32 main() {
     U8 small = 7;
     stats::bump(&small, 1);
     c::printf("%d %d %d\n", n, small, stats::read(&n));
-    c::printf("%d %d %d\n", stats::third(raw), stats::second(raw), stats::read(&raw[0]));
+    c::printf("%d %d %d\n", stats::third(raw), stats::second(&raw[0]), stats::read(&raw[0]));
     struct Point points[2] = {{1, 2}, {3, 4}};
     struct Point ps[:] = points;
-    c::printf("%d %d\n", stats::count(ps) == 2, stats::second(points).y);
+    c::printf("%d %d\n", stats::count(ps) == 2, stats::second(&points[0]).y);
     return 0;
 }
 ==> generic-auto-element/src/stats.smith <==
@@ -5819,7 +5819,7 @@ int main() {
     printf("%d %g\n", pick::larger(a, b), pick::larger(d, 1.5));
     printf("%d %d %d\n", pick::larger(p.x, pp->y), pick::larger(p.x, 3), pick::larger(numbers[1], fixed));
     printf("%d %g %zu\n", pick::larger(fixed, 100), pick::larger(half(9), d), pick::size_of_value(byte));
-    printf("%d %zu\n", pick::larger(*numbers, 1), pick::size_of_value((U16)3));
+    printf("%d %zu\n", pick::larger(numbers[0], 1), pick::size_of_value((U16)3));
     // The second argument converts to the first's type, by C's rules, when the value is kept.
     U64 big = 5;
     printf("%llu %d %d\n", pick::larger(big, 7), pick::larger(a, (I32)big), pick::larger(a, 1 << 3));
@@ -6293,13 +6293,13 @@ export I32 sign_of(Signed n) {
 }
 
 export typeof(x) shifted(Num x) {
-    Int one = 1;
-    Num y = x + one;
+    typeof(x) one = 1;
+    typeof(x) y = x + one;
     return y;
 }
 
 export I32 plain(I32 q) {
-    Int r = q * 2;
+    I32 r = q * 2;
     return r;
 }
 ==> generic-countof-member/src/main.smith <==

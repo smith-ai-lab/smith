@@ -69,3 +69,17 @@ export void test_front_emit_slice_of_slices_a_slice_of_pointers_is_read() {
                  "}\n";
     test::check_equal(run(source, "front::test::run"), (I32)13);
 }
+
+// `F32[:][:]`: a slice whose element is a slice of scalars, as a parameter (the grid of
+// tests/smith-lang/cases/generic-*).
+export void test_front_emit_slice_of_slices_a_slice_of_scalar_slices_is_passed() {
+    Str source = "static Usize rows(const F32 grid[:][:]) {\n"
+                 "    return countof(grid);\n"
+                 "}\n"
+                 "export I32 run() {\n"
+                 "    F32 grid[2][2] = {{1, 2}, {3, 4}};\n"
+                 "    F32 g[:][:] = grid;\n"
+                 "    return (I32)rows(g);\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)2);
+}

@@ -23,7 +23,7 @@ int main() {
     printf("%d %g\n", pick::larger(a, b), pick::larger(d, 1.5));
     printf("%d %d %d\n", pick::larger(p.x, pp->y), pick::larger(p.x, 3), pick::larger(numbers[1], fixed));
     printf("%d %g %zu\n", pick::larger(fixed, 100), pick::larger(half(9), d), pick::size_of_value(byte));
-    printf("%d %zu\n", pick::larger(*numbers, 1), pick::size_of_value((U16)3));
+    printf("%d %zu\n", pick::larger(numbers[0], 1), pick::size_of_value((U16)3));
     // The second argument converts to the first's type, by C's rules, when the value is kept.
     U64 big = 5;
     printf("%llu %d %d\n", pick::larger(big, 7), pick::larger(a, (I32)big), pick::larger(a, 1 << 3));
