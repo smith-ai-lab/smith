@@ -55,3 +55,15 @@ export void test_front_fix_struct_list_a_pair_of_strings_is_a_construction() {
         "\"d\")]\n"
         "fn main() -> i32:\n    return (countof(table)).to(i32)\n");
 }
+
+export void test_front_fix_struct_list_fields_of_different_types_are_a_construction() {
+    expect_fixed(
+        "typedef struct {\n    const char *name;\n    I32 (*call)(I32);\n} Op;\n"
+        "static I32 twice(I32 x) {\n    return x * 2;\n}\n"
+        "static const Op ops[2] = {{\"a\", twice}, {\"b\", twice}};\n"
+        "I32 main() {\n    return ops[1].call(4);\n}\n",
+        "struct Op:\n    name: *char\n    call: fn(i32) -> i32\n"
+        "fn twice(x: i32) -> i32:\n    return x * 2\n"
+        "static mut ops: [2]Op = [Op(\"a\", twice), Op(\"b\", twice)]\n"
+        "fn main() -> i32:\n    return ops[1].call(4)\n");
+}

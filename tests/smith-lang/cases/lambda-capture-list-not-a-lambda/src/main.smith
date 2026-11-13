@@ -2,14 +2,16 @@ module main;
 
 import <stdio.h>;
 
+typedef I32 (*Unary)(I32);
+
 I32 twice(I32 a) {
     return a * 2;
 }
 
 I32 main() {
-    I32 (*table[2])(I32) = {twice, twice};
+    Unary table[2] = {twice, twice};
     I32 i = 1;
-    I32 (*triple)(I32) = [](I32 a) -> I32 { return a * 3; };
+    Unary triple = [](I32 a) -> I32 { return a * 3; };
     c::printf("%d %d\n", table[i](4), triple(5));
     return 0;
 }

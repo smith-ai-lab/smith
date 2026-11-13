@@ -1113,8 +1113,10 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     if (callee->kind == .name && streams::is_call(x)) return streams::call(e, x);
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
     if (!is_imported && instance == nullptr && callee->kind != .name) {
-        // A call through a field holding a function, or through a conversion `(address.to(Run))()` (#3110).
-        if (callee->kind != .member && callee->kind != .cast) return unsupported_callee(x, callee);
+        // A call through a field holding a function, an element of an array of them (`table[i](4)`), or through a
+        // conversion `(address.to(Run))()` (#3110).
+        if (callee->kind != .member && callee->kind != .cast && callee->kind != .index)
+            return unsupported_callee(x, callee);
         state::TyResult held = state::type_of_node(e, callee);
         if (held == .error) return {.error = held.error};
         if (held.ok.kind != .fn_value && held.ok.kind != .fn_pointer)
