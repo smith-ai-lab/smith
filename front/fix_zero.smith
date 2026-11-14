@@ -925,7 +925,11 @@ static Str local_name(Str source, lex::Tokens t, Str base) {
         while (k + 2 < n && t[k].kind == lex::name && (t[k + 1].kind == lex::dot || t[k + 1].kind == lex::colon_colon))
             k += 2;
         if (k >= n || t[k].kind != lex::name || !same(lex::text(source, t[k]), base)) continue;
-        if (k + 2 < n && t[k + 1].kind == lex::kw_as) return lex::text(source, t[k + 2]);
+        // today's text lexes `as` as a plain name: `import front::emit_state as state;` names the module `state` there
+        // too
+        Bool alias =
+            t[k + 1].kind == lex::kw_as || (t[k + 1].kind == lex::name && same(lex::text(source, t[k + 1]), "as"));
+        if (k + 2 < n && alias) return lex::text(source, t[k + 2]);
         return base;
     }
     return "";
