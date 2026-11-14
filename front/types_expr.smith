@@ -691,6 +691,12 @@ static syntax::Edits data_fix(const types::Checked *c, const ast::Expr *slice_ex
     return mut_after(slice->written->span.start + 2);
 }
 
+// The type a symbol of smith's own syntax was written with, or null when `s` is none, not a variable, or has none.
+static const ast::TypeExpr *written_type(const types::Symbol *s) {
+    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr) return nullptr;
+    return s->written;
+}
+
 // The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
 // becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
 // neither is so (the pointer comes from somewhere a fix cannot see).
@@ -699,7 +705,7 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     // `s.*` of an `s: *mut *T` handed where a `*mut T` is wanted: the inner pointer is `*mut T` (#2643).
     if (base->kind == .unary && base->kind.unary.op == .dereference && base->kind.unary.operand->kind == .name) {
         const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.unary.operand->kind.name.path);
-        const ast::TypeExpr *outer = s != nullptr && s->kind == .variable && s->is_new ? s->written : nullptr;
+        const ast::TypeExpr *outer = written_type(s);
         const ast::TypeExpr *inner = nullptr;
         if (outer != nullptr && outer->kind == .pointer) inner = outer->kind.pointer.pointee;
         if (inner != nullptr && inner->kind == .pointer && !inner->kind.pointer.is_mut &&
@@ -722,7 +728,7 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     // `xs[i]` of an array of `*T` handed where a `*mut T` is wanted: the element is written `*mut T` (#2643).
     if (base->kind == .index && base->kind.index.base->kind == .name) {
         const types::Symbol *xs = types::lookup_path(&c->scopes, base->kind.index.base->kind.name.path);
-        const ast::TypeExpr *array = xs != nullptr && xs->kind == .variable && xs->is_new ? xs->written : nullptr;
+        const ast::TypeExpr *array = written_type(xs);
         const ast::TypeExpr *element = array != nullptr && array->kind == .array ? array->kind.array.element : nullptr;
         if (element != nullptr && element->kind == .pointer && !element->kind.pointer.is_mut)
             return mut_after(element->span.start + 1);
@@ -6825,6 +6831,7 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
         poison(c, e);
         return;
     }
+    contract::assert(template->decl != nullptr); // tested at the top; the calls above only read it
     Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:taken]);
     if (at >= c->instance_count) {
         poison(c, e);
