@@ -99,7 +99,7 @@ export void test_front_fix_imports_a_library_already_imported_keeps_one_import()
 export void test_front_fix_imports_a_name_the_module_lacks_keeps_the_header() {
     expect("module m;\nimport <smith/test.h>;\nexport void test_a() {\n    c::smith_check(true);\n"
            "    c::smith_no_such_check(1);\n}\n",
-           "import c <smith/test.h>\npub fn test_a():\n    c.smith_check(true)\n"
+           "import c <smith/test.h>\npub fn test_a():\n    test.smith_check(true)\n"
            "    c.smith_no_such_check(1)\n");
 }
 

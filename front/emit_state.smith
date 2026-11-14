@@ -54,6 +54,8 @@ export struct Options {
     Bool debug_info;
     Bool fill_undefined;           // a debug build fills an `undefined` local with the byte 0xAA
     const types::Checked *checked; // the checker's result for the module; null: no cast is checked (K2, #1329)
+    Str header_flags;              // the flags the file's C headers are read with, one a line (the bodies of #3618)
+    Str header_folder;             // the file's folder, where a quoted header is found
 };
 
 // What a handler returns: success, or the Error that stops the walk.
@@ -536,6 +538,7 @@ export struct Emitter {
 
     // The blocks a type's `element` and `parts` point to, chained so `memory::release` frees them (B3b).
     OwnedTy *owned;
+    Str c_bodies; // the header-defined C functions this module calls, one a line: their bodies go in at the end (#3618)
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -684,7 +687,7 @@ export Emitter emitter(c::LLVMContextRef context, c::LLVMModuleRef module, Optio
         nullptr, nullptr, nullptr, nullptr, false, nullptr,                              // the hooks
         work, 0, values, 0,                                                              // the stacks
         nullptr, nullptr, nullptr, nullptr, line_starts, 0, 0,                           // debug info
-        nullptr};                                                                        // owned
+        nullptr, ""};                                                                    // owned, c_bodies
     // clang-format on
     return e;
 }

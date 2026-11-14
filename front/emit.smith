@@ -2589,6 +2589,7 @@ export Emitted module_all(c::LLVMContextRef context, const ast::Module *m, state
     e.alloca_builder = c::LLVMCreateBuilderInContext(context);
     state::Status status = emit_all(&e);
     if (status == .error) state::add_error(&e, status.error);
+    if (status != .error) call::link_c_bodies(&e, m);
     debug::release(&e);
     emit_memory::release(&e);
     matching::release(&e);
