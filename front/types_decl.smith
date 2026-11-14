@@ -485,9 +485,6 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     // An enumeration given where an integer is wanted is the same conversion: C reads an enumerator as an `int`.
     if ((from->kind == .integer || from->kind == .enumeration) && to->kind == .integer && countof(fix) == 0)
         fix = types_expr::convert_fix(e, to);
-    // `.square.to(i32)`: the receiver is a bare variant of no expected enumeration; it is written qualified (#3678).
-    if (from->kind == .symbol && to->kind == .integer && countof(fix) == 0)
-        fix = types_expr::qualified_enumerator_fix(c, e);
     // `nullptr` where a `?T` is wanted is `.none`; a read `a.f` of an option field that a test guards is its binding
     // `f` (#2557).
     if (from->kind == .null_type && to->kind == .option && e->kind == .null_pointer) {
@@ -635,6 +632,10 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
                 (syntax::Edit){.span = {.start = e->kind.cast.operand->span.end, .end = e->kind.cast.operand->span.end},
                                .text = pointer};
         }
+        // `.square.to(i32)`, C's `(int)Square`: the operand is a bare variant of no expected enumeration, so it is
+        // written with its enumeration, `area.Kind.square.to(i32)` (#3678).
+        if (e->kind == .cast && from->kind == .symbol && to->kind == .integer && countof(fix) == 0)
+            fix = types_expr::qualified_enumerator_fix(c, e->kind.cast.operand);
         types::fail_fix(c, e->span, verdict.message, fix);
         return false;
     }
