@@ -205,3 +205,21 @@ export void test_front_compile_an_imported_signature_names_its_modules_type_not_
     test::check_equal(made.ok, true);
     remove_all(folder);
 }
+
+// A global whose initializer holds a `?*T` set to `.none` (#3687): the pointer is the niche, so `.none` is null, alone
+// or as a field of a struct (the shape of `front/types_decl.smith`'s `state`).
+export void test_front_compile_a_global_with_an_option_pointer_set_to_none_is_a_constant() {
+    Str folder = folder_for("global_none");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "struct State:\n    next: ?*State\n    count: i32\n\n"
+               "mut state := State(next = .none, count = 3)\n"
+               "mut head: ?*State = .none\n\n"
+               "pub fn f() -> i32:\n"
+               "    if head != .none:\n        return 0\n"
+               "    if state.next == .none:\n        return state.count\n"
+               "    return 1\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(countof(made.text), (Usize)0);
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}
