@@ -280,3 +280,19 @@ export void test_front_fix_guard_a_loop_that_writes_the_root_after_the_reads_rea
                                          "        if c.kind != .pair or c.kind == 0 or k == 2:\n"
                                          "            return 0\n        k += c.kind\n        c = s\n    k\n")));
 }
+
+static Str value_text() {
+    return "struct Whole:\n    magnitude: i32\n\nenum Value:\n    integer: Whole\n    boolean: Whole\n    none\n\n";
+}
+
+// Two variant tests of two names in one `or` chain: the second binding is `integer_value`, as a Result's second `ok`
+// is, where the first took `integer` (#3616).
+export void test_front_fix_guard_two_tests_of_one_variant_on_two_names_bind_two_names() {
+    expect_fixed(as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
+                                                   "    if l != .integer or r != .integer: return 0\n"
+                                                   "    return l.integer.magnitude + r.integer.magnitude\n")),
+                 as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
+                                                   "    .integer(integer) := l else: return 0\n"
+                                                   "    .integer(integer_value) := r else: return 0\n"
+                                                   "    return integer.magnitude + integer_value.magnitude\n")));
+}
