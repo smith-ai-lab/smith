@@ -96,6 +96,8 @@ enum Step {
                  // (#2481)
     open_false,  // the condition `expr` is false: the same for the `else` branch
     narrow_rest, // the condition `expr` is false from here to the end of the scope: after an `if` that always leaves
+    restore,     // an `if` with an `else`: the `else` starts from what the tests proved before the `then` (#3332)
+    rejoin,      // after such an `if`: what the `then` dropped is dropped for the code after it
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -105,6 +107,14 @@ struct Frame {
     Step step;
     Usize index;
     U32 end; // a statement of a block: where the block ends (#2503)
+};
+
+// What a test proved about one name before the `then` of an `if` (#3332): its place in the scopes, the symbol as it
+// was, and whether the `then` dropped it (an assignment).
+struct Snapshot {
+    Usize at;
+    types::Symbol symbol;
+    Bool dropped;
 };
 
 // A local that a body declared, for the golden tests.
@@ -131,6 +141,8 @@ struct State {
     Usize top;
     U32 block_end; // where the block of the statement being entered ends, 0 when it is in none: the reach of a
                    // binding the statement makes (#2503)
+    Snapshot snaps[:];
+    Usize snap_count;
     Local locals[:];
     Usize local_count;
     Pending pending[:];
@@ -163,11 +175,14 @@ static Str msg(char chars[:]) {
     return chars;
 }
 
-// Whether the read `e` of an option field comes after a test of the same field that the checker refused only for its
-// `nullptr` (`if a.f == nullptr: return`, #3621): the fix of the test narrows the read on the next pass, so the local
-// that holds it keeps its type; a read that is not narrowed then gets its `?` on that pass.
+static Bool is_word_char(char c);
+
+// Whether the read `e` of an option field or name comes after a test of the same place that the checker refused only
+// for its `nullptr` (`if a.f == nullptr: return`, #3621; `while s != nullptr:` over a `mut` name, #3332): the fix of
+// the test narrows the read on the next pass (D18 of #3634: a tested `mut` name narrows until its next assignment), so
+// the local that holds it keeps its type; a read that is not narrowed then gets its `?` on that pass.
 static Bool after_null_test(const types::Checked *c, const ast::Expr *e) {
-    if (e->kind != .member || e->span.end > countof(fixed_source)) return false;
+    if ((e->kind != .member && e->kind != .name) || e->span.end > countof(fixed_source)) return false;
     Str read = fixed_source[e->span.start:e->span.end];
     Str refused = "an option is tested with `.none`, not `nullptr`";
     for (Usize i = 0; i < c->error_count; i++) {
@@ -176,7 +191,8 @@ static Bool after_null_test(const types::Checked *c, const ast::Expr *e) {
             continue;
         if (found.span.end > e->span.start || found.span.end > countof(fixed_source)) continue;
         Str test = fixed_source[found.span.start:found.span.end];
-        if (countof(test) > countof(read) && types::same_text(test[0:countof(read)], read)) return true;
+        if (countof(test) <= countof(read) || !types::same_text(test[0:countof(read)], read)) continue;
+        if (!is_word_char(test[countof(read)])) return true; // `s` is not the start of `sibling`
     }
     return false;
 }
@@ -567,6 +583,53 @@ static void push(const ast::Stmt *stmt, const ast::Expr *expr, Step step) {
     }
     state.work[state.top] = (Frame){.stmt = stmt, .expr = expr, .step = step};
     state.top += 1;
+}
+
+// Saves the narrowings in scope, for the `else` of the `if` that is being entered (#3332): `x` tested above and written
+// in the `then` is still narrowed in the `else`, which the `then` does not reach (D18 of #3634). The frame's `index` is
+// where the saved ones start in `state.snaps` and its `end` how many there are.
+static void push_snapshot(types::Checked *r, Step step) {
+    Usize start = state.snap_count;
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const types::Symbol *symbol = &r->scopes.symbols[i];
+        if (!symbol->narrowed && symbol->excluded == 0) continue;
+        if (state.snap_count == countof(state.snaps)) {
+            Usize capacity = countof(state.snaps) * 2;
+            if (capacity < 16) capacity = 16;
+            state.snaps = mem::realloc(state.snaps, capacity);
+        }
+        state.snaps[state.snap_count] = (Snapshot){.at = i, .symbol = *symbol, .dropped = false};
+        state.snap_count += 1;
+    }
+    push(nullptr, nullptr, step);
+    state.work[state.top - 1].index = start;
+    state.work[state.top - 1].end = (U32)(state.snap_count - start);
+}
+
+// Whether a narrowing is as it was saved.
+static Bool narrowing_kept(const types::Symbol *now, const types::Symbol *saved) {
+    return now->narrowed == saved->narrowed && now->excluded == saved->excluded && now->type == saved->type;
+}
+
+// Before the `else`: puts back each narrowing that the `then` dropped, and notes it.
+static void restore_snapshot(types::Checked *r, Frame f) {
+    for (Usize i = f.index; i < f.index + f.end; i++) {
+        Snapshot *saved = &state.snaps[i];
+        if (saved->at >= r->scopes.count) continue;
+        types::Symbol *now = &r->scopes.symbols[saved->at];
+        if (narrowing_kept(now, &saved->symbol) || !types::same_text(now->name, saved->symbol.name)) continue;
+        *now = saved->symbol;
+        saved->dropped = true;
+    }
+}
+
+// After the `if`: a name the `then` dropped is not known to be narrowed, whichever branch ran; the `else` may have
+// dropped others itself, which stay dropped.
+static void rejoin_snapshot(types::Checked *r, Frame f) {
+    for (Usize i = f.index; i < f.index + f.end; i++) {
+        if (state.snaps[i].dropped) types::unnarrow(&r->scopes, state.snaps[i].symbol.name);
+    }
+    state.snap_count = f.index;
 }
 
 static void note_local(Str name, types::TypeRef type) {
@@ -1861,9 +1924,14 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
+        push_snapshot(r, rejoin);
+        Frame saved = state.work[state.top - 1];
         push(nullptr, nullptr, leave);
         push(else_branch, nullptr, enter);
         push(nullptr, test, open_false);
+        push(nullptr, nullptr, restore);
+        state.work[state.top - 1].index = saved.index;
+        state.work[state.top - 1].end = saved.end;
     } else if (leaves(then_branch)) {
         push(nullptr, test, narrow_rest);
     }
@@ -2450,6 +2518,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     find_tails(root);
     types_undefined::check_body(r, root);
     state.top = 0;
+    state.snap_count = 0;
     push(root, nullptr, enter);
     while (state.top > 0) {
         state.top -= 1;
@@ -2461,6 +2530,10 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             types_expr::narrow_scope(r, f.expr, f.step == open_true);
         } else if (f.step == narrow_rest) {
             types_expr::narrow_scope(r, f.expr, false);
+        } else if (f.step == restore) {
+            restore_snapshot(r, f);
+        } else if (f.step == rejoin) {
+            rejoin_snapshot(r, f);
         } else if (f.step == condition) {
             (void)types_expr::check(r, f.expr, r->table.bool_type);
         } else if (f.step == advance) {

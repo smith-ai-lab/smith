@@ -2826,6 +2826,7 @@ export void fix_returned_tag(parse::Parser *p, U32 start) {
     } else if (kind == .record) {
         for (Usize i = 0; i < countof(kind.record.fields); i++) {
             const ast::FieldDecl *field = &kind.record.fields[i];
+            contract::assert(field->type != nullptr); // a member of a record is written with its type
             Str written = trimmed(source_between(p, field->type->span.start, field->type->span.end));
             text = format::push(text, "\n", indent, "    ", field->name, ": ", written);
         }
