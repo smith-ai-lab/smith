@@ -2070,10 +2070,15 @@ static Bool slice_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, 
     return false;
 }
 
+// `.none` where a `?*T` is wanted.
+static Bool none_pointer(state::Ty ty, const ast::Expr *x) {
+    return ty.kind == .option && ty.kind.option.element->kind == .pointer && x->kind == .variant &&
+           x->kind.variant.payload == nullptr && state::same_text(x->kind.variant.name, "none");
+}
+
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false`, `null` or `.none` of a `?*T`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (ty.kind == .option && ty.kind.option.element->kind == .pointer && x->kind == .variant &&
-        x->kind.variant.payload == nullptr && state::same_text(x->kind.variant.name, "none")) {
+    if (none_pointer(ty, x)) {
         *out = c::LLVMConstNull(ty.llvm); // `?*T` is the pointer itself: `.none` is null (#2643)
         return state::success();
     }
