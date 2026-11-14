@@ -3148,6 +3148,28 @@ static void push_arguments(Work *w, ast::ExprRef args[:], types::TypeRef signatu
     }
 }
 
+static Bool picks_only_literals(const types::Checked *c, const ast::Expr *e);
+
+// The arguments of a call. In the `...` of a C variadic an `if` whose branches are all string literals is wanted as a
+// `const Char *`: each literal is a C string there, as a bare literal is (#3660).
+static void push_call_arguments(types::Checked *c, Work *w, ast::ExprRef args[:], types::TypeRef signature) {
+    if (signature == nullptr || !types::is_variadic(signature)) {
+        push_arguments(w, args, signature);
+        return;
+    }
+    types::TypeRef c_string = types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true);
+    Usize fixed = countof(types::slots_of(signature).items);
+    for (Usize i = countof(args); i > 0; i--) {
+        types::TypeRef wanted = nullptr;
+        if (i - 1 < fixed) {
+            wanted = types::slots_of(signature).items[i - 1].type;
+        } else if (picks_only_literals(c, argument_value(args[i - 1]))) {
+            wanted = c_string;
+        }
+        push(w, argument_value(args[i - 1]), wanted, 0);
+    }
+}
+
 // A `name = value` argument has the type of its value.
 static void type_named_arguments(types::Checked *c, ast::ExprRef args[:]) {
     for (Usize i = 0; i < countof(args); i++) {
@@ -3345,7 +3367,7 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
         push_named_arguments(c, w, args, signature, params);
         return;
     }
-    push_arguments(w, args, signature);
+    push_call_arguments(c, w, args, signature);
 }
 
 // A string literal in the `...` is a C string.
@@ -5664,6 +5686,20 @@ static Bool literal_branches(const types::Checked *c, const ast::Expr *e) {
         return p.leaf_count > 0;
     }
     return literal_like(e);
+}
+
+// Whether `e` is an `if` or a `match` value whose every branch is a string literal (`if c: "a" else: "b"`).
+static Bool picks_only_literals(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .conditional) {
+        return e->kind.conditional.then_value->kind == .string && e->kind.conditional.else_value->kind == .string;
+    }
+    if (e->kind != .stmt_expr) return false;
+    Plan p = read_value(c, e, nullptr);
+    for (Usize i = 0; i < p.leaf_count; i++) {
+        const ast::Expr *leaf = p.leaves[i];
+        if (!(leaf->kind == .string)) return false;
+    }
+    return p.leaf_count > 0;
 }
 
 static Str word(const ast::Stmt *s) {

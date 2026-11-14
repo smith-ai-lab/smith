@@ -1,0 +1,12 @@
+extern fn printf(format: *u8, ...) -> i32
+
+# An `if` whose branches are string literals is a C string in the `...`, as a bare literal is (#3660).
+pub fn check() -> i32:
+    yes := true
+    n := printf("%s\n", if yes: "yes" else: "no!")
+    if n != 4:
+        return 1
+    m := printf("%s%s\n", if yes: "" else: ", ", if yes: "ab" else: "cd")
+    if m != 3:
+        return 2
+    0

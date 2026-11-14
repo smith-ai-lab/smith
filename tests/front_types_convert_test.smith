@@ -462,6 +462,13 @@ export void test_front_types_convert_string_literal_converts_to_const_char_point
     refused(conv(&t, t.text, read_pointer), "expected const Char *", "found Str", "cstr.of(s)");
     // A pointer type carries no const (#3250), so a `Char *` target accepts the literal too.
     test::check_condition(is(conv_literal(&t, t.text, write_pointer), types_convert::literal_to_pointer));
+    // The bytes C reads as a string: a literal is a `const U8 *`, a `const I8 *` and a `const void *` too (#3660); a
+    // `Str` value is not.
+    types::TypeRef byte_pointer = types::pointer_to(&t, named(&t, "U8"), true);
+    types::TypeRef void_pointer = types::pointer_to(&t, t.void_type, true);
+    test::check_condition(is(conv_literal(&t, t.text, byte_pointer), types_convert::literal_to_pointer));
+    test::check_condition(is(conv_literal(&t, t.text, void_pointer), types_convert::literal_to_pointer));
+    refused(conv(&t, t.text, byte_pointer), "expected const U8 *", "found Str", "cstr.of(s)");
     // Only characters: a literal is no `const I32 *`.
     refused(conv_literal(&t, t.text, types::pointer_to(&t, named(&t, "I32"), true)), "expected const I32 *",
             "found Str", "no conversion");
