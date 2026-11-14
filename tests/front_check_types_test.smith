@@ -675,6 +675,20 @@ export void test_front_check_types_a_loop_that_assigns_a_mut_name_drops_its_narr
           "", "");
 }
 
+// A call in a loop that is handed a value read from a tested name or path is no write: the narrowing stands (#3631).
+// A `mut` name whose address the loop takes, or a name the loop assigns, still drops it.
+export void test_front_check_types_a_loop_call_given_a_value_read_keeps_its_narrowing() {
+    clean(with_kinds("fn read(n: i32) -> i32:\n    n\n\nfn f(k: Kind) -> i32:\n    if k is not .unary:\n"
+                     "        return 0\n    mut n := 0\n    while n < 3:\n        n += read(k.op)\n    n\n"));
+    clean(with_kinds("fn read(n: i32) -> i32:\n    n\n\nfn f(h: Kind) -> i32:\n    mut m := h\n"
+                     "    if m is not .unary:\n        return 0\n    mut n := 0\n    while n < 3:\n"
+                     "        n += read(m.op)\n    n\n"));
+    fails(with_kinds("fn take(p: *mut Kind):\n    p.* = Kind(name = 1)\n\nfn f(h: Kind) -> i32:\n    mut m := h\n"
+                     "    if m is not .unary:\n        return 0\n    mut n := 0\n    while n < 3:\n"
+                     "        take(&m)\n        n += m.op\n    n\n"),
+          "payload enumeration", "");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // static_assert of a call whose argument is a function (#3236)
 

@@ -7109,7 +7109,6 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
         poison(c, e);
         return;
     }
-    contract::assert(template->decl != nullptr); // tested at the top; the calls above only read it
     Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:taken]);
     if (at >= c->instance_count) {
         poison(c, e);
