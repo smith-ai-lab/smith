@@ -109,16 +109,12 @@ export struct Slot {
     const ast::TypeExpr *written;   // a field written in smith's own syntax: its type as written (for a fix-it)
 };
 
-// A `Slot` with every field written: the ones a construction does not set are zero, false, empty or null, and the
-// construction assigns the ones it does (`value` of an enumerator, `written`).
+// A `Slot` with its fields written: the ones a construction does not set are zero, false, empty or null, and the
+// construction assigns the ones it does (`value` of an enumerator, `written`). `default_value` is left out on purpose:
+// a field a construction leaves out and a read tests against `nullptr` is the pointer that may be absent (`?*Expr`),
+// the form the fixer writes it in (#3630).
 export Slot make_slot(Str name, TypeRef type) {
-    Slot slot = {.name = name,
-                 .type = type,
-                 .value = 0,
-                 .is_pub = false,
-                 .default_value = nullptr,
-                 .doc = "",
-                 .written = nullptr};
+    Slot slot = {.name = name, .type = type, .value = 0, .is_pub = false, .doc = "", .written = nullptr};
     return slot;
 }
 
