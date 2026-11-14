@@ -1997,6 +1997,16 @@ export TypeRef type_of(const Checked *r, const ast::Expr *node) {
     return entry->type;
 }
 
+// Records that the name `node`, a `Result` narrowed by a test, reads its error (#3681); the mark is kept under the
+// address after the node's, which no node has.
+export void mark_error_read(Checked *r, const ast::Expr *node) {
+    set_type(r, (const ast::Expr *)((Usize)node + 1), r->table.bool_type);
+}
+
+export Bool is_error_read(const Checked *r, const ast::Expr *node) {
+    return type_of(r, (const ast::Expr *)((Usize)node + 1)) != nullptr;
+}
+
 // The type recorded for an expression in the body of `instance`, or null.
 export TypeRef type_of_in(const Checked *r, const ast::Expr *node, Usize instance) {
     const NodeType *entry = find_in(r, node, instance);

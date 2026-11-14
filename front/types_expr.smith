@@ -1306,7 +1306,21 @@ static void name_expr(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    if (s->narrowed && f.expected != nullptr && countof(path.segments) == 1) {
+        // a narrowed `Result` read where its own type is wanted is the whole `Result` (open decision 8 of #3634: no
+        // answer is built, the read keeps compiling as before #3681)
+        const types::Symbol *whole = types::declared(&c->scopes, path.segments[0].text);
+        if (whole != nullptr && whole->type->kind == .result_type && whole->type == f.expected) {
+            finish(c, e, whole->type, f.expected);
+            return;
+        }
+    }
     finish(c, e, s->type, f.expected);
+    // a `Result` name narrowed to its error: the emitter reads the error, not the ok (the two may be one type, #3681)
+    if (s->narrowed && s->excluded == 1 && countof(path.segments) == 1) {
+        const types::Symbol *own = types::declared(&c->scopes, path.segments[0].text);
+        if (own != nullptr && own->type->kind == .result_type) types::mark_error_read(c, e);
+    }
 }
 
 // Whether an enumerator of a payload enumeration carries a value (`void` is what one that carries nothing has).
@@ -1775,8 +1789,9 @@ static types::TypeRef tag_type(types::Checked *c, const ast::Expr *place, types:
     if (countof(key) == 0) return typed;
     const types::Symbol *narrowed = types::lookup(&c->scopes, key);
     const types::Symbol *own = types::declared(&c->scopes, key);
-    if (narrowed == nullptr || !narrowed->narrowed || own == nullptr || !types::is_payload_enum(own->type))
-        return typed;
+    if (narrowed == nullptr || !narrowed->narrowed || own == nullptr) return typed;
+    if (own->type->kind == .result_type) return own->type;
+    if (!types::is_payload_enum(own->type)) return typed;
     return own->type;
 }
 
@@ -2285,6 +2300,20 @@ static Usize variant_index(types::TypeRef t, const NameTest *test) {
     return found;
 }
 
+// A `Result` name tested with `== .ok`, `== .error` (or `!=`, or `is`): the name is the ok value (bit 1 of `excluded`
+// says the error is ruled out) or the error (bit 0 says the ok is ruled out) where the test says so (#3681, D17, D18).
+static Bool narrow_result(const NameTest *test, Bool has, types::Symbol *s) {
+    Bool ok = same_text(test->variant, "ok");
+    if (test->type != nullptr || (!ok && !same_text(test->variant, "error"))) return false;
+    Bool is_ok = has == ok;
+    types::TypeRef payload = is_ok ? types::element_of(s->type) : types::error_of(s->type);
+    if (payload == nullptr || payload->kind == .void_type) return false;
+    s->type = payload;
+    s->narrowed = true;
+    s->excluded = is_ok ? 2 : 1;
+    return true;
+}
+
 // The type the name of `test` has when the test says so (`has`) or not, given the symbol `s` as it is, written to `s`.
 // An option is its element when it is not `.none`; a payload enumeration is the payload of its variant, or of the one
 // variant left when the others are ruled out. False when the test narrows nothing.
@@ -2299,6 +2328,7 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         s->narrowed = true;
         return true;
     }
+    if (t->kind == .result_type) return narrow_result(test, has, s);
     if (!test->by_is || !types::is_payload_enum(t) || countof(types::slots_of(t).items) > 64) return false;
     Usize count = countof(types::slots_of(t).items);
     Usize at = variant_index(t, test);
@@ -4722,6 +4752,18 @@ static Bool builtin_member(types::Checked *c, Frame f, types::TypeRef base, Str 
     return false;
 }
 
+// `r.ok` and `r.error` where `r` is a `Result` that a test narrowed: the read is of the `Result` as it was, so it keeps
+// the fixer's binding (#3681); `typed` otherwise.
+export types::TypeRef whole_result(types::Checked *c, const ast::Expr *base, types::TypeRef typed, Str member) {
+    if (!same_text(member, "ok") && !same_text(member, "error")) return typed;
+    Str key = place_key(base);
+    if (countof(key) == 0) return typed;
+    const types::Symbol *s = types::lookup(&c->scopes, key);
+    const types::Symbol *own = types::declared(&c->scopes, key);
+    if (s == nullptr || !s->narrowed || own == nullptr || own->type->kind != .result_type) return typed;
+    return own->type;
+}
+
 static void member_after(types::Checked *c, Frame f, const ast::Expr *outer) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) {
@@ -4736,6 +4778,7 @@ static void member_after(types::Checked *c, Frame f, const ast::Expr *outer) {
     if (narrowed_payload(c, f) || narrowed_variant_read(c, f, outer)) {
         return;
     }
+    base = whole_result(c, e->kind.member.base, base, name);
     if (base->kind == .tuple && !e->kind.member.arrow) {
         const types::Slot *element = types::member(base, name);
         if (element == nullptr) {
@@ -5797,6 +5840,12 @@ static void bind_stage(types::Checked *c, Frame f) {
         return;
     }
     types::TypeRef t = typ(c, s->kind.if_let.value);
+    if (t != invalid(c) && t->kind != .result_type && t->kind != .option) {
+        // `.ok(v) := r` over a `Result` name a test narrowed tests the `Result` as it was (#3681)
+        types::TypeRef whole = whole_result(c, s->kind.if_let.value, t, "ok");
+        if (whole != t) types::set_type(c, s->kind.if_let.value, whole);
+        t = whole;
+    }
     Str name = s->kind.if_let.pattern.name;
     Str binding = s->kind.if_let.pattern.binding;
     types::TypeRef element = invalid(c);
