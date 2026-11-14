@@ -872,7 +872,14 @@ static void drop_call_writes(types::Checked *c, const ast::Expr *e) {
         }
         Str key = place_key(arg);
         if (t == nullptr || countof(key) == 0 || t->kind != .pointer || types::points_to_const(t)) continue;
-        types::unnarrow_under(&c->scopes, key);
+        // a pointer value handed out writes what it points at (the paths under it), never the path that holds it
+        // (#3613)
+        types::TypeRef given = types::type_of(c, arg);
+        if (given != nullptr && given->kind == .pointer) {
+            types::unnarrow_below(&c->scopes, key);
+        } else {
+            types::unnarrow_under(&c->scopes, key);
+        }
     }
     const ast::Expr *callee = e->kind.call.callee;
     if (callee->kind != .member) return;
@@ -880,7 +887,11 @@ static void drop_call_writes(types::Checked *c, const ast::Expr *e) {
     types::TypeRef rt = types::type_of(c, receiver);
     Str key = place_key(receiver);
     if (rt == nullptr || countof(key) == 0 || (rt->kind == .pointer && types::points_to_const(rt))) return;
-    types::unnarrow_under(&c->scopes, key);
+    if (rt->kind == .pointer) {
+        types::unnarrow_below(&c->scopes, key);
+    } else {
+        types::unnarrow_under(&c->scopes, key);
+    }
 }
 
 static void finish(types::Checked *c, const ast::Expr *e, types::TypeRef found, types::TypeRef expected) {
