@@ -1685,23 +1685,23 @@ static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::Una
 
 static Str place_root(const ast::Expr *e);
 
+// The text of an index operand: a name or an integer; empty for anything else.
+static Str operand_text(const ast::Expr *e) {
+    if (e->kind == .integer) return msg(format::push(e->kind.integer.value));
+    if (e->kind == .name && countof(e->kind.name.path.segments) == 1) return e->kind.name.path.segments[0].text;
+    return "";
+}
+
 // The text of an index that can be compared by text: a name, an integer, or one of them plus or minus another
 // (`i`, `3`, `i + 1`); empty for anything else, a call included (item 73 of #3516).
 static Str index_text(const ast::Expr *e) {
-    if (e->kind == .integer) return format::push(e->kind.integer.value);
-    if (e->kind == .name) return countof(e->kind.name.path.segments) == 1 ? e->kind.name.path.segments[0].text : "";
-    if (e->kind != .binary) return "";
+    if (e->kind != .binary) return operand_text(e);
     ast::BinaryOp op = e->kind.binary.op;
     if (op != .add && op != .subtract) return "";
-    const ast::Expr *left = e->kind.binary.left;
-    const ast::Expr *right = e->kind.binary.right;
-    if (!(left->kind == .name || left->kind == .integer) || !(right->kind == .name || right->kind == .integer)) {
-        return "";
-    }
-    Str l = index_text(left);
-    Str r = index_text(right);
+    Str l = operand_text(e->kind.binary.left);
+    Str r = operand_text(e->kind.binary.right);
     if (countof(l) == 0 || countof(r) == 0) return "";
-    return format::push(l, op == .add ? "+" : "-", r);
+    return msg(format::push(l, op == .add ? "+" : "-", r));
 }
 
 // The text of a field path: `a.kind` for `a.kind` and `a->kind`, `a` for a name, `xs[i].f` for a path with an index
@@ -1716,10 +1716,10 @@ static Str place_key(const ast::Expr *e) {
         if (at->kind == .index) {
             Str inner = index_text(at->kind.index.index);
             if (countof(inner) == 0) return "";
-            parts[count] = format::push("[", inner, "]");
+            parts[count] = msg(format::push("[", inner, "]"));
             at = at->kind.index.base;
         } else {
-            parts[count] = format::push(".", at->kind.member.name);
+            parts[count] = msg(format::push(".", at->kind.member.name));
             at = at->kind.member.base;
         }
         count += 1;
@@ -2318,7 +2318,11 @@ static Str single_name(const ast::Expr *name) {
 static Str root_name(const ast::Expr *e) {
     const ast::Expr *at = e;
     while (at->kind == .member || at->kind == .index) {
-        at = at->kind == .member ? at->kind.member.base : at->kind.index.base;
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else {
+            at = at->kind.index.base;
+        }
     }
     return single_name(at);
 }
