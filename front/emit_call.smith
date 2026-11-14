@@ -380,7 +380,9 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
         // `contract.trusted()` in the body of `mem.copy`'s instance: an import of the module the generic comes from
         if (module == nullptr && i == 0 && countof(e->instance_scope) > 0)
             module = types::lookup(scopes, state::msg(format::push(e->instance_scope, names.items[i])));
-        if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
+        if (module == nullptr || module->kind != .module_name) return false;
+        contract::assert(module->decl != nullptr); // a `module_name` symbol is declared by its import
+        if (module->decl->kind != .import_module) return false;
         prefix = state::msg(format::push(join(module->decl->kind.import_module.path), "::"));
     }
     Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
@@ -796,7 +798,9 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
 static ast::Path through_import(state::Emitter *e, ast::Path path, ast::Identifier parts[8]) {
     if (e->options.checked == nullptr || countof(path.segments) == 0) return path;
     const types::Symbol *module = types::lookup(&e->options.checked->scopes, path.segments[0].text);
-    if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return path;
+    if (module == nullptr || module->kind != .module_name) return path;
+    contract::assert(module->decl != nullptr); // a `module_name` symbol is declared by its import
+    if (module->decl->kind != .import_module) return path;
     ast::Path imported = module->decl->kind.import_module.path;
     if (countof(imported.segments) + countof(path.segments) > 9) return path;
     Usize count = 0;

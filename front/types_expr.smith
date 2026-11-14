@@ -3470,6 +3470,7 @@ static Bool has_generics(const types::Symbol *method_fn) {
 
 // Whether the first parameter of a function with bracketed generics is written as a pointer.
 static Bool generic_takes_pointer(const types::Symbol *method_fn) {
+    contract::assert(method_fn->decl != nullptr); // `has_generics` tested it
     if (!(method_fn->decl->kind == .function)) return false;
     const ast::TypeExpr *written = method_fn->decl->kind.function.params[0].type;
     return written != nullptr && written->kind == .pointer;
@@ -3479,6 +3480,7 @@ static Bool generic_takes_pointer(const types::Symbol *method_fn) {
 // through one pointer, is a generic name or has the receiver's shape (a name or an applied type is left to the check
 // of the arguments).
 static Bool generic_first_fits(const types::Symbol *method_fn, types::TypeRef self_type) {
+    contract::assert(method_fn->decl != nullptr); // `has_generics` tested it
     if (!(method_fn->decl->kind == .function)) return false;
     const ast::TypeExpr *written = method_fn->decl->kind.function.params[0].type;
     if (written == nullptr) return false;
@@ -6567,6 +6569,7 @@ static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol
     push(w, e, f.expected, 4);
     for (Usize i = countof(args); i > 0; i--) {
         const ast::Expr *arg = argument_value(args[i - 1]);
+        contract::assert(template->decl != nullptr); // tested at the top; the loop's calls may write it
         if (types::is_compile_time(&params[i - 1])) {
             // A type argument is read as a written type in `auto_resolved`; a constant is typed on its own.
             if (types::is_type_parameter(&params[i - 1])) {
