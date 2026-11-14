@@ -44,7 +44,8 @@
 //   Str           A `Str` converts to a `Str`; only a `Char` slice or array (the checker's own 8-bit `Char`) converts
 //                 to a `Str`; a `U8[:]` or `I8[:]` needs the cast `(Str)xs`. A `Str` converts to a slice only when
 //                 the slice's element is const `Char`. A string literal (and only a literal: it is NUL-terminated)
-//                 also converts to a `const Char *`, the C `const char *` (`literal_to_pointer`, #2941); a `Str`
+//                 also converts to a `const Char *`, the C `const char *` (`literal_to_pointer`, #2941), to a `const U8 *` or
+//                 `const I8 *` and to a `const void *` (#3660); a `Str`
 //                 value needs `cstr.of(s)`, and a `Char *` target refuses because the literal's characters are const.
 //   Option, Result  A value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok` wherever one is expected, if
 //                 it converts to `T` (owner, 2026-10-25). Absence and errors stay explicit: an `Option(T)` is not a
@@ -385,10 +386,17 @@ static Verdict pointer_to_pointer(const Ctx *c) {
     return needs_cast(c, "the pointers point to different types");
 }
 
-// A `Str` is not NUL-terminated, so only a string literal (which is) converts to a `const Char *`; a `Str` value needs
-// `cstr.of(s)`. The literal's characters are const, so a `Char *` target refuses (#2941).
+// A byte C reads as characters: `Char`, a one-byte integer (`const U8 *`, `const I8 *`) or `void` (`const void *`).
+static Bool is_c_string_element(const Ctx *c, types::TypeRef element) {
+    if (element == c->char_type || element->kind == .void_type) return true;
+    return element->kind == .integer && types::bits_of(element) == 8;
+}
+
+// A `Str` is not NUL-terminated, so only a string literal (which is) converts to a `const Char *`, `const U8 *` or
+// `const void *` (a literal takes the type its place expects, D15 of #3634); a `Str` value needs `cstr.of(s)`. The
+// literal's characters are const, so a `Char *` target refuses (#2941).
 static Verdict text_to_pointer(const Ctx *c) {
-    if (types::element_of(c->target_type) != c->char_type) return no_rule(c);
+    if (!is_c_string_element(c, types::element_of(c->target_type))) return no_rule(c);
     if (!c->lit.is_string) return refuse(c, "a Str is not NUL-terminated", "write the C string: cstr.of(s)");
     if (fixing && !types::points_to_const(c->target_type)) return dropped_const(c);
     return accept(literal_to_pointer);
