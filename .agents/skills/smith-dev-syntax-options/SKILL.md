@@ -18,11 +18,11 @@ if .circle(c) := shape: area(c)      # any other enum: the general pattern
 A `?T` name is a `T` (a `?*T` a `*T`) where it is known not to be `.none`: the block of `if x != .none:`, the right
 side of `x != .none and ...`, the `else` of `if x == .none:`, and the lines after an `if x == .none:` whose block always
 leaves (`return`, `break`, `continue`). Every name narrows, `mut` or not (item 55), and so does a field path (`p.child`,
-`cur.kind`, `a.b.c`; item 68 of #3516, #3587), through a value or a pointer. A narrowing ends at the next assignment
+`cur.kind`, `a.b.c`; #3634, #3587), through a value or a pointer. A narrowing ends at the next assignment
 that could change which case it is: to the name, to the path or to a part of it before the tested field, `&` of any of
 those, a call that is passed a writable pointer to it (or the path as a method receiver), or a loop that writes the name
 (an assignment to a part below the tested field keeps it). A path through an index (`xs[i].kind`) does not narrow.
-`contract.assert(c)` as a statement narrows the rest of its block as `if not c: return` does (item 72 of #3516, #3622),
+`contract.assert(c)` as a statement narrows the rest of its block as `if not c: return` does (#3634, #3622),
 for every name and path `c` tests (`contract.assert(x != .none)`, `a.kind is .v and a.n != .none`): use it for a value that is
 absent only by a bug, with a comment where the reason is not obvious; where an absent value is a real outcome, test it and
 return, and where a flag says the optional is set, make the data a union. The old source spells it `contract::assert(c);`.
