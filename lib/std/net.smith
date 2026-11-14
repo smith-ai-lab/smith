@@ -705,6 +705,7 @@ if constexpr (target::os == target::macos) {
 
     // Reads: the count, 0 at the end, or -1 with the code.
     Isize secure_read(Connection *connection, void *buffer, Usize size, I32 *code) {
+        contract::trusted(); // OpenSSL through function pointers is the edge
         const Api *api = &api_table;
         contract::assert(connection->session != nullptr); // set by secure_connect; the OpenSSL calls below take no null
         api->error_clear();
@@ -721,6 +722,7 @@ if constexpr (target::os == target::macos) {
     // Reads like secure_read, giving up with ETIMEDOUT when nothing arrives on the socket within timeout_ns. Bytes
     // OpenSSL holds already are returned at once; a record that has arrived in part is waited for in secure_read.
     Isize secure_read_within(Connection *connection, void *buffer, Usize size, I64 timeout_ns, I32 *code) {
+        contract::trusted(); // OpenSSL through function pointers is the edge
         const Api *api = &api_table;
         contract::assert(connection->session != nullptr); // set by secure_connect; the OpenSSL calls below take no null
         if (api->session_pending(connection->session) == 0) {
@@ -738,6 +740,7 @@ if constexpr (target::os == target::macos) {
     // Writes up to a record of size bytes with SIGPIPE blocked for the call and, when the write raised it, taken off
     // the thread, so a peer that has gone is the error EPIPE and never a signal: the count, or -1 with the code.
     Isize secure_write(Connection *connection, const void *buffer, Usize size, I32 *code) {
+        contract::trusted(); // OpenSSL through function pointers is the edge
         const Api *api = &api_table;
         contract::assert(connection->session != nullptr); // set by secure_connect; the OpenSSL calls below take no null
         c::sigset_t pipe_signal = {};
