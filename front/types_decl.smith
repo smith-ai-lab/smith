@@ -393,6 +393,8 @@ static syntax::Edits option_local_fix(const types::Checked *c, const ast::Expr *
     return fix;
 }
 
+static Bool left_out_of(types::TypeRef from, types::TypeRef to, U64 *given);
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok && volatile_refused(c, e, from, to)) return false;
@@ -454,8 +456,34 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     // A number where a Bool is wanted: the fix writes the comparison the message names, `x != 0`; an operand that is
     // not a postfix expression goes in parentheses first, `(a + b) != 0`.
     if (from->kind == .integer && to->kind == .bool_type && countof(fix) == 0) fix = nonzero_fix(e);
+    U64 given = 0;
+    if (e->kind == .tuple_lit && left_out_of(from, to, &given)) {
+        // a named value built where a record is wanted (a payload `(element = x)`) that leaves a field out: the
+        // fixer writes the field at the value, as it does at a construction (#3658)
+        types::fail_left_out(c, e->span, verdict.message, e, to, given);
+        return false;
+    }
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
+}
+
+// Whether the named value of type `from` leaves out a field of the record `to` that has no default; `given` marks the
+// fields of `to` the value has (the rule of `types_convert::to_record`).
+static Bool left_out_of(types::TypeRef from, types::TypeRef to, U64 *given) {
+    if (from->kind != .tuple || to->kind != .record || types::is_union_record(to) || !types::is_complete(to))
+        return false;
+    types::Members have = types::slots_of(from);
+    types::Members want = types::slots_of(to);
+    if (countof(have.items) == 0 || types::is_position(have.items[0].name) || countof(want.items) > 64) return false;
+    Bool left_out = false;
+    for (Usize k = 0; k < countof(want.items); k++) {
+        Bool found = false;
+        for (Usize i = 0; i < countof(have.items); i++)
+            if (types::same_text(have.items[i].name, want.items[k].name)) found = true;
+        if (found) *given |= (U64)1 << k;
+        if (!found && want.items[k].default_value == nullptr) left_out = true;
+    }
+    return left_out;
 }
 
 // `x` where a Bool is wanted and `x` is an integer: ` != 0` after it, with parentheses around an operand that is not a

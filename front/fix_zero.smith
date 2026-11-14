@@ -347,14 +347,20 @@ static Str omitted(types::TypeRef record, U64 given, Str outer, Bool header) {
 // declaration).
 static core::ParseError left_out_fix(Str source, const ast::Expr *e, types::TypeRef record, U64 given) {
     core::ParseError none = {};
-    if (!(e->kind == .call)) return none;
-    const ast::Expr *callee = e->kind.call.callee;
+    if (!(e->kind == .call) && !(e->kind == .tuple_lit)) return none;
+    // a call names what it builds; a named value `(element = x)` nested in a payload is the same construction without
+    // a name (#3658): the one rule, at the one function
     Str outer = "";
-    if (callee->span.end > callee->span.start && callee->span.end <= countof(source))
-        outer = source[callee->span.start:callee->span.end];
+    ast::ExprRef args[:] = {};
+    if (e->kind == .tuple_lit) args = e->kind.tuple_lit.items;
+    if (e->kind == .call) {
+        args = e->kind.call.args;
+        const ast::Expr *callee = e->kind.call.callee;
+        if (callee->span.end > callee->span.start && callee->span.end <= countof(source))
+            outer = source[callee->span.start:callee->span.end];
+    }
     Str text = omitted(record, given, outer, same(types::owner_of(record), "c::"));
     if (countof(text) == 0) return none;
-    ast::ExprRef args[:] = e->kind.call.args;
     U32 at = e->span.end - 1; // before the `)`
     if (countof(args) > 0) {
         at = args[countof(args) - 1]->span.end;
