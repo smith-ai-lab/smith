@@ -116,7 +116,8 @@ static Str scalar_zero(types::TypeRef t) {
     if (t->kind == .integer) return "0";
     if (t->kind == .floating) return "0.0";
     if (t->kind == .bool_type) return "false";
-    if (t->kind == .pointer) return "nullptr";
+    // a C function pointer is null like a pointer
+    if (t->kind == .pointer || t->kind == .function || t->kind == .fn_value) return "nullptr";
     if (t->kind == .slice) return "[]";  // the empty slice literal, typed by the field (owner, 2026-11-05, #2460)
     if (t->kind == .text) return "\"\""; // a smith struct from another module holds `str` (`ast.Place`, #2648)
     return enum_zero(t);
@@ -304,7 +305,7 @@ static Str defaulted_record(types::TypeRef t, Str name) {
 
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
 // each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
-static Str omitted(types::TypeRef record, U64 given, Str outer) {
+static Str omitted(types::TypeRef record, U64 given, Str outer, Bool header) {
     if (record->kind != .record || types::is_union_record(record) || !types::is_complete(record)) return "";
     Str out = "";
     for (Usize k = 0; k < countof(types::slots_of(record).items); k++) {
@@ -312,6 +313,9 @@ static Str omitted(types::TypeRef record, U64 given, Str outer) {
         types::TypeRef field = types::slots_of(record).items[k].type;
         Str zero = flat_zero(field);
         if (field->kind == .option) zero = ".none";
+        // a pointer of a smith struct has no zero (item 3 of #3224): it stays the one error left, the fields that have
+        // a zero are still written
+        if (!header && same(zero, "nullptr")) continue;
         if (countof(zero) == 0 && field->kind == .array) {
             types::TypeRef leaf = field;
             for (Usize d = 0; d < 16 && leaf->kind == .array; d++)
@@ -319,7 +323,8 @@ static Str omitted(types::TypeRef record, U64 given, Str outer) {
             zero = construct_array(types::show(leaf), field); // too long to write out: `array.filled(u32, 128, 0)`
             if (countof(zero) > 0) array_written = true;
         }
-        if (countof(zero) == 0) zero = construct_one(nested_name(outer, field), field);
+        if (countof(zero) == 0)
+            zero = construct(nested_name(outer, field), field); // `Path(segments = [], span = Span(..))`
         if (countof(zero) == 0 && field->kind == .record) zero = local_record_zero(field, nested_name(outer, field));
         if (field->kind == .record && same(zero, "undefined")) continue; // not a value here: the struct's `= undefined`
         // a member of a smith struct whose pointers nothing tests against null: C fills it before use (lead on #2613).
@@ -347,7 +352,7 @@ static core::ParseError left_out_fix(Str source, const ast::Expr *e, types::Type
     Str outer = "";
     if (callee->span.end > callee->span.start && callee->span.end <= countof(source))
         outer = source[callee->span.start:callee->span.end];
-    Str text = omitted(record, given, outer);
+    Str text = omitted(record, given, outer, same(types::owner_of(record), "c::"));
     if (countof(text) == 0) return none;
     ast::ExprRef args[:] = e->kind.call.args;
     U32 at = e->span.end - 1; // before the `)`
