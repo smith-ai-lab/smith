@@ -3000,7 +3000,8 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     push(w, value, hint, 0);
 }
 
-// `x op= y` with `y` an integer narrower than `x` and of the same signedness: C widens `y`, and a fix writes `y.to(T)`.
+// `x op= y` with `y` an integer of the same signedness, narrower than `x` or of a type with no common one (`usize` and
+// `u64`): C converts `y`, and a fix writes `y.to(T)`.
 // True when the error was recorded.
 static Bool widen_assigned(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, types::TypeRef tt,
                            types::TypeRef vt) {
@@ -3009,7 +3010,11 @@ static Bool widen_assigned(types::Checked *c, const ast::Expr *e, ast::BinaryOp 
     }
     const ast::Expr *value = e->kind.assign.value;
     if (is_shift(op) || !is_integer(tt) || !is_integer(vt) || types::signed_of(tt) != types::signed_of(vt) ||
-        types::bits_of(vt) >= types::bits_of(tt) || literal_like(value)) {
+        literal_like(value)) {
+        return false;
+    }
+    // As wide or wider: only a pair with no common type (`usize` and `u64`) is a conversion C does silently.
+    if (types::bits_of(vt) >= types::bits_of(tt) && types_convert::operand_type(&c->table, tt, vt) != nullptr) {
         return false;
     }
     types::fail_fix(c, e->span,
