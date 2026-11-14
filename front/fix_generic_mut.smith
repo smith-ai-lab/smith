@@ -641,16 +641,22 @@ static core::Errors loop_fixes(Str source, const ast::Module *module) {
     return out;
 }
 
-// The type a result written as the name of a `typedef` of this module stands for (`TyResult` is `Result(Ty, Error)`),
-// else `type` itself: `return {.error = e}` in a generic function that returns the alias is mended the same.
-static const ast::TypeExpr *through_alias(const ast::Module *module, const ast::TypeExpr *type) {
-    if (type == nullptr || type->kind != .named || countof(type->kind.named.path.segments) != 1) return type;
+// Whether a result written as the name of an alias of this module (`TyResult`, `typedef Result(Ty, Error) TyResult;`
+// or, once the typedef is fixed, `TyResult := Result(Ty, Error)`) stands for the type `head` opens: `return {.error =
+// e}` in a generic function that returns the alias is mended the same.
+static Bool alias_of(Str source, const ast::Module *module, const ast::TypeExpr *type, Str head) {
+    if (type == nullptr || type->kind != .named || countof(type->kind.named.path.segments) != 1) return false;
     Str name = type->kind.named.path.segments[0].text;
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
-        if (d->kind == .type_alias && same(d->kind.type_alias.name, name)) return d->kind.type_alias.type;
+        if (d->kind == .type_alias && same(d->kind.type_alias.name, name))
+            return has_result_type(source, d->kind.type_alias.type, head);
+        if (d->kind == .variable && same(d->kind.variable.name, name) && d->kind.variable.init != nullptr) {
+            const ast::Expr *init = d->kind.variable.init;
+            return init->span.end <= countof(source) && lit_at(source, init->span.start, init->span.end, head);
+        }
     }
-    return type;
+    return false;
 }
 
 export core::Errors edits(Str source, const ast::Module *module) {
@@ -659,15 +665,17 @@ export core::Errors edits(Str source, const ast::Module *module) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .function) continue;
         const ast::Stmt *function_body = d->kind.function.body;
-        const ast::TypeExpr *function_result = through_alias(module, d->kind.function.result);
+        const ast::TypeExpr *function_result = d->kind.function.result;
         ast::Param params[:] = d->kind.function.params;
         if (function_body != nullptr && is_generic(source, d)) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
             Usize body = function_body->span.start;
             if (body < end) out = scan(module, source, body, end, out);
-            if (body < end && has_result_type(source, function_result, "Result("))
+            if (body < end && (has_result_type(source, function_result, "Result(") ||
+                               alias_of(source, module, function_result, "Result(")))
                 out = result_literals(source, body, end, false, out);
-            if (body < end && has_result_type(source, function_result, "Option("))
+            if (body < end && (has_result_type(source, function_result, "Option(") ||
+                               alias_of(source, module, function_result, "Option(")))
                 out = result_literals(source, body, end, true, out);
             if (body < end) out = assigned_params(source, params, body, end, out);
             if (body < end) out = pointer_params(module, source, params, body, end, out);
