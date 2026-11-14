@@ -40,3 +40,25 @@ export void test_front_fix_zero_option_a_field_given_to_a_parameter_that_tests_n
                  "pub fn f(n: *Node) -> i32:\n"
                  "    return count(n.next)\n");
 }
+
+// A local initialised from a field that a test above narrows keeps the narrowed type (#3621): the test is still
+// `nullptr` when the read is checked, and the fix of the test is what narrows it on the next pass.
+export void test_front_fix_zero_option_a_local_read_after_a_null_test_is_not_an_option() {
+    expect_fixed("module m;\nexport struct Pat {\n    Pat *constant;\n    int v;\n};\n"
+                 "export int has(const Pat *p) {\n    return p->constant != nullptr;\n}\n"
+                 "export Pat make(void) {\n    return (Pat){.v = 1};\n}\n"
+                 "export int use(const Pat *p) {\n    if (p->constant == nullptr) return 0;\n"
+                 "    const Pat *e = p->constant;\n    return e->v;\n}\n",
+                 "pub struct Pat:\n"
+                 "    pub constant: ?*Pat = .none\n"
+                 "    pub v: i32\n"
+                 "pub fn has(p: *Pat) -> i32:\n"
+                 "    return (p.constant != .none).to(i32)\n"
+                 "pub fn make() -> Pat:\n"
+                 "    return Pat(v = 1)\n"
+                 "pub fn use(p: *Pat) -> i32:\n"
+                 "    if p.constant == .none:\n"
+                 "        return 0\n"
+                 "    e: *Pat = p.constant\n"
+                 "    return e.v\n");
+}

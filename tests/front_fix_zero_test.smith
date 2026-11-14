@@ -478,7 +478,7 @@ export void test_front_fix_zero_a_pointer_field_read_through_a_tested_local_is_o
         "    Node second = {.value = 2};\n    Node *n = &second;\n    while (n != nullptr) {\n"
         "        n = n->next;\n    }\n    return 0;\n}\n",
         "struct Node:\n    value: i32\n    next: ?*Node = .none\nfn f() -> i32:\n    second := Node(value = 2)\n"
-        "    mut n: *Node = &second\n    while n != nullptr:\n        n = n.next\n    return 0\n");
+        "    mut n: ?*Node = &second\n    while n != .none:\n        n = n.next\n    return 0\n");
 }
 
 // A test of a field counts for the struct it is on (D23): `o->next == nullptr` tests `Other.next`, and `Node.next`,

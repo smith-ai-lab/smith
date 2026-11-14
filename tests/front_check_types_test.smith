@@ -389,6 +389,16 @@ export void test_front_check_types_and_or_and_not_narrow() {
     clean(with_kinds("fn f(x: Kind) -> i32:\n    if x is not .unary and x is not .binary:\n        return x\n    0\n"));
 }
 
+// The body of `while n != .none:` reads `n` as a `T` until it writes `n` (#3621): a walk down a list.
+export void test_front_check_types_a_while_test_narrows_an_option_in_its_body() {
+    Str node = "struct Node:\n    next: ?*Node = .none\n    value: i32\n\n";
+    clean(join(node, "fn sum(list: *Node) -> i32:\n    mut total: i32 = 0\n    mut n: ?*Node = list\n"
+                     "    while n != .none:\n        total += n.value\n        n = n.next\n    total\n"));
+    fails(join(node, "fn sum(list: *Node) -> i32:\n    mut n: ?*Node = list\n"
+                     "    while n != .none:\n        n = n.next\n        return n.value\n    0\n"),
+          "needs a record", "Option");
+}
+
 export void test_front_check_types_equality_with_a_symbol_narrows_an_option() {
     clean("fn f(o: ?i32) -> i32:\n    if o != .none:\n        return o\n    0\n");
     clean("fn f(o: ?i32) -> i32:\n    if o == .none:\n        return 0\n    o\n");
