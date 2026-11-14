@@ -1110,6 +1110,7 @@ static syntax::Edit edit_of(U32 start, U32 end, Str text) {
 // a name, an index or a dereference. A test of such a path is left as written, and a read `a.kind.v` after it is
 // written `a.kind` by the checker's fix (#3598, item 68 of #3516); a test of a name keeps its binding.
 static Bool field_path(const ast::Expr *left) {
+    if (left->kind == .name) return countof(left->kind.name.path.segments) == 1;
     if (left->kind != .member) return false;
     const ast::Expr *at = left;
     while (at->kind == .member)

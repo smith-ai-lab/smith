@@ -2247,7 +2247,7 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         if (payload == nullptr || payload->kind == .void_type) return false;
         s->type = payload;
         s->narrowed = true;
-        s->by_equal = test->equal && test->name->kind == .name; // a field path is read directly: no binding (#3598)
+        s->by_equal = false; // a tested name or path is read directly: no binding (#3598, #3631)
         return true;
     }
     if (mask == s->excluded) return false;
