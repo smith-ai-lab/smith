@@ -60,6 +60,11 @@ bytes := q.cast(*mut u8)        # reinterpret a pointer: rare and unsafe
   fn call_symbol(address: usize, n: i32) -> i32:
       (address.to(Run))(n)
   ```
+- `unsafe(expr)` (#3642, #3634 D4) wraps one expression, is written like a call, and has the type and value of `expr`. It is a reserved built-in name, with no import, no block form and no attribute. Inside it, and only there, two casts are allowed: an address read as a function (`address.cast(fn(*mut void))`, a pointer or an integer as wide as one) and a function read as an integer as wide as a pointer (`f.to(usize)`). Outside it each is an error whose fix writes `unsafe(<expr>)`; `smith lint --fix` writes it round the casts it makes from C's `(void (*)(void *))address` and `(Usize)f`. The permission covers the wrapped expression, not the bodies of the functions it calls.
+  ```smith
+  address: usize = unsafe(f.to(usize))
+  run := unsafe(address.cast(fn(*mut i32)))
+  ```
 - `to`, `wrap` and `cast` are built-in functions, so also method calls on any value. They are reserved as member names: no struct field is called `cast`, `to` or `wrap` (the tree's `Hooks.cast` is `cast_rule`, #2526); locals and parameters named `to` are fine. `as`, prefix `*p` and `(T)x` are errors whose fixes write these. There is no `&mut` and no `->`.
 
 ## Strings

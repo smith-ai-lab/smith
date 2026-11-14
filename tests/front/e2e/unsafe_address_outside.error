@@ -1,0 +1,2 @@
+<dir>/src/unsafe_address_outside.smith:5:22: error: expected Usize, found Void (I32 *): there is no cast between these types; convert the parts one at a time; write `unsafe(<expr>)`
+<dir>/src/unsafe_address_outside.smith:6:12: error: `cast` reinterprets a pointer, or an integer of pointer size, as another pointer type; write `unsafe(<expr>)`

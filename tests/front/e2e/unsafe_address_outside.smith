@@ -1,0 +1,7 @@
+fn seven(p: *mut i32):
+    p.* = 7
+
+pub fn check() -> i32:
+    address: usize = seven.to(usize)
+    run := address.cast(fn(*mut i32))
+    0

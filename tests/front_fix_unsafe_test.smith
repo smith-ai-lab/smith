@@ -1,0 +1,46 @@
+// Tests of the fix-it that writes `unsafe(...)` round the casts of an address (#3642): `x.cast(fn(...))`, and the
+// `usize` local whose value is the address of a function that such a cast reads back.
+module front_fix_unsafe_test;
+
+import front::fix_unsafe;
+import front::parse as core;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_wraps(Str source, Usize count, Usize from, Usize to) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    core::Errors found = fix_unsafe::edits(source);
+    test::check_equal(countof(found), count);
+    if (count > 0 && countof(found) > 0) {
+        core::Edits fix = found[0].fix;
+        test::check_equal(countof(fix), (Usize)2);
+        test::check_equal((Usize)fix[0].span.start, from);
+        test::check_equal((Usize)fix[1].span.start, to);
+        Str open = "unsafe(";
+        test::check_equal(fix[0].text, open);
+    }
+}
+
+export void test_front_fix_unsafe_a_cast_to_a_function_is_wrapped() {
+    expect_wraps("fn f(a: usize):\n    run(a.cast(fn(*mut void)), 1)\n", 1, 24, 45);
+}
+
+export void test_front_fix_unsafe_a_wrapped_cast_is_left() {
+    expect_wraps("fn f(a: usize):\n    run(unsafe(a.cast(fn(*mut void))), 1)\n", 0, 0, 0);
+}
+
+export void test_front_fix_unsafe_a_cast_to_a_pointer_is_left() {
+    expect_wraps("fn f(a: usize):\n    run(a.cast(*mut void), 1)\n", 0, 0, 0);
+}
+
+export void test_front_fix_unsafe_the_address_local_of_a_function_cast_is_wrapped() {
+    expect_wraps("fn f(g: auto):\n    address: usize = g.to(usize)\n    h(address.cast(fn(*mut void)))\n", 2, 36, 47);
+}
+
+export void test_front_fix_unsafe_an_address_local_never_cast_to_a_function_is_left() {
+    expect_wraps("fn f(g: auto):\n    address: usize = g.to(usize)\n    h(address)\n", 0, 0, 0);
+}

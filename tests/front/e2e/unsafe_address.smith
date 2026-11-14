@@ -1,0 +1,20 @@
+# `unsafe(e)` is `e`, and inside it a function is read as an address and an address as a function (#3642).
+fn seven(p: *mut i32):
+    p.* = 7
+
+fn call_through(f: auto, p: *mut i32):
+    address: usize = unsafe(f.to(usize))
+    run := unsafe(address.cast(fn(*mut i32)))
+    run(p)
+
+fn plain(x: i32) -> i32:
+    unsafe(x + 1)
+
+pub fn check() -> i32:
+    mut n := 0
+    call_through(seven, &n)
+    if n != 7:
+        return 1
+    if plain(4) != 5:
+        return 2
+    0
