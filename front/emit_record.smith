@@ -24,6 +24,7 @@ import front::emit_memory;
 import front::emit_state as state;
 import front::types;
 import std::arena;
+import std::contract;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
@@ -157,6 +158,7 @@ export state::TyResult type_record(state::Emitter *e, const ast::TypeExpr *t) {
                 result = state::ty_fail("not emitted yet: bit-field", field.span);
                 break;
             }
+            contract::assert(field.type != nullptr); // an anonymous struct's field has its type, or it is no field
             if (field.type->kind == .record) {
                 if (depth == max_depth) {
                     result = too_deep(field.span);
