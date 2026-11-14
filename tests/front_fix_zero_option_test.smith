@@ -62,3 +62,28 @@ export void test_front_fix_zero_option_a_local_read_after_a_null_test_is_not_an_
                  "    e: *Pat = p.constant\n"
                  "    return e.v\n");
 }
+
+// A local copied from a `mut` option name that a loop tests against `nullptr` keeps the narrowed type (#3332): the
+// test is still `nullptr` when the copy is checked, and the fix of the test narrows `s` until its assignment.
+export void test_front_fix_zero_option_a_copy_of_a_mut_name_under_a_null_test_is_not_an_option() {
+    expect_fixed("module m;\nexport struct Node {\n    Node *next;\n    I32 v;\n};\n"
+                 "export Node make(I32 v) {\n    return (Node){.v = v};\n}\n"
+                 "static I32 sum(const Node *s) {\n    I32 total = 0;\n    while (s != nullptr) {\n"
+                 "        const Node *at = s;\n        total += at->v;\n        s = at->next;\n    }\n"
+                 "    return total;\n}\n"
+                 "export I32 f(const Node *n) {\n    return sum(n->next);\n}\n",
+                 "pub struct Node:\n"
+                 "    pub next: ?*Node = .none\n"
+                 "    pub v: i32\n"
+                 "pub fn make(v: i32) -> Node:\n"
+                 "    return Node(v = v)\n"
+                 "fn sum(mut s: ?*Node) -> i32:\n"
+                 "    mut total: i32 = 0\n"
+                 "    while s != .none:\n"
+                 "        at: *Node = s\n"
+                 "        total += at.v\n"
+                 "        s = at.next\n"
+                 "    return total\n"
+                 "pub fn f(n: *Node) -> i32:\n"
+                 "    return sum(n.next)\n");
+}

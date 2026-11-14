@@ -599,9 +599,11 @@ Task *simulation_take(Simulation *simulation) {
     Task *previous = nullptr;
     Task *task = simulation->ready_first;
     for (Usize i = 0; i < index; i++) {
+        contract::assert(task != nullptr); // `index < ready_count`: the list holds that many tasks
         previous = task;
         task = task->next;
     }
+    contract::assert(task != nullptr); // `index < ready_count`, so the walk ends on a task
     if (previous == nullptr)
         simulation->ready_first = task->next;
     else
@@ -823,6 +825,7 @@ Task *record_take() {
         }
     }
     Task *task = free_records;
+    contract::assert(task != nullptr); // the branch above filled the list when it was empty
     free_records = task->wait_next;
     pool_release();
     return task;
@@ -1268,6 +1271,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
                 continue;
             }
             Task *task = pool_head;
+            contract::assert(task != nullptr); // the test above went on only when the head is a task
             pool_head = task->pool_next;
             if (pool_head == nullptr) pool_tail = nullptr;
             unlock_scheduler();

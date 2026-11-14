@@ -96,6 +96,8 @@ enum Step {
                  // (#2481)
     open_false,  // the condition `expr` is false: the same for the `else` branch
     narrow_rest, // the condition `expr` is false from here to the end of the scope: after an `if` that always leaves
+    restore,     // an `if` with an `else`: the `else` starts from what the tests proved before the `then` (#3332)
+    rejoin,      // after such an `if`: what the `then` dropped is dropped for the code after it
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -105,6 +107,14 @@ struct Frame {
     Step step;
     Usize index;
     U32 end; // a statement of a block: where the block ends (#2503)
+};
+
+// What a test proved about one name before the `then` of an `if` (#3332): its place in the scopes, the symbol as it
+// was, and whether the `then` dropped it (an assignment).
+struct Snapshot {
+    Usize at;
+    types::Symbol symbol;
+    Bool dropped;
 };
 
 // A local that a body declared, for the golden tests.
@@ -131,6 +141,8 @@ struct State {
     Usize top;
     U32 block_end; // where the block of the statement being entered ends, 0 when it is in none: the reach of a
                    // binding the statement makes (#2503)
+    Snapshot snaps[:];
+    Usize snap_count;
     Local locals[:];
     Usize local_count;
     Pending pending[:];
@@ -163,11 +175,14 @@ static Str msg(char chars[:]) {
     return chars;
 }
 
-// Whether the read `e` of an option field comes after a test of the same field that the checker refused only for its
-// `nullptr` (`if a.f == nullptr: return`, #3621): the fix of the test narrows the read on the next pass, so the local
-// that holds it keeps its type; a read that is not narrowed then gets its `?` on that pass.
+static Bool is_word_char(char c);
+
+// Whether the read `e` of an option field or name comes after a test of the same place that the checker refused only
+// for its `nullptr` (`if a.f == nullptr: return`, #3621; `while s != nullptr:` over a `mut` name, #3332): the fix of
+// the test narrows the read on the next pass (D18 of #3634: a tested `mut` name narrows until its next assignment), so
+// the local that holds it keeps its type; a read that is not narrowed then gets its `?` on that pass.
 static Bool after_null_test(const types::Checked *c, const ast::Expr *e) {
-    if (e->kind != .member || e->span.end > countof(fixed_source)) return false;
+    if ((e->kind != .member && e->kind != .name) || e->span.end > countof(fixed_source)) return false;
     Str read = fixed_source[e->span.start:e->span.end];
     Str refused = "an option is tested with `.none`, not `nullptr`";
     for (Usize i = 0; i < c->error_count; i++) {
@@ -176,7 +191,8 @@ static Bool after_null_test(const types::Checked *c, const ast::Expr *e) {
             continue;
         if (found.span.end > e->span.start || found.span.end > countof(fixed_source)) continue;
         Str test = fixed_source[found.span.start:found.span.end];
-        if (countof(test) > countof(read) && types::same_text(test[0:countof(read)], read)) return true;
+        if (countof(test) <= countof(read) || !types::same_text(test[0:countof(read)], read)) continue;
+        if (!is_word_char(test[countof(read)])) return true; // `s` is not the start of `sibling`
     }
     return false;
 }
@@ -377,6 +393,8 @@ static syntax::Edits option_local_fix(const types::Checked *c, const ast::Expr *
     return fix;
 }
 
+static Bool left_out_of(types::TypeRef from, types::TypeRef to, U64 *given);
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok && volatile_refused(c, e, from, to)) return false;
@@ -423,7 +441,9 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
          (types::element_of(from)->kind == .pointer && types::element_of(to)->kind == .pointer))) // `execv(path, argv)`
         fix = types_builtin::element_address_fix(e);
     // An integer that needs `.to(T)` (a different width, a sign change, a narrowing): the message's own fix (#2506).
-    if (from->kind == .integer && to->kind == .integer && countof(fix) == 0) fix = types_expr::convert_fix(e, to);
+    // An enumeration given where an integer is wanted is the same conversion: C reads an enumerator as an `int`.
+    if ((from->kind == .integer || from->kind == .enumeration) && to->kind == .integer && countof(fix) == 0)
+        fix = types_expr::convert_fix(e, to);
     // `nullptr` where a `?T` is wanted is `.none`; a read `a.f` of an option field that a test guards is its binding
     // `f` (#2557).
     if (from->kind == .null_type && to->kind == .option && e->kind == .null_pointer) {
@@ -436,8 +456,34 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     // A number where a Bool is wanted: the fix writes the comparison the message names, `x != 0`; an operand that is
     // not a postfix expression goes in parentheses first, `(a + b) != 0`.
     if (from->kind == .integer && to->kind == .bool_type && countof(fix) == 0) fix = nonzero_fix(e);
+    U64 given = 0;
+    if (e->kind == .tuple_lit && left_out_of(from, to, &given)) {
+        // a named value built where a record is wanted (a payload `(element = x)`) that leaves a field out: the
+        // fixer writes the field at the value, as it does at a construction (#3658)
+        types::fail_left_out(c, e->span, verdict.message, e, to, given);
+        return false;
+    }
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
+}
+
+// Whether the named value of type `from` leaves out a field of the record `to` that has no default; `given` marks the
+// fields of `to` the value has (the rule of `types_convert::to_record`).
+static Bool left_out_of(types::TypeRef from, types::TypeRef to, U64 *given) {
+    if (from->kind != .tuple || to->kind != .record || types::is_union_record(to) || !types::is_complete(to))
+        return false;
+    types::Members have = types::slots_of(from);
+    types::Members want = types::slots_of(to);
+    if (countof(have.items) == 0 || types::is_position(have.items[0].name) || countof(want.items) > 64) return false;
+    Bool left_out = false;
+    for (Usize k = 0; k < countof(want.items); k++) {
+        Bool found = false;
+        for (Usize i = 0; i < countof(have.items); i++)
+            if (types::same_text(have.items[i].name, want.items[k].name)) found = true;
+        if (found) *given |= (U64)1 << k;
+        if (!found && want.items[k].default_value == nullptr) left_out = true;
+    }
+    return left_out;
 }
 
 // `x` where a Bool is wanted and `x` is an integer: ` != 0` after it, with parentheses around an operand that is not a
@@ -567,6 +613,53 @@ static void push(const ast::Stmt *stmt, const ast::Expr *expr, Step step) {
     }
     state.work[state.top] = (Frame){.stmt = stmt, .expr = expr, .step = step};
     state.top += 1;
+}
+
+// Saves the narrowings in scope, for the `else` of the `if` that is being entered (#3332): `x` tested above and written
+// in the `then` is still narrowed in the `else`, which the `then` does not reach (D18 of #3634). The frame's `index` is
+// where the saved ones start in `state.snaps` and its `end` how many there are.
+static void push_snapshot(types::Checked *r, Step step) {
+    Usize start = state.snap_count;
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const types::Symbol *symbol = &r->scopes.symbols[i];
+        if (!symbol->narrowed && symbol->excluded == 0) continue;
+        if (state.snap_count == countof(state.snaps)) {
+            Usize capacity = countof(state.snaps) * 2;
+            if (capacity < 16) capacity = 16;
+            state.snaps = mem::realloc(state.snaps, capacity);
+        }
+        state.snaps[state.snap_count] = (Snapshot){.at = i, .symbol = *symbol, .dropped = false};
+        state.snap_count += 1;
+    }
+    push(nullptr, nullptr, step);
+    state.work[state.top - 1].index = start;
+    state.work[state.top - 1].end = (U32)(state.snap_count - start);
+}
+
+// Whether a narrowing is as it was saved.
+static Bool narrowing_kept(const types::Symbol *now, const types::Symbol *saved) {
+    return now->narrowed == saved->narrowed && now->excluded == saved->excluded && now->type == saved->type;
+}
+
+// Before the `else`: puts back each narrowing that the `then` dropped, and notes it.
+static void restore_snapshot(types::Checked *r, Frame f) {
+    for (Usize i = f.index; i < f.index + f.end; i++) {
+        Snapshot *saved = &state.snaps[i];
+        if (saved->at >= r->scopes.count) continue;
+        types::Symbol *now = &r->scopes.symbols[saved->at];
+        if (narrowing_kept(now, &saved->symbol) || !types::same_text(now->name, saved->symbol.name)) continue;
+        *now = saved->symbol;
+        saved->dropped = true;
+    }
+}
+
+// After the `if`: a name the `then` dropped is not known to be narrowed, whichever branch ran; the `else` may have
+// dropped others itself, which stay dropped.
+static void rejoin_snapshot(types::Checked *r, Frame f) {
+    for (Usize i = f.index; i < f.index + f.end; i++) {
+        if (state.snaps[i].dropped) types::unnarrow(&r->scopes, state.snaps[i].symbol.name);
+    }
+    state.snap_count = f.index;
 }
 
 static void note_local(Str name, types::TypeRef type) {
@@ -1861,9 +1954,14 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
+        push_snapshot(r, rejoin);
+        Frame saved = state.work[state.top - 1];
         push(nullptr, nullptr, leave);
         push(else_branch, nullptr, enter);
         push(nullptr, test, open_false);
+        push(nullptr, nullptr, restore);
+        state.work[state.top - 1].index = saved.index;
+        state.work[state.top - 1].end = saved.end;
     } else if (leaves(then_branch)) {
         push(nullptr, test, narrow_rest);
     }
@@ -2450,6 +2548,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     find_tails(root);
     types_undefined::check_body(r, root);
     state.top = 0;
+    state.snap_count = 0;
     push(root, nullptr, enter);
     while (state.top > 0) {
         state.top -= 1;
@@ -2461,6 +2560,10 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             types_expr::narrow_scope(r, f.expr, f.step == open_true);
         } else if (f.step == narrow_rest) {
             types_expr::narrow_scope(r, f.expr, false);
+        } else if (f.step == restore) {
+            restore_snapshot(r, f);
+        } else if (f.step == rejoin) {
+            rejoin_snapshot(r, f);
         } else if (f.step == condition) {
             (void)types_expr::check(r, f.expr, r->table.bool_type);
         } else if (f.step == advance) {

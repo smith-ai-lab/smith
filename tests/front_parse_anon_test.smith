@@ -5,6 +5,7 @@ module front_parse_anon_test;
 import front::ast;
 import front::parser;
 import std::arena;
+import std::contract;
 import std::mem;
 import std::test;
 
@@ -45,6 +46,7 @@ export void test_parse_anon_struct_member() {
     Str name = "in";
     test::check_equal(fields[0].name, name);
     ast::TypeExpr *type = fields[0].type;
+    contract::assert(type != nullptr); // the fixture's member is written with a type
     test::check_condition(type->kind == .record);
     if (type->kind == .record) {
         Bool is_union = type->kind.record.is_union;
@@ -61,6 +63,7 @@ export void test_parse_anon_union_member() {
     FieldList fields = fields_of("struct Anon { union { I32 a; F32 b; } u; };");
     test::check_equal(countof(fields), 1);
     ast::TypeExpr *type = fields[0].type;
+    contract::assert(type != nullptr); // the fixture's member is written with a type
     test::check_condition(type->kind == .record);
     if (type->kind == .record) {
         Bool is_union = type->kind.record.is_union;

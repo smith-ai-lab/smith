@@ -163,6 +163,7 @@ static Bool is_alias_symbol(const types::Symbol *s) {
 
 // The alias's written type, emitted as any written type is (a function type has no checker form to emit yet).
 static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) {
+    contract::assert(s->decl != nullptr); // `is_alias_symbol` tested it
     const ast::Expr *init = s->decl->kind == .variable ? s->decl->kind.variable.init : nullptr;
     // `const Pair = (i32, f32)`: a tuple of names has no written type; the checker made its type.
     if (init != nullptr && init->kind == .tuple_lit) return type_of_checked(e, s->type, s->decl->span);
@@ -228,8 +229,10 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
         module = types::lookup(scopes, own);
         state::free_text(own);
     }
-    if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module)
+    if (module == nullptr || module->kind != .module_name)
         return state::ty_fail("unknown module", path.segments[0].span);
+    contract::assert(module->decl != nullptr); // a `module_name` symbol is declared by its import
+    if (module->decl->kind != .import_module) return state::ty_fail("unknown module", path.segments[0].span);
     ast::Path via = module->decl->kind.import_module.path;
     Str full = state::msg(format::push(path.segments[1].text));
     for (Usize i = countof(via.segments); i > 0; i--) {
@@ -592,11 +595,13 @@ static Bool imported_global(state::Emitter *e, const ast::Expr *x, const ast::De
     Str prefix = "";
     for (Usize i = 0; i + 1 < names.count; i++) {
         const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
-        if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
+        if (module == nullptr || module->kind != .module_name) return false;
+        contract::assert(module->decl != nullptr); // a `module_name` symbol is declared by its import
+        if (module->decl->kind != .import_module) return false;
         Str module_path = "";
-        for (Usize j = 0; j < countof(module->decl->kind.import_module.path.segments); j++)
-            module_path =
-                state::msg(format::push(module_path, module->decl->kind.import_module.path.segments[j].text, "::"));
+        ast::Path imported = module->decl->kind.import_module.path;
+        for (Usize j = 0; j < countof(imported.segments); j++)
+            module_path = state::msg(format::push(module_path, imported.segments[j].text, "::"));
         prefix = module_path;
     }
     Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
