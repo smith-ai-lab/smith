@@ -19,7 +19,10 @@ static Str source_of(Str path) {
         return "module front::left_out;\n"
                "export struct Error {\n    Str message;\n    Str module;\n    Bool in_instance;\n    Usize "
                "instance;\n};\n"
-               "export struct Then {\n    Usize run;\n    const int *expr;\n    Bool flag;\n};\n";
+               "export struct Then {\n    Usize run;\n    const int *expr;\n    Bool flag;\n};\n"
+               "export struct Cut {\n    Usize start;\n    Usize end;\n};\n"
+               "export struct Place {\n    Str names[:];\n    Cut span;\n};\n"
+               "export struct Located {\n    Usize id;\n    Place place;\n};\n";
     }
     if (same(path, "front.left_span")) {
         return "module front::left_span;\nimport front::left_ast;\n"
@@ -64,12 +67,23 @@ export void test_front_fix_zero_left_out_a_field_named_module_is_written() {
                  "    return error\n");
 }
 
-// A pointer of another module's struct has no zero: the construction that leaves it out stays as written.
+// A pointer of another module's struct has no zero: it stays the one error left, and the fields that have a zero are
+// still written (#3224).
 export void test_front_fix_zero_left_out_a_pointer_of_another_module_stays_an_error() {
     expect_fixed("module m;\nimport front::left_out;\nleft_out::Then make(void) {\n"
                  "    return (left_out::Then){.run = 3};\n}\n",
                  "import front.left_out\nfn make() -> left_out.Then:\n"
-                 "    return left_out.Then(run = 3)\n");
+                 "    return left_out.Then(run = 3, flag = false)\n");
+}
+
+// A record of another module that a construction leaves out is written out whole, one record inside the next
+// (`Path(segments = [], span = Span(start = 0, end = 0))`).
+export void test_front_fix_zero_left_out_a_record_in_a_record_of_another_module_is_written() {
+    expect_fixed("module m;\nimport front::left_out;\nleft_out::Located make(void) {\n"
+                 "    return (left_out::Located){.id = 1};\n}\n",
+                 "import front.left_out\nfn make() -> left_out.Located:\n"
+                 "    return left_out.Located(id = 1, place = left_out.Place(names = [], span = left_out.Cut(start = "
+                 "0, end = 0)))\n");
 }
 
 // A member that holds a record that holds a pointer is `= undefined` too, as far down as the pointer is.
