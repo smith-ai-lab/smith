@@ -800,8 +800,8 @@ export Bool bound_type(const Emitter *e, Str name, types::TypeRef *found) {
     if (e->instance == nullptr) return false;
     for (Usize i = 0; i < countof(e->instance->bindings); i++) {
         types::Binding b = e->instance->bindings[i];
-        if (b.is_type && same_text(b.name, name)) {
-            *found = b.type;
+        if (b.kind == .type_arg && same_text(b.name, name)) {
+            *found = b.kind.type_arg.passed;
             return true;
         }
     }
