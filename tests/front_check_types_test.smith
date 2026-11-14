@@ -534,8 +534,9 @@ export void test_front_check_types_an_assert_at_the_start_narrows() {
 // Item 73 of #3516 (#3624): a path with an index narrows as a field path does, while the index and the array are not
 // written; an index that calls does not narrow.
 export void test_front_check_types_a_tested_indexed_path_narrows() {
-    clean(with_holder("fn f(hs: []Holder, i: usize) -> i32:\n    if hs[i].next != .none:\n        return hs[i].next + 1\n"
-                      "    0\n"));
+    clean(
+        with_holder("fn f(hs: []Holder, i: usize) -> i32:\n    if hs[i].next != .none:\n        return hs[i].next + 1\n"
+                    "    0\n"));
     clean(with_holder("fn f(hs: []Holder, i: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
                       "    hs[i].next + 1\n"));
     clean(with_holder("fn f(hs: []Holder) -> i32:\n    if hs[2].next == .none:\n        return 0\n"

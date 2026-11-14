@@ -2473,7 +2473,10 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
         return node->kind.function.result;
     }
     if (node->kind == .tuple) return node->kind.tuple.elements[i];
-    if (node->kind == .record) return node->kind.record.fields[i].type;
+    if (node->kind == .record) {
+        contract::assert(node->kind.record.fields[i].type != nullptr); // a written record field has its type
+        return node->kind.record.fields[i].type;
+    }
     Usize seen = 0;
     if (node->kind == .applied) {
         for (Usize k = 0; k < countof(node->kind.applied.args); k++) {
