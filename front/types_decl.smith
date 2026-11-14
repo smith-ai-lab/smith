@@ -423,7 +423,9 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
          (types::element_of(from)->kind == .pointer && types::element_of(to)->kind == .pointer))) // `execv(path, argv)`
         fix = types_builtin::element_address_fix(e);
     // An integer that needs `.to(T)` (a different width, a sign change, a narrowing): the message's own fix (#2506).
-    if (from->kind == .integer && to->kind == .integer && countof(fix) == 0) fix = types_expr::convert_fix(e, to);
+    // An enumeration given where an integer is wanted is the same conversion: C reads an enumerator as an `int`.
+    if ((from->kind == .integer || from->kind == .enumeration) && to->kind == .integer && countof(fix) == 0)
+        fix = types_expr::convert_fix(e, to);
     // `nullptr` where a `?T` is wanted is `.none`; a read `a.f` of an option field that a test guards is its binding
     // `f` (#2557).
     if (from->kind == .null_type && to->kind == .option && e->kind == .null_pointer) {
