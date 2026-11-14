@@ -210,14 +210,22 @@ static Bool has_dot(Str subject) {
     return false;
 }
 
-static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
-    out = mem::realloc(out, countof(out) + 1);
-    core::Edits fix = {};
-    fix = mem::realloc(fix, 1);
+// One edit more in the fix of a chain.
+static core::Edits add(core::Edits fix, Usize start, Usize stop, Str text) {
+    fix = mem::realloc(fix, countof(fix) + 1);
     ast::Span at = {.start = (U32)start, .end = (U32)stop};
-    fix[0] = (core::Edit){.span = at, .text = text};
+    fix[countof(fix) - 1] = (core::Edit){.span = at, .text = text};
+    return fix;
+}
+
+// The fix of a chain: its edits are one fix, so a read another fix of the same round took (the checker writes the
+// read of a tested field path direct) leaves the chain whole for the next round, not hoisted with its reads kept
+// (#3616).
+static core::Errors wrap(core::Errors out, core::Edits fix) {
+    out = mem::realloc(out, countof(out) + 1);
     core::ParseError made = {};
-    made.span = at;
+    ast::Span whole = {.start = fix[0].span.start, .end = fix[countof(fix) - 1].span.end};
+    made.span = whole;
     Str why = "a payload read after its variant test is a pattern of the chain";
     made.message = why;
     made.fix = fix;
@@ -250,6 +258,7 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
         // a field is named first, which reads it before the whole chain: only where the test is the first conjunct
         Str name = subject;
         Usize indent = 0;
+        core::Edits fix = {};
         if (has_dot(subject)) {
             if (i != 0) continue;
             name = last_part(subject);
@@ -259,18 +268,18 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
             while (indent < countof(line) && line[indent] == ' ')
                 indent += 1;
             Str naming = types::message_of(format::push(name, " := ", subject, "\n", line[0:indent]));
-            out = add(out, base + indent, base + indent, naming);
+            fix = add(fix, base + indent, base + indent, naming);
         }
-        out = add(out, base + a, base + b,
+        fix = add(fix, base + a, base + b,
                   types::message_of(format::push(name, or_chain ? " is not ." : " is .", variant)));
         Usize at = parts[i].stop;
         Usize found = read_at(line, at, subject, variant);
         while (found < countof(line)) {
-            out = add(out, base + found, base + found + countof(subject) + 1 + countof(variant), name);
+            fix = add(fix, base + found, base + found + countof(subject) + 1 + countof(variant), name);
             at = found + countof(subject) + 1 + countof(variant);
             found = read_at(line, at, subject, variant);
         }
-        return out;
+        return wrap(out, fix);
     }
     return out;
 }
