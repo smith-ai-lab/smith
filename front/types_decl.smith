@@ -1132,9 +1132,10 @@ static Bool direct_test(types::Checked *r, const ast::Expr *left, Str variant) {
     for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
         const types::Slot *slot = &types::slots_of(t).items[i];
         if (!types::same_text(slot->name, variant)) continue;
-        // A record payload with a field of its own name keeps its binding; any other payload is read direct (#3648).
-        if (slot->type == nullptr) return false;
-        if (slot->type->kind == .record && types::member(slot->type, variant) != nullptr) return false;
+        // A payload that is no record (a scalar, an enumeration, a pointer) is bound as before: the emitter reads a
+        // narrowed name only for a record payload.
+        if (slot->type == nullptr || slot->type->kind != .record || types::member(slot->type, variant) != nullptr)
+            return false;
     }
     return field_path(left);
 }

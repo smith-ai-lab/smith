@@ -202,7 +202,7 @@ export void test_front_fix_guard_a_test_inside_an_and_chain_is_a_pattern() {
     expect_fixed(as_str(format::push(shape, "fn radius(s: Shape, n: i32) -> i32:\n    if n > 0 and s == .circle:\n"
                                             "        return s.circle\n    0\n")),
                  as_str(format::push(shape, "fn radius(s: Shape, n: i32) -> i32:\n"
-                                            "    if n > 0 and s == .circle:\n        return s\n    0\n")));
+                                            "    if n > 0 and s is .circle:\n        return s\n    0\n")));
 }
 
 // The same test of a payload enumeration with a record payload stays as written and the name narrows (#3631).
