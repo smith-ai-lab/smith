@@ -293,6 +293,49 @@ export void test_front_emit_match_a_payload_enumeration_is_a_tag_and_a_payload()
     emit_jit::stop(&host);
 }
 
+// A narrowed name handed on where its enumeration is expected is the whole value: the callee reads its variant (#3664,
+// #3634 D23). `kind` returns 1 for a circle, 2 for a rect, 3 for empty.
+export void test_front_emit_match_a_narrowed_name_passed_on_is_the_whole_value() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("struct Circle:\n"
+                     "    radius: i32\n"
+                     "struct Rect:\n"
+                     "    w: i32\n"
+                     "    h: i32\n"
+                     "enum Shape:\n"
+                     "    circle: Circle\n"
+                     "    rect: Rect\n"
+                     "    empty\n"
+                     "fn make(n: i32) -> Shape:\n"
+                     "    if n == 0:\n"
+                     "        return .circle(Circle(radius = 2))\n"
+                     "    if n == 1:\n"
+                     "        return .rect(Rect(w = 3, h = 4))\n"
+                     "    return .empty\n"
+                     "fn kind(s: Shape) -> i32:\n"
+                     "    match s:\n"
+                     "        .circle(c): 1\n"
+                     "        .rect(r): 2\n"
+                     "        .empty: 3\n"
+                     "fn through(s: Shape) -> Shape:\n"
+                     "    if s == .circle:\n"
+                     "        return s\n"
+                     "    return s\n"
+                     "pub fn passed(n: i32) -> i32:\n"
+                     "    s := make(n)\n"
+                     "    if s == .circle:\n"
+                     "        return kind(s) * 10 + s.radius\n"
+                     "    kind(through(s))\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick passed = (Pick)symbol_of(&host, "passed");
+    test::check_equal(passed(0), (I32)12);
+    test::check_equal(passed(1), (I32)2);
+    test::check_equal(passed(2), (I32)3);
+    emit_jit::stop(&host);
+}
+
 export void test_front_emit_match_an_enumerator_value_that_is_not_a_literal_is_an_error() {
     stops_with("enum Color:\n"
                "    red = 1 + 1\n",
