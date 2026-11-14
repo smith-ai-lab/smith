@@ -46,6 +46,7 @@ import front::fix_reserved;
 import front::fix_alloc;
 import front::fix_build;
 import front::fix_typeof;
+import front::fix_unsafe;
 import front::fix_variants;
 import front::lex;
 import front::parse_decl;
@@ -1064,7 +1065,8 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     if (bindings_take_else()) out = append(out, fix_guard::edits(source));
     out = append(out, fix_guard::result_tests(source, checked)); // `R == .error` is `R != .ok`, `x.some` (#3083)
     if (places_are_bound()) out = append(out, fix_place::edits(source));
-    out = append(out, fix_pack::edits(source)); // `f(rest)...` is `map(rest, fn(each): f(each))...` (item 45)
+    out = append(out, fix_unsafe::edits(source)); // `unsafe(...)` round the casts of an address (#3642)
+    out = append(out, fix_pack::edits(source));   // `f(rest)...` is `map(rest, fn(each): f(each))...` (item 45)
     if (!values_take_patterns()) return out;
     return append(out, fix_chain::edits(source));
 }

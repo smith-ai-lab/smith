@@ -473,6 +473,21 @@ static syntax::Edits discard_fix(const ast::Expr *e, types::TypeRef to) {
     return edits;
 }
 
+// Whether `t` is an integer as wide as a pointer of the target.
+static Bool is_pointer_wide(const types::Checked *c, types::TypeRef t) {
+    return t->kind == .integer && types::bits_of(t) == c->table.target.pointer_bytes * 8;
+}
+
+// `unsafe(` before the expression and `)` after it: the fix of a cast that only `unsafe` allows (#3642).
+static syntax::Edits unsafe_fix(const ast::Expr *e) {
+    Str open = "unsafe(";
+    Str close = ")";
+    syntax::Edits edits = mem::alloc_slice(syntax::Edit, 2);
+    edits[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start}, .text = open};
+    edits[1] = (syntax::Edit){.span = {.start = e->span.end, .end = e->span.end}, .text = close};
+    return edits;
+}
+
 // Whether the cast `e` may be written; a cast that can lose a value is marked for a run-time check (K1, #1328).
 static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Literal lit = types_convert::no_literal();
@@ -486,13 +501,29 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
         return false;
     }
     if (form == .reinterpret && to->kind != .pointer) {
-        types::fail(c, e->span,
-                    "`cast` reinterprets a pointer, or an integer of pointer size, as another pointer type");
+        // `unsafe(address.cast(fn(*mut void)))`: an address is a function only inside `unsafe` (#3642)
+        Bool address = from->kind == .pointer || is_pointer_wide(c, from);
+        Bool callable = to->kind == .function || to->kind == .fn_value;
+        if (callable && address && c->unsafe_depth > 0) return true;
+        Str message = "`cast` reinterprets a pointer, or an integer of pointer size, as another pointer type";
+        if (callable && address) {
+            types::fail_fix(c, e->span, types::message_of(format::push(message, "; write `unsafe(<expr>)`")),
+                            unsafe_fix(e));
+        } else {
+            types::fail(c, e->span, message);
+        }
         return false;
     }
     // `x.wrap(T)` keeps the low bits of any integer, a constant too: `(-1).wrap(usize)` is the largest usize (#2474).
     if (form == .wrapping) return true;
     types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
+    if (!verdict.ok && from->kind == .function && is_pointer_wide(c, to) && form == .convert) {
+        // `unsafe(f.to(usize))`: a function is an address, and only `unsafe` reads it as an integer (#3642)
+        if (c->unsafe_depth > 0) return true;
+        types::fail_fix(c, e->span, types::message_of(format::push(verdict.message, "; write `unsafe(<expr>)`")),
+                        unsafe_fix(e));
+        return false;
+    }
     if (!verdict.ok) {
         // A `p.cast(*mut T)` of a `*T` drops const: the fix writes `*mut T` on the parameter or local `p` comes from
         // (std.mem's `self: *Allocator` cast to `*mut Checked`, #2427).

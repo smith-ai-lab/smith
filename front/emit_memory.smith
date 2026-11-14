@@ -1209,6 +1209,13 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
         state::push_value(e, (state::Value){.llvm = code, .ty = to});
         return state::success();
     }
+    if (to.kind == .integer && (from.ty.kind == .fn_pointer || from.ty.kind == .fn_value)) {
+        // `unsafe(f.to(usize))` (#3642): a function's code address, as an integer as wide as a pointer.
+        c::LLVMValueRef code =
+            from.ty.kind == .fn_pointer ? from.llvm : c::LLVMBuildExtractValue(e->builder, from.llvm, 0, "code");
+        state::Ty address = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "Void *"};
+        return pointer_integer_cast(e, w, (state::Value){.llvm = code, .ty = address}, to);
+    }
     if ((from.ty.kind == .pointer && to.kind == .integer) || (from.ty.kind == .integer && to.kind == .pointer))
         return pointer_integer_cast(e, w, from, to);
     if ((to.kind == .fn_value || to.kind == .fn_pointer) && (from.ty.kind == .pointer || from.ty.kind == .integer))

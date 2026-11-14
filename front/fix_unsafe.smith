@@ -1,0 +1,187 @@
+// front::fix_unsafe, the fix-it that writes `unsafe(...)` round the casts of an address (#3642).
+//
+//   address: usize = f.to(usize)                   address: usize = unsafe(f.to(usize))
+//   run(address.cast(fn(*mut void)), arg)          run(unsafe(address.cast(fn(*mut void))), arg)
+//
+// C's `(Usize)f` and `(void (*)(void *))address` read a function as an address and an address as a function. In smith
+// both are casts only `unsafe(...)` allows (smith-dev-syntax-values): the first reads a pointer-sized integer as a
+// function, the second a function as an integer. The checker finds the second kind only in the body of a generic's
+// instance (`f` is `auto`), where its fix is not applied to the file that holds it, so the rule reads the text:
+//
+//   * `x.cast(fn(...))` is wrapped, `x` being the name, member chain or parenthesized expression before `.cast`;
+//   * a local written `name: usize = value.to(usize)` whose `name.cast(fn(...))` is written later in the same function
+//     is the other half of the round trip: its value is wrapped.
+//
+// An expression already written `unsafe(...)` is left. Tests: `tests/front_fix_unsafe_test.smith`.
+//
+//   fix_unsafe::edits(source)   one fix for each such expression
+module front::fix_unsafe;
+
+import front::ast;
+import front::parse as core;
+import std::format;
+import std::mem;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Bool starts_with(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    for (Usize i = 0; i < countof(prefix); i++)
+        if (text[i] != prefix[i]) return false;
+    return true;
+}
+
+static Bool ends_with(Str text, Str suffix) {
+    if (countof(text) < countof(suffix)) return false;
+    return starts_with(text[countof(text) - countof(suffix):countof(text)], suffix);
+}
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// The end of the line that starts at `at`.
+static Usize line_end(Str source, Usize at) {
+    while (at < countof(source) && source[at] != '\n')
+        at += 1;
+    return at;
+}
+
+// Where the postfix expression that ends just before `end` starts: a name, a chain of `.name`, brackets and calls.
+static Usize expression_start(Str line, Usize end) {
+    Usize at = end;
+    while (at > 0) {
+        char before = line[at - 1];
+        if (word_char(before) || before == '.') {
+            at -= 1;
+        } else if (before == ')' || before == ']') {
+            Usize depth = 0;
+            while (at > 0) {
+                at -= 1;
+                if (line[at] == ')' || line[at] == ']') depth += 1;
+                if (line[at] == '(' || line[at] == '[') depth -= 1;
+                if (depth == 0) break;
+            }
+        } else {
+            break;
+        }
+    }
+    return at;
+}
+
+// The index just after the `)` that closes the `(` at `open`; the end of the line when it does not close.
+static Usize after_group(Str line, Usize open) {
+    Usize depth = 0;
+    for (Usize i = open; i < countof(line); i++) {
+        if (line[i] == '(') depth += 1;
+        if (line[i] == ')') {
+            depth -= 1;
+            if (depth == 0) return i + 1;
+        }
+    }
+    return countof(line);
+}
+
+// Whether the text before `at` ends with `unsafe(`.
+static Bool wrapped(Str source, Usize at) {
+    return at >= 7 && starts_with(source[at - 7:at], "unsafe(");
+}
+
+// The fix that writes `unsafe(` at `from` and `)` at `to`.
+static core::ParseError wrap(Usize from, Usize to) {
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 2);
+    Str open = "unsafe(";
+    Str close = ")";
+    fix[0] = (core::Edit){.span = {.start = (U32)from, .end = (U32)from}, .text = open};
+    fix[1] = (core::Edit){.span = {.start = (U32)to, .end = (U32)to}, .text = close};
+    core::ParseError made = {};
+    ast::Span whole = {.start = (U32)from, .end = (U32)to};
+    made.span = whole;
+    Str why = "a cast between an address and a function is written `unsafe(...)`";
+    made.message = why;
+    made.fix = fix;
+    return made;
+}
+
+static core::Errors add(core::Errors out, core::ParseError made) {
+    out = mem::realloc(out, countof(out) + 1);
+    out[countof(out) - 1] = made;
+    return out;
+}
+
+// The index in `line` of the first `.cast(fn(` at or after `from`, or the length of the line.
+static Usize find_cast(Str line, Usize from) {
+    for (Usize i = from; i + 9 <= countof(line); i++)
+        if (starts_with(line[i:countof(line)], ".cast(fn(")) return i;
+    return countof(line);
+}
+
+// Whether `line`, from `at`, reads `: T = ` and ends with `.to(T)` for `T` the integer `kind`.
+static Bool declares_address(Str line, Usize at, Str kind) {
+    Str head = as_str(format::push(": ", kind, " = "));
+    Str tail = as_str(format::push(".to(", kind, ")"));
+    return starts_with(line[at:countof(line)], head) && ends_with(line, tail);
+}
+
+// The name of the local that `line` declares as `name: usize = value.to(usize)` (or `u64`, `isize`, `i64`: an integer
+// as wide as a pointer); empty when it is not one. `value_at` is where `value` starts.
+static Str address_local(Str line, Usize *value_at) {
+    Usize k = 0;
+    while (k < countof(line) && line[k] == ' ')
+        k += 1;
+    Usize from = k;
+    while (k < countof(line) && word_char(line[k]))
+        k += 1;
+    for (Usize i = 0; i < 4 && k > from; i++) {
+        Str kind = "usize";
+        if (i == 1) kind = "u64";
+        if (i == 2) kind = "isize";
+        if (i == 3) kind = "i64";
+        if (!declares_address(line, k, kind)) continue;
+        *value_at = k + 4 + countof(kind) + 1;
+        return line[from:k];
+    }
+    return "";
+}
+
+// Whether `name.cast(fn(` is written in `text`.
+static Bool cast_to_function(Str text, Str name) {
+    for (Usize i = 0; i + countof(name) + 9 <= countof(text); i++) {
+        if (!starts_with(text[i:countof(text)], name) || (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')))
+            continue;
+        if (starts_with(text[i + countof(name):countof(text)], ".cast(fn(")) return true;
+    }
+    return false;
+}
+
+export core::Errors edits(Str source) {
+    core::Errors out = {};
+    Usize at = 0;
+    while (at < countof(source)) {
+        Usize end = line_end(source, at);
+        Str line = source[at:end];
+        Usize found = find_cast(line, 0);
+        while (found < countof(line)) {
+            Usize start = expression_start(line, found);
+            Usize stop = after_group(line, found + 5);
+            if (start < found && !wrapped(source, at + start)) out = add(out, wrap(at + start, at + stop));
+            found = find_cast(line, found + 1);
+        }
+        Usize value = 0;
+        Str name = address_local(line, &value);
+        if (countof(name) > 0) {
+            // the rest of the function: up to the next line at column 0
+            Usize stop = end + 1;
+            while (stop < countof(source) && (source[stop] == ' ' || source[stop] == '\n'))
+                stop = line_end(source, stop) + 1;
+            Usize body = stop < countof(source) ? stop : countof(source);
+            Bool held = starts_with(line[value:countof(line)], "unsafe(");
+            if (end < body && !held && cast_to_function(source[end:body], name)) out = add(out, wrap(at + value, end));
+        }
+        at = end + 1;
+    }
+    return out;
+}

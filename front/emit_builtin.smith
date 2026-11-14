@@ -226,6 +226,8 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
                                c::LLVMAtomicOrdering order) {
     c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
     switch (entry.shape) {
+    case .unsafe_value:
+        return v[0].llvm; // not reached: `finish` returns first
     case .overflow:
         return overflow(e, entry, v);
     case .bit_cast:
@@ -296,6 +298,7 @@ static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *x = w->expr;
     table::Entry entry = {};
     if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
+    if (entry.shape == .unsafe_value) return state::success(); // `unsafe(e)` leaves the value of `e` as it is (#3642)
     state::Ty result = {.kind = .record, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
     Bool no_value = entry.shape == .assume || entry.shape == .trap || entry.shape == .atomic_store ||
                     entry.shape == .va_start || entry.shape == .va_end ||
