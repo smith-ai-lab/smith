@@ -176,9 +176,11 @@ static types::TypeRef path_type(const types::Checked *r, const ast::Expr *e) {
         } else if (step->kind == .member && (t->kind == .record || t->kind == .enumeration)) {
             const types::Slot *slot = types::member(t, step->kind.member.name);
             // a payload read direct after a test (`ty.kind.parts`): the field of the payload that has it
-            for (Usize i = 0; slot == nullptr && t->kind == .enumeration && i < countof(types::slots_of(t).items); i++) {
+            for (Usize i = 0; slot == nullptr && t->kind == .enumeration && i < countof(types::slots_of(t).items);
+                 i++) {
                 const types::Ty *payload = types::slots_of(t).items[i].type;
-                if (payload != nullptr && payload->kind == .record) slot = types::member(payload, step->kind.member.name);
+                if (payload != nullptr && payload->kind == .record)
+                    slot = types::member(payload, step->kind.member.name);
             }
             t = slot == nullptr ? nullptr : slot->type;
         } else {
@@ -196,8 +198,7 @@ static Bool may_fill(const types::Checked *r, const ast::Expr *arg) {
     types::TypeRef t = path_type(r, arg);
     if (t == nullptr) return true;
     types::TyKind k = t->kind;
-    Bool inert = k == .bool_type || k == .integer || k == .floating || k == .text || k == .enumeration ||
-                 k == .record;
+    Bool inert = k == .bool_type || k == .integer || k == .floating || k == .text || k == .enumeration || k == .record;
     return !inert;
 }
 
