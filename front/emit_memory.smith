@@ -2070,8 +2070,13 @@ static Bool slice_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, 
     return false;
 }
 
-// A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
+// A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false`, `null` or `.none` of a `?*T`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (ty.kind == .option && ty.kind.option.element->kind == .pointer && x->kind == .variant &&
+        x->kind.variant.payload == nullptr && state::same_text(x->kind.variant.name, "none")) {
+        *out = c::LLVMConstNull(ty.llvm); // `?*T` is the pointer itself: `.none` is null (#2643)
+        return state::success();
+    }
     if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer)) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
