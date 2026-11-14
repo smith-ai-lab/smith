@@ -531,6 +531,58 @@ export void test_front_check_types_an_assert_at_the_start_narrows() {
                     "    o\n"));
 }
 
+// Item 73 of #3516 (#3624): a path with an index narrows as a field path does, while the index and the array are not
+// written; an index that calls does not narrow.
+export void test_front_check_types_a_tested_indexed_path_narrows() {
+    clean(
+        with_holder("fn f(hs: []Holder, i: usize) -> i32:\n    if hs[i].next != .none:\n        return hs[i].next + 1\n"
+                    "    0\n"));
+    clean(with_holder("fn f(hs: []Holder, i: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
+                      "    hs[i].next + 1\n"));
+    clean(with_holder("fn f(hs: []Holder) -> i32:\n    if hs[2].next == .none:\n        return 0\n"
+                      "    hs[2].next + 1\n"));
+    clean(with_holder("fn f(hs: []Holder, i: usize) -> i32:\n    if hs[i + 1].kind is .unary:\n"
+                      "        return hs[i + 1].kind.op\n    0\n"));
+    clean(asserting("fn f(hs: []Holder, i: usize) -> i32:\n    contract.assert(hs[i].next != .none)\n"
+                    "    hs[i].next + 1\n"));
+    fails(with_holder("fn f(hs: []Holder, i: usize, j: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
+                      "    hs[j].next + 1\n"),
+          "", "");
+    fails(with_holder("fn at(n: usize) -> usize:\n    n\n\nfn f(hs: []Holder, i: usize) -> i32:\n"
+                      "    if hs[at(i)].next == .none:\n        return 0\n    hs[at(i)].next + 1\n"),
+          "", "");
+}
+
+export void test_front_check_types_an_indexed_narrowing_is_dropped_by_a_write() {
+    fails(with_holder("fn f(hs: []Holder, mut i: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
+                      "    i = i + 1\n    hs[i].next + 1\n"),
+          "", "");
+    fails(with_holder("fn f(hs: []mut Holder, i: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
+                      "    hs[i].next = .none\n    hs[i].next + 1\n"),
+          "", "");
+    fails(with_holder("fn f(hs: []mut Holder, i: usize, j: usize, h: Holder) -> i32:\n"
+                      "    if hs[i].next == .none:\n        return 0\n    hs[j] = h\n    hs[i].next + 1\n"),
+          "", "");
+    fails(with_holder("fn f(mut hs: []Holder, i: usize, other: []Holder) -> i32:\n"
+                      "    if hs[i].next == .none:\n        return 0\n    hs = other\n    hs[i].next + 1\n"),
+          "", "");
+    fails(with_holder("fn f(hs: []Holder, mut i: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
+                      "    while i < 3:\n        i += 1\n    hs[i].next + 1\n"),
+          "", "");
+}
+
+export void test_front_check_types_an_indexed_narrowing_is_dropped_in_a_loop_that_moves_the_index() {
+    fails(with_holder("fn f(hs: []Holder, mut i: usize) -> i32:\n    if hs[i].next == .none:\n        return 0\n"
+                      "    while i < 3:\n        _ := hs[i].next + 1\n        i += 1\n    0\n"),
+          "", "");
+}
+
+export void test_front_check_types_a_tested_indexed_path_narrows_an_array_of_a_type_parameter() {
+    clean(join("pub fn Cell(T: type) -> type:\n    struct:\n        value: ?T\n\n",
+               "fn f[T: type](cells: []Cell(T), i: usize) -> bool:\n    if cells[i].value == .none:\n"
+               "        return false\n    _ := cells[i].value\n    true\n"));
+}
+
 // A narrowing made before a loop is dropped when the body writes the path.
 export void test_front_check_types_a_loop_that_writes_a_field_drops_its_narrowing() {
     fails(with_holder(

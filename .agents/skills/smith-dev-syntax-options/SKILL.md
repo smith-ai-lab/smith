@@ -21,7 +21,10 @@ leaves (`return`, `break`, `continue`). Every name narrows, `mut` or not (item 5
 `cur.kind`, `a.b.c`; #3634, #3587), through a value or a pointer. A narrowing ends at the next assignment
 that could change which case it is: to the name, to the path or to a part of it before the tested field, `&` of any of
 those, a call that is passed a writable pointer to it (or the path as a method receiver), or a loop that writes the name
-(an assignment to a part below the tested field keeps it). A path through an index (`xs[i].kind`) does not narrow.
+(an assignment to a part below the tested field keeps it). A path through an index narrows too (`xs[i].kind`,
+`xs[i + 1].next`, `a.b[2].c`; #3634, #3624) when the index is a name, an integer, or one of them plus or minus
+another; an index that calls does not narrow. It also ends at an assignment to a name used in the index (`i = i + 1`),
+to the array, or to any element of it (`xs[j] = v`), and at a loop that writes the index.
 `contract.assert(c)` as a statement narrows the rest of its block as `if not c: return` does (#3634, #3622),
 for every name and path `c` tests (`contract.assert(x != .none)`, `a.kind is .v and a.n != .none`): use it for a value that is
 absent only by a bug, with a comment where the reason is not obvious; where an absent value is a real outcome, test it and

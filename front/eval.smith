@@ -1645,6 +1645,7 @@ static void arguments_step(Run *run, Step s, const types::Symbol *symbol, const 
     Str module = module_of(symbol->name, s.prefix);
     push_step(run, later(s, 3));
     for (Usize i = countof(params); i > given_count; i--) {
+        if (params[i - 1].default_value == nullptr) continue; // `plain` says every missing argument has a default
         Step given = expr_step(params[i - 1].default_value, s);
         given.prefix = module;
         push_step(run, given);
@@ -1924,7 +1925,9 @@ static void construct_step(Run *run, Step s, types::TypeRef t) {
         }
     }
     for (Usize k = countof(slots); k > 0; k--) {
-        if (!filled[k - 1]) push_step(run, expr_step(slots[k - 1].default_value, s));
+        if (filled[k - 1] || slots[k - 1].default_value == nullptr)
+            continue; // the loop above stopped on a slot without
+        push_step(run, expr_step(slots[k - 1].default_value, s));
     }
     for (Usize i = countof(args); i > 0; i--)
         push_step(run, expr_step(argument_value(args[i - 1]), s));
