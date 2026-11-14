@@ -471,6 +471,7 @@ I32 gen_definition_index(const Generator *g, const char name[:]) {
 }
 
 GenMaybe gen_reference(const Generator *g, const c::SmithJsonValue *node) {
+    contract::trusted(); // the edge: it reads the JSON tree or reports and exits, both C
     const c::SmithJsonValue *ref = gen_get(node, "$ref");
     if (ref->kind != c::SmithJsonKind_String) gen_die("a $ref at byte %zu is not a string", ref->offset);
     const char name[:] = ref->text;
@@ -698,6 +699,7 @@ void gen_add_own(Generator *g, GenCollect *collect, const char *owner, const c::
 
 // The definition a $ref names, as the node to read; a primitive is no base.
 const c::SmithJsonValue *gen_reference_node(const Generator *g, const c::SmithJsonValue *node) {
+    contract::trusted(); // the edge: it reads the JSON tree or reports and exits, both C
     const c::SmithJsonValue *ref = gen_get(node, "$ref");
     const char name[:] = ref->text;
     Usize slash = name.count[0];
