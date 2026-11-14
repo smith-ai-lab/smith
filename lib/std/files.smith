@@ -384,8 +384,10 @@ I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
         if (found < 0) *code = errno_now();
         return found;
     }
+    c::DIR *directory = lister->directory;
     for (Usize tries = 0; tries < 3; tries++) { // "." and ".." are skipped: at most two reads are theirs
-        struct c::dirent *entry = c::readdir(lister->directory);
+        contract::assert(directory != nullptr); // no handler: `lister_open` opened the folder, `lister_close` ends it
+        struct c::dirent *entry = c::readdir(directory);
         if (entry == nullptr) return 0;
         if (c::strcmp(entry->d_name, ".") == 0 || c::strcmp(entry->d_name, "..") == 0) continue;
         Usize length = c::strlen(entry->d_name);
@@ -393,7 +395,7 @@ I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
         put(item->name, entry->d_name, length);
         item->name[length] = 0;
         struct c::stat status = {};
-        Bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
+        Bool known = c::fstatat(c::dirfd(directory), entry->d_name, &status, 0) == 0;
         item->folder = known && (status.st_mode & mode_kind_mask) == mode_folder;
         item->size = known && !item->folder ? (Usize)status.st_size : 0;
         return 1;

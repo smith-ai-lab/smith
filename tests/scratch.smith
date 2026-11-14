@@ -274,10 +274,20 @@ export Project make(const char *name, const char *fixture) {
     return p;
 }
 
+// The folder `make` made. A project that a test copied with its `root` cleared (`sibling`) has none, and asking it for
+// the folder is a failure of the test: the original owns the folder.
+export const char *root_of(const Project *p) {
+    test::check(p->root != nullptr);
+    if (p->root == nullptr) return "";
+    return p->root;
+}
+
 // Removes the folder of a project made by `make` and frees the memory the project holds for itself.
 export void clean(Project *p) {
-    release(script_free("rm -rf \"$0\"", p->root, ""));
-    release(p->root);
+    if (p->root != nullptr) { // a project that `sibling` copied owns no folder: the original removes it
+        release(script_free("rm -rf \"$0\"", p->root, ""));
+        release(p->root);
+    }
     release(p->dir);
     release(p->tested);
     if (p->cache[0] != '\0') release(p->cache);
@@ -286,7 +296,7 @@ export void clean(Project *p) {
 
 // The project gets a cache of its own, empty, for a test of the cache or of what a cold one does.
 export void own_cache(Project *p) {
-    p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
+    p->cache = join_free(root_of(p), "/", "xdg-cache"); // clean frees it
 }
 
 // The project's commands run with the compile step cache off, for a test that counts or compares the compiles of its

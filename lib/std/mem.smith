@@ -316,6 +316,7 @@ CheckedRecord **table(Checked *self) {
         self->buckets = parent_alloc(self, buckets_count * sizeof(CheckedRecord *), 16);
         if (self->buckets != nullptr) __builtin_memset(self->buckets, 0, buckets_count * sizeof(CheckedRecord *));
     }
+    if (self->buckets == nullptr) return nullptr; // the parent had no memory for the table
     return (CheckedRecord **)self->buckets;
 }
 
@@ -602,9 +603,10 @@ CheckedSite site_of(const CheckedRecord *record) {
 // still live stays what the parent made it, for whoever holds it. Set the previous allocator back first.
 [[std::c_name("smith_mem_checked_release")]] export void checked_release(Checked *self) {
     contract::trusted();
-    if (self->buckets == nullptr) return;
+    void *buckets = self->buckets; // the table is made with the first block: an allocator that kept no block has none
+    if (buckets == nullptr) return;
     for (Usize i = 0; i < buckets_count; i++) {
-        CheckedRecord *r = ((CheckedRecord **)self->buckets)[i];
+        CheckedRecord *r = ((CheckedRecord **)buckets)[i];
         while (r != nullptr) {
             CheckedRecord *next = r->next;
             if (sanitized) c::__asan_unpoison_memory_region(r->block, r->span); // back to what the parent made
@@ -613,7 +615,7 @@ CheckedSite site_of(const CheckedRecord *record) {
             r = next;
         }
     }
-    parent_free(self, self->buckets);
+    parent_free(self, buckets);
     self->buckets = nullptr;
     self->live = 0;
     self->live_bytes = 0;

@@ -125,7 +125,7 @@ const char *joined(auto... pieces) {
 
 // Git as the project's own: HOME a folder of the test, and the identity from the environment, or none at all.
 static void git_isolate(const scratch::Project *p, Bool identity, Saved *saved) {
-    const char *folder = joined(p->root, "/.home");
+    const char *folder = joined(scratch::root_of(p), "/.home");
     ensure_folder(folder, c::strlen(folder));
     (void)format::write(saved->home, sizeof saved->home, "HOME=", folder);
     Usize n = 0;
