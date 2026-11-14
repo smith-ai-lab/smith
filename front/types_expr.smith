@@ -5686,7 +5686,8 @@ static Bool picks_only_literals(const types::Checked *c, const ast::Expr *e) {
     if (e->kind != .stmt_expr) return false;
     Plan p = read_value(c, e, nullptr);
     for (Usize i = 0; i < p.leaf_count; i++) {
-        if (p.leaves[i]->kind != .string) return false;
+        const ast::Expr *leaf = p.leaves[i];
+        if (!(leaf->kind == .string)) return false;
     }
     return p.leaf_count > 0;
 }
