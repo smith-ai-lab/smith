@@ -119,3 +119,20 @@ export void test_front_fix_place_a_pointer_loop_name_keeps_its_star() {
     expect_fixed("fn f(xs: []i32):\n    for p in refs(xs):\n        p.* *= 2\n",
                  "fn f(xs: []i32):\n    for p in refs(xs):\n        p.* *= 2\n");
 }
+
+// A test with an `else` and a test written `else if` are the same fix (#3616): the else branch reads nothing of the
+// payload, and each test of one enumeration binds its own variant.
+export void test_front_fix_place_an_else_branch_and_an_else_if_test_are_fixed() {
+    expect("fn f(k: mut E):\n    if k == .count:\n        k.count.n += 1\n    else:\n        use(k)\n",
+           "fn f(k: mut E):\n    if .count(count) := &k:\n        count.n += 1\n    else:\n        use(k)\n");
+    expect("fn g(k: mut E):\n    if k == .size and k.size.n > 0:\n        use(k)\n    else if k == .count:\n"
+           "        k.count.n += 1\n",
+           "fn g(k: mut E):\n    if k == .size and k.size.n > 0:\n        use(k)\n    else if .count(count) := &k:\n"
+           "        count.n += 1\n");
+}
+
+// A word of the variant inside a string is no name that the binding would hide.
+export void test_front_fix_place_the_variant_in_a_string_is_no_name() {
+    expect("fn f(k: mut E):\n    note(\"the count\")\n    if k == .count:\n        k.count.n += 1\n",
+           "fn f(k: mut E):\n    note(\"the count\")\n    if .count(count) := &k:\n        count.n += 1\n");
+}

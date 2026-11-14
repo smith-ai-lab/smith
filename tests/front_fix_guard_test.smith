@@ -316,3 +316,12 @@ export void test_front_fix_guard_two_tests_of_one_variant_on_two_names_bind_two_
                                                    "    .integer(integer_value) := r else: return 0\n"
                                                    "    return integer.magnitude + integer_value.magnitude\n")));
 }
+
+// A tested field path in a value (#3616): the checker writes the read direct and `fix_chain` would hoist the test to a
+// name; the two fixes are one or the other, never the hoist with the read left as the checker wrote it.
+export void test_front_fix_guard_a_field_test_in_a_value_is_left_with_the_read_direct() {
+    expect_fixed(as_str(format::push(node_text(), "fn linked(n: *Node) -> bool:\n"
+                                                  "    return n.kind == .next and n.kind.next != nullptr\n")),
+                 as_str(format::push(node_text(), "fn linked(n: *Node) -> bool:\n"
+                                                  "    return n.kind == .next and n.kind != nullptr\n")));
+}
