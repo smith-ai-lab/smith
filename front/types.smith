@@ -1659,7 +1659,8 @@ export struct NodeType {
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
     Bool decided;            // the condition of an `if` that asks about types: one branch is kept (#1902)
     Bool keeps_then;         // when `decided`: the `then` branch is the one kept, else the `else` branch
-    Bool has_value; // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
+    Bool error_read; // a `Result` name a test narrowed to its error: the emitter reads the error, not the ok (#3681)
+    Bool has_value;  // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
     U64 value;
 };
 
@@ -1995,6 +1996,17 @@ export TypeRef type_of(const Checked *r, const ast::Expr *node) {
     const NodeType *entry = find_here(r, node);
     if (entry == nullptr) return nullptr;
     return entry->type;
+}
+
+// Records that the name `node`, a `Result` narrowed by a test, reads its error (#3681).
+export void mark_error_read(Checked *r, const ast::Expr *node) {
+    entry_in(r, node, r->current)->error_read = true;
+    if (r->current != max_instances) entry_in(r, node, max_instances)->error_read = true;
+}
+
+export Bool is_error_read(const Checked *r, const ast::Expr *node) {
+    const NodeType *entry = find_here(r, node);
+    return entry != nullptr && entry->error_read;
 }
 
 // The type recorded for an expression in the body of `instance`, or null.

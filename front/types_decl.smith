@@ -2057,6 +2057,12 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     const ast::Stmt *else_branch = s->kind.if_let.else_branch;
     Bool refutable = pattern.refutable;
     types::TypeRef t = types_expr::infer(r, s->kind.if_let.value);
+    if (t != nullptr && t->kind != .result_type && t->kind != .option) {
+        // `.ok(v) := x` over a `Result` name a test narrowed tests the `Result` as it was (#3681)
+        types::TypeRef whole = types_expr::whole_result(r, s->kind.if_let.value, t, "ok");
+        if (whole != t) types::set_type(r, s->kind.if_let.value, whole);
+        t = whole;
+    }
     if (refutable) refutable_binding(r, s->span, t, pattern, else_branch);
     if (else_branch != nullptr) {
         push(else_branch, nullptr, enter);

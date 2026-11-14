@@ -486,6 +486,13 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
         types::TypeRef seen = types::type_of(e->options.checked, x);
         if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value, local.ty.kind.option);
     }
+    if (local.ty.kind == .result && e->options.checked != nullptr) {
+        // A `Result` name the checker narrowed by `x == .error` or `x != .error` reads its ok or its error (#3681).
+        types::TypeRef seen = types::type_of(e->options.checked, x);
+        if (seen != nullptr && seen->kind != .result_type)
+            value = emit_option::result_payload(e, value, local.ty.kind.result,
+                                                types::is_error_read(e->options.checked, x));
+    }
     if (local.ty.kind == .variant_enum && e->options.checked != nullptr) {
         // A payload enumeration name the checker narrowed by `x is .v` has the variant's payload for its type (#3226).
         types::TypeRef seen = types::type_of(e->options.checked, x);
