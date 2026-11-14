@@ -72,9 +72,8 @@ export void test_front_fix_numeric_a_bare_enumerator_given_to_an_integer_is_writ
 }
 
 export void test_front_fix_numeric_a_cast_enumerator_is_written_with_its_enumeration() {
-    expect_fixed_settled(
-        "module m;\nenum Color { Red, Green };\nint f() {\n    return (int)Green;\n}\n",
-        "enum Color:\n    Red\n    Green\nfn f() -> i32:\n    return Color.Green.to(i32)\n");
+    expect_fixed_settled("module m;\nenum Color { Red, Green };\nint f() {\n    return (int)Green;\n}\n",
+                         "enum Color:\n    Red\n    Green\nfn f() -> i32:\n    return Color.Green.to(i32)\n");
 }
 
 export void test_front_fix_numeric_a_count_or_size_given_to_a_fixed_width_is_converted() {

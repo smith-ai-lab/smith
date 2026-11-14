@@ -2635,9 +2635,9 @@ static syntax::Edits bare_enumerator_fix(const types::Checked *c, const ast::Exp
     return edits;
 }
 
-// A bare `.square` that a written conversion follows (`.square.to(i32)`, from C's `(int)Square`): the variant is a value
-// of no enumeration here, so only its name is written with the enumeration (`area.Kind.square`); the conversion stays.
-// Empty when no enumeration, or two, have the enumerator (#3678).
+// A bare `.square` that a written conversion follows (`.square.to(i32)`, from C's `(int)Square`): the variant is a
+// value of no enumeration here, so only its name is written with the enumeration (`area.Kind.square`); the conversion
+// stays. Empty when no enumeration, or two, have the enumerator (#3678).
 export syntax::Edits qualified_enumerator_fix(const types::Checked *c, const ast::Expr *e) {
     syntax::Edits edits = {};
     if (e->kind != .variant || e->kind.variant.payload != nullptr) return edits;
