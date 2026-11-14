@@ -869,8 +869,18 @@ jobs:
           [ -s .smith/count-costs.tsv ] && export SMITH_COVERAGE_COSTS="$PWD/.smith/count-costs.tsv"
           export SMITH_COVERAGE_COSTS_OUT="$RUNNER_TEMP/coverage/costs.tsv"
           export SMITH_COVERAGE_ENTRIES_OUT="$RUNNER_TEMP/coverage/entries.txt"
+          # a runner killed for memory leaves no log of its own ("received a shutdown signal", exit 143, #3644): every 5 s the
+          # job log gets the memory still available and the five largest processes, whose command line names the file a fixer
+          # or a compile was on, so the last lines before a kill say what was running and how much it held
+          ( while true; do
+              echo "count heartbeat $(date +%T): $(awk '/MemAvailable/ {printf "%.1f GB available", $2 / 1048576}' /proc/meminfo)"
+              ps -eo rss,args --sort=-rss | sed -n '2,6p' | cut -c1-200 | awk '{printf "  %.1f GB %s\n", $1 / 1048576, substr($0, index($0, $2))}'
+              sleep 5
+            done ) &
+          heartbeat=$!
           timeout -k 10 780 "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/4 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           status=$?
+          kill "$heartbeat"
           [ "$status" != 124 ] || echo "shard ${{ matrix.shard }} hung for 13 minutes: the entry fails" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "status: $status" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
