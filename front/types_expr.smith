@@ -2247,7 +2247,11 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         if (payload == nullptr || payload->kind == .void_type) return false;
         s->type = payload;
         s->narrowed = true;
-        s->by_equal = false; // a tested name or path is read directly: no binding (#3598, #3631)
+        // A tested name or path is read directly: no binding (#3598, #3631). Not a `Result`'s `ok` and `error`, nor a
+        // variant whose payload has a field of its own name: those keep the fixer's binding (`direct_test`).
+        Bool own_field = countof(test->variant) > 0 && types::member(payload, test->variant) != nullptr;
+        Bool result = same_text(test->variant, "ok") || same_text(test->variant, "error");
+        s->by_equal = test->equal && test->name->kind == .name && (own_field || result);
         return true;
     }
     if (mask == s->excluded) return false;
