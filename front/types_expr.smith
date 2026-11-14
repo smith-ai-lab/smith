@@ -691,6 +691,12 @@ static syntax::Edits data_fix(const types::Checked *c, const ast::Expr *slice_ex
     return mut_after(slice->written->span.start + 2);
 }
 
+// The type a symbol of smith's own syntax was written with, or null when `s` is none, not a variable, or has none.
+static const ast::TypeExpr *written_type(const types::Symbol *s) {
+    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr) return nullptr;
+    return s->written;
+}
+
 // The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
 // becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
 // neither is so (the pointer comes from somewhere a fix cannot see).
@@ -699,7 +705,7 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     // `s.*` of an `s: *mut *T` handed where a `*mut T` is wanted: the inner pointer is `*mut T` (#2643).
     if (base->kind == .unary && base->kind.unary.op == .dereference && base->kind.unary.operand->kind == .name) {
         const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.unary.operand->kind.name.path);
-        const ast::TypeExpr *outer = s != nullptr && s->kind == .variable && s->is_new ? s->written : nullptr;
+        const ast::TypeExpr *outer = written_type(s);
         const ast::TypeExpr *inner = nullptr;
         if (outer != nullptr && outer->kind == .pointer) inner = outer->kind.pointer.pointee;
         if (inner != nullptr && inner->kind == .pointer && !inner->kind.pointer.is_mut &&
@@ -722,7 +728,7 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     // `xs[i]` of an array of `*T` handed where a `*mut T` is wanted: the element is written `*mut T` (#2643).
     if (base->kind == .index && base->kind.index.base->kind == .name) {
         const types::Symbol *xs = types::lookup_path(&c->scopes, base->kind.index.base->kind.name.path);
-        const ast::TypeExpr *array = xs != nullptr && xs->kind == .variable && xs->is_new ? xs->written : nullptr;
+        const ast::TypeExpr *array = written_type(xs);
         const ast::TypeExpr *element = array != nullptr && array->kind == .array ? array->kind.array.element : nullptr;
         if (element != nullptr && element->kind == .pointer && !element->kind.pointer.is_mut)
             return mut_after(element->span.start + 1);
@@ -3014,7 +3020,8 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     push(w, value, hint, 0);
 }
 
-// `x op= y` with `y` an integer narrower than `x` and of the same signedness: C widens `y`, and a fix writes `y.to(T)`.
+// `x op= y` with `y` an integer of the same signedness, narrower than `x` or of a type with no common one (`usize` and
+// `u64`): C converts `y`, and a fix writes `y.to(T)`.
 // True when the error was recorded.
 static Bool widen_assigned(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, types::TypeRef tt,
                            types::TypeRef vt) {
@@ -3023,7 +3030,11 @@ static Bool widen_assigned(types::Checked *c, const ast::Expr *e, ast::BinaryOp 
     }
     const ast::Expr *value = e->kind.assign.value;
     if (is_shift(op) || !is_integer(tt) || !is_integer(vt) || types::signed_of(tt) != types::signed_of(vt) ||
-        types::bits_of(vt) >= types::bits_of(tt) || literal_like(value)) {
+        literal_like(value)) {
+        return false;
+    }
+    // As wide or wider: only a pair with no common type (`usize` and `u64`) is a conversion C does silently.
+    if (types::bits_of(vt) >= types::bits_of(tt) && types_convert::operand_type(&c->table, tt, vt) != nullptr) {
         return false;
     }
     types::fail_fix(c, e->span,
@@ -3157,6 +3168,28 @@ static void push_arguments(Work *w, ast::ExprRef args[:], types::TypeRef signatu
         types::TypeRef wanted = nullptr;
         if (signature != nullptr && i - 1 < countof(types::slots_of(signature).items)) {
             wanted = types::slots_of(signature).items[i - 1].type;
+        }
+        push(w, argument_value(args[i - 1]), wanted, 0);
+    }
+}
+
+static Bool picks_only_literals(const types::Checked *c, const ast::Expr *e);
+
+// The arguments of a call. In the `...` of a C variadic an `if` whose branches are all string literals is wanted as a
+// `const Char *`: each literal is a C string there, as a bare literal is (#3660).
+static void push_call_arguments(types::Checked *c, Work *w, ast::ExprRef args[:], types::TypeRef signature) {
+    if (signature == nullptr || !types::is_variadic(signature)) {
+        push_arguments(w, args, signature);
+        return;
+    }
+    types::TypeRef c_string = types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true);
+    Usize fixed = countof(types::slots_of(signature).items);
+    for (Usize i = countof(args); i > 0; i--) {
+        types::TypeRef wanted = nullptr;
+        if (i - 1 < fixed) {
+            wanted = types::slots_of(signature).items[i - 1].type;
+        } else if (picks_only_literals(c, argument_value(args[i - 1]))) {
+            wanted = c_string;
         }
         push(w, argument_value(args[i - 1]), wanted, 0);
     }
@@ -3359,7 +3392,7 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
         push_named_arguments(c, w, args, signature, params);
         return;
     }
-    push_arguments(w, args, signature);
+    push_call_arguments(c, w, args, signature);
 }
 
 // A string literal in the `...` is a C string.
@@ -5687,6 +5720,20 @@ static Bool literal_branches(const types::Checked *c, const ast::Expr *e) {
     return literal_like(e);
 }
 
+// Whether `e` is an `if` or a `match` value whose every branch is a string literal (`if c: "a" else: "b"`).
+static Bool picks_only_literals(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .conditional) {
+        return e->kind.conditional.then_value->kind == .string && e->kind.conditional.else_value->kind == .string;
+    }
+    if (e->kind != .stmt_expr) return false;
+    Plan p = read_value(c, e, nullptr);
+    for (Usize i = 0; i < p.leaf_count; i++) {
+        const ast::Expr *leaf = p.leaves[i];
+        if (!(leaf->kind == .string)) return false;
+    }
+    return p.leaf_count > 0;
+}
+
 static Str word(const ast::Stmt *s) {
     if (s->kind == .if_stmt || s->kind == .if_let) {
         return "if";
@@ -6284,8 +6331,120 @@ static const ast::Expr *type_value_name(types::Checked *c, const ast::Expr *e) {
     return name;
 }
 
+// The enumeration `base` names when it is written as a type (`Color`, `area.Kind`), else null: the `T` of `T.v` (#3665,
+// D16 of #3634).
+static types::TypeRef enumeration_named(types::Checked *c, const ast::Expr *base) {
+    ast::Path path = {};
+    if (base->kind == .type_value && base->kind.type_value.type != nullptr &&
+        base->kind.type_value.type->kind == .named) {
+        path = base->kind.type_value.type->kind.named.path;
+    } else if (base->kind == .name) {
+        path = base->kind.name.path;
+    } else {
+        return nullptr;
+    }
+    const types::Symbol *named = types::type_through_modules(c, path);
+    if (named == nullptr || named->kind != .type_name || named->type == nullptr) return nullptr;
+    return named->type->kind == .enumeration ? named->type : nullptr;
+}
+
+// The variant `v` of `T.v` where `T` names an enumeration, else null.
+static const types::Slot *enumeration_slot(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .member || e->kind.member.arrow) return nullptr;
+    types::TypeRef t = enumeration_named(c, e->kind.member.base);
+    return t == nullptr ? nullptr : types::member(t, e->kind.member.name);
+}
+
+// `T.v` where `T` names an enumeration and `v` is one of its variants: the value `.v` of `T`, so it is typed by the
+// function that types `.v` where a `T` is expected (`variant_expr`), not by a copy of it. The twin is checked with `T`
+// expected; null when `e` is no such form (#3665).
+static const ast::Expr *full_variant(types::Checked *c, const ast::Expr *e, ast::Expr *payload,
+                                     types::TypeRef *enumeration) {
+    if (e->kind != .member || e->kind.member.arrow) return nullptr;
+    types::TypeRef t = enumeration_named(c, e->kind.member.base);
+    if (t == nullptr || types::member(t, e->kind.member.name) == nullptr) return nullptr;
+    ast::Expr *variant = mem::alloc(ast::Expr);
+    variant->span = e->span;
+    variant->kind = {.variant = {.name = e->kind.member.name, .payload = payload}};
+    *enumeration = t;
+    return variant;
+}
+
+// `Circle(radius = 2.0)` written inside the arguments of a type (`Shape.circle(Circle(radius = 2.0))`): the parser
+// reads the arguments of a type as plain expressions, so `radius = 2.0` is an assignment there. In the call the checker
+// builds from it, each such argument is the named argument it was written as (#3665).
+static ast::Expr *named_from_assigns(const ast::Expr *call) {
+    if (!(call->kind == .call)) return nullptr;
+    Usize count = countof(call->kind.call.args);
+    ast::ExprRef *block = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), count, alignof(ast::ExprRef));
+    for (Usize i = 0; i < count; i++) {
+        ast::Expr *arg = call->kind.call.args[i];
+        block[i] = arg;
+        if (!(arg->kind == .assign) || arg->kind.assign.op != .plain) continue;
+        const ast::Expr *target = arg->kind.assign.target;
+        if (!(target->kind == .name) || countof(target->kind.name.path.segments) != 1) continue;
+        ast::Expr *named = mem::alloc(ast::Expr);
+        named->span = arg->span;
+        named->kind = {.named_arg = {.name = target->kind.name.path.segments[0].text, .value = arg->kind.assign.value}};
+        block[i] = named;
+    }
+    ast::Expr *made = mem::alloc(ast::Expr);
+    made->span = call->span;
+    made->kind = {.call = {.callee = call->kind.call.callee, .args = block[0:count]}};
+    return made;
+}
+
+// `Shape.circle(c)`: the parser reads the capitalized path with its argument as a type applied to arguments. When the
+// path is an enumeration and one of its variants that carries a value, and there is one argument, it is the value
+// `.circle(c)` of that enumeration (#3665). The twin is the variant; `enumeration` is its type. Null when it is not
+// one.
+static const ast::Expr *type_value_variant(types::Checked *c, const ast::Expr *e, types::TypeRef *enumeration) {
+    if (e->kind != .type_value) return nullptr;
+    const ast::TypeExpr *t = e->kind.type_value.type;
+    if (t->kind != .applied || countof(t->kind.applied.args) != 1) return nullptr;
+    ast::Path path = t->kind.applied.name;
+    Usize count = countof(path.segments);
+    if (count < 2) return nullptr;
+    ast::Path owner = {.segments = path.segments[0:count - 1], .span = path.span};
+    const types::Symbol *named = types::type_through_modules(c, owner);
+    if (named == nullptr || named->kind != .type_name || named->type == nullptr) return nullptr;
+    if (!(named->type->kind == .enumeration)) return nullptr;
+    const types::Slot *slot = types::member(named->type, path.segments[count - 1].text);
+    if (slot == nullptr || !carries_value(slot->type)) return nullptr;
+    const ast::TypeArg *arg = &t->kind.applied.args[0];
+    ast::Expr *value = nullptr;
+    if (*arg == .value) {
+        value = arg->value.value;
+    } else if (arg->type.type->kind == .named) {
+        value = mem::alloc(ast::Expr);
+        value->span = arg->type.type->span;
+        value->kind = {.name = {.path = arg->type.type->kind.named.path}};
+    } else {
+        // `Circle(radius = 2.0)`: the parser read the argument as a type too, which the checker reads as a value
+        value = mem::alloc(ast::Expr);
+        value->span = arg->type.type->span;
+        value->kind = {.type_value = {.type = arg->type.type}};
+        const ast::Expr *built = type_value_call(c, value);
+        ast::Expr *rebuilt = built != nullptr ? named_from_assigns(built) : nullptr;
+        if (rebuilt != nullptr) value = rebuilt;
+    }
+    ast::Expr *variant = mem::alloc(ast::Expr);
+    variant->span = e->span;
+    variant->kind = {.variant = {.name = path.segments[count - 1].text, .payload = payload_value(slot->type, value)}};
+    *enumeration = named->type;
+    return variant;
+}
+
 // The call is checked in the place of the type; the type takes its type afterwards (stage 1).
 static void type_value_before(types::Checked *c, Work *w, Frame f) {
+    types::TypeRef enumeration = nullptr;
+    const ast::Expr *variant = type_value_variant(c, f.node, &enumeration);
+    if (variant != nullptr) {
+        types::set_method(c, f.node, variant); // the emitter reads the value from it
+        push_frame(w, make_frame(f.node, f.expected, 1, nullptr, 0, "", variant));
+        push(w, variant, enumeration, 0);
+        return;
+    }
     const ast::Expr *call = type_value_call(c, f.node);
     if (call == nullptr) call = type_value_name(c, f.node);
     if (call == nullptr) {
@@ -6852,6 +7011,7 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
         poison(c, e);
         return;
     }
+    contract::assert(template->decl != nullptr); // tested at the top; the calls above only read it
     Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:taken]);
     if (at >= c->instance_count) {
         poison(c, e);
@@ -7461,6 +7621,25 @@ static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
 static Bool computed_call(types::Checked *c, Frame f);
 static Bool made_callee_failed(types::Checked *c, const ast::Expr *call, const ast::Expr *callee);
 
+// `T.v(payload)`: the value `.v(payload)` of the enumeration `T`, checked in the place of the call (#3665).
+static Bool call_variant_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) return false;
+    const ast::Expr *callee = e->kind.call.callee;
+    ast::ExprRef given[:] = e->kind.call.args;
+    const ast::Expr *only = countof(given) == 1 ? given[0] : nullptr;
+    const types::Slot *slot = only != nullptr && callee->kind == .member ? enumeration_slot(c, callee) : nullptr;
+    if (slot == nullptr || !carries_value(slot->type)) return false;
+    if (only->kind == .named_arg) return false;
+    types::TypeRef enumeration = nullptr;
+    const ast::Expr *full = full_variant(c, callee, payload_value(slot->type, given[0]), &enumeration);
+    if (full == nullptr) return false;
+    types::set_method(c, e, full); // the emitter builds the value from the twin
+    push_frame(w, make_frame(e, f.expected, 11, nullptr, 0, "", full));
+    push(w, full, enumeration, 0);
+    return true;
+}
+
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -7498,7 +7677,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         }
     }
     ast::ExprRef given[:] = e->kind.call.args;
-    if (made_callee_failed(c, e, callee)) return;
+    if (made_callee_failed(c, e, callee) || call_variant_before(c, w, f)) return;
     types::TypeRef record = constructed_call(c, callee, given);
     if (record != nullptr) {
         construct_before(w, f, record);
@@ -7746,6 +7925,17 @@ static void refuse_generic_select(types::Checked *c, const ast::Expr *e) {
     poison(c, e);
 }
 
+// `Color.green`: the value `.green` of the enumeration, checked in the place of the member (#3665).
+static Bool member_variant_before(types::Checked *c, Work *w, Frame f) {
+    types::TypeRef enumeration = nullptr;
+    const ast::Expr *full = full_variant(c, f.node, nullptr, &enumeration);
+    if (full == nullptr) return false;
+    types::set_method(c, f.node, full);
+    push_frame(w, make_frame(f.node, f.expected, 1, nullptr, 0, "", full));
+    push(w, full, enumeration, 0);
+    return true;
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -7798,7 +7988,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
             return;
         }
         if (fold_target(c, f, types::member_names(e)) || fold_target_system(c, f, types::member_names(e))) return;
-        if (module_value(c, f, types::member_names(e))) return;
+        if (module_value(c, f, types::member_names(e)) || member_variant_before(c, w, f)) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);
     } else if (e->kind == .cast) {
@@ -7825,6 +8015,15 @@ static void method_rewritten(types::Checked *c, const ast::Expr *e) {
     types::set_type(c, e, typ(c, made));
     Usize at = types::instance_called(c, made);
     if (at < c->instance_count) types::use_instance(c, e, at); // the emitter asks for the call as written
+}
+
+// A member read, or the variant `T.v` it was rewritten to (#3665).
+static void member_stage(types::Checked *c, Frame f, const ast::Expr *outer) {
+    if (f.twin != nullptr) {
+        enum_variant_after(c, f);
+    } else {
+        member_after(c, f, outer);
+    }
 }
 
 static void after(types::Checked *c, Work *w, Frame f) {
@@ -7885,7 +8084,7 @@ static void after(types::Checked *c, Work *w, Frame f) {
         slice_after(c, f);
     } else if (e->kind == .member) {
         const ast::Expr *outer = w->count > 0 ? w->items[w->count - 1].node : nullptr;
-        member_after(c, f, outer);
+        member_stage(c, f, outer);
     } else if (e->kind == .cast) {
         cast_after(c, f);
     } else if (e->kind == .array_lit) {

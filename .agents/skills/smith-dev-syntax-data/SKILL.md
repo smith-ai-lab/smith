@@ -45,6 +45,7 @@ struct Field:
 | generic struct | `Pair(i32)(1, 2)`, or through an alias `IntPair(first = 1, second = 2)` |
 | enum variant | `.red`, `.empty`: the leading dot means the enum the context expects; a plain enum (no payload) is ordered with `<`, `<=`, `>`, `>=` in declaration order (owner, 2026-11-05: "Yeah, I think we should be able to do what you're saying"), and a leading dot in a comparison takes its type from the other operand (`kind >= .kw_alignas`); a payload enum is not ordered; the variants of a `pub enum` are public with it |
 | payload variant | `.circle(Circle(radius = 1))`, `.square(2)`: parentheses wrap the one payload value |
+| full form | `Color.red`, `area.Kind.square`, `Shape.circle(c)`: a variant written with its enumeration's name needs no expected type, where `.red` does (variant shorthand, D16 of #3634); `Color.green.to(i32)` is an integer |
 | tuple | `(1, 2.5)`, `()` empty |
 | named tuple | `(count = n, ms = ms)`: its type is the anonymous struct `(count: i32, ms: f64)` |
 | array or slice | `[1, 2, 3]` (a slice gets a hidden array behind it), `[a..., b]` splices a compile-time pack or a tuple into the literal, as `...` does in a call (owner, 2026-11-07: "I feel like we should support spread in array literals"), `[]` empty (owner, 2026-11-05: "empty array literals should be `[]`"; it takes its type from context: a field, a parameter, a declared type, as in `Attribute(name = n, args = [])`; a bare `xs := []` is an error for now, write `xs: []i32 = []`, and inferring it from later uses is planned), `array.filled(u32, 256, 0)` |

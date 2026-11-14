@@ -83,6 +83,11 @@ export void test_front_fix_numeric_a_compound_assignment_widens_a_narrower_right
                  "fn f(a: *mut u64, b: u32):\n    a.* /= b.to(u64)\n");
 }
 
+export void test_front_fix_numeric_a_compound_assignment_converts_a_same_width_type_with_no_common_one() {
+    expect_fixed("module m;\nvoid f(U64 *a, Usize b) {\n    *a *= b;\n}\n",
+                 "fn f(a: *mut u64, b: usize):\n    a.* *= b.to(u64)\n");
+}
+
 export void test_front_fix_numeric_literals_in_a_conditional_take_the_targets_type() {
     expect_fixed("module m;\nU32 f(I32 e) {\n    U32 k = 1;\n    k *= e < 0 ? 5 : 2;\n    return k;\n}\n",
                  "fn f(e: i32) -> u32:\n    mut k: u32 = 1\n    k *= if e < 0: 5 else: 2\n    return k\n");

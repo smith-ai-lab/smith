@@ -1,0 +1,28 @@
+# `Type.variant`: a variant written with its enumeration's name, where no type is expected (#3665, D16 of #3634)
+struct Circle:
+    radius: i32
+
+enum Color:
+    red
+    green
+
+enum Shape:
+    circle: Circle
+    empty
+
+fn radius_of(s: Shape) -> i32:
+    match s:
+        .circle(c): c.radius
+        .empty: 0 - 1
+
+pub fn check() -> i32:
+    if Color.green.to(i32) != 1:
+        return 1
+    chosen: Color = Color.red
+    if chosen != .red:
+        return 2
+    if radius_of(Shape.circle(Circle(radius = 7))) != 7:
+        return 3
+    if radius_of(Shape.empty) != 0 - 1:
+        return 4
+    0

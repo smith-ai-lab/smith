@@ -1055,3 +1055,15 @@ export void test_front_fix_two_quoted_headers_each_bind_their_own_name() {
     check_text(fixed.text, "import c \"c.h\"\nimport c \"d.h\"\nfn main() -> i32:\n"
                            "    return c.c_value() + d.d_value()\n");
 }
+
+// A string literal is a C string where a read-only byte pointer is wanted, so `(const U8 *)"abc"` is `"abc"`, with no
+// `.cast(*u8)` (#3660); a cast of a writable pointer type stays a cast.
+export void test_a_literal_cast_to_a_read_only_pointer_is_the_literal() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\n\nconst U8 *f() {\n    return (const U8 *)\"abc\";\n}\n");
+    Str want = "\nfn f() -> *u8:\n    return \"abc\"\n";
+    test::check_equal(fixed.text, want);
+}

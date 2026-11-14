@@ -299,6 +299,37 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
     remove_all(folder);
 }
 
+// `area.Kind.square`: a variant written with its enumeration's name through a module, where no type is expected
+// (#3665, D16 of #3634). The library's enumeration is read by the importer.
+export void test_front_e2e_an_enumeration_variant_written_through_a_module_links_and_runs() {
+    Str folder = folder_for("enum_module");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/area.smith"));
+    write_text(library, "pub enum Kind:\n    circle\n    square\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "import area\n\npub fn check() -> i32:\n    if area.Kind.square.to(i32) != 1:\n        return 1\n"
+                    "    k: area.Kind = area.Kind.circle\n    if k != .circle:\n        return 2\n    0\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/area.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        write_text(as_str(format::push(folder, "/main.c")),
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       "int main(void) { return check(); }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
+                                                   "/area.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}
+
 // A function with no result across modules (#2172): `barrier.wait(&x)` is a call to a `Void` prototype, and the
 // library's object defines it.
 export void test_front_e2e_a_call_to_a_function_without_a_result_links_and_runs() {

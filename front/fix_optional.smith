@@ -325,6 +325,10 @@ static Usize test_line(Str source, Usize at, Str name) {
         Usize pad = indent_of(source, line);
         if (pad >= indent) continue;
         Str text = source[line + pad:end];
+        if (starts_with(text, "for ")) {
+            indent = pad; // a read in a loop body: the loop does not change the name, the `if` above it holds the test
+            continue;
+        }
         if (!starts_with(text, "if ")) return countof(source);
         for (Usize i = 0; i + countof(name) + 9 <= countof(text); i++) {
             if (!starts_with(text[i:countof(text)], name) || (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')))
