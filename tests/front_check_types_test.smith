@@ -399,6 +399,18 @@ export void test_front_check_types_a_while_test_narrows_an_option_in_its_body() 
           "needs a record", "Option");
 }
 
+// D18 of #3634 (#3332): a write in the `then` of an `if` ends the narrowing there, not in its `else`: the `else` runs
+// when the `then` did not. After the `if` the name is not known to be narrowed.
+export void test_front_check_types_a_write_in_the_then_leaves_the_else_narrowed() {
+    Str node = "struct Node:\n    next: ?*Node = .none\n    value: i32\n\n";
+    clean(join(node, "fn walk(mut n: ?*Node) -> i32:\n    while n != .none:\n        if n.value == 1:\n"
+                     "            n = n.next\n        else if n.value == 2:\n            n = n.next\n"
+                     "        else:\n            break\n    0\n"));
+    fails(join(node, "fn walk(mut n: ?*Node) -> i32:\n    if n != .none:\n        if n.value == 1:\n"
+                     "            n = n.next\n        else:\n            n = n.next\n        return n.value\n    0\n"),
+          "needs a record", "Option");
+}
+
 export void test_front_check_types_equality_with_a_symbol_narrows_an_option() {
     clean("fn f(o: ?i32) -> i32:\n    if o != .none:\n        return o\n    0\n");
     clean("fn f(o: ?i32) -> i32:\n    if o == .none:\n        return 0\n    o\n");
