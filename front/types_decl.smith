@@ -1125,7 +1125,9 @@ static Bool field_path(const ast::Expr *left) {
 static Bool direct_test(types::Checked *r, const ast::Expr *left, Str variant) {
     if (left->kind != .name) return field_path(left);
     if (types::same_text(variant, "ok") || types::same_text(variant, "error")) return false;
-    types::TypeRef t = types::type_of(r, left);
+    const types::Symbol *named = types::lookup(&r->scopes, left->kind.name.path.segments[0].text);
+    if (named == nullptr) return true;
+    types::TypeRef t = named->type;
     if (t == nullptr || t->kind != .enumeration || !types::is_payload_enum(t)) return false;
     for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
         const types::Slot *slot = &types::slots_of(t).items[i];
