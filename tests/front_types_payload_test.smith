@@ -251,8 +251,8 @@ export void test_front_types_payload_tag_test_again_on_a_narrowed_path() {
 // A narrowed name is the whole value where its enumeration is expected, and the payload everywhere else (#3664, #3634
 // D23). One test for each place of the rule.
 export void test_front_types_payload_narrowed_name_is_whole_as_an_argument() {
-    clean(shapes("fn keep(s: Shape) -> Shape:\n    return s\nfn f(s: Shape) -> f32:\n    if s == .circle:\n"
-                 "        keep(s)\n        return s.radius\n    return 0.0\n"));
+    clean(shapes("fn keep(s: Shape) -> Shape:\n    return s\nfn f(s: Shape) -> Shape:\n    if s == .circle:\n"
+                 "        return keep(s)\n    return .empty\n"));
 }
 
 export void test_front_types_payload_narrowed_name_is_whole_in_a_return() {
