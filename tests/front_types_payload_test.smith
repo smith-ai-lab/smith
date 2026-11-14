@@ -240,3 +240,10 @@ export void test_front_types_payload_binding_in_a_function_without_a_result_ends
 export void test_front_types_payload_binding_in_a_function_with_a_result_returns_its_last_line() {
     clean(shapes("fn area(s: Shape) -> f32:\n    .circle(c) := s else:\n        return 0.0\n    c.radius * 2.0\n"));
 }
+
+// A path a test narrowed to its payload is still a payload enumeration to the next test of its tag (#3664):
+// `if s.shape != .circle: return` and then `s.shape != .circle` again checks, as in C where the tag is read twice.
+export void test_front_types_payload_tag_test_again_on_a_narrowed_path() {
+    clean(shapes("struct Slot:\n    shape: Shape\nfn area(s: *Slot) -> f32:\n    if s.shape != .circle:\n"
+                 "        return 0.0\n    if s.shape != .circle:\n        return 1.0\n    return s.shape.radius\n"));
+}
