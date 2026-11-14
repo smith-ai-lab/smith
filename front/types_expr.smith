@@ -1272,8 +1272,8 @@ static Bool module_value(types::Checked *c, Frame f, types::Names names) {
 }
 
 // The enumeration `key` (a name or a field path) has where `expected` is that enumeration and an earlier test narrowed
-// `key` to a payload: the whole value, not the payload (#3664, #3634 D23: the place decides). Null for anything else; an
-// option and a `Result` are not changed (#3673).
+// `key` to a payload: the whole value, not the payload (#3664, #3634 D23: the place decides). Null for anything else;
+// an option and a `Result` are not changed (#3673).
 static types::TypeRef whole_where_expected(types::Checked *c, Str key, Usize segments, types::TypeRef expected) {
     if (expected == nullptr || segments != 1 || countof(key) == 0) return nullptr;
     if (expected->kind != .enumeration || !types::is_payload_enum(expected)) return nullptr;
@@ -4320,7 +4320,8 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
     return invalid(c);
 }
 
-static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, types::TypeRef own, types::TypeRef expected);
+static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, types::TypeRef own,
+                                     types::TypeRef expected);
 
 static void index_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
@@ -4667,7 +4668,8 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
 
 // The type of the field path `e` that tests narrowed (`a.kind` after `a.kind == .v`, `p.next` after `p.next != .none`),
 // else `own`, the field's type (#3587, item 68 of #3516). The same narrowing as a name's, found under the path's text.
-static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, types::TypeRef own, types::TypeRef expected) {
+static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, types::TypeRef own,
+                                     types::TypeRef expected) {
     if (c->paths == 0) return own;
     Str key = place_key(e);
     if (countof(key) == 0) return own;
