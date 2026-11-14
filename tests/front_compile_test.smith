@@ -168,3 +168,23 @@ export void test_front_compile_a_function_named_like_a_builtin_is_called_not_low
     test::check_equal(made.ok, true);
     remove_all(folder);
 }
+
+// Two modules that each declare a type of one name (#3680): in the body of an imported generic, `Value` is the module's
+// own, whoever calls it (it used to find the caller's, `no field n in Value`, and `argument 1 of ... is util::Value, the
+// parameter is Value`).
+export void test_front_compile_a_type_of_an_imported_generic_is_its_modules_not_the_callers_of_the_same_name() {
+    Str folder = folder_for("same_name");
+    write_text(as_str(format::push(folder, "/src/util.smith")),
+               "pub struct Value:\n    pub n: i32\n\n"
+               "fn read(v: Value) -> i32:\n    return v.n\n\n"
+               "pub fn make(x: auto) -> Value:\n    v: Value = Value(n = 1)\n    return v\n\n"
+               "pub fn total(x: auto) -> i32:\n    return read(make(x))\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import util\n\nstruct Value:\n    k: i32\n\n"
+               "pub fn f() -> i32:\n    mine: Value = Value(k = 2)\n    got := util.make(1)\n"
+               "    return got.n + mine.k + util.total(3)\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(countof(made.text), (Usize)0);
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}

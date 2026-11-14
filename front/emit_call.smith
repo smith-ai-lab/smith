@@ -851,8 +851,9 @@ static Bool member_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
 static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at) {
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
+        if (instance_record(e, path, at)) return true; // a name in a generic's body means its own module's (#3680)
         if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, at)) return true;
-        if (c_record(e, path, at) || imported_record_at(e, path, at) || instance_record(e, path, at)) return true;
+        if (c_record(e, path, at) || imported_record_at(e, path, at)) return true;
         ast::Identifier expanded[8];
         return countof(path.segments) > 1 && c_record(e, through_import(e, path, expanded), at);
     }
