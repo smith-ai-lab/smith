@@ -1118,6 +1118,13 @@ static Bool field_path(const ast::Expr *left) {
     return at->kind == .name && countof(at->kind.name.path.segments) == 1;
 }
 
+// Whether a test of `left` against `variant` is left as written: a field path, or a name of a payload enumeration. A
+// `Result`'s `ok` and `error` keep their bindings (`try`, #2611), whatever they are tested on.
+static Bool direct_test(const ast::Expr *left, Str variant) {
+    if (left->kind == .name && (types::same_text(variant, "ok") || types::same_text(variant, "error"))) return false;
+    return field_path(left);
+}
+
 static Bool word_char(char c);
 
 // `text` with each `->` written `.`, so the old and the new form of a path read the same.
@@ -1143,7 +1150,7 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
     const ast::Expr *right = binary_right(test);
     Str variant = variant_name(right);
     if (countof(variant) == 0) return;
-    Bool direct = field_path(left);
+    Bool direct = direct_test(left, variant);
     Str bound = binding_name(r, variant); // a direct test binds nothing, unless a read of it is dropped (bind_dropped)
     if (!direct && countof(bound) == 0) return;
     Str pattern = msg(format::push(".", variant, "(", bound, ") := "));
@@ -1176,7 +1183,7 @@ static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast
     const ast::Expr *right = binary_right(tested);
     Str variant = variant_name(right);
     if (countof(variant) == 0) return;
-    Bool direct = field_path(left);
+    Bool direct = direct_test(left, variant);
     Str bound = binding_name(r, variant); // a direct test binds nothing, unless a read of it is dropped (bind_dropped)
     if (!direct && countof(bound) == 0) return;
     Str pattern = msg(format::push(".", variant, "(", bound, ") := "));
@@ -1263,7 +1270,7 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     Str variant = option ? member_name(left) : variant_name(right);
     if (countof(variant) == 0 || (option && name_taken(r, variant))) return;
     Str bound = "";
-    Bool direct = !option && field_path(left);
+    Bool direct = !option && direct_test(left, variant);
     if (!option) bound = rest_binding_name(r, variant);
     if (!option && !direct && countof(bound) == 0) return;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
