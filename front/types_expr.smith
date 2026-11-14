@@ -1718,9 +1718,11 @@ static Str place_key(const ast::Expr *e) {
             if (countof(inner) == 0) return "";
             parts[count] = msg(format::push("[", inner, "]"));
             at = at->kind.index.base;
-        } else {
+        } else if (at->kind == .member) {
             parts[count] = msg(format::push(".", at->kind.member.name));
             at = at->kind.member.base;
+        } else {
+            return "";
         }
         count += 1;
     }
@@ -2320,7 +2322,7 @@ static Str root_name(const ast::Expr *e) {
     while (at->kind == .member || at->kind == .index) {
         if (at->kind == .member) {
             at = at->kind.member.base;
-        } else {
+        } else if (at->kind == .index) {
             at = at->kind.index.base;
         }
     }

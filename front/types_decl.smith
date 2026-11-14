@@ -2258,6 +2258,10 @@ static void bind_dropped(types::Checked *r, types::Guard *g, Usize from) {
     }
 }
 
+static Bool is_word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
 // Whether the loop `s` may write a name used in an index of the path `name` (`xs[i].f`: `i`), item 73 of #3516.
 static Bool index_written(Str name, const ast::Stmt *s) {
     Usize at = 0;
@@ -2271,8 +2275,7 @@ static Bool index_written(Str name, const ast::Stmt *s) {
             end += 1;
         Usize from = at + 1;
         for (Usize i = at + 1; i <= end && i <= countof(name); i++) {
-            Bool word = i < end && (name[i] >= 'a' && name[i] <= 'z' || name[i] >= 'A' && name[i] <= 'Z' ||
-                                    name[i] == '_' || name[i] >= '0' && name[i] <= '9');
+            Bool word = i < end && is_word_char(name[i]);
             if (word) continue;
             if (i > from && !(name[from] >= '0' && name[from] <= '9') && types_undefined::may_write(name[from:i], s))
                 return true;
