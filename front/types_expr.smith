@@ -1428,6 +1428,7 @@ static Str member_list(types::TypeRef t) {
 
 // `.high` where an integer is expected: the error carries the typed fix when one enumeration in scope has the member.
 static void bare_enumerator_error(types::Checked *c, const ast::Expr *e, Str want) {
+    if (!(e->kind == .variant)) return;
     Str name = e->kind.variant.name;
     types::fail_fix(
         c, e->span,
