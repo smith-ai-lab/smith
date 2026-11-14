@@ -3795,7 +3795,8 @@ static U64 binding_value(const Binding *b) {
 // Whether two bindings are the same type, or the same constant (an instance holds the constant's type, a call's does
 // not, so only the value is compared).
 static Bool same_binding(const Binding *have, const Binding *given) {
-    if (have->kind == .type_arg) return given->kind == .type_arg && have->kind.type_arg.passed == given->kind.type_arg.passed;
+    if (have->kind == .type_arg)
+        return given->kind == .type_arg && have->kind.type_arg.passed == given->kind.type_arg.passed;
     if (given->kind == .type_arg) return false;
     return binding_value(have) == binding_value(given);
 }

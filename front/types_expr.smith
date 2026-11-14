@@ -6621,7 +6621,8 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
                     clash.before->kind == .pointer && clash.now->kind == .pointer &&
                     clash.before->kind.pointer.element == clash.now->kind.pointer.element &&
                     !clash.before->kind.pointer.pointee_volatile && !clash.now->kind.pointer.pointee_volatile) {
-                    bound[clash.generic] = types::type_binding(types::pointer_to(&c->table, clash.before->kind.pointer.element, true));
+                    bound[clash.generic] =
+                        types::type_binding(types::pointer_to(&c->table, clash.before->kind.pointer.element, true));
                     clash = (types::Unified){};
                     continue;
                 }
