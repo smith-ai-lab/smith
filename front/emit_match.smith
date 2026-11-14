@@ -348,6 +348,23 @@ static state::Value variant_payload(state::Emitter *e, state::Value o, Str name)
     return (state::Value){.llvm = c::LLVMBuildLoad2(e->builder, payload.llvm, data, "payload"), .ty = payload};
 }
 
+// Whether the payload `a` of a variant is the type `b` the checker gave a narrowed name (#3648). A type's `name` is as
+// written (`i32`, `I32`), and every pointer's is `pointer`, so a scalar is its LLVM type and signedness, and a pointer
+// its pointee; any other type is its name.
+static Bool same_payload(state::Ty a, state::Ty b) {
+    while (a.kind == .pointer && b.kind == .pointer) {
+        state::Ty *x = a.kind.pointer.element;
+        state::Ty *y = b.kind.pointer.element;
+        if (x == nullptr || y == nullptr) return x == y;
+        a = *x;
+        b = *y;
+    }
+    Bool scalar = a.kind == .integer || a.kind == .floating || a.kind == .boolean;
+    Bool both = b.kind == .integer || b.kind == .floating || b.kind == .boolean;
+    if (scalar || both) return scalar && both && state::same_type(a, b);
+    return state::same_text(a.name, b.name);
+}
+
 // The variant of the payload enumeration `ty` whose payload is the type `seen` the checker gave a name narrowed by
 // `x is .v` (#3226): its place in the enumeration `at` and its payload, false when no variant has it.
 export Bool narrowed_variant(state::Emitter *e, state::Ty ty, types::TypeRef seen, ast::Span span, state::Ty *payload) {
@@ -357,7 +374,7 @@ export Bool narrowed_variant(state::Emitter *e, state::Ty ty, types::TypeRef see
     if (wanted == .error) return false;
     state::Enumerator items[:] = e->enums[at].items;
     for (Usize i = 0; i < countof(items); i++) {
-        if (!items[i].has_payload || !state::same_text(items[i].payload.name, wanted.ok.name)) continue;
+        if (!items[i].has_payload || !same_payload(items[i].payload, wanted.ok)) continue;
         *payload = items[i].payload;
         return true;
     }

@@ -1,0 +1,39 @@
+# A name tested for a variant whose payload is a scalar or a pointer is read direct, as one with a record payload is (#3648).
+enum Value:
+    count: i32
+    ratio: f64
+    flag: bool
+    text: *u8
+    empty
+
+fn count_of(v: Value) -> i32:
+    if v == .count:
+        return v + 1
+    0
+
+fn ratio_of(v: Value) -> f64:
+    if v is not .ratio:
+        return 0.0
+    v * 2.0
+
+fn flag_of(v: Value) -> bool:
+    if v is .flag and v:
+        return true
+    false
+
+fn first_byte(v: Value) -> u8:
+    if v is .text:
+        return v.*
+    0
+
+pub fn check() -> i32:
+    if count_of(.count(4)) != 5: return 1
+    if count_of(.empty) != 0: return 2
+    if ratio_of(.ratio(1.5)) != 3.0: return 3
+    if ratio_of(.count(2)) != 0.0: return 4
+    if not flag_of(.flag(true)): return 5
+    if flag_of(.flag(false)): return 6
+    byte: u8 = 7
+    if first_byte(.text(&byte)) != 7: return 7
+    if first_byte(.empty) != 0: return 8
+    0
