@@ -855,6 +855,7 @@ static Bool conform(types::Checked *c, const ast::Expr *e, types::TypeRef from, 
 
 // Records `found` for `e` and checks it against `expected` (null: nothing to check).
 static Str place_key(const ast::Expr *e);
+static syntax::Edits bare_enumerator_fix(const types::Checked *c, const ast::Expr *e, Str integer);
 static types::TypeRef callable(types::TypeRef t);
 
 // A call that is passed a writable pointer to a field path, or a path to a method, may write it: what tests proved
@@ -1476,6 +1477,11 @@ static void variant_expr(types::Checked *c, Frame f) {
     Str want = types::show(expected);
     if (expected->kind == .enumeration) {
         types::failf(c, e->span, "`.", name, "` is not a member of `", want, "` (", member_list(expected), ")");
+    } else if (expected->kind == .integer) {
+        types::fail_fix(
+            c, e->span,
+            msg(format::push("`.", name, "` is not a value of `", want, "`; write a value of type `", want, "`")),
+            bare_enumerator_fix(c, e, want));
     } else {
         types::failf(c, e->span, "`.", name, "` is not a value of `", want, "`; write a value of type `", want, "`");
     }
@@ -2588,6 +2594,20 @@ export syntax::Edits convert_fix(const ast::Expr *x, types::TypeRef to) {
     return edits;
 }
 
+// A bare `.square` where an integer is wanted (a `...` argument, a field or a parameter of an integer type): the
+// enumerator is written with its enumeration, and the conversion C made silently is written
+// (`area.Kind.square.to(i32)`). Empty when no enumeration, or two, have the enumerator.
+static syntax::Edits bare_enumerator_fix(const types::Checked *c, const ast::Expr *e, Str integer) {
+    syntax::Edits edits = {};
+    if (e->kind != .variant || e->kind.variant.payload != nullptr) return edits;
+    Str owner = types::sole_enumeration_with(c, e->kind.variant.name);
+    if (countof(owner) == 0) return edits;
+    edits = mem::realloc(edits, 1);
+    edits[0] = (syntax::Edit){.span = e->span,
+                              .text = msg(format::push(owner, ".", e->kind.variant.name, ".to(", integer, ")"))};
+    return edits;
+}
+
 // The type C converts both operands of `l op r` to when they are numbers of different types: the float, else the wider
 // integer, else the unsigned one (`usize` and `u64` keep the left). Null when they are not two numbers.
 static types::TypeRef c_common(types::TypeRef l, types::TypeRef r) {
@@ -3371,6 +3391,13 @@ static void check_variadic_arguments(types::Checked *c, types::TypeRef signature
                 msg(format::push("`", types::show(t), "` cannot go through `...`: C receives the address of ",
                                  "its first element, so write `&x[0]`")),
                 builtins::element_address_fix(args[i]));
+            continue;
+        }
+        // A bare `.square`: C passes the enumerator as an `int`.
+        syntax::Edits bare = bare_enumerator_fix(c, args[i], "i32");
+        if (countof(bare) > 0) {
+            types::fail_fix(c, args[i]->span,
+                            msg(format::push("argument ", (U64)i + 1, " is `", types::show(t), "`,", hint)), bare);
             continue;
         }
         types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);
