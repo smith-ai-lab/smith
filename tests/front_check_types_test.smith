@@ -577,7 +577,7 @@ export void test_front_check_types_an_indexed_narrowing_is_dropped_in_a_loop_tha
 }
 
 export void test_front_check_types_a_tested_indexed_path_narrows_an_array_of_a_type_parameter() {
-    clean(join("pub struct Cell(T: type):\n    pub value: ?T\n\n",
+    clean(join("pub fn Cell(T: type) -> type:\n    struct:\n        value: ?T\n\n",
                "fn f[T: type](cells: []Cell(T), i: usize) -> bool:\n    if cells[i].value == .none:\n"
                "        return false\n    _ := cells[i].value\n    true\n"));
 }
