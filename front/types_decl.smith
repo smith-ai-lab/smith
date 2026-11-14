@@ -2007,6 +2007,26 @@ static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value) {
     return false;
 }
 
+// The condition of `contract.assert(c)` (item 72 of #3516): the call states that `c` is true from here on, so every
+// name and path `c` tests is narrowed in the rest of the scope, as after `if not c: return`. Null for any other call.
+static const ast::Expr *asserted_condition(const types::Checked *r, const ast::Expr *value) {
+    (void)r;
+    if (value->kind != .call || countof(value->kind.call.args) != 1) return nullptr;
+    const ast::Expr *callee = value->kind.call.callee;
+    if (callee->kind == .member && !callee->kind.member.arrow && types::same_text(callee->kind.member.name, "assert")) {
+        const ast::Expr *base = callee->kind.member.base;
+        Bool module = base->kind == .name && countof(base->kind.name.path.segments) == 1 &&
+                      types::same_text(base->kind.name.path.segments[0].text, "contract");
+        return module ? value->kind.call.args[0] : nullptr;
+    }
+    if (callee->kind != .name) return nullptr;
+    ast::Identifier segments[:] = callee->kind.name.path.segments;
+    Usize n = countof(segments);
+    Bool named = n >= 2 && types::same_text(segments[n - 2].text, "contract") &&
+                 types::same_text(segments[n - 1].text, "assert");
+    return named ? value->kind.call.args[0] : nullptr;
+}
+
 // An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded.
 static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind != .expression) {
@@ -2020,6 +2040,8 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     } else {
         type = types_expr::infer(r, value);
     }
+    const ast::Expr *asserted = asserted_condition(r, value);
+    if (asserted != nullptr) types_expr::narrow_scope(r, asserted, true);
     if (!r->new_body || value->kind != .call || type == nullptr) {
         return;
     }

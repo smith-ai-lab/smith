@@ -32,6 +32,7 @@ import front::emit_state as state;
 import front::emit_stream as streams;
 import front::types;
 import std::arena;
+import std::contract;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
@@ -263,7 +264,12 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
         target = types::lookup(&e->options.checked->scopes, tagged);
         state::free_text(tagged);
     }
-    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
+    if (target == nullptr || target->kind != .function_symbol) {
+        state::free_text(full);
+        return false;
+    }
+    contract::assert(target->decl != nullptr);
+    if (target->decl->kind != .function) {
         state::free_text(full);
         return false;
     }
@@ -298,10 +304,13 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
         countof(callee->kind.name.path.segments) == 1) {
         Str own = state::msg(format::push(e->instance_scope, callee->kind.name.path.segments[0].text));
         const types::Symbol *sibling = types::lookup(&e->options.checked->scopes, own);
-        if (sibling != nullptr && sibling->kind == .function_symbol && sibling->decl->kind == .function) {
-            *found = sibling->decl; // a function of the module the generic comes from
-            *symbol = own;
-            return true;
+        if (sibling != nullptr && sibling->kind == .function_symbol) {
+            contract::assert(sibling->decl != nullptr);
+            if (sibling->decl->kind == .function) {
+                *found = sibling->decl; // a function of the module the generic comes from
+                *symbol = own;
+                return true;
+            }
         }
     }
     if (names.count < 2) return false;
@@ -317,7 +326,9 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     }
     Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
     const types::Symbol *target = types::lookup(scopes, full);
-    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) return false;
+    if (target == nullptr || target->kind != .function_symbol) return false;
+    contract::assert(target->decl != nullptr);
+    if (target->decl->kind != .function) return false;
     *found = target->decl;
     *symbol = full;
     return true;
@@ -358,7 +369,9 @@ static Bool method_callee(state::Emitter *e, const ast::Expr *x, const ast::Decl
     if (cut == 0) return false;
     Str full = state::msg(format::push(type_name[0:cut], callee->kind.member.name));
     const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
-    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) return false;
+    if (target == nullptr || target->kind != .function_symbol) return false;
+    contract::assert(target->decl != nullptr);
+    if (target->decl->kind != .function) return false;
     *found = target->decl;
     *symbol = full;
     return true;
@@ -630,6 +643,7 @@ static Bool find_record(state::Emitter *e, Str name, Usize *found) {
 static Bool record_of_symbol(state::Emitter *e, const types::Symbol *symbol, Usize *at) {
     if (symbol == nullptr || symbol->kind != .type_name || symbol->type->kind != .record) return false;
     if (emit_memory::is_imported_record(e, symbol)) { // `AppTests(...)` after `from std.build import AppTests`
+        contract::assert(symbol->decl != nullptr);
         state::TyResult made = emit_memory::imported_record(e, symbol->decl, types::name_of(symbol->type));
         if (made == .error) {
             state::free_text(made.error.message);

@@ -45,6 +45,7 @@ import front::emit_option;
 import front::emit_state as state;
 import front::types;
 import std::arena;
+import std::contract;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
@@ -198,6 +199,7 @@ static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize 
         }
         // Through the emitter's hook, not `resolve`: a field of an imported record may itself name a type, and a call
         // back into `leaf_type` would be a recursion in the module.
+        contract::assert(field.type != nullptr); // the parser adds a field only with its type
         state::TyResult made = state::type_of(e, field.type);
         if (made == .error) {
             return {.error = made.error};
@@ -376,7 +378,10 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
     }
     const types::Symbol *named = imported_by_name(e, name);
-    if (named != nullptr) return imported_record(e, named->decl, types::name_of(named->type));
+    if (named != nullptr) {
+        contract::assert(named->decl != nullptr);
+        return imported_record(e, named->decl, types::name_of(named->type));
+    }
     if (e->options.checked != nullptr) { // an alias (`Unary := fn(i32) -> i32`) as the element of an array or pointer
         const types::Symbol *alias = types::lookup(&e->options.checked->scopes, name);
         if (alias != nullptr && alias->kind == .type_name) return state::type_of_checked(e, alias->type, base->span);

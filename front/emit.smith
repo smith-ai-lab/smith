@@ -107,6 +107,7 @@ import front::types;
 import front::types_stream;
 import std::format;
 import std::arena;
+import std::contract;
 import std::mem;
 import <llvm-c/Analysis.h>;
 import <llvm-c/Core.h>;
@@ -194,6 +195,7 @@ static Bool is_enum_symbol(const types::Symbol *target) {
 }
 
 static state::TyResult imported_enum(state::Emitter *e, const types::Symbol *target) {
+    contract::assert(target->decl != nullptr); // `is_enum_symbol` tested it
     if (target->decl->kind != .enumeration) return state::ty_fail("unknown type", target->decl->span);
     Str bare = target->decl->kind.enumeration.name;
     state::Ty ty = {};

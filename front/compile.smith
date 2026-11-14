@@ -2341,6 +2341,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         Str needed = "";
         for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
             ast::FieldDecl field = d->kind.record.fields[k];
+            contract::assert(field.type != nullptr); // a record's field has its type
             Spelled spelled = spell_declarator(field.type, &scope, prefix);
             used_bindings = as_str(format::push(used_bindings, spelled.bindings));
             if (countof(spelled.text) == 0) {

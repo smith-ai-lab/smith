@@ -43,10 +43,22 @@ static Str join(Str a, Str b) {
     return out;
 }
 
+// The module an `import std.contract` reads in these tests: the one function a narrowing assertion calls.
+static const ast::Module *load_contract(const char *path) {
+    (void)path;
+    parser::Parsed p = parser::parse_new(
+        "contract.smith",
+        "pub fn assert(condition: bool):\n    return\n\npub fn requires(condition: bool):\n    return\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
 static types::Checked check_text(Str source) {
     parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
-    return types_decl::check_module(&p.module, types::lp64());
+    return types_decl::check_module_with(&p.module, types::lp64(), load_contract);
 }
 
 // The errors, one per line.
@@ -475,6 +487,38 @@ export void test_front_check_types_a_pointer_to_a_narrowed_field_drops_it() {
           "payload enumeration", "");
     clean(with_holder("fn look(k: *Holder) -> i32:\n    0\n\nfn f(h: *mut Holder) -> i32:\n"
                       "    if h.kind is not .unary:\n        return 0\n    _ := look(h)\n    h.kind.op\n"));
+}
+
+// Item 72 of #3516 (#3622): `contract.assert(c)` narrows the rest of the scope as `if not c: return` does: an option
+// name, a field path (through a value or a read-only pointer), a variant test, `and` of two facts; a write drops it.
+static Str asserting(Str body) {
+    return join("import std.contract\n\n", with_holder(body));
+}
+
+export void test_front_check_types_an_assert_narrows_a_name_and_a_path() {
+    clean(asserting("fn f(o: ?i32) -> i32:\n    contract.assert(o != .none)\n    o + 1\n"));
+    clean(asserting("fn f(h: Holder) -> i32:\n    contract.assert(h.next != .none)\n    h.next + 1\n"));
+    clean(asserting("fn f(h: *Holder) -> i32:\n    contract.assert(h.next != .none)\n    h.next + 1\n"));
+    clean(asserting("fn f(h: Holder) -> i32:\n    contract.assert(h.kind is .unary)\n    h.kind.op\n"));
+    clean(asserting("fn f(h: Holder) -> i32:\n    contract.assert(h.kind is .unary and h.next != .none)\n"
+                    "    h.kind.op + h.next\n"));
+    fails(asserting("fn f(h: Holder) -> i32:\n    h.next + 1\n"), "", "");
+}
+
+export void test_front_check_types_an_assert_narrowing_is_dropped_by_a_write() {
+    fails(asserting("fn f(h: Holder) -> i32:\n    mut m := h\n    contract.assert(m.next != .none)\n"
+                    "    m.next = .none\n    m.next + 1\n"),
+          "", "");
+}
+
+export void test_front_check_types_an_assert_narrows_an_option_of_a_type_parameter() {
+    clean(asserting("fn f[T: type](o: ?T) -> T:\n    contract.assert(o != .none)\n    o\n"));
+}
+
+// An assert at the start of a function is still the caller's duty to `smith prove`, and still narrows.
+export void test_front_check_types_an_assert_at_the_start_narrows() {
+    clean(asserting("fn f(o: ?i32) -> i32:\n    contract.requires(o != .none)\n    contract.assert(o != .none)\n"
+                    "    o\n"));
 }
 
 // A narrowing made before a loop is dropped when the body writes the path.
