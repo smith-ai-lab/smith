@@ -1660,7 +1660,7 @@ export struct NodeType {
     Bool decided;            // the condition of an `if` that asks about types: one branch is kept (#1902)
     Bool keeps_then;         // when `decided`: the `then` branch is the one kept, else the `else` branch
     Bool error_read; // a `Result` name a test narrowed to its error: the emitter reads the error, not the ok (#3681)
-    Bool has_value; // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
+    Bool has_value;  // an expression the checker computed (`small(T)`, `u8 != i8`): its value is `value` (#3039)
     U64 value;
 };
 
