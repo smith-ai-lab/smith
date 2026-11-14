@@ -1075,6 +1075,17 @@ static Str binding_name(types::Checked *r, Str variant) {
     return other;
 }
 
+// The name an early-return test (`if k != .v: return`) binds: as `binding_name`, else `v_value` where `v` is taken, as
+// a second test of one variant on another name needs (`if l != .integer or r != .integer: return`, #3616). The `==`
+// test has the `is` form for a taken name; this one has nothing, and its site would stay as written.
+static Str rest_binding_name(types::Checked *r, Str variant) {
+    Str named = binding_name(r, variant);
+    if (countof(named) > 0) return named;
+    Str other = msg(format::push(variant, "_value"));
+    Str none = "";
+    return name_taken(r, other) ? none : other;
+}
+
 // Whether the function being checked, from local `first` on, declares a local named `name`.
 static Bool local_named(Usize first, Str name) {
     for (Usize k = first; k < state.local_count; k++) {
@@ -1252,7 +1263,7 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     if (countof(variant) == 0 || (option && name_taken(r, variant))) return;
     Str bound = "";
     Bool direct = !option && field_path(left);
-    if (!option) bound = binding_name(r, variant);
+    if (!option) bound = rest_binding_name(r, variant);
     if (!option && !direct && countof(bound) == 0) return;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
         types::Guard *g = &r->guards[i];
