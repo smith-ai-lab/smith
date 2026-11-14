@@ -1753,6 +1753,20 @@ static Str place_key(const ast::Expr *e) {
     return out;
 }
 
+// The type a test of a tag gives `place`: a name or path that an earlier test narrowed to its payload (`if e.kind !=
+// .call: return`, then `e.kind != .call` again) is still a payload enumeration to a test of its tag, so the test has
+// the enumeration's type, not the payload's (#3664). `typed` is the type the place has here.
+static types::TypeRef tag_type(types::Checked *c, const ast::Expr *place, types::TypeRef typed) {
+    if (typed->kind == .enumeration || typed->kind == .option || typed->kind == .result_type) return typed;
+    Str key = place_key(place);
+    if (countof(key) == 0) return typed;
+    const types::Symbol *narrowed = types::lookup(&c->scopes, key);
+    const types::Symbol *own = types::declared(&c->scopes, key);
+    if (narrowed == nullptr || !narrowed->narrowed || own == nullptr || !types::is_payload_enum(own->type))
+        return typed;
+    return own->type;
+}
+
 // What a write to `target` (`x`, `x.f`, `p.*`) changes about the narrowed paths: the path and every path under it.
 static void unnarrow_written(types::Checked *c, const ast::Expr *target) {
     const ast::Expr *place = target;
@@ -2829,6 +2843,16 @@ static void is_after(types::Checked *c, const ast::Expr *e, Frame f) {
     finish(c, e, c->table.bool_type, f.expected);
 }
 
+// The type of `place`, an operand of `place op other`: the enumeration, when `other` is a bare variant and an earlier
+// test narrowed `place` to its payload; the type is recorded so the emitter reads the whole value (#3664).
+static types::TypeRef tag_side(types::Checked *c, ast::BinaryOp op, const ast::Expr *place, const ast::Expr *other) {
+    types::TypeRef seen = typ(c, place);
+    if (!is_equality(op) || other->kind != .variant) return seen;
+    types::TypeRef whole = tag_type(c, place, seen);
+    if (whole != seen) types::set_type(c, place, whole);
+    return whole;
+}
+
 static void binary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .binary)) {
@@ -2885,7 +2909,9 @@ static void binary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    types::TypeRef t = binary_type(c, e->span, op, typ(c, left), typ(c, right));
+    types::TypeRef lt = tag_side(c, op, left, right);
+    types::TypeRef rt = tag_side(c, op, right, left);
+    types::TypeRef t = binary_type(c, e->span, op, lt, rt);
     if (t == bad) {
         poison(c, e);
         return;
@@ -7728,6 +7754,7 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
         poison(c, e);
         return;
     }
+    if (is_equality(op) && dotted->kind == .variant) want = tag_type(c, typed, want);
     push(w, e, f.expected, 1);
     // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
     // carries.
