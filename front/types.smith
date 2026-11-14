@@ -1464,7 +1464,37 @@ static Bool is_under(Str name, Str prefix) {
     for (Usize i = 0; i < countof(prefix); i++) {
         if (name[i] != prefix[i]) return false;
     }
-    return countof(name) == countof(prefix) || name[countof(prefix)] == '.';
+    return countof(name) == countof(prefix) || name[countof(prefix)] == '.' || name[countof(prefix)] == '[';
+}
+
+// Whether `c` can be part of a name.
+static Bool is_word(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Drops what tests proved about the indexed paths (`xs[i].f`) that have the name `index` in an index: `i` was written
+// (item 73 of #3516).
+export void unnarrow_indexed_by(Scopes *s, Str index) {
+    for (Usize at = s->count; at > 0; at--) {
+        const Symbol *symbol = &s->symbols[at - 1];
+        if (!is_narrowing(symbol)) continue;
+        Str name = symbol->name;
+        Bool inside = false;
+        Bool hit = false;
+        for (Usize i = 0; i < countof(name) && !hit; i++) {
+            if (name[i] == '[') inside = true;
+            if (name[i] == ']') inside = false;
+            if (!inside || i + countof(index) > countof(name) || !is_word(name[i]) || (i > 0 && is_word(name[i - 1])))
+                continue;
+            Usize end = i + countof(index);
+            Bool same = true;
+            for (Usize k = 0; k < countof(index); k++) {
+                if (name[i + k] != index[k]) same = false;
+            }
+            hit = same && (end == countof(name) || !is_word(name[end]));
+        }
+        if (hit) unnarrow(s, name);
+    }
 }
 
 // Drops what tests proved about the field path `prefix` and every path under it (#3587, item 68 of #3516): the path
@@ -2444,7 +2474,10 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
         return node->kind.function.result;
     }
     if (node->kind == .tuple) return node->kind.tuple.elements[i];
-    if (node->kind == .record) return node->kind.record.fields[i].type;
+    if (node->kind == .record) {
+        contract::assert(node->kind.record.fields[i].type != nullptr); // a written record field has its type
+        return node->kind.record.fields[i].type;
+    }
     Usize seen = 0;
     if (node->kind == .applied) {
         for (Usize k = 0; k < countof(node->kind.applied.args); k++) {
