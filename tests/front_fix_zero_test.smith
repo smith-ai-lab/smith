@@ -248,6 +248,27 @@ export void test_front_fix_zero_a_construction_in_another_folder_gives_the_defau
     test::check_equal(fixed.text, want);
 }
 
+// A neighbour's `e->f = nullptr` makes the field an option when the neighbour imports the module `as` a name, in
+// today's text where `as` is not a keyword yet (#3695): `import front::st as state;` and `state::Emitter *e`.
+export void test_front_fix_zero_a_null_assigned_in_a_neighbour_that_imports_as_a_name_makes_an_option() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str folder = "/tmp/front_fix_zero_test_alias";
+    (void)files::make_folder(folder);
+    // the `//` comment is an error of the lexer of smith's own syntax, so the text is read as today's, where `as` is a
+    // name
+    Str user = "module b;\n// recover\nimport front::a as state;\nstatic void recover(state::Emitter *e) {\n"
+               "    e->k = 0;\n    e->next = nullptr;\n}\n";
+    test::check(fix::store("/tmp/front_fix_zero_test_alias/b.smith", user));
+    fix::Fixed fixed = fix::fix_text("/tmp/front_fix_zero_test_alias/a.smith",
+                                     "module front::a;\nexport struct Inst {\n    int n;\n};\n"
+                                     "export struct Emitter {\n    const Inst *next;\n    int k;\n};\n");
+    Str want = "pub struct Inst:\n    pub n: i32\npub struct Emitter:\n    pub next: ?*Inst = .none\n    pub k: i32\n";
+    test::check_equal(fixed.text, want);
+}
+
 // A pointer field that a construction leaves null and a read tests is `?*T = .none` (#2557): a read after
 // `!= nullptr` binds the field by its own name, `== nullptr: return` binds the rest of the block, `nullptr` is `.none`.
 export void test_front_fix_zero_a_tested_pointer_is_an_option_and_its_tested_reads_bind() {
