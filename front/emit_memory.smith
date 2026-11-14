@@ -362,6 +362,11 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         ty = array_of(e, word, 4);
         return ty;
     }
+    if (countof(e->instance_scope) > 0 && e->options.checked != nullptr) { // `Written` in a generic's instance (#3680)
+        const types::Symbol *own =
+            types::lookup(&e->options.checked->scopes, state::msg(format::push(e->instance_scope, name)));
+        if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
+    }
     if (find_record_named(e, name, &index)) {
         ty = e->records[index].ty;
         return ty;
@@ -377,11 +382,6 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         state::TyResult found = state::type_of(e, base);
         e->scoped_leaf = outer;
         return found;
-    }
-    if (countof(e->instance_scope) > 0 && e->options.checked != nullptr) { // `Written` in a generic's instance
-        const types::Symbol *own =
-            types::lookup(&e->options.checked->scopes, state::msg(format::push(e->instance_scope, name)));
-        if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
     }
     const types::Symbol *named = imported_by_name(e, name);
     if (named != nullptr) return imported_symbol_record(e, named);
