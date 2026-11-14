@@ -630,6 +630,16 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
         if (have->kind == .slice && want->kind == .slice && types::element_of(have) == types::element_of(want) &&
             gains_const)
             return accept(identity);
+        // `?*mut T` where `?*T` is wanted (#3677): the same rule as the plain pointer's, applied to the payload; the
+        // layout is the same, and the payload only gains const. The other direction keeps its error.
+        if (have->kind == .pointer && want->kind == .pointer && gains_const) {
+            Ctx payload = c;
+            payload.from = have;
+            payload.target_type = want;
+            payload.shown = want;
+            Verdict inner = pointer_to_pointer(&payload);
+            if (inner.ok && inner.kind == add_const) return accept(identity);
+        }
     }
     if (is_wrapper(from)) return from_wrapper(&c);
     if (is_wrapper(to)) {
