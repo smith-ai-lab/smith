@@ -2635,6 +2635,19 @@ static syntax::Edits bare_enumerator_fix(const types::Checked *c, const ast::Exp
     return edits;
 }
 
+// A bare `.square` that a written conversion follows (`.square.to(i32)`, from C's `(int)Square`): the variant is a value
+// of no enumeration here, so only its name is written with the enumeration (`area.Kind.square`); the conversion stays.
+// Empty when no enumeration, or two, have the enumerator (#3678).
+export syntax::Edits qualified_enumerator_fix(const types::Checked *c, const ast::Expr *e) {
+    syntax::Edits edits = {};
+    if (e->kind != .variant || e->kind.variant.payload != nullptr) return edits;
+    Str owner = types::sole_enumeration_with(c, e->kind.variant.name);
+    if (countof(owner) == 0) return edits;
+    edits = mem::realloc(edits, 1);
+    edits[0] = (syntax::Edit){.span = e->span, .text = msg(format::push(owner, ".", e->kind.variant.name))};
+    return edits;
+}
+
 // The type C converts both operands of `l op r` to when they are numbers of different types: the float, else the wider
 // integer, else the unsigned one (`usize` and `u64` keep the left). Null when they are not two numbers.
 static types::TypeRef c_common(types::TypeRef l, types::TypeRef r) {
