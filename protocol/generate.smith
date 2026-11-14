@@ -196,7 +196,7 @@ const char **gen_string_block(Generator *g, Usize count) {
     return (const char **)push_block(g, const char *, count);
 }
 
-const char *gen_text(Generator *g, struct smith_array_const_char_n text) {
+const char *gen_text(Generator *g, const char text[:]) {
     return gen_copy(g, text.data, text.count[0]);
 }
 
@@ -462,22 +462,23 @@ I32 gen_new_type(Generator *g, GenKind kind, const char *hint, const c::SmithJso
     return id;
 }
 
-I32 gen_definition_index(const Generator *g, struct smith_array_const_char_n name) {
+I32 gen_definition_index(const Generator *g, const char name[:]) {
     for (Usize i = 0; i < g->definitions->count; i++) { // bounded by the definitions
-        const struct smith_array_const_char_n key = g->definitions->items[i]->key;
+        const char key[:] = g->definitions->items[i]->key;
         if (key.count[0] == name.count[0] && mem::equal(key, name)) return (I32)i;
     }
     return -1;
 }
 
 GenMaybe gen_reference(const Generator *g, const c::SmithJsonValue *node) {
+    contract::trusted(); // the edge: it reads the JSON tree or reports and exits, both C
     const c::SmithJsonValue *ref = gen_get(node, "$ref");
     if (ref->kind != c::SmithJsonKind_String) gen_die("a $ref at byte %zu is not a string", ref->offset);
-    struct smith_array_const_char_n name = ref->text;
+    const char name[:] = ref->text;
     Usize slash = name.count[0];
     while (slash > 0 && name.data[slash - 1] != '/')
         slash--; // bounded by the reference
-    name = (struct smith_array_const_char_n){.data = name.data + slash, .count = {name.count[0] - slash}};
+    name = name[slash:];
     I32 index = gen_definition_index(g, name);
     if (index < 0) gen_die("the reference at byte %zu names no definition", ref->offset);
     return g->definition[index].type;
@@ -666,7 +667,7 @@ typedef struct {
     bool extras;
 } GenCollect;
 
-void gen_add_property(Generator *g, GenCollect *collect, const char *owner, struct smith_array_const_char_n name,
+void gen_add_property(Generator *g, GenCollect *collect, const char *owner, const char name[:],
                       const c::SmithJsonValue *schema) {
     const char *json = gen_text(g, name);
     GenRef type = gen_slot_for(g, schema, gen_hint(g, owner, json));
@@ -698,13 +699,13 @@ void gen_add_own(Generator *g, GenCollect *collect, const char *owner, const c::
 
 // The definition a $ref names, as the node to read; a primitive is no base.
 const c::SmithJsonValue *gen_reference_node(const Generator *g, const c::SmithJsonValue *node) {
+    contract::trusted(); // the edge: it reads the JSON tree or reports and exits, both C
     const c::SmithJsonValue *ref = gen_get(node, "$ref");
-    struct smith_array_const_char_n name = ref->text;
+    const char name[:] = ref->text;
     Usize slash = name.count[0];
     while (slash > 0 && name.data[slash - 1] != '/')
         slash--; // bounded by the reference
-    I32 index = gen_definition_index(
-        g, (struct smith_array_const_char_n){.data = name.data + slash, .count = {name.count[0] - slash}});
+    I32 index = gen_definition_index(g, name[slash:]);
     if (index < 0) gen_die("the reference at byte %zu names no definition", ref->offset);
     return g->definitions->items[index];
 }
@@ -1993,15 +1994,16 @@ Sink gen_sink_make(char *storage) {
     return (Sink){storage, 0};
 }
 
-struct smith_array_const_char_n gen_read_file(const char *path, char *buffer, Usize capacity) {
+const char[:] gen_read_file(const char *path, char *buffer, Usize capacity) {
     c::FILE *file = c::fopen(path, "rb");
-    if (file == nullptr) return (struct smith_array_const_char_n){};
+    const char *none = nullptr;
+    if (file == nullptr) return none[0:0];
     Usize length = c::fread(buffer, 1, capacity - 1, file);
     bool whole = c::feof(file) != 0;
     c::fclose(file);
     if (!whole) gen_die("%s is more than %zu bytes", path, capacity - 1);
     buffer[length] = '\0';
-    return (struct smith_array_const_char_n){.data = buffer, .count = {length}};
+    return buffer[0:length];
 }
 
 char gen_existing[gen_sink_capacity];
@@ -2011,7 +2013,7 @@ bool gen_output(const char *directory, const char *name, const Sink *sink, bool 
     char path[1024];
     I32 written = __builtin_snprintf(path, sizeof path, "%s/%s", directory, name);
     gen_assert(written > 0 && (Usize)written < sizeof path, "written > 0 && (Usize)written < sizeof path");
-    struct smith_array_const_char_n old = gen_read_file(path, gen_existing, sizeof gen_existing);
+    const char old[:] = gen_read_file(path, gen_existing, sizeof gen_existing);
     if (old.data != nullptr && mem::equal(old, sink->begin[0:sink->length])) return true;
     if (check) {
         gen_note("%s is not what the generator writes now; run `smith build`\n", path);
@@ -2031,7 +2033,7 @@ char gen_test_storage[gen_sink_capacity];
 char gen_license_storage[1 << 20];
 char gen_schema_storage[gen_input_capacity];
 
-void gen_prepare(Generator *g, const char *name, struct smith_array_const_char_n schema) {
+void gen_prepare(Generator *g, const char *name, const char schema[:]) {
     contract::trusted(); // the edge: it reads the JSON tree or reports and exits, both C
     g->schema = name;
     char upper[32];
@@ -2085,9 +2087,9 @@ I32 main(Str args[:]) {
     I32 argc = (I32)countof(args);
     bool check = argc == 8 && __builtin_strcmp(argv[7], "--check") == 0;
     if (argc != 7 && !check) gen_die("usage: protocol NAME SCHEMA LICENSE SOURCE OUT_DIR TEST_DIR [--check]");
-    struct smith_array_const_char_n schema = gen_read_file(argv[2], gen_schema_storage, sizeof gen_schema_storage);
+    const char schema[:] = gen_read_file(argv[2], gen_schema_storage, sizeof gen_schema_storage);
     if (schema.data == nullptr) gen_die("cannot read %s", argv[2]);
-    struct smith_array_const_char_n license = gen_read_file(argv[3], gen_license_storage, sizeof gen_license_storage);
+    const char license[:] = gen_read_file(argv[3], gen_license_storage, sizeof gen_license_storage);
     if (license.data == nullptr) gen_die("cannot read %s", argv[3]);
     gen_prepare(g, argv[1], schema);
     Sink header = gen_sink_make(gen_header_storage);
