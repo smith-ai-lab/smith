@@ -15,7 +15,7 @@ What they link (#2853): `smith cc --front-end=new` without `-c` links, like a C 
 The pipeline, one module group per section below:
 
 - **lex, parse**: text to a `front::ast` tree (`lex`, `parse`, `parse_expr`, `parse_type`, `parse_stmt`, `parse_decl`, `parser`).
-- **fix**: the fixes parse and check errors carry, applied by `smith lint --fix`; C's `assert(c)` becomes `contract.assert(c)` (with `import std.contract`, and `import c <assert.h>` dropped) until the one `assert` exists (#3343, #3285 step 14).
+- **fix**: the fixes parse and check errors carry, applied by `smith lint --fix`; C's `assert(c)` becomes `contract.assert(c)` (with `import std.contract`, and `import c <assert.h>` dropped) until the one `assert` exists (#3343, #3634 D3).
 - **check**: the tree to types (`types`, `types_expr`, `types_convert`, `types_decl`, `types_attr`, `types_fn`, `types_iter`, `types_stream`).
 - **types**: the integer primitives are `i8 .. i64`, `i128`, `u8 .. u64`, `u128`, `isize`, `usize` (#2306): `i128` and `u128` are checker builtins (`I128`, `U128`), emit as LLVM `i128`, are C's `__int128`, and the fixer writes them for `_BitInt(128)` and `__int128`.
 - **emit**: the checked tree to an LLVM module (`emit*.smith`), then an object (`emit_object`).
