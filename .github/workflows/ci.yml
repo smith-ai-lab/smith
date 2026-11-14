@@ -1068,8 +1068,11 @@ jobs:
             # gate-end
           fi
           awk -F'\t' '$1 == "gate-row" {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/frontend-gate.tsv"
+          # the files that refuse this run (#3629): those of a comparison whose window is over, and, once this version's
+          # window is over, those of its own; the other named files only report
+          awk -F'\t' '$1 == "gate-refuses" {print $2}' "$RUNNER_TEMP/gate-out.txt" >"$RUNNER_TEMP/refused.txt"
           mode=report-only
-          [ "$(awk -F'\t' '{print $5}' "$RUNNER_TEMP/frontend-gate.tsv")" = refusing ] && mode=refusing
+          [ -s "$RUNNER_TEMP/refused.txt" ] && mode=refusing
           n=$(wc -l <"$RUNNER_TEMP/regressed.txt" | tr -d ' ')
           echo "frontend-gate: $(tr '\t' ' ' <"$RUNNER_TEMP/frontend-gate.tsv")   (version, run, would refuse, dirty, mode)"
           # a demotion is printed by the tool as `frontend-gate: demoted (<files>)`; the stall alarm (#3444) lists it
@@ -1084,7 +1087,7 @@ jobs:
           note=$(grep '^gate-note: ' "$RUNNER_TEMP/gate-out.txt" | tr -d '\r')
           [ -n "$note" ] && echo "::warning::${note#gate-note: }"
           while IFS=$'\t' read -r f stage cause; do
-            if [ "$mode" = refusing ]; then
+            if grep -qxF -- "$f" "$RUNNER_TEMP/refused.txt"; then
               echo "frontend-regressed: $f ($stage: $cause)"
               echo "::error file=$f::passed on $base and fails now at $stage: $cause"
             else
@@ -1095,8 +1098,8 @@ jobs:
           echo "frontend-would-refuse: $n"
           # the rule (owner, 2026-11-12, #3369): any file that passed on the base and fails now refuses the change,
           # whatever the total does (fixing three files and breaking three is refused); two ways out
-          if [ "$mode" = refusing ] && [ "$n" != 0 ]; then
-            echo "::error::$n files passed on $base and fail now (frontend-regressed lines). Fix them, or, for a file that should no longer be measured, list it in scripts/frontend_coverage/excluded.txt with a reason (knowledge/front-end/driver.md, The count's excluded files); a total that goes up does not excuse a file that fails."
+          if [ "$mode" = refusing ]; then
+            echo "::error::$(wc -l <"$RUNNER_TEMP/refused.txt" | tr -d ' ') of $n files passed on $base and fail now (frontend-regressed lines). Fix them, or, for a file that should no longer be measured, list it in scripts/frontend_coverage/excluded.txt with a reason (knowledge/front-end/driver.md, The count's excluded files); a total that goes up does not excuse a file that fails."
           fi
           {
             echo "### Front-end regression"
@@ -1111,7 +1114,7 @@ jobs:
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
           [ -s "$RUNNER_TEMP/frontend-gate.tsv" ] || { echo "::error::the gate printed no verdict row"; exit 1; }
-          [ "$mode" != refusing ] || [ "$n" = 0 ]
+          [ "$mode" != refusing ]
       - name: Publish the table (the base of the next runs)
         shell: bash
         run: |

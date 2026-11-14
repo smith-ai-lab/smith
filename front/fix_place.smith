@@ -56,7 +56,11 @@ static Usize next_line(Str source, Usize at) {
 
 // The place of `name` as a whole word (not `x.name`) in `text`, or `countof(text)`.
 static Usize word_at(Str text, Str name) {
+    Bool quoted = false; // inside a string: a word there is no name (#3616)
     for (Usize i = 0; i + countof(name) <= countof(text); i++) {
+        if (text[i] == '"') quoted = !quoted;
+        if (text[i] == '\n') quoted = false;
+        if (quoted) continue;
         if (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')) continue;
         if (!starts_with(text[i:countof(text)], name)) continue;
         if (i + countof(name) < countof(text) && word_char(text[i + countof(name)])) continue;
@@ -84,19 +88,23 @@ static Usize function_end(Str source, Usize start) {
     return stop < countof(source) ? stop : countof(source);
 }
 
-// The `K` and `v` of the trimmed `line` `if K == .v:`, and where the colon ends.
-static Bool test_of(Str line, Str *base, Str *variant, Usize *after) {
-    if (!starts_with(line, "if ")) return false;
-    Usize k = 3;
+// The `K` and `v` of the trimmed `line` `if K == .v:` or `else if K == .v:` (#3616), where the test starts (`lead`) and
+// where the colon ends.
+static Bool test_of(Str line, Str *base, Str *variant, Usize *after, Usize *lead) {
+    Usize from = 0;
+    if (starts_with(line, "else ")) from = 5;
+    if (!starts_with(line[from:countof(line)], "if ")) return false;
+    Usize k = from + 3;
+    *lead = k;
     while (k < countof(line) && (word_char(line[k]) || line[k] == '.'))
         k += 1;
-    if (k == 3 || !starts_with(line[k:countof(line)], " == .")) return false;
+    if (k == *lead || !starts_with(line[k:countof(line)], " == .")) return false;
     Usize name = k + 5;
     Usize j = name;
     while (j < countof(line) && word_char(line[j]))
         j += 1;
     if (j == name || j + 1 != countof(line) || line[j] != ':') return false;
-    *base = line[3:k];
+    *base = line[*lead:k];
     *variant = line[name:j];
     *after = j + 1;
     return true;
@@ -169,7 +177,8 @@ export core::Errors edits(Str source) {
         Str base = "";
         Str variant = "";
         Usize after = 0;
-        if (!test_of(source[at + indent:end], &base, &variant, &after)) {
+        Usize lead = 0;
+        if (!test_of(source[at + indent:end], &base, &variant, &after, &lead)) {
             at = end + 1;
             continue;
         }
@@ -179,12 +188,9 @@ export core::Errors edits(Str source) {
         while (body_end < countof(source) && (blank(source, body_end) || indent_of(source, body_end) > indent))
             body_end = next_line(source, body_end);
         if (body_end > countof(source)) body_end = countof(source);
-        Bool has_else = body_end < countof(source) && indent_of(source, body_end) == indent &&
-                        starts_with(source[body_end + indent:countof(source)], "else");
         Usize start = function_start(source, at);
         Usize stop = function_end(source, start);
-        if (body_end == body || has_else || start == last_function ||
-            word_at(source[start:stop], variant) < stop - start) {
+        if (body_end == body || start == last_function || word_at(source[start:stop], variant) < stop - start) {
             at = end + 1;
             continue;
         }
@@ -199,7 +205,7 @@ export core::Errors edits(Str source) {
         core::Edits fix = {};
         fix = mem::realloc(fix, count + 1);
         Str pattern = types::message_of(format::push(".", variant, "(", variant, ") := &", base, ":"));
-        fix[0] = (core::Edit){.span = {.start = (U32)(head + 3), .end = (U32)(head + after)}, .text = pattern};
+        fix[0] = (core::Edit){.span = {.start = (U32)(head + lead), .end = (U32)(head + after)}, .text = pattern};
         for (Usize i = 0; i < count; i++) {
             Usize from = body + places[i];
             fix[i + 1] =

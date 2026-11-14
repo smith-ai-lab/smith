@@ -67,6 +67,7 @@ import front::ast_clone;
 import front::parse as syntax;
 import front::when;
 import std::arena;
+import std::contract;
 import std::format;
 import std::mem;
 
@@ -3400,6 +3401,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
     Slot fields[:] = mem::alloc_slice(Slot, n);
     for (Usize i = 0; i < n; i++) {
         const ast::FieldDecl *f = &members[i];
+        contract::assert(f->type != nullptr); // the parser adds a field only with its type
         fields[i].name = f->name;
         fields[i].is_pub = f->is_pub || !f->is_new;
         fields[i].default_value = f->default_value;

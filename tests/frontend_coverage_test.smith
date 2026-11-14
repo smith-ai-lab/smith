@@ -463,12 +463,16 @@ export void test_frontend_coverage_a_new_gate_reports_for_ten_runs_and_a_wrong_o
     defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
     scratch::write(&p, "excluded.txt", "");
-    scratch::write(&p, "base.tsv", "a.smith\tpass\t\t\nb.smith\tpass\t\t\n");
-    scratch::write(&p, "good.tsv", "a.smith\tpass\t\t\nb.smith\tpass\t\t\n");
-    scratch::write(&p, "bad.tsv", "a.smith\tcheck\tunknown name\t1\nb.smith\tcheck\tunknown name\t1\n");
-    // the table of the base's own base: both files pass there, so a would-refuse that names them is false when the
-    // base's table still shows them passing (#3509)
-    scratch::write(&p, "older.tsv", "a.smith\tpass\t\t\nb.smith\tpass\t\t\n");
+    // the window is the new comparison's, a file that goes from errors to a crash (#3606); a passing file that fails
+    // is the old comparison's and refuses in every run (#3629, test below)
+    scratch::write(&p, "base.tsv", "a.smith\tcheck\tunknown name\t1\nb.smith\tcheck\tunknown name\t1\n");
+    scratch::write(&p, "good.tsv", "a.smith\tcheck\tunknown name\t1\nb.smith\tcheck\tunknown name\t1\n");
+    scratch::write(&p, "bad.tsv",
+                   "a.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n"
+                   "b.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n");
+    // the table of the base's own base: both files fail without a crash there, so a would-refuse that names them is
+    // false when the base's table still shows them not crashing (#3509)
+    scratch::write(&p, "older.tsv", "a.smith\tcheck\tunknown name\t1\nb.smith\tcheck\tunknown name\t1\n");
     // 11 runs, the table of run N is `$2`; the 11th run of the correct gate meets a seeded regression
     scratch::write(&p, "runs.sh",
                    "export SMITH_COVERAGE_EXCLUDED=excluded.txt\n"
@@ -501,6 +505,39 @@ export void test_frontend_coverage_a_new_gate_reports_for_ten_runs_and_a_wrong_o
     scratch::expect_lacks("frontend_coverage: the wrong gate never refuses", wrong.out, "refusing");
     scratch::release(wrong.out);
     scratch::release(wrong.err);
+}
+
+// #3629: a comparison an earlier version introduced refuses in every run, also while a newer comparison of the current
+// version is in its window: a passing file that fails is refused in run 1 of version 5 (introduced in version 4), the
+// file that goes from errors to a crash (version 5) is only reported, and the verdict row names only the second.
+export void test_frontend_coverage_an_old_comparison_refuses_while_a_new_one_reports() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::write(&p, "excluded.txt", "");
+    // a passed and fails now (old comparison); c failed without a crash and crashes now (new comparison)
+    scratch::write(&p, "base.tsv", "a.smith\tpass\t\t\nc.smith\tcheck\tunknown name\t1\n");
+    scratch::write(&p, "now.tsv",
+                   "a.smith\tcheck\tunknown name\t1\n"
+                   "c.smith\tcheck\tthe compiler crashed (SIGSEGV) in the check stage\t\n");
+    scratch::write(&p, "prev", "5\t3\t0\t0\treport-only\t,\n");
+    scratch::Run run =
+        scratch::sh(&p, "env SMITH_COVERAGE_EXCLUDED=excluded.txt smith run -- regressed base.tsv now.tsv prev");
+    scratch::expect_status("frontend_coverage: the gate runs", 0, &run);
+    scratch::expect_contains("frontend_coverage: the old comparison's file refuses in the window", run.out,
+                             "gate-refuses\ta.smith\n");
+    scratch::expect_lacks("frontend_coverage: the new comparison's file only reports", run.out,
+                          "gate-refuses\tc.smith");
+    scratch::expect_contains("frontend_coverage: the verdict row counts and names only the window's file", run.out,
+                             "gate-row\t5\t4\t1\t0\treport-only\t,c.smith,\n");
+    scratch::expect_contains("frontend_coverage: the log names both files", run.out,
+                             "\t5\trefused\t,a.smith,c.smith,\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
 }
 
 // #3509: a would-refuse that the published tables show true (a file that passed in the table of the run's base and

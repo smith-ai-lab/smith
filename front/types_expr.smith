@@ -77,6 +77,7 @@ import front::types_fn;
 import front::when;
 import std::arena;
 import std::format;
+import std::contract;
 import std::mem;
 import target;
 
@@ -5796,6 +5797,7 @@ static Bool type_pattern_name(types::Checked *c, const ast::Expr *e) {
 // a `char` or a `bool`, typed as the value, and a literal or a constant, never a variable. A bare name is the constant
 // it names, never a new binding.
 static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern pat) {
+    contract::assert(pat.constant != nullptr); // the caller calls it for a pattern that has a constant
     if (t == invalid(c) || !matchable(t)) {
         return;
     }
@@ -6504,6 +6506,7 @@ static types::TypeRef pack_expected(types::Checked *c, const ast::Param *pack, c
 // Stage 0 of a call of a function with `auto` parameters: the arguments are typed first, the instance is found after
 // them (`auto_resolved`).
 static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     const ast::Expr *e = f.node;
     if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
     ast::ExprRef args[:] = e->kind.call.args;
@@ -6599,6 +6602,7 @@ static Bool bind_pack_elements(types::Checked *c, ast::Param params[:], ast::Exp
 // Binds the generics from the arguments' types, the literals in a second pass. False, with the error, on a clash.
 static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const types::Symbol *template,
                                 types::Binding bound[:], Bool set[:]) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     if (!(e->kind == .call) || !(template->decl->kind == .function)) return false;
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
@@ -6728,6 +6732,7 @@ static Bool conform_fixed_arguments(types::Checked *c, ast::Param params[:], ast
 // the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
 // binds last, and only a generic no other argument binds.
 static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *template) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     const ast::Expr *e = f.node;
     if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
     const ast::Expr *callee = e->kind.call.callee;
@@ -6786,7 +6791,12 @@ static void auto_resolved(types::Checked *c, Frame f) {
     if (!(e->kind == .call)) return;
     const ast::Expr *callee = e->kind.call.callee;
     const types::Symbol *template = generic_callee(c, callee);
-    if (template == nullptr || !(template->decl->kind == .function)) {
+    if (template == nullptr) {
+        poison(c, e);
+        return;
+    }
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
+    if (!(template->decl->kind == .function)) {
         poison(c, e);
         return;
     }
@@ -6924,6 +6934,7 @@ static const ast::Expr *gathered_call(const ast::Expr *e, ast::Param params[:], 
 // `(count = n, ms = ms)`, the last argument, which the gather parameter takes as an `auto` one; then the call goes on
 // as the call of a template with `auto` parameters, one instance per set of leftovers (#1985).
 static void gather_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     const ast::Expr *e = f.node;
     if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
     ast::ExprRef args[:] = e->kind.call.args;
@@ -6965,6 +6976,7 @@ static const ast::Param *pack_param(ast::Param params[:]) {
 // argument, which the pack takes as an `auto` parameter; then the call goes on as the call of a template with `auto`
 // parameters, one instance per list of argument types (#1821).
 static void pack_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     const ast::Expr *e = f.node;
     if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
     ast::ExprRef args[:] = e->kind.call.args;
@@ -7008,6 +7020,7 @@ static void pack_before(types::Checked *c, Work *w, Frame f, const types::Symbol
 
 // Stage 0 of a call of a function whose instance depends on the arguments' types: `; kw...`, `rest...` or `auto`.
 static void rewritten_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     if (template->decl->kind != .function) return;
     ast::Param params[:] = template->decl->kind.function.params;
     if (gather_param(params) != nullptr) {
@@ -7021,6 +7034,7 @@ static void rewritten_before(types::Checked *c, Work *w, Frame f, const types::S
 
 // Stage 0 of a call of a generic function: finds the instance, then pushes the arguments of the runtime parameters.
 static void generic_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    contract::assert(template->decl != nullptr); // `generic_callee` returned only a symbol with its declaration
     const ast::Expr *e = f.node;
     if (!(e->kind == .call) || template->decl->kind != .function) {
         return;
@@ -7557,7 +7571,9 @@ static types::TypeRef made_callee(types::Checked *c, const ast::Expr *callee) {
     }
     if (callee->kind != .call) return nullptr;
     const types::Symbol *function = called_function(c, callee);
-    if (function == nullptr || !eval::returns_type(function->decl)) return nullptr;
+    if (function == nullptr) return nullptr;
+    contract::assert(function->decl != nullptr); // `called_function` tested it
+    if (!eval::returns_type(function->decl)) return nullptr;
     types::TypeRef held = eval::held_for(c, callee);
     if (held == nullptr || held == c->table.invalid || !types::is_made(c, held)) return held;
     types::set_type(c, callee, held);
@@ -7576,6 +7592,7 @@ static Bool computed_call(types::Checked *c, Frame f) {
     if (e->kind != .call) return false;
     const types::Symbol *callee = called_function(c, e);
     if (callee == nullptr) return false;
+    contract::assert(callee->decl != nullptr); // `called_function` tested it
     if (eval::returns_type(callee->decl)) {
         // a type function (`widen(T)`): the call is the type it makes, and has no run-time form
         types::TypeRef held = eval::held_for(c, e);

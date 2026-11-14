@@ -13,20 +13,25 @@ static Str as_str(char chars[:]) {
     return chars;
 }
 
-// Applies the fixes of `fix_chain::edits(source)` from the back, so the offsets hold.
+// Applies the edits of the fixes of `fix_chain::edits(source)` from the back, so the offsets hold.
 static Str applied(Str source) {
     core::Errors found = fix_chain::edits(source);
-    Str text = source;
+    core::Edits all = {};
     for (Usize k = 0; k < countof(found); k++) {
-        Usize best = k;
-        for (Usize j = k + 1; j < countof(found); j++)
-            if (found[j].fix[0].span.start > found[best].fix[0].span.start) best = j;
-        core::ParseError pick = found[best];
-        found[best] = found[k];
-        found[k] = pick;
+        core::Edits fix = found[k].fix;
+        for (Usize j = 0; j < countof(fix); j++) {
+            all = mem::realloc(all, countof(all) + 1);
+            all[countof(all) - 1] = fix[j];
+        }
     }
-    for (Usize k = 0; k < countof(found); k++) {
-        core::Edit edit = found[k].fix[0];
+    Str text = source;
+    for (Usize k = 0; k < countof(all); k++) {
+        Usize best = k;
+        for (Usize j = k + 1; j < countof(all); j++)
+            if (all[j].span.start > all[best].span.start) best = j;
+        core::Edit edit = all[best];
+        all[best] = all[k];
+        all[k] = edit;
         Str before = text[0:edit.span.start];
         Str after = text[edit.span.end:countof(text)];
         text = as_str(format::push(before, edit.text, after));
