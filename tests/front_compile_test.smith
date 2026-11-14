@@ -188,3 +188,21 @@ export void test_front_compile_a_type_of_an_imported_generic_is_its_modules_not_
     test::check_equal(made.ok, true);
     remove_all(folder);
 }
+
+// The signature of an imported function says `Value` in its own module's names (#3680): the caller's type of the same
+// name is not the parameter (`argument 1 of util::order is util::Value, the parameter is Value`).
+export void test_front_compile_an_imported_signature_names_its_modules_type_not_the_callers_of_the_same_name() {
+    Str folder = folder_for("same_signature");
+    write_text(as_str(format::push(folder, "/src/util.smith")),
+               "pub struct Value:\n    pub n: i32\n\n"
+               "pub fn order(v: Value) -> i32:\n    return v.n\n\n"
+               "pub fn make() -> Value:\n    return Value(n = 1)\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import util\n\nstruct Value:\n    k: i32\n\n"
+               "pub fn f() -> i32:\n    mine: Value = Value(k = 2)\n    theirs := util.make()\n"
+               "    return util.order(theirs) + mine.k\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(countof(made.text), (Usize)0);
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}

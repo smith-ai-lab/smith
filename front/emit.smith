@@ -350,13 +350,13 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
+        state::TyResult scoped = {}; // the signature's module before the caller's names (#3680)
+        if (countof(path.segments) == 1 && countof(e->import_scope) > 0 && type_in_import_scope(e, path, &scoped))
+            return scoped;
         if (countof(path.segments) == 1 && matching::type_enum(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 &&
             (state::same_text(path.segments[0].text, "str") || state::same_text(path.segments[0].text, "Str")))
             return emit_memory::type_slice(e, t);
-        state::TyResult scoped = {};
-        if (countof(path.segments) == 1 && countof(e->import_scope) > 0 && type_in_import_scope(e, path, &scoped))
-            return scoped;
         if (countof(path.segments) == 1 && e->options.checked != nullptr) {
             const types::Symbol *alias = types::lookup(&e->options.checked->scopes, path.segments[0].text);
             if (is_alias_symbol(alias)) return type_of_alias(e, alias);
