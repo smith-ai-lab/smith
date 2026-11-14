@@ -11,7 +11,7 @@
 //                 is the empty string)
 //   words[4..5]   types: first word, count      (5 words each: kind, flags, a, b, c)
 //   words[6..7]   functions: first word, count  (5 words each: name, return type, first parameter, parameter count,
-//                 flags)
+//                 flags: bit 0 variadic, bit 1 the header defines it (an inline function with a body, #3618))
 //   words[8..9]   structs: first word, count    (4 words each: name, first field, field count, flags: bit 0 opaque,
 //                 bit 1 union)
 //   words[10..11] fields: first word, count     (2 words each: name, type)
@@ -77,6 +77,7 @@
 #include "clang/AST/Type.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/CodeGen/CodeGenAction.h"
 #include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -84,6 +85,10 @@
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/Tooling.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/Support/raw_ostream.h"
 
 extern "C" {
@@ -393,8 +398,11 @@ uint32_t Reader::record(const clang::RecordDecl *decl) {
 
 void Reader::function(const clang::FunctionDecl *decl) {
     std::string name = decl->getName().str();
-    if (decl->doesThisDeclarationHaveABody()) {
-        skip(0, name, "an inline function with a body is not imported");
+    // A function the header defines (`static inline`) is imported like any other; flag bit 1 says it has a body, which
+    // smith_cimport_bodies compiles into the importing module's object (#3618).
+    bool has_body = decl->hasBody();
+    if (has_body && decl->isVariadic()) {
+        skip(0, name, "an inline function with a body that takes `...` is not imported");
         return;
     }
     // The type as written: a redeclaration of a library function (strlen) takes the builtin's type, which has lost
@@ -417,7 +425,7 @@ void Reader::function(const clang::FunctionDecl *decl) {
     for (auto &p : params)
         parameters.push_back(p);
     functions.push_back(
-        {text(name), result, first, static_cast<uint32_t>(params.size()), proto->isVariadic() ? 1U : 0U});
+        {text(name), result, first, static_cast<uint32_t>(params.size()), (proto->isVariadic() ? 1U : 0U) | (has_body ? 2U : 0U)});
     place(0, static_cast<uint32_t>(functions.size() - 1), decl);
     for (const clang::Attr *a : decl->attrs())
         if (!a->isImplicit()) skip(1, name, a->getSpelling());
@@ -976,7 +984,7 @@ bool cache_on() {
 std::string cache_key(const SmithCimportRequest *request, const Folders &f) {
     auto plain = [](const char *text) { return text == nullptr || std::strchr(text, '\x01') == nullptr; };
     if (!plain(request->name) || !plain(request->folder) || !plain(request->flags)) return "";
-    std::string material = "smith-cimport-words 1\n";
+    std::string material = "smith-cimport-words 2\n";
     material += request->name;
     material += request->quoted != 0 ? "\n\"\n" : "\n<\n";
     std::string folder = request->quoted != 0 && request->folder != nullptr ? request->folder : "";
@@ -1165,3 +1173,64 @@ void cache_store(const SmithCimportRequest *request, const uint32_t *words, size
 }
 
 } // namespace
+
+// The bodies of a header's inline functions (#3618). `import <h>;` reads a function the header defines like any other
+// (smith_cimport_read flags it), and a call to it needs its body in the object, since a `static inline` function has no
+// symbol of its own. The one mechanism for a clang-compiled C body in a module: clang inside smith compiles a small
+// translation unit, `includes` and then one use of each name, with the target of `into`, in `context`; the definitions
+// become `linkonce_odr` (defined once per module, merged with an equal one) and are linked into `into`, which has
+// declared them. Only the names asked for, and what they call, are compiled. Returns 0, or 1 with the text in `error`.
+namespace {
+struct TakeBodies : clang::EmitLLVMOnlyAction {
+    std::unique_ptr<llvm::Module> *out;
+    TakeBodies(llvm::LLVMContext *context, std::unique_ptr<llvm::Module> *where)
+        : clang::EmitLLVMOnlyAction(context), out(where) {}
+    void EndSourceFileAction() override {
+        clang::EmitLLVMOnlyAction::EndSourceFileAction();
+        *out = takeModule();
+    }
+};
+
+int bodies_failed(const std::string &text, char *error, size_t capacity) {
+    if (error != nullptr && capacity > 0) std::snprintf(error, capacity, "%s", text.c_str());
+    return 1;
+}
+} // namespace
+
+extern "C" int smith_cimport_bodies(const char *includes, const char *folder, const char *flags, const char *names,
+                                    void *context, void *into, char *error, size_t capacity) {
+    PlainAllocator plain;
+    auto *module = static_cast<llvm::Module *>(into);
+    std::string code = includes;
+    std::vector<std::string> wanted = lines(names);
+    // A plain `inline` definition (C99) has no external definition unless the unit redeclares it without `inline`.
+    for (const std::string &name : wanted)
+        code += "__typeof__(" + name + ") " + name + ";\n";
+    for (size_t i = 0; i < wanted.size(); i++)
+        code += "void *__smith_use_" + std::to_string(i) + " = (void *)" + wanted[i] + ";\n";
+    std::vector<std::string> args = {"-x", "c", "-std=gnu23", "-fno-color-diagnostics", "-ferror-limit=0", "-O0"};
+    args.push_back("--target=" + module->getTargetTriple().str());
+    if (folder != nullptr && folder[0] != '\0') {
+        args.push_back("-iquote");
+        args.push_back(folder);
+    }
+    for (const std::string &f : lines(flags))
+        args.push_back(f);
+    std::unique_ptr<llvm::Module> body;
+    auto action = std::make_unique<TakeBodies>(static_cast<llvm::LLVMContext *>(context), &body);
+    if (!clang::tooling::runToolOnCodeWithArgs(std::move(action), code, args, source_name, "smith-cimport") ||
+        body == nullptr)
+        return bodies_failed("clang could not compile the bodies of the header's inline functions", error, capacity);
+    for (size_t i = 0; i < wanted.size(); i++)
+        if (llvm::GlobalVariable *keep = body->getNamedGlobal("__smith_use_" + std::to_string(i)))
+            keep->eraseFromParent();
+    for (llvm::Function &f : *body)
+        if (!f.isDeclaration()) {
+            f.setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
+            f.setVisibility(llvm::GlobalValue::DefaultVisibility);
+        }
+    if (llvm::Linker::linkModules(*module, std::move(body)))
+        return bodies_failed("the bodies of the header's inline functions did not link into the module", error,
+                             capacity);
+    return 0;
+}

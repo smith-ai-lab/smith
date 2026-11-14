@@ -151,6 +151,63 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     return sig;
 }
 
+// A function the header defines (`static inline`) that the module calls: its name goes on the list `link_c_bodies`
+// compiles at the end (#3618), once.
+static void note_c_body(state::Emitter *e, Str name) {
+    Usize from = 0;
+    for (Usize i = 0; i <= countof(e->c_bodies); i++) {
+        if (i < countof(e->c_bodies) && e->c_bodies[i] != '\n') continue;
+        if (state::same_text(e->c_bodies[from:i], name)) return;
+        from = i + 1;
+    }
+    e->c_bodies = state::msg(format::push(e->c_bodies, name, "\n"));
+}
+
+// The `#include` of each C header the module imports, one a line.
+static Str header_includes(const ast::Module *m) {
+    Str lines = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        Str header = "";
+        Bool angled = false;
+        if (d->kind == .import_c) {
+            header = d->kind.import_c.header;
+            angled = d->kind.import_c.angled;
+        } else if (d->kind == .import_from) {
+            header = d->kind.import_from.header;
+            angled = d->kind.import_from.angled;
+        }
+        if (countof(header) == 0) continue;
+        lines = state::msg(format::push(lines, "#include ", angled ? "<" : "\"", header, angled ? ">" : "\"", "\n"));
+    }
+    return lines;
+}
+
+extern I32 smith_cimport_bodies(const char *includes, const char *folder, const char *flags, const char *names,
+                                void *context, void *into, char *error, Usize capacity);
+
+// The one way a clang-compiled C body gets into a module (#3618): the bodies of the header-defined functions the module
+// called (`e->c_bodies`) are compiled by the clang inside smith, in the module's context and for its target, and linked
+// in as `linkonce_odr`, so each is defined once however many instances call it. Later users of the mechanism (a macro
+// wrapped in a small inline C function, #3338, #3342) call `smith_cimport_bodies` the same way with the C text they
+// wrote, naming the functions it defines.
+export void link_c_bodies(state::Emitter *e, const ast::Module *m) {
+    if (countof(e->c_bodies) == 0) return;
+    char *includes = state::cstr(header_includes(m));
+    char *folder = state::cstr(e->options.header_folder);
+    char *flags = state::cstr(e->options.header_flags);
+    char *names = state::cstr(e->c_bodies);
+    char problem[512] = "";
+    I32 failed = smith_cimport_bodies(includes, folder, flags, names, (void *)e->context, (void *)e->module, problem, 512);
+    mem::free(includes);
+    mem::free(folder);
+    mem::free(flags);
+    mem::free(names);
+    mem::free(e->c_bodies.data);
+    e->c_bodies = "";
+    if (failed != 0) state::add_error(e, state::error_of(state::msg(format::push((const char *)problem))));
+}
+
 // A function of a C header (#1762), `c::printf`: its type is the checker's (the header's own names are typedefs the
 // emitter has no declaration for), and its symbol is its C name. Declared when the first call needs it.
 static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
@@ -164,6 +221,7 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     if (symbol == nullptr || symbol->type->kind != .function) {
         return signature_failed(state::fail("not a C function", d->span));
     }
+    if (d->is_inline) note_c_body(e, name);
     types::TypeRef type = symbol->type;
     Usize count = countof(types::slots_of(type).items);
     if (count > 64) {

@@ -1554,6 +1554,8 @@ static emit::Options emit_options(Str wanted, Str source, types::Checked *checke
     options.source = source;
     options.checked = checked;
     options.fill_undefined = true;
+    options.header_flags = header_flags();
+    options.header_folder = header_folder;
     options.debug_info = c::getenv("SMITH_FRONT_DEBUG") != nullptr;
     return options;
 }
