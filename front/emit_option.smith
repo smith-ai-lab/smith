@@ -180,9 +180,7 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
     }
     state::TyResult made = payload_of_checked(e, base);
     for (Usize i = depth; i > 0; i--) {
-        if (made == .error) {
-            return {.error = made.error};
-        }
+        if (made == .error) return made;
         made = build(e, made.ok, (ast::Span){});
     }
     return made;
@@ -267,7 +265,8 @@ static state::Status option_of_node(state::Emitter *e, const ast::Expr *x, state
 static Bool is_result_node(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (hint.present && hint.ty.kind == .result) return true;
     state::TyResult checked = state::type_of_node(e, x);
-    Bool yes = checked == .ok && checked.ok.kind == .result;
+    Bool yes = false;
+    if (checked == .ok) yes = checked.ok.kind == .result;
     if (checked == .error) state::free_text(checked.error.message);
     return yes;
 }

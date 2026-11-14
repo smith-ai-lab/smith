@@ -7,9 +7,12 @@
 //
 // A `Result` is read with `.ok` only after a test, and the test that leaves the block is a binding with an `else`
 // (smith-dev-syntax-bindings). `try` is for a guard that passes the error up unchanged, which the checker writes
-// (`note_try_guard`); this pass is for the other guards: a body that leaves (`return`, `continue`, `break`) and never
-// mentions the result. The binding takes the variant's name, `ok`; a name `ok` in the function leaves the site as it
-// is, and so does a second guard in the same function (the next pass finds `ok` in scope). Tests:
+// (`note_try_guard`); this pass is for the other guards: a body that leaves (`return`, `continue`, `break`) and does
+// not read a part of the result. The body may use the result as a whole value (`result = r`, `return unknown(r)`: in
+// the `else` the name is the result still); `return r` alone is `try`'s, unless `r` is `mut`. The mirror, `if r ==
+// .ok:` or `if r != .error:` that leaves with `r.error` read below, is `.error(error) := r else:` the same way. The
+// binding takes the variant's name; a name the function holds already makes it `ok_value` (`error_value`), and one
+// guard of a function is bound in a pass (the next pass finds the first one's name in scope). Tests:
 // `tests/front_fix_guard_test.smith`.
 //
 //   fix_guard::edits(source)   the fixes for the guards of `source`
@@ -127,15 +130,31 @@ static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
     return add_why(out, start, stop, text, "a Result read after a guard that leaves is a binding with an else");
 }
 
-// The name `R` of `if R == .error:` in the trimmed `line`, and where the text after the colon starts.
-static Bool guard_of(Str line, Str *name, Usize *after) {
+// The name `R` of `if R == .error:`, `if R == .ok:` or `if R != .error:` in the trimmed `line`, the variant the rest of
+// the block reads (`ok` after a test of the error, `error` after a test of the value), and where the text after the
+// colon starts.
+static Bool guard_of(Str line, Str *name, Usize *after, Str *reads) {
     if (!starts_with(line, "if ")) return false;
     Usize k = 3;
     while (k < countof(line) && word_char(line[k]))
         k += 1;
-    if (k == 3 || !starts_with(line[k:countof(line)], " == .error:")) return false;
+    if (k == 3) return false;
+    Str rest = line[k:countof(line)];
+    Str value = "ok";
+    Str failure = "error";
+    if (starts_with(rest, " == .error:")) {
+        *reads = value;
+        *after = k + 11;
+    } else if (starts_with(rest, " != .error:")) {
+        *reads = failure;
+        *after = k + 11;
+    } else if (starts_with(rest, " == .ok:")) {
+        *reads = failure;
+        *after = k + 8;
+    } else {
+        return false;
+    }
     *name = line[3:k];
-    *after = k + 11;
     return true;
 }
 
@@ -154,6 +173,52 @@ static Bool leaves(Str text) {
 }
 
 static Usize code_word_at(Str text, Str name);
+static Usize variant_read_at(Str text, Usize from, Str name, Str variant);
+
+// Whether a body that mentions the result `name` is another fix's: it reads a part of it (`r.error`, which the
+// binding's `else` cannot), or it ends by returning the whole result, which `try` passes up. A body that uses the
+// result as a value (`result = r`, `return unknown(r)`) is not: in the `else` the name is the result still. `try` takes
+// only a result declared once (`mut` is not), so `return r` of a `mut r` is the binding's too.
+static Bool body_keeps(Str body, Str name, Bool mutable) {
+    Usize from = 0;
+    Usize at = code_word_at(body, name);
+    while (at < countof(body)) {
+        Usize after = at + countof(name);
+        if (after < countof(body) && body[after] == '.') return true;
+        from = after;
+        at = code_word_at(body[from:countof(body)], name);
+        if (at < countof(body) - from)
+            at += from;
+        else
+            at = countof(body);
+    }
+    Usize stop = countof(body);
+    while (stop > 0 && (body[stop - 1] == ' ' || body[stop - 1] == '\n'))
+        stop -= 1;
+    Usize line = stop;
+    while (line > 0 && body[line - 1] != '\n')
+        line -= 1;
+    Str last = body[line:stop];
+    while (countof(last) > 0 && (last[0] == ' ' || last[0] == ':'))
+        last = last[1:countof(last)];
+    return !mutable && same_str(last, types::message_of(format::push("return ", name)));
+}
+
+// The guard's binding, and each read of the variant in the rest of the block replaced by the bound name.
+static core::Errors bind_rest(core::Errors out, Str source, Usize head_after, Usize body_end, Usize rest_end, Str name,
+                              Str reads, Str bound, Usize head) {
+    Str binding = types::message_of(format::push(".", reads, "(", bound, ") := ", name, " else:"));
+    out = add(out, head, head_after, binding);
+    Usize size = countof(name) + 1 + countof(reads);
+    Usize from = 0;
+    Usize found = variant_read_at(source[body_end:rest_end], from, name, reads);
+    while (found < rest_end - body_end) {
+        out = add(out, body_end + found, body_end + found + size, bound);
+        from = found + size;
+        found = variant_read_at(source[body_end:rest_end], from, name, reads);
+    }
+    return out;
+}
 
 export core::Errors edits(Str source) {
     core::Errors out = {};
@@ -164,7 +229,8 @@ export core::Errors edits(Str source) {
         Usize indent = indent_of(source, at);
         Str name = "";
         Usize after = 0;
-        if (!guard_of(source[at + indent:end], &name, &after)) {
+        Str reads = "";
+        if (!guard_of(source[at + indent:end], &name, &after, &reads)) {
             at = end + 1;
             continue;
         }
@@ -188,7 +254,12 @@ export core::Errors edits(Str source) {
         // the body, from the colon on, must not mention the result
         Usize mention_from = countof(inline_body) > 0 ? head + after : end + 1;
         Str body_text = source[mention_from:body_end];
-        if (!left || code_word_at(body_text, name) < countof(body_text)) {
+        Usize in_start = function_start(source, at);
+        Usize in_stop = function_end(source, in_start);
+        Str declared = types::message_of(format::push("mut ", name));
+        Bool mutable = word_at(source[in_start:in_stop], 0, declared) < in_stop - in_start;
+        if (same_str(reads, "error")) mutable = true; // the value's path: `try` has no part in it
+        if (!left || body_keeps(body_text, name, mutable)) {
             at = end + 1;
             continue;
         }
@@ -197,26 +268,23 @@ export core::Errors edits(Str source) {
         while (rest_end < countof(source) && (blank(source, rest_end) || indent_of(source, rest_end) >= indent))
             rest_end = next_line(source, rest_end);
         if (rest_end > countof(source)) rest_end = countof(source);
-        if (body_end >= rest_end || read_at(source[body_end:rest_end], 0, name) >= rest_end - body_end) {
+        if (body_end >= rest_end || variant_read_at(source[body_end:rest_end], 0, name, reads) >= rest_end - body_end) {
             at = end + 1;
             continue;
         }
         Usize start = function_start(source, at);
         Usize stop = function_end(source, start);
-        if (start == last_function || word_at(source[start:stop], 0, "ok") < stop - start) {
+        // the binding is the variant's name; where the function names it already (an earlier guard's binding, a local)
+        // it is `<variant>_value`
+        Str bound = reads;
+        if (word_at(source[start:stop], 0, bound) < stop - start)
+            bound = types::message_of(format::push(reads, "_value"));
+        if (start == last_function || word_at(source[start:stop], 0, bound) < stop - start) {
             at = end + 1;
             continue;
         }
         last_function = start;
-        Str binding = types::message_of(format::push(".ok(ok) := ", name, " else:"));
-        out = add(out, head, head + after, binding);
-        Usize from = 0;
-        Usize found = read_at(source[body_end:rest_end], from, name);
-        while (found < rest_end - body_end) {
-            out = add(out, body_end + found, body_end + found + countof(name) + 3, "ok");
-            from = found + countof(name) + 3;
-            found = read_at(source[body_end:rest_end], from, name);
-        }
+        out = bind_rest(out, source, head + after, body_end, rest_end, name, reads, bound, head);
         at = end + 1;
     }
     return out;

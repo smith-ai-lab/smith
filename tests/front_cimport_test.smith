@@ -67,16 +67,11 @@ static Str dump(const Header *h) {
 
 static Str run_line(const char *const argv[:]) {
     process::OutputResult done = process::run(argv);
-    switch (done) {
-    case .ok: {
-        Usize n = countof(done.ok.output);
-        while (n > 0 && done.ok.output[n - 1] == '\n')
-            n -= 1;
-        return format::bytes((const char *)done.ok.output.data, n);
-    }
-    case .error:
-        return "";
-    }
+    if (done == .error) return "";
+    Usize n = countof(done.ok.output);
+    while (n > 0 && done.ok.output[n - 1] == '\n')
+        n -= 1;
+    return format::bytes((const char *)done.ok.output.data, n);
 }
 
 // The flags a driver would give: smith's own clang resource folder (builtin headers such as <stddef.h>), and the SDK
