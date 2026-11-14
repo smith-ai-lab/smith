@@ -60,14 +60,34 @@ export void test_front_fix_guard_a_body_that_mentions_the_result_is_left() {
            "fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        return r.error\n    use(r.ok)\n");
 }
 
+export void test_front_fix_guard_a_body_that_uses_the_result_as_a_value_is_a_binding_with_an_else() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        out = r\n        break\n    use(r.ok)\n",
+           "fn f(s: Str):\n    r := g(s)\n    .ok(ok) := r else:\n        out = r\n        break\n    use(ok)\n");
+}
+
+export void test_front_fix_guard_returning_a_mut_result_is_a_binding_with_an_else() {
+    expect("fn f(s: Str):\n    mut r := g(s)\n    if r == .error: return r\n    use(r.ok)\n",
+           "fn f(s: Str):\n    mut r := g(s)\n    .ok(ok) := r else: return r\n    use(ok)\n");
+}
+
+export void test_front_fix_guard_a_value_that_leaves_binds_the_error_of_the_rest() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .ok:\n        return r\n    use(r.error)\n",
+           "fn f(s: Str):\n    r := g(s)\n    .error(error) := r else:\n        return r\n    use(error)\n");
+    expect("fn f(s: Str):\n    r := g(s)\n    if r != .error: return r\n    mut error: Error = r.error\n",
+           "fn f(s: Str):\n    r := g(s)\n    .error(error_value) := r else: return r\n    mut error: Error = "
+           "error_value\n");
+}
+
 export void test_front_fix_guard_a_body_that_does_not_leave_is_left() {
     expect("fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        log(s)\n    use(r.ok)\n",
            "fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        log(s)\n    use(r.ok)\n");
 }
 
-export void test_front_fix_guard_a_name_ok_in_the_function_leaves_the_site() {
+export void test_front_fix_guard_a_name_ok_in_the_function_makes_the_binding_ok_value() {
     expect("fn f(s: Str):\n    ok := 1\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n",
-           "fn f(s: Str):\n    ok := 1\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n");
+           "fn f(s: Str):\n    ok := 1\n    r := g(s)\n    .ok(ok_value) := r else: return\n    use(ok_value)\n");
+    expect("fn f(s: Str):\n    ok := 1\n    ok_value := 2\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n",
+           "fn f(s: Str):\n    ok := 1\n    ok_value := 2\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n");
 }
 
 export void test_front_fix_guard_a_call_named_like_return_is_not_a_leave() {
@@ -233,14 +253,14 @@ static Str node_text() {
     return "struct Node:\n    kind: Kind\n\nenum Kind:\n    next: *Node\n    leaf\n\n";
 }
 
-// A write of the tested name whose right side reads the payload binds it: the binding is a copy taken at the test
-// (#3210).
-export void test_front_fix_guard_a_payload_read_that_moves_the_name_is_a_binding() {
+// A write of the tested name whose right side reads the payload: the read comes before the write, so `n.kind` is the
+// payload still, and it is written direct (#3616; #3210 bound it before the checker narrowed a tested path).
+export void test_front_fix_guard_a_payload_read_that_moves_the_name_is_read_direct() {
     expect_fixed(as_str(format::push(node_text(), "fn last(mut n: *Node) -> bool:\n    while n != nullptr:\n"
                                                   "        if n.kind == .next:\n            n = n.kind.next\n"
                                                   "        else:\n            return false\n    true\n")),
                  as_str(format::push(node_text(), "fn last(mut n: *Node) -> bool:\n    while n != nullptr:\n"
-                                                  "        if .next(next) := n.kind:\n            n = next\n"
+                                                  "        if n.kind == .next:\n            n = n.kind\n"
                                                   "        else:\n            return false\n    true\n")));
 }
 
@@ -266,4 +286,33 @@ export void test_front_fix_guard_a_field_test_is_left_and_the_payload_is_read_di
                                                   "        return 0\n    return n.kind.pair\n")),
                  as_str(format::push(pair_text(), "fn other(n: *Node) -> i32:\n    if n.kind != .pair:\n"
                                                   "        return 0\n    return n.kind\n")));
+}
+
+// A loop that writes the root of a tested path after the reads (#3616): the reads before the write are the payload.
+export void test_front_fix_guard_a_loop_that_writes_the_root_after_the_reads_reads_direct() {
+    expect_fixed(
+        as_str(format::push(pair_text(), "fn run(s: *Node) -> i32:\n    mut c: *Node = s\n    mut k: i32 = 0\n"
+                                         "    while k < 3:\n"
+                                         "        if c.kind != .pair or c.kind.pair == 0 or k == 2:\n"
+                                         "            return 0\n        k += c.kind.pair\n        c = s\n    k\n")),
+        as_str(format::push(pair_text(), "fn run(s: *Node) -> i32:\n    mut c: *Node = s\n    mut k: i32 = 0\n"
+                                         "    while k < 3:\n"
+                                         "        if c.kind != .pair or c.kind == 0 or k == 2:\n"
+                                         "            return 0\n        k += c.kind\n        c = s\n    k\n")));
+}
+
+static Str value_text() {
+    return "struct Whole:\n    magnitude: i32\n\nenum Value:\n    integer: Whole\n    boolean: Whole\n    none\n\n";
+}
+
+// Two variant tests of two names in one `or` chain: the second binding is `integer_value`, as a Result's second `ok`
+// is, where the first took `integer` (#3616).
+export void test_front_fix_guard_two_tests_of_one_variant_on_two_names_bind_two_names() {
+    expect_fixed(as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
+                                                   "    if l != .integer or r != .integer: return 0\n"
+                                                   "    return l.integer.magnitude + r.integer.magnitude\n")),
+                 as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
+                                                   "    .integer(integer) := l else: return 0\n"
+                                                   "    .integer(integer_value) := r else: return 0\n"
+                                                   "    return integer.magnitude + integer_value.magnitude\n")));
 }
