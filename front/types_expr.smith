@@ -2843,6 +2843,16 @@ static void is_after(types::Checked *c, const ast::Expr *e, Frame f) {
     finish(c, e, c->table.bool_type, f.expected);
 }
 
+// The type of `place`, an operand of `place op other`: the enumeration, when `other` is a bare variant and an earlier
+// test narrowed `place` to its payload; the type is recorded so the emitter reads the whole value (#3664).
+static types::TypeRef tag_side(types::Checked *c, ast::BinaryOp op, const ast::Expr *place, const ast::Expr *other) {
+    types::TypeRef seen = typ(c, place);
+    if (!is_equality(op) || other->kind != .variant) return seen;
+    types::TypeRef whole = tag_type(c, place, seen);
+    if (whole != seen) types::set_type(c, place, whole);
+    return whole;
+}
+
 static void binary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .binary)) {
@@ -2899,16 +2909,8 @@ static void binary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    types::TypeRef lt = typ(c, left);
-    types::TypeRef rt = typ(c, right);
-    if (is_equality(op) && right->kind == .variant && lt != tag_type(c, left, lt)) {
-        lt = tag_type(c, left, lt);
-        types::set_type(c, left, lt); // the emitter reads the whole enumeration, not the payload, to test its tag
-    }
-    if (is_equality(op) && left->kind == .variant && rt != tag_type(c, right, rt)) {
-        rt = tag_type(c, right, rt);
-        types::set_type(c, right, rt);
-    }
+    types::TypeRef lt = tag_side(c, op, left, right);
+    types::TypeRef rt = tag_side(c, op, right, left);
     types::TypeRef t = binary_type(c, e->span, op, lt, rt);
     if (t == bad) {
         poison(c, e);
