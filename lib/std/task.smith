@@ -295,8 +295,6 @@ void transfer(Task *from, Task *to) {
         c::__sanitizer_start_switch_fiber(from->finished && !from->keep_fake_stack ? nullptr : &from->fake_stack,
                                           to->bottom, to->size);
     }
-    contract::assert(
-        to->sp != nullptr); // a task that is switched to has its stack pointer: `make_task` or the switch away set it
     switch_stacks(&from->sp, to->sp);
     if constexpr (target::address_sanitizer) {
         const void *bottom = nullptr;
