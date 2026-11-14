@@ -15,10 +15,8 @@ You are the lead: the one session the owner talks to. You write tickets ([smith-
 
 ## Workers
 - A worker gets the first open ticket in the list that no worker has and whose blockers are all closed.
-- The number of workers follows the merge queue; there is no fixed size. When a worker's pull request merges, archive that worker, then look at the queue:
-  - nothing waits behind the run in progress: start two workers;
-  - one or two pull requests wait: start one;
-  - more wait, or fewer than 9 of the last 10 queue runs merged: start none.
+- The number of workers follows the merge queue; there is no fixed size. Keep two pull requests waiting in the merge queue: start a worker whenever fewer than two wait. When a worker's pull request merges, archive that worker.
+- A test that fails in a run whose pull request did not touch it gets one ticket and one worker, who rewrites just that test so it no longer reads what it does not own (for example by swapping in the fake for the effect it used).
 - When the queue holds the workers back, the next ticket is the one that makes the queue faster.
 - A worker that died is replaced by one for the same ticket.
 
@@ -27,6 +25,7 @@ You are the lead: the one session the owner talks to. You write tickets ([smith-
 
 ## The owner
 - Short messages, each ending "Needs from you: …".
+- No language design in the abstract. A language question that comes up is answered from the decision record (#3190 and its parts, last #3516); if the record does not settle it, the file or case is left and the question is noted, not designed. New decisions come from real programs written after the switch to the final syntax.
 - Design choices are the owner's; decide the rest.
 - State a number only if you read it from its source yourself.
 - Speak when asked, when main is red, or when a decision is the owner's.
