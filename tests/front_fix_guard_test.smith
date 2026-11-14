@@ -205,12 +205,12 @@ export void test_front_fix_guard_a_test_inside_an_and_chain_is_a_pattern() {
                                             "    if n > 0 and s is .circle:\n        return s\n    0\n")));
 }
 
-// The same test of a payload enumeration is `is` and the name narrows (#3227); a `mut` name keeps the pattern.
+// The same test of a payload enumeration with a record payload stays as written and the name narrows (#3631).
 export void test_front_fix_guard_a_payload_test_in_an_and_chain_is_written_with_is() {
     Str shape = "struct Circle:\n    r: i32\n\nenum Shape:\n    circle: Circle\n    empty\n\n";
     expect_fixed(as_str(format::push(shape, "fn big(s: Shape, n: i32) -> i32:\n    if n > 0 and s == .circle and "
                                             "s.circle.r > 1:\n        return s.circle.r\n    0\n")),
-                 as_str(format::push(shape, "fn big(s: Shape, n: i32) -> i32:\n    if n > 0 and s is .circle and "
+                 as_str(format::push(shape, "fn big(s: Shape, n: i32) -> i32:\n    if n > 0 and s == .circle and "
                                             "s.r > 1:\n        return s.r\n    0\n")));
 }
 
@@ -305,16 +305,15 @@ static Str value_text() {
     return "struct Whole:\n    magnitude: i32\n\nenum Value:\n    integer: Whole\n    boolean: Whole\n    none\n\n";
 }
 
-// Two variant tests of two names in one `or` chain: the second binding is `integer_value`, as a Result's second `ok`
-// is, where the first took `integer` (#3616).
+// Two variant tests of two names in one `or` chain are left as written and both reads are direct (#3631; before, the
+// second binding was `integer_value`, as a Result's second `ok` is).
 export void test_front_fix_guard_two_tests_of_one_variant_on_two_names_bind_two_names() {
     expect_fixed(as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
                                                    "    if l != .integer or r != .integer: return 0\n"
                                                    "    return l.integer.magnitude + r.integer.magnitude\n")),
                  as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
-                                                   "    .integer(integer) := l else: return 0\n"
-                                                   "    .integer(integer_value) := r else: return 0\n"
-                                                   "    return integer.magnitude + integer_value.magnitude\n")));
+                                                   "    if l != .integer or r != .integer: return 0\n"
+                                                   "    return l.magnitude + r.magnitude\n")));
 }
 
 // A tested field path in a value (#3616): the checker writes the read direct and `fix_chain` would hoist the test to a
@@ -324,14 +323,4 @@ export void test_front_fix_guard_a_field_test_in_a_value_is_left_with_the_read_d
                                                   "    return n.kind == .next and n.kind.next != nullptr\n")),
                  as_str(format::push(node_text(), "fn linked(n: *Node) -> bool:\n"
                                                   "    return n.kind == .next and n.kind != nullptr\n")));
-}
-
-// A tested name is left as written and read direct (#3631).
-export void test_front_fix_guard_a_tested_name_is_left_and_read_direct() {
-    expect_fixed(as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
-                                                   "    if l != .integer or r != .integer: return 0\n"
-                                                   "    return l.integer.magnitude + r.integer.magnitude\n")),
-                 as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
-                                                   "    if l != .integer or r != .integer: return 0\n"
-                                                   "    return l.magnitude + r.magnitude\n")));
 }
