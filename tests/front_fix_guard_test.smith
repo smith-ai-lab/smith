@@ -325,3 +325,13 @@ export void test_front_fix_guard_a_field_test_in_a_value_is_left_with_the_read_d
                  as_str(format::push(node_text(), "fn linked(n: *Node) -> bool:\n"
                                                   "    return n.kind == .next and n.kind != nullptr\n")));
 }
+
+// A tested name is left as written and read direct (#3631).
+export void test_front_fix_guard_a_tested_name_is_left_and_read_direct() {
+    expect_fixed(as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
+                                                   "    if l != .integer or r != .integer: return 0\n"
+                                                   "    return l.integer.magnitude + r.integer.magnitude\n")),
+                 as_str(format::push(value_text(), "fn both(l: Value, r: Value) -> i32:\n"
+                                                   "    if l != .integer or r != .integer: return 0\n"
+                                                   "    return l.magnitude + r.magnitude\n")));
+}

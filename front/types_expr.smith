@@ -2297,7 +2297,7 @@ static Usize narrow_test(types::Checked *c, const ast::Expr *item, Bool truth, t
     if (r == nullptr || r->kind != .variable || !r->is_new) return count;
     if (!r->is_const && !types::is_local(&c->scopes, root)) return count;
     Bool path = !same_text(name, root);
-    if (path) t.by_is = true; // a field path is narrowed by `==` too (item 68 of #3516)
+    t.by_is = true; // a name and a field path are narrowed by `==` too (items 27 and 68 of #3516, #3631)
     const types::Symbol *s = path ? types::lookup(&c->scopes, name) : r;
     Usize at = found_at(out, count, name);
     types::Symbol next = {};
