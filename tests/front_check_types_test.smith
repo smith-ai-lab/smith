@@ -817,3 +817,18 @@ export void test_front_check_types_a_pointer_field_handed_out_as_a_value_stays_n
                      "    put(c.session)\n"),
           "", "");
 }
+
+// #3677: a `?*mut T` where a `?*T` is expected only gains const, so it is accepted wherever a `*mut T` converts to a
+// `*T` (assignment, argument, return, field); the other direction drops const and stays an error.
+export void test_front_check_types_an_optional_writable_pointer_converts_to_an_optional_read_only_one() {
+    Str head = "struct T:\n    n: i32\n\nstruct Holder:\n    p: ?*T\n\nfn take(p: ?*T) -> i32:\n    0\n\n";
+    clean(join(head, "fn a(p: ?*mut T):\n    q: ?*T = p\n"));
+    clean(join(head, "fn b(p: ?*mut T) -> i32:\n    take(p)\n"));
+    clean(join(head, "fn c(p: ?*mut T) -> ?*T:\n    p\n"));
+    clean(join(head, "fn d(p: ?*mut T) -> Holder:\n    Holder(p = p)\n"));
+}
+
+export void test_front_check_types_an_optional_read_only_pointer_does_not_convert_to_a_writable_one() {
+    Str head = "struct T:\n    n: i32\n\n";
+    fails(join(head, "fn a(p: ?*T):\n    q: ?*mut T = p\n"), "expected Option(T *), found Option(const T *)", "");
+}
