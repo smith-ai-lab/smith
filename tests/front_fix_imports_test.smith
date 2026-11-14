@@ -6,8 +6,11 @@ import front::ast;
 import front::fix;
 import front::parser;
 import std::arena;
+import std::format;
 import std::mem;
+import std::process;
 import std::test;
+import <stdlib.h>;
 import <string.h>;
 
 static Bool same(Str a, Str b) {
@@ -43,6 +46,26 @@ static const ast::Module *load(const char *name) {
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = p.module;
     return copy;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// The fixer reads `smith/test.h` with the flags of SMITH_FRONT_CIMPORT_FLAGS, which name smith's resource directory
+// (where `stddef.h` is), as `smith cc` passes them (front_fix_test does the same). Without them the header is not read
+// and `c.` is kept; a test that relied on another test of the runner having set them failed when run alone (#3636).
+static void use_header_flags() {
+    const char *self = c::getenv("SMITH_SELF");
+    const char *const argv[3] = {self != nullptr ? self : "smith", "cc", "-print-resource-dir"};
+    process::OutputResult done = process::run(argv[0:3]);
+    if (done != .ok) return;
+    Usize n = countof(done.ok.output);
+    while (n > 0 && done.ok.output[n - 1] == '\n')
+        n -= 1;
+    Str dir = as_str(format::push(format::bytes((const char *)done.ok.output.data, n)));
+    Str flags = as_str(format::push("-resource-dir\n", dir, "\n"));
+    c::setenv("SMITH_FRONT_CIMPORT_FLAGS", flags.data, 1);
 }
 
 static void expect(Str before, Str after) {
@@ -97,6 +120,7 @@ export void test_front_fix_imports_a_library_already_imported_keeps_one_import()
 }
 
 export void test_front_fix_imports_a_name_the_module_lacks_keeps_the_header() {
+    use_header_flags();
     expect("module m;\nimport <smith/test.h>;\nexport void test_a() {\n    c::smith_check(true);\n"
            "    c::smith_no_such_check(1);\n}\n",
            "import c <smith/test.h>\npub fn test_a():\n    test.smith_check(true)\n"
