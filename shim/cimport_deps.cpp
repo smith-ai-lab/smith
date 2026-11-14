@@ -123,8 +123,11 @@ void finish(uint64_t *state, size_t count, uint64_t *out) {
 
 } // namespace
 
+extern "C" const char *smith_cimport_default_resource_dir(void); // shim/cimport.cpp
+
 extern "C" size_t smith_cimport_deps(const SmithCimportRequest *request, char *out, size_t capacity) {
     PlainAllocator plain;
+    bool has_resource = false;
     std::string header = request->name;
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
                        (request->quoted != 0 ? "\"" : ">") + "\n";
@@ -133,7 +136,14 @@ extern "C" size_t smith_cimport_deps(const SmithCimportRequest *request, char *o
         args.push_back("-iquote");
         args.push_back(request->folder);
     }
-    for (const std::string &f : lines(request->flags))
+    std::vector<std::string> given = lines(request->flags);
+    for (const std::string &f : given)
+        if (f == "-resource-dir") has_resource = true;
+    if (!has_resource && smith_cimport_default_resource_dir()[0] != '\0') {
+        given.push_back("-resource-dir");
+        given.push_back(smith_cimport_default_resource_dir());
+    }
+    for (const std::string &f : given)
         args.push_back(f);
     std::vector<std::string> files;
     bool ran = clang::tooling::runToolOnCodeWithArgs(std::make_unique<Collect>(&files), code, args, "smith_cimport.c",
