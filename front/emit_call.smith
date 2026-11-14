@@ -947,6 +947,12 @@ static void mark_returns_twice(c::LLVMValueRef function, c::LLVMValueRef call) {
     c::LLVMAddAttributeAtIndex(function, 0xFFFFFFFF, attribute);
 }
 
+// The error of a failed lookup of the callee, with its text freed.
+static state::Status find_failed(Str key, state::Error failure) {
+    state::free_text(key);
+    return {.error = failure};
+}
+
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *written = w->expr;
@@ -973,15 +979,8 @@ static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w)
     if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     ast::ExprRef args[:] = filled_arguments(e, key, written_args, imported);
     SignatureResult found = find(e, key, callee->span, imported);
-    Signature sig = {};
-    switch (found) {
-    case .ok:
-        sig = found.ok;
-        break;
-    case .error:
-        state::free_text(key);
-        return {.error = found.error};
-    }
+    if (found == .error) return find_failed(key, found.error);
+    Signature sig = found.ok;
     Usize slot[64];
     state::Status slotted = assign_slots(e, key, args, slot, imported);
     if (slotted == .error) {
