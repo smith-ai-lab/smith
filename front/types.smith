@@ -5121,6 +5121,30 @@ export Str enumeration_of(const Checked *r, Str prefix, Str name) {
     return "";
 }
 
+// Whether two enumerator names are the same one written in C's casing and in smith's (`Range`, `range`; `NotFound`,
+// `not_found`): the module that declares it may not be mended yet when a file that uses it is (#3678).
+static Bool same_variant_name(Str a, Str b) {
+    Usize i = 0;
+    Usize j = 0;
+    while (i < countof(a) || j < countof(b)) {
+        if (i < countof(a) && a[i] == '_') {
+            i += 1;
+            continue;
+        }
+        if (j < countof(b) && b[j] == '_') {
+            j += 1;
+            continue;
+        }
+        if (i >= countof(a) || j >= countof(b)) return false;
+        char x = a[i] >= 'A' && a[i] <= 'Z' ? (char)(a[i] + 32) : a[i];
+        char y = b[j] >= 'A' && b[j] <= 'Z' ? (char)(b[j] + 32) : b[j];
+        if (x != y) return false;
+        i += 1;
+        j += 1;
+    }
+    return true;
+}
+
 // The enumeration, as a file of the module being checked writes it (`Level`, or `area.Kind` for one of `shapes::area`),
 // that is the only smith-written enumeration in scope with an enumerator `name`: a bare `.square` where no enumeration
 // is expected is that enumerator written qualified (#3634 D16). Empty when none has it, when two do, and for a C
@@ -5138,7 +5162,7 @@ export Str sole_enumeration_with(const Checked *r, Str name) {
         if (countof(prefix) >= 3 && same_text(prefix[0:3], "c::")) continue;
         Bool has = false;
         for (Usize k = 0; k < countof(slots_of(s->type).items); k++) {
-            if (same_text(slots_of(s->type).items[k].name, name)) has = true;
+            if (same_variant_name(slots_of(s->type).items[k].name, name)) has = true;
         }
         if (!has) continue;
         count += 1;

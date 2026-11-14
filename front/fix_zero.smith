@@ -735,6 +735,17 @@ struct Variant {
     const ast::TypeExpr *payload;
 };
 
+constexpr Usize links_max = 128;
+
+// `x.f = y.g`: the field `f` of record `r` takes the value of the field `g` of record `from_r`; when `g` is an option,
+// so is `f` (the value it is given may be absent).
+struct Link {
+    Usize r;
+    Usize f;
+    Usize from_r;
+    Usize from_f;
+};
+
 struct Wanted {
     Variant variants[variants_max];
     Usize variant_count;
@@ -742,6 +753,9 @@ struct Wanted {
     U64 left[records_max];
     U64 text_left[records_max]; // the fields left out by a construction the text shows (`left` has the checker's too)
     U64 tested[records_max];    // the fields a read tests against null: `x.f != nullptr` (#2557)
+    U64 nulled[records_max];    // the fields the text assigns `nullptr`: `x.f = nullptr`, `x->f = .none` (#3332)
+    Link links[links_max];      // the fields the text gives another field's value (`x.f = y.g`)
+    Usize link_count;
     Usize count;
 };
 
@@ -1084,6 +1098,39 @@ static void scan_tests(Wanted *w, Str source, lex::Tokens t, const Bool named[re
     }
 }
 
+// The fields of the module's records that `source` assigns null, `x.f = nullptr`, or the value of another field,
+// `x.f = y.g` (recorded as a link: `f` is an option when `g` is). A pointer that is assigned null is not a `*T`:
+// absence is `?T` (D17 of #3634), whether or not a construction leaves the field out or a read tests it (#3332).
+static void scan_assigns(Wanted *w, Str source, lex::Tokens t, const Bool named[records_max]) {
+    Usize n = countof(t);
+    for (Usize i = 2; i + 2 < n; i++) {
+        if (!is_word(t[i].kind) || !(t[i - 1].kind == lex::dot || t[i - 1].kind == lex::arrow)) continue;
+        if (t[i + 1].kind != lex::equal) continue;
+        Usize r = chain_owner(w, source, t, i);
+        if (r == w->count || !named[r]) continue;
+        Usize f = field_index(&w->records[r], lex::text(source, t[i]));
+        if (f >= fields_max) continue;
+        if (null_word(source, t, i + 2)) {
+            w->nulled[r] |= (U64)1 << f;
+            continue;
+        }
+        Usize k = i + 2;
+        while (k + 2 < n && is_word(t[k].kind) && is_member(t[k + 1].kind) && is_word(t[k + 2].kind))
+            k += 2;
+        if (k == i + 2 || !is_word(t[k].kind) || w->link_count == links_max) continue;
+        Usize after = k + 1;
+        if (after < n &&
+            (t[after].kind == lex::left_paren || t[after].kind == lex::left_bracket || is_member(t[after].kind)))
+            continue;
+        Usize from = chain_owner(w, source, t, k);
+        if (from == w->count) continue;
+        Usize g = field_index(&w->records[from], lex::text(source, t[k]));
+        if (g >= fields_max) continue;
+        w->links[w->link_count] = (Link){.r = r, .f = f, .from_r = from, .from_f = g};
+        w->link_count += 1;
+    }
+}
+
 // Whether the file has `from <path>.<base> import ...` and, with a `name`, whether that line imports `name` (D6: a
 // build file writes `from std.build import Build, App` and builds `App(...)` with no module in front of it). An empty
 // `name` asks only for the line.
@@ -1133,7 +1180,10 @@ static void scan_file(Wanted *w, Str source, Str base, Bool own) {
         for (Usize r = 0; r < w->count; r++)
             named[r] = true;
     }
-    if (own || countof(prefix) > 0 || bare) scan_tests(w, source, t, named);
+    if (own || countof(prefix) > 0 || bare) {
+        scan_tests(w, source, t, named);
+        scan_assigns(w, source, t, named);
+    }
     mem::free(t.data);
 }
 
@@ -1149,6 +1199,7 @@ struct SiblingCache {
     Usize name_lengths[records_max];
     U64 left[records_max];
     U64 tested[records_max];
+    U64 nulled[records_max];
     Usize count;
 };
 
@@ -1254,6 +1305,7 @@ static void from_siblings(Wanted *w, const ast::Module *module) {
         for (Usize r = 0; r < found.count; r++) {
             found.left[r] = 0;
             found.tested[r] = 0;
+            found.nulled[r] = 0;
         }
         scan_siblings(&found, module);
         cache->file_length = copy_into(cache->file[0:cache_text_max], module->file);
@@ -1262,6 +1314,7 @@ static void from_siblings(Wanted *w, const ast::Module *module) {
             cache->name_lengths[r] = copy_into(cache->names[r][0:cache_text_max], found.records[r].name);
             cache->left[r] = found.left[r];
             cache->tested[r] = found.tested[r];
+            cache->nulled[r] = found.nulled[r];
         }
     }
     for (Usize r = 0; r < cache->count; r++) {
@@ -1270,6 +1323,7 @@ static void from_siblings(Wanted *w, const ast::Module *module) {
         w->left[at] |= cache->left[r];
         w->text_left[at] |= cache->left[r];
         w->tested[at] |= cache->tested[r];
+        w->nulled[at] |= cache->nulled[r];
     }
 }
 
@@ -1357,13 +1411,38 @@ static Bool pointer_like(const ast::Module *module, const ast::TypeExpr *t) {
 // construction the text shows leaves the field out, and a read tests it against null. Each becomes `?*T = .none`
 // (`?F = .none` for a function, lead on #2557). Only the text counts, not the checker, so that the struct's file and
 // each file that imports it, fixed one at a time, make the same decision.
+static U64 selected(const Wanted *w, Usize r) {
+    U64 m[records_max] = {};
+    for (Usize q = 0; q < w->count; q++) {
+        m[q] = w->text_left[q] & w->tested[q];
+        // A C-layout struct is read by C, which takes null for unset: a pointer a construction leaves out is an option
+        // even when no smith read tests it (D2, lead on #2631: translating, not inventing).
+        if (w->records[q].c_layout) m[q] = w->text_left[q];
+        m[q] |= w->nulled[q];
+    }
+    Bool changed = true;
+    while (changed) {
+        changed = false;
+        for (Usize k = 0; k < w->link_count; k++) {
+            Link edge = w->links[k];
+            ast::FieldDecl sources[:] = w->records[edge.from_r].fields;
+            const ast::TypeExpr *shape = edge.from_f < countof(sources) ? sources[edge.from_f].type : nullptr;
+            Bool written = shape != nullptr && shape->kind == .option;
+            Bool absent = (m[edge.from_r] & ((U64)1 << edge.from_f)) != 0 || written;
+            U64 bit = (U64)1 << edge.f;
+            if (absent && (m[edge.r] & bit) == 0) {
+                m[edge.r] |= bit;
+                changed = true;
+            }
+        }
+    }
+    return m[r];
+}
+
 static U64 nullable(const ast::Module *module, const Wanted *w, Usize r) {
     U64 out = 0;
     ast::FieldDecl fields[:] = w->records[r].fields;
-    U64 both = w->text_left[r] & w->tested[r];
-    // A C-layout struct is read by C, which takes null for unset: a pointer a construction leaves out is an option even
-    // when no smith read tests it (D2, lead on #2631: translating, not inventing).
-    if (w->records[r].c_layout) both = w->text_left[r];
+    U64 both = selected(w, r);
     for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
         U64 bit = (U64)1 << k;
         if ((both & bit) == 0 || fields[k].default_value != nullptr || fields[k].bit_width != nullptr) continue;
@@ -1462,7 +1541,7 @@ static core::Errors defaults(Str source, const ast::Module *module, types::Check
         U64 nulls = nullable(module, &w, r);
         for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
             const ast::FieldDecl *f = &fields[k];
-            if ((w.left[r] & ((U64)1 << k)) == 0 || !f->is_new || f->default_value != nullptr) continue;
+            if (((w.left[r] | nulls) & ((U64)1 << k)) == 0 || !f->is_new || f->default_value != nullptr) continue;
             if (f->bit_width != nullptr || f->type == nullptr || !nameable(f->name)) continue;
             if ((nulls & ((U64)1 << k)) != 0) {
                 out = add(out, nullable_fix(f));
