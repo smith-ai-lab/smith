@@ -44,9 +44,9 @@
 //   Str           A `Str` converts to a `Str`; only a `Char` slice or array (the checker's own 8-bit `Char`) converts
 //                 to a `Str`; a `U8[:]` or `I8[:]` needs the cast `(Str)xs`. A `Str` converts to a slice only when
 //                 the slice's element is const `Char`. A string literal (and only a literal: it is NUL-terminated)
-//                 also converts to a `const Char *`, the C `const char *` (`literal_to_pointer`, #2941), to a `const U8 *` or
-//                 `const I8 *` and to a `const void *` (#3660); a `Str`
-//                 value needs `cstr.of(s)`, and a `Char *` target refuses because the literal's characters are const.
+//                 also converts to a `const Char *`, the C `const char *` (`literal_to_pointer`, #2941), to a `const U8
+//                 *` or `const I8 *` and to a `const void *` (#3660); a `Str` value needs `cstr.of(s)`, and a `Char *`
+//                 target refuses because the literal's characters are const.
 //   Option, Result  A value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok` wherever one is expected, if
 //                 it converts to `T` (owner, 2026-10-25). Absence and errors stay explicit: an `Option(T)` is not a
 //                 `T`, a `Result(T, E)` is not a `T`, and `null` is not an `Option(T)` (write `.none`).

@@ -1360,7 +1360,8 @@ static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand)
     if (op->type->kind == .pointer && !op->type->kind.pointer.is_mut && operand->kind == .string) {
         parse::Edits head = {};
         head = with_edit(head, from_to(op->head.start, operand->span.start), "");
-        parse::warning_fix(p, from_to(op->head.start, operand->span.end), "a string literal needs no cast to a read-only pointer: write the literal", head);
+        parse::warning_fix(p, from_to(op->head.start, operand->span.end),
+                           "a string literal needs no cast to a read-only pointer: write the literal", head);
         return;
     }
     Str name = cast_name(op->type, operand, type_text);
