@@ -247,3 +247,39 @@ export void test_front_types_payload_tag_test_again_on_a_narrowed_path() {
     clean(shapes("struct Slot:\n    shape: Shape\nfn area(s: *Slot) -> f32:\n    if s.shape != .circle:\n"
                  "        return 0.0\n    if s.shape != .circle:\n        return 1.0\n    return s.shape.radius\n"));
 }
+
+// A narrowed name is the whole value where its enumeration is expected, and the payload everywhere else (#3664, #3634
+// D23). One test for each place of the rule.
+export void test_front_types_payload_narrowed_name_is_whole_as_an_argument() {
+    clean(shapes("fn keep(s: Shape) -> Shape:\n    return s\nfn f(s: Shape) -> Shape:\n    if s == .circle:\n"
+                 "        return keep(s)\n    return .empty\n"));
+}
+
+export void test_front_types_payload_narrowed_name_is_whole_in_a_return() {
+    clean(shapes("fn f(s: Shape) -> Shape:\n    if s == .circle:\n        return s\n    return .empty\n"));
+}
+
+export void test_front_types_payload_narrowed_name_is_whole_in_an_assignment() {
+    clean(shapes("fn f(s: Shape) -> Shape:\n    mut t: Shape = .empty\n    if s == .circle:\n        t = s\n"
+                 "    return t\n"));
+}
+
+export void test_front_types_payload_narrowed_name_is_whole_in_a_field_of_a_construction() {
+    clean(shapes("struct Slot:\n    shape: Shape\nfn f(s: Shape) -> Slot:\n    if s == .circle:\n"
+                 "        return Slot(shape = s)\n    return Slot(shape = .empty)\n"));
+}
+
+export void test_front_types_payload_narrowed_name_is_whole_in_a_comparison_with_another_value() {
+    clean(shapes("fn f(s: Shape, t: Shape) -> bool:\n    if s == .circle:\n        return s == t\n    return false\n"));
+}
+
+export void test_front_types_payload_narrowed_path_is_whole_where_its_enumeration_is_expected() {
+    clean(shapes("struct Slot:\n    shape: Shape\nfn keep(s: Shape) -> Shape:\n    return s\n"
+                 "fn f(p: *Slot) -> Shape:\n    if p.shape == .circle:\n        return keep(p.shape)\n"
+                 "    return .empty\n"));
+}
+
+export void test_front_types_payload_narrowed_name_is_the_payload_elsewhere() {
+    clean(shapes("fn f(s: Shape) -> f32:\n    if s == .circle:\n        r: f32 = s.radius\n        return r\n"
+                 "    return 0.0\n"));
+}
