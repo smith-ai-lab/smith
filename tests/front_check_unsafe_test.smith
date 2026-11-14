@@ -1,0 +1,126 @@
+// `unsafe(e)` (#3642): an address read as a function and a function read as an integer are errors outside it, with a
+// fix that writes it, and checked inside it.
+// Each scenario is source text in smith's own syntax, read by front::parser's hooks and checked by front::types_decl,
+// and builds in an arena it sets as the current allocator.
+module front_check_unsafe_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parse as syntax;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)0);
+    test::check_condition(has(errors, ""));
+}
+
+// `source` gives exactly one error, which says `first` and `second`, and whose fix writes `unsafe(` and `)`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+    syntax::Edits fix = r.errors[0].fix;
+    test::check_equal(countof(fix), (Usize)2);
+    Str open = "unsafe(";
+    test::check_equal(fix[0].text, open);
+}
+
+// `source` gives exactly one error that says `first`.
+static void fails_plain(Str source, Str first) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors_of(&r), first));
+}
+
+export void test_front_check_unsafe_an_address_cast_to_a_function_is_refused_outside() {
+    fails("fn run(a: usize, p: *mut i32):\n    f := a.cast(fn(*mut i32))\n    f(p)\n", "`cast` reinterprets a pointer",
+          "write `unsafe(<expr>)`");
+}
+
+export void test_front_check_unsafe_an_address_cast_to_a_function_is_checked_inside() {
+    clean("fn run(a: usize, p: *mut i32):\n    f := unsafe(a.cast(fn(*mut i32)))\n    f(p)\n");
+}
+
+export void test_front_check_unsafe_a_function_read_as_an_integer_is_refused_outside() {
+    fails("fn seven(p: *mut i32):\n    p.* = 7\n\nfn run() -> usize:\n    seven.to(usize)\n",
+          "there is no cast between these types", "write `unsafe(<expr>)`");
+}
+
+export void test_front_check_unsafe_a_function_read_as_an_integer_is_checked_inside() {
+    clean("fn seven(p: *mut i32):\n    p.* = 7\n\nfn run() -> usize:\n    unsafe(seven.to(usize))\n");
+}
+
+export void test_front_check_unsafe_has_the_type_of_its_expression() {
+    clean("fn run(x: i32) -> i32:\n    unsafe(x + 1)\n");
+}
+
+export void test_front_check_unsafe_does_not_allow_a_cast_to_an_integer() {
+    fails_plain("fn run(p: *mut i32) -> i32:\n    unsafe(p.cast(i32))\n", "`cast` reinterprets a pointer");
+}
