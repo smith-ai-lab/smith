@@ -1,0 +1,69 @@
+// A field tested only through the member of a payload enum is an option for the file that declares it and for every
+// file that imports it (#3621). The importer reads the module as it is on disk, so it decides from the text as written,
+// where the test is `node.pat->constant != nullptr` and `node` is a `Node`, not a struct: the declaring file reaches
+// the same decision only after its own passes have rewritten the test.
+module front_fix_zero_union_test;
+
+import front::fix;
+import std::arena;
+import std::files;
+import std::mem;
+import std::test;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+static Str read_text(Str path) {
+    files::BytesResult back = files::read_file(path);
+    switch (back) {
+    case .error:
+        return "";
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        return got;
+    }
+}
+
+export void test_front_fix_zero_union_a_field_tested_through_a_union_member_is_an_option_in_an_importer() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_zero_union_ast.smith";
+    Str user_path = "/tmp/front_fix_zero_union_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_zero_union_ast;\n"
+                                              "export struct Pat {\n    Pat *constant;\n    int v;\n};\n"
+                                              "export typedef enum {\n    Pat *pat;\n    absent;\n} Node;\n"
+                                              "export Pat make(int v) {\n    return (Pat){.v = v};\n}\n"
+                                              "export int has(Node node) {\n"
+                                              "    if (node == .pat) {\n"
+                                              "        if (node.pat->constant != nullptr) return 1;\n"
+                                              "    }\n    return 0;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_zero_union_user;\nimport front_fix_zero_union_ast;\n"
+                                            "struct Holder {\n    const front_fix_zero_union_ast::Pat *pat;\n};\n"
+                                            "export int count(const Holder *h) {\n"
+                                            "    if (h->pat->constant == nullptr) return 0;\n"
+                                            "    return 1;\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    check_text(read_text(user_path), "import front_fix_zero_union_ast\n"
+                                     "struct Holder:\n    pat: *front_fix_zero_union_ast.Pat\n"
+                                     "pub fn count(h: *Holder) -> i32:\n"
+                                     "    if h.pat.constant == .none:\n"
+                                     "        return 0\n"
+                                     "    return 1\n");
+    // the declaring file reaches the same decision
+    const char *own[1] = {module_path.data};
+    (void)fix::fix_run(own, 1);
+    Str fixed = read_text(module_path);
+    check_text(fixed, "pub struct Pat:\n    pub constant: ?*Pat = .none\n    pub v: i32\n"
+                      "pub enum Node:\n    pat: *Pat\n    absent\n"
+                      "pub fn make(v: i32) -> Pat:\n    return Pat(v = v)\n"
+                      "pub fn has(node: Node) -> i32:\n    if .pat(pat) := node:\n"
+                      "        if pat.constant != .none:\n            return 1\n    return 0\n");
+}
