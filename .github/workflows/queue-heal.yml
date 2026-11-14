@@ -6,7 +6,7 @@
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
 # alone, so the PR fails by itself and is dequeued; that holds because the queue's group size is fixed at 1 (`max_entries_to_merge`
 # 1) and nothing writes the ruleset (#3286 deleted the third pass, which rewrote the size by the health of the runs and cancelled
-# the group being built each time it wrote). A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. When it dequeues the front PR it also sets a failing check `queue` on the PR's head naming the run, the failed jobs and their first FAIL lines (#3243). A first step (#3302) sweeps the roadmap: the sub-issues of the issue labelled `epic` are exactly the open issues (a closed one is removed, an open one missing is added, first when labelled `p0` or `regressed`, else last); its failure fails no other pass. It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
+# the group being built each time it wrote). A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. A sixth pass (#3200) updates the branch of a PR with auto-merge that is behind main, or marks it red with a check `conflict` when it conflicts. When it dequeues the front PR it also sets a failing check `queue` on the PR's head naming the run, the failed jobs and their first FAIL lines (#3243). A first step (#3302) sweeps the roadmap: the sub-issues of the issue labelled `epic` are exactly the open issues (a closed one is removed, an open one missing is added last); its failure fails no other pass. It runs on `workflow_run` of ci (the cron rarely fires), on every push to main, by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -122,9 +122,9 @@ jobs:
           # sub-issues in the lead's order: "<number> <id> <state>"
           subs=$(gh api -X GET "repos/$REPO/issues/$roadmap/sub_issues" -f per_page=100 --paginate \
             --jq '.[] | "\(.number) \(.id) \(.state)"') || { log "roadmap: cannot list #$roadmap's sub-issues, nothing done"; exit 1; }
-          # open issues, pull requests and the roadmap aside: "<number> <id> <first|last>"
+          # open issues, pull requests and the roadmap aside: "<number> <id>"
           open=$(gh api -X GET "repos/$REPO/issues" -f state=open -f per_page=100 --paginate --jq \
-            ".[] | select((.pull_request | not) and .number != $roadmap) | \"\(.number) \(.id) \(if ([.labels[].name] | (index(\"p0\") or index(\"regressed\"))) then \"first\" else \"last\" end)\"") \
+            ".[] | select((.pull_request | not) and .number != $roadmap) | \"\(.number) \(.id)\"") \
             || { log "roadmap: cannot list the open issues, nothing done"; exit 1; }
           fail=0
           while read -r n id state; do
@@ -136,29 +136,20 @@ jobs:
               log "roadmap: removing #$n failed"; fail=1
             fi
           done <<< "$subs"
-          # the id a ticket added first goes before: the head of the list, then the ticket just added
-          head=$(echo "$subs" | head -n 1 | cut -d' ' -f2)
           changes=0
           known=" $(echo "$subs" | cut -d' ' -f1 | tr '\n' ' ')"
-          # in number order, the first-tickets before the last-ones; each first-ticket goes before the one added before it
+          # a new or reopened ticket is added last, in number order; the order of the list is the lead's
           # (a bare `read` loop over a here-string keeps the variables in this shell)
-          while read -r n id where; do
+          while read -r n id; do
             [ -n "$n" ] || continue
             case "$known" in *" $n "*) continue ;; esac
             changes=$((changes + 1))
-            if dry; then log "dry-run: would add #$n to #$roadmap $where"; continue; fi
+            if dry; then log "dry-run: would add #$n to #$roadmap last"; continue; fi
             if ! gh api -X POST "repos/$REPO/issues/$roadmap/sub_issue" -F sub_issue_id="$id" --silent; then
               log "roadmap: adding #$n failed"; fail=1; continue
             fi
-            if [ "$where" = first ] && [ -n "$head" ]; then
-              if gh api -X PATCH "repos/$REPO/issues/$roadmap/sub_issues/priority" -F sub_issue_id="$id" -F before_id="$head" --silent; then
-                head=$id
-              else
-                log "roadmap: moving #$n first failed, it stays last"; fail=1; continue
-              fi
-            fi
-            log "roadmap: added #$n $where"
-          done <<< "$(echo "$open" | sort -k3,3 -k1,1n)"
+            log "roadmap: added #$n last"
+          done <<< "$(echo "$open" | sort -k1,1n)"
           removed=$(echo "$subs" | grep -c ' closed$' || true)
           if [ "$changes" = 0 ] && [ "$removed" = 0 ] && [ "$fail" = 0 ]; then
             log "roadmap: $(echo "$open" | grep -c .) open tickets, in step"
