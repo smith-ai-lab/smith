@@ -263,10 +263,8 @@ static Table read_table(arena::Arena *a, const char *name, Bool quoted, const ch
     header.functions = arena::push_slice(a, Function, w[7]);
     for (U32 i = 0; i < w[7]; i++) {
         Usize at = w[6] + 5 * (Usize)i;
-        Function f = {.name = text(pool, w[at]),
-                      .result = w[at + 1],
-                      .variadic = (w[at + 4] & 1) != 0,
-                      .defined = (w[at + 4] & 2) != 0};
+        Function f = {.name = text(pool, w[at]), .result = w[at + 1], .variadic = (w[at + 4] & 1) != 0};
+        f.defined = (w[at + 4] & 2) != 0;
         f.parameters = arena::push_slice(a, Parameter, w[at + 3]);
         for (U32 j = 0; j < w[at + 3]; j++) {
             f.parameters[j] = parameter_at(w, pool, w[12], w[at + 2] + j);
