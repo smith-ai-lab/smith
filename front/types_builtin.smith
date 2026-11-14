@@ -64,6 +64,7 @@ export typedef enum {
     va_end;
     va_format;
     frame_address;
+    unsafe_value; // `unsafe(e)` (#3642): `e`, with the casts of a pointer and an address allowed inside
 } Shape;
 
 export struct Entry {
@@ -197,6 +198,8 @@ export Bool find(Str name, Entry *found) {
         *found = made(name, .predicate, "isnan");
     } else if (same(name, "__builtin_isfinite")) {
         *found = made(name, .predicate, "isfinite");
+    } else if (same(name, "unsafe")) {
+        *found = made(name, .unsafe_value, "");
     } else if (same(name, "__builtin_inf")) {
         *found = made(name, .constant, "inf64");
     } else if (same(name, "__builtin_inff")) {
@@ -753,6 +756,9 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
     case .va_end:
     case .va_format:
         return check_va(c, e, entry, args);
+    case .unsafe_value:
+        if (countof(args) != 1) return wrong(c, e->span, entry, "one expression; write `unsafe(x.cast(*mut u8))`");
+        return value_type(c, args[0]);
     case .frame_address:
         if (countof(args) != 1) return wrong(c, e->span, entry, "one integer, the depth; write `(0)`");
         types::TypeRef depth = value_type(c, args[0]);

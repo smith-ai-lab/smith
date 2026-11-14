@@ -1838,6 +1838,7 @@ export struct Checked {
     Usize error_count;
     Guard guards[:]; // the variant tests of the function being checked (#2494)
     Usize guard_count;
+    Usize unsafe_depth; // how many `unsafe(...)` enclose the expression being checked (#3642): the casts it allows
     Usize paths; // the field paths (`a.kind`) a test narrowed so far in this module: zero means no read looks for one
                  // (#3587)
     MadeType made[:]; // the types the type functions made so far
