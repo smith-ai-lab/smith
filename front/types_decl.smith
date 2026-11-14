@@ -632,6 +632,10 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
                 (syntax::Edit){.span = {.start = e->kind.cast.operand->span.end, .end = e->kind.cast.operand->span.end},
                                .text = pointer};
         }
+        // `.square.to(i32)`, C's `(int)Square`: the operand is a bare variant of no expected enumeration, so it is
+        // written with its enumeration, `area.Kind.square.to(i32)` (#3678).
+        if (e->kind == .cast && from->kind == .symbol && to->kind == .integer && countof(fix) == 0)
+            fix = types_expr::qualified_enumerator_fix(c, e->kind.cast.operand);
         types::fail_fix(c, e->span, verdict.message, fix);
         return false;
     }
