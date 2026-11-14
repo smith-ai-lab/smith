@@ -1025,8 +1025,11 @@ static Str declared_type(Str source, lex::Tokens t, Usize at) {
         Usize k = d;
         while (k > 0 && (t[k - 1].kind == lex::star || t[k - 1].kind == lex::kw_const))
             k -= 1;
-        // `Node node` (a parameter or local held by value in today's text) names its type just as `Node *node` does
-        if (k > 0 && is_word(t[k - 1].kind)) return lex::text(source, t[k - 1]);
+        if (k < d && k > 0 && is_word(t[k - 1].kind)) return lex::text(source, t[k - 1]);
+        // `Node node` (a parameter or local held by value in today's text) names its type just as `Node *node` does;
+        // a name that starts its line is a statement (`n = n.next`), never a declaration, and the word before it ends
+        // the line above
+        if (k == d && k > 0 && !t[k - 1].line_break && is_word(t[k - 1].kind)) return lex::text(source, t[k - 1]);
     }
     return "";
 }

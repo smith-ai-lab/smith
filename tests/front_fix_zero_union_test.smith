@@ -6,12 +6,20 @@ module front_fix_zero_union_test;
 
 import front::fix;
 import std::arena;
+import <unistd.h>;
 import std::files;
 import std::mem;
 import std::test;
 
 static void check_text(Str got, Str want) {
     test::check_equal(got, want);
+}
+
+static Bool has(Str text, Str part) {
+    for (Usize i = 0; i + countof(part) <= countof(text); i++) {
+        if (mem::equal(text[i:i + countof(part)], part)) return true;
+    }
+    return false;
 }
 
 static Str read_text(Str path) {
@@ -66,4 +74,85 @@ export void test_front_fix_zero_union_a_field_tested_through_a_union_member_is_a
                       "pub fn make(v: i32) -> Pat:\n    return Pat(v = v)\n"
                       "pub fn has(node: Node) -> i32:\n    if .pat(pat) := node:\n"
                       "        if pat.constant != .none:\n            return 1\n    return 0\n");
+}
+
+// A name that starts a line is a statement, not a by-value declaration (#3621): in `total += n.value` / `n = n.next`
+// the word before `n` ends the line above and is not `n`'s type. A walk over a list tests the local `n`, so `next` is
+// an option in the declaring file, when another file of the tree leaves it out.
+export void test_front_fix_zero_union_a_statement_is_not_a_by_value_declaration() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char home[4096];
+    test::check(c::getcwd(home, sizeof home) != nullptr);
+    (void)files::make_folder("/tmp/front_fix_zero_walk_tree");
+    (void)files::make_folder("/tmp/front_fix_zero_walk_tree/geo");
+    test::check(fix::store("/tmp/front_fix_zero_walk_tree/main.smith",
+                           "module main;\n"
+                           "\n"
+                           "import <stdio.h>;\n"
+                           "import geo::shapes;\n"
+                           "\n"
+                           "extern I32 user(void); // C names the same types (user.c)\n"
+                           "\n"
+                           "I32 main() {\n"
+                           "    shapes::Point p = shapes::make(1, 2);\n"
+                           "    shapes::Node b = {.value = 3};\n"
+                           "    shapes::Node a = {.next = &b, .value = 4};\n"
+                           "    struct shapes::Point q = p; // the keyword still works\n"
+                           "    shapes::Shape s = shapes::round_at(q);\n"
+                           "    shapes::Color c = shapes::next(shapes::red);\n"
+                           "    c::printf(\"%g %g %d %d %d\\n\", p.x, p.y, shapes::sum(&a), s == .circle, (int)c);\n"
+                           "    return user();\n"
+                           "}\n"));
+    test::check(fix::store("/tmp/front_fix_zero_walk_tree/geo/shapes.smith",
+                           "module geo::shapes;\n"
+                           "\n"
+                           "export struct Point {\n"
+                           "    F32 x;\n"
+                           "    F32 y;\n"
+                           "};\n"
+                           "\n"
+                           "export struct Node {\n"
+                           "    Node *next;\n"
+                           "    I32 value;\n"
+                           "};\n"
+                           "\n"
+                           "export enum Color { red, green };\n"
+                           "\n"
+                           "export enum Shape {\n"
+                           "    Point circle;\n"
+                           "    empty;\n"
+                           "};\n"
+                           "\n"
+                           "struct Hidden {\n"
+                           "    I32 secret;\n"
+                           "};\n"
+                           "\n"
+                           "export Point make(F32 x, F32 y) {\n"
+                           "    Hidden h = {.secret = 1};\n"
+                           "    return (Point){.x = x + (F32)h.secret - 1, .y = y};\n"
+                           "}\n"
+                           "\n"
+                           "export I32 sum(Node *list) {\n"
+                           "    I32 total = 0;\n"
+                           "    for (Node *n = list; n != nullptr; n = n->next)\n"
+                           "        total += n->value;\n"
+                           "    return total;\n"
+                           "}\n"
+                           "\n"
+                           "export Shape round_at(Point p) {\n"
+                           "    return {.circle = p};\n"
+                           "}\n"
+                           "\n"
+                           "export Color next(Color c) {\n"
+                           "    return c == red ? green : red;\n"
+                           "}\n"));
+    test::check_equal(c::chdir("/tmp/front_fix_zero_walk_tree"), 0);
+    const char *paths[1] = {"geo/shapes.smith"};
+    (void)fix::fix_run(paths, 1);
+    test::check_equal(c::chdir(home), 0);
+    Str fixed_text = read_text("/tmp/front_fix_zero_walk_tree/geo/shapes.smith");
+    test::check(has(fixed_text, "    pub next: ?*Node = .none\n"));
 }
