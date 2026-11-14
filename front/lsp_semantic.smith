@@ -309,14 +309,23 @@ static void token_entry(Found *found, const Names *names, Str source, lex::Token
     }
 }
 
-// The tokens of `source`: all of them, or those before the lexer's error.
-static lex::Tokens tokens_of(Str source, Bool today) {
-    lex::Lexed lexed = today ? lex::tokenize(source) : lex::tokenize_new(source);
-    if (lexed == .ok) return lexed.ok;
-    Str before = source[0:lexed.error.span.start];
+// The tokens of `source` before the byte `end`, none when they do not lex either.
+static lex::Tokens tokens_before(Str source, Bool today, Usize end) {
+    Str before = source[0:end];
     lex::Lexed again = today ? lex::tokenize(before) : lex::tokenize_new(before);
     if (again == .ok) return again.ok;
     return {};
+}
+
+// The tokens of `source`: all of them, or those before the lexer's error.
+static lex::Tokens tokens_of(Str source, Bool today) {
+    lex::Lexed lexed = today ? lex::tokenize(source) : lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        return lexed.ok;
+    case .error:
+        return tokens_before(source, today, lexed.error.span.start);
+    }
 }
 
 static Found collect(Str path, Str source) {

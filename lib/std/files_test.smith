@@ -89,6 +89,15 @@ files::Error failure_info(files::InfoResult r) {
     }
 }
 
+files::Error failure_done(files::DoneResult r) {
+    switch (r) {
+    case .ok:
+        return files::Other;
+    case .error:
+        return r.error;
+    }
+}
+
 // Whether the bytes are the text.
 Bool is_text(const U8 got[:], const char *contents) {
     Usize length = __builtin_strlen(contents);
@@ -148,7 +157,7 @@ export void test_files_a_missing_file_is_a_value() {
     test::check_condition(about == .error);
     test::check_condition(failure_info(about) == files::NotFound);
     files::DoneResult removed = files::remove("nothing.txt");
-    test::check_condition(removed == .error && removed.error == files::NotFound);
+    test::check_condition(removed == .error && failure_done(removed) == files::NotFound);
 }
 
 export void test_files_write_modes_replace_append_and_new() {
@@ -165,13 +174,13 @@ export void test_files_write_modes_replace_append_and_new() {
                       (I32)files::Exists); // New refuses a path that is taken
     test::check_equal(put_text("log.txt", "+two", 4, files::Append), -1);
     files::BytesResult appended = files::read_file("log.txt");
-    test::check_condition(appended == .ok && is_text(appended.ok, "one+two"));
+    test::check_condition(appended == .ok && is_text(value_bytes(appended), "one+two"));
     test::check_equal(put_text("log.txt", "x", 1, files::Replace), -1);
     files::BytesResult replaced = files::read_file("log.txt");
-    test::check_condition(replaced == .ok && is_text(replaced.ok, "x"));
+    test::check_condition(replaced == .ok && is_text(value_bytes(replaced), "x"));
     test::check_equal(put_text("log.txt", "atomic", 6, files::Atomic), -1);
     files::BytesResult atomic = files::read_file("log.txt");
-    test::check_condition(atomic == .ok && is_text(atomic.ok, "atomic"));
+    test::check_condition(atomic == .ok && is_text(value_bytes(atomic), "atomic"));
     files::InfoResult check1 = files::info("log.txt.tmp");
     test::check_condition(check1 == .error); // the temporary name was renamed away
 }
@@ -256,9 +265,9 @@ export void test_files_info_list_folders_and_sorting() {
     test::check_equal(put_text("project/src/main.c", "int", 3, files::Replace), -1);
 
     files::InfoResult folder = files::info("project");
-    test::check_condition(folder == .ok && folder.ok.folder);
+    test::check_condition(folder == .ok && value_info(folder).folder);
     files::InfoResult file = files::info("project/zeta.txt");
-    test::check_condition(file == .ok && !file.ok.folder);
+    test::check_condition(file == .ok && !value_info(file).folder);
     test::check_equal(value_info(file).size, 2);
     files::InfoResult check10 = files::info("project/nothing");
     test::check_condition(check10 == .error);
@@ -294,11 +303,12 @@ export void test_files_remove_and_move() {
     files::InfoResult check13 = files::info("from.txt");
     test::check_condition(check13 == .error);
     files::InfoResult moved = files::info("to.txt");
-    test::check_condition(moved == .ok && moved.ok.size == 4);
+    test::check_condition(moved == .ok && value_info(moved).size == 4);
     files::DoneResult check14 = files::make_folder("folder");
     test::check_condition(check14 == .ok);
     files::DoneResult folder = files::remove("folder");
-    test::check_condition(folder == .error && folder.error == files::Denied); // a folder is not removed as a file
+    test::check_condition(folder == .error &&
+                          failure_done(folder) == files::Denied); // a folder is not removed as a file
     files::DoneResult check15 = files::remove("to.txt");
     test::check_condition(check15 == .ok);
     files::BytesResult check16 = files::read_file("to.txt");
@@ -339,7 +349,7 @@ export void test_files_fake_add_replaces_a_file() {
     files::fake_add(&fake, "config.txt", hello);
     files::fake_add(&fake, "config.txt", hi);
     files::BytesResult contents = files::read_file("config.txt");
-    test::check_condition(contents == .ok && is_text(contents.ok, "hi"));
+    test::check_condition(contents == .ok && is_text(value_bytes(contents), "hi"));
 }
 
 export void test_files_the_handler_is_restored() {
@@ -376,9 +386,9 @@ export void test_files_the_real_file_system_in_a_scratch_folder() {
     test::check_equal(put_text(path, "real!", 5, files::Atomic), -1);
 
     files::BytesResult contents = files::read_file(path[0:__builtin_strlen(path)]);
-    test::check_condition(contents == .ok && is_text(contents.ok, "real!"));
+    test::check_condition(contents == .ok && is_text(value_bytes(contents), "real!"));
     files::InfoResult about = files::info(path[0:__builtin_strlen(path)]);
-    test::check_condition(about == .ok && !about.ok.folder);
+    test::check_condition(about == .ok && !value_info(about).folder);
     test::check_equal(value_info(about).size, 5);
     files::EntriesResult listed = files::list(folder[0:__builtin_strlen(folder)]);
     test::check_condition(listed == .ok);
@@ -386,13 +396,13 @@ export void test_files_the_real_file_system_in_a_scratch_folder() {
     test::check_condition(is_named(value_entries(listed)[0], "file.txt"));
 
     files::BytesResult mapped = files::map(path[0:__builtin_strlen(path)]);
-    test::check_condition(mapped == .ok && is_text(mapped.ok, "real!"));
+    test::check_condition(mapped == .ok && is_text(value_bytes(mapped), "real!"));
     files::unmap(value_bytes(mapped));
 
     files::DoneResult check20 = files::remove(path[0:__builtin_strlen(path)]);
     test::check_condition(check20 == .ok);
     files::BytesResult gone = files::read_file(path[0:__builtin_strlen(path)]);
-    test::check_condition(gone == .error && gone.error == files::NotFound);
+    test::check_condition(gone == .error && failure_bytes(gone) == files::NotFound);
 }
 
 // An environment that has the one variable the reads log names, on the test's thread: the process's is not changed,
@@ -507,7 +517,7 @@ export void test_files_the_reads_log_is_not_written_without_the_variable_or_over
         defer files::set_handler(before);
         files::fake_add(&fake, path[0:__builtin_strlen(path)], bytes_of("fake")[0:4]);
         files::BytesResult over = files::read_file(path[0:__builtin_strlen(path)]);
-        test::check_condition(over == .ok && is_text(over.ok, "fake"));
+        test::check_condition(over == .ok && is_text(value_bytes(over), "fake"));
         files::EntriesResult listed = files::list(p.dir[0:__builtin_strlen(p.dir)]);
         test::check_condition(listed == .ok);
     }
@@ -606,6 +616,15 @@ Bool is_chars(const char got[:], const char *contents) {
     return true;
 }
 
+files::Error failure_text(files::TextResult r) {
+    switch (r) {
+    case .ok:
+        return files::Other;
+    case .error:
+        return r.error;
+    }
+}
+
 files::Text value_text(files::TextResult r) {
     switch (r) {
     case .ok:
@@ -635,7 +654,7 @@ export void test_files_paths_and_links_in_the_fake() {
     files::TextResult real = files::real_path("dir/a.txt");
     test::check_condition(real == .ok && is_chars(value_text(real), "dir/a.txt"));
     files::TextResult missing = files::real_path("nothing");
-    test::check_condition(missing == .error && missing.error == files::NotFound);
+    test::check_condition(missing == .error && failure_text(missing) == files::NotFound);
 
     files::LinkResult made = files::make_link("a.txt", "dir/b.txt");
     test::check_condition(made == .none);
@@ -644,9 +663,9 @@ export void test_files_paths_and_links_in_the_fake() {
     files::TextResult target = files::read_link("dir/b.txt");
     test::check_condition(target == .ok && is_chars(value_text(target), "a.txt"));
     files::TextResult plain = files::read_link("dir/a.txt");
-    test::check_condition(plain == .error && plain.error == files::Other);
+    test::check_condition(plain == .error && failure_text(plain) == files::Other);
     files::TextResult absent = files::read_link("nothing");
-    test::check_condition(absent == .error && absent.error == files::NotFound);
+    test::check_condition(absent == .error && failure_text(absent) == files::NotFound);
 }
 
 export void test_files_current_folder_is_real() {
