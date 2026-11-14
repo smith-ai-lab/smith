@@ -76,16 +76,7 @@ export void test_front_fix_zero_union_a_field_tested_through_a_union_member_is_a
                       "        if pat.constant != .none:\n            return 1\n    return 0\n");
 }
 
-// A name that starts a line is a statement, not a by-value declaration (#3621): in `total += n.value` / `n = n.next`
-// the word before `n` ends the line above and is not `n`'s type. A walk over a list tests the local `n`, so `next` is
-// an option in the declaring file, when another file of the tree leaves it out.
-export void test_front_fix_zero_union_a_statement_is_not_a_by_value_declaration() {
-    arena::Arena memory = test::memory(1U << 24);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    char home[4096];
-    test::check(c::getcwd(home, sizeof home) != nullptr);
+static void write_walk_tree() {
     (void)files::make_folder("/tmp/front_fix_zero_walk_tree");
     (void)files::make_folder("/tmp/front_fix_zero_walk_tree/geo");
     test::check(fix::store("/tmp/front_fix_zero_walk_tree/main.smith",
@@ -149,6 +140,19 @@ export void test_front_fix_zero_union_a_statement_is_not_a_by_value_declaration(
                            "export Color next(Color c) {\n"
                            "    return c == red ? green : red;\n"
                            "}\n"));
+}
+
+// A name that starts a line is a statement, not a by-value declaration (#3621): in `total += n.value` / `n = n.next`
+// the word before `n` ends the line above and is not `n`'s type. A walk over a list tests the local `n`, so `next` is
+// an option in the declaring file, when another file of the tree leaves it out.
+export void test_front_fix_zero_union_a_statement_is_not_a_by_value_declaration() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char home[4096];
+    test::check(c::getcwd(home, sizeof home) != nullptr);
+    write_walk_tree();
     test::check_equal(c::chdir("/tmp/front_fix_zero_walk_tree"), 0);
     const char *paths[1] = {"geo/shapes.smith"};
     (void)fix::fix_run(paths, 1);
