@@ -672,10 +672,23 @@ static const ast::Expr *named_variant(state::Emitter *e, const ast::Expr *x) {
     return variant;
 }
 
+// `Color.green`, `Shape.circle(c)`: the value `.v` of the enumeration the checker typed in the place of the member or
+// the call (#3665); null for any other expression.
+static const ast::Expr *written_variant(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return nullptr;
+    const ast::Expr *full = types::method_of(e->options.checked, x);
+    return full != nullptr && full->kind == .variant ? full : nullptr;
+}
+
 // A call: a vector built by its type, a payload enumeration built by its name, or a call of a function.
 static state::Status dispatch_call(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .call) return state::fail("not a call", x->span);
     if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
+    const ast::Expr *full = written_variant(e, x);
+    if (full != nullptr) {
+        state::push_eval(e, full, hint);
+        return state::success();
+    }
     const ast::Expr *variant = named_variant(e, x);
     if (variant != nullptr) {
         state::TyResult made = state::type_of_node(e, x); // the enumeration, which the new node has no record of
@@ -713,6 +726,16 @@ static Usize instance_index(const state::Emitter *e) {
 static Bool is_computed(const state::Emitter *e, const ast::Expr *x, U64 *computed) {
     if ((x->kind != .binary && x->kind != .call) || e->options.checked == nullptr) return false;
     return types::value_in(e->options.checked, x, instance_index(e), computed);
+}
+
+// A member: a tuple's element, a module's function as a value, a field, or a variant written with its enumeration.
+static state::Status dispatch_member(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    const ast::Expr *full = written_variant(e, x);
+    if (full != nullptr) return dispatch_twin(e, full, hint);
+    if (is_tuple_member(e, x)) return tupled::member(e, x, hint);
+    state::Status function = state::success();
+    if (call::module_function_value(e, x, &function)) return function; // `parse_expr.expression` as a value
+    return emit_memory::member(e, x, hint);
 }
 
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
@@ -755,12 +778,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     }
     if (x->kind == .null_pointer) return emit_memory::null_pointer(e, x, hint);
     if (x->kind == .index) return emit_memory::index(e, x, hint);
-    if (x->kind == .member) {
-        if (is_tuple_member(e, x)) return tupled::member(e, x, hint);
-        state::Status function = state::success();
-        if (call::module_function_value(e, x, &function)) return function; // `parse_expr.expression` as a value
-        return emit_memory::member(e, x, hint);
-    }
+    if (x->kind == .member) return dispatch_member(e, x, hint);
     if (x->kind == .variant) return dispatch_variant(e, x, hint);
     if (x->kind == .tuple_lit) return tupled::literal(e, x, hint);
     if (x->kind == .lambda) return lambdas::lambda(e, x, hint);

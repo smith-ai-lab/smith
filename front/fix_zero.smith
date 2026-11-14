@@ -27,6 +27,7 @@ import front::lex;
 import front::parse as core;
 import front::types;
 import std::arena;
+import std::contract;
 import std::files;
 import std::format;
 import std::mem;
@@ -1275,6 +1276,7 @@ static void from_siblings(Wanted *w, const ast::Module *module) {
 // The type of a field, resolved in the module as smith's own syntax; null when it does not resolve. Resolving it must
 // not leave an error behind.
 static types::TypeRef field_type(types::Checked *c, const ast::FieldDecl *f) {
+    contract::assert(f->type != nullptr); // a member of a record is written with its type
     Usize errors_before = c->error_count;
     Bool was_new = c->new_syntax;
     c->new_syntax = true;
@@ -1408,6 +1410,7 @@ static Bool has_plain_pointer(const ast::Module *module, types::Checked *c, cons
 
 // The fix that writes the pointer field `f` as an option with no value: `next: ?*Node = .none`.
 static core::ParseError nullable_fix(const ast::FieldDecl *f) {
+    contract::assert(f->type != nullptr); // the caller found a pointer type in it
     core::Edits fix = {};
     fix = mem::realloc(fix, 2);
     Str mark = "?";
@@ -1433,6 +1436,7 @@ static Bool holds_plain_pointers(const ast::Module *module, types::Checked *c, c
 // The fix that gives the member `f` the default `= undefined`.
 static core::ParseError undefined_default(const ast::FieldDecl *f) {
     core::Edits fix = {};
+    contract::assert(f->type != nullptr); // the caller found a pointer type in it
     fix = mem::realloc(fix, 1);
     U32 at = f->type->span.end;
     Str text = " = undefined";
@@ -1578,6 +1582,7 @@ export void nullable_fields(ast::Module *module, Str source) {
         for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
             if ((masks[r] & ((U64)1 << k)) == 0) continue;
             ast::TypeExpr *inner = fields[k].type;
+            contract::assert(inner != nullptr); // the mask has a bit only for a field with a pointer type
             ast::TypeExpr *wrapped = mem::alloc(ast::TypeExpr);
             wrapped->span = inner->span;
             ast::TypeKind kind = {.option = {.inner = inner}};

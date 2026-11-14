@@ -288,6 +288,24 @@ export void test_front_check_types_other_declaration_in_a_function_is_not_yet_ty
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// A variant written with its enumeration's name needs no expected type (#3665, D16 of #3634)
+
+export void test_front_check_types_a_variant_written_with_its_enumeration_has_no_expected_type() {
+    clean("enum Color:\n    red\n    green\n\n"
+          "fn index() -> i32:\n    Color.green.to(i32)\n");
+}
+
+export void test_front_check_types_a_payload_variant_written_with_its_enumeration_builds_the_value() {
+    clean("struct Circle:\n    radius: f64\n\nenum Shape:\n    circle: Circle\n    empty\n\n"
+          "fn make(r: f64) -> Shape:\n    Shape.circle(Circle(radius = r))\n"
+          "fn none() -> Shape:\n    Shape.empty\n");
+}
+
+export void test_front_check_types_a_variant_the_enumeration_lacks_is_still_an_error() {
+    fails("enum Color:\n    red\n    green\n\nfn index() -> i32:\n    Color.blue.to(i32)\n", "`.` needs a record",
+          "found `Auto`");
+}
+
 // Ordering on plain enumerations and leading-dot operands (#2480, owner 2026-11-05)
 
 export void test_front_check_types_plain_enum_is_ordered_in_declaration_order() {
