@@ -641,13 +641,25 @@ static core::Errors loop_fixes(Str source, const ast::Module *module) {
     return out;
 }
 
+// The type a result written as the name of a `typedef` of this module stands for (`TyResult` is `Result(Ty, Error)`),
+// else `type` itself: `return {.error = e}` in a generic function that returns the alias is mended the same.
+static const ast::TypeExpr *through_alias(const ast::Module *module, const ast::TypeExpr *type) {
+    if (type == nullptr || type->kind != .named || countof(type->kind.named.path.segments) != 1) return type;
+    Str name = type->kind.named.path.segments[0].text;
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .type_alias && same(d->kind.type_alias.name, name)) return d->kind.type_alias.type;
+    }
+    return type;
+}
+
 export core::Errors edits(Str source, const ast::Module *module) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .function) continue;
         const ast::Stmt *function_body = d->kind.function.body;
-        const ast::TypeExpr *function_result = d->kind.function.result;
+        const ast::TypeExpr *function_result = through_alias(module, d->kind.function.result);
         ast::Param params[:] = d->kind.function.params;
         if (function_body != nullptr && is_generic(source, d)) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
