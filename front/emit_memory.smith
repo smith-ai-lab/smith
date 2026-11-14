@@ -2083,7 +2083,7 @@ export typedef state::Status (*RecordMaker)(state::Emitter *e, state::Ty ty, con
 // A leaf constant of type `ty`: an integer literal (negated or not), `true`/`false`, `null`, a string or a function's
 // address; `scalar_constant` adds the options and the arrays.
 static state::Status leaf_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer)) {
+    if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer || ty.kind == .fn_value)) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
     }

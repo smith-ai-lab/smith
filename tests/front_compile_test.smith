@@ -245,3 +245,22 @@ export void test_front_compile_a_global_with_an_array_is_a_constant() {
     test::check_equal(made.ok, true);
     remove_all(folder);
 }
+
+// A global whose initializer holds the address of a function, or an absent function (#3687): a `fn(...)` field set to a
+// function declared before or after it, and a `fn(...)` global set to `nullptr` (`lib/std/task.smith`'s
+// `inline_value`, `front/lint.smith`'s `header_text`).
+export void test_front_compile_a_global_with_a_function_address_is_a_constant() {
+    Str folder = folder_for("global_fn");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "struct Hooks:\n    first: fn(i32) -> i32\n    second: fn(i32) -> i32\n    third: fn(*Hooks)\n\n"
+               "mut hooks := Hooks(first = one, second = two, third = note)\n"
+               "mut reader: fn(i32) -> i32 = nullptr\n\n"
+               "fn one(x: i32) -> i32:\n    return x + 1\n\n"
+               "fn two(x: i32) -> i32:\n    return x * 2\n\n"
+               "fn note(h: *Hooks):\n    return\n\n"
+               "pub fn f() -> i32:\n    return hooks.first(1) + hooks.second(2)\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(countof(made.text), (Usize)0);
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}
