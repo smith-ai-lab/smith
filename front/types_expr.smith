@@ -699,7 +699,8 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     // `s.*` of an `s: *mut *T` handed where a `*mut T` is wanted: the inner pointer is `*mut T` (#2643).
     if (base->kind == .unary && base->kind.unary.op == .dereference && base->kind.unary.operand->kind == .name) {
         const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.unary.operand->kind.name.path);
-        const ast::TypeExpr *outer = s != nullptr && s->kind == .variable && s->is_new ? s->written : nullptr;
+        const ast::TypeExpr *outer =
+            s != nullptr && s->kind == .variable && s->is_new && s->written != nullptr ? s->written : nullptr;
         const ast::TypeExpr *inner = nullptr;
         if (outer != nullptr && outer->kind == .pointer) inner = outer->kind.pointer.pointee;
         if (inner != nullptr && inner->kind == .pointer && !inner->kind.pointer.is_mut &&
@@ -722,7 +723,8 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     // `xs[i]` of an array of `*T` handed where a `*mut T` is wanted: the element is written `*mut T` (#2643).
     if (base->kind == .index && base->kind.index.base->kind == .name) {
         const types::Symbol *xs = types::lookup_path(&c->scopes, base->kind.index.base->kind.name.path);
-        const ast::TypeExpr *array = xs != nullptr && xs->kind == .variable && xs->is_new ? xs->written : nullptr;
+        const ast::TypeExpr *array =
+            xs != nullptr && xs->kind == .variable && xs->is_new && xs->written != nullptr ? xs->written : nullptr;
         const ast::TypeExpr *element = array != nullptr && array->kind == .array ? array->kind.array.element : nullptr;
         if (element != nullptr && element->kind == .pointer && !element->kind.pointer.is_mut)
             return mut_after(element->span.start + 1);
@@ -6825,6 +6827,7 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
         poison(c, e);
         return;
     }
+    contract::assert(template->decl != nullptr); // tested at the top; the calls above only read it
     Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:taken]);
     if (at >= c->instance_count) {
         poison(c, e);
