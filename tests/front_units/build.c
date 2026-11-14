@@ -41,7 +41,9 @@ void build(SmithBuild *b) {
     const char *const *cxx_sources = smith_glob(b, smith_list(b, smith_fmt(b, "%s/shim/cimport*.cpp", root), nullptr));
     const char *const *cxx_flags =
         smith_list(b, "-std=c++17", "-g", "-O0", "-Wall", "-Wextra", "-Werror", "-fno-exceptions", "-fno-rtti",
-                   "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
+                   "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS",
+                   // where the reader finds clang's own headers when no -resource-dir is given (#3636)
+                   smith_fmt(b, "-DSMITH_CIMPORT_LLVM_ROOT=\"%s\"", llvm), "-isystem",
                    smith_fmt(b, "%s/include", llvm), "-fsanitize=address,undefined", "-fno-sanitize=vptr",
                    "-fno-sanitize-recover=all", nullptr);
     static SmithObject objects[64];

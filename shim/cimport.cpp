@@ -57,7 +57,9 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <dirent.h>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <map>
@@ -618,6 +620,50 @@ std::vector<std::string> lines(const char *text) {
     return out;
 }
 
+} // namespace
+
+// The resource directory of the LLVM this program links (`<llvm>/lib/clang/<version>`, where clang's own headers such
+// as `stddef.h` are), "" when there is none (#3636). A program that links this shim has no clang folder beside it, so
+// clang's own way of finding the directory (the path of the executable) finds nothing, and a header that includes
+// `<stddef.h>` could not be read unless the caller gave `-resource-dir` (`smith cc` does, in
+// $SMITH_FRONT_CIMPORT_FLAGS). The LLVM root is the one the program was built with (SMITH_CIMPORT_LLVM_ROOT), else
+// $SMITH_LLVM; the newest version folder that has `include/stddef.h` is used. Looked up once.
+extern "C" const char *smith_cimport_default_resource_dir(void) {
+    static const std::string found = [] {
+        std::string root;
+#ifdef SMITH_CIMPORT_LLVM_ROOT
+        root = SMITH_CIMPORT_LLVM_ROOT;
+#endif
+        const char *env = std::getenv("SMITH_LLVM");
+        if (root.empty() && env != nullptr) root = env;
+        if (root.empty()) return std::string();
+        std::string clang = root + "/lib/clang";
+        std::string best;
+        if (DIR *dir = ::opendir(clang.c_str())) {
+            while (const dirent *entry = ::readdir(dir)) {
+                std::string name = entry->d_name;
+                if (name[0] == '.' || name <= best) continue;
+                if (::access((clang + "/" + name + "/include/stddef.h").c_str(), R_OK) == 0) best = name;
+            }
+            ::closedir(dir);
+        }
+        return best.empty() ? std::string() : clang + "/" + best;
+    }();
+    return found.c_str();
+}
+
+namespace {
+
+// `flags` with the linked LLVM's resource directory added when the caller gave none.
+void with_default_resource_dir(std::vector<std::string> *flags) {
+    for (const std::string &f : *flags)
+        if (f == "-resource-dir") return;
+    const char *dir = smith_cimport_default_resource_dir();
+    if (dir[0] == '\0') return;
+    flags->push_back("-resource-dir");
+    flags->push_back(dir);
+}
+
 // `-I dir`, `-Idir`, `-isystem dir`, `-iquote dir` and `-isysroot dir`, in order.
 std::vector<std::string> folders_of(const std::vector<std::string> &flags) {
     std::vector<std::string> out;
@@ -807,6 +853,7 @@ size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t ca
                   std::vector<std::string> *files) {
     std::string header = request->name;
     std::vector<std::string> flags = lines(request->flags);
+    with_default_resource_dir(&flags);
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
                        (request->quoted != 0 ? "\"" : ">") + "\n";
     std::vector<std::string> args = {"-x",
@@ -1214,7 +1261,9 @@ extern "C" int smith_cimport_bodies(const char *includes, const char *folder, co
         args.push_back("-iquote");
         args.push_back(folder);
     }
-    for (const std::string &f : lines(flags))
+    std::vector<std::string> given = lines(flags);
+    with_default_resource_dir(&given);
+    for (const std::string &f : given)
         args.push_back(f);
     std::unique_ptr<llvm::Module> body;
     auto action = std::make_unique<TakeBodies>(static_cast<llvm::LLVMContext *>(context), &body);
