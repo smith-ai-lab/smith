@@ -424,8 +424,8 @@ void Reader::function(const clang::FunctionDecl *decl) {
     uint32_t first = static_cast<uint32_t>(parameters.size());
     for (auto &p : params)
         parameters.push_back(p);
-    functions.push_back(
-        {text(name), result, first, static_cast<uint32_t>(params.size()), (proto->isVariadic() ? 1U : 0U) | (has_body ? 2U : 0U)});
+    functions.push_back({text(name), result, first, static_cast<uint32_t>(params.size()),
+                         (proto->isVariadic() ? 1U : 0U) | (has_body ? 2U : 0U)});
     place(0, static_cast<uint32_t>(functions.size() - 1), decl);
     for (const clang::Attr *a : decl->attrs())
         if (!a->isImplicit()) skip(1, name, a->getSpelling());

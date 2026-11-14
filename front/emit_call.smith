@@ -198,12 +198,13 @@ export void link_c_bodies(state::Emitter *e, const ast::Module *m) {
     char *flags = state::cstr(e->options.header_flags);
     char *names = state::cstr(e->c_bodies);
     char problem[512] = "";
-    I32 failed = smith_cimport_bodies(includes, folder, flags, names, (void *)e->context, (void *)e->module, problem, 512);
+    I32 failed =
+        smith_cimport_bodies(includes, folder, flags, names, (void *)e->context, (void *)e->module, problem, 512);
     mem::free(includes);
     mem::free(folder);
     mem::free(flags);
     mem::free(names);
-    mem::free(e->c_bodies.data);
+    state::free_text(e->c_bodies);
     e->c_bodies = "";
     if (failed != 0) state::add_error(e, state::error_of(state::msg(format::push((const char *)problem))));
 }
