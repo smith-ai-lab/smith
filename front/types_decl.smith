@@ -2258,6 +2258,31 @@ static void bind_dropped(types::Checked *r, types::Guard *g, Usize from) {
     }
 }
 
+// Whether the loop `s` may write a name used in an index of the path `name` (`xs[i].f`: `i`), item 73 of #3516.
+static Bool index_written(Str name, const ast::Stmt *s) {
+    Usize at = 0;
+    while (at < countof(name)) {
+        if (name[at] != '[') {
+            at += 1;
+            continue;
+        }
+        Usize end = at + 1;
+        while (end < countof(name) && name[end] != ']')
+            end += 1;
+        Usize from = at + 1;
+        for (Usize i = at + 1; i <= end && i <= countof(name); i++) {
+            Bool word = i < end && (name[i] >= 'a' && name[i] <= 'z' || name[i] >= 'A' && name[i] <= 'Z' ||
+                                    name[i] == '_' || name[i] >= '0' && name[i] <= '9');
+            if (word) continue;
+            if (i > from && !(name[from] >= '0' && name[from] <= '9') && types_undefined::may_write(name[from:i], s))
+                return true;
+            from = i + 1;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
 // A loop runs its body again after the last statement of it: a name that a test narrowed before the loop and that the
 // loop may write is not narrowed in the loop, nor after it (#3438, item 55 of #3284).
 static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
@@ -2268,9 +2293,10 @@ static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
         if (symbol->kind != .variable || (!symbol->narrowed && symbol->excluded == 0)) continue;
         // a field path (`a.kind`) is written by what writes the name it starts from, or a part of it (#3587)
         Usize root = 0;
-        while (root < countof(symbol->name) && symbol->name[root] != '.')
+        while (root < countof(symbol->name) && symbol->name[root] != '.' && symbol->name[root] != '[')
             root += 1;
         if (types_undefined::may_write(symbol->name[0:root], s)) types::unnarrow(&r->scopes, symbol->name);
+        else if (index_written(symbol->name, s)) types::unnarrow(&r->scopes, symbol->name);
     }
 }
 

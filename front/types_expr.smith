@@ -1685,23 +1685,50 @@ static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::Una
 
 static Str place_root(const ast::Expr *e);
 
-// The text of a field path: `a.kind` for `a.kind` and `a->kind`, `a` for a name; empty for anything else (an index, a
-// call, a name of several segments). A path is narrowed under this text (#3587, item 68 of #3516).
+// The text of an index that can be compared by text: a name, an integer, or one of them plus or minus another
+// (`i`, `3`, `i + 1`); empty for anything else, a call included (item 73 of #3516).
+static Str index_text(const ast::Expr *e) {
+    if (e->kind == .integer) return format::push(e->kind.integer.value);
+    if (e->kind == .name) return countof(e->kind.name.path.segments) == 1 ? e->kind.name.path.segments[0].text : "";
+    if (e->kind != .binary) return "";
+    ast::BinaryOp op = e->kind.binary.op;
+    if (op != .add && op != .subtract) return "";
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    if (!(left->kind == .name || left->kind == .integer) || !(right->kind == .name || right->kind == .integer)) {
+        return "";
+    }
+    Str l = index_text(left);
+    Str r = index_text(right);
+    if (countof(l) == 0 || countof(r) == 0) return "";
+    return format::push(l, op == .add ? "+" : "-", r);
+}
+
+// The text of a field path: `a.kind` for `a.kind` and `a->kind`, `a` for a name, `xs[i].f` for a path with an index
+// that is a name or an integer (item 73 of #3516); empty for anything else (an index that calls, a name of several
+// segments). A path is narrowed under this text (#3587, item 68 of #3516).
 static Str place_key(const ast::Expr *e) {
     Str parts[8] = {};
     Usize count = 0;
     const ast::Expr *at = e;
-    while (at->kind == .member) {
+    while (at->kind == .member || at->kind == .index) {
         if (count == 8) return "";
-        parts[count] = at->kind.member.name;
+        if (at->kind == .index) {
+            Str inner = index_text(at->kind.index.index);
+            if (countof(inner) == 0) return "";
+            parts[count] = format::push("[", inner, "]");
+            at = at->kind.index.base;
+        } else {
+            parts[count] = format::push(".", at->kind.member.name);
+            at = at->kind.member.base;
+        }
         count += 1;
-        at = at->kind.member.base;
     }
     if (at->kind != .name || countof(at->kind.name.path.segments) != 1) return "";
     Str root = at->kind.name.path.segments[0].text;
     Usize total = countof(root);
     for (Usize i = 0; i < count; i++) {
-        total += 1 + countof(parts[i]);
+        total += countof(parts[i]);
     }
     char out[:] = mem::alloc_slice(char, total);
     Usize put = 0;
@@ -1710,8 +1737,6 @@ static Str place_key(const ast::Expr *e) {
         put += 1;
     }
     for (Usize k = count; k > 0; k--) {
-        out[put] = '.';
-        put += 1;
         for (Usize i = 0; i < countof(parts[k - 1]); i++) {
             out[put] = parts[k - 1][i];
             put += 1;
@@ -1726,6 +1751,13 @@ static void unnarrow_written(types::Checked *c, const ast::Expr *target) {
     if (target->kind == .unary && target->kind.unary.op == .dereference) place = target->kind.unary.operand;
     Str key = place_key(place);
     if (countof(key) > 0) types::unnarrow_under(&c->scopes, key);
+    if (place->kind == .name) types::unnarrow_indexed_by(&c->scopes, key); // `i` of `xs[i]` was written (item 73)
+    // another element of the array may be this one: `xs[j].f = v` drops what was proved about `xs[i].f` (item 73)
+    for (Usize at = countof(key); at > 0; at--) {
+        if (key[at - 1] != '[') continue;
+        types::unnarrow_under(&c->scopes, key[0:at - 1]);
+        break;
+    }
 }
 
 static void unary_before(types::Checked *c, Work *w, Frame f) {
@@ -1736,7 +1768,8 @@ static void unary_before(types::Checked *c, Work *w, Frame f) {
     ast::UnaryOp op = e->kind.unary.op;
     const ast::Expr *operand = e->kind.unary.operand;
     // `&x` is the address of the name as declared, and lets the pointer write it: what a test proved is dropped first
-    if (op == .address_of) {
+    if (op == .address_of || op == .pre_increment || op == .pre_decrement || op == .post_increment ||
+        op == .post_decrement) {
         types::unnarrow(&c->scopes, place_root(operand));
         unnarrow_written(c, operand);
     }
@@ -2284,8 +2317,8 @@ static Str single_name(const ast::Expr *name) {
 // The name a field path starts from: `a` for `a.kind`.
 static Str root_name(const ast::Expr *e) {
     const ast::Expr *at = e;
-    while (at->kind == .member) {
-        at = at->kind.member.base;
+    while (at->kind == .member || at->kind == .index) {
+        at = at->kind == .member ? at->kind.member.base : at->kind.index.base;
     }
     return single_name(at);
 }
@@ -4120,6 +4153,8 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
     return invalid(c);
 }
 
+static types::TypeRef narrowed_field(types::Checked *c, const ast::Expr *e, types::TypeRef own);
+
 static void index_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .index)) {
@@ -4147,7 +4182,7 @@ static void index_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    finish(c, e, element, f.expected);
+    finish(c, e, narrowed_field(c, e, element), f.expected);
 }
 
 static void slice_after(types::Checked *c, Frame f) {
