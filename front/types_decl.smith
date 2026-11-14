@@ -1119,8 +1119,8 @@ static Bool field_path(const ast::Expr *left) {
 }
 
 // Whether a test of `left` against `variant` is left as written: a field path, or a name of a payload enumeration. A
-// `Result`'s `ok` and `error` keep their bindings (`try`, #2611), and so does a variant whose payload has a field of its
-// own name (`only.type.type`: the read of the variant and of the field cannot be told apart once the variant is
+// `Result`'s `ok` and `error` keep their bindings (`try`, #2611), and so does a variant whose payload has a field of
+// its own name (`only.type.type`: the read of the variant and of the field cannot be told apart once the variant is
 // dropped), whatever they are tested on.
 static Bool direct_test(types::Checked *r, const ast::Expr *left, Str variant) {
     if (left->kind != .name) return field_path(left);
