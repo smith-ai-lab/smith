@@ -713,7 +713,19 @@ static Bool has_c_name(const ast::Decl *d) {
     return false;
 }
 
+constexpr Usize variants_max = 128;
+
+// A payload enum of the module and one variant that holds a pointer or a record: `Node.pattern` is a `*Pattern`. A read
+// `node.pattern.constant` is a read of `Pattern.constant`, whichever way the file has spelled the test so far.
+struct Variant {
+    Str owner;
+    Str name;
+    const ast::TypeExpr *payload;
+};
+
 struct Wanted {
+    Variant variants[variants_max];
+    Usize variant_count;
     Record records[records_max];
     U64 left[records_max];
     U64 text_left[records_max]; // the fields left out by a construction the text shows (`left` has the checker's too)
@@ -750,6 +762,14 @@ static Wanted records_of(const ast::Module *module) {
                                           .exported = d->exported || d->is_pub,
                                           .c_layout = has_c_name(d)};
             w.count += 1;
+        } else if (d->kind == .enumeration) {
+            ast::Enumerator items[:] = d->kind.enumeration.items;
+            for (Usize k = 0; k < countof(items) && w.variant_count < variants_max; k++) {
+                if (items[k].payload == nullptr) continue;
+                w.variants[w.variant_count] =
+                    (Variant){.owner = d->kind.enumeration.name, .name = items[k].name, .payload = items[k].payload};
+                w.variant_count += 1;
+            }
         }
     }
     return w;
@@ -957,6 +977,14 @@ static Str type_name_of(const ast::TypeExpr *type) {
     return type->kind.named.path.segments[countof(type->kind.named.path.segments) - 1].text;
 }
 
+// The type name that the variant `member` of the payload enum `owner` holds; empty when `owner` is no such enum.
+static Str variant_type(const Wanted *w, Str owner, Str member) {
+    for (Usize i = 0; i < w->variant_count; i++)
+        if (same(w->variants[i].owner, owner) && same(w->variants[i].name, member))
+            return type_name_of(w->variants[i].payload);
+    return "";
+}
+
 // The type named after `t[k]`, which starts a type: `module.T` or `T`, its last name.
 static Str last_of_path(Str source, lex::Tokens t, Usize k) {
     while (k + 2 < countof(t) && is_member(t[k + 1].kind) && is_word(t[k + 2].kind))
@@ -997,7 +1025,8 @@ static Str declared_type(Str source, lex::Tokens t, Usize at) {
         Usize k = d;
         while (k > 0 && (t[k - 1].kind == lex::star || t[k - 1].kind == lex::kw_const))
             k -= 1;
-        if (k < d && k > 0 && is_word(t[k - 1].kind)) return lex::text(source, t[k - 1]);
+        // `Node node` (a parameter or local held by value in today's text) names its type just as `Node *node` does
+        if (k > 0 && is_word(t[k - 1].kind)) return lex::text(source, t[k - 1]);
     }
     return "";
 }
@@ -1013,7 +1042,12 @@ static Usize chain_owner(const Wanted *w, Str source, lex::Tokens t, Usize i) {
     Str type = declared_type(source, t, at);
     for (Usize step = at; step + 2 < i && countof(type) > 0; step += 2) {
         Usize r = record_index(w, type);
-        if (r == w->count) return w->count;
+        if (r == w->count) {
+            // `node.pattern.constant`: the payload enum's variant holds the record (a union typedef in today's text)
+            type = variant_type(w, type, lex::text(source, t[step + 2]));
+            if (countof(type) == 0) return w->count;
+            continue;
+        }
         Usize f = field_index(&w->records[r], lex::text(source, t[step + 2]));
         if (f >= countof(w->records[r].fields)) return w->count;
         type = type_name_of(w->records[r].fields[f].type);
