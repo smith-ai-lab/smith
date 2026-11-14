@@ -2057,6 +2057,12 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     const ast::Stmt *else_branch = s->kind.if_let.else_branch;
     Bool refutable = pattern.refutable;
     types::TypeRef t = types_expr::infer(r, s->kind.if_let.value);
+    if (t != nullptr && t->kind != .result_type && t->kind != .option) {
+        // `.ok(v) := x` over a `Result` name a test narrowed tests the `Result` as it was (#3681)
+        types::TypeRef whole = types_expr::whole_result(r, s->kind.if_let.value, t, "ok");
+        if (whole != t) types::set_type(r, s->kind.if_let.value, whole);
+        t = whole;
+    }
     if (refutable) refutable_binding(r, s->span, t, pattern, else_branch);
     if (else_branch != nullptr) {
         push(else_branch, nullptr, enter);
@@ -2460,6 +2466,18 @@ static Bool index_written(Str name, const ast::Stmt *s) {
     return false;
 }
 
+// Whether the name is declared without `mut` and holds a plain value (no pointer, array or slice to write through): a
+// loop cannot write it, so a test of it stands in the loop (item 55 of #3284, #3631).
+static Bool frozen_root(const types::Checked *r, Str name) {
+    const types::Symbol *symbol = types::lookup(&r->scopes, name);
+    if (symbol == nullptr || symbol->kind != .variable || !symbol->is_new || !symbol->is_const) return false;
+    if (symbol->type == nullptr || symbol->is_volatile) return false;
+    types::TypeRef t = symbol->type;
+    if (t->kind == .option && types::element_of(t) != nullptr) t = types::element_of(t);
+    return t->kind == .record || t->kind == .enumeration || t->kind == .integer || t->kind == .floating ||
+           t->kind == .bool_type || t->kind == .text;
+}
+
 // A loop runs its body again after the last statement of it: a name that a test narrowed before the loop and that the
 // loop may write is not narrowed in the loop, nor after it (#3438, item 55 of #3284).
 static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
@@ -2472,7 +2490,8 @@ static void drop_loop_narrowing(types::Checked *r, const ast::Stmt *s) {
         Usize root = 0;
         while (root < countof(symbol->name) && symbol->name[root] != '.' && symbol->name[root] != '[')
             root += 1;
-        if (types_undefined::may_write(symbol->name[0:root], s) || index_written(symbol->name, s))
+        if (frozen_root(r, symbol->name[0:root])) continue;
+        if (types_undefined::may_write_typed(r, symbol->name[0:root], s) || index_written(symbol->name, s))
             types::unnarrow(&r->scopes, symbol->name);
     }
 }

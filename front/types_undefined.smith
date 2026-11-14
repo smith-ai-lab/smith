@@ -32,6 +32,7 @@ struct Item {
 struct Work {
     Item items[:];
     Usize top;
+    const types::Checked *checked; // when set, a call argument that hands over a plain value is no write (#3631)
 };
 
 // What a statement or an expression does with one name.
@@ -147,6 +148,60 @@ static void unary(Work *w, Usage *u, Str name, const ast::Expr *e) {
     }
 }
 
+// The type of a name or a path of fields and indexes (`v.aggregate.object`, `xs[i].f`) as the scopes hold it, a
+// pointer followed; null when a step is unknown.
+static types::TypeRef path_type(const types::Checked *r, const ast::Expr *e) {
+    const ast::Expr *steps[8] = {};
+    Usize count = 0;
+    const ast::Expr *at = e;
+    while (at->kind == .member || at->kind == .index) {
+        if (count == 8) return nullptr;
+        steps[count] = at;
+        count += 1;
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else if (at->kind == .index) {
+            at = at->kind.index.base;
+        }
+    }
+    if (at->kind != .name || countof(at->kind.name.path.segments) != 1) return nullptr;
+    const types::Symbol *symbol = types::lookup(&r->scopes, at->kind.name.path.segments[0].text);
+    if (symbol == nullptr || symbol->kind != .variable || symbol->type == nullptr) return nullptr;
+    types::TypeRef t = symbol->type;
+    for (Usize k = count; k > 0; k--) {
+        const ast::Expr *step = steps[k - 1];
+        if (t->kind == .pointer && types::element_of(t) != nullptr) t = types::element_of(t);
+        if (step->kind == .index) {
+            t = types::element_of(t);
+        } else if (step->kind == .member && (t->kind == .record || t->kind == .enumeration)) {
+            const types::Slot *slot = types::member(t, step->kind.member.name);
+            // a payload read direct after a test (`ty.kind.parts`): the field of the payload that has it
+            for (Usize i = 0; slot == nullptr && t->kind == .enumeration && i < countof(types::slots_of(t).items);
+                 i++) {
+                const types::Ty *payload = types::slots_of(t).items[i].type;
+                if (payload != nullptr && payload->kind == .record)
+                    slot = types::member(payload, step->kind.member.name);
+            }
+            t = slot == nullptr ? nullptr : slot->type;
+        } else {
+            t = nullptr;
+        }
+        if (t == nullptr) return nullptr;
+    }
+    return t;
+}
+
+// Whether passing `arg` to a call may let the callee write what it is rooted at: it hands over a pointer or an
+// array to write through. A value it reads (`read(v.n)`, `f(v)` by value, a text) cannot. Without types, always.
+static Bool may_fill(const types::Checked *r, const ast::Expr *arg) {
+    if (r == nullptr) return true;
+    types::TypeRef t = path_type(r, arg);
+    if (t == nullptr) return true;
+    types::TyKind k = t->kind;
+    Bool inert = k == .bool_type || k == .integer || k == .floating || k == .text || k == .enumeration || k == .record;
+    return !inert;
+}
+
 // The expressions an expression holds, other than an assignment or a unary operator.
 static void operands(Work *w, Usage *u, Str name, const ast::Expr *e) {
     if (e->kind == .binary) {
@@ -159,7 +214,7 @@ static void operands(Work *w, Usage *u, Str name, const ast::Expr *e) {
     } else if (e->kind == .call) {
         push(w, nullptr, e->kind.call.callee);
         for (Usize i = 0; i < countof(e->kind.call.args); i++) {
-            if (is_name(root_of(e->kind.call.args[i]), name)) {
+            if (is_name(root_of(e->kind.call.args[i]), name) && may_fill(w->checked, e->kind.call.args[i])) {
                 u->writes += 1; // an array or a struct passed on may be filled by the callee
             }
         }
@@ -289,8 +344,8 @@ static void statement_parts_more(Work *w, Usage *u, const ast::Stmt *s) {
 }
 
 // What `stmt` (or, with a null `stmt`, `expr`) does with `name`, everything under it included.
-static Usage scan(Str name, const ast::Stmt *stmt, const ast::Expr *expr) {
-    Work w = {};
+static Usage scan(const types::Checked *checked, Str name, const ast::Stmt *stmt, const ast::Expr *expr) {
+    Work w = {.checked = checked};
     Usage u = {};
     push(&w, stmt, expr);
     while (w.top > 0) {
@@ -310,7 +365,12 @@ static Usage scan(Str name, const ast::Stmt *stmt, const ast::Expr *expr) {
 // Whether `stmt` may write `name` or a part of it (an assignment, `&name`, a call that takes it on, code it cannot
 // read): the narrowing of a `mut` name before a loop is dropped when the loop does (#3438).
 export Bool may_write(Str name, const ast::Stmt *stmt) {
-    return scan(name, stmt, nullptr).writes > 0;
+    return scan(nullptr, name, stmt, nullptr).writes > 0;
+}
+
+// As `may_write`, with the types known: a call that is handed a value read from the name is no write (#3631).
+export Bool may_write_typed(const types::Checked *r, Str name, const ast::Stmt *stmt) {
+    return scan(r, name, stmt, nullptr).writes > 0;
 }
 
 static void report(types::Checked *r, Str name, const ast::Expr *at) {
@@ -351,7 +411,7 @@ static Bool settle(types::Checked *r, Str name, const ast::Stmt *s) {
     const ast::Expr *e = assignment_to(s, name);
     if (e != nullptr) {
         if (e->kind == .assign) {
-            Usage v = scan(name, nullptr, e->kind.assign.value);
+            Usage v = scan(nullptr, name, nullptr, e->kind.assign.value);
             if (e->kind.assign.op != .plain) {
                 report(r, name, e->kind.assign.target);
             } else if (v.reads > 0 && v.writes == 0) {
@@ -360,7 +420,7 @@ static Bool settle(types::Checked *r, Str name, const ast::Stmt *s) {
             return true;
         }
     }
-    Usage u = scan(name, s, nullptr);
+    Usage u = scan(nullptr, name, s, nullptr);
     if (u.writes > 0) {
         return true;
     }

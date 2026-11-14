@@ -438,6 +438,20 @@ export void test_front_check_types_equality_with_a_symbol_narrows_an_option() {
     clean("fn f(o: ?i32) -> i32:\n    if o is i32:\n        return o\n    0\n");
 }
 
+// D17 and D18 of #3634 (#3681): a `Result` is a payload enumeration to a test, so a tested name is its ok or its error.
+export void test_front_check_types_a_tested_result_name_is_its_payload() {
+    clean("fn f(r: Result(i32, u8)) -> i32:\n    if r == .error:\n        return 0\n    r\n");
+    clean("fn f(r: Result(i32, u8)) -> i32:\n    if r != .error:\n        return r\n    0\n");
+    clean("fn f(r: Result(i32, u8)) -> u8:\n    if r == .error:\n        return r\n    0\n");
+    clean("fn f(r: Result(i32, u8)) -> i32:\n    if r is .ok:\n        return r + 1\n    0\n");
+    clean("fn f(r: Result(i32, u8)) -> i32:\n    mut x := r\n    if x != .ok:\n        return 0\n    x + 1\n");
+    clean("fn f(r: Result(i32, u8)) -> i32:\n    if r != .ok:\n        return 1\n    else if .ok(v) := r:\n        "
+          "return v\n    0\n");
+    clean("fn f(r: Result(i32, u8)) -> Result(i32, u8):\n    if r == .error:\n        return r\n    r\n");
+    fails("fn f(r: Result(i32, u8)) -> u8:\n    if r == .error:\n        return 0\n    r\n", "i32", "u8");
+    fails("fn f(r: Result(i32, u8)) -> i32:\n    x: i32 = r\n    x\n", "Result", "I32");
+}
+
 // Item 55 of #3284 (#3438): narrowing works the same on a `mut` name.
 export void test_front_check_types_a_mut_name_is_narrowed_by_is() {
     clean(with_kinds("fn f(k: Kind) -> i32:\n    mut x := k\n    if x is not .unary:\n        return 0\n    x.op\n"));
@@ -659,6 +673,20 @@ export void test_front_check_types_a_loop_that_assigns_a_mut_name_drops_its_narr
     fails("fn f(o: ?i32) -> i32:\n    mut x := o\n    if x == .none:\n        return 0\n    mut n := 0\n"
           "    while n < 3:\n        n += x\n        x = .none\n    n\n",
           "", "");
+}
+
+// A call in a loop that is handed a value read from a tested name or path is no write: the narrowing stands (#3631).
+// A `mut` name whose address the loop takes, or a name the loop assigns, still drops it.
+export void test_front_check_types_a_loop_call_given_a_value_read_keeps_its_narrowing() {
+    clean(with_kinds("fn read(n: i32) -> i32:\n    n\n\nfn f(k: Kind) -> i32:\n    if k is not .unary:\n"
+                     "        return 0\n    mut n := 0\n    while n < 3:\n        n += read(k.op)\n    n\n"));
+    clean(with_kinds("fn read(n: i32) -> i32:\n    n\n\nfn f(h: Kind) -> i32:\n    mut m := h\n"
+                     "    if m is not .unary:\n        return 0\n    mut n := 0\n    while n < 3:\n"
+                     "        n += read(m.op)\n    n\n"));
+    fails(with_kinds("fn take(p: *mut Kind):\n    p.* = Kind(name = 1)\n\nfn f(h: Kind) -> i32:\n    mut m := h\n"
+                     "    if m is not .unary:\n        return 0\n    mut n := 0\n    while n < 3:\n"
+                     "        take(&m)\n        n += m.op\n    n\n"),
+          "payload enumeration", "");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -275,3 +275,27 @@ export void test_front_emit_value_a_u16_plus_an_if_of_u64_widens_the_u16() {
     test::check_equal(sum(false, 4, 5000000000), (U64)5000000005);
     emit_jit::stop(&host);
 }
+
+typedef I32 (*PickResult)(Bool);
+
+// A `Result` name tested with `== .error` is read as the ok value after an early return and as the error where the
+// test holds; the ok and the error may be one type (#3681).
+export void test_front_emit_value_a_tested_result_name_is_read_direct() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    _ = ir_of("fn make(c: bool) -> Result(i32, i32):\n"
+              "    if c:\n"
+              "        return .ok(5)\n"
+              "    return .error(9)\n"
+              "\n"
+              "pub fn pick(c: bool) -> i32:\n"
+              "    r := make(c)\n"
+              "    if r == .error:\n"
+              "        return r + 100\n"
+              "    return r\n",
+              &host, &s);
+    PickResult pick = (PickResult)symbol_of(&host, "pick");
+    test::check_equal(pick(true), (I32)5);
+    test::check_equal(pick(false), (I32)109);
+    emit_jit::stop(&host);
+}
