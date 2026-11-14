@@ -2579,6 +2579,8 @@ export syntax::Edits convert_fix(const ast::Expr *x, types::TypeRef to) {
     Bool postfix = x->kind == .name || x->kind == .member || x->kind == .call || x->kind == .index;
     syntax::Edits edits = {};
     if (x->kind == .binary && x->kind.binary.op != .logical_and) return to_fix(x, to); // `(i - 1).to(u64)`
+    // `countof(xs)` and `sizeof x` are numbers C converts silently: the conversion goes round them.
+    if (x->kind == .query) return to_fix(x, to);
     if (!postfix) return edits; // the span of a conditional may start inside its text: no fix
     edits = mem::realloc(edits, 1);
     edits[0] = (syntax::Edit){.span = {.start = x->span.end, .end = x->span.end},

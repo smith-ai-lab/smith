@@ -56,6 +56,21 @@ export void test_front_fix_numeric_an_integer_literal_next_to_a_float_is_a_float
                  "fn f(v: f64) -> f64:\n    if v < 0.0:\n        return -v\n    return v\n");
 }
 
+export void test_front_fix_numeric_an_enumeration_given_to_an_integer_is_converted() {
+    expect_fixed("module m;\nenum Mode { fast, slow };\nI32 f() {\n    enum Mode m = fast;\n    I32 code = m;\n    "
+                 "return code;\n}\n",
+                 "enum Mode:\n    fast\n    slow\nfn f() -> i32:\n    m: Mode = .fast\n    code: i32 = m.to(i32)\n    "
+                 "return code\n");
+}
+
+export void test_front_fix_numeric_a_count_or_size_given_to_a_fixed_width_is_converted() {
+    expect_fixed(
+        "module m;\nU64 lanes_of(U64 n) { return n; }\nU64 g(I32 xs[4]) {\n    return lanes_of(countof(xs));\n}\nU32 "
+        "h(I32 flag) {\n    U32 n = sizeof(U64);\n    return n;\n}\n",
+        "fn lanes_of(n: u64) -> u64:\n    return n\nfn g(mut xs: [4]i32) -> u64:\n    return "
+        "lanes_of((countof(xs)).to(u64))\nfn h(flag: i32) -> u32:\n    n: u32 = (sizeof(u64)).to(u32)\n    return n\n");
+}
+
 export void test_front_fix_numeric_a_compound_assignment_widens_a_narrower_right_side() {
     expect_fixed("module m;\nvoid f(U64 *a, U32 b) {\n    *a /= b;\n}\n",
                  "fn f(a: *mut u64, b: u32):\n    a.* /= b.to(u64)\n");
