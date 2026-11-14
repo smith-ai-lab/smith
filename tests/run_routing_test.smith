@@ -938,7 +938,8 @@ export void test_run_fmt_outside_a_git_repository_says_to_name_the_files() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     arena::Arena *store = &memory;
-    scratch::Run run = scratch::sh(&p, format::push("env GIT_CEILING_DIRECTORIES='", p.root, "' smith fmt").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push("env GIT_CEILING_DIRECTORIES='", scratch::root_of(&p), "' smith fmt").data);
     scratch::expect_text(
         "fmt: outside a git repository it says to name the files",
         "smith: this folder is not a git repository, so smith fmt has no list of files; name them: smith "
@@ -955,8 +956,9 @@ export void test_run_check_reports_every_part_in_order() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     arena::Arena *store = &memory;
-    scratch::Run run =
-        scratch::sh(&p, format::push("env SMITH_OUTPUT=full GIT_CEILING_DIRECTORIES='", p.root, "' smith check").data);
+    scratch::Run run = scratch::sh(
+        &p,
+        format::push("env SMITH_OUTPUT=full GIT_CEILING_DIRECTORIES='", scratch::root_of(&p), "' smith check").data);
     scratch::expect_status("check: a part that fails is reported, and the exit status is 1", 1, &run);
     const char *a = c::strstr(run.err, "smith check: fmt FAILED (status 2)");
     const char *b = a != nullptr ? c::strstr(a, "smith check: docs ok") : nullptr;

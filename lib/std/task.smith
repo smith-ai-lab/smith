@@ -869,6 +869,7 @@ void wake_waiters(Group *group) {
     Task **chain = &waiters;
     while (*chain != nullptr) {
         Task *waiter = *chain;
+        contract::assert(waiter->waiting_on != nullptr); // `wait` sets the group before it links the task into the list
         if (waiter->waiting_on != group) {
             chain = &waiter->wait_next;
             continue;
@@ -878,6 +879,7 @@ void wake_waiters(Group *group) {
         if (waiter->parked) { // it has switched out: queue it
             waiter->parked = false;
             waiter->in_wait = false;
+            contract::assert(waiter->worker != nullptr); // a managed task has its worker for its whole life
             push_ready(waiter->worker, waiter);
         } else { // it is about to: its worker queues it when it has
             waiter->woken = true;
@@ -891,6 +893,7 @@ void finish_managed(Task *task) {
     lock_scheduler();
     task->group->pending -= 1;
     live -= 1;
+    contract::assert(task->worker != nullptr); // a managed task has its worker for its whole life
     task->worker->load -= 1;
     if (task->group->pending == 0) wake_waiters(task->group);
     unlock_scheduler();
@@ -1058,6 +1061,7 @@ void poll_now() {
 
 // Whether the worker's cache has room for the stack of this ended task.
 Bool stack_will_be_kept(Task *task) {
+    contract::assert(task->worker != nullptr); // a managed task has its worker for its whole life
     return task->worker->cached < stack_cache_max;
 }
 
@@ -1274,6 +1278,8 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
             contract::assert(task != nullptr); // the test above went on only when the head is a task
             pool_head = task->pool_next;
             if (pool_head == nullptr) pool_tail = nullptr;
+            contract::assert(task->pool_request != nullptr); // the task was queued with its call and its worker
+            contract::assert(task->pool_worker != nullptr);  // (`pool_call` sets both before it links the task in)
             unlock_scheduler();
             attempt(task->pool_request);
             lock_scheduler();

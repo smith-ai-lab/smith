@@ -440,7 +440,7 @@ export void test_build_step_cache_runs_twice_in_one_process() {
     expect_counts("twice: the first call compiles all three", 3, 0, &first);
     Build again = build(a, a.cache, 2000);
     scratch::expect_contains("twice: the second call finds the folder settled", again.text, "no work to do");
-    const char *other_cache = format::push(a.root, "/second-cache").data;
+    const char *other_cache = format::push(scratch::root_of(&a), "/second-cache").data;
     Build elsewhere = build(b, other_cache, 3000);
     expect_counts("twice: another cache holds nothing of the first", 3, 0, &elsewhere);
 }
@@ -458,7 +458,7 @@ static scratch::Project made(const char *name) {
 static scratch::Project sibling(const scratch::Project *a, const char *name) {
     scratch::Project p = *a;
     p.root = nullptr;
-    p.dir = format::push(a->root, "/", name).data;
+    p.dir = format::push(scratch::root_of(a), "/", name).data;
     scratch::copy_tree(&p, "tests/build_fixtures/step_cache", "");
     return p;
 }

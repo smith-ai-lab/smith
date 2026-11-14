@@ -21,7 +21,7 @@ static scratch::Project made(const char *name) {
 static scratch::Project sibling(const scratch::Project *a, const char *name) {
     scratch::Project p = *a;
     p.root = nullptr;
-    p.dir = format::push(a->root, "/", name).data;
+    p.dir = format::push(scratch::root_of(a), "/", name).data;
     scratch::copy_tree(&p, "tests/build_fixtures/function_cache", "");
     return p;
 }

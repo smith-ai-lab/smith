@@ -87,7 +87,7 @@ static Bool make_built(const scratch::Project *root, scratch::Project *p, const 
 // The lines the client printed for the commands: `smith lsp` from the folder, with its root, and stderr too. The client
 // is in the folder scratch::make made, beside the project.
 static const char *session(const scratch::Project *p, const char *commands) {
-    const char *client = join("\"", p->root, "/lsp_client\" \"$(command -v smith)\" \"$(pwd -P)\" ");
+    const char *client = join("\"", scratch::root_of(p), "/lsp_client\" \"$(command -v smith)\" \"$(pwd -P)\" ");
     return scratch::sh(p, join(client, commands, " 2>&1")).out;
 }
 

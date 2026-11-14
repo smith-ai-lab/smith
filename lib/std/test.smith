@@ -722,7 +722,9 @@ I32 explain_start(c::pid_t *child) {
         char program[path_capacity];
         char verb[16] = "--smith-explain";
         char option[6] = "--pid";
-        __builtin_snprintf(program, sizeof program, "%s", explain_path);
+        const char *path = explain_path;
+        contract::assert(path != nullptr); // `explain_failure` returns before it when the path is not set
+        __builtin_snprintf(program, sizeof program, "%s", path);
         char *arguments[5] = {program, verb, option, pid_text, nullptr};
         c::execv(program, arguments);
         c::_exit(127);

@@ -33,9 +33,10 @@ constexpr char make_archives[_] =
 
 // A cache folder `name` in the project's scratch folder, allocated with mem:: as scratch::clean frees it.
 static const char *cache_in(const scratch::Project *p, const char *name) {
-    Usize length = format::length(p->root, "/", name) + 1;
+    const char *root = scratch::root_of(p);
+    Usize length = format::length(root, "/", name) + 1;
     char *path = mem::alloc_slice(char, length).data;
-    (void)format::write(path, length, p->root, "/", name);
+    (void)format::write(path, length, root, "/", name);
     return path;
 }
 

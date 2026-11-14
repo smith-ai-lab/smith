@@ -44,6 +44,7 @@ void release(Stream **s) {
 // Where the body writes the value it yields: the `slot` of the `next` that resumed it.
 [[std::c_name("smith_stream_slot")]] export void *slot(Stream *s) {
     contract::requires(s != nullptr);
+    contract::assert(s->slot != nullptr); // the body asks while a `next` has resumed it, and that `next` set the slot
     return s->slot;
 }
 
