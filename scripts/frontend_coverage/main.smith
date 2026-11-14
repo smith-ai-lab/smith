@@ -856,24 +856,41 @@ static I32 summarize(const char file[:], const char *smith) {
 // fingerprint is the hash `gate-check` prints for the text between the gate-begin and gate-end lines of this file and
 // of ci.yml; the test `the_gate_version_moves_with_the_comparison` fails when they differ, and says what to write.
 constexpr U64 gate_version = 5;
-constexpr U64 gate_fingerprint = 9742430355599004601ULL;
+constexpr U64 gate_fingerprint = 11994585387949903843ULL;
 constexpr U64 gate_dry_runs = 10;
 
-// The files the comparison named, as `,a,b,` (the verdict log keeps them, #3443).
-static char named_files[4096];
-static Usize named_files_length = 0;
+// The files a comparison named, as `,a,b,` (the verdict log keeps them, #3443).
+struct Named {
+    char text[4096];
+    Usize length;
+};
 
-static void note_named(const char path[:]) {
-    if (named_files_length == 0) {
-        named_files[0] = ',';
-        named_files_length = 1;
+// every file named, the files of the comparisons still in their window (the published row names these) and the files of
+// the comparisons whose window is over (#3629)
+static struct Named named_files;
+static struct Named named_fresh;
+static struct Named named_old;
+
+static void note_in(struct Named *list, const char path[:]) {
+    if (list->length == 0) {
+        list->text[0] = ',';
+        list->length = 1;
     }
-    if (named_files_length + countof(path) + 2 > sizeof(named_files)) return;
+    if (list->length + countof(path) + 2 > sizeof(list->text)) return;
     for (Usize i = 0; i < countof(path); i++)
-        named_files[named_files_length + i] = path[i];
-    named_files[named_files_length + countof(path)] = ',';
-    named_files_length += countof(path) + 1;
-    named_files[named_files_length] = '\0';
+        list->text[list->length + i] = path[i];
+    list->text[list->length + countof(path)] = ',';
+    list->length += countof(path) + 1;
+    list->text[list->length] = '\0';
+}
+
+static const char *list_text(const struct Named *list) {
+    return list->length > 0 ? (const char *)list->text : ",";
+}
+
+static void note_named(const char path[:], Bool old) {
+    note_in(&named_files, path);
+    note_in(old ? &named_old : &named_fresh, path);
 }
 
 // Whether the row is a crash of the compiler (a stage's message starts with this, `compiled->status >= 127`).
@@ -907,7 +924,10 @@ static Usize new_crash(const char path[:], Usize from, Usize base_rows) {
 // with is the one it is given (the base's), never an older green run's. A file that has rows in the BASE table, none of
 // them a crash, and a crash in the NOW table is named too, with its crash row (#3606); a crash already in the base is
 // not.
+// named_count counts the files of the comparison of version `gate_version` (the window's), named_old_count those of the
+// comparisons an earlier version introduced (#3629).
 static Usize named_count = 0;
+static Usize named_old_count = 0;
 
 static I32 regressed(const char base[:], const char now[:]) {
     if (!read_table(base)) {
@@ -937,8 +957,11 @@ static I32 regressed(const char base[:], const char now[:]) {
         }
         console::print((const char *)entries[shown].path, "\t", (const char *)entries[shown].stage, "\t",
                        (const char *)entries[shown].message, "\n");
-        named_count += 1;
-        note_named(path);
+        if (passed_on_base)
+            named_old_count += 1;
+        else
+            named_count += 1;
+        note_named(path, passed_on_base);
     }
     return 0;
 }
@@ -2819,8 +2842,10 @@ static I32 gate_check(const char source[:], const char ci[:]) {
     console::print_error(
         "frontend_coverage: error: the gate's comparison changed (the text between the gate-begin and gate-end lines "
         "of scripts/frontend_coverage/main.smith or of the gate step of .github/workflows/ci.yml).\n"
-        "  Bump `gate_version` in scripts/frontend_coverage/main.smith and set `gate_fingerprint` to ",
-        h.a, "; a new version runs report-only for ", gate_dry_runs, " queue runs (#3443).\n");
+        "  Set `gate_fingerprint` in scripts/frontend_coverage/main.smith to ",
+        h.a,
+        ". A change that adds a comparison also bumps `gate_version`: ", "the new comparison runs report-only for ",
+        gate_dry_runs, " queue runs (#3443) and the comparisons of earlier versions keep refusing (#3629).\n");
     return 1;
 }
 
@@ -2944,6 +2969,18 @@ static Bool refusal_true(const char files[:], const char before[:], const char a
     return any;
 }
 
+// One `gate-refuses` line for each file of the list `,a,b,`: the files whose comparison refuses this run (#3629).
+static void print_refused(const struct Named *list) {
+    typeof(const char[:]) all = list->text[0:list->length];
+    Usize from = 1;
+    for (Usize i = 1; i < countof(all); i++) {
+        if (all[i] != ',') continue;
+        typeof(const char[:]) name = all[from:i];
+        console::print("gate-refuses\t", name, "\n");
+        from = i + 1;
+    }
+}
+
 // The mode of this queue run (#3443). PREV is the row the base's run published: `version TAB run TAB would TAB dirty
 // TAB mode`. A version counts the queue runs that finished with it; it refuses from its 11th run, and only when none
 // of its first 10 would have refused (`dirty` carries that along, so only the base's row is read). A gate that is
@@ -2975,9 +3012,12 @@ static I32 gate(const char prev_path[:], Usize would, const char older_table[:],
     Usize index = version == gate_version ? run + 1 : 1;
     Usize taint = version == gate_version && (dirty > 0 || carried) ? 1 : 0;
     Bool live = index > gate_dry_runs && taint == 0;
+    // A comparison an earlier version introduced has had its window: it refuses whatever the window of this version
+    // does (#3629); only a demotion (below) holds it back.
+    Bool refuses = (live && would > 0) || named_old_count > 0;
     Bool demoted = false;
     const char *log_name = c::getenv("SMITH_GATE_LOG");
-    if (live && log_name != nullptr) {
+    if (refuses && log_name != nullptr) {
         files::BytesResult log = files::read_file(view_of(log_name));
         if (log != .error) {
             defer mem::free(log.ok.data);
@@ -2986,18 +3026,20 @@ static I32 gate(const char prev_path[:], Usize would, const char older_table[:],
         }
     }
     const char *pr = c::getenv("SMITH_GATE_PR");
-    const char *status = demoted ? "demoted" : !live ? "report" : would > 0 ? "refused" : "ok";
+    const char *status = demoted ? "demoted" : refuses ? "refused" : live ? "ok" : "report";
     if (demoted) {
         run = 0;
         index = 0;
         taint = 0;
         live = false;
+        refuses = false;
     }
     console::print("gate-row\t", gate_version, "\t", index, "\t", would, "\t", taint, "\t",
-                   live ? "refusing" : "report-only", "\t", named_files_length > 0 ? (const char *)named_files : ",",
-                   "\n");
+                   live ? "refusing" : "report-only", "\t", list_text(&named_fresh), "\n");
     console::print("gate-log\t", pr != nullptr ? pr : "?", "\t", gate_version, "\t", status, "\t",
-                   named_files_length > 0 ? (const char *)named_files : ",", "\n");
+                   list_text(&named_files), "\n");
+    if (!demoted) print_refused(&named_old);
+    if (live) print_refused(&named_fresh);
     if (live) return 0;
     if (demoted) {
         console::print("gate-note: gate version ", gate_version, " demoted itself: its last three refusals, in three ",
