@@ -5109,6 +5109,38 @@ export Str enumeration_of(const Checked *r, Str prefix, Str name) {
     return "";
 }
 
+// The enumeration, as a file of the module being checked writes it (`Level`, or `area.Kind` for one of `shapes::area`),
+// that is the only smith-written enumeration in scope with an enumerator `name`: a bare `.square` where no enumeration
+// is expected is that enumerator written qualified (#3634 D16). Empty when none has it, when two do, and for a C
+// header's
+// (`c::`) and for a payload enumeration.
+export Str sole_enumeration_with(const Checked *r, Str name) {
+    Str found = "";
+    Usize count = 0;
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const Symbol *s = &r->scopes.symbols[i];
+        if (s->kind != .type_name || s->type == nullptr || s->type->kind != .enumeration || is_payload_enum(s->type))
+            continue;
+        Str prefix = module_prefix(s->name);
+        if (countof(prefix) > 0 && !is_public(s)) continue;
+        if (countof(prefix) >= 3 && same_text(prefix[0:3], "c::")) continue;
+        Bool has = false;
+        for (Usize k = 0; k < countof(slots_of(s->type).items); k++) {
+            if (same_text(slots_of(s->type).items[k].name, name)) has = true;
+        }
+        if (!has) continue;
+        count += 1;
+        Str bare = s->name[countof(prefix):countof(s->name)];
+        Usize from = 0; // the last module name before the `::` that ends the prefix
+        for (Usize k = 0; k + 1 < countof(prefix); k++)
+            if (prefix[k] == ':' && prefix[k + 1] == ':' && k + 2 < countof(prefix)) from = k + 2;
+        found = bare;
+        if (countof(prefix) > 2) found = msg(format::push(prefix[from:countof(prefix) - 2], ".", bare));
+    }
+    if (count != 1) found = "";
+    return found;
+}
+
 // Reports `std.math has no public sinn`, with the closest public name when one is near.
 export void report_missing(Checked *r, ast::Span span, Through t) {
     Str prefix = prefix_of_symbol(t.module);

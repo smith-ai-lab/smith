@@ -87,3 +87,42 @@ export void test_front_fix_zero_option_a_copy_of_a_mut_name_under_a_null_test_is
                  "pub fn f(n: *Node) -> i32:\n"
                  "    return sum(n.next)\n");
 }
+
+// A pointer field whose value is handed to a `*mut` parameter is `?*mut T`, and one never written through stays `?*T`
+// (#3671): the fixer writes a field read-only until a use of its value asks for `*mut`.
+export void test_front_fix_zero_option_a_field_given_to_a_mut_global_is_written_mut() {
+    expect_fixed("module m;\nexport struct Node {\n    Node *next;\n    Node *link;\n    I32 v;\n};\n"
+                 "static Node *first;\nstatic Node *last;\n"
+                 "export Node make(I32 v) {\n    return (Node){.v = v};\n}\n"
+                 "export void push(Node *n) {\n    n->next = nullptr;\n    if (last != nullptr) last->next = n;\n"
+                 "    last = n;\n    if (first == nullptr) first = n;\n}\n"
+                 "export Node *pop(void) {\n    Node *n = first;\n    first = n->next;\n"
+                 "    if (first == nullptr) last = nullptr;\n    n->next = nullptr;\n    return n;\n}\n"
+                 "export I32 look(const Node *a) {\n    if (a->link == nullptr) return 0;\n    return a->link->v;\n}\n",
+                 "pub struct Node:\n"
+                 "    pub next: ?*mut Node = .none\n"
+                 "    pub link: ?*Node = .none\n"
+                 "    pub v: i32\n"
+                 "static mut first: ?*mut Node = undefined\n"
+                 "static mut last: *mut Node = undefined\n"
+                 "pub fn make(v: i32) -> Node:\n"
+                 "    return Node(v = v)\n"
+                 "pub fn push(n: *mut Node):\n"
+                 "    n.next = .none\n"
+                 "    if last != nullptr:\n"
+                 "        last.next = n\n"
+                 "    last = n\n"
+                 "    if first == .none:\n"
+                 "        first = n\n"
+                 "pub fn pop() -> *mut Node:\n"
+                 "    n: ?*mut Node = first\n"
+                 "    first = n.next\n"
+                 "    if first == .none:\n"
+                 "        last = nullptr\n"
+                 "    n.next = .none\n"
+                 "    return n\n"
+                 "pub fn look(a: *Node) -> i32:\n"
+                 "    if a.link == .none:\n"
+                 "        return 0\n"
+                 "    return a.link.v\n");
+}

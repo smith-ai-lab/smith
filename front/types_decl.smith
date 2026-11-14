@@ -395,6 +395,49 @@ static syntax::Edits option_local_fix(const types::Checked *c, const ast::Expr *
 
 static Bool left_out_of(types::TypeRef from, types::TypeRef to, U64 *given);
 
+// The pointer of an option of one (`?*T`), else `t` itself: `?*T` handed where `?*mut T` or `*mut T` is wanted drops
+// const as `*T` does (#3671).
+static types::TypeRef option_pointer(types::TypeRef t) {
+    if (t->kind == .option && types::element_of(t)->kind == .pointer) return types::element_of(t);
+    return t;
+}
+
+// Whether `from` gives a value to `to` and drops const, looking through an option on either side (#3671).
+static Bool drops_const_option(types::TypeRef from, types::TypeRef to) {
+    if (from->kind != .option && to->kind != .option) return false;
+    types::TypeRef a = option_pointer(from);
+    types::TypeRef b = option_pointer(to);
+    return a->kind == .pointer && b->kind == .pointer && types::points_to_const(a) && !types::points_to_const(b);
+}
+
+// Whether `from` is `*(?*T)` and `to` is `*(*mut T)` or `*(?*mut T)`: the field whose address is taken is written
+// through, so its own pointer is `*mut` (#3671).
+static Bool drops_const_in_option_element(types::TypeRef from, types::TypeRef to) {
+    if (from->kind != .pointer || to->kind != .pointer) return false;
+    types::TypeRef inner_from = types::element_of(from);
+    types::TypeRef inner_to = types::element_of(to);
+    if (inner_from->kind != .option && inner_to->kind != .option) return false;
+    return drops_const_option(inner_from, inner_to);
+}
+
+// `&node.next` of a `?*T` field handed where `*mut ?*mut T` is wanted: the field is written `?*mut T` (#3671).
+static syntax::Edits option_field_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from,
+                                      types::TypeRef to) {
+    syntax::Edits none = {};
+    const ast::Expr *operand = address_operand(e);
+    if (operand == nullptr || operand->kind != .member || !drops_const_in_option_element(from, to)) return none;
+    return types_expr::pointer_fix(c, operand);
+}
+
+// Whether `from` is a pointer or slice that points to const where `to` does not, or the same through an option.
+static Bool drops_const_pointer(types::TypeRef from, types::TypeRef to) {
+    Bool pointers =
+        from->kind == .pointer && to->kind == .pointer && types::points_to_const(from) && !types::points_to_const(to);
+    Bool slices =
+        from->kind == .slice && to->kind == .slice && types::points_to_const(from) && !types::points_to_const(to);
+    return pointers || slices || drops_const_option(from, to);
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok && volatile_refused(c, e, from, to)) return false;
@@ -402,10 +445,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         return true;
     }
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
-    Bool drops_const =
-        from->kind == .pointer && to->kind == .pointer && types::points_to_const(from) && !types::points_to_const(to);
-    drops_const = drops_const || (from->kind == .slice && to->kind == .slice && types::points_to_const(from) &&
-                                  !types::points_to_const(to));
+    Bool drops_const = drops_const_pointer(from, to);
     // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
     const ast::Expr *source = pointer_source(e);
     syntax::Edits fix = mem::alloc_slice(syntax::Edit, 0);
@@ -427,6 +467,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
             }
         }
     }
+    if (countof(fix) == 0) fix = option_field_fix(c, e, from, to);
     if (from->kind == .pointer && to->kind == .pointer && !types::points_to_const(from) && !types::points_to_const(to))
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
