@@ -314,6 +314,12 @@ static const types::Symbol *imported_by_name(const state::Emitter *e, Str name) 
     return is_imported_record(e, s) ? s : nullptr;
 }
 
+// The record of an imported type symbol; `imported_by_name` returns only symbols with their declaration.
+static state::TyResult imported_symbol_record(state::Emitter *e, const types::Symbol *named) {
+    contract::assert(named->decl != nullptr);
+    return imported_record(e, named->decl, types::name_of(named->type));
+}
+
 // The type at the bottom of a chain of pointers and arrays: a scalar, an enumeration, a record, `str` or a slice.
 static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .slice) {
@@ -378,10 +384,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
     }
     const types::Symbol *named = imported_by_name(e, name);
-    if (named != nullptr) {
-        contract::assert(named->decl != nullptr);
-        return imported_record(e, named->decl, types::name_of(named->type));
-    }
+    if (named != nullptr) return imported_symbol_record(e, named);
     if (e->options.checked != nullptr) { // an alias (`Unary := fn(i32) -> i32`) as the element of an array or pointer
         const types::Symbol *alias = types::lookup(&e->options.checked->scopes, name);
         if (alias != nullptr && alias->kind == .type_name) return state::type_of_checked(e, alias->type, base->span);
