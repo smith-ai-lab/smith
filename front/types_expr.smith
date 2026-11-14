@@ -1426,6 +1426,15 @@ static Str member_list(types::TypeRef t) {
     return out;
 }
 
+// `.high` where an integer is expected: the error carries the typed fix when one enumeration in scope has the member.
+static void bare_enumerator_error(types::Checked *c, const ast::Expr *e, Str want) {
+    Str name = e->kind.variant.name;
+    types::fail_fix(
+        c, e->span,
+        msg(format::push("`.", name, "` is not a value of `", want, "`; write a value of type `", want, "`")),
+        bare_enumerator_fix(c, e, want));
+}
+
 static void variant_expr(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .variant)) {
@@ -1484,10 +1493,7 @@ static void variant_expr(types::Checked *c, Frame f) {
     if (expected->kind == .enumeration) {
         types::failf(c, e->span, "`.", name, "` is not a member of `", want, "` (", member_list(expected), ")");
     } else if (expected->kind == .integer) {
-        types::fail_fix(
-            c, e->span,
-            msg(format::push("`.", name, "` is not a value of `", want, "`; write a value of type `", want, "`")),
-            bare_enumerator_fix(c, e, want));
+        bare_enumerator_error(c, e, want);
     } else {
         types::failf(c, e->span, "`.", name, "` is not a value of `", want, "`; write a value of type `", want, "`");
     }
