@@ -945,6 +945,14 @@ static state::Status push_field(state::Emitter *e, state::Ty record, c::LLVMValu
     return state::failf(span, "no field ", name, " in ", record.name);
 }
 
+// A narrowed payload that is a pointer, read through (`c.radius` for `c.some->radius`, #3631): follow it.
+static void follow_payload_pointer(state::Emitter *e, state::Value *base, state::Ty *record) {
+    if (record->kind != .pointer || record->kind.pointer.element == nullptr) return;
+    if (record->kind.pointer.element->kind == .pointer) return;
+    base->llvm = c::LLVMBuildLoad2(e->builder, record->llvm, base->llvm, "pointer");
+    *record = *record->kind.pointer.element;
+}
+
 static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *w) {
     if (w->expr->kind != .member) {
         return state::fail("not a member access", w->span);
@@ -996,6 +1004,7 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
             matching::narrowed_variant(e, record, seen, w->span, &payload)) {
             base.llvm = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 1, "payload");
             record = payload;
+            follow_payload_pointer(e, &base, &record);
         }
     }
     if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {

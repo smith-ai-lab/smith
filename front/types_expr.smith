@@ -2247,7 +2247,12 @@ static Bool narrow_symbol(const NameTest *test, Bool has, types::Symbol *s) {
         if (payload == nullptr || payload->kind == .void_type) return false;
         s->type = payload;
         s->narrowed = true;
-        s->by_equal = test->equal && test->name->kind == .name; // a field path is read directly: no binding (#3598)
+        // A tested name or path is read directly: no binding (#3598, #3631). Not a `Result`'s `ok` and `error`, nor a
+        // variant whose payload has a field of its own name: those keep the fixer's binding (`direct_test`).
+        Bool own_field = payload->kind != .record ||
+                         (countof(test->variant) > 0 && types::member(payload, test->variant) != nullptr);
+        Bool result = same_text(test->variant, "ok") || same_text(test->variant, "error");
+        s->by_equal = test->equal && test->name->kind == .name && (own_field || result);
         return true;
     }
     if (mask == s->excluded) return false;
@@ -2297,7 +2302,7 @@ static Usize narrow_test(types::Checked *c, const ast::Expr *item, Bool truth, t
     if (r == nullptr || r->kind != .variable || !r->is_new) return count;
     if (!r->is_const && !types::is_local(&c->scopes, root)) return count;
     Bool path = !same_text(name, root);
-    if (path) t.by_is = true; // a field path is narrowed by `==` too (item 68 of #3516)
+    t.by_is = true; // a name and a field path are narrowed by `==` too (items 27 and 68 of #3516, #3631)
     const types::Symbol *s = path ? types::lookup(&c->scopes, name) : r;
     Usize at = found_at(out, count, name);
     types::Symbol next = {};
