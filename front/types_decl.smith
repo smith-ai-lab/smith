@@ -360,14 +360,18 @@ static Bool volatile_refused(types::Checked *c, const ast::Expr *e, types::TypeR
     return true;
 }
 
-// `n = n.next` of a local `n: *Node`: the local holds the option, `n: ?*Node` (#3621).
-static syntax::Edits assigned_option_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from,
-                                         types::TypeRef to) {
+// The local that holds an option written `*T` is `?*T`: `p: *char = a.f` of an option field, and `n = n.next` of a
+// local `n: *Node` (#3621).
+static syntax::Edits option_local_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from,
+                                      types::TypeRef to) {
     syntax::Edits fix = {};
+    if (from->kind != .option || to->kind != .pointer || after_null_test(c, e)) return fix;
+    const ast::TypeExpr *declared = declared_pointer_type(state.declaring, e);
     const types::Symbol *assigned = types_expr::assigned_pointer_local(c, e);
-    if (from->kind != .option || to->kind != .pointer || assigned == nullptr || after_null_test(c, e)) return fix;
+    if (declared == nullptr && assigned != nullptr) declared = assigned->written;
+    if (declared == nullptr) return fix;
     fix = mem::realloc(fix, 1);
-    U32 at = assigned->written->span.start;
+    U32 at = declared->span.start;
     Str question = "?";
     fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
     return fix;
@@ -428,17 +432,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         fix[0] = (syntax::Edit){.span = e->span, .text = none};
     }
     if (from->kind == .option && to->kind != .option && countof(fix) == 0) fix = types_expr::option_read_fix(c, e);
-    // `p: *char = a.f` of an option: the local holds the option, `p: ?*char = a.f`.
-    const ast::Decl *declaring = state.declaring;
-    const ast::TypeExpr *declared = declared_pointer_type(declaring, e);
-    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declared != nullptr &&
-        !after_null_test(c, e)) {
-        fix = mem::realloc(fix, 1);
-        U32 at = declared->span.start;
-        Str question = "?";
-        fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
-    }
-    if (countof(fix) == 0) fix = assigned_option_fix(c, e, from, to);
+    if (countof(fix) == 0) fix = option_local_fix(c, e, from, to);
     // A number where a Bool is wanted: the fix writes the comparison the message names, `x != 0`; an operand that is
     // not a postfix expression goes in parentheses first, `(a + b) != 0`.
     if (from->kind == .integer && to->kind == .bool_type && countof(fix) == 0) fix = nonzero_fix(e);
