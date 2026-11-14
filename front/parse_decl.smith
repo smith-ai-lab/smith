@@ -51,6 +51,7 @@ import front::parse;
 import front::parse_type;
 import std::arena;
 import std::format;
+import std::contract;
 import std::mem;
 import std::slice;
 
@@ -2284,6 +2285,7 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
 // `struct { I32 a; };` when `anonymous`), array suffixes, `: width`, `;`.
 static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool anonymous, U32 start, Style *style,
                                    Bool top) {
+    contract::assert(field.type != nullptr); // both callers parsed it
     if (anonymous && parse::at(p, lex::semicolon)) {
         parse::advance(p);
         field.span = parse::span_from(p, start);
