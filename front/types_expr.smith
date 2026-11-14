@@ -6253,6 +6253,18 @@ static void value_after(types::Checked *c, Frame f) {
 // ---------------------------------------------------------------------------------------------------------------
 // The walk
 
+// The argument of an applied type as the value it is written as: a value as it is, a name for a type that is a name;
+// null for any other type.
+static ast::Expr *type_arg_expr(const ast::TypeArg *arg) {
+    if (*arg == .value) return arg->value.value;
+    const ast::TypeExpr *written = arg->type.type;
+    if (written->kind != .named) return nullptr;
+    ast::Expr *value = mem::alloc(ast::Expr);
+    value->span = written->span;
+    value->kind = {.name = {.path = written->kind.named.path}};
+    return value;
+}
+
 // `Point(a, b)`: the parser reads a name first as a type (it cannot tell it from `Pair(i32)`). When the path names a
 // struct and every argument is a name or a value, it is a construction (#1813): the call is built here and checked in
 // its place. Null when it is not one.
@@ -6268,16 +6280,9 @@ static const ast::Expr *type_value_call(types::Checked *c, const ast::Expr *e) {
     ast::ExprRef *block = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), count, alignof(ast::ExprRef));
     ast::ExprRef args[:] = block[0:count];
     for (Usize i = 0; i < count; i++) {
-        const ast::TypeArg *arg = &t->kind.applied.args[i];
-        if (*arg == .value) {
-            block[i] = arg->value.value;
-            continue;
-        }
-        if (arg->type.type->kind != .named) return nullptr;
-        ast::Expr *value = mem::alloc(ast::Expr);
-        value->span = arg->type.type->span;
-        value->kind = {.name = {.path = arg->type.type->kind.named.path}};
-        block[i] = value;
+        ast::Expr *item = type_arg_expr(&t->kind.applied.args[i]);
+        if (item == nullptr) return nullptr;
+        block[i] = item;
     }
     ast::Expr *call = mem::alloc(ast::Expr);
     call->span = e->span;
@@ -6367,6 +6372,20 @@ static ast::Expr *named_from_assigns(const ast::Expr *call) {
     return made;
 }
 
+// The argument of the applied type `Shape.circle(arg)` as the value it is written as (#3665): a value as it is, a name
+// for a type that is a name, and for any other type (`Circle(radius = 2.0)`, which the parser read as a type too) the
+// value it constructs.
+static ast::Expr *type_arg_value(types::Checked *c, const ast::TypeArg *arg) {
+    ast::Expr *value = type_arg_expr(arg);
+    if (value != nullptr || *arg == .value) return value;
+    value = mem::alloc(ast::Expr);
+    value->span = arg->type.type->span;
+    value->kind = {.type_value = {.type = arg->type.type}};
+    const ast::Expr *built = type_value_call(c, value);
+    ast::Expr *rebuilt = built != nullptr ? named_from_assigns(built) : nullptr;
+    return rebuilt != nullptr ? rebuilt : value;
+}
+
 // `Shape.circle(c)`: the parser reads the capitalized path with its argument as a type applied to arguments. When the
 // path is an enumeration and one of its variants that carries a value, and there is one argument, it is the value
 // `.circle(c)` of that enumeration (#3665). The twin is the variant; `enumeration` is its type. Null when it is not
@@ -6384,23 +6403,7 @@ static const ast::Expr *type_value_variant(types::Checked *c, const ast::Expr *e
     if (!(named->type->kind == .enumeration)) return nullptr;
     const types::Slot *slot = types::member(named->type, path.segments[count - 1].text);
     if (slot == nullptr || !carries_value(slot->type)) return nullptr;
-    const ast::TypeArg *arg = &t->kind.applied.args[0];
-    ast::Expr *value = nullptr;
-    if (*arg == .value) {
-        value = arg->value.value;
-    } else if (arg->type.type->kind == .named) {
-        value = mem::alloc(ast::Expr);
-        value->span = arg->type.type->span;
-        value->kind = {.name = {.path = arg->type.type->kind.named.path}};
-    } else {
-        // `Circle(radius = 2.0)`: the parser read the argument as a type too, which the checker reads as a value
-        value = mem::alloc(ast::Expr);
-        value->span = arg->type.type->span;
-        value->kind = {.type_value = {.type = arg->type.type}};
-        const ast::Expr *built = type_value_call(c, value);
-        ast::Expr *rebuilt = built != nullptr ? named_from_assigns(built) : nullptr;
-        if (rebuilt != nullptr) value = rebuilt;
-    }
+    ast::Expr *value = type_arg_value(c, &t->kind.applied.args[0]);
     ast::Expr *variant = mem::alloc(ast::Expr);
     variant->span = e->span;
     variant->kind = {.variant = {.name = path.segments[count - 1].text, .payload = payload_value(slot->type, value)}};
