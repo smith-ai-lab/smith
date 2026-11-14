@@ -223,3 +223,25 @@ export void test_front_compile_a_global_with_an_option_pointer_set_to_none_is_a_
     test::check_equal(made.ok, true);
     remove_all(folder);
 }
+
+// A global whose initializer holds an array built by `array.filled` or listed (#3687): one dimension, two, all zero or
+// another value, alone or as fields of a struct (the shape of `front/fix_zero.smith`'s caches).
+export void test_front_compile_a_global_with_an_array_is_a_constant() {
+    Str folder = folder_for("global_array");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/lib/std")).data, 0o700);
+    write_text(as_str(format::push(folder, "/lib/std/array.smith")),
+               "module std::array;\n\nstatic_assert(true, \"std::array has no function\");\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import std.array\n\nstruct Cache:\n    text: [16]u8\n    names: [4, 8]u8\n    counts: [3]usize\n    "
+               "count: usize\n\n"
+               "mut cache := Cache(text = array.filled(u8, 16, 0), names = array.filled(u8, [4, 8], 7),\n"
+               "                   counts = [1, 2, 3], count = 0)\n"
+               "mut sizes: [5]usize = array.filled(usize, 5, 0)\n\n"
+               "pub fn f() -> usize:\n"
+               "    return cache.names[3][7].to(usize) + cache.counts[2] + sizes[4] + cache.text[0].to(usize)\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(countof(made.text), (Usize)0);
+    test::check_equal(made.ok, true);
+    remove_all(folder);
+}

@@ -2076,12 +2076,13 @@ static Bool none_pointer(state::Ty ty, const ast::Expr *x) {
            x->kind.variant.payload == nullptr && state::same_text(x->kind.variant.name, "none");
 }
 
-// A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false`, `null` or `.none` of a `?*T`.
-static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (none_pointer(ty, x)) {
-        *out = c::LLVMConstNull(ty.llvm); // `?*T` is the pointer itself: `.none` is null (#2643)
-        return state::success();
-    }
+// Builds a record's constant; array and record constants hold each other, so the one is handed to the other (the
+// code the old front end builds has no recursion).
+export typedef state::Status (*RecordMaker)(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out);
+
+// A leaf constant of type `ty`: an integer literal (negated or not), `true`/`false`, `null`, a string or a function's
+// address; `scalar_constant` adds the options and the arrays.
+static state::Status leaf_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer)) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
@@ -2149,13 +2150,32 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
+// A constant that is not an array: `.none` of a `?*T` (the pointer itself, null, #2643), or a leaf.
+static state::Status unit_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (none_pointer(ty, x)) {
+        *out = c::LLVMConstNull(ty.llvm);
+        return state::success();
+    }
+    return leaf_constant(e, ty, x, out);
+}
+
 static state::Status construction_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out);
+static state::Status array_constant(state::Emitter *e, state::Ty ty, state::SizedTy array, const ast::Expr *x,
+                                    RecordMaker record, c::LLVMValueRef *out);
+static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, RecordMaker record,
+                                     c::LLVMValueRef *out);
+
+// The constant of type `ty` for `x`, whole: an array (listed or made by `array.filled`, #3687) or a unit.
+static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, construction_constant, out);
+    return unit_constant(e, ty, x, out);
+}
 
 // An array's constant from an array literal of constants (scalars, records, nested arrays) or a string literal;
 // elements left out are zero. Any length and depth up to 16: the leaves are found by their index digits, then folded
 // into arrays level by level (no recursion).
 static state::Status array_constant(state::Emitter *e, state::Ty ty, state::SizedTy array, const ast::Expr *x,
-                                    c::LLVMValueRef *out) {
+                                    RecordMaker record, c::LLVMValueRef *out) {
     if (x->kind == .string && array.element->kind == .integer && state::width(*array.element) == 8) {
         Str bytes = x->kind.string.bytes;
         if (countof(bytes) + 1 > array.count) return state::failf(x->span, "the string does not fit ", ty.name);
@@ -2166,6 +2186,7 @@ static state::Status array_constant(state::Emitter *e, state::Ty ty, state::Size
         mem::free(values.data);
         return state::success();
     }
+    if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, record, out); // a field or an element (#3687)
     if (x->kind != .array_lit)
         return state::fold(e, x, ty, out); // `squares()`: baked whole when the evaluator runs it (#3039)
     state::SizedTy chain[16];
@@ -2204,9 +2225,9 @@ static state::Status array_constant(state::Emitter *e, state::Ty ty, state::Size
         if (node == nullptr) continue;
         state::Status made = state::success();
         if (level.kind == .record && node->kind == .call) {
-            made = construction_constant(e, level, node, &cells[leaf].item);
+            made = record(e, level, node, &cells[leaf].item);
         } else {
-            made = scalar_constant(e, level, node, &cells[leaf].item);
+            made = unit_constant(e, level, node, &cells[leaf].item);
         }
         if (made == .error) {
             mem::free(cells.data);
@@ -2262,7 +2283,8 @@ static state::Status construction_constant(state::Emitter *e, state::Ty ty, cons
 
 // `array.filled(T, n, value)` at file scope (#2339): a constant array of `n` copies of the value's constant, the null
 // constant when the value is zero, so the object holds zero or constant data and runs no code.
-static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, RecordMaker record,
+                                     c::LLVMValueRef *out) {
     if (ty.kind != .array) return state::failf(x->span, "array.filled where ", ty.name, " is expected");
     state::SizedTy chain[16];
     Usize n = builtin::filled_chain(e, x, ty.kind.array, chain);
@@ -2271,9 +2293,9 @@ static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast:
     c::LLVMValueRef item = nullptr;
     const ast::Expr *value = builtin::filled_value(x);
     if (leaf.kind == .record && value->kind == .call)
-        try construction_constant(e, leaf, value, &item);
+        try record(e, leaf, value, &item);
     else
-        try scalar_constant(e, leaf, value, &item);
+        try unit_constant(e, leaf, value, &item);
     if (c::LLVMIsNull(item) != 0) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
@@ -2288,7 +2310,7 @@ static state::Status compound_constant(state::Emitter *e, state::Ty ty, const as
         *out = c::LLVMConstNull(ty.llvm); // a global `= undefined` is the zeroed storage C gives (#2643)
         return state::success();
     }
-    if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, out);
+    if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, construction_constant, out);
     if (builtin::is_zeroed(e, x)) {
         *out = c::LLVMConstNull(ty.llvm); // `static mut memory: arena.Arena = mem.zeroed(arena.Arena)` (#3036)
         return state::success();
@@ -2300,7 +2322,7 @@ static state::Status compound_constant(state::Emitter *e, state::Ty ty, const as
         state::Status baked = state::fold(e, x, ty, out);
         return baked != .error ? baked : built;
     }
-    if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, out);
+    if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, construction_constant, out);
 
     if (x->kind != .compound) {
         return scalar_constant(e, ty, x, out);
