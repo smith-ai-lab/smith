@@ -1736,14 +1736,14 @@ static state::Status emit_generator(state::Emitter *e, const ast::Decl *d, state
 static state::Status declare_constants(state::Emitter *e, const types::Instance *instance, ast::Span span) {
     for (Usize i = 0; i < countof(instance->bindings); i++) {
         types::Binding binding = instance->bindings[i];
-        if (binding.is_type) continue;
-        state::TyResult made = type_of_checked(e, binding.type, span);
+        if (binding.kind != .constant) continue; // a type is no local, and `bind_given` made every constant of one
+        state::TyResult made = type_of_checked(e, binding.kind.constant.type, span);
         if (made == .error) {
             return {.error = made.error};
         }
         state::Ty ty = made.ok;
         c::LLVMValueRef slot = state::new_alloca(e, ty, binding.name);
-        c::LLVMBuildStore(e->builder, c::LLVMConstInt(ty.llvm, binding.value, 0), slot);
+        c::LLVMBuildStore(e->builder, c::LLVMConstInt(ty.llvm, binding.kind.constant.value, 0), slot);
         state::add_local(e, (state::Local){.name = binding.name, .ty = ty, .address = slot});
     }
     return state::success();

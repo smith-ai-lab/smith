@@ -6546,13 +6546,13 @@ static Bool pin_first(types::Checked *c, const ast::Expr *e, ast::Param generics
         if (t == nullptr) {
             return false;
         }
-        bound[0] = (types::Binding){.is_type = true, .type = t};
+        bound[0] = types::type_binding(t);
     } else {
         U64 value = 0;
         if (!value_argument(c, &generics[0], pin, &value)) {
             return false;
         }
-        bound[0] = (types::Binding){.value = value};
+        bound[0] = types::given_binding(value);
     }
     set[0] = true;
     return true;
@@ -6611,7 +6611,7 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
                     wide = types_convert::operand_type(&c->table, clash.before, clash.now);
                 }
                 if (wide != nullptr && is_number(wide)) {
-                    bound[clash.generic].type = wide;
+                    bound[clash.generic] = types::type_binding(wide);
                     clash = (types::Unified){};
                     continue;
                 }
@@ -6621,7 +6621,8 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
                     clash.before->kind == .pointer && clash.now->kind == .pointer &&
                     clash.before->kind.pointer.element == clash.now->kind.pointer.element &&
                     !clash.before->kind.pointer.pointee_volatile && !clash.now->kind.pointer.pointee_volatile) {
-                    bound[clash.generic].type = types::pointer_to(&c->table, clash.before->kind.pointer.element, true);
+                    bound[clash.generic] =
+                        types::type_binding(types::pointer_to(&c->table, clash.before->kind.pointer.element, true));
                     clash = (types::Unified){};
                     continue;
                 }
@@ -6641,12 +6642,12 @@ static Bool compile_time_binding(types::Checked *c, const ast::Param *p, const a
     if (types::is_type_parameter(p)) {
         types::TypeRef t = type_argument(c, p, arg);
         if (t == nullptr) return false;
-        *out = (types::Binding){.is_type = true, .type = t};
+        *out = types::type_binding(t);
         return true;
     }
     U64 value = 0;
     if (!value_argument(c, p, arg, &value)) return false;
-    *out = (types::Binding){.value = value};
+    *out = types::given_binding(value);
     return true;
 }
 
@@ -6680,7 +6681,7 @@ static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::E
                              : "` is a slice of `auto`, but this argument is not a slice");
             return false;
         }
-        given[*bound] = (types::Binding){.is_type = true, .type = t};
+        given[*bound] = types::type_binding(t);
         *bound += 1;
     }
     return true;
@@ -6731,8 +6732,9 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     for (Usize i = 0; i < countof(generics); i++) {
         if (set[i]) {
             Str concept = types::written_concept(generics[i].type);
-            if (countof(concept) > 0 && !types::concept_holds(concept, bound[i].type)) {
-                types::failf(c, e->span, "`", generics[i].name, "` is `", types::show(bound[i].type),
+            types::TypeRef bound_type = types::binding_type(&bound[i]);
+            if (countof(concept) > 0 && !types::concept_holds(concept, bound_type)) {
+                types::failf(c, e->span, "`", generics[i].name, "` is `", types::show(bound_type),
                              "`, which is not a `", concept, "`");
                 poison(c, e);
                 return;
@@ -7046,14 +7048,14 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
                 poison(c, e);
                 return;
             }
-            given[bound] = (types::Binding){.is_type = true, .type = t};
+            given[bound] = types::type_binding(t);
         } else {
             U64 value = 0;
             if (!value_argument(c, &params[i], arg, &value)) {
                 poison(c, e);
                 return;
             }
-            given[bound] = (types::Binding){.value = value};
+            given[bound] = types::given_binding(value);
         }
         bound += 1;
     }
@@ -7079,7 +7081,7 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
             values -= 1;
         } else {
             values -= 1;
-            push(w, arg, bound_list[values].type, 0);
+            push(w, arg, types::binding_type(&bound_list[values]), 0);
         }
     }
 }

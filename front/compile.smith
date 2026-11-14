@@ -1235,8 +1235,15 @@ static Str instance_label(const types::Checked *c, Usize i) {
     Str label = "?";
     if (x->template->kind == .function) label = as_str(format::push(x->template->kind.function.name));
     for (Usize k = 0; k < countof(x->bindings); k++) {
-        Str bound =
-            x->bindings[k].is_type ? types::show(x->bindings[k].type) : as_str(format::push(x->bindings[k].value));
+        const types::Binding *b = &x->bindings[k];
+        Str bound = "";
+        if (b->kind == .type_arg) {
+            bound = types::show(b->kind.type_arg.passed);
+        } else if (b->kind == .constant) {
+            bound = as_str(format::push(b->kind.constant.value));
+        } else if (b->kind == .given) {
+            bound = as_str(format::push(b->kind.given.value));
+        }
         label = as_str(format::push(label, k == 0 ? "[" : ", ", bound));
     }
     if (countof(x->bindings) > 0) label = as_str(format::push(label, "]"));
