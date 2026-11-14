@@ -163,6 +163,24 @@ static Str msg(char chars[:]) {
     return chars;
 }
 
+// Whether the read `e` of an option field comes after a test of the same field that the checker refused only for its
+// `nullptr` (`if a.f == nullptr: return`, #3621): the fix of the test narrows the read on the next pass, so the local that
+// holds it keeps its type; a read that is not narrowed then gets its `?` on that pass.
+static Bool after_null_test(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .member || e->span.end > countof(fixed_source)) return false;
+    Str read = fixed_source[e->span.start:e->span.end];
+    Str refused = "an option is tested with `.none`, not `nullptr`";
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error found = c->errors[i];
+        if (countof(found.message) < countof(refused) || !types::same_text(found.message[0:countof(refused)], refused))
+            continue;
+        if (found.span.end > e->span.start || found.span.end > countof(fixed_source)) continue;
+        Str test = fixed_source[found.span.start:found.span.end];
+        if (countof(test) > countof(read) && types::same_text(test[0:countof(read)], read)) return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The conversion hook (J1c into J1b)
 
@@ -400,7 +418,8 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     // `p: *char = a.f` of an option: the local holds the option, `p: ?*char = a.f`.
     const ast::Decl *declaring = state.declaring;
     const ast::TypeExpr *declared = declared_pointer_type(declaring, e);
-    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declared != nullptr) {
+    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declared != nullptr &&
+        !after_null_test(c, e)) {
         fix = mem::realloc(fix, 1);
         U32 at = declared->span.start;
         Str question = "?";
