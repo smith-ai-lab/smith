@@ -452,7 +452,8 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
 // Whether the named value of type `from` leaves out a field of the record `to` that has no default; `given` marks the
 // fields of `to` the value has (the rule of `types_convert::to_record`).
 static Bool left_out_of(types::TypeRef from, types::TypeRef to, U64 *given) {
-    if (from->kind != .tuple || to->kind != .record || types::is_union_record(to) || !types::is_complete(to)) return false;
+    if (from->kind != .tuple || to->kind != .record || types::is_union_record(to) || !types::is_complete(to))
+        return false;
     types::Members have = types::slots_of(from);
     types::Members want = types::slots_of(to);
     if (countof(have.items) == 0 || types::is_position(have.items[0].name) || countof(want.items) > 64) return false;
