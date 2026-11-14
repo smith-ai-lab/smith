@@ -2882,6 +2882,20 @@ static Str place_root(const ast::Expr *e) {
     return single_name(e);
 }
 
+// The target and the value of the plain assignment `name = value` whose value is being checked, for the fix that makes
+// the local an option when the value is one (`n = n.next`, #3621).
+static const ast::Expr *assigning_target = nullptr;
+static const ast::Expr *assigning_value = nullptr;
+
+// The local `value` is being assigned to, when it is a new local written `*T`; else null.
+export const types::Symbol *assigned_pointer_local(const types::Checked *c, const ast::Expr *value) {
+    if (assigning_value != value || assigning_target == nullptr) return nullptr;
+    const types::Symbol *x = named_symbol(c, assigning_target);
+    if (x == nullptr || x->kind != .variable || !x->is_new || x->written == nullptr) return nullptr;
+    if (x->written->kind != .pointer) return nullptr;
+    return x;
+}
+
 // Stage 1: the target is typed; the value is wanted as the target's type.
 static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -2928,6 +2942,8 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
         hint = tt;
     }
     push(w, e, f.expected, 2);
+    assigning_target = op == .plain ? target : nullptr;
+    assigning_value = value;
     push(w, value, hint, 0);
 }
 
@@ -2958,6 +2974,8 @@ static void assign_value_done(types::Checked *c, Frame f) {
         return;
     }
     ast::AssignOp op = e->kind.assign.op;
+    assigning_target = nullptr;
+    assigning_value = nullptr;
     types::TypeRef tt = typ(c, e->kind.assign.target);
     types::TypeRef vt = typ(c, e->kind.assign.value);
     types::unnarrow(

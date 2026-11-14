@@ -155,4 +155,7 @@ export void test_front_fix_zero_union_a_statement_is_not_a_by_value_declaration(
     test::check_equal(c::chdir(home), 0);
     Str fixed_text = read_text("/tmp/front_fix_zero_walk_tree/geo/shapes.smith");
     test::check(has(fixed_text, "    pub next: ?*Node = .none\n"));
+    // the walk assigns that option to its local, which holds it too
+    test::check(has(fixed_text, "mut n: ?*Node = list"));
+    test::check(has(fixed_text, "n = n.next"));
 }

@@ -425,6 +425,15 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         Str question = "?";
         fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
     }
+    // `n = n.next` of a local `n: *Node`: the local holds the option, `n: ?*Node` (#3621).
+    const types::Symbol *assigned = types_expr::assigned_pointer_local(c, e);
+    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && assigned != nullptr &&
+        !after_null_test(c, e)) {
+        fix = mem::realloc(fix, 1);
+        U32 at = assigned->written->span.start;
+        Str question = "?";
+        fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
+    }
     // A number where a Bool is wanted: the fix writes the comparison the message names, `x != 0`; an operand that is
     // not a postfix expression goes in parentheses first, `(a + b) != 0`.
     if (from->kind == .integer && to->kind == .bool_type && countof(fix) == 0) fix = nonzero_fix(e);
@@ -2248,7 +2257,11 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         const ast::Stmt *body = s->kind.while_stmt.body;
         note_guard(r, s); // `while k == .v && k.v.n < 3:` (D12)
         (void)types_expr::check(r, condition, r->table.bool_type);
+        // `while n != .none:` names `n` a `T` where the body starts, as `if` does for its `then`; a write to `n` in the
+        // body ends that (#3621)
+        push(nullptr, nullptr, leave);
         push(body, nullptr, enter);
+        push(nullptr, condition, open_true);
     } else if (s->kind == .do_while) {
         push(nullptr, s->kind.do_while.condition, condition);
         push(s->kind.do_while.body, nullptr, enter);
