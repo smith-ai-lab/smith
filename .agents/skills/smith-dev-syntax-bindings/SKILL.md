@@ -26,6 +26,12 @@ started := process.start(cmd)
 - A pattern that can fail **must** have `else` and one that always matches (`(q, r) := divmod(a, b)`) **must not**: "this pattern always matches: remove `else`". The `else` is one line or indented and ends in `return`, `break`, `continue` or a call that never returns: "the `else` of a binding must leave: end it with `return`, ...". The names do not exist inside the `else`.
 - Passing an error up stays `try`: `child := try process.start(cmd)`.
 - Reading a payload with `.` is an error (`kind.tuple.elements`). A test narrows a field path as it does a name (#3587: `if p.kind is not .v: return`, then `p.kind.f` reads the payload of `.v`); `p.kind.v.f` after such a test is an error whose fix writes `p.kind.f`. The fixer rewrites, each read `k.v` becoming `v`:
+- A narrowed name is the whole value where its enumeration type is expected, and the payload everywhere else (#3634 D23, #3664): the place decides. An argument, a `return`, an assignment, a field of a construction and a comparison with another value of the enumeration read the whole value; every other read is the payload. It covers a narrowed field path (`e.kind`) the same way, and it does not change an option or a `Result`.
+  ```
+  if l == .integer and r == .integer:
+      total = l + r          # l is the i64 payload
+      return wrap(l)         # wrap expects a Value: l is the whole Value
+  ```
   - A test of a field path (`a.kind == .v`, `!=`, an `else`, an early `return`, `and`/`or`/`not`) stays as written and binds nothing; each read `a.kind.v.f` is written `a.kind.f` (#3598: one rule, whichever test narrowed the path). A name of a payload enumeration whose variant's payload is a record is read the same way (#3631: `if k != .v or k.v.f:` stays and the reads are `k.f`); a name keeps its binding (next item) when the payload is no record (a scalar, an enumeration, a pointer), has a field named like its variant, or the variant is a `Result`'s `ok` or `error`. Where the path stays unnarrowed (a loop that may write its root, a root still in today's syntax) the site is bound as for a name, and a write through the payload (`a.kind.v.f = x`) is `fix_place`'s.
   - `if k == .v:` with reads in the `then` → `if .v(v) := k:`, with or without an `else`: each test of an `else if` chain binds its own payload.
   - Through a pointer: `if p.* == .v:` or `match p.*:` with reads `p.v` → `if .v(v) := p.*:` and `.v(v):` (#2494).
