@@ -109,3 +109,14 @@ export void test_front_fix_zero_left_out_the_import_of_a_field_type_is_written_o
                  "    b := left_emit.Error(message = m, span = left_ast.Span(start = 0, end = 0), module = \"\")\n"
                  "    return b\n");
 }
+
+// A construction nested in a payload variant (`.pointer = {.pointee = x}`) leaves a field out too: it is written at the
+// nested value with the same rule as at a plain construction (#3658).
+export void test_front_fix_zero_left_out_a_construction_nested_in_a_payload_is_written() {
+    expect_fixed("module m;\ntypedef enum {\n    struct {\n        int *pointee;\n        Bool is_mut;\n    } pointer;\n"
+                 "    struct {\n        int plain;\n    } plain;\n} Kind;\n"
+                 "Kind make(int *x) {\n    Kind k = {.pointer = {.pointee = x}};\n    return k;\n}\n",
+                 "typedef enum {\n    struct {\n        *i32 pointee;\n        bool is_mut;\n    } pointer;\n"
+                 "    struct {\n        i32 plain;\n    } plain;\n} Kind;\n"
+                 "fn make(x: *i32) -> Kind:\n    k: Kind = .pointer((pointee = x, is_mut = false))\n    return k\n");
+}
