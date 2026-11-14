@@ -996,12 +996,6 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
             matching::narrowed_variant(e, record, seen, w->span, &payload)) {
             base.llvm = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 1, "payload");
             record = payload;
-            if (payload.kind == .pointer && payload.kind.pointer.element != nullptr &&
-                payload.kind.pointer.element->kind != .pointer) {
-                // a payload that is a pointer, read through (`c.radius` for `c.some->radius`, #3631): follow it
-                base.llvm = c::LLVMBuildLoad2(e->builder, payload.llvm, base.llvm, "pointer");
-                record = *payload.kind.pointer.element;
-            }
         }
     }
     if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {
