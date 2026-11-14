@@ -163,6 +163,24 @@ static Str msg(char chars[:]) {
     return chars;
 }
 
+// Whether the read `e` of an option field comes after a test of the same field that the checker refused only for its
+// `nullptr` (`if a.f == nullptr: return`, #3621): the fix of the test narrows the read on the next pass, so the local
+// that holds it keeps its type; a read that is not narrowed then gets its `?` on that pass.
+static Bool after_null_test(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .member || e->span.end > countof(fixed_source)) return false;
+    Str read = fixed_source[e->span.start:e->span.end];
+    Str refused = "an option is tested with `.none`, not `nullptr`";
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error found = c->errors[i];
+        if (countof(found.message) < countof(refused) || !types::same_text(found.message[0:countof(refused)], refused))
+            continue;
+        if (found.span.end > e->span.start || found.span.end > countof(fixed_source)) continue;
+        Str test = fixed_source[found.span.start:found.span.end];
+        if (countof(test) > countof(read) && types::same_text(test[0:countof(read)], read)) return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The conversion hook (J1c into J1b)
 
@@ -342,6 +360,23 @@ static Bool volatile_refused(types::Checked *c, const ast::Expr *e, types::TypeR
     return true;
 }
 
+// The local that holds an option written `*T` is `?*T`: `p: *char = a.f` of an option field, and `n = n.next` of a
+// local `n: *Node` (#3621).
+static syntax::Edits option_local_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from,
+                                      types::TypeRef to) {
+    syntax::Edits fix = {};
+    if (from->kind != .option || to->kind != .pointer || after_null_test(c, e)) return fix;
+    const ast::TypeExpr *declared = declared_pointer_type(state.declaring, e);
+    const types::Symbol *assigned = types_expr::assigned_pointer_local(c, e);
+    if (declared == nullptr && assigned != nullptr) declared = assigned->written;
+    if (declared == nullptr) return fix;
+    fix = mem::realloc(fix, 1);
+    U32 at = declared->span.start;
+    Str question = "?";
+    fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
+    return fix;
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok && volatile_refused(c, e, from, to)) return false;
@@ -397,15 +432,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         fix[0] = (syntax::Edit){.span = e->span, .text = none};
     }
     if (from->kind == .option && to->kind != .option && countof(fix) == 0) fix = types_expr::option_read_fix(c, e);
-    // `p: *char = a.f` of an option: the local holds the option, `p: ?*char = a.f`.
-    const ast::Decl *declaring = state.declaring;
-    const ast::TypeExpr *declared = declared_pointer_type(declaring, e);
-    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declared != nullptr) {
-        fix = mem::realloc(fix, 1);
-        U32 at = declared->span.start;
-        Str question = "?";
-        fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
-    }
+    if (countof(fix) == 0) fix = option_local_fix(c, e, from, to);
     // A number where a Bool is wanted: the fix writes the comparison the message names, `x != 0`; an operand that is
     // not a postfix expression goes in parentheses first, `(a + b) != 0`.
     if (from->kind == .integer && to->kind == .bool_type && countof(fix) == 0) fix = nonzero_fix(e);
@@ -2274,7 +2301,11 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         const ast::Stmt *body = s->kind.while_stmt.body;
         note_guard(r, s); // `while k == .v && k.v.n < 3:` (D12)
         (void)types_expr::check(r, condition, r->table.bool_type);
+        // `while n != .none:` names `n` a `T` where the body starts, as `if` does for its `then`; a write to `n` in the
+        // body ends that (#3621)
+        push(nullptr, nullptr, leave);
         push(body, nullptr, enter);
+        push(nullptr, condition, open_true);
     } else if (s->kind == .do_while) {
         push(nullptr, s->kind.do_while.condition, condition);
         push(s->kind.do_while.body, nullptr, enter);
