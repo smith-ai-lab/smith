@@ -34,6 +34,7 @@ print("could not open the file", to: .stderr)
 - `print` is in the prelude, so every program can use it without an import. `input` and `Stream` are imported from `std.console`.
 - The console is a program's real output, which another program may read, so the text is written as it is given and nothing is formatted.
 - Each operation is whole. A line that one task prints is never split by another task's output.
+- A write that the system refuses [ends the task](../language/tasks.md) that made it, as running out of memory does. Its parent sees an error from `join`, and in `main` the program ends with a failing status. A handler written in Smith never does this.
 
 ```
 use std.console (input)

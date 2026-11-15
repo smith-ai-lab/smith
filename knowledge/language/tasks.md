@@ -46,7 +46,7 @@ All I/O is async and reads as sequential code. A call such as `fetch(a)` carries
 - A server is one task per connection with one arena per request.
 - A value lives as long as the task that created it, and tasks pass plain data to each other.
 
-Running out of memory ends the task that ran out, and nothing else. Its arena is dropped whole, the `fs` and `net` handlers close the handles it left open, and its parent sees the failure as an error from `join`. No other task shares its memory, so none is left in a broken state. Only the `alloc` handler can end a task, and user code has no way to ask for it. `main` is the root task, so running out of memory there ends the program.
+Two failures end the task they happen in, and nothing else: running out of memory, and a console write that the system refuses, as when output is piped to a program that has stopped reading. The task's arena is dropped whole, the `fs` and `net` handlers close the handles it left open, and its parent sees the failure as an error from `join`, so the parent can recover. No other task shares its memory, so none is left in a broken state. Only the operating system's handlers for `alloc` and `console` can end a task, and user code has no way to ask for it. `main` is the root task, so a failure there ends the program with a failing status.
 
 Events are handled the same way. A native application is a task that waits for the next event, so user code has no callbacks, and the window lives exactly as long as `main`.
 
