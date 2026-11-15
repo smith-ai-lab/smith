@@ -7,7 +7,7 @@ description: Take one roadmap issue from open to merged by starting a worker age
 
 The lead does not write the code. It starts one worker on one issue, stays out of the way until a pull request is ready, reviews it, and merges it. The lead runs on Fable, a more capable model than any worker, so that its review is the stronger read.
 
-The owner is not in the loop. The lead manages the work: it writes the issues, answers the questions, decides what `knowledge/` leaves open, and approves and merges. It tells the owner what happened afterwards.
+The owner and the lead decide the design of Smith together, in conversation, and both agree before anything is written into `knowledge/`. Everything else is the lead's to do: writing issues, starting workers, reviewing pull requests, and merging them. The owner does not do those, and is not asked to.
 
 ## Steps
 
@@ -26,7 +26,7 @@ The owner is not in the loop. The lead manages the work: it writes the issues, a
 
 3. Wait for the worker's turn to end. Do not message it or check on it while it works.
 
-4. If it stopped with a question, answer in a comment on the issue. Answer from `knowledge/`. If it does not answer the question, decide: choose what the principles in `knowledge/language/overview.md` point to, write the decision into `knowledge/` with the `update-knowledge` skill, and then answer. Then tell the worker the answer is on the issue.
+4. If it stopped with a question, answer in a comment on the issue. Answer from `knowledge/`. If it does not answer the question, it is a design question: ask the owner, agree on the answer, write it into `knowledge/` with the `update-knowledge` skill, and then answer. Then tell the worker the answer is on the issue.
 
 5. Review the pull request against the issue.
 
@@ -46,7 +46,7 @@ The owner is not in the loop. The lead manages the work: it writes the issues, a
 
 7. Repeat steps 5 and 6 until nothing is left. Then add the pull request to the merge queue, as the `ship-change` skill describes.
 
-8. Tell the owner what merged, in a line or two, any decision you made about Smith along the way, and anything the run showed that should change an issue or a skill.
+8. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
 
 ## When a worker falls short
 
@@ -63,5 +63,5 @@ Work through these in order, and stop at the first that applies.
 - The lead owns the issues. It writes and corrects them with the `write-issue` skill. A worker is assigned an issue and never edits one.
 - `knowledge/` is changed by whoever makes the change. A worker updates it in its own pull request when its work alters what Smith is. The lead updates it when a decision is made outside a worker's pull request, such as an answer to a worker's question.
 - Never push to the worker's branch. Review in comments, and let the worker change the code.
-- A pull request that touches `knowledge/language/` or `knowledge/grammar.md` changes the language. Merge it only when the issue called for that change and the change follows the principles in the overview. Otherwise it is a finding for the review.
+- A pull request that touches `knowledge/language/` or `knowledge/grammar.md` changes the language. Merge it only when it writes down what the owner and the lead already agreed. A change to the language that nobody agreed is a design question for the owner, not something to merge or to settle in review.
 - Never merge with a failing or pending check.
