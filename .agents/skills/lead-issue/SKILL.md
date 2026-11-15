@@ -64,6 +64,8 @@ Work through these in order, and stop at the first that applies.
 ## Rules
 
 - One worker per issue, and one issue at a time.
+- The lead owns the issues. It writes and corrects them with the `write-issue` skill. A worker is assigned an issue and never edits one.
+- `knowledge/` is changed by whoever makes the change. A worker updates it in its own pull request when its work alters what Smith is. The lead updates it when a decision is made outside a worker's pull request, such as an answer from the owner.
 - Never push to the worker's branch. Review in comments, and let the worker change the code.
 - A pull request that touches `knowledge/language/` or `knowledge/grammar.md` waits for the owner's approval.
 - Never merge with a failing or pending check.

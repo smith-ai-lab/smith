@@ -1,6 +1,6 @@
 ---
 name: update-knowledge
-description: Add to or change the files in knowledge/, which define the Smith language, its grammar, and the compiler's design. Use whenever a change alters what Smith is, or when a fact in knowledge/ is wrong or missing.
+description: Add to or change the files in knowledge/, which define the Smith language, its grammar, and the compiler's design, and which are never loaded automatically. Use whenever your change adds or alters a language feature, syntax, a command, or how the compiler works, whenever a decision about Smith is made, and whenever knowledge/ turns out to be silent or wrong about something the work depends on.
 ---
 
 # Update the knowledge folder

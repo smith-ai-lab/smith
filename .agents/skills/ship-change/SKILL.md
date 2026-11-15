@@ -9,7 +9,7 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
 ## Steps
 
-1. Know which issue the change is for. Unless you were given one, take the first open sub-issue of the roadmap issue. Read its "Must be true" list: every line of it becomes a test.
+1. Know which issue the change is for. Unless you were given one, take the first open sub-issue of the roadmap issue. Read its "Must be true" list: every line of it becomes a test. Then read `knowledge/index.md` and every file the issue lists under "Read first". `knowledge/` is not loaded for you, so nothing in it is known until you open it.
 
 2. Start from the newest `main`.
 
@@ -93,4 +93,5 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 - Never merge with a failing or pending check.
 - Never use a merge commit or a squash merge. History on `main` stays linear.
 - A pull request that touches `knowledge/language/` or `knowledge/grammar.md` waits for the owner's approval, even when checks are green.
-- If the change alters what Smith is, update `knowledge/` in the same pull request, following the `update-knowledge` skill.
+- If the change alters what Smith is, update `knowledge/` in the same pull request, following the `update-knowledge` skill. Whoever makes the change writes it down.
+- Do not edit the issue. If it is wrong or unclear, say so in a comment on it.
