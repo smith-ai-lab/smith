@@ -23,9 +23,26 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked -- --group=once
       - name: Timings
-        run: cargo run --locked --quiet -- build --timings tests/cases/hello.smith
+        run: target/debug/smith build --timings tests/cases/hello.smith
+
+  # The tests whose result depends on the machine, on each kind of machine
+  # a target needs: linux_x64 and macos_arm64.
+  machine:
+    name: test on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: bootstrap
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test
+        run: cargo test --locked -- --group=machine
 
   commits:
     name: conventional commits

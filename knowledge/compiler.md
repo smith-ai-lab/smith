@@ -180,13 +180,15 @@ The other layers use a second generator that builds well-typed programs.
 - Tests run in-process and in parallel.
 - A test states its expectation from the generator that built its input, never from a line or column written by hand, so adding a feature does not break it.
 
-Every target passes the same tests, which run over every case of the target enum, so a target cannot be added without them.
+Every target passes the same tests, which take their targets from the target enum's own list of cases, so adding a case runs them over it and no test names a target. A test that builds skips a target the compiler cannot build for yet, a test that runs the executable skips a target this machine cannot run, and a run names each target it did not run.
 
 | Property | How it is checked |
 | --- | --- |
-| The executable does what the evaluator says the program does | On each target's own kind of machine, for generated programs |
-| A target's executables have the same bytes whichever machine builds them | Their hashes are kept in the repository and compared on every kind of machine |
-| The executable runs | Continuous integration runs it on a machine of the target's kind |
+| Building twice gives the same bytes | For every target the compiler can build for, on generated programs |
+| The executable does what the evaluator says the program does | For every target this machine can run, on generated programs and on the cases |
+| A target's executables have the same bytes whichever machine builds them | The SHA-256 of each case's executable for each target is kept in `bootstrap/tests/hashes` and compared on every kind of machine. `SMITH_UPDATE=1 cargo test cases`, the command that rewrites the cases' expected output, rewrites it too |
+
+The tests whose result depends on the kind of machine they run on are one group: the last two properties, and what `smith run` and a build with no `--target` do. `cargo test -- --group=machine` runs only that group, and `cargo test -- --group=once` runs only the others. Continuous integration runs the second once, on Linux on x86-64, and the first once on each kind of machine a target needs, building the compiler once in each job.
 
 ## Timings
 

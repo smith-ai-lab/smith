@@ -8,12 +8,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::Test;
+use smith::target::Target;
 
-pub const TESTS: &[Test] = &[
+use crate::Test;
+use crate::targets::{self, any, case_files, updating};
+
+pub const ONCE: &[Test] = &[
     (
-        "the_cases_build_and_print_or_report_their_error",
-        the_cases_build_and_print_or_report_their_error,
+        "the_cases_build_or_report_their_error",
+        the_cases_build_or_report_their_error,
     ),
     (
         "build_writes_the_executable_to_the_folder_it_ran_in",
@@ -26,10 +29,6 @@ pub const TESTS: &[Test] = &[
     (
         "main_smith_is_the_entry_and_takes_the_folder_name",
         main_smith_is_the_entry_and_takes_the_folder_name,
-    ),
-    (
-        "without_a_flag_the_target_is_this_machine",
-        without_a_flag_the_target_is_this_machine,
     ),
     (
         "an_unknown_target_is_an_error_that_names_the_targets",
@@ -48,6 +47,18 @@ pub const TESTS: &[Test] = &[
         "a_failed_build_lists_the_stages_that_ran_after_its_errors",
         a_failed_build_lists_the_stages_that_ran_after_its_errors,
     ),
+];
+
+/// The tests whose result depends on the kind of machine they run on.
+pub const MACHINE: &[Test] = &[
+    (
+        "the_cases_run_as_their_out_files_say",
+        the_cases_run_as_their_out_files_say,
+    ),
+    (
+        "without_a_flag_the_target_is_this_machine",
+        without_a_flag_the_target_is_this_machine,
+    ),
     (
         "run_prints_the_timings_before_the_program_runs",
         run_prints_the_timings_before_the_program_runs,
@@ -55,9 +66,6 @@ pub const TESTS: &[Test] = &[
 ];
 
 const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
-
-/// Whether this machine can run what `linux_x64` builds.
-const NATIVE: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
 
 /// A new, empty folder for one test.
 fn folder(name: &str) -> PathBuf {
@@ -85,47 +93,54 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// Whether this run rewrites the expected output of the cases, as
-/// `SMITH_UPDATE=1 cargo test cases` asks.
-fn updating() -> bool {
-    std::env::var_os("SMITH_UPDATE").is_some_and(|v| !v.is_empty())
+/// `smith build` for a target, of a file in the folder.
+fn build(dir: &Path, target: Target, file: &str) -> Output {
+    smith(dir, &["build", "--target", target.name(), file])
 }
 
-fn the_cases_build_and_print_or_report_their_error() {
-    let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases");
-    let mut entries: Vec<_> = std::fs::read_dir(&cases)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "smith"))
-        .collect();
-    entries.sort();
-    assert!(!entries.is_empty());
-    for source in entries {
+fn the_cases_build_or_report_their_error() {
+    for source in case_files() {
         let name = source.file_stem().unwrap().to_str().unwrap();
         let file = format!("{name}.smith");
-        let dir = folder(name);
-        std::fs::copy(&source, dir.join(&file)).unwrap();
         let out = source.with_extension("out");
         let err = source.with_extension("err");
-        let built = smith(&dir, &["build", "--target", "linux_x64", &file]);
-        if updating() {
-            update(&source, &built);
-            continue;
-        }
-        if out.exists() {
-            assert!(built.status.success(), "{file}: {}", stderr(&built));
-            assert!(dir.join(name).is_file(), "{file} writes {name}");
-            if NATIVE {
-                let ran = smith(&dir, &["run", &file]);
-                assert_eq!(ran.status.code(), Some(0), "{file}: {}", stderr(&ran));
-                assert_eq!(ran.stdout, std::fs::read(&out).unwrap(), "{file}");
+        for target in targets::buildable() {
+            let dir = folder(name);
+            std::fs::copy(&source, dir.join(&file)).unwrap();
+            let built = build(&dir, target, &file);
+            let shown = format!("{file} for {}", target.name());
+            if updating() {
+                update(&source, &built);
+                break;
             }
-        } else {
-            assert!(!built.status.success(), "{file} is rejected");
-            let expected = std::fs::read_to_string(&err)
-                .unwrap_or_else(|_| panic!("{file} has a .out or .err file beside it"));
-            assert_eq!(stderr(&built), expected, "{file}");
-            assert!(!dir.join(name).exists(), "{file} writes no executable");
+            if out.exists() {
+                assert!(built.status.success(), "{shown}: {}", stderr(&built));
+                assert!(dir.join(name).is_file(), "{shown} writes {name}");
+            } else {
+                assert!(!built.status.success(), "{shown} is rejected");
+                let expected = std::fs::read_to_string(&err)
+                    .unwrap_or_else(|_| panic!("{file} has a .out or .err file beside it"));
+                assert_eq!(stderr(&built), expected, "{shown}");
+                assert!(!dir.join(name).exists(), "{shown} writes no executable");
+            }
+        }
+    }
+}
+
+fn the_cases_run_as_their_out_files_say() {
+    if updating() {
+        return;
+    }
+    for target in targets::runnable() {
+        for source in cases("out") {
+            let name = source.file_stem().unwrap().to_str().unwrap();
+            let file = format!("{name}.smith");
+            let dir = folder(name);
+            std::fs::copy(&source, dir.join(&file)).unwrap();
+            let ran = smith(&dir, &["run", "--target", target.name(), &file]);
+            assert_eq!(ran.status.code(), Some(0), "{file}: {}", stderr(&ran));
+            let expected = std::fs::read(source.with_extension("out")).unwrap();
+            assert_eq!(ran.stdout, expected, "{file} for {}", target.name());
         }
     }
 }
@@ -153,15 +168,10 @@ fn build_writes_the_executable_to_the_folder_it_ran_in() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/hello.smith"), HELLO).unwrap();
     std::fs::write(dir.join("hello"), "an old file").unwrap();
-    let built = smith(&dir, &["build", "--target", "linux_x64", "src/hello.smith"]);
+    let built = build(&dir, any(), "src/hello.smith");
     assert!(built.status.success(), "{}", stderr(&built));
     assert!(!dir.join("src/hello").exists());
-    if NATIVE {
-        let ran = Command::new(dir.join("hello")).output().unwrap();
-        assert_eq!(ran.status.code(), Some(0));
-        assert_eq!(ran.stdout, b"hello world\n");
-        assert!(ran.stderr.is_empty());
-    }
+    assert_ne!(std::fs::read(dir.join("hello")).unwrap(), b"an old file");
 }
 
 fn smith_build_twice_writes_identical_bytes() {
@@ -169,12 +179,12 @@ fn smith_build_twice_writes_identical_bytes() {
     let second = folder("second");
     for dir in [&first, &second] {
         std::fs::write(dir.join("hello.smith"), HELLO).unwrap();
-        let built = smith(dir, &["build", "--target", "linux_x64", "hello.smith"]);
+        let built = build(dir, any(), "hello.smith");
         assert!(built.status.success(), "{}", stderr(&built));
     }
     let bytes = std::fs::read(first.join("hello")).unwrap();
     assert_eq!(bytes, std::fs::read(second.join("hello")).unwrap());
-    let again = smith(&first, &["build", "--target", "linux_x64", "hello.smith"]);
+    let again = build(&first, any(), "hello.smith");
     assert!(again.status.success());
     assert_eq!(bytes, std::fs::read(first.join("hello")).unwrap());
 }
@@ -182,7 +192,7 @@ fn smith_build_twice_writes_identical_bytes() {
 fn main_smith_is_the_entry_and_takes_the_folder_name() {
     let dir = folder("greeter");
     std::fs::write(dir.join("main.smith"), HELLO).unwrap();
-    let built = smith(&dir, &["build", "--target", "linux_x64"]);
+    let built = smith(&dir, &["build", "--target", any().name()]);
     assert!(built.status.success(), "{}", stderr(&built));
     assert!(dir.join("greeter").is_file());
 }
@@ -191,13 +201,18 @@ fn without_a_flag_the_target_is_this_machine() {
     let dir = folder("host");
     std::fs::write(dir.join("hello.smith"), HELLO).unwrap();
     let built = smith(&dir, &["build", "hello.smith"]);
-    if NATIVE {
-        assert!(built.status.success(), "{}", stderr(&built));
-        let ran = smith(&dir, &["run", "hello.smith"]);
-        assert_eq!(ran.status.code(), Some(0));
-        assert_eq!(ran.stdout, b"hello world\n");
-    } else if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        assert!(stderr(&built).contains("is not a target"));
+    match Target::host() {
+        Some(host) if targets::runnable().contains(&host) => {
+            assert!(built.status.success(), "{}", stderr(&built));
+            let ran = smith(&dir, &["run", "hello.smith"]);
+            assert_eq!(ran.status.code(), Some(0));
+            assert_eq!(ran.stdout, b"hello world\n");
+        }
+        Some(host) => {
+            assert!(!built.status.success());
+            assert!(stderr(&built).contains(host.name()), "{}", stderr(&built));
+        }
+        None => assert!(stderr(&built).contains("is not a target")),
     }
 }
 
@@ -206,13 +221,19 @@ fn an_unknown_target_is_an_error_that_names_the_targets() {
     std::fs::write(dir.join("hello.smith"), HELLO).unwrap();
     let built = smith(&dir, &["build", "--target", "vax", "hello.smith"]);
     assert!(!built.status.success());
-    assert!(stderr(&built).contains("linux_x64"), "{}", stderr(&built));
+    for target in Target::ALL {
+        assert!(stderr(&built).contains(target.name()), "{}", stderr(&built));
+    }
 }
 
 fn run_rejects_a_target_other_than_this_machine() {
     let dir = folder("other");
     std::fs::write(dir.join("hello.smith"), HELLO).unwrap();
-    let other = if NATIVE { "macos_arm64" } else { "linux_x64" };
+    let other = Target::ALL
+        .iter()
+        .find(|t| Target::host() != Some(**t))
+        .unwrap()
+        .name();
     let ran = smith(&dir, &["run", "--target", other, "hello.smith"]);
     assert!(!ran.status.success());
     assert!(stderr(&ran).contains(other), "{}", stderr(&ran));
@@ -222,7 +243,7 @@ fn run_rejects_a_target_other_than_this_machine() {
 fn a_file_must_be_named_smith() {
     let dir = folder("named");
     std::fs::write(dir.join("hello.txt"), HELLO).unwrap();
-    let built = smith(&dir, &["build", "--target", "linux_x64", "hello.txt"]);
+    let built = build(&dir, any(), "hello.txt");
     assert!(!built.status.success());
     assert_eq!(
         std::fs::read_to_string(dir.join("hello.txt")).unwrap(),
@@ -253,15 +274,12 @@ fn timing_lines(text: &str) -> Vec<(String, f64)> {
 
 const STAGES: [&str; 5] = ["lex", "parse", "check", "emit", "write"];
 
+/// The cases with a file of this extension beside them.
 fn cases(extension: &str) -> Vec<PathBuf> {
-    let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases");
-    let mut found: Vec<_> = std::fs::read_dir(&cases)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "smith"))
+    let found: Vec<_> = case_files()
+        .into_iter()
         .filter(|p| p.with_extension(extension).exists())
         .collect();
-    found.sort();
     assert!(!found.is_empty());
     found
 }
@@ -275,11 +293,9 @@ fn timings_list_every_stage_in_order_and_change_nothing_else() {
         for dir in [&plain, &timed] {
             std::fs::copy(&source, dir.join(&file)).unwrap();
         }
-        let without = smith(&plain, &["build", "--target", "linux_x64", &file]);
-        let with = smith(
-            &timed,
-            &["build", "--timings", "--target", "linux_x64", &file],
-        );
+        let target = any().name();
+        let without = smith(&plain, &["build", "--target", target, &file]);
+        let with = smith(&timed, &["build", "--timings", "--target", target, &file]);
         assert!(without.status.success() && with.status.success(), "{file}");
         assert!(without.stderr.is_empty(), "{file}: {}", stderr(&without));
         assert!(with.stdout.is_empty(), "{file}");
@@ -306,7 +322,7 @@ fn a_failed_build_lists_the_stages_that_ran_after_its_errors() {
         std::fs::copy(&source, dir.join(&file)).unwrap();
         let built = smith(
             &dir,
-            &["build", "--timings", "--target", "linux_x64", &file],
+            &["build", "--timings", "--target", any().name(), &file],
         );
         assert!(!built.status.success(), "{file}");
         let text = stderr(&built);
@@ -323,7 +339,7 @@ fn a_failed_build_lists_the_stages_that_ran_after_its_errors() {
 }
 
 fn run_prints_the_timings_before_the_program_runs() {
-    if !NATIVE {
+    if !Target::host().is_some_and(|host| targets::runnable().contains(&host)) {
         return;
     }
     let dir = folder("run_timings");
