@@ -3,5 +3,23 @@ name = "smith"
 version = "0.0.0"
 edition = "2024"
 publish = false
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+test = false
+doctest = false
+
+[[bin]]
+name = "smith"
+path = "src/main.rs"
+test = false
+
+# One test binary with its own harness, so that a run ends with its
+# slowest tests.
+[[test]]
+name = "tests"
+path = "tests/main.rs"
+harness = false
 
 [dependencies]

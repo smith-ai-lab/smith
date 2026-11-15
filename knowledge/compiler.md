@@ -175,7 +175,8 @@ The other layers use a second generator that builds well-typed programs.
 | Self-hosting | The compiler built by itself twice is byte-identical |
 
 - Each property is a theorem to prove later, so it is written in that form now.
-- Specific cases live as `.smith` files with expected output beside them, updated by one command and reviewed as a diff.
+- Specific cases live as `.smith` files with expected output beside them, updated by one command and reviewed as a diff. In the bootstrap compiler the command is `SMITH_UPDATE=1 cargo test cases`, run in `bootstrap/`.
+- A generator draws every choice from a fixed seed, and a failing input is shrunk, by shrinking those choices, before it is reported.
 - Tests run in-process and in parallel.
 - A test states its expectation from the generator that built its input, never from a line or column written by hand, so adding a feature does not break it.
 

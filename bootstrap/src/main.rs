@@ -1,22 +1,11 @@
-//! The bootstrap compiler for Smith. It is written in Rust with no
-//! dependencies, and is retired once Smith compiles itself.
-
-mod check;
-mod diag;
-mod ir;
-mod lexer;
-mod parser;
-mod target;
-mod timings;
-
-#[cfg(test)]
-mod tests;
+//! The `smith` command: `build` and `run`, over the compiler in `lib.rs`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use target::Target;
-use timings::Timings;
+use smith::diag;
+use smith::target::Target;
+use smith::timings::Timings;
 
 const USAGE: &str = "usage: smith build [--target <target>] [--timings] [<file>.smith]
        smith run [--target <target>] [--timings] [<file>.smith]";
@@ -30,45 +19,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-/// The program a source file describes, as the target's executable.
-///
-/// The errors are those of the earliest stage that finds any, in the order
-/// of their places, each once.
-pub fn compile(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<diag::Error>> {
-    compile_timed(source, target, &mut Timings::new())
-}
-
-/// `compile`, recording how long each stage takes.
-fn compile_timed(
-    source: &[u8],
-    target: Target,
-    timings: &mut Timings,
-) -> Result<Vec<u8>, Vec<diag::Error>> {
-    let tokens = timings
-        .stage("lex", || lexer::lex(source))
-        .map_err(in_order)?;
-    let function = timings
-        .stage("parse", || parser::parse(&tokens))
-        .map_err(in_order)?;
-    let program = timings
-        .stage("check", || check::check(function))
-        .map_err(in_order)?;
-    timings
-        .stage("emit", || target.emit(&program))
-        .ok_or_else(|| {
-            vec![diag::Error::unsupported(
-                diag::Pos::START,
-                &format!("building for {}", target.name()),
-            )]
-        })
-}
-
-fn in_order(mut errors: Vec<diag::Error>) -> Vec<diag::Error> {
-    errors.sort_by_key(|e| e.pos);
-    errors.dedup();
-    errors
 }
 
 /// What a `build` or `run` command line asks for.
@@ -175,7 +125,7 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
         _ => return Err(format!("{shown}: a Smith file's name ends in .smith")),
     };
     let source = std::fs::read(entry).map_err(|e| format!("{shown}: {e}"))?;
-    let bytes = compile_timed(&source, request.target, timings).map_err(|errors| {
+    let bytes = smith::compile_timed(&source, request.target, timings).map_err(|errors| {
         let file = entry.to_string_lossy();
         let text = diag::render(&file, &source, &errors);
         text.strip_suffix('\n').unwrap_or(&text).to_string()
