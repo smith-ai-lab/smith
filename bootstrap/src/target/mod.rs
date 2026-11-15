@@ -2,6 +2,7 @@
 //! the bytes of an executable.
 
 mod linux_x64;
+mod macos_arm64;
 
 use crate::ir::Program;
 
@@ -60,7 +61,7 @@ impl Target {
     pub fn emit(self, program: &Program) -> Option<Vec<u8>> {
         match self {
             Target::LinuxX64 => Some(linux_x64::emit(program)),
-            Target::MacosArm64 => None,
+            Target::MacosArm64 => Some(macos_arm64::emit(program)),
         }
     }
 }
