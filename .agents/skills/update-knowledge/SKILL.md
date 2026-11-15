@@ -22,5 +22,5 @@ description: Add to or change the files in knowledge/, which define the Smith la
 - When a feature is removed, delete its text. Do not leave a note saying it used to exist.
 - Do not number headings, and do not refer to a section by position. Link to it by name.
 - Examples use only features introduced above them in the same file, or in a file earlier in the tour that `knowledge/language/index.md` lists.
-- A change to `knowledge/language/` or `knowledge/grammar.md` changes the language. It needs the owner's approval before it merges, so open the pull request and wait.
+- A change to `knowledge/language/` or `knowledge/grammar.md` changes the language. Only the lead merges it, so open the pull request and stop.
 - Plans, open questions, and work to be done go in GitHub issues, not in `knowledge/`.
