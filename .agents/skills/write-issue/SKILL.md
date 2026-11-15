@@ -9,6 +9,8 @@ An issue is read by an agent that starts cold, with only the repository and the 
 
 ## Where issues live
 
+The owner and the lead agree on an issue before it is created. The lead then writes it.
+
 One parent issue is the roadmap. Each task is a sub-issue of it, and the order of the sub-issues is the order of the work. An implementer takes the first open one.
 
 ## Before writing
@@ -36,11 +38,14 @@ What not to build.
 Ask first
 Choices the implementer must not make alone. Leave this out when there are none.
 
+After
+Issues that must be merged before this one starts, because it builds on them or changes the same code. Leave this out when there are none.
+
 Read first
 The sections of knowledge/ that apply, as links.
 ```
 
-The first three parts are the goal, the finished result, and its limits. "Ask first" says when to stop. "Read first" points at the sources, so nothing is pasted into the issue that the repository already holds.
+The first three parts are the goal, the finished result, and its limits. "Ask first" says when to stop. "After" tells the lead what can run at the same time: two issues with neither under the other's "After" get workers together. "Read first" points at the sources, so nothing is pasted into the issue that the repository already holds.
 
 ## Rules
 

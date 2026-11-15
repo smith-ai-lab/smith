@@ -126,6 +126,7 @@ smith deploy --env staging   a task from project.smith
 - `smith build` writes the executable to the folder the command ran in, and replaces a file already there.
 - `--target` chooses what to build for, as in `smith build --target macos_arm64`. Its values are the [target names](../compiler.md#backends). Without it, the target is the machine the compiler is running on, and it is an error if that machine is not a target.
 - `smith run` runs only what the machine it is on can run, so it rejects any other target.
+- `--timings` prints how long each stage of the build took.
 - A task's parameters are named flags. A `bool` is a bare flag, a parameter with a default or of type `Option` may be left out, and there are no positional arguments.
 - A `Result` error prints its message and exits non-zero.
 - Built-in command names are reserved, so a task named `build` is a compile error.

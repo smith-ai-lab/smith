@@ -1,7 +1,7 @@
 ---
 type: specification
 title: The Smith compiler
-description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, and bootstrap.
+description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, timings, and bootstrap.
 ---
 
 # The Smith compiler
@@ -59,7 +59,17 @@ The compiler is lazy. It starts from the roots and does only the work they reach
 
 An error stops every command. A warning is reported only by `smith check`, which fails if there are any, so it is the lint step and a continuous integration run needs no extra flag.
 
-An error names its file, line, and column, as in `hello.smith:2:3: message`. Lines and columns count from 1, and a column counts characters.
+What the compiler prints is written to be read by a model, and there is one form of it. An error gives its place, what is wrong, the line of source with a mark under the place, and what to write when the compiler knows.
+
+```
+hello.smith:1:13: `print` needs the `console` effect, which `main` does not declare
+  1 | fn main() { print("hi") }
+    |             ^
+  fix: write `fn main() ! console`
+```
+
+- The first line is `file:line:column: message`. Lines and columns count from 1, and a column counts characters.
+- Every error in a file is reported, in the order of their places, so one round of changes can fix them all.
 
 - Dead code, meaning a definition no root reaches, is a warning.
 - An unused variable or an unused import is a warning.
@@ -67,7 +77,7 @@ An error names its file, line, and column, as in `hello.smith:2:3: message`. Lin
 
 ### Commands that report
 
-The command line is the compiler's interface for people and for agents. Every command can print its result as JSON.
+The command line is the compiler's interface for people and for agents, and its output is plain text in the one form above.
 
 | Command | Reports |
 | --- | --- |
@@ -100,7 +110,7 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 
 Everything up to the kernel form is the same for every target. Each CPU target supplies its instruction selection, its calling convention, and its executable writer, and that seam exists from the first program. The compiler writes executables itself and runs no linker or assembler.
 
-The first two targets are built together. A target has one name, which is its case in the `Target` enum that `build` takes in `project.smith`, and the same word selects it on the command line, as in `--target linux_x64`.
+The first two targets are built together. A target is one case of an enum, and adding a case is what adds a target: the compiler then requires every place that depends on the target to handle it. A target has one name, which is its case in the `Target` enum that `build` takes in `project.smith`, and the same word selects it on the command line, as in `--target linux_x64`.
 
 - **Linux on x86-64,** named `linux_x64`. A static ELF executable that talks to the kernel directly.
 - **macOS on arm64,** named `macos_arm64`. A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
@@ -164,6 +174,23 @@ The other layers use a second generator that builds well-typed programs.
 - Each property is a theorem to prove later, so it is written in that form now.
 - Specific cases live as `.smith` files with expected output beside them, updated by one command and reviewed as a diff.
 - Tests run in-process and in parallel.
+- A test states its expectation from the generator that built its input, never from a line or column written by hand, so adding a feature does not break it.
+
+Every target passes the same tests, which run over every case of the target enum, so a target cannot be added without them.
+
+| Property | How it is checked |
+| --- | --- |
+| The executable does what the evaluator says the program does | On each target's own kind of machine, for generated programs |
+| A target's executables have the same bytes whichever machine builds them | Their hashes are kept in the repository and compared on every kind of machine |
+| The executable runs | Continuous integration runs it on a machine of the target's kind |
+
+## Timings
+
+The time each step takes is measured from the first program, so a slowdown is seen in the change that causes it.
+
+- `smith build --timings` prints how long each stage of the pipeline took.
+- A test run ends with its slowest tests and how long each took.
+- Continuous integration prints both on every run.
 
 ## Bootstrap
 

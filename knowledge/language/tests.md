@@ -43,6 +43,7 @@ smith test --seed 4127               replay a failing run
 - All tests run in one process, each as a task with its own arena, in parallel.
 - Running one test compiles only what that test reaches, so it stays fast in a large project.
 - A failure prints the smallest failing input and the seed.
+- A run ends with its slowest tests and how long each took.
 - A test declares its effects like any function. One that touches files gets an in-memory file system unless it says otherwise.
 
 Next: [A transformer](transformer.md)

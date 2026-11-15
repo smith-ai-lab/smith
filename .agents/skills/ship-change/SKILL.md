@@ -10,7 +10,7 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 ## Before you start
 
 - You know which issue the change is for. Unless you were given one, take the first open sub-issue of the roadmap issue.
-- You have read its "Must be true" list. Every line of it becomes a test.
+- You have read its "Must be true" list. Every line of it becomes a test, written as the `write-tests` skill says.
 - You have read `knowledge/index.md` and every file the issue lists under "Read first". `knowledge/` is not loaded for you, so nothing in it is known until you open it.
 
 ## The branch and its commits
