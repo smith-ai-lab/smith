@@ -51,11 +51,11 @@ result     = [ IDENT ":" ] type ;
 generics   = "[" generic { "," generic } "]" ;
 generic    = [ "out" ] IDENT [ ":" type ] ;
 params     = param { "," param } [ "," ] ;
-param      = IDENT ":" [ "take" ] type ;
+param      = IDENT ":" [ "take" ] type [ "=" expr ] ;
 effects    = "!" IDENT { "," IDENT } ;
 contract   = ( "requires" | "ensures" ) expr ;
 
-struct_def = "struct" IDENT [ generics ] "{" { [ "pub" ] IDENT ":" type } "}" ;
+struct_def = "struct" IDENT [ generics ] "{" { [ "pub" ] IDENT ":" type [ "=" expr ] } "}" ;
 enum_def   = "enum" IDENT [ generics ] "{" { IDENT [ ":" type ] } "}" ;
 trait_def  = "trait" IDENT generics "{" { fn_sig } "}" ;
 effect_def = "effect" IDENT "{" { fn_sig } "}" ;
