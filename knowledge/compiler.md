@@ -1,0 +1,140 @@
+---
+type: specification
+title: The Smith compiler
+description: How the compiler is designed. It covers how for expressions are compiled, the compiler's structure and commands, its representation, backends, testing, and bootstrap.
+---
+
+# The Smith compiler
+
+Smith's compiler is an optimizing compiler built around `for` expressions. Its optimizations are fixed rules keyed on shape and structure, with no search and no heuristics that vary between builds, so performance is predictable and builds stay fast. It emits machine code and GPU shaders itself, with no LLVM.
+
+## How `for` is compiled
+
+- **Fusion.** An array read once per element fuses into its consumer. An array read repeatedly, or by several consumers, gets a buffer.
+- **Contractions.** A `for` with a `sum` over a shared index, which is what every `@` expands to, is recognized and compiled as a tuned library would write it: loop order chosen, blocked for the cache, with a vector kernel inside.
+- **Strategy by size.** Type parameters are always specialized. For size parameters, a shared version always exists that takes the sizes at run time and picks its strategy with a size check: a simple loop, or cache blocking and threads. A specialized copy is made only when the sizes are constants and the operation count at those sizes is under a fixed bound, as for a 4 by 4 matrix, which is then fully unrolled into SIMD registers. The rule uses no profile data, and `smith cost` reports which version a call uses.
+- **Whole-function vectorization.** A scalar function called inside a `for` runs across SIMD lanes or GPU threads, with branches turned into masks.
+- **Reductions.** Each core runs several SIMD accumulators, cores combine their partial results, and a GPU uses a tree. The grouping is fixed for a given compiler and target and never depends on thread count, so results are repeatable. A reduction that fills one element of an array runs in order along its index.
+- **Layout.** No address is observable, so the compiler is free to store an array of structs as one array per field.
+- **Devices.** Inside `with device(gpu)`, each fused loop nest becomes a GPU kernel.
+
+## Scalar code
+
+The compiler's own code and the edges of a server are scalar. They get a fixed list of roughly linear-time passes: inlining small functions, constant folding, dead-code and common-subexpression elimination, instruction selection, and register allocation. Nothing iterates to a fixpoint, and value semantics means no alias analysis is needed. New passes are added one at a time, each proven or validated.
+
+## Structure
+
+The compiler is a pure function from a set of roots and the source text to results: diagnostics, types, and optionally a binary. Nothing is kept between runs, so every run starts clean and no result can be stale.
+
+It works in three steps, each a pure function of its inputs with no shared mutable state.
+
+1. **Parse** a file. This depends on that file's text alone.
+2. **Collect signatures** from the parsed files.
+3. **Check a body** against the signatures. A signature states everything a caller needs, so checking one body never depends on another body, and bodies check in parallel.
+
+The compiler is lazy. It starts from the roots and does only the work they reach. A module is a file named by its path, imports are explicit lists, and a trait implementation lives with the trait or the type, so the compiler finds a name's file without scanning the project. Files that nothing reaches are never read.
+
+| Command | Roots |
+| --- | --- |
+| `smith build`, `smith run` | `main` |
+| `smith test --name x` | That test |
+| `smith test` | Every test |
+| `smith check` | `main`, every test, and a library's public items |
+
+- Checking a body needs only the signatures of what it calls. Running it needs those bodies too, all the way down.
+- Code that no root reaches is not compiled, so it can hold an error while a single test runs. That lets a new design be tried with one test before every caller is updated. The error surfaces when a command whose roots reach it is run.
+- `grad(f)` needs the body of `f` and of everything it calls. Its type depends only on the signature of `f`, so checking stays local, and whether `f` can be differentiated is decided when the code is built.
+
+### Errors and warnings
+
+An error stops every command. A warning is reported only by `smith check`, which fails if there are any, so it is the lint step and a continuous integration run needs no extra flag.
+
+- Dead code, meaning a definition no root reaches, is a warning.
+- An unused variable or an unused import is a warning.
+- An unused value whose type cannot be discarded is an error, as [Ownership](language.md#ownership) requires.
+
+### Commands that report
+
+The command line is the compiler's interface for people and for agents. Every command can print its result as JSON.
+
+| Command | Reports |
+| --- | --- |
+| `smith check` | Errors with a counterexample, the remaining proof goal, and candidate fixes, plus warnings |
+| `smith hole` | The type, effects, and proof goal a `hole(name)` needs |
+| `smith find` | Definitions matching a type signature, so existing code gets reused |
+| `smith deps` | What a definition uses, and what uses it |
+| `smith cost` | Allocation and operation counts as formulas over the sizes, and which arrays were stored |
+
+## Representation
+
+The lexer and parser are hand-written: recursive descent for declarations and a Pratt parser for expressions. One syntax tree serves the checker and the formatter. Every node keeps its source span, comments are ordinary nodes attached to what follows them, and an error node holds any tokens the parser skipped, so broken programs and holes are still representable.
+
+| Level | What happens there |
+| --- | --- |
+| Surface tree | Parsing and formatting |
+| Typed core term | Checking and `grad`. About ten node kinds |
+| Kernel form | Fusion, contractions, and vectorization. Shared by the CPU backend and both GPU emitters |
+| Machine form | Instruction selection and register allocation |
+
+## Backends
+
+| Target | Output |
+| --- | --- |
+| CPU | arm64 and x86-64 machine code, written to Mach-O, ELF, and PE directly |
+| Apple GPU | Metal shading language source, compiled by the OS at load time |
+| Vulkan GPU | SPIR-V binary |
+
+Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
+
+## Why builds are fast
+
+- **Only what is reached is compiled.** A run costs what its roots use, not the size of the project or the standard library.
+- **Bodies check independently.** Signatures are complete, so bodies are checked in parallel across every core.
+- **Rules, not search.** Every optimization above is a fixed rule.
+- **Proofs are checked, not found.**
+- **No cache.** There is nothing to invalidate, download, or go stale.
+
+## Platform layer
+
+Each platform needs a small set of foreign bindings for a window, a GPU surface, input, and audio, all through the C calling convention. Bindings are generated and validated with Clang at development time, so Clang never ships with the compiler.
+
+| Platform | Window and input | GPU | Linking |
+| --- | --- | --- | --- |
+| macOS, iOS | AppKit or UIKit through the Objective-C runtime's C functions | Metal | Dynamic to system libraries. iOS builds are ahead-of-time only |
+| Linux | Wayland or X11 socket protocol | Vulkan | Static possible without a GPU |
+| Windows | Win32 through system DLLs | Vulkan | Dynamic to system DLLs |
+| Android | NDK native activity, JNI for the rest | Vulkan | Dynamic, plus a manifest |
+
+## Testing
+
+The test suite is a few properties per layer and a small regression corpus, with almost no unit tests. Tests touch only the compiler's commands and semantic properties, so refactors do not break them.
+
+For the parser, one generator walks the grammar and builds a random derivation tree, with shrinking. The tree is flattened to program text and also folded into the expected syntax tree, so no second parser is needed.
+
+1. Parsing generated text gives the expected tree.
+2. Formatting is idempotent and preserves every token.
+3. Mutated input never crashes or hangs, and anything the parser accepts passes property 2.
+
+The other layers use a second generator that builds well-typed programs.
+
+| Layer | Property |
+| --- | --- |
+| Checker | A well-typed program never gets stuck in the evaluator, and its result has the declared type |
+| Optimizer | Fused, blocked, and vectorized code gives the same result as the plain loop nest |
+| Backends | Native output equals evaluator output on small inputs. GPU equals CPU within the stated float tolerance |
+| Differentiation | `grad` matches finite differences |
+| Laziness | For any root, the lazy result equals what a run over every root gives for the same definitions |
+| Determinism | The same input gives the same bytes |
+| Self-hosting | The compiler built by itself twice is byte-identical |
+
+- Each property is a theorem to prove later, so it is written in that form now.
+- Specific cases live as `.smith` files with expected output beside them, updated by one command and reviewed as a diff.
+- Tests run in-process and in parallel.
+
+## Bootstrap
+
+The first compiler is written in a subset of Rust shaped like Smith, then ported by a mechanical translator and retired.
+
+- **The subset:** arenas with indices, enums, `match`, and traits with static dispatch, with `unsafe` confined to one module and no external dependencies.
+- **The translator,** `rust2smith`, reads the compiler's own source and emits Smith. A construct it cannot translate fails the build, which enforces the subset.
+- **The switch.** Both compilers must produce identical binaries on the whole test corpus. Then the Rust compiler builds the Smith compiler, that builds itself, and that builds itself again. The last two binaries must match byte for byte.
