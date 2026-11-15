@@ -50,7 +50,7 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
    gh api repos/{owner}/{repo}/pulls -f title="<title>" -f head="<branch>" -f base=main -F body=@pr.md --jq '.number'
    ```
 
-   Use `gh api` as shown. Cloud sessions cannot run `gh pr create` or `gh pr merge`.
+   Use `gh api` as shown. Cloud sessions cannot run `gh pr create`.
 
 7. Wait for every check to pass.
 
@@ -76,10 +76,16 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
 9. If a lead gave you the issue, stop here. End your turn with the pull request's number. The lead reviews it and merges it.
 
-10. Otherwise, merge by rebase once every check is green.
+10. Otherwise, add the pull request to the merge queue once every check is green. The queue rebases it onto `main`.
 
     ```
-    gh api -X PUT repos/{owner}/{repo}/pulls/<number>/merge -f merge_method=rebase
+    gh pr merge <number> --rebase
+    ```
+
+    In a cloud session that command is not available. Use this instead.
+
+    ```
+    gh api -X PUT repos/{owner}/{repo}/pulls/<number>/ccr/auto_merge -f merge_method=rebase
     ```
 
 ## Rules
