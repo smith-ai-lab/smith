@@ -71,6 +71,10 @@ smith test                   run the tests
 smith fmt                    format every file
 smith vendor add <url>       fetch, hash, and add an entry
 smith vendor update <path>   re-fetch one folder and update its hash
+smith hole                   what a hole needs
+smith find                   definitions matching a signature
+smith deps                   what a definition uses, and what uses it
+smith cost                   allocation and operation counts
 
 smith deploy --env staging   a task from project.smith
 ```
@@ -78,7 +82,13 @@ smith deploy --env staging   a task from project.smith
 - A task's parameters are named flags. A `bool` is a bare flag, an `Option` is optional, and there are no positional arguments.
 - A `Result` error prints its message and exits non-zero.
 - Built-in command names are reserved, so a task named `build` is a compile error.
-- `smith build`, `smith run`, and `smith test` fail only on errors. `smith check` also reports warnings, such as dead code, unused variables, and unused imports, and fails if there are any. What each command compiles is described in [compiler.md](../compiler.md#structure).
+- `smith build`, `smith run`, and `smith test` fail only on errors. `smith check` also reports warnings, such as dead code, unused variables, and unused imports, and fails if there are any. What each command compiles, and what the reporting commands print, is described in [compiler.md](../compiler.md#structure).
 - `smith vendor add` shows a dependency's own vendored list, and writes entries only for what is approved.
+
+A single file can be built without a project, which is how a first program is written. `smith build hello.smith` compiles that one file with its `main` as the root, and `smith run hello.smith` builds it and runs it.
+
+- The executable is written to the directory the command ran in, and replaces a file already there. It is named after the file, without `.smith`, so `hello.smith` gives `hello`. In a project it is named after the package.
+- `--target` chooses what to build for, as in `smith build hello.smith --target macos_arm64`. Its values are the [target names](../compiler.md#backends). Without it, the target is the machine the compiler is running on, and it is an error if that machine is not a target.
+- `smith run` runs only what the machine it is on can run, so it rejects any other target.
 
 Next: [Tests](tests.md)
