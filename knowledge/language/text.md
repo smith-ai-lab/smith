@@ -29,7 +29,27 @@ fn greet(name: str, age: i32) ! console, alloc {
 - The braces hold any expression. A type joins in by implementing `Fmt`, and `derive Fmt for Rect` writes the obvious implementation.
 - Nothing is special-cased. A `str` in braces goes through its own `Fmt` implementation, like a value of any other type.
 - There are no format options inside the braces. A width or a number of decimal places is an ordinary function call, as in `"{fixed(x, 2)}"`.
-- A literal brace is written `\{`.
 - A string with an expression in it has a size known only at run time, so it carries `alloc`. A plain string literal does not.
+
+A backslash writes a character that would otherwise mean something else. These escapes are the whole set, and any other character after a backslash is a compile error.
+
+| Written | Means |
+| --- | --- |
+| `\"` | A double quote |
+| `\\` | A backslash |
+| `\{` and `\}` | A brace |
+| `\n` | A line break |
+| `\t` | A tab |
+
+```
+fn show(x: i32, y: i32) ! console, alloc {
+  print("point \{{x}, {y}\}")
+}
+```
+
+`show(3, 4)` prints `point {3, 4}`.
+
+- A brace that is not escaped always opens or closes an expression, so a `}` on its own is a compile error.
+- A string literal ends on the line it starts. A line break in the text is written `\n`.
 
 Next: [Ownership](ownership.md)
