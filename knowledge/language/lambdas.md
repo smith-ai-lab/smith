@@ -6,7 +6,7 @@ description: Lambdas, trailing blocks, with to pass the rest of a block to a fun
 
 # Lambdas, `with`, and `try`
 
-A lambda is `fn(x) { e }`, and a function type is written `(T) -> U`.
+A lambda is `fn(x) { e }`, and a function type is written `(T) -> U`. A default belongs to a function's name and not to its type, so a function passed as a value takes every argument.
 
 When the last argument of a call is a lambda with no parameters, it may be written as a block after the call: `f(a) { e }`, or `f { e }` when there are no other arguments. The block must start on the same line as the call.
 
