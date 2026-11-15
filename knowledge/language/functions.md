@@ -15,7 +15,7 @@ fn area(w: f32, h: f32) -> f32 { w * h }
 fn double(x: f32) -> f32 { x * 2.0 }
 ```
 
-A call is `area(2.0, 3.0)`, and arguments may be named, as in `area(w: 2.0, h: 3.0)`.
+A call is `area(2.0, 3.0)`, and arguments may be named, as in `area(w: 2.0, h: 3.0)`. Arguments by position come first, in the order of the parameters. Once one argument is named, every argument after it is named too, as in `area(2.0, h: 3.0)`.
 
 A parameter may have a default, written after its type. A call that leaves the argument out gets the default.
 
@@ -23,10 +23,10 @@ A parameter may have a default, written after its type. A call that leaves the a
 fn scale(x: f32, by: f32 = 2.0) -> f32 { x * by }
 ```
 
-`scale(3.0)` is `6.0`, and `scale(3.0, by: 10.0)` is `30.0`.
+`scale(3.0)` is `6.0`, and `scale(3.0, 10.0)` and `scale(3.0, by: 10.0)` are both `30.0`.
 
 - Parameters with defaults come after those without.
-- An argument for a parameter that has a default is always passed by name, so a call shows which option it sets.
+- Naming an argument is how a call sets a later default and leaves an earlier one alone.
 - A default is a fixed value. It is an expression that uses no parameter, and it is worked out when the program is built, so it never depends on when or where the call happens.
 - The compiler fills in a missing argument where the call is written. The function always receives every argument, so a default costs nothing at run time.
 
