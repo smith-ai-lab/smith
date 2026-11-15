@@ -9,6 +9,12 @@ pub struct Timings {
     stages: Vec<(&'static str, Duration)>,
 }
 
+impl Default for Timings {
+    fn default() -> Timings {
+        Timings::new()
+    }
+}
+
 impl Timings {
     pub fn new() -> Timings {
         Timings {
