@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Contracts and proofs
-description: requires, ensures, and check, the arith procedure that discharges them, termination, and hole.
+description: requires, ensures, and check, what the arith procedure can prove, termination, and hole.
 ---
 
 # Contracts and proofs
@@ -30,6 +30,15 @@ Contracts are discharged by `arith`, a small deterministic procedure for arithme
 | `requires` | The caller | The arguments |
 | `ensures` | The function | The result, by the name the signature gives it |
 | `check` | Nobody: it tests at run time | Outside data. Yields a proof if the test passes |
+
+`arith` decides linear arithmetic over integers and nothing more. That is what lets it always answer yes or no, in a time that can be predicted.
+
+- It decides comparisons between sums and differences of variables and constants, where any multiplication is by a constant, such as `i + k < n + w - 1` and `2 * n + 1 <= m`. Comparisons may be joined with `and`, `or`, and `not`.
+- It does not reason about a product of two variables, or about dividing by a variable. It treats such a term as one unknown quantity, and knows only the facts stated about that same term.
+- When it cannot prove a goal, the compiler reports the goal. The author supplies the missing fact with a `requires`, with a `check`, or with a type that carries the proof.
+- A subtraction `a - b` on `Nat` compiles only when `arith` can show `b <= a`.
+
+So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller with sizes known only at run time gets it from a `check`.
 
 `Fin[n]` from [Arrays and sizes](arrays.md) is a number paired with a proof that it is below `n`. `check` is how outside data becomes one.
 
