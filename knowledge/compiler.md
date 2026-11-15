@@ -1,7 +1,7 @@
 ---
 type: specification
 title: The Smith compiler
-description: How the compiler is designed. It covers how for expressions are compiled, the compiler's structure and commands, its representation, backends, testing, and bootstrap.
+description: How the compiler is designed. It covers how for expressions are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, and bootstrap.
 ---
 
 # The Smith compiler
@@ -94,6 +94,19 @@ The first two targets are built together. A target has one name, which is its ca
 - **macOS on arm64,** named `macos_arm64`. A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
+
+## Standing alone
+
+A Smith executable carries everything it runs. All of its code is compiled from Smith source into the one file, in the same way that outside code is [vendored](language/projects.md) into the project and never fetched from a shared cache. The only thing the executable needs from the machine is the operating system's own stable boundary, and that boundary is the kernel wherever the kernel allows it.
+
+| System | Boundary | Why |
+| --- | --- | --- |
+| Linux | The kernel's system calls, made directly | The kernel keeps them stable, so the executable is fully static and uses no C library |
+| macOS, iOS | `libSystem`, loaded by the system's dynamic loader | Apple changes system call numbers between releases, and Apple silicon does not run a static executable |
+| Windows | The system DLLs | Windows changes system call numbers between builds |
+
+- From a system library a program calls only the thin wrappers over the kernel, such as `write`, `mmap`, and `exit`. It never uses the C library behind them. Allocation, formatting, and everything else are written in Smith and behave the same on every target.
+- Nothing from the system is needed to build. The compiler writes the records that ask the loader for a library and its symbols, so it needs no SDK and can build for any target from any machine.
 
 ## Why builds are fast
 
