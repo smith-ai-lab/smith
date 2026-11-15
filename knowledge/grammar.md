@@ -14,7 +14,8 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 - Commas appear only inside `( )` and `[ ]`.
 - A comment starts with `//`, stands on its own line, and attaches to the definition, field, case, or statement that follows it.
 - Literals keep their source spelling, so `0x10` and `16` stay distinct in the syntax tree.
-- A string may hold expressions in braces. The lexer returns the text before a `{`, then ordinary tokens up to the matching `}`, then resumes the string. `\{` is a literal brace.
+- A string may hold expressions in braces. The lexer returns the text before a `{`, then ordinary tokens up to the matching `}`, then resumes the string.
+- Inside a string, `TEXT` is a run of characters other than `"`, `\`, `{`, `}`, and a line break. `ESCAPE` is a backslash followed by one of `"`, `\`, `{`, `}`, `n`, or `t`. A backslash before anything else, a `}` that closes no expression, and a line break before the closing quote are errors.
 
 ## Precedence
 
@@ -83,7 +84,7 @@ index      = expr | [ expr ] ".." [ expr ] ;
 primary    = IDENT | LITERAL | string | "(" expr { "," expr } ")" | block
            | case | if | match | for | loop | lambda ;
 
-string     = '"' { TEXT | "{" expr "}" } '"' ;
+string     = '"' { TEXT | ESCAPE | "{" expr "}" } '"' ;
 case       = "." IDENT [ "(" [ args ] ")" ] ;
 if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
