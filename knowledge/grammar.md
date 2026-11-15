@@ -80,8 +80,7 @@ pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
 expr       = operand { BINOP operand } ;
 operand    = { "not" } unary ;
 unary      = [ "-" | "try" ] postfix ;
-postfix    = primary { "(" [ args ] ")" [ block ] | block | "[" index { "," index } "]"
-                     | "." IDENT } ;
+postfix    = primary { "(" [ args ] ")" | "[" index { "," index } "]" | "." IDENT } ;
 args       = arg { "," arg } [ "," ] ;
 arg        = [ IDENT ":" ] expr ;
 index      = expr | [ expr ] ".." [ expr ] ;
@@ -107,5 +106,5 @@ size       = expr | "some" IDENT ;
 - **No name lookup.** Parsing never needs to know what a name refers to, so definitions parse independently and in parallel.
 - **One token of lookahead,** with one exception: a statement that starts like a tuple is read as an expression and converted to a pattern when `=` follows. This is still linear time.
 - **`f[n](x)` and `a[i]` are the same postfix form.** The type checker tells a type argument from an index.
-- **`{` on the same line after a call opens a trailing block,** except in the header of `if`, `match`, `loop`, or `for`, where it opens that construct's body. On a new line it starts a new statement. Construction is a call, so `{` never starts a literal.
+- **`{` never continues an expression.** After the condition of an `if`, a `match`, a `loop`, a `for`, or a contract it opens that construct's body, and anywhere else it starts a block. Construction is a call, so `{` never starts a literal.
 - **Files split cheaply.** Top-level items start with a keyword at column zero, and only edited definitions are re-parsed.
