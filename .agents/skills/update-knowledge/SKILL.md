@@ -19,7 +19,8 @@ description: Add to or change the files in knowledge/, which define the Smith la
 ## Rules
 
 - Prefer fewer features. Add one only when real code needs it, and say in the pull request what that code is.
-- When a feature is removed, delete its text. Do not leave a note saying it used to exist.
+- Write only what is true now. When a feature is removed or a rule changes, delete or rewrite the text so that a reader sees the present state and nothing else. Do not leave a note of what it used to be, or of why it was decided.
+- Keep files short. Before adding a sentence, look for one to remove.
 - Do not number headings, and do not refer to a section by position. Link to it by name.
 - Examples use only features introduced above them in the same file, or in a file earlier in the tour that `knowledge/language/index.md` lists.
 - A change to `knowledge/language/` or `knowledge/grammar.md` changes the language. Only the lead merges it, so open the pull request and stop.
