@@ -33,15 +33,9 @@ The lead does not write the code. It starts one worker on one issue, stays out o
    - `knowledge/` changed if what Smith is changed.
    - Every check passes and every commit is meaningful.
    - Check out the branch, run the checks, and run the issue's example yourself. Read the whole diff.
+   - Start from what the pull request says it could not verify, and verify it.
 
-6. Post what you found as comments on the pull request. Each comment says what is wrong and what must be true instead. It does not say how to fix it.
-
-   ```
-   gh api repos/{owner}/{repo}/issues/<number>/comments -F body=@comment.md
-   gh api repos/{owner}/{repo}/pulls/<number>/comments -F body=@comment.md -f commit_id=<sha> -f path=<file> -F line=<line> -f side=RIGHT
-   ```
-
-   The first form is for the pull request as a whole, the second for one line. Post everything in one round. Then send the worker one message:
+6. Post what you found as comments on the pull request, each on the line it is about where there is one. Each comment says what is wrong and what must be true instead. It does not say how to fix it. Post everything in one round. Then send the worker one message:
 
    ```
    Address the review comments on pull request #<number>. Stop when
@@ -58,7 +52,7 @@ Work through these in order, and stop at the first that applies.
 
 1. The issue was unclear or wrong. Fix the issue.
 2. The worker lacked something it needed to read. Add it to `knowledge/` or to "Read first".
-3. The worker had what it needed and tried. Raise the effort.
+3. The worker had what it needed and tried. Raise the effort one level. On a `model:sonnet` issue do this once: beyond that, Sonnet costs about what Opus does, so move up instead.
 4. It still fails. Move the label up a model and start a new worker. If the label is already `model:opus`, split the issue into smaller ones, or ask the owner.
 
 ## Rules
