@@ -20,6 +20,7 @@ fn fixture_config() -> Result[Config, IoError] ! alloc {
 
 An effect is a parameter that the compiler passes for you. A signature states it, a call does not, and it costs nothing at run time. So a signature says everything a function may do, while the code that calls it stays plain.
 
+- An effect is named once in a list, so naming it again is an error.
 - The stored signature always states the effect list. The compiler proposes it while the function is being written, and lambdas are inferred.
 - A lambda's other effects are checked where it is written: whatever its body does must be allowed by the function it sits in, and the function receiving it says nothing about them. This is sound because a lambda passed to a call cannot be stored or returned. There are no effect variables.
 - A function stored in a value states its effects in its type, and is pure when none are written.

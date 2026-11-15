@@ -10,6 +10,7 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 
 ## Lexical rules
 
+- Source text is UTF-8. Spaces and tabs separate tokens, and a line break is a line feed. A carriage return is an error anywhere in a file, inside a string or a comment too. Any other character that belongs to no token, string, or comment is an error.
 - A newline ends a statement, except inside `( )` or `[ ]`, after an operator or comma, or before `requires`, `ensures`, and the `{` that opens a function's body. A block inside `( )` or `[ ]` separates its own statements by newlines as usual.
 - Commas appear only inside `( )` and `[ ]`, in a list of effects, and between the indices of a `for`.
 - An identifier, `IDENT`, is a letter or `_` followed by letters, digits, and `_`, and is not a keyword. The letters are `a` to `z` and `A` to `Z`.
