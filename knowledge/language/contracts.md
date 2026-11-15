@@ -42,7 +42,7 @@ fn token[v: Nat](raw: Nat) -> Option[Fin[v]] {
 }
 ```
 
-There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with neither the `alloc` nor the `diverge` effect therefore returns a value for every input its `requires` lines allow.
+There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](tasks.md) when the system runs out of what they stand for.
 
 - A proof comes from `arith` or from a `check` that passed, and it is erased before code generation.
 - Predicates used in contracts are ordinary functions returning `bool`, so a contract can be run on real data.
