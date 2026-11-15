@@ -176,8 +176,9 @@ impl Parser<'_> {
 
     /// Skips the tokens of a definition that holds a mistake, from its
     /// first token to the next token outside any bracket that starts a line
-    /// at its first column. A brace there belongs to the definition before
-    /// it, as when a body's `{` is on a line of its own.
+    /// at its first column. A brace, `requires`, or `ensures` there belongs
+    /// to the definition before it, as a line break before them does not
+    /// end it.
     fn skip_item(&mut self, from: usize) {
         self.at = from;
         let mut depth = 0usize;
@@ -186,7 +187,11 @@ impl Parser<'_> {
                 Tok::Eof => return,
                 Tok::Newline if depth == 0 => {
                     self.skip_newlines();
-                    if self.pos().col == 1 && !matches!(self.tok(), Tok::Punct("{" | "}")) {
+                    let continues = matches!(
+                        self.tok(),
+                        Tok::Punct("{" | "}") | Tok::Keyword("requires" | "ensures")
+                    );
+                    if self.pos().col == 1 && !continues {
                         return;
                     }
                     continue;
@@ -202,15 +207,29 @@ impl Parser<'_> {
     /// Skips the tokens of a statement that holds a mistake, up to the line
     /// break or `}` that ends it. Gives whether one was found before the end
     /// of the file.
+    ///
+    /// A `}` with no `{` open in the statement closes the block, even inside
+    /// a bracket the statement left open, so that a missing `)` is not also
+    /// reported as a missing `}`.
     fn skip_statement(&mut self, from: usize) -> bool {
         self.at = from;
-        let mut depth = 0usize;
+        let mut open: Vec<&str> = Vec::new();
         loop {
             match self.tok() {
                 Tok::Eof => return false,
-                Tok::Newline | Tok::Punct("}") if depth == 0 => return true,
-                Tok::Punct("(" | "[" | "{") => depth += 1,
-                Tok::Punct(")" | "]" | "}") => depth = depth.saturating_sub(1),
+                Tok::Newline if open.is_empty() => return true,
+                Tok::Punct("}") if !open.contains(&"{") => return true,
+                Tok::Punct(p @ ("(" | "[" | "{")) => open.push(p),
+                Tok::Punct(p @ (")" | "]" | "}")) => {
+                    let opener = match *p {
+                        ")" => "(",
+                        "]" => "[",
+                        _ => "{",
+                    };
+                    if let Some(i) = open.iter().rposition(|o| *o == opener) {
+                        open.truncate(i);
+                    }
+                }
                 _ => {}
             }
             self.bump();
