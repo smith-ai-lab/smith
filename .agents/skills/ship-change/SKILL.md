@@ -1,6 +1,6 @@
 ---
 name: ship-change
-description: Take a change from a clean main to merged, using a branch, conventional commits, a pull request, and a rebase merge once checks pass. Use for every change to this repository.
+description: Take a change from a clean main to a pull request that is ready to merge, or merged, using a branch, conventional commits, a pull request, and a rebase merge once checks pass. Use for every change to this repository.
 ---
 
 # Ship a change
@@ -45,7 +45,20 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
 6. Push the branch and open a pull request. Its title follows the same format. Its body says what changed and why, and ends with `Closes #<issue>` so the roadmap updates when it merges.
 
-7. Wait for every check to pass. Each commit lands on `main` as written, so fix a failure by folding the fix into the commit that caused it, then push again.
+   ```
+   git push -u origin HEAD
+   gh api repos/{owner}/{repo}/pulls -f title="<title>" -f head="<branch>" -f base=main -F body=@pr.md --jq '.number'
+   ```
+
+   Use `gh api` as shown. Cloud sessions cannot run `gh pr create` or `gh pr merge`.
+
+7. Wait for every check to pass.
+
+   ```
+   gh api repos/{owner}/{repo}/commits/<branch>/check-runs --jq '.check_runs[] | "\(.name) \(.status) \(.conclusion)"'
+   ```
+
+   Each commit lands on `main` as written, so fix a failure by folding the fix into the commit that caused it, then push again.
 
    ```
    git commit --fixup <commit>
@@ -61,11 +74,13 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
    git push --force-with-lease
    ```
 
-9. Merge by rebase once every check is green.
+9. If a lead gave you the issue, stop here. End your turn with the pull request's number. The lead reviews it and merges it.
 
-   ```
-   gh pr merge --rebase --delete-branch
-   ```
+10. Otherwise, merge by rebase once every check is green.
+
+    ```
+    gh api -X PUT repos/{owner}/{repo}/pulls/<number>/merge -f merge_method=rebase
+    ```
 
 ## Rules
 
