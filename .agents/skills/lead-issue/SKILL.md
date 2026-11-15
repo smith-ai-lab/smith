@@ -48,11 +48,7 @@ The lead does not write the code. It starts one worker on one issue, stays out o
    every check passes.
    ```
 
-7. Repeat steps 5 and 6 until nothing is left. Then merge by rebase.
-
-   ```
-   gh api -X PUT repos/{owner}/{repo}/pulls/<number>/merge -f merge_method=rebase
-   ```
+7. Repeat steps 5 and 6 until nothing is left. Then add the pull request to the merge queue, as the last step of the `ship-change` skill shows.
 
 8. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
 
