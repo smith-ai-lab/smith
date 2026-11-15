@@ -6,7 +6,7 @@ description: for as an unordered description of an array, reductions, element-wi
 
 # `for` expressions
 
-`for i { e }` describes an array: the value `e` at every index `i`. The size comes from how `i` is used, and several indices give several axes. A `for` is a view, a rule for computing each element, so it allocates nothing by being written.
+`for i { e }` describes an array: the value `e` at every index `i`. Several indices give several axes. A `for` is a view, a rule for computing each element, so it allocates nothing by being written.
 
 ```
 trait MatMul[A, B, out C] {
@@ -34,6 +34,20 @@ impl[m: Nat, k: Nat, n: Nat] MatMul[[m, k]f32, [k, n]f32, [m, n]f32] {
   }
 }
 ```
+
+An index gets its size from one of two places, and both are in the source.
+
+- Where the index alone picks an element along an axis, as in `a[i]`, it has that axis's size. When it is used this way on several arrays, their sizes must be equal.
+- Where the `for` is written in a place that expects an array, such as a function's result, an argument, or a binding that states its type, its indices take their sizes from that type.
+
+```
+fn ramp() -> [4]f32 { for i { float(i) } }
+
+evens: [4]f32 = for i { float(i) * 2.0 }
+```
+
+- When both places give a size, the two must agree. An index with neither is a compile error that names the index.
+- Arithmetic on an index, as in `x[i + 1]`, never gives it a size. The compiler does not solve for one. The access is instead proven to be in range, as [Contracts and proofs](contracts.md) describes.
 
 - `sum`, `max`, and `mean` reduce a view to a value, and `map(f, v)` is shorthand for `for i { f(v[i]) }`.
 - Arithmetic operators on arrays are element-wise and return views, so `x + y` is `for i { x[i] + y[i] }`. The one product that is not element-wise is `@`: `a @ b` means `matmul(a, b)`, which contracts the last axis of `a` with the first axis of `b`, and it binds like `*`. The sizes are checked by the types. `@` does not treat leading axes as batches, so a batch is written as a `for`.

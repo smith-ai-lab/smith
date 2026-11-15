@@ -16,7 +16,7 @@ Every literal form is backed by a trait, and the expected type picks which imple
 | `[1, 2, 3]` | `FromArray[T]` | An array of three elements |
 
 - Conversion runs at compile time, so `300` as a `u8` is a compile error.
-- A literal with nothing to determine its type is an error.
+- A literal with nothing to determine its type is an error. A binding gives it one by stating its type, as in `limit: i32 = 100`.
 - Only literals are flexible. A value of one numeric type becomes another only through an explicit call such as `float(n)`.
 - The numeric types are `i8` to `i64`, `u8` to `u64`, `f16`, `bf16`, `f32`, and `f64`, plus `bool`. A `str` is bytes known to be valid UTF-8.
 
