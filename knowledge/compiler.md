@@ -67,6 +67,8 @@ The command line is the compiler's interface for people and for agents. Every co
 
 ## Representation
 
+The pipeline is the classic one: tokenize, parse, collect signatures, check, lower, and emit. A run that only checks stops after the fourth step.
+
 The lexer and parser are hand-written: recursive descent for declarations and a Pratt parser for expressions. One syntax tree serves the checker and the formatter. Every node keeps its source span, comments are ordinary nodes attached to what follows them, and an error node holds any tokens the parser skipped, so broken programs and holes are still representable.
 
 | Level | What happens there |
@@ -83,6 +85,13 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 | CPU | arm64 and x86-64 machine code, written to Mach-O, ELF, and PE directly |
 | Apple GPU | Metal shading language source, compiled by the OS at load time |
 | Vulkan GPU | SPIR-V binary |
+
+Everything up to the kernel form is the same for every target. Each CPU target supplies its instruction selection, its calling convention, and its executable writer, and that seam exists from the first program. The compiler writes executables itself and runs no linker or assembler.
+
+The first two targets are built together.
+
+- **Linux on x86-64.** A static ELF executable that talks to the kernel directly.
+- **macOS on arm64.** A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
 
@@ -133,8 +142,9 @@ The other layers use a second generator that builds well-typed programs.
 
 ## Bootstrap
 
-The first compiler is written in a subset of Rust shaped like Smith, then ported by a mechanical translator and retired.
+The first compiler is written in Rust with no dependencies. It is kept small and retired early.
 
-- **The subset:** arenas with indices, enums, `match`, and traits with static dispatch, with `unsafe` confined to one module and no external dependencies.
-- **The translator,** `rust2smith`, reads the compiler's own source and emits Smith. A construct it cannot translate fails the build, which enforces the subset.
-- **The switch.** Both compilers must produce identical binaries on the whole test corpus. Then the Rust compiler builds the Smith compiler, that builds itself, and that builds itself again. The last two binaries must match byte for byte.
+- **It implements only enough Smith to write a compiler:** functions, structs, enums, `match`, generics and traits, strings, lists, maps, files, arenas, `with`, and `try`, followed by contracts and the `arith` procedure. Arrays with `for`, differentiation, devices, and tasks are built afterwards, in Smith.
+- **Contracts come before the port,** so that the compiler's own source, which is full of integer arithmetic, is the first real test of arithmetic that must be proven to fit.
+- **The port is done by hand and checked by comparison.** The compiler is rewritten in Smith. For every program a generator produces, the Rust compiler and the Smith compiler must emit identical bytes.
+- **The switch.** The Rust compiler builds the Smith compiler, that builds itself, and that builds itself again. The last two binaries must match byte for byte. Then the Rust compiler is deleted.
