@@ -69,7 +69,10 @@ hello.smith:1:13: `print` needs the `console` effect, which `main` does not decl
 ```
 
 - The first line is `file:line:column: message`. Lines and columns count from 1, and a column counts characters.
-- Every error in a file is reported, in the order of their places, so one round of changes can fix them all.
+- The line of source is shown as written, except that a tab is shown as a space and any other control character as `�`. The mark is placed for a terminal, where a wide character takes two places. Advice is only ever on the `fix:` line, and an error with none has no such line.
+- Every error in a file is reported, each once, in the order of their places, so one round of changes can fix them all.
+- A file is read in stages: its text, which must be UTF-8 with no carriage return, then its tokens, its syntax, and the check. Only the errors of the earliest stage that finds any are reported, because each later stage reads what the earlier ones produced.
+- An error that another error explains is not reported. A mistake in the syntax hides the rest of its statement, or of its signature, and a listed effect with no such name hides a missing `console`, which it may be a misspelling of.
 
 - Dead code, meaning a definition no root reaches, is a warning.
 - An unused variable or an unused import is a warning.

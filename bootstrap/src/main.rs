@@ -33,7 +33,10 @@ fn main() -> ExitCode {
 }
 
 /// The program a source file describes, as the target's executable.
-pub fn compile(source: &[u8], target: Target) -> Result<Vec<u8>, diag::Error> {
+///
+/// The errors are those of the earliest stage that finds any, in the order
+/// of their places, each once.
+pub fn compile(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<diag::Error>> {
     compile_timed(source, target, &mut Timings::new())
 }
 
@@ -42,15 +45,30 @@ fn compile_timed(
     source: &[u8],
     target: Target,
     timings: &mut Timings,
-) -> Result<Vec<u8>, diag::Error> {
-    let tokens = timings.stage("lex", || lexer::lex(source))?;
-    let function = timings.stage("parse", || parser::parse(&tokens))?;
-    let program = timings.stage("check", || check::check(function))?;
+) -> Result<Vec<u8>, Vec<diag::Error>> {
+    let tokens = timings
+        .stage("lex", || lexer::lex(source))
+        .map_err(in_order)?;
+    let function = timings
+        .stage("parse", || parser::parse(&tokens))
+        .map_err(in_order)?;
+    let program = timings
+        .stage("check", || check::check(function))
+        .map_err(in_order)?;
     timings
         .stage("emit", || target.emit(&program))
         .ok_or_else(|| {
-            diag::Error::unsupported(diag::Pos::START, &format!("building for {}", target.name()))
+            vec![diag::Error::unsupported(
+                diag::Pos::START,
+                &format!("building for {}", target.name()),
+            )]
         })
+}
+
+fn in_order(mut errors: Vec<diag::Error>) -> Vec<diag::Error> {
+    errors.sort_by_key(|e| e.pos);
+    errors.dedup();
+    errors
 }
 
 /// What a `build` or `run` command line asks for.
@@ -157,8 +175,11 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
         _ => return Err(format!("{shown}: a Smith file's name ends in .smith")),
     };
     let source = std::fs::read(entry).map_err(|e| format!("{shown}: {e}"))?;
-    let bytes =
-        compile_timed(&source, request.target, timings).map_err(|e| format!("{shown}:{e}"))?;
+    let bytes = compile_timed(&source, request.target, timings).map_err(|errors| {
+        let file = entry.to_string_lossy();
+        let text = diag::render(&file, &source, &errors);
+        text.strip_suffix('\n').unwrap_or(&text).to_string()
+    })?;
     let cwd = std::env::current_dir().map_err(|e| format!("cannot find this folder: {e}"))?;
     let name = if stem == "main" {
         cwd.file_name().unwrap_or(stem).to_owned()

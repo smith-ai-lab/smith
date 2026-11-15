@@ -1,7 +1,7 @@
 //! Properties of the compiler, checked in-process on generated programs.
 
 use crate::compile;
-use crate::diag::Error;
+use crate::diag::{self, Error, Pos};
 use crate::target::Target;
 
 /// A small, fixed random number generator, so that every run of the tests
@@ -72,11 +72,25 @@ fn col_after(text: &str) -> usize {
     text.rsplit('\n').next().unwrap_or("").chars().count() + 1
 }
 
-fn error(source: &str) -> Error {
+/// The place just after `text`, which starts at the start of a file.
+fn pos_after(text: &str) -> Pos {
+    let line = text.matches('\n').count() + 1;
+    Pos {
+        line,
+        col: col_after(text),
+    }
+}
+
+fn errors(source: &str) -> Vec<Error> {
     match compile(source.as_bytes(), Target::LinuxX64) {
         Ok(_) => panic!("expected an error for {source:?}"),
-        Err(e) => e,
+        Err(errors) => errors,
     }
+}
+
+/// The first error reported for a source.
+fn error(source: &str) -> Error {
+    errors(source).remove(0)
 }
 
 fn assert_error(source: &str, line: usize, col: usize, contains: &str) {
@@ -137,7 +151,7 @@ mod native {
         for _ in 0..150 {
             let (source, text) = literal(&mut rng);
             let bytes = compile(program(&source).as_bytes(), Target::LinuxX64)
-                .unwrap_or_else(|e| panic!("{e} in {source}"));
+                .unwrap_or_else(|e| panic!("{e:?} in {source}"));
             let mut expected = text;
             expected.push(b'\n');
             assert_eq!(run(&bytes), (0, expected), "for {source}");
@@ -240,13 +254,8 @@ fn every_input_gives_an_executable_or_an_error_with_a_place() {
         if i % 10 == 0 {
             source = (0..rng.below(64)).map(|_| rng.next() as u8).collect();
         }
-        if let Err(e) = compile(&source, Target::LinuxX64) {
-            let lines = source.iter().filter(|b| **b == b'\n').count() + 1;
-            assert!(
-                e.pos.line >= 1 && e.pos.line <= lines && e.pos.col >= 1,
-                "{e} for {:?}",
-                String::from_utf8_lossy(&source)
-            );
+        if let Err(errors) = compile(&source, Target::LinuxX64) {
+            assert_well_formed(&source, &errors);
         }
     }
 }
@@ -391,7 +400,7 @@ fn invalid_utf8_is_an_error_at_its_place() {
     let mut source = b"fn main() ! console {\n  print(\"ab".to_vec();
     source.push(0xff);
     source.extend_from_slice(b"\") }");
-    let e = compile(&source, Target::LinuxX64).unwrap_err();
+    let e = &compile(&source, Target::LinuxX64).unwrap_err()[0];
     assert_eq!((e.pos.line, e.pos.col), (2, 12));
 }
 
@@ -433,4 +442,349 @@ fn only_smith_run_starts_another_program() {
         (run..next).contains(&starts[0].0),
         "only run starts a program"
     );
+}
+
+/// Checks what must hold of the errors for any input: there is at least
+/// one, each is at a place inside the file, they are in the order of their
+/// places with none twice, advice is never in a message, and the printed
+/// form holds no control characters other than line breaks.
+fn assert_well_formed(source: &[u8], errors: &[Error]) {
+    let shown = String::from_utf8_lossy(source);
+    let text = diag::text(source);
+    let lines: Vec<&str> = text.split('\n').collect();
+    assert!(!errors.is_empty(), "no error for {shown:?}");
+    for e in errors {
+        let Pos { line, col } = e.pos;
+        assert!(line >= 1 && line <= lines.len(), "{e} for {shown:?}");
+        let length = lines[line - 1].chars().count();
+        assert!(col >= 1 && col <= length + 1, "{e} for {shown:?}");
+        assert!(!e.message.contains("write `"), "{e} holds its fix");
+    }
+    for pair in errors.windows(2) {
+        assert!(pair[0].pos <= pair[1].pos, "out of order for {shown:?}");
+        assert_ne!(pair[0], pair[1], "reported twice for {shown:?}");
+    }
+    let printed = diag::render("f.smith", source, errors);
+    assert!(
+        printed.chars().all(|c| c == '\n' || !c.is_control()),
+        "{printed:?}"
+    );
+    let fixes = printed.lines().filter(|l| l.starts_with("  fix: ")).count();
+    assert_eq!(fixes, errors.iter().filter(|e| e.fix.is_some()).count());
+}
+
+/// A piece of a string literal: how it is written, how many places it takes
+/// on a terminal, and the error it holds, if any.
+type Piece = (&'static str, usize, Option<&'static str>);
+
+const GOOD_PIECES: &[Piece] = &[
+    ("a", 1, None),
+    ("hello", 5, None),
+    (" ", 1, None),
+    ("\t", 1, None),
+    ("é", 1, None),
+    ("e\u{301}", 1, None),
+    ("日本", 4, None),
+    ("🙂", 2, None),
+    ("\\\"", 2, None),
+    ("\\\\", 2, None),
+    ("\\{", 2, None),
+    ("\\n", 2, None),
+];
+
+const BAD_PIECES: &[Piece] = &[
+    ("\\q", 2, Some("unknown escape")),
+    ("\\0", 2, Some("unknown escape")),
+    ("\\ ", 2, Some("unknown escape")),
+    ("\\é", 2, Some("unknown escape")),
+    ("}", 1, Some("closes no expression")),
+    ("{x}", 3, Some("not supported yet")),
+];
+
+/// A file whose only mistakes are in the tokens, each at a known place,
+/// along with what each error must mention. It also holds a mistake for the
+/// checker, if `main` lacks `console`, which must not be reported.
+fn file_with_token_errors(rng: &mut Rng) -> (String, Vec<(Pos, &'static str)>) {
+    let mut source = String::new();
+    let mut expected = Vec::new();
+    source.push_str(rng.pick(&["fn main() ! console {", "fn main() {"]));
+    source.push_str(rng.pick(&[" ", "\n  ", "\n\t"]));
+    if rng.below(3) == 0 {
+        expected.push((pos_after(&source), "unexpected character"));
+        source.push_str(rng.pick(&["#", "$", "?"]));
+    }
+    source.push_str("print(\"");
+    for _ in 0..1 + rng.below(8) {
+        let (written, _, bad) = if rng.below(2) == 0 {
+            rng.pick(BAD_PIECES)
+        } else {
+            rng.pick(GOOD_PIECES)
+        };
+        if let Some(what) = bad {
+            expected.push((pos_after(&source), *what));
+        }
+        source.push_str(written);
+    }
+    if expected
+        .iter()
+        .all(|(_, what)| *what == "unexpected character")
+    {
+        expected.push((pos_after(&source), "closes no expression"));
+        source.push('}');
+    }
+    source.push_str("\")");
+    source.push_str(" }");
+    if rng.below(3) == 0 {
+        source.push(' ');
+        expected.push((pos_after(&source), "own line"));
+        source.push_str("// note");
+    }
+    source.push('\n');
+    (source, expected)
+}
+
+/// A file whose mistakes are all in its syntax, one in each statement or
+/// definition that holds one, at known places. Its `main` lacks `console`,
+/// which must not be reported.
+fn file_with_syntax_errors(rng: &mut Rng) -> (String, Vec<(Pos, &'static str)>) {
+    const STATEMENTS: &[(&str, &str, Option<&str>)] = &[
+        ("", "print(\"a\")", None),
+        ("", "x = 1", Some("not supported yet")),
+        ("", "var x = 1", Some("not supported yet")),
+        ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
+        ("print(\"a\")", ".x", Some("not supported yet")),
+        ("", ")", Some("statement")),
+    ];
+    const ITEMS: &[(&str, &str)] = &[
+        ("struct A { x: f32 }", "not supported yet"),
+        ("use std.console (input)", "not supported yet"),
+        (")", "definition"),
+        ("fn f() ! console { print(\"a\") }", "after the first"),
+        ("fn g()\n{\n  x = 1\n}", "after the first"),
+    ];
+    loop {
+        let mut source = String::new();
+        let mut expected = Vec::new();
+        let items = rng.below(3);
+        let main_at = rng.below(items + 1);
+        for i in 0..=items {
+            if i == main_at {
+                source.push_str("fn main() {\n");
+                for n in 0..1 + rng.below(4) {
+                    source.push_str("  ");
+                    let (before, rest, bad) = rng.pick(STATEMENTS);
+                    let start = pos_after(&source);
+                    source.push_str(before);
+                    if let Some(what) = bad {
+                        expected.push((pos_after(&source), *what));
+                    } else if n > 0 {
+                        expected.push((start, "after the first"));
+                    }
+                    source.push_str(rest);
+                    source.push('\n');
+                }
+                source.push_str("}\n");
+            } else {
+                let (text, what) = rng.pick(ITEMS);
+                if i < main_at && text.starts_with("fn") {
+                    continue;
+                }
+                expected.push((pos_after(&source), *what));
+                source.push_str(text);
+                source.push('\n');
+            }
+        }
+        if !expected.is_empty() {
+            return (source, expected);
+        }
+    }
+}
+
+/// A file whose mistakes are all for the checker, with the errors it must
+/// give.
+fn file_with_check_errors(rng: &mut Rng) -> (String, Vec<(Pos, String)>) {
+    loop {
+        let mut source = String::from("fn main()");
+        let mut expected = Vec::new();
+        let mut listed: Vec<&str> = Vec::new();
+        let mut unknown = false;
+        for i in 0..rng.below(4) {
+            source.push_str(if i == 0 { " ! " } else { ", " });
+            let effect = *rng.pick(&["console", "fs", "alloc", "consol", "net"]);
+            let at = pos_after(&source);
+            source.push_str(effect);
+            if listed.contains(&effect) {
+                expected.push((at, format!("`{effect}` effect is already listed")));
+                continue;
+            }
+            listed.push(effect);
+            match effect {
+                "console" => {}
+                "consol" => {
+                    unknown = true;
+                    expected.push((at, "no effect named `consol`".to_string()));
+                }
+                _ => expected.push((at, format!("the `{effect}` effect is not supported yet"))),
+            }
+        }
+        source.push_str(" {\n  ");
+        let callee = *rng.pick(&["print", "print", "prin", "main"]);
+        let at = pos_after(&source);
+        source.push_str(callee);
+        source.push('(');
+        let args = rng.below(3);
+        for i in 0..args {
+            if i == 1 {
+                source.push_str(", ");
+                if callee == "print" {
+                    expected.push((pos_after(&source), "`end` and `to`".to_string()));
+                }
+            }
+            source.push_str("\"a\"");
+        }
+        match callee {
+            "print" => {
+                if args == 0 {
+                    expected.push((pos_after(&source), "needs the text".to_string()));
+                }
+                if !listed.contains(&"console") && !unknown {
+                    expected.push((at, "`console` effect".to_string()));
+                }
+            }
+            "main" => expected.push((at, "not supported yet".to_string())),
+            _ => expected.push((at, "no function named `prin`".to_string())),
+        }
+        source.push_str(")\n}\n");
+        if !expected.is_empty() {
+            expected.sort_by_key(|(pos, _)| *pos);
+            return (source, expected);
+        }
+    }
+}
+
+fn assert_errors(source: &str, expected: &[(Pos, &str)]) {
+    let found = errors(source);
+    assert_well_formed(source.as_bytes(), &found);
+    let places: Vec<Pos> = found.iter().map(|e| e.pos).collect();
+    let wanted: Vec<Pos> = expected.iter().map(|(pos, _)| *pos).collect();
+    assert_eq!(places, wanted, "{found:?} for {source:?}");
+    for (e, (_, what)) in found.iter().zip(expected) {
+        assert!(e.message.contains(what), "{e} lacks {what} in {source:?}");
+    }
+}
+
+#[test]
+fn every_error_of_the_tokens_is_reported_once_in_order() {
+    let mut rng = Rng::new(5);
+    for _ in 0..500 {
+        let (source, expected) = file_with_token_errors(&mut rng);
+        assert_errors(&source, &expected);
+    }
+}
+
+#[test]
+fn every_error_of_the_syntax_is_reported_once_in_order() {
+    let mut rng = Rng::new(6);
+    for _ in 0..500 {
+        let (source, expected) = file_with_syntax_errors(&mut rng);
+        assert_errors(&source, &expected);
+    }
+}
+
+#[test]
+fn every_error_of_the_checker_is_reported_once_in_order() {
+    let mut rng = Rng::new(7);
+    for _ in 0..500 {
+        let (source, expected) = file_with_check_errors(&mut rng);
+        let expected: Vec<(Pos, &str)> = expected.iter().map(|(p, w)| (*p, w.as_str())).collect();
+        assert_errors(&source, &expected);
+    }
+}
+
+#[test]
+fn an_error_shows_its_line_with_a_mark_under_its_column() {
+    let mut rng = Rng::new(8);
+    for _ in 0..500 {
+        let blank = *rng.pick(&["", "\n", "\n\n\n\n\n\n\n\n\n\n"]);
+        let indent = *rng.pick(&["", "  ", "\t", " \t "]);
+        let head = format!("fn main() ! console {{{blank}\n{indent}print(\"");
+        let mut source = head.clone();
+        let mut places = 1 + indent.len() + "print(\"".len();
+        for _ in 0..rng.below(8) {
+            let (written, width, _) = rng.pick(GOOD_PIECES);
+            source.push_str(written);
+            places += width;
+        }
+        let at = pos_after(&source);
+        source.push_str("\\q\") }\n");
+        let line = source.lines().nth(at.line - 1).unwrap();
+        let printed = diag::render("f.smith", source.as_bytes(), &errors(&source));
+        let number = at.line.to_string();
+        let gutter = " ".repeat(number.len());
+        let expected = format!(
+            "f.smith:{number}:{}: unknown escape: a backslash is followed by `q`, \
+             not one of \" \\ {{ }} n t\n  {number} | {}\n  {gutter} | {}^\n",
+            at.col,
+            line.replace('\t', " "),
+            " ".repeat(places - 1),
+        );
+        assert_eq!(printed, expected, "for {source:?}");
+    }
+}
+
+#[test]
+fn advice_is_on_the_fix_line_and_not_in_the_message() {
+    let cases: &[(&[u8], &str)] = &[
+        (b"fn main() { print(\"a\") }", "`fn main() ! console`"),
+        (
+            b"fn main() ! fs { print(\"a\") }",
+            "`fn main() ! fs, console`",
+        ),
+        (b"fn main() ! console { print(\"}\") }", "`\\}`"),
+        (b"fn main() ! console { print() }", "`print(\"hello\")`"),
+        (b"fn main() ! console {\r\n}", "line feed"),
+    ];
+    for (source, fix) in cases {
+        let found = compile(source, Target::LinuxX64).unwrap_err();
+        assert_well_formed(source, &found);
+        let e = found.iter().find(|e| e.fix.is_some()).expect("a fix");
+        assert!(e.fix.as_ref().unwrap().contains(fix), "{e:?}");
+        let printed = diag::render("f.smith", source, &found);
+        assert!(printed.contains("  fix: "), "{printed}");
+    }
+    let found = errors("fn main() ! console { prin(\"a\") }");
+    assert!(found.iter().all(|e| e.fix.is_none()));
+    let printed = diag::render("f.smith", b"fn main() ! console { prin(\"a\") }", &found);
+    assert!(!printed.contains("fix:"), "{printed}");
+}
+
+#[test]
+fn a_mistake_in_the_text_hides_every_later_stage() {
+    let parts: &[&[u8]] = &[
+        b"fn main() {",
+        b"\r",
+        b"\n  print(\"\\q",
+        b"\xff",
+        b"\")",
+        b"\r",
+        b"\n}",
+        b"\r",
+        b"\n",
+    ];
+    let mut source = Vec::new();
+    let mut expected = Vec::new();
+    for part in parts {
+        if matches!(part, [b'\r'] | [0xff]) {
+            expected.push(pos_after(&diag::text(&source)));
+        }
+        source.extend_from_slice(part);
+    }
+    let found = compile(&source, Target::LinuxX64).unwrap_err();
+    assert_well_formed(&source, &found);
+    let places: Vec<_> = found.iter().map(|e| e.pos).collect();
+    assert_eq!(places, expected);
+    source.retain(|b| *b != b'\r' && *b != 0xff);
+    let found = compile(&source, Target::LinuxX64).unwrap_err();
+    assert_eq!(found.len(), 1);
+    assert!(found[0].message.contains("unknown escape"));
 }
