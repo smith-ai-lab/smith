@@ -276,11 +276,38 @@ fn fixture_config() -> Result[Config, IoError] ! alloc {
 }
 ```
 
-- The built-in effects are `fs`, `net`, `time`, `ui`, `gpu`, `foreign`, `alloc`, `spawn`, `exec` for running another program, and `diverge` for code that may not terminate.
+- The built-in effects are `console`, `fs`, `net`, `time`, `ui`, `gpu`, `foreign`, `alloc`, `spawn`, `exec` for running another program, and `diverge` for code that may not terminate.
 - A handler is a function that runs a lambda with an effect handled, installed with `with`. It is declared by putting the effect on its lambda parameter, as in `fn memory_fs[T](files: Files, body: () -> T ! fs) -> T`. `memory_fs` above handles `fs` with an in-memory file system, so `fixture_config` does not carry `fs`.
 - The stored signature always states the effect list. The compiler proposes it while the function is being written, and lambdas are inferred.
 - A lambda's other effects are checked where it is written: whatever its body does must be allowed by the function it sits in, and the function receiving it says nothing about them. This is sound because a lambda passed to a call cannot be stored or returned. There are no effect variables.
 - A function stored in a value states its effects in its type, and is pure when none are written.
+
+## Text and printing
+
+A program starts at `main`. `print` writes its argument and a newline to standard output, and carries the `console` effect, which covers standard input, output, and error.
+
+```
+fn main() ! console {
+  print("hello world")
+}
+```
+
+A string literal may hold expressions in braces. Each one is turned into text by the `Fmt` trait, and the pieces are joined.
+
+```
+trait Fmt[T] {
+  fn fmt(value: T) -> str ! alloc
+}
+
+fn greet(name: str, age: i32) ! console, alloc {
+  print("hello {name}, you are {age}")
+}
+```
+
+- The braces hold any expression. A type joins in by implementing `Fmt`, and `derive Fmt for Rect` writes the obvious implementation.
+- There are no format options inside the braces. A width or a number of decimal places is an ordinary function call, as in `"{fixed(x, 2)}"`.
+- A literal brace is written `\{`.
+- A string with an expression in it has a size known only at run time, so it carries `alloc`. A plain string literal does not.
 
 ## Ownership
 
