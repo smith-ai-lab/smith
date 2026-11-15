@@ -27,6 +27,7 @@ The compiler's own code and the edges of a server are scalar. They get a fixed l
 Effects are checked and then erased, so a permission costs nothing at run time.
 
 - **A handler is resolved at build time.** The handler in force at each call is known from the source, so a function is compiled once for each handler it runs under and its operations become direct calls. Under the operating system's handlers they are system calls.
+- **Start-up code installs the real handlers.** The entry point of an executable is Smith code from the standard library. It installs the operating system's handlers for the effects `main` lists and calls `main`. No part of the compiler or the library reaches the system by any route a program could not use.
 - **Suspension is a property of the copy.** The copy of a function that runs under an async handler is a state machine, and the copy under a blocking handler is ordinary code.
 - **Exclusion is added only where tasks can meet.** When a task group opens under a handler whose operations assign a `var`, the runtime makes those operations take turns. A handler with no tasks under it has no such cost.
 - **A handler's state has its own arena,** covered by the same exclusion, so a child task that adds to it never allocates in its parent's arena.

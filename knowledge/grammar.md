@@ -40,7 +40,7 @@ Items inside braces are separated by newlines under the lexical rules above.
 
 ```
 file       = { item } ;
-item       = use | [ "pub" ] ( fn_def | struct_def | enum_def | trait_def | define )
+item       = use | [ "pub" ] ( fn_def | struct_def | enum_def | trait_def | effect_def | define )
            | impl_def
            | derive | without | foreign ;
 
@@ -58,6 +58,7 @@ contract   = ( "requires" | "ensures" ) expr ;
 struct_def = "struct" IDENT [ generics ] "{" { [ "pub" ] IDENT ":" type } "}" ;
 enum_def   = "enum" IDENT [ generics ] "{" { IDENT [ ":" type ] } "}" ;
 trait_def  = "trait" IDENT generics "{" { fn_sig } "}" ;
+effect_def = "effect" IDENT "{" { fn_sig } "}" ;
 impl_def   = "impl" [ generics ] IDENT "[" type { "," type } "]" "{" { fn_def } "}" ;
 derive     = "derive" IDENT "for" IDENT ;
 without    = "without" IDENT "for" IDENT ;

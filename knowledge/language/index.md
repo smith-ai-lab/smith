@@ -13,7 +13,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
 - [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
 - [lambdas.md](lambdas.md): lambdas, trailing blocks, `with` to pass the rest of a block to a function, and `try` to continue only on success.
-- [effects.md](effects.md): effects listed in a signature as permissions, the fixed set of effects, and how a handler is used and written.
+- [effects.md](effects.md): effects listed in a signature as permissions, how an effect is declared, how a handler is used and written, and the effects Smith provides.
 - [text.md](text.md): where a program starts, `print`, and string literals that hold expressions formatted by the `Fmt` trait.
 - [ownership.md](ownership.md): the `Copy` and `Discard` traits, lending and `take`, and values that must be used at most once or exactly once.
 - [arrays.md](arrays.md): arrays whose sizes are part of their types, `Fin` indices that need no bounds check, and ranges.
