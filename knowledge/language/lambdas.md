@@ -20,6 +20,22 @@ fn fee(is_member: bool, w: f32, h: f32) -> f32 {
 }
 ```
 
+A lambda may be passed to a call, and that is all. It cannot be stored in a field or a binding, and it cannot be returned, so it never outlives the function it is written in. This is why a lambda may assign that function's `var`s, and why it is always inlined.
+
+A function with a name can be stored and returned, because it holds nothing that belongs to another function.
+
+```
+struct Pricing {
+  discount: (f32) -> f32
+}
+
+fn half(x: f32) -> f32 { x * 0.5 }
+
+sale = Pricing(discount: half)
+```
+
+When a stored function needs data to work with, the data is stored beside it and passed to it. Nothing is captured.
+
 `with x = f(args)` passes the rest of the enclosing block to `f` as a lambda taking `x`, added as the last argument. It is sugar for a call, and it keeps code flat.
 
 ```

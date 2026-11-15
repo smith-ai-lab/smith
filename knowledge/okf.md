@@ -24,6 +24,7 @@ The Open Knowledge Format (OKF) is an open specification from Google Cloud for p
 - A file is named for its subject, as a plain noun: `grammar.md`, `compiler.md`, `language/effects.md`.
 - Headings carry no numbers. Sections are referred to by name, with a link to the heading, so that adding a section never forces others to be renumbered.
 - A fact is stated once, in the file it belongs to. Other files link to it.
+- A file says only what is true now, in as few words as will teach it. It holds no history, no record of a decision, and no note of what something replaced. Git is the history.
 - [language/](language/index.md) is complete. If a feature is not described there, it is not in Smith.
 - The language folder is a tour, and it is how people and agents learn Smith. Its index lists the files in reading order, each file uses only what the files before it introduced, and each ends with a link to the next.
 - [library/](library/index.md) holds one file for each module of the standard library, named for the module.
