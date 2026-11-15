@@ -39,7 +39,7 @@ print("could not open the file", to: .stderr)
 use std.console (input)
 
 fn greet() ! console, alloc {
-  match input(prompt: "name: ") {
+  match input("name: ") {
     .some(name) { print("hello {name}") }
     .none { print("hello") }
   }
@@ -60,7 +60,7 @@ fn capture[T](body: () -> T ! console) -> (T, List[str]) ! console, alloc {
         .stderr { print(text, end: end, to: .stderr) }
       }
     },
-    input: fn(prompt) { input(prompt: prompt) },
+    input: fn(prompt) { input(prompt) },
     body: body,
   )
   (r, out)
