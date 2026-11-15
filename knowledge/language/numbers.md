@@ -17,6 +17,7 @@ Every literal form is backed by a trait, and the expected type picks which imple
 
 - Conversion runs at compile time, so `300` as a `u8` is a compile error.
 - A literal with nothing to determine its type is an error. A binding gives it one by stating its type, as in `limit: i32 = 100`.
+- A literal that is an operand takes the one type that fits: a type it can become, for which the operator has an implementation with the other operand's type. With `x: f32`, the `2` in `x * 2` is an `f32`. When more than one type fits, or both operands are literals, it is a compile error, and a binding that states its type settles it.
 - Only literals are flexible. A value of one numeric type becomes another only through an explicit call such as `float(n)`.
 - The numeric types are `i8` to `i64`, `u8` to `u64`, `f16`, `bf16`, `f32`, and `f64`, plus `bool`. A `str` is bytes known to be valid UTF-8.
 
