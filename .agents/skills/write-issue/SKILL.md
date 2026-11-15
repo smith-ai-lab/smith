@@ -45,7 +45,7 @@ The first three parts are the goal, the finished result, and its limits. "Ask fi
 ## Rules
 
 - "Must be true" is both the goal and the test plan. Every line in it becomes a test, and a property becomes a property test.
-- Make each property exact enough that the test is nearly dictated. "For every string literal s, the program that prints s outputs exactly s and a newline" can be checked. "Printing works" cannot.
+- Make each property exact enough that the test is nearly dictated. "For every string literal s with no braces and no escapes, the program that prints s outputs exactly s and a newline" can be checked. "Printing works" cannot.
 - Prefer a property to a list of examples. Keep one or two examples, to pin down the meaning.
 - Do not write steps, and do not assign an approach. Describing how is writing the code in prose.
 - Do not add lines such as "think carefully" or "be thorough". They change nothing.

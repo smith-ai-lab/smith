@@ -41,7 +41,7 @@ The declaration gives two things, and nothing else is generated.
 
 An operation may give its parameters defaults, like any function. The lambda that a handler supplies for it takes every argument.
 
-A program declares its own effects in the same way, so nothing about `time` is special. An effect is a name like any other: it is defined in one module and imported by name, as [Modules](modules.md) describes.
+A program declares its own effects in the same way, so nothing about `time` is special. An effect is a name like any other: it is defined in one module and imported by name, as [Modules](modules.md) describes. The five effects the standard library declares are in scope everywhere.
 
 ## Handlers
 
@@ -93,11 +93,11 @@ Six more are built in, because the compiler itself gives them their meaning. The
 | --- | --- | --- |
 | `alloc` | Memory whose size is known only at run time | An [arena](storage.md) |
 | `spawn` | Starting a task | A [task group](tasks.md) |
-| `gpu` | Running on a GPU | A [device](devices.md) |
+| `gpu` | Opening a [device](devices.md) to run on a GPU | Nothing |
 | `diverge` | Not terminating | Nothing |
 | `foreign` | Calling a [foreign function](foreign.md) | Nothing |
 | `exec` | Running another program | Nothing |
 
-An effect that nothing handles is carried by every caller up to `main`. The effects `main` lists are provided by the operating system.
+An effect that nothing handles is carried by every caller up to [`main`](text.md), where a program starts. The effects `main` lists are provided by the operating system.
 
 Next: [Text and printing](text.md)

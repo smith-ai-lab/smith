@@ -6,7 +6,7 @@ description: Typed parameters, a return type, a block whose last expression is i
 
 # Functions
 
-A function has typed parameters, a return type, and a block for a body. The last expression of a block is its value. A comment starts with `//` on its own line.
+A function has typed parameters, a return type, and a block for a body. The last expression of a block is its value. A function with nothing to return leaves the return type out. Arguments are evaluated from left to right. A comment starts with `//` on its own line.
 
 ```
 // The area of a rectangle.

@@ -2,13 +2,15 @@
 
 Every feature of Smith, one file each. Anything not in this folder is not in the language.
 
+An example may show a function by its signature alone, where its body does not matter.
+
 The files are a tour. Read them in the order below: each one uses only what the files above it introduced, and ends with a link to the next.
 
 - [overview.md](overview.md): what Smith is for, the rules that hold throughout the language, and the four principles its design follows.
 - [functions.md](functions.md): typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
-- [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function.
+- [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function, and how a binding states its type.
 - [mutable-locals.md](mutable-locals.md): locals that change with `var` and `:=`, and `if` as an expression.
-- [structs.md](structs.md): structs with named fields, tuples, and patterns that take them apart.
+- [structs.md](structs.md): structs with named fields and defaults, tuples, and patterns that take them apart.
 - [enums.md](enums.md): enums that hold one of their cases, and `match` to take a value apart.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
 - [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.

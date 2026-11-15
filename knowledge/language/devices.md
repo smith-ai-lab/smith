@@ -21,7 +21,7 @@ fn train_on_gpu[n: Nat](
 }
 ```
 
-- Code inside the scope must have no `alloc` or I/O effects, no recursion, and only fixed-size data. Anything else is a compile error that names the reason.
+- Code inside the scope must have no `alloc` or I/O effects, no recursion other than a [tail call](storage.md), and only fixed-size data. Anything else is a compile error that names the reason.
 - On Apple silicon the CPU and GPU share memory, so entering the scope copies nothing. Elsewhere, values are moved to the device on entry and results are moved back on exit.
 
 Next: [Tasks and async](tasks.md)

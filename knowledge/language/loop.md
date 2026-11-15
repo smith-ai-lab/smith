@@ -6,7 +6,7 @@ description: loop for steps that run in order, the Iterate trait, and break.
 
 # `loop` and iteration
 
-The keyword states whether order matters: a `for` has no order, and a `loop` runs in order, one step at a time. A `loop` runs over a range, an array, or any type that implements the `Iterate` trait below. An open-ended `loop { ... }` runs until `break`, and its function carries the `diverge` effect unless it states a measure that decreases. There is no `while`.
+The keyword states whether order matters: a `for` has no order, and a `loop` runs in order, one step at a time. A `loop` runs over a range, an array, or any type that implements the `Iterate` trait below. An open-ended `loop { ... }` runs until `break`, and its function carries the `diverge` effect unless it states a measure that decreases, as [Contracts and proofs](contracts.md) describes. There is no `while`.
 
 ```
 fn smooth[n: Nat](x: [n]f32) -> f32 {
