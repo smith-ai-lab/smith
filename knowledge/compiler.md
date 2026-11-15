@@ -88,10 +88,10 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 
 Everything up to the kernel form is the same for every target. Each CPU target supplies its instruction selection, its calling convention, and its executable writer, and that seam exists from the first program. The compiler writes executables itself and runs no linker or assembler.
 
-The first two targets are built together.
+The first two targets are built together. A target has one name, which is its case in the `Target` enum that `build` takes in `project.smith`, and the same word selects it on the command line, as in `--target linux_x64`.
 
-- **Linux on x86-64.** A static ELF executable that talks to the kernel directly.
-- **macOS on arm64.** A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
+- **Linux on x86-64,** named `linux_x64`. A static ELF executable that talks to the kernel directly.
+- **macOS on arm64,** named `macos_arm64`. A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
 
