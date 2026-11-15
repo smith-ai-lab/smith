@@ -19,7 +19,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [arrays.md](arrays.md): arrays whose sizes are part of their types, `Fin` indices that need no bounds check, and ranges.
 - [for.md](for.md): `for` as an unordered description of an array, reductions, element-wise operators, `@`, and the rules for float arithmetic.
 - [loop.md](loop.md): `loop` for steps that run in order, the `Iterate` trait, and `break`.
-- [contracts.md](contracts.md): `requires`, `ensures`, and `check`, the `arith` procedure that discharges them, termination, and `hole`.
+- [contracts.md](contracts.md): `requires`, `ensures`, and `check`, what the `arith` procedure can prove, termination, and `hole`.
 - [storage.md](storage.md): when an array gets a buffer, the `alloc` effect and arenas, recursion without stack overflow, and types that contain themselves.
 - [differentiation.md](differentiation.md): `grad` as a compile-time call that returns the gradient of a function, shown by training an MLP.
 - [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`.
