@@ -188,7 +188,7 @@ Every target passes the same tests, which run over every case of the target enum
 
 The time each step takes is measured from the first program, so a slowdown is seen in the change that causes it.
 
-- `smith build --timings` prints how long each stage of the pipeline took.
+- `smith build --timings`, and `smith run --timings` before the program runs, print to standard error one line for each stage in the order they run, then a line for the total. The stages are `lex`, `parse`, `check`, `emit`, and `write`, which saves the executable. A build that fails lists the stages that ran, after its errors. The executable is the same with the flag and without it.
 - A test run ends with its slowest tests and how long each took.
 - Continuous integration prints both on every run.
 

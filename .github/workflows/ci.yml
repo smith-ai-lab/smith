@@ -24,6 +24,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --locked
+      - name: Timings
+        run: cargo run --locked --quiet -- build --timings tests/cases/hello.smith
 
   commits:
     name: conventional commits
