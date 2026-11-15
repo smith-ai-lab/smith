@@ -1,0 +1,65 @@
+name: timings
+
+# Runs after a merge, never for a pull request, so it cannot hold one up.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: timings
+  cancel-in-progress: false
+
+jobs:
+  record:
+    name: record timings and sizes
+    runs-on: ubuntu-latest
+    permissions:
+      # Only this job may write, and only to the timings branch.
+      contents: write
+    steps:
+      - name: Note when the job began
+        run: echo "JOB_START=$(($(date +%s%N) / 1000000))" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Measure
+        run: sh .github/record-timings.sh > "$RUNNER_TEMP/line"
+      - name: Add the line to the history on the timings branch
+        env:
+          TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -eu
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          url="https://x-access-token:${TOKEN}@github.com/${REPOSITORY}.git"
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$RUNNER_TEMP/history"
+            if git ls-remote --exit-code --heads "$url" timings >/dev/null; then
+              git clone --quiet --branch timings --single-branch "$url" "$RUNNER_TEMP/history"
+            else
+              git init --quiet --initial-branch=timings "$RUNNER_TEMP/history"
+              git -C "$RUNNER_TEMP/history" remote add origin "$url"
+              sh .github/record-timings.sh --header > "$RUNNER_TEMP/history/history.csv"
+              git -C "$RUNNER_TEMP/history" add history.csv
+              git -C "$RUNNER_TEMP/history" commit --quiet -m "chore(timings): start the history"
+            fi
+            # A rerun of this job adds nothing: one line for each merge.
+            if grep -q "^${COMMIT}," "$RUNNER_TEMP/history/history.csv"; then
+              exit 0
+            fi
+            cat "$RUNNER_TEMP/line" >> "$RUNNER_TEMP/history/history.csv"
+            git -C "$RUNNER_TEMP/history" add history.csv
+            git -C "$RUNNER_TEMP/history" commit --quiet -m "chore(timings): record ${COMMIT}"
+            # Never forced, so an earlier line cannot be changed.
+            if git -C "$RUNNER_TEMP/history" push --quiet origin timings:refs/heads/timings; then
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          echo "could not push the timings branch" >&2
+          exit 1
