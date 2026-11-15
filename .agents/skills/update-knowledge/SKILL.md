@@ -23,4 +23,5 @@ description: Add to or change the files in knowledge/, which define the Smith la
 - Do not number headings, and do not refer to a section by position. Link to it by name.
 - Examples use only features introduced above them in the same file, or in a file earlier in the tour that `knowledge/language/index.md` lists.
 - A change to `knowledge/language/` or `knowledge/grammar.md` changes the language. Only the lead merges it, so open the pull request and stop.
+- A function added to the standard library is written into `knowledge/library/`, in the file for its module, by whoever adds it. A new effect is a design question for the owner and the lead, because it defines a permission.
 - Plans, open questions, and work to be done go in GitHub issues, not in `knowledge/`.

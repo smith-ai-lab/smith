@@ -34,6 +34,8 @@ Operators bind more tightly further down the table.
 | `^` | right |
 | call, index, `.` | left |
 
+`not` covers the whole comparison that follows it, so `not a < b` means `not (a < b)`.
+
 ## EBNF
 
 Items inside braces are separated by newlines under the lexical rules above.
@@ -75,8 +77,9 @@ with       = "with" [ pattern "=" ] expr ;
 pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
            | "(" pattern { "," pattern } ")" ;
 
-expr       = unary { BINOP unary } ;
-unary      = [ "-" | "not" | "try" ] postfix ;
+expr       = operand { BINOP operand } ;
+operand    = { "not" } unary ;
+unary      = [ "-" | "try" ] postfix ;
 postfix    = primary { "(" [ args ] ")" [ block ] | block | "[" index { "," index } "]"
                      | "." IDENT } ;
 args       = arg { "," arg } [ "," ] ;
