@@ -65,5 +65,5 @@ Work through these in order, and stop at the first that applies.
 
 - One worker per issue, and one issue at a time.
 - Never push to the worker's branch. Review in comments, and let the worker change the code.
-- A pull request that touches `knowledge/language.md` or `knowledge/grammar.md` waits for the owner's approval.
+- A pull request that touches `knowledge/language/` or `knowledge/grammar.md` waits for the owner's approval.
 - Never merge with a failing or pending check.
