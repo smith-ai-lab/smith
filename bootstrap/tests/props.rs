@@ -2,15 +2,16 @@
 //! Each takes what it expects from the generator that built its input.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use smith::diag::{self, Error, Pos};
 use smith::eval::{self, Outcome};
-use smith::target::Target;
 use smith::{compile, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
 use crate::programs::{self, Case, PIECES, pos_after};
+use crate::targets;
 
 pub const TESTS: &[Test] = &[
     (
@@ -22,24 +23,12 @@ pub const TESTS: &[Test] = &[
         the_evaluator_says_a_program_prints_its_literal_and_a_line_break,
     ),
     (
-        "every_executable_does_what_the_evaluator_says",
-        every_executable_does_what_the_evaluator_says,
-    ),
-    (
-        "a_long_literal_is_printed_whole",
-        a_long_literal_is_printed_whole,
-    ),
-    (
         "every_placed_mistake_is_one_error_at_its_place",
         every_placed_mistake_is_one_error_at_its_place,
     ),
     (
         "every_input_gives_an_executable_or_an_error_with_a_place",
         every_input_gives_an_executable_or_an_error_with_a_place,
-    ),
-    (
-        "building_twice_gives_identical_bytes",
-        building_twice_gives_identical_bytes,
     ),
     (
         "nothing_before_the_target_seam_names_a_system_or_machine",
@@ -70,45 +59,6 @@ pub const TESTS: &[Test] = &[
         a_mistake_in_the_text_hides_every_later_stage,
     ),
 ];
-
-/// Whether this machine can run what `linux_x64` builds.
-const NATIVE: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
-
-/// Runs an executable and gives what it did.
-fn run_native(bytes: &[u8]) -> Outcome {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "smith-props-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("program");
-    std::fs::write(&path, bytes).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    // Another test's process may briefly hold the file open while it
-    // starts, which makes running it fail as busy.
-    let mut tries = 0;
-    let output = loop {
-        match std::process::Command::new(&path).output() {
-            Err(e) if e.raw_os_error() == Some(26) && tries < 100 => {
-                tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            result => break result.unwrap(),
-        }
-    };
-    std::fs::remove_dir_all(&dir).unwrap();
-    Outcome {
-        stdout: output.stdout,
-        status: output.status.code().unwrap_or(-1),
-    }
-}
 
 fn the_shrinker_gives_the_smallest_failing_input() {
     // Known to fail: some program prints an `é`.
@@ -149,33 +99,10 @@ fn the_evaluator_says_a_program_prints_its_literal_and_a_line_break() {
     });
 }
 
-fn every_executable_does_what_the_evaluator_says() {
-    generate::check(3, 150, programs::program, |case| {
-        let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
-        let bytes = compile(&case.source, Target::LinuxX64).unwrap_or_else(|e| panic!("{e:?}"));
-        // On another kind of machine the executable is built but not run.
-        if NATIVE {
-            assert_eq!(run_native(&bytes), eval::run(&program));
-        }
-    });
-}
-
-fn a_long_literal_is_printed_whole() {
-    let text = "abcdefghij".repeat(100_000);
-    let source = format!("fn main() ! console {{ print(\"{text}\") }}\n");
-    let program = lower(source.as_bytes()).unwrap();
-    let said = eval::run(&program);
-    assert_eq!(said.stdout, format!("{text}\n").into_bytes());
-    if NATIVE {
-        let bytes = compile(source.as_bytes(), Target::LinuxX64).unwrap();
-        assert_eq!(run_native(&bytes), said);
-    }
-}
-
 fn every_placed_mistake_is_one_error_at_its_place() {
     generate::check(4, 3000, programs::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
-        let found = compile(&case.source, Target::LinuxX64).expect_err("an error");
+        let found = lower(&case.source).expect_err("an error");
         assert_well_formed(&case.source, &found);
         assert_eq!(found.len(), 1, "{found:?}");
         let e = &found[0];
@@ -259,18 +186,13 @@ fn damaged(g: &mut Gen) -> Bytes {
 }
 
 fn every_input_gives_an_executable_or_an_error_with_a_place() {
+    let targets = targets::buildable();
     generate::check(5, 5000, damaged, |Bytes(source)| {
-        if let Err(errors) = compile(source, Target::LinuxX64) {
-            assert_well_formed(source, &errors);
+        for &target in &targets {
+            if let Err(errors) = compile(source, target) {
+                assert_well_formed(source, &errors);
+            }
         }
-    });
-}
-
-fn building_twice_gives_identical_bytes() {
-    generate::check(6, 100, programs::program, |case| {
-        let first = compile(&case.source, Target::LinuxX64).unwrap();
-        let second = compile(&case.source, Target::LinuxX64).unwrap();
-        assert_eq!(first, second);
     });
 }
 
@@ -293,17 +215,14 @@ fn nothing_before_the_target_seam_names_a_system_or_machine() {
 }
 
 fn only_smith_run_starts_another_program() {
-    let mut files = BEFORE_THE_SEAM.to_vec();
-    files.push(("lib.rs", include_str!("../src/lib.rs")));
-    files.push(("eval.rs", include_str!("../src/eval.rs")));
-    files.push(("timings.rs", include_str!("../src/timings.rs")));
-    files.push(("target/mod.rs", include_str!("../src/target/mod.rs")));
-    files.push((
-        "target/linux_x64.rs",
-        include_str!("../src/target/linux_x64.rs"),
-    ));
-    for (file, text) in files {
-        assert!(!text.contains("Command"), "{file} starts a program");
+    for (file, text) in sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src")) {
+        if !file.ends_with("src/main.rs") {
+            assert!(
+                !text.contains("Command"),
+                "{} starts a program",
+                file.display()
+            );
+        }
     }
     let main = include_str!("../src/main.rs");
     let starts: Vec<_> = main.match_indices("Command::").collect();
@@ -316,6 +235,22 @@ fn only_smith_run_starts_another_program() {
         (run..next).contains(&starts[0].0),
         "only run starts a program"
     );
+}
+
+/// Every Rust file in the folder and the folders inside it.
+fn sources(dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(sources(&path));
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            found.push((path, text));
+        }
+    }
+    assert!(!found.is_empty());
+    found
 }
 
 /// Checks what must hold of the errors for any input: there is at least
@@ -348,7 +283,7 @@ fn assert_well_formed(source: &[u8], errors: &[Error]) {
 }
 
 fn errors(source: &str) -> Vec<Error> {
-    match compile(source.as_bytes(), Target::LinuxX64) {
+    match lower(source.as_bytes()) {
         Ok(_) => panic!("expected an error for {source:?}"),
         Err(errors) => errors,
     }
@@ -609,12 +544,12 @@ fn a_mistake_in_the_text_hides_every_later_stage() {
         }
         source.extend_from_slice(part);
     }
-    let found = compile(&source, Target::LinuxX64).unwrap_err();
+    let found = lower(&source).unwrap_err();
     assert_well_formed(&source, &found);
     let places: Vec<_> = found.iter().map(|e| e.pos).collect();
     assert_eq!(places, expected);
     source.retain(|b| *b != b'\r' && *b != 0xff);
-    let found = compile(&source, Target::LinuxX64).unwrap_err();
+    let found = lower(&source).unwrap_err();
     assert_eq!(found.len(), 1);
     assert!(found[0].message.contains("unknown escape"));
 }
