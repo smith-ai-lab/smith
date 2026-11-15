@@ -46,7 +46,7 @@ A loose file or folder needs no `project.smith`, which suits a small program wri
 
 ## The standard library
 
-The standard library is large, so that outside code is rarely needed. It covers arrays, differentiation, and neural network layers; tasks, networking, and an HTTP server; serialization through `derive`; files, time, random numbers, text, hashing, and compression; and the platform layer for windows and events.
+The standard library is large, so that outside code is rarely needed. It covers arrays, differentiation, and neural network layers; tasks, networking, and an HTTP server; serialization through `derive`; files, time, random numbers, text, hashing, and compression; and the platform layer for windows and events. Each module is described in [library/](../library/index.md).
 
 ## Dependencies, build steps, and tasks
 

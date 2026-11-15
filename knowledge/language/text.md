@@ -6,7 +6,7 @@ description: Where a program starts, print, and string literals that hold expres
 
 # Text and printing
 
-A program starts at `main`. `print` takes a `str` and writes it and a newline to standard output. It carries the `console` effect, which covers standard input, output, and error.
+A program starts at `main`. `print` takes a `str` and writes it and a newline to standard output. It carries the `console` effect, which covers standard input, output, and error. `print` is in scope in every file, and the rest of the console is in [std.console](../library/console.md).
 
 ```
 fn main() ! console {

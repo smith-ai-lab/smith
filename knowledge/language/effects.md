@@ -79,7 +79,7 @@ The standard library declares five effects. Each has operations, and a program c
 
 | Effect | Allows |
 | --- | --- |
-| `console` | Standard input, output, and error |
+| [`console`](../library/console.md) | Standard input, output, and error |
 | `fs` | Files |
 | `net` | The network |
 | `time` | The clock |

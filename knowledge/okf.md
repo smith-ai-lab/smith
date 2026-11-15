@@ -26,6 +26,7 @@ The Open Knowledge Format (OKF) is an open specification from Google Cloud for p
 - A fact is stated once, in the file it belongs to. Other files link to it.
 - [language/](language/index.md) is complete. If a feature is not described there, it is not in Smith.
 - The language folder is a tour, and it is how people and agents learn Smith. Its index lists the files in reading order, each file uses only what the files before it introduced, and each ends with a link to the next.
+- [library/](library/index.md) holds one file for each module of the standard library, named for the module.
 - Work to be done is not knowledge. Plans and open problems are GitHub issues.
 
 How to change these files is in the `update-knowledge` skill.
