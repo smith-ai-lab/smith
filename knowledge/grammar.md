@@ -68,7 +68,7 @@ foreign    = "foreign" STRING fn_sig ;
 
 block      = "{" { stmt } "}" ;
 stmt       = define | var_def | assign | with | "break" | expr ;
-define     = pattern "=" expr ;
+define     = pattern [ ":" type ] "=" expr ;
 var_def    = "var" IDENT [ ":" type ] "=" expr ;
 assign     = IDENT [ "[" index { "," index } "]" ] ( ":=" | "+=" | "-=" | "*=" | "/=" ) expr ;
 with       = "with" [ pattern "=" ] expr ;

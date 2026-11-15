@@ -16,4 +16,6 @@ fn hypot(a: f32, b: f32) -> f32 {
 }
 ```
 
+A binding may state its type, written as a parameter's is: `half: f32 = 0.5`. Most bindings do not need to, because the type of the value is already known.
+
 Next: [Mutable locals and `if`](mutable-locals.md)
