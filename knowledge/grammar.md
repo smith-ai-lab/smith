@@ -14,6 +14,7 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 - Commas appear only inside `( )` and `[ ]`.
 - A comment starts with `//`, stands on its own line, and attaches to the definition, field, case, or statement that follows it.
 - Literals keep their source spelling, so `0x10` and `16` stay distinct in the syntax tree.
+- A string may hold expressions in braces. The lexer returns the text before a `{`, then ordinary tokens up to the matching `}`, then resumes the string. `\{` is a literal brace.
 
 ## Precedence
 
@@ -79,9 +80,10 @@ postfix    = primary { "(" [ args ] ")" [ block ] | block | "[" index { "," inde
 args       = arg { "," arg } [ "," ] ;
 arg        = [ IDENT ":" ] expr ;
 index      = expr | [ expr ] ".." [ expr ] ;
-primary    = IDENT | LITERAL | "(" expr { "," expr } ")" | block
+primary    = IDENT | LITERAL | string | "(" expr { "," expr } ")" | block
            | case | if | match | for | loop | lambda ;
 
+string     = '"' { TEXT | "{" expr "}" } '"' ;
 case       = "." IDENT [ "(" [ args ] ")" ] ;
 if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
