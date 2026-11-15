@@ -15,6 +15,7 @@ One parent issue is the roadmap. Each task is a sub-issue of it, and the order o
 
 - If the task depends on a large or contested decision that will outlive it, such as a boundary between stages, write that decision into `knowledge/` first, with the `update-knowledge` skill. The issue links to it. An issue is closed and forgotten, and `knowledge/` is not.
 - A small, settled decision, such as the name of a flag, can be stated in the issue. Add a line to "Must be true" saying that `knowledge/` describes it, so the pull request records it.
+- An issue is a vertical slice: one feature of the language, working end to end from source text to a running executable. Do not write an issue for a whole stage, such as the full parser.
 - One issue is one pull request. If the work will not fit in one session, split it into several issues.
 
 ## Format

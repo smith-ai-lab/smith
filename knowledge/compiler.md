@@ -158,6 +158,7 @@ The other layers use a second generator that builds well-typed programs.
 The first compiler is written in Rust with no dependencies. It is kept small and retired early.
 
 - **It implements only enough Smith to write a compiler:** functions, structs, enums, `match`, generics and traits, strings, lists, maps, files, arenas, `with`, and `try`, followed by contracts and the `arith` procedure. Arrays with `for`, differentiation, devices, and tasks are built afterwards, in Smith.
+- **It grows one feature at a time, end to end.** Each step takes a feature from source text to a running executable on every target, starting with a program that prints one line. A program that uses a feature not built yet gets an ordinary error, with a line and column, that says so. The test generators cover what the compiler accepts so far and grow with it.
 - **Contracts come before the port,** so that the compiler's own source, which is full of integer arithmetic, is the first real test of arithmetic that must be proven to fit.
 - **The port is done by hand and checked by comparison.** The compiler is rewritten in Smith. For every program a generator produces, the Rust compiler and the Smith compiler must emit identical bytes.
 - **The switch.** The Rust compiler builds the Smith compiler, that builds itself, and that builds itself again. The last two binaries must match byte for byte. Then the Rust compiler is deleted.
