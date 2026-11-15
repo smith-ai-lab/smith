@@ -6,20 +6,20 @@ description: Task groups with spawn and join, async I/O that reads as sequential
 
 # Tasks and async
 
-Concurrent work runs in tasks, and there are no raw threads or locks. Data is immutable or uniquely owned, so data races cannot be written. `with tasks()` opens a task group. `spawn` takes the child's work as a trailing block (see [Lambdas, `with`, and `try`](lambdas.md)) and starts it in the nearest group, and `join` waits for its result. Every child finishes before the block ends. A function that spawns without opening its own group carries the `spawn` effect.
+Concurrent work runs in tasks, and there are no raw threads or locks. Data is immutable or uniquely owned, so data races cannot be written. `with tasks()` opens a task group. `spawn` takes the child's work as a lambda and starts it in the nearest group, and `join` waits for its result. Every child finishes before the block ends. A function that spawns without opening its own group carries the `spawn` effect.
 
 ```
 fn fetch_both(a: str, b: str) -> Result[(Bytes, Bytes), NetError] ! net, alloc {
   with tasks()
-  ta = spawn { fetch(a) }
-  tb = spawn { fetch(b) }
+  ta = spawn(fn() { fetch(a) })
+  tb = spawn(fn() { fetch(b) })
   pa = try join(ta)
   pb = try join(tb)
   .ok((pa, pb))
 }
 ```
 
-A spawned block runs at the same time as its parent, so three rules say what it may use.
+A spawned lambda runs at the same time as its parent, so three rules say what it may use.
 
 - An ordinary value is shared. It is immutable, and the child finishes before the group's block ends, so nothing is copied.
 - A `var` is read as its value at the moment of the spawn and cannot be assigned. Results come back through `join`.
@@ -30,7 +30,7 @@ fn serve(listener: Listener) ! net, alloc, diverge {
   with tasks()
   loop {
     conn = accept(listener)
-    spawn { handle(conn) }
+    spawn(fn() { handle(conn) })
   }
 }
 ```

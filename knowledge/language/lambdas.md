@@ -1,14 +1,14 @@
 ---
 type: specification
 title: Lambdas, with, and try
-description: Lambdas, trailing blocks, with to pass the rest of a block to a function, and try to continue only on success.
+description: Lambdas, with to pass the rest of a block to a function, and try to continue only on success.
 ---
 
 # Lambdas, `with`, and `try`
 
 A lambda is `fn(x) { e }`, and a function type is written `(T) -> U`. A default belongs to a function's name and not to its type, so a function passed as a value takes every argument.
 
-When the last argument of a call is a lambda with no parameters, it may be written as a block after the call: `f(a) { e }`, or `f { e }` when there are no other arguments. The block must start on the same line as the call.
+A lambda is passed like any other argument.
 
 ```
 fn unless(skip: bool, otherwise: f32, body: () -> f32) -> f32 {
@@ -16,11 +16,9 @@ fn unless(skip: bool, otherwise: f32, body: () -> f32) -> f32 {
 }
 
 fn fee(is_member: bool, w: f32, h: f32) -> f32 {
-  unless(is_member, 0.0) { area(w, h) * 0.1 }
+  unless(is_member, 0.0, fn() { area(w, h) * 0.1 })
 }
 ```
-
-The body of `fee` means `unless(is_member, 0.0, fn() { area(w, h) * 0.1 })`. The formatter always uses the trailing form.
 
 `with x = f(args)` passes the rest of the enclosing block to `f` as a lambda taking `x`, added as the last argument. It is sugar for a call, and it keeps code flat.
 
@@ -54,7 +52,7 @@ then(parse_int(a), fn(x) {
 })
 ```
 
-A trailing block and `with` always fill a call's last parameter. So a final lambda parameter may come after parameters that have defaults, and a call can leave those out: with `fn repeat(times: i32 = 2, body: () -> f32) -> f32`, the call `repeat { 1.0 }` uses the default.
+`with` always fills a call's last parameter. So a final lambda parameter may come after parameters that have defaults, and a call can leave those out: with `fn repeat(times: i32 = 2, body: () -> f32) -> f32`, the line `with repeat()` uses the default.
 
 The binding is optional: `with f(args)` passes a lambda that takes no parameters. The lambda is inlined and cannot escape, so `with` costs nothing at run time.
 
