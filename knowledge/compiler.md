@@ -59,6 +59,8 @@ The compiler is lazy. It starts from the roots and does only the work they reach
 
 An error stops every command. A warning is reported only by `smith check`, which fails if there are any, so it is the lint step and a continuous integration run needs no extra flag.
 
+An error names its file, line, and column, as in `hello.smith:2:3: message`. Lines and columns count from 1, and a column counts characters.
+
 - Dead code, meaning a definition no root reaches, is a warning.
 - An unused variable or an unused import is a warning.
 - An unused value whose type cannot be discarded is an error, as [Ownership](language/ownership.md) requires.
