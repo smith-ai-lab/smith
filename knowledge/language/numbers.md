@@ -6,7 +6,7 @@ description: Literals backed by traits, the numeric types, and integer arithmeti
 
 # Literals and numbers
 
-Every literal form is backed by a trait, and the expected type picks which implementation runs. That is why `2.0` above became an `f32`.
+Every literal form is backed by a trait, and the expected type picks which implementation runs. That is why the `2.0` in [`double`](functions.md) became an `f32`.
 
 | Literal | Trait | Can become |
 | --- | --- | --- |

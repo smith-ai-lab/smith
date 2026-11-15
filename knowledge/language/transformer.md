@@ -6,7 +6,7 @@ description: A decoder-only transformer in under a hundred lines, built from eve
 
 # A transformer
 
-Everything above combines into a decoder-only transformer in under a hundred lines. This version uses one attention head to keep it short.
+Everything in the files before this one combines into a decoder-only transformer in under a hundred lines. This version uses one attention head to keep it short.
 
 ```
 fn softmax[n: Pos](x: [n]f32) -> [n]f32 {

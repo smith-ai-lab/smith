@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Bindings
-description: How x = e defines an immutable name, once per function.
+description: How x = e defines an immutable name, once per function, and how a binding states its type.
 ---
 
 # Bindings
