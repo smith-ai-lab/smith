@@ -1,1 +1,4 @@
-missing_console.smith:2:3: `print` needs the `console` effect, which `main` does not declare; write `fn main() ! console`
+missing_console.smith:2:3: `print` needs the `console` effect, which `main` does not declare
+  2 |   print("hello")
+    |   ^
+  fix: write `fn main() ! console`

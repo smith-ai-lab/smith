@@ -1,1 +1,3 @@
 unknown_escape.smith:1:31: unknown escape: a backslash is followed by `q`, not one of " \ { } n t
+  1 | fn main() ! console { print("a\q") }
+    |                               ^

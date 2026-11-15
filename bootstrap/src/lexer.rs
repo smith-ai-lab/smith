@@ -52,30 +52,33 @@ pub struct Token {
 }
 
 /// Splits a file into tokens. The last token is always `Tok::Eof`.
-pub fn lex(bytes: &[u8]) -> Result<Vec<Token>, Error> {
-    let text = match std::str::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(e) => {
-            let valid = std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or_default();
-            return Err(Error::new(end_of(valid), "the file is not valid UTF-8"));
-        }
-    };
-    if let Some(at) = text.find('\r') {
-        return Err(Error::new(
-            end_of(&text[..at]),
-            "a carriage return is not allowed in a Smith file; end lines with a line feed alone",
-        ));
-    }
-    Lexer::new(text).run()
-}
-
-/// The place just after the given text.
-fn end_of(text: &str) -> Pos {
+///
+/// Every error is reported. If the text itself is not valid Smith source,
+/// because of invalid UTF-8 or a carriage return, only those errors are, as
+/// the tokens of such a file mean nothing.
+pub fn lex(bytes: &[u8]) -> Result<Vec<Token>, Vec<Error>> {
+    let mut errors = Vec::new();
     let mut pos = Pos::START;
-    for c in text.chars() {
-        advance(&mut pos, c);
+    for chunk in bytes.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if c == '\r' {
+                errors.push(
+                    Error::new(pos, "a carriage return is not allowed in a Smith file")
+                        .with_fix("end lines with a line feed alone"),
+                );
+            }
+            advance(&mut pos, c);
+        }
+        if !chunk.invalid().is_empty() {
+            errors.push(Error::new(pos, "the file is not valid UTF-8 here"));
+            pos.col += 1;
+        }
     }
-    pos
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let text = std::str::from_utf8(bytes).unwrap_or_default();
+    Lexer::new(text).run()
 }
 
 fn advance(pos: &mut Pos, c: char) {
@@ -91,6 +94,7 @@ struct Lexer<'a> {
     rest: &'a str,
     pos: Pos,
     tokens: Vec<Token>,
+    errors: Vec<Error>,
     /// Whether a token has been read on the current line.
     line_has_token: bool,
 }
@@ -101,6 +105,7 @@ impl<'a> Lexer<'a> {
             rest: text,
             pos: Pos::START,
             tokens: Vec::new(),
+            errors: Vec::new(),
             line_has_token: false,
         }
     }
@@ -125,7 +130,11 @@ impl<'a> Lexer<'a> {
         self.tokens.push(Token { tok, pos });
     }
 
-    fn run(mut self) -> Result<Vec<Token>, Error> {
+    fn error(&mut self, error: Error) {
+        self.errors.push(error);
+    }
+
+    fn run(mut self) -> Result<Vec<Token>, Vec<Error>> {
         while let Some(c) = self.peek() {
             let start = self.pos;
             match c {
@@ -136,29 +145,27 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     self.push(Tok::Newline, start);
                 }
-                '/' if self.peek_second() == Some('/') => self.comment(start)?,
-                '"' => self.string(start)?,
+                '/' if self.peek_second() == Some('/') => self.comment(start),
+                '"' => self.string(start),
                 'a'..='z' | 'A'..='Z' | '_' => self.word(start),
                 '0'..='9' => self.number(start),
-                _ => self.punctuation(start, c)?,
+                _ => self.punctuation(start, c),
             }
         }
         let end = self.pos;
         self.push(Tok::Eof, end);
-        Ok(self.tokens)
+        if self.errors.is_empty() {
+            Ok(self.tokens)
+        } else {
+            Err(self.errors)
+        }
     }
 
-    fn comment(&mut self, start: Pos) -> Result<(), Error> {
+    fn comment(&mut self, start: Pos) {
         if self.line_has_token {
-            return Err(Error::new(start, "a comment must stand on its own line"));
+            self.error(Error::new(start, "a comment must stand on its own line"));
         }
-        while let Some(c) = self.peek() {
-            if c == '\n' {
-                break;
-            }
-            self.bump();
-        }
-        Ok(())
+        self.take_while(|c| c != '\n');
     }
 
     fn take_while(&mut self, keep: impl Fn(char) -> bool) -> &'a str {
@@ -193,44 +200,52 @@ impl<'a> Lexer<'a> {
         self.push(Tok::Number(text.to_string()), start);
     }
 
-    fn punctuation(&mut self, start: Pos, c: char) -> Result<(), Error> {
+    fn punctuation(&mut self, start: Pos, c: char) {
         let Some(p) = PUNCTUATION.iter().find(|p| self.rest.starts_with(**p)) else {
-            return Err(Error::new(
+            self.bump();
+            self.error(Error::new(
                 start,
                 format!("unexpected character {}", show_char(c)),
             ));
+            return;
         };
         for _ in 0..p.len() {
             self.bump();
         }
         self.push(Tok::Punct(p), start);
-        Ok(())
     }
 
-    fn string(&mut self, start: Pos) -> Result<(), Error> {
+    /// Reads a string literal. Each mistake inside it is reported, and the
+    /// string still becomes a token, so that the rest of the line is read.
+    fn string(&mut self, start: Pos) {
         self.bump();
         let mut value = Vec::new();
         loop {
             let at = self.pos;
             match self.peek() {
                 None | Some('\n') => {
-                    return Err(Error::new(
+                    self.error(Error::new(
                         start,
                         "this string has no closing quote on the line it starts",
                     ));
+                    break;
                 }
                 Some('"') => {
                     self.bump();
                     break;
                 }
                 Some('{') => {
-                    return Err(Error::unsupported(at, "an expression in a string"));
+                    self.error(Error::unsupported(at, "an expression in a string"));
+                    if !self.skip_expression() {
+                        break;
+                    }
                 }
                 Some('}') => {
-                    return Err(Error::new(
-                        at,
-                        "a `}` in a string closes no expression; write `\\}` for a brace",
-                    ));
+                    self.bump();
+                    self.error(
+                        Error::new(at, "a `}` in a string closes no expression")
+                            .with_fix("write `\\}` for a brace"),
+                    );
                 }
                 Some('\\') => {
                     self.bump();
@@ -246,13 +261,22 @@ impl<'a> Lexer<'a> {
                                 None | Some('\n') => "nothing".to_string(),
                                 Some(c) => show_char(c),
                             };
-                            return Err(Error::new(
+                            self.error(Error::new(
                                 at,
                                 format!(
                                     "unknown escape: a backslash is followed by {after}, \
                                      not one of \" \\ {{ }} n t"
                                 ),
                             ));
+                            match other {
+                                // The string ends at the line, and that is
+                                // the escape's mistake, not another one.
+                                None | Some('\n') => break,
+                                Some(_) => {
+                                    self.bump();
+                                    continue;
+                                }
+                            }
                         }
                     };
                     self.bump();
@@ -266,7 +290,28 @@ impl<'a> Lexer<'a> {
             }
         }
         self.push(Tok::Str(value), start);
-        Ok(())
+    }
+
+    /// Skips an expression in a string, from its `{` to the `}` that closes
+    /// it. Gives whether that `}` is on the line, so the string goes on.
+    fn skip_expression(&mut self) -> bool {
+        let mut depth = 0;
+        while let Some(c) = self.peek() {
+            match c {
+                '\n' => return false,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.bump();
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+            self.bump();
+        }
+        false
     }
 }
 
