@@ -10,7 +10,7 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 
 ## Lexical rules
 
-- A newline ends a statement, except inside `( )` or `[ ]`, or after an operator or comma.
+- A newline ends a statement, except inside `( )` or `[ ]`, or after an operator or comma. A block inside `( )` or `[ ]` separates its own statements by newlines as usual.
 - Commas appear only inside `( )` and `[ ]`.
 - A comment starts with `//`, stands on its own line, and attaches to the definition, field, case, or statement that follows it.
 - Literals keep their source spelling, so `0x10` and `16` stay distinct in the syntax tree.

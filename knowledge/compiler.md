@@ -1,7 +1,7 @@
 ---
 type: specification
 title: The Smith compiler
-description: How the compiler is designed. It covers how for expressions are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, and bootstrap.
+description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, and bootstrap.
 ---
 
 # The Smith compiler
@@ -21,6 +21,15 @@ Smith's compiler is an optimizing compiler built around `for` expressions. Its o
 ## Scalar code
 
 The compiler's own code and the edges of a server are scalar. They get a fixed list of roughly linear-time passes: inlining small functions, constant folding, dead-code and common-subexpression elimination, instruction selection, and register allocation. Nothing iterates to a fixpoint, and value semantics means no alias analysis is needed. New passes are added one at a time, each proven or validated.
+
+## Effects
+
+Effects are checked and then erased, so a permission costs nothing at run time.
+
+- **A handler is resolved at build time.** The handler in force at each call is known from the source, so a function is compiled once for each handler it runs under and its operations become direct calls. Under the operating system's handlers they are system calls.
+- **Suspension is a property of the copy.** The copy of a function that runs under an async handler is a state machine, and the copy under a blocking handler is ordinary code.
+- **Exclusion is added only where tasks can meet.** When a task group opens under a handler whose operations assign a `var`, the runtime makes those operations take turns. A handler with no tasks under it has no such cost.
+- **A handler's state has its own arena,** covered by the same exclusion, so a child task that adds to it never allocates in its parent's arena.
 
 ## Structure
 
