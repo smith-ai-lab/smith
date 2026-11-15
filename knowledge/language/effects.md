@@ -37,6 +37,7 @@ effect time {
 The declaration gives two things, and nothing else is generated.
 
 - Each operation is an ordinary function that carries the effect. `now()` has the signature `fn now() -> u64 ! time`.
+- An operation may give its parameters defaults, like any function. The lambda that a handler supplies for it takes every argument.
 - The effect's name is a function that handles it. It takes a lambda for each operation, named as the operation is, and the body to run. Calling it is to an effect what calling a struct's name is to a struct.
 
 A program declares its own effects in the same way, so nothing about `time` is special. An effect is a name like any other: it is defined in one module and imported by name, as [Modules](modules.md) describes.

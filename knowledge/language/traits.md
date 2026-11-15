@@ -34,5 +34,6 @@ both = add(unit, unit)
 
   The operands of an operator may differ in type, so a matrix times a vector, or a scalar times a struct of weights, is one more `impl` of `Mul`.
 - `derive Add for Circle` generates an implementation field by field.
+- A trait states the defaults of its functions' parameters, and an `impl` does not repeat them.
 
 Next: [Literals and numbers](numbers.md)

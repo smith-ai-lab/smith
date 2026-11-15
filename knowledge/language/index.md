@@ -5,7 +5,7 @@ Every feature of Smith, one file each. Anything not in this folder is not in the
 The files are a tour. Read them in the order below: each one uses only what the files above it introduced, and ends with a link to the next.
 
 - [overview.md](overview.md): what Smith is for, the rules that hold throughout the language, and the four principles its design follows.
-- [functions.md](functions.md): typed parameters, a return type, and a block whose last expression is its value.
+- [functions.md](functions.md): typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
 - [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function.
 - [mutable-locals.md](mutable-locals.md): locals that change with `var` and `:=`, and `if` as an expression.
 - [structs.md](structs.md): structs with named fields, tuples, and patterns that take them apart.

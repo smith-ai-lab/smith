@@ -27,4 +27,16 @@ fn perimeter(r: Rect) -> f32 {
 unit = Rect(w: 1.0, h: 1.0)
 ```
 
+A field may have a default, written as a parameter's is and under the same rules. Construction may then leave the field out.
+
+```
+struct Border {
+  width: f32 = 1.0
+  inset: f32 = 0.0
+}
+
+thin = Border()
+wide = Border(width: 4.0)
+```
+
 Next: [Enums and `match`](enums.md)
