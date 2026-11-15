@@ -92,5 +92,5 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
 - Never merge with a failing or pending check.
 - Never use a merge commit or a squash merge. History on `main` stays linear.
-- A pull request that touches `knowledge/language.md` or `knowledge/grammar.md` waits for the owner's approval, even when checks are green.
+- A pull request that touches `knowledge/language/` or `knowledge/grammar.md` waits for the owner's approval, even when checks are green.
 - If the change alters what Smith is, update `knowledge/` in the same pull request, following the `update-knowledge` skill.

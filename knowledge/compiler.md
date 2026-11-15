@@ -51,7 +51,7 @@ An error stops every command. A warning is reported only by `smith check`, which
 
 - Dead code, meaning a definition no root reaches, is a warning.
 - An unused variable or an unused import is a warning.
-- An unused value whose type cannot be discarded is an error, as [Ownership](language.md#ownership) requires.
+- An unused value whose type cannot be discarded is an error, as [Ownership](language/ownership.md) requires.
 
 ### Commands that report
 

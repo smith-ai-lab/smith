@@ -6,7 +6,7 @@ description: Lexical rules, operator precedence, the EBNF grammar, and the prope
 
 # Smith grammar
 
-This grammar is the single source of truth for syntax. It is a first draft, and the examples in [language.md](language.md) are its first test cases.
+This grammar is the single source of truth for syntax. It is a first draft, and the examples in [language/](language/index.md) are its first test cases.
 
 ## Lexical rules
 
