@@ -37,7 +37,9 @@ fn serve(listener: Listener) ! net, alloc, diverge {
 
 Here `conn` belongs to the child after the spawn. A child runs under the handlers in force where it was spawned, except that it gets its own arena.
 
-All I/O is async and reads as sequential code. A call such as `fetch(a)` carries the `net` effect. Under an async handler it suspends its task, and under a blocking handler it blocks, with the same source either way.
+Several tasks may therefore call one [handler](effects.md). Its operations run one at a time, so the handler's `var`s are never assigned by two tasks at once. Each operation sees the handler's state whole and leaves it whole, as a read or a write does on a real file system. The order in which tasks reach a handler is not fixed, so a sequence of operations in one task can be interleaved with another task's.
+
+All I/O is async and reads as sequential code. A call such as `fetch(a)` carries the `net` effect. Under an async handler it suspends its task, and under a blocking handler it blocks, with the same source either way. Only the built-in handlers for `net`, `fs`, and `time` can suspend a task. A handler written in Smith returns from each operation.
 
 - A function with a suspending effect compiles to a state machine whose frame lives in its task's arena. Tasks need no stacks of their own, and pure code compiles as ordinary functions.
 - Each child task gets its own arena, and its result is built in the parent's.
