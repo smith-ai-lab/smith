@@ -45,6 +45,6 @@ gh api -X PUT repos/{owner}/{repo}/pulls/<number>/ccr/auto_merge -f merge_method
 
 - Never merge with a failing or pending check.
 - Never use a merge commit or a squash merge. History on `main` stays linear.
-- A pull request that touches `knowledge/language/` or `knowledge/grammar.md` waits for the owner's approval, even when checks are green.
+- A pull request that touches `knowledge/language/` or `knowledge/grammar.md` is merged only by the lead, even when checks are green.
 - If the change alters what Smith is, update `knowledge/` in the same pull request, following the `update-knowledge` skill. Whoever makes the change writes it down.
 - Do not edit the issue. If it is wrong or unclear, say so in a comment on it.
