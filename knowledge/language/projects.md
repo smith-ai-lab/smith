@@ -39,7 +39,7 @@ fn main() ! console {
 ```
 use std.project (Package)
 
-package = Package(name: "serving", vendored: [], generate: [])
+package = Package(name: "serving")
 ```
 
 A loose file or folder needs no `project.smith`, which suits a small program written to try something. The file is needed once the project has a dependency, a build step, or a task, all described below. `smith vendor add` creates it when it is missing.
@@ -83,7 +83,7 @@ pub fn deploy(env: str) -> Result[(), DeployError] ! fs, net, alloc {
 - A task is a public function in `project.smith`, run by name, as in `smith deploy --env staging`. Its parameters are its command-line flags and its effects say what it may do. Running another program needs the `exec` effect.
 - There are no macros that rewrite code in place.
 
-Every field of `Package` is always written, since there are no default field values. A project that has grown looks like this:
+A project that has grown looks like this:
 
 ```
 serving/
@@ -126,7 +126,7 @@ smith deploy --env staging   a task from project.smith
 - `smith build` writes the executable to the folder the command ran in, and replaces a file already there.
 - `--target` chooses what to build for, as in `smith build --target macos_arm64`. Its values are the [target names](../compiler.md#backends). Without it, the target is the machine the compiler is running on, and it is an error if that machine is not a target.
 - `smith run` runs only what the machine it is on can run, so it rejects any other target.
-- A task's parameters are named flags. A `bool` is a bare flag, an `Option` is optional, and there are no positional arguments.
+- A task's parameters are named flags. A `bool` is a bare flag, a parameter with a default or of type `Option` may be left out, and there are no positional arguments.
 - A `Result` error prints its message and exits non-zero.
 - Built-in command names are reserved, so a task named `build` is a compile error.
 - `smith build`, `smith run`, and `smith test` fail only on errors. `smith check` also reports warnings, such as dead code, unused variables, and unused imports, and fails if there are any. What each command compiles, and what the reporting commands print, is described in [compiler.md](../compiler.md#structure).

@@ -9,20 +9,29 @@ description: The console effect, for a program's standard input, output, and err
 The module `std.console` declares the `console` [effect](../language/effects.md). It covers the three standard streams of a program, which the operating system grants together.
 
 ```
+enum Stream {
+  stdout
+  stderr
+}
+
 effect console {
-  fn print(text: str)
-  fn print_error(text: str)
-  fn input(prompt: str) -> Option[str] ! alloc
+  fn print(text: str, end: str = "\n", to: Stream = .stdout)
+  fn input(prompt: str = "") -> Option[str] ! alloc
 }
 ```
 
 | Operation | Does |
 | --- | --- |
-| `print` | Writes the text and a line break to standard output |
-| `print_error` | Writes the text and a line break to standard error |
-| `input` | Writes the prompt to standard output with nothing added, then returns the next line of standard input without its line break, or `.none` at the end of input |
+| `print` | Writes the text and then `end` to the stream `to` |
+| `input` | Writes the prompt to standard output, then returns the next line of standard input without its line break, or `.none` at the end of input |
 
-- `print` is in the prelude, so every program can use it without an import. The other two are imported from `std.console`.
+```
+print("hello world")
+print("loading", end: "")
+print("could not open the file", to: .stderr)
+```
+
+- `print` is in the prelude, so every program can use it without an import. `input` and `Stream` are imported from `std.console`.
 - The console is a program's real output, which another program may read, so the text is written as it is given and nothing is formatted.
 - Each operation is whole. A line that one task prints is never split by another task's output.
 
@@ -30,26 +39,30 @@ effect console {
 use std.console (input)
 
 fn greet() ! console, alloc {
-  match input("name: ") {
+  match input(prompt: "name: ") {
     .some(name) { print("hello {name}") }
     .none { print("hello") }
   }
 }
 ```
 
-A handler supplies all three operations. This one keeps every printed line for a test to look at, and passes the other two to the console outside it, which is why it carries `console` itself.
+A handler supplies both operations. This one keeps everything printed to standard output for a test to look at, and passes the rest to the console outside it, which is why it carries `console` itself.
 
 ```
-use std.console (console, input, print_error)
+use std.console (console, input)
 
 fn capture[T](body: () -> T ! console) -> (T, List[str]) ! console, alloc {
-  var lines: List[str] = []
+  var out: List[str] = []
   r = console(
-    print: fn(text) { lines := push(lines, text) },
-    print_error: fn(text) { print_error(text) },
-    input: fn(prompt) { input(prompt) },
+    print: fn(text, end, to) {
+      match to {
+        .stdout { out := push(out, "{text}{end}") }
+        .stderr { print(text, end: end, to: .stderr) }
+      }
+    },
+    input: fn(prompt) { input(prompt: prompt) },
     body: body,
   )
-  (r, lines)
+  (r, out)
 }
 ```
