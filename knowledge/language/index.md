@@ -26,6 +26,6 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [tasks.md](tasks.md): task groups with `spawn` and `join`, async I/O that reads as sequential code, running out of memory, and events.
 - [foreign.md](foreign.md): foreign declarations with C signatures, and how system frameworks are reached for native applications.
 - [modules.md](modules.md): one file as one module, `pub`, and explicit imports with `use`.
-- [projects.md](projects.md): the standard library, vendored dependencies, `project.smith`, build steps, tasks, and the command line.
+- [projects.md](projects.md): how a folder becomes a project by convention, what `smith new` creates, the standard library, vendored dependencies, build steps and tasks in `project.smith`, and the command line.
 - [tests.md](tests.md): tests found by convention, examples and properties driven by a `Key`, and how they run.
 - [transformer.md](transformer.md): a decoder-only transformer in under a hundred lines, built from everything before it.
