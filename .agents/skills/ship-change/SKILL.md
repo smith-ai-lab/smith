@@ -5,88 +5,41 @@ description: Take a change from a clean main to a pull request that is ready to 
 
 # Ship a change
 
-Every change reaches `main` through a pull request. Nothing is pushed to `main` directly.
+Every change reaches `main` through a pull request. Nothing is pushed to `main` directly. This skill says what must be true of the change at each point. How you get there is yours to choose.
 
-## Steps
+## Before you start
 
-1. Know which issue the change is for. Unless you were given one, take the first open sub-issue of the roadmap issue. Read its "Must be true" list: every line of it becomes a test. Then read `knowledge/index.md` and every file the issue lists under "Read first". `knowledge/` is not loaded for you, so nothing in it is known until you open it.
+- You know which issue the change is for. Unless you were given one, take the first open sub-issue of the roadmap issue.
+- You have read its "Must be true" list. Every line of it becomes a test.
+- You have read `knowledge/index.md` and every file the issue lists under "Read first". `knowledge/` is not loaded for you, so nothing in it is known until you open it.
 
-2. Start from the newest `main`.
+## The branch and its commits
 
-   ```
-   git fetch origin main
-   git switch -c <type>/<short-name> origin/main
-   ```
+- The branch starts from the newest `main`. It is named `<type>/<short-name>`, such as `feat/lexer` or `docs/loop-section`, unless your session was given a branch to use.
+- The pull request covers one topic.
+- Every commit follows Conventional Commits: `<type>(<scope>): <summary>`, with the summary in the imperative, starting lowercase, and with no full stop. `.github/check-commits.sh` holds the exact rule and the list of types.
+- Each commit lands on `main` as written, so every commit is meaningful on its own. A fix for a failed check is folded into the commit that caused it, not added on top.
+- The branch is rebased onto `main` when `main` moves. `main` is never merged into it.
 
-   The branch name uses the commit type and a few words, such as `feat/lexer` or `docs/loop-section`.
+## The pull request
 
-3. Make the change. Keep the pull request to one topic.
+- The checks in `.github/workflows/ci.yml` pass on your machine before you push, and every check passes on the pull request before you stop.
+- The title follows the commit format.
+- The body says what changed and why, names anything you could not verify, and ends with `Closes #<issue>` so the roadmap updates when it merges.
 
-4. Run the checks before committing, from `bootstrap/`.
+## Finishing
 
-   ```
-   cargo fmt --check
-   cargo clippy --all-targets -- -D warnings
-   cargo test
-   ```
+- If a lead gave you the issue, stop once the pull request exists and every check passes. End your turn with the pull request's number. The lead reviews it and merges it.
+- Otherwise, add the pull request to the merge queue with a rebase merge once every check is green.
 
-5. Commit with a Conventional Commits message.
+## What you could not guess
 
-   ```
-   <type>(<scope>): <summary>
-   ```
+A cloud session may refuse `gh pr create` and `gh pr merge`. These work in their place.
 
-   - `type` is one of `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `chore`, or `revert`.
-   - `scope` is optional and names the part changed, such as `parser` or `knowledge`.
-   - `summary` is in the imperative, starts lowercase, and has no full stop.
-   - A breaking change adds `!` before the colon.
-
-   Examples: `feat(lexer): tokenize numeric literals`, `docs(knowledge): describe trailing blocks`.
-
-6. Push the branch and open a pull request. Its title follows the same format. Its body says what changed and why, and ends with `Closes #<issue>` so the roadmap updates when it merges.
-
-   ```
-   git push -u origin HEAD
-   gh api repos/{owner}/{repo}/pulls -f title="<title>" -f head="<branch>" -f base=main -F body=@pr.md --jq '.number'
-   ```
-
-   Use `gh api` as shown. Cloud sessions cannot run `gh pr create`.
-
-7. Wait for every check to pass.
-
-   ```
-   gh api repos/{owner}/{repo}/commits/<branch>/check-runs --jq '.check_runs[] | "\(.name) \(.status) \(.conclusion)"'
-   ```
-
-   Each commit lands on `main` as written, so fix a failure by folding the fix into the commit that caused it, then push again.
-
-   ```
-   git commit --fixup <commit>
-   GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash origin/main
-   git push --force-with-lease
-   ```
-
-8. If `main` has moved, rebase onto it and push again.
-
-   ```
-   git fetch origin main
-   git rebase origin/main
-   git push --force-with-lease
-   ```
-
-9. If a lead gave you the issue, stop here. End your turn with the pull request's number. The lead reviews it and merges it.
-
-10. Otherwise, add the pull request to the merge queue once every check is green. The queue rebases it onto `main`.
-
-    ```
-    gh pr merge <number> --rebase
-    ```
-
-    In a cloud session that command is not available. Use this instead.
-
-    ```
-    gh api -X PUT repos/{owner}/{repo}/pulls/<number>/ccr/auto_merge -f merge_method=rebase
-    ```
+```
+gh api repos/{owner}/{repo}/pulls -f title="<title>" -f head="<branch>" -f base=main -F body=@pr.md --jq '.number'
+gh api -X PUT repos/{owner}/{repo}/pulls/<number>/ccr/auto_merge -f merge_method=rebase
+```
 
 ## Rules
 
