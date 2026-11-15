@@ -54,7 +54,7 @@ The first three parts are the goal, the finished result, and its limits. "Ask fi
 
 ## Choosing the model
 
-Label each issue with the least capable model that can finish it. The lead starts the worker on that model.
+Label each issue with the least capable model family that can finish it. A label names a family, and the lead starts the worker on the newest model in it. Opus is the most capable model a worker runs on.
 
 - `model:sonnet`: the issue nearly dictates the work. The design is settled and the tests follow from "Must be true".
 - `model:opus`: the work needs judgment the issue cannot dictate, such as a new stage, a file format written by hand, or a design that several later issues build on.

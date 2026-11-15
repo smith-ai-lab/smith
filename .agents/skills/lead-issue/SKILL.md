@@ -5,13 +5,13 @@ description: Take one roadmap issue from open to merged by starting a worker age
 
 # Lead an issue
 
-The lead does not write the code. It starts one worker on one issue, stays out of the way until a pull request is ready, reviews it, and merges it.
+The lead does not write the code. It starts one worker on one issue, stays out of the way until a pull request is ready, reviews it, and merges it. The lead runs on Fable, a more capable model than any worker, so that its review is the stronger read.
 
 ## Steps
 
 1. Take the first open sub-issue of the roadmap. Read it, and read its `model:` label.
 
-2. Start one worker: a cloud agent on this repository, on the model the label names, at the default effort. Give it this brief and nothing more.
+2. Start one worker: a cloud agent on this repository, on the newest model in the family the label names, at the default effort. Give it this brief and nothing more.
 
    ```
    Do issue #<n> in <owner>/<repo>. Follow the ship-change skill.
@@ -59,7 +59,7 @@ Work through these in order, and stop at the first that applies.
 1. The issue was unclear or wrong. Fix the issue.
 2. The worker lacked something it needed to read. Add it to `knowledge/` or to "Read first".
 3. The worker had what it needed and tried. Raise the effort.
-4. It still fails. Move the label up a model and start a new worker.
+4. It still fails. Move the label up a model and start a new worker. If the label is already `model:opus`, split the issue into smaller ones, or ask the owner.
 
 ## Rules
 
