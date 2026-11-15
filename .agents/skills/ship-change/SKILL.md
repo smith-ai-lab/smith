@@ -9,7 +9,9 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
 ## Steps
 
-1. Start from the newest `main`.
+1. Know which issue the change is for. Unless you were given one, take the first open sub-issue of the roadmap issue. Read its "Must be true" list: every line of it becomes a test.
+
+2. Start from the newest `main`.
 
    ```
    git fetch origin main
@@ -18,9 +20,9 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
    The branch name uses the commit type and a few words, such as `feat/lexer` or `docs/loop-section`.
 
-2. Make the change. Keep the pull request to one topic.
+3. Make the change. Keep the pull request to one topic.
 
-3. Run the checks before committing, from `bootstrap/`.
+4. Run the checks before committing, from `bootstrap/`.
 
    ```
    cargo fmt --check
@@ -28,7 +30,7 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
    cargo test
    ```
 
-4. Commit with a Conventional Commits message.
+5. Commit with a Conventional Commits message.
 
    ```
    <type>(<scope>): <summary>
@@ -41,9 +43,9 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 
    Examples: `feat(lexer): tokenize numeric literals`, `docs(knowledge): describe trailing blocks`.
 
-5. Push the branch and open a pull request. Its title follows the same format. Its body says what changed and why, and links the issue it closes.
+6. Push the branch and open a pull request. Its title follows the same format. Its body says what changed and why, and ends with `Closes #<issue>` so the roadmap updates when it merges.
 
-6. Wait for every check to pass. Each commit lands on `main` as written, so fix a failure by folding the fix into the commit that caused it, then push again.
+7. Wait for every check to pass. Each commit lands on `main` as written, so fix a failure by folding the fix into the commit that caused it, then push again.
 
    ```
    git commit --fixup <commit>
@@ -51,7 +53,7 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
    git push --force-with-lease
    ```
 
-7. If `main` has moved, rebase onto it and push again.
+8. If `main` has moved, rebase onto it and push again.
 
    ```
    git fetch origin main
@@ -59,7 +61,7 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
    git push --force-with-lease
    ```
 
-8. Merge by rebase once every check is green.
+9. Merge by rebase once every check is green.
 
    ```
    gh pr merge --rebase --delete-branch
