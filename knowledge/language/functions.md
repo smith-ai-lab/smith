@@ -25,7 +25,7 @@ fn scale(x: f32, by: f32 = 2.0) -> f32 { x * by }
 
 `scale(3.0)` is `6.0`, and `scale(3.0, 10.0)` and `scale(3.0, by: 10.0)` are both `30.0`.
 
-- Parameters with defaults come after those without.
+- Parameters with defaults come after those without. The one exception is a final lambda parameter, described under [Lambdas, `with`, and `try`](lambdas.md).
 - Naming an argument is how a call sets a later default and leaves an earlier one alone.
 - A default is a fixed value. It is an expression that uses no parameter, and it is worked out when the program is built, so it never depends on when or where the call happens.
 - The compiler fills in a missing argument where the call is written. The function always receives every argument, so a default costs nothing at run time.

@@ -54,6 +54,8 @@ then(parse_int(a), fn(x) {
 })
 ```
 
+A trailing block and `with` always fill a call's last parameter. So a final lambda parameter may come after parameters that have defaults, and a call can leave those out: with `fn repeat(times: i32 = 2, body: () -> f32) -> f32`, the call `repeat { 1.0 }` uses the default.
+
 The binding is optional: `with f(args)` passes a lambda that takes no parameters. The lambda is inlined and cannot escape, so `with` costs nothing at run time.
 
 Continuing only on success is common enough to have a keyword. `x = try e` means `with x = then(e)`, so `parse_pair` is written like this:
