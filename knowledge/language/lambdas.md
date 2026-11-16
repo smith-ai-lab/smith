@@ -102,7 +102,7 @@ fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
 }
 ```
 
-An error is an ordinary value. If `parse_int(a)` fails, `parse_pair` returns that failure and the remaining lines do not run. Nothing unwinds: `try` only returns a value, so code after a call always runs. `try` also works inside a larger expression, as in `.ok((try parse_int(a), try parse_int(b)))`, and as a statement when there is no value to bind. The formatter always writes `try e`.
+An error is an ordinary value. If `parse_int(a)` fails, `parse_pair` returns that failure and the remaining lines do not run. Nothing unwinds: `try` only returns a value, so code after a call always runs. `try` also works inside a larger expression, as in `.ok((try parse_int(a), try parse_int(b)))`, and as a statement when there is no value to bind. The formatter always writes `try e`. A statement that gives a `Result` and does nothing with it is an error, so a failure is never dropped by leaving `try` out.
 
 The keyword is fixed and its meaning is extensible. `then` is the one function of the `Try` trait, which relates a container `C`, the final result `R`, and the value inside the container, `T`, and `try` works on any type that has an implementation. The function above is the one for `Result`. An `impl` takes its own type parameters in brackets, and this is the one for `Option`:
 

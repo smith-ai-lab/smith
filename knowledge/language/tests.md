@@ -7,25 +7,25 @@ status: planned
 
 # Tests
 
-Tests are found by convention. A file named `x_test.smith` holds tests for `x.smith`, and every function in it named `test_...` is a test. A test returns a `Result`, so a failure carries the values that differed, and several checks chain with `try`. A test file is an ordinary module: it imports with `use` and sees only public names, so tests check behaviour through the interface, while contracts and proofs check the internals. Test files are left out of normal builds.
+Tests are found by convention. A file named `x_test.smith` holds tests for `x.smith`, and every function in it named `test_...` is a test. A test returns a `Result`, and several checks chain with `try`. `expect` is the one check. It receives its lambda as [code](code.md), so a failed comparison reports both of its sides. A test file is an ordinary module: it imports with `use` and sees only public names, so tests check behaviour through the interface, while contracts and proofs check the internals. Test files are left out of normal builds.
 
 ```
 use model.tokenizer (decode, encode)
-use std.test (Failed, expect, expect_eq)
+use std.test (Failed, expect)
 
 fn test_empty() -> Result[(), Failed] {
-  expect_eq(len(encode("")), 0)
+  expect { len(encode("")) == 0 }
 }
 
 fn test_round_trip(key: take Key) -> Result[(), Failed] {
   text = random_text(key, max: 200)
-  expect_eq(decode(encode(text)), text)
+  expect { decode(encode(text)) == text }
 }
 
 fn test_tokens(text: str) -> Result[(), Failed] {
   tokens = encode(text)
-  try expect(len(tokens) <= len(text))
-  expect_eq(decode(tokens), text)
+  try expect { len(tokens) <= len(text) }
+  expect { decode(tokens) == text }
 }
 ```
 
