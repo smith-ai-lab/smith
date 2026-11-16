@@ -105,7 +105,10 @@ jobs:
   # `cancelled`, without a step run, and nothing here sets that limit. So a job
   # that never started is started again, twice at most, by `machine2` and
   # `machine3`, before the run counts it as failed. The jobs that follow the
-  # first `machine` run only for the kinds whose job never started.
+  # first `machine` run only for the kinds whose job never started. Whether a
+  # job never started is not read from the result GitHub gives a matrix, which
+  # is not what it was expected to be, but from the list of jobs, so `lost1` and
+  # `lost2` run whenever the run was not cancelled and a machine job was due.
   machine:
     name: test on ${{ matrix.os }}
     needs: [changes, decide]
@@ -120,8 +123,8 @@ jobs:
 
   lost1:
     name: which machines were not found
-    needs: machine
-    if: ${{ !cancelled() && needs.machine.result == 'cancelled' }}
+    needs: [decide, machine]
+    if: ${{ !cancelled() && needs.decide.result == 'success' && needs.decide.outputs.machines != '[]' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -154,8 +157,8 @@ jobs:
 
   lost2:
     name: which machines were still not found
-    needs: machine2
-    if: ${{ !cancelled() && needs.machine2.result == 'cancelled' }}
+    needs: [lost1, machine2]
+    if: ${{ !cancelled() && needs.lost1.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
