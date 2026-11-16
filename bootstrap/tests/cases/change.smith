@@ -1,0 +1,6 @@
+fn main() ! console {
+  var word = "first"
+  print(word)
+  word = "second"
+  print(word)
+}

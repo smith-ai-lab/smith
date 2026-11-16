@@ -1,0 +1,4 @@
+colon_equals.smith:2:8: Smith has no `:=`
+  2 |   word := "first"
+    |        ^
+  fix: write `=`, which defines a name or assigns to a `var`

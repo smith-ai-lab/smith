@@ -1,0 +1,4 @@
+fn main() ! console {
+  word := "first"
+  print(word)
+}

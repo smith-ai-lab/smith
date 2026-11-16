@@ -1048,13 +1048,33 @@ fn bounds_named(generics: &[Generic]) -> Vec<&str> {
         .collect()
 }
 
+/// The error for assigning to `name`, or to a field of it, where `name`,
+/// the name at `at` among those of the body, is not a `var`.
+fn not_a_var(body: &Body, name: &str, pos: Pos, at: usize) -> Error {
+    let error = Error::new(
+        pos,
+        format!("`{name}` is not a `var`, so it cannot be assigned to"),
+    );
+    if at < body.params {
+        error.with_fix(format!(
+            "declare a `var` that starts as the parameter, as in `var new_{name} = {name}`"
+        ))
+    } else {
+        error.with_fix(format!(
+            "declare it with `var`: write `var {name}` where it is defined"
+        ))
+    }
+}
+
 /// Every expression in a body, each before the expressions inside it, and
 /// then from left to right.
 fn exprs(body: &[Stmt]) -> Vec<&Expr> {
     let mut out = Vec::new();
     for stmt in body {
         match stmt {
-            Stmt::Define { value, .. } | Stmt::Expr(value) => walk(value, &mut out),
+            Stmt::Define { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => {
+                walk(value, &mut out)
+            }
         }
     }
     out
@@ -1285,7 +1305,9 @@ impl<'a> Defs<'a> {
         let mut out = Vec::new();
         for stmt in &view.f.body {
             let value = match stmt {
-                Stmt::Define { value, .. } | Stmt::Expr(value) => value,
+                Stmt::Define { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => {
+                    value
+                }
             };
             let mut inside = Vec::new();
             walk(value, &mut inside);
@@ -1296,7 +1318,9 @@ impl<'a> Defs<'a> {
                     out.push((call.pos, callee));
                 }
             }
-            if let Stmt::Define { name, value, .. } = stmt {
+            if let Stmt::Define { name, value, .. } = stmt
+                && !names.iter().any(|(n, _)| n == name)
+            {
                 let ty = self.type_of(value, &names);
                 names.push((name.clone(), ty));
             }
@@ -1332,6 +1356,10 @@ struct Body<'a> {
     missing: Vec<String>,
     /// The names defined so far, and what each gives.
     names: Vec<(String, Ty)>,
+    /// How many of the names are parameters, which come first.
+    params: usize,
+    /// The names defined with `var`.
+    vars: Vec<String>,
 }
 
 impl<'a> Checker<'a> {
@@ -1778,6 +1806,8 @@ impl<'a> Checker<'a> {
             unknown_effect,
             missing: Vec::new(),
             names: view.params.clone(),
+            params: view.params.len(),
+            vars: Vec::new(),
         };
         for (i, stmt) in f.body.iter().enumerate() {
             let last = i + 1 == f.body.len();
@@ -1786,41 +1816,68 @@ impl<'a> Checker<'a> {
                     name,
                     pos,
                     ty,
+                    var,
                     value,
                 } => {
                     let gives = self.expr(&mut body, value);
-                    let bound = match ty {
-                        Some(t) => {
-                            self.ty(t, view.scope);
-                            let needed = defs.quietly(t, view.scope);
-                            self.expect(&body, value, &gives, &needed);
-                            needed
-                        }
-                        None => {
-                            if gives == Ty::Nothing {
-                                self.errors
-                                    .push(Error::unsupported(value.pos(), "binding nothing"));
+                    let defined = body.names.iter().position(|(n, _)| n == name);
+                    match (defined, ty, var) {
+                        (Some(at), None, false) => {
+                            if body.vars.contains(name) {
+                                let needed = body.names[at].1.clone();
+                                self.expect(&body, value, &gives, &needed);
+                            } else {
+                                self.errors.push(not_a_var(&body, name, *pos, at));
                             }
-                            gives
                         }
-                    };
-                    if body.names.iter().any(|(n, _)| n == name) {
-                        self.errors.push(Error::new(
-                            *pos,
-                            format!("`{name}` is already defined in `{}`", f.name),
-                        ));
-                    } else {
-                        body.names.push((name.clone(), bound));
+                        _ => {
+                            let bound = match ty {
+                                Some(t) => {
+                                    self.ty(t, view.scope);
+                                    let needed = defs.quietly(t, view.scope);
+                                    self.expect(&body, value, &gives, &needed);
+                                    needed
+                                }
+                                None => {
+                                    if gives == Ty::Nothing {
+                                        self.errors.push(Error::unsupported(
+                                            value.pos(),
+                                            "binding nothing",
+                                        ));
+                                    }
+                                    gives
+                                }
+                            };
+                            if defined.is_some() {
+                                self.errors.push(Error::new(
+                                    *pos,
+                                    format!("`{name}` is already defined in `{}`", f.name),
+                                ));
+                            } else {
+                                body.names.push((name.clone(), bound));
+                                if *var {
+                                    body.vars.push(name.clone());
+                                }
+                            }
+                        }
                     }
                     if let (true, Some(t)) = (last, &view.result) {
-                        self.errors.push(Error::new(
-                            *pos,
-                            format!(
-                                "`{}` returns `{t}`, and its body ends with a binding, \
-                                 which gives nothing",
-                                f.name
-                            ),
-                        ));
+                        self.ends_with_nothing(f, *pos, t);
+                    }
+                    continue;
+                }
+                Stmt::Assign {
+                    name,
+                    pos,
+                    fields,
+                    value,
+                } => {
+                    let gives = self.expr(&mut body, value);
+                    if let Some(needed) = self.place(&body, name, *pos, fields) {
+                        self.expect(&body, value, &gives, &needed);
+                    }
+                    if let (true, Some(t)) = (last, &view.result) {
+                        self.ends_with_nothing(f, *pos, t);
                     }
                     continue;
                 }
@@ -1851,6 +1908,70 @@ impl<'a> Checker<'a> {
                 ),
             ));
         }
+    }
+
+    /// Reports a body that ends with a statement that gives nothing, the
+    /// one at `pos`, where `f` returns the type written `t`.
+    fn ends_with_nothing(&mut self, f: &Function, pos: Pos, t: &str) {
+        self.errors.push(Error::new(
+            pos,
+            format!(
+                "`{}` returns `{t}`, and its body ends with a binding or an assignment, \
+                 which gives nothing",
+                f.name
+            ),
+        ));
+    }
+
+    /// Checks a field of a `var`, or a field of one of its fields, as a
+    /// place to assign to, and gives the type of what it holds. Gives
+    /// `None` when the place holds a mistake, which is reported.
+    fn place(&mut self, body: &Body, name: &str, pos: Pos, fields: &[(String, Pos)]) -> Option<Ty> {
+        let defs = self.defs;
+        let Some(at) = body.names.iter().position(|(n, _)| n == name) else {
+            self.errors.push(Error::new(
+                pos,
+                format!(
+                    "there is no name `{name}` defined before this in `{}`",
+                    body.f.name
+                ),
+            ));
+            return None;
+        };
+        if !body.vars.iter().any(|v| v == name) {
+            self.errors.push(not_a_var(body, name, pos, at));
+            return None;
+        }
+        let mut ty = body.names[at].1.clone();
+        for (field, pos) in fields {
+            ty = match ty {
+                Ty::Struct(s, args) => {
+                    let def = &defs.file.structs[s];
+                    match def.fields.iter().position(|f| &f.name == field) {
+                        Some(at) => defs.fields[s][at].subst(&args),
+                        None => {
+                            self.errors.push(Error::new(
+                                *pos,
+                                format!("`{}` has no field named `{field}`", def.name),
+                            ));
+                            return None;
+                        }
+                    }
+                }
+                Ty::Unknown => return None,
+                given => {
+                    self.errors.push(Error::new(
+                        *pos,
+                        format!(
+                            "the field `{field}` is assigned in {}, which is not a struct",
+                            defs.describe(&given, body.scope)
+                        ),
+                    ));
+                    return None;
+                }
+            };
+        }
+        Some(ty)
     }
 
     fn expr(&mut self, body: &mut Body<'a>, expr: &Expr) -> Ty {
@@ -2312,6 +2433,31 @@ impl<'a> Lowering<'a> {
         }
     }
 
+    /// Where the texts of a field, or of a field of a field for each
+    /// further name, are among the texts of a value of the type, and how
+    /// many there are.
+    fn offset(&self, ty: &Ty, fields: &[(String, Pos)]) -> (usize, usize) {
+        let mut ty = ty.clone();
+        let mut start = 0;
+        for (name, _) in fields {
+            let Ty::Struct(s, args) = ty else {
+                unreachable!("checked")
+            };
+            let defs = self.defs;
+            let mut found = None;
+            for (field, t) in defs.file.structs[s].fields.iter().zip(&defs.fields[s]) {
+                let t = t.subst(&args);
+                if &field.name == name {
+                    found = Some(t);
+                    break;
+                }
+                start += self.width(&t);
+            }
+            ty = found.expect("checked");
+        }
+        (start, self.width(&ty))
+    }
+
     /// New locals for a value of the type.
     fn locals(&self, out: &mut Lowered, ty: &Ty) -> Vec<usize> {
         let width = self.width(ty);
@@ -2352,10 +2498,31 @@ impl<'a> Lowering<'a> {
             result = match stmt {
                 Stmt::Define { name, value, .. } => {
                     // A name stands for the texts it is bound to, so a
-                    // binding needs no step of its own.
+                    // binding needs no step of its own. A body runs its
+                    // statements once each, in order, so an assignment
+                    // makes the name stand for the new texts from then on,
+                    // and a name bound to the old ones keeps them.
                     let (ty, value) = self.expr(&mut out, value);
-                    out.types.push((name.clone(), ty));
-                    out.values.push(value);
+                    match out.types.iter().position(|(n, _)| n == name) {
+                        Some(at) => out.values[at] = value,
+                        None => {
+                            out.types.push((name.clone(), ty));
+                            out.values.push(value);
+                        }
+                    }
+                    Vec::new()
+                }
+                Stmt::Assign {
+                    name,
+                    fields,
+                    value,
+                    ..
+                } => {
+                    let (_, value) = self.expr(&mut out, value);
+                    let at = out.types.iter().position(|(n, _)| n == name);
+                    let at = at.expect("checked");
+                    let (start, width) = self.offset(&out.types[at].1, fields);
+                    out.values[at].splice(start..start + width, value);
                     Vec::new()
                 }
                 Stmt::Expr(value) => self.expr(&mut out, value).1,

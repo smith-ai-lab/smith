@@ -5,7 +5,8 @@
 //!
 //! A program is a few structs, whose fields are text or other structs, and
 //! a few functions that take and return text and structs, with bindings,
-//! constructions, field reads, and calls nested a few deep. It first builds
+//! `var` locals, assignments to them and to their fields, constructions,
+//! field reads, and calls nested a few deep. It first builds
 //! a model of the program, works out from the model what the program
 //! prints, and then writes the model out as source, placing the mistake as
 //! it writes.
@@ -113,6 +114,10 @@ enum Kind {
     UnknownFunction,
     UnknownName,
     DefinedTwice,
+    NotAVar,
+    FieldOfNotAVar,
+    ColonEquals,
+    AssignedWrongType,
     Recursion,
     NoArgument,
     PrintEnd,
@@ -167,6 +172,10 @@ const KINDS: &[Kind] = &[
     Kind::UnknownFunction,
     Kind::UnknownName,
     Kind::DefinedTwice,
+    Kind::NotAVar,
+    Kind::FieldOfNotAVar,
+    Kind::ColonEquals,
+    Kind::AssignedWrongType,
     Kind::Recursion,
     Kind::NoArgument,
     Kind::PrintEnd,
@@ -214,6 +223,8 @@ impl Kind {
                 | Kind::NoSuchField
                 | Kind::FieldByPosition
                 | Kind::NoSuchFieldRead
+                | Kind::FieldOfNotAVar
+                | Kind::AssignedWrongType
         )
     }
 
@@ -241,6 +252,8 @@ impl Kind {
                 | Kind::TokenAfterStatement
                 | Kind::UnknownName
                 | Kind::DefinedTwice
+                | Kind::NotAVar
+                | Kind::ColonEquals
                 | Kind::Recursion
                 | Kind::NoArgument
                 | Kind::PrintEnd
@@ -325,6 +338,15 @@ enum Stmt {
         name: String,
         ty: Type,
         typed: bool,
+        /// Whether it is a `var`.
+        var: bool,
+        value: Expr,
+    },
+    /// An assignment to a `var`, or to a field of it through `path`, each
+    /// step a field by its place in its struct.
+    Assign {
+        name: String,
+        path: Vec<(usize, usize)>,
         value: Expr,
     },
     Expr(Expr),
@@ -455,6 +477,7 @@ fn model(g: &mut Gen, shaped: bool, with_field: bool) -> Model {
                     name: format!("y{j}"),
                     ty,
                     typed: false,
+                    var: false,
                     value: call,
                 },
                 None => Stmt::Expr(call),
@@ -484,7 +507,7 @@ fn model(g: &mut Gen, shaped: bool, with_field: bool) -> Model {
 
 fn stmt_expr(stmt: &Stmt) -> &Expr {
     match stmt {
-        Stmt::Define { value, .. } | Stmt::Expr(value) => value,
+        Stmt::Define { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => value,
     }
 }
 
@@ -556,8 +579,10 @@ fn body(g: &mut Gen, m: &Model, i: usize) -> Vec<Stmt> {
     let mut names: Vec<(String, Type)> = (m.fns[i].params.iter())
         .map(|(p, ty)| (p.to_string(), *ty))
         .collect();
+    // The names defined with `var`.
+    let mut vars: Vec<String> = Vec::new();
     let mut stmts = Vec::new();
-    let count = g.below(4);
+    let count = g.below(6);
     let later = |gives: bool| -> Vec<usize> {
         (i + 1..m.fns.len())
             .filter(|&j| m.fns[j].result.is_some() == gives)
@@ -565,19 +590,49 @@ fn body(g: &mut Gen, m: &Model, i: usize) -> Vec<Stmt> {
     };
     for n in 0..count {
         let last = n + 1 == count && m.fns[i].result.is_none();
-        let stmt = match g.below(4) {
-            1 => {
+        let stmt = match g.below(6) {
+            choice @ (1 | 4) => {
                 let name = format!("x{}", stmts.len() + 1);
                 let typed = g.one_in(2);
+                let var = choice == 4;
                 let ty = some_type(g, &m.structs);
                 let value = value(g, m, i, &names, ty, DEPTH);
                 names.push((name.clone(), ty));
+                if var {
+                    vars.push(name.clone());
+                }
                 Stmt::Define {
                     name,
                     ty,
                     typed,
+                    var,
                     value,
                 }
+            }
+            5 if !vars.is_empty() => {
+                let name = g.pick(&vars).clone();
+                let mut ty = names.iter().find(|(n, _)| *n == name).unwrap().1;
+                let mut path = Vec::new();
+                while let Type::Struct(s) = ty
+                    && !m.structs[s].fields.is_empty()
+                    && !g.one_in(3)
+                {
+                    // A field that holds a struct now and then, so that
+                    // the path can go deeper.
+                    let fields = &m.structs[s].fields;
+                    let deeper: Vec<usize> = (0..fields.len())
+                        .filter(|&f| matches!(fields[f].1, Type::Struct(_)))
+                        .collect();
+                    let field = if !deeper.is_empty() && g.one_in(2) {
+                        *g.pick(&deeper)
+                    } else {
+                        g.below(fields.len())
+                    };
+                    path.push((s, field));
+                    ty = m.structs[s].fields[field].1;
+                }
+                let value = value(g, m, i, &names, ty, DEPTH);
+                Stmt::Assign { name, path, value }
             }
             2 if !later(false).is_empty() => {
                 let j = *g.pick(&later(false));
@@ -723,6 +778,17 @@ fn run(m: &Model, f: usize, args: Vec<Val>, out: &mut Vec<u8>) -> Val {
             Stmt::Define { name, value, .. } => {
                 let value = eval(m, &names, value, out);
                 names.push((name.clone(), value));
+            }
+            Stmt::Assign { name, path, value } => {
+                let value = eval(m, &names, value, out);
+                let mut place = &mut names.iter_mut().find(|(n, _)| n == name).unwrap().1;
+                for &(_, field) in path {
+                    let Val::Struct(fields) = place else {
+                        unreachable!("a field is assigned in a struct")
+                    };
+                    place = &mut fields[field];
+                }
+                *place = value;
             }
             Stmt::Expr(value) => last = eval(m, &names, value, out),
         }
@@ -1124,7 +1190,8 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         extra.push(kind);
     }
     let one_line = func.body.len() == 1 && extra.is_empty() && b.g.one_in(2);
-    let mut names: Vec<String> = Vec::new();
+    // The names defined so far, each with whether it is a `var`.
+    let mut names: Vec<(String, bool)> = Vec::new();
     for stmt in &func.body {
         if one_line {
             b.pick(&[" ", "  "]);
@@ -1136,8 +1203,12 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
                 name,
                 ty,
                 typed,
+                var,
                 value,
             } => {
+                if *var {
+                    b.pick(&["var ", "var  "]);
+                }
                 b.push(name);
                 if *typed {
                     b.pick(&[": ", ":"]);
@@ -1147,7 +1218,16 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
                     b.pick(&[" = ", "=", "  =  "]);
                 }
                 expr(b, m, value, &console_site);
-                names.push(name.clone());
+                names.push((name.clone(), *var));
+            }
+            Stmt::Assign { name, path, value } => {
+                b.push(name);
+                for &(s, field) in path {
+                    b.push(".");
+                    b.push(m.structs[s].fields[field].0);
+                }
+                b.pick(&[" = ", "=", "  =  "]);
+                expr(b, m, value, &console_site);
             }
             Stmt::Expr(value) => expr(b, m, value, &console_site),
         }
@@ -1204,18 +1284,28 @@ fn struct_of(m: &Model, value: &Expr) -> usize {
 
 /// A statement at the end of `main` that holds the mistake. `around` is
 /// the value of a struct it is built around, if it needs one.
-fn main_statement(b: &mut Builder, m: &Model, kind: Kind, names: &[String], around: Option<&Expr>) {
+fn main_statement(
+    b: &mut Builder,
+    m: &Model,
+    kind: Kind,
+    names: &[(String, bool)],
+    around: Option<&Expr>,
+) {
     let no_console = None;
     match kind {
         Kind::StatementNotBuilt => {
-            b.mark(NOT_BUILT, None);
-            b.pick(&[
-                "var x = \"a\"",
-                "x += \"a\"",
-                "with a",
-                "break",
-                "x.y = \"a\"",
+            let (before, rest) = *b.g.pick(&[
+                ("x ", "+= \"a\""),
+                ("x.y ", "-= \"a\""),
+                ("", "with a"),
+                ("", "break"),
+                ("", "loop {}"),
+                ("", "(a, var b) = f()"),
+                ("x", "[0] = \"a\""),
             ]);
+            b.push(before);
+            b.mark(NOT_BUILT, None);
+            b.push(rest);
         }
         Kind::NoClosingParenthesis => {
             b.push("print(\"a\" ");
@@ -1233,13 +1323,79 @@ fn main_statement(b: &mut Builder, m: &Model, kind: Kind, names: &[String], arou
             b.push("nope)");
         }
         Kind::DefinedTwice => {
-            let name = names.first().cloned().unwrap_or_else(|| {
-                b.push("twice = \"a\"\n  ");
-                "twice".to_string()
-            });
+            let name = match names.first() {
+                Some((name, _)) => name.clone(),
+                None => {
+                    b.pick(&["twice = \"a\"\n  ", "var twice = \"a\"\n  "]);
+                    "twice".to_string()
+                }
+            };
+            // `var` defines a name, and never assigns to one.
+            b.push("var ");
             b.mark(format!("`{name}`"), None);
             b.push(&name);
             b.push(" = \"b\"");
+        }
+        Kind::NotAVar => {
+            let fixed: Vec<&String> = (names.iter())
+                .filter(|(_, var)| !var)
+                .map(|(n, _)| n)
+                .collect();
+            let name = match fixed.first() {
+                Some(name) => name.to_string(),
+                None => {
+                    b.push("once = \"a\"\n  ");
+                    "once".to_string()
+                }
+            };
+            b.mark(format!("`{name}`"), Some("`var".to_string()));
+            b.push(&name);
+            b.push(" = \"b\"");
+        }
+        Kind::FieldOfNotAVar => {
+            let around = around.expect("a value of a struct");
+            let s = struct_of(m, around);
+            b.push("kept = ");
+            expr(b, m, around, &no_console);
+            b.push("\n  ");
+            b.mark("`kept`", Some("`var kept`".to_string()));
+            b.push("kept.");
+            b.push(m.structs[s].fields[0].0);
+            b.push(" = \"a\"");
+        }
+        Kind::ColonEquals => {
+            let name = names.first().map_or("x", |(n, _)| n.as_str());
+            b.push(name);
+            b.push(" ");
+            b.mark("`:=`", Some("`=`".to_string()));
+            b.push(":= \"a\"");
+        }
+        Kind::AssignedWrongType => {
+            let around = around.expect("a value of a struct");
+            let s = struct_of(m, around);
+            b.push("var changed = ");
+            expr(b, m, around, &no_console);
+            b.push("\n  changed");
+            let (field, ty) = *b.g.pick(&m.structs[s].fields);
+            if b.g.one_in(2) {
+                b.push(" = ");
+                b.mark(format!("`{}`", m.structs[s].name), None);
+                b.push("\"a\"");
+            } else {
+                b.push(".");
+                b.push(field);
+                b.push(" = ");
+                match ty {
+                    Type::Str => {
+                        b.mark(format!("a `{}`", m.structs[s].name), None);
+                        b.push("changed");
+                    }
+                    Type::Struct(t) => {
+                        b.mark(format!("`{}`", m.structs[t].name), None);
+                        b.push("\"a\"");
+                    }
+                }
+            }
         }
         Kind::Recursion => {
             b.mark(NOT_BUILT, None);
@@ -1277,6 +1433,7 @@ fn main_statement(b: &mut Builder, m: &Model, kind: Kind, names: &[String], arou
             let around = around.expect("a value of a struct");
             let name = m.structs[struct_of(m, around)].name;
             if b.g.one_in(2) {
+                b.pick(&["", "var "]);
                 b.push("wrong: ");
                 b.push(name);
                 b.push(" = ");
