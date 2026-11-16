@@ -1,0 +1,43 @@
+name: mirror-releases
+
+# Copies every file of every release to GitLab's package registry, so the
+# compiler can be fetched when GitHub is gone. Runs when the release workflow
+# finishes, since a release made with a workflow's own token starts no other
+# workflow, and can be started by hand to copy what GitLab lacks. Never for a
+# pull request or the merge queue, so it cannot hold one up.
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-releases
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    name: copy to GitLab
+    runs-on: ubuntu-latest
+    # Only this job reads the secret. It can read releases and nothing more.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Copy what GitLab lacks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
+        run: |
+          set -eu
+          if [ -z "$GITLAB_PACKAGE_TOKEN" ]; then
+            echo "the secret GITLAB_PACKAGE_TOKEN is not set, so nothing can be copied to GitLab" >&2
+            exit 1
+          fi
+          sh .github/mirror-releases.sh
