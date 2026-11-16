@@ -1,14 +1,14 @@
 ---
 type: specification
 title: Lambdas, with, and try
-description: Lambdas, with to pass the rest of a block to a function, and try to continue only on success.
+description: Lambdas written as blocks after a call, with to pass the rest of a block to a function, and try to continue only on success.
 ---
 
 # Lambdas, `with`, and `try`
 
-A lambda is `fn(x) { e }`, and a function type is written `(T) -> U`. A default belongs to a function's name and not to its type, so a function passed as a value takes every argument.
+A lambda is a block, `{ e }`. When it takes parameters, `fn` and their names come first, as in `fn(x) { e }`. A function type is written `(T) -> U`. A default belongs to a function's name and not to its type, so a function passed as a value takes every argument.
 
-A lambda is passed like any other argument.
+A lambda that is a call's last argument is written after the call, on the line where the call's arguments end.
 
 ```
 fn unless(skip: bool, otherwise: f32, body: () -> f32) -> f32 {
@@ -16,9 +16,28 @@ fn unless(skip: bool, otherwise: f32, body: () -> f32) -> f32 {
 }
 
 fn fee(is_member: bool, w: f32, h: f32) -> f32 {
-  unless(is_member, 0.0, fn() { area(w, h) * 0.1 })
+  unless(is_member, 0.0) { area(w, h) * 0.1 }
 }
 ```
+
+When the lambda is the only argument, the call has no parentheses. So a function can read like a part of the language. This one runs a few lines for their value:
+
+```
+fn do[T](body: () -> T) -> T { body() }
+
+fn rect_area(left: f32, right: f32, top: f32, bottom: f32) -> f32 {
+  do {
+    w = right - left
+    h = bottom - top
+    w * h
+  }
+}
+```
+
+- A lambda that is not the last argument is passed by name inside the parentheses. Only a call that takes several lambdas has one, such as the call of `time` in the `fake_clock` handler under [Effects](effects.md#handlers).
+- Braces are the body of a construct or a lambda, and nothing else. A block that stands alone is not an expression.
+- After the condition of an `if`, the value of a `match`, the head of a `loop`, or a contract, `{` opens that construct's body. A call there takes a lambda after it only when the call is in parentheses.
+- A lambda's value is its last expression. `try` inside a lambda returns from the lambda, and `break` does not reach a `loop` outside it.
 
 A lambda may be passed to a call, and that is all. It cannot be stored in a field or a binding, and it cannot be returned, so it never outlives the function it is written in. This is why a lambda may assign that function's `var`s, and why it is always inlined.
 
@@ -36,7 +55,7 @@ sale = Pricing(discount: half)
 
 When a stored function needs data to work with, the data is stored beside it and passed to it. Nothing is captured.
 
-`with x = f(args)` passes the rest of the enclosing block to `f` as a lambda taking `x`, added as the last argument. It is sugar for a call, and it keeps code flat.
+`with x = f(args)` passes the rest of the enclosing block to `f` as a lambda taking `x`, added as the last argument. It means `f(args) fn(x) { ... }` with the rest of the block inside the braces, and it keeps code flat.
 
 ```
 enum Result[T, E] {
@@ -61,11 +80,11 @@ fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
 The body of `parse_pair` means exactly this:
 
 ```
-then(parse_int(a), fn(x) {
-  then(parse_int(b), fn(y) {
+then(parse_int(a)) fn(x) {
+  then(parse_int(b)) fn(y) {
     .ok((x, y))
-  })
-})
+  }
+}
 ```
 
 `with` always fills a call's last parameter. So a final lambda parameter may come after parameters that have defaults, and a call can leave those out: with `fn repeat(times: i32 = 2, body: () -> f32) -> f32`, the line `with repeat()` uses the default.
