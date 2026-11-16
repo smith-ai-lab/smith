@@ -1,0 +1,33 @@
+enum S {
+  one
+  two
+}
+
+fn say(s: str) -> str ! console {
+  print(s)
+  s
+}
+
+fn check(n: str, o: Option[str]) -> Result[str, str] {
+  match o {
+    .some(v) { .ok(v) }
+    .none { .err(n) }
+  }
+}
+
+fn join3(a: str, b: str, c: str) -> str { a }
+
+fn f(s: S, b: Option[str]) -> Result[str, str] ! console {
+  m = join3(match s {
+    .one { say("match one") }
+    .two { say("match two") }
+  }, try check("m", b), "z")
+  .ok(m)
+}
+
+fn main() ! console {
+  match f(.one, .none) {
+    .ok(t) { print(t) }
+    .err(w) { print(w) }
+  }
+}

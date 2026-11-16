@@ -1,0 +1,9 @@
+fn wrap(body: () -> ()) ! console {
+  body()
+  print("after")
+}
+
+fn main() ! console {
+  with wrap()
+  print("in")
+}

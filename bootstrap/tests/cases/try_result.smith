@@ -1,0 +1,31 @@
+fn find(name: str, have: Option[str]) -> Result[str, str] ! alloc {
+  match have {
+    .some(value) { .ok(value) }
+    .none { .err("no {name}") }
+  }
+}
+
+fn both(a: Option[str], b: Option[str]) -> Result[str, str] ! alloc {
+  x = try find("a", a)
+  y = try find("b", b)
+  .ok("{x}{y}")
+}
+
+fn show(r: Result[str, str]) ! console {
+  match r {
+    .ok(text) { print(text) }
+    .err(why) { print(why) }
+  }
+}
+
+fn wrap(body: () -> ()) ! console {
+  body()
+  print("after")
+}
+
+fn main() ! console, alloc {
+  show(both(.some("a"), .some("b")))
+  show(both(.some("a"), .none))
+  with wrap()
+  print("in")
+}
