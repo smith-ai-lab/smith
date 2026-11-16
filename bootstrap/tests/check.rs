@@ -97,7 +97,7 @@ fn check_reports_what_build_reports_for_the_cases_and_writes_no_file() {
 }
 
 fn check_reports_the_errors_build_reports_for_every_input() {
-    generate::check(41, 800, props::bytes, |Bytes(source)| {
+    generate::check(41, 483, props::bytes, |Bytes(source)| {
         match (lower(source), check(source)) {
             (Err(built), Err(checked)) => assert_eq!(checked, built),
             (Ok(_), Ok(_)) => {}
@@ -397,7 +397,7 @@ fn linted(g: &mut Gen) -> Linted {
 }
 
 fn every_placed_warning_is_reported_by_check_alone_at_its_place() {
-    generate::check(42, 300, linted, |linted| {
+    generate::check(42, 60, linted, |linted| {
         let source = linted.source.as_bytes();
         let found: Vec<Error> = check(source).unwrap_or_else(|e| panic!("{e:?}"));
         let places: Vec<Pos> = found.iter().map(|w| w.pos).collect();

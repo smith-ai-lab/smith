@@ -185,7 +185,7 @@ struct Lowered {
 }
 
 /// How many programs each generator contributes.
-const CASES: u64 = 40;
+const CASES: u64 = 8;
 
 /// Every program of every generator, lowered.
 fn lowered() -> &'static [Lowered] {

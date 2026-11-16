@@ -2,9 +2,11 @@
 //! decides from two fingerprints, which `targets::fingerprint` makes of two
 //! compilers, so it is tested here without GitHub.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use smith::compile;
 use smith::diag::Error;
@@ -13,14 +15,17 @@ use smith::target::Target;
 use crate::Test;
 use crate::targets::fingerprint;
 
+/// The test that makes the fingerprints, which the harness starts first so
+/// that no other test waits for it.
+pub const FIRST: &[Test] = &[(
+    "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it",
+    a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it,
+)];
+
 pub const ONCE: &[Test] = &[
     (
         "the_machines_file_names_every_target_but_one_once",
         the_machines_file_names_every_target_but_one_once,
-    ),
-    (
-        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it",
-        a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it,
     ),
     (
         "a_compiler_that_differs_for_nothing_needs_no_machine",
@@ -68,6 +73,31 @@ fn the_machines_file_names_every_target_but_one_once() {
     assert_eq!(lines.len(), Target::ALL.len() - 1);
 }
 
+/// What the compiler built, by program and target name.
+type Built = Mutex<HashMap<(Vec<u8>, &'static str), Vec<u8>>>;
+
+/// What the compiler builds for a program and a target, built once. The
+/// three fingerprints of the first test build the same programs, and the
+/// compiler that differs for a target builds what this does and a byte more.
+fn built(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
+    static BUILT: OnceLock<Built> = OnceLock::new();
+    let key = (source.to_vec(), target.name());
+    let cache = BUILT.get_or_init(Mutex::default);
+    if let Some(bytes) = cache.lock().unwrap().get(&key) {
+        return Ok(bytes.clone());
+    }
+    let bytes = compile(source, target)?;
+    cache.lock().unwrap().insert(key, bytes.clone());
+    Ok(bytes)
+}
+
+/// The fingerprint of the compiler, which the three tests share: it is the
+/// same for each, and it is most of what each takes.
+fn fingerprint_of_the_compiler() -> &'static [(Target, String)] {
+    static FINGERPRINT: OnceLock<Vec<(Target, String)>> = OnceLock::new();
+    FINGERPRINT.get_or_init(|| fingerprint(built))
+}
+
 /// The fingerprint of a compiler as the lines a file holds.
 fn lines(fingerprint: &[(Target, String)]) -> String {
     fingerprint
@@ -108,7 +138,7 @@ static CHANGED: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 /// The compiler with a byte more in the executables of `CHANGED`.
 fn changed(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
-    let mut bytes = compile(source, target)?;
+    let mut bytes = built(source, target)?;
     let place = CHANGED.load(Ordering::Relaxed);
     if place == usize::MAX || Target::ALL[place] == target {
         bytes.push(0);
@@ -117,7 +147,7 @@ fn changed(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
 }
 
 fn a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it() {
-    let same = fingerprint(compile);
+    let same = fingerprint_of_the_compiler().to_vec();
     // The compiler that differs for every target, and the one that differs
     // for the first only.
     CHANGED.store(usize::MAX, Ordering::Relaxed);
@@ -154,12 +184,12 @@ fn a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it
 }
 
 fn a_compiler_that_differs_for_nothing_needs_no_machine() {
-    let same = lines(&fingerprint(compile));
+    let same = lines(fingerprint_of_the_compiler());
     assert_eq!(needs(&same, &same), Vec::<String>::new());
 }
 
 fn nothing_known_of_a_compiler_needs_every_machine() {
-    let known = lines(&fingerprint(compile));
+    let known = lines(fingerprint_of_the_compiler());
     let every: Vec<String> = machines().into_iter().map(|(_, m)| m).collect();
     assert_eq!(needs("", &known), every);
     assert_eq!(needs(&known, ""), every);
