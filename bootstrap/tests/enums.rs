@@ -516,11 +516,9 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
     m.main = main_body(g, &m, kind);
     if kind == Some(Kind::NotBuilt) {
         match g.below(4) {
-            0 => m.main.push(Stmt::Raw(
-                "w = ".into(),
-                "try note".into(),
-                NOT_BUILT.into(),
-            )),
+            0 => m
+                .main
+                .push(Stmt::Raw("w = ".into(), "[note]".into(), NOT_BUILT.into())),
             1 => m.main.push(Stmt::Raw(
                 "w = ".into(),
                 "if note { \"a\" }".into(),
@@ -528,7 +526,7 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
             )),
             2 => m.main.push(Stmt::Raw(
                 "w: ".into(),
-                "Option[str] = .none".into(),
+                "List[str] = .none".into(),
                 NOT_BUILT.into(),
             )),
             _ => {

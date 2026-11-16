@@ -1508,7 +1508,7 @@ fn main_statement(
             let (before, rest) = *b.g.pick(&[
                 ("x ", "+= \"a\""),
                 ("x.y ", "-= \"a\""),
-                ("", "with a"),
+                ("x ", "*= \"a\""),
                 ("", "break"),
                 ("", "loop {}"),
                 ("x", "[0] = \"a\""),

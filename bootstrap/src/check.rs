@@ -52,7 +52,7 @@ const TEXT: &str = "str";
 /// not build yet.
 const TYPES_NOT_BUILT: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "f16", "bf16", "f32",
-    "f64", "Nat", "Pos", "Fin", "Ptr", "List", "Map", "Option", "Result",
+    "f64", "Nat", "Pos", "Fin", "Ptr", "List", "Map",
 ];
 
 /// The traits the language and its prelude define, which the compiler
@@ -66,7 +66,6 @@ const TRAITS_NOT_BUILT: &[&str] = &[
     "Div",
     "Pow",
     "MatMul",
-    "Try",
     "Iterate",
     "FromInt",
     "FromFloat",
@@ -74,10 +73,20 @@ const TRAITS_NOT_BUILT: &[&str] = &[
     "FromArray",
 ];
 
-/// The traits the prelude defines that the compiler builds, with their
-/// implementations, written in Smith. They are read at line 0, which no file
-/// has, so nothing in a file can be confused with them.
+/// The types and traits the prelude defines that the compiler builds, with
+/// their implementations, written in Smith. They are read at line 0, which
+/// no file has, so nothing in a file can be confused with them.
 const PRELUDE: &str = "\
+enum Option[T] {
+  some: T
+  none
+}
+
+enum Result[T, E] {
+  ok: T
+  err: E
+}
+
 trait Fmt[T] {
   fn fmt(value: T) -> str ! alloc
 }
@@ -85,10 +94,32 @@ trait Fmt[T] {
 impl Fmt[str] {
   fn fmt(value: str) -> str ! alloc { value }
 }
+
+trait Try[C, R, out T] {
+  fn then(c: C, body: (T) -> R) -> R
+}
+
+impl[T, U, E] Try[Result[T, E], Result[U, E], T] {
+  fn then(c: Result[T, E], body: (T) -> Result[U, E]) -> Result[U, E] {
+    match c {
+      .ok(x) { body(x) }
+      .err(e) { .err(e) }
+    }
+  }
+}
+
+impl[T, U] Try[Option[T], Option[U], T] {
+  fn then(c: Option[T], body: (T) -> Option[U]) -> Option[U] {
+    match c {
+      .some(x) { body(x) }
+      .none { .none }
+    }
+  }
+}
 ";
 
 /// The names of the traits `PRELUDE` defines.
-const PRELUDE_TRAITS: &[&str] = &["Fmt"];
+const PRELUDE_TRAITS: &[&str] = &["Fmt", "Try"];
 
 /// Whether a definition is the prelude's.
 fn of_prelude(pos: Pos) -> bool {
@@ -102,6 +133,7 @@ fn with_prelude(mut file: File) -> File {
         t.pos.line = 0;
     }
     let prelude = crate::parser::parse(&tokens).expect("the prelude parses");
+    file.enums.splice(0..0, prelude.enums);
     file.traits.splice(0..0, prelude.traits);
     file.impls.splice(0..0, prelude.impls);
     file
@@ -533,6 +565,18 @@ impl<'a> Defs<'a> {
         Ty::Unknown
     }
 
+    /// Whether the type is the prelude's `Result`, whose failure must not be
+    /// dropped.
+    fn is_result(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Enum(e, _) => {
+                let e = &self.file.enums[*e];
+                e.name == "Result" && of_prelude(e.pos)
+            }
+            _ => false,
+        }
+    }
+
     /// The type, with nothing reported.
     fn quietly(&self, t: &Type, scope: &Scope) -> Ty {
         self.resolve(t, scope, &mut Vec::new())
@@ -714,7 +758,7 @@ impl<'a> Defs<'a> {
     /// The trait's types other than its `out` ones, as an error names them.
     fn types_of(&self, k: usize, types: &[Ty], scope: &Scope) -> String {
         let shown: Vec<String> = (types.iter().zip(&self.outs[k]))
-            .filter(|(_, out)| !**out)
+            .filter(|(t, out)| !**out && **t != Ty::Unknown)
             .map(|(t, _)| self.text(t, scope))
             .collect();
         let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
@@ -797,6 +841,29 @@ impl<'a> Defs<'a> {
             return Found::Yes(all, Some((i, sol)));
         }
         Found::No
+    }
+
+    /// The types of trait `k` that an implementation for the types that are
+    /// not `out` gives, where those may be partly known. The types an
+    /// implementation does not fix are unknown. Gives `None` when no
+    /// implementation fits.
+    fn fitting(&self, k: usize, types: &[Ty]) -> Option<Vec<Ty>> {
+        for &i in &self.impls_of[k] {
+            let Some(info) = &self.impls[i] else {
+                continue;
+            };
+            if !info.chosen {
+                continue;
+            }
+            let mut sol = vec![None; info.scope.names.len()];
+            let fits = (info.args.iter().zip(types).zip(&self.outs[k]))
+                .filter(|(_, out)| !**out)
+                .all(|((pattern, given), _)| unify(pattern, given, &mut sol));
+            if fits {
+                return Some(info.args.iter().map(|t| t.solved(&sol)).collect());
+            }
+        }
+        None
     }
 
     /// Whether `t` meets the bound `T: Trait`, which asks for an
@@ -1309,6 +1376,8 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         types: HashMap::new(),
         value_calls: HashSet::new(),
         fn_values: HashMap::new(),
+        no_impl: false,
+        refusals: 0,
     };
     checker.main(&file.functions[main]);
     for &item in &reached {
@@ -2150,6 +2219,13 @@ struct Checker<'a> {
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
     fn_values: HashMap<usize, usize>,
+    /// Whether the call of a trait's function being checked has types no
+    /// implementation is for, which is already reported.
+    no_impl: bool,
+    /// How many lambdas after a call have been reported as given to a
+    /// function that cannot take them, so that a call that had one is not
+    /// reported again for what it gives.
+    refusals: usize,
 }
 
 /// What is expected of an expression's value.
@@ -2709,17 +2785,6 @@ impl<'a> Checker<'a> {
             self.params(f, &defs.trait_sigs[k][i].scope);
             self.defaults(f, &defs.trait_sigs[k][i]);
             self.effects(&f.effects);
-            for p in &f.params {
-                for (name, pos) in type_names(&p.ty) {
-                    let out = t.generics.iter().any(|g| g.name == name && g.out.is_some());
-                    if out {
-                        self.errors.push(Error::unsupported(
-                            pos,
-                            "an `out` type in a parameter of a trait's function",
-                        ));
-                    }
-                }
-            }
             for g in t.generics.iter().filter(|g| g.out.is_none()) {
                 let named =
                     (f.params.iter()).any(|p| type_names(&p.ty).iter().any(|(n, _)| *n == g.name));
@@ -3158,7 +3223,21 @@ impl<'a> Checker<'a> {
                 }
                 Stmt::Expr(value) => {
                     let want = if is_last { last } else { &Want::Unused };
-                    End::Value(self.expr(body, value, want), value)
+                    let gives = self.expr(body, value, want);
+                    if !is_last && self.defs.is_result(&gives) {
+                        self.errors.push(
+                            Error::new(
+                                value.pos(),
+                                format!(
+                                    "this gives {}, which nothing uses, so a failure would be \
+                                     dropped",
+                                    self.defs.describe(&gives, body.scope)
+                                ),
+                            )
+                            .with_fix("write `try` before it, or match on it"),
+                        );
+                    }
+                    End::Value(gives, value)
                 }
             };
         }
@@ -3344,10 +3423,10 @@ impl<'a> Checker<'a> {
             }
             Expr::Match(m) => self.match_expr(body, m, want),
             Expr::Lambda(l) => match want {
-                Want::Ty(Ty::Fn(items)) => self.lambda(body, l, items),
+                Want::Ty(Ty::Fn(items)) => self.lambda(body, l, items, false),
                 Want::Ty(Ty::Unknown) => {
                     let unknown = vec![Ty::Unknown; l.params.len() + 1];
-                    self.lambda(body, l, &unknown);
+                    self.lambda(body, l, &unknown, true);
                     Ty::Unknown
                 }
                 Want::Ty(t) => {
@@ -3389,7 +3468,7 @@ impl<'a> Checker<'a> {
     /// partly known, and gives its type. Its body is checked where it is
     /// written, against the effects of the function it is written in, and
     /// it may assign that function's `var`s.
-    fn lambda(&mut self, body: &mut Body<'a>, l: &Lambda, wanted: &[Ty]) -> Ty {
+    fn lambda(&mut self, body: &mut Body<'a>, l: &Lambda, wanted: &[Ty], quiet: bool) -> Ty {
         let defs = self.defs;
         let (result, params) = wanted.split_last().expect("a result");
         if l.params.len() != params.len() {
@@ -3419,6 +3498,7 @@ impl<'a> Checker<'a> {
         }
         let want = match result {
             Ty::Nothing => Want::Unused,
+            Ty::Unknown if quiet => Want::Ty(Ty::Unknown),
             t if t.unknown() => Want::Any,
             t => Want::Ty(t.clone()),
         };
@@ -4018,7 +4098,7 @@ impl<'a> Checker<'a> {
                 ));
                 return self.unknown_call(body, call);
             };
-            return self.trait_call(body, call, k, fi);
+            return self.trait_call(body, call, k, fi, want);
         }
         if let Some((_, Ty::Fn(items))) = body.names.iter().rfind(|(n, _)| n == name) {
             let items = items.clone();
@@ -4032,7 +4112,7 @@ impl<'a> Checker<'a> {
             if self.effect_in_default(body, call, &print) {
                 return self.unknown_call(body, call);
             }
-            self.arguments(body, call, &print, true);
+            self.arguments(body, call, &print, true, None);
             return Ty::Nothing;
         }
         if let Some(&f) = defs.function_names.get(name) {
@@ -4040,8 +4120,9 @@ impl<'a> Checker<'a> {
             if self.effect_in_default(body, call, sig) {
                 return self.unknown_call(body, call);
             }
-            let sol = self.arguments(body, call, sig, false);
-            if self.function_for_parameter(&sol, call.pos) {
+            let refused = self.refusals;
+            let sol = self.arguments(body, call, sig, false, None);
+            if self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
                 return Ty::Unknown;
             }
             for (g, bound) in sig.scope.bounds.iter().enumerate() {
@@ -4061,7 +4142,7 @@ impl<'a> Checker<'a> {
             return sig.gives.solved(&sol);
         }
         match defs.trait_fns.get(name).map(Vec::as_slice) {
-            Some([(k, fi)]) => self.trait_call(body, call, *k, *fi),
+            Some([(k, fi)]) => self.trait_call(body, call, *k, *fi, want),
             Some(of) if !of.is_empty() => {
                 let traits: Vec<&str> = (of.iter())
                     .map(|(k, _)| defs.file.traits[*k].name.as_str())
@@ -4088,14 +4169,24 @@ impl<'a> Checker<'a> {
 
     /// Checks a call of function `fi` of trait `k`, which runs the
     /// implementation its types choose.
-    fn trait_call(&mut self, body: &mut Body<'a>, call: &Call, k: usize, fi: usize) -> Ty {
+    fn trait_call(
+        &mut self,
+        body: &mut Body<'a>,
+        call: &Call,
+        k: usize,
+        fi: usize,
+        want: &Want,
+    ) -> Ty {
         let defs = self.defs;
         let sig = &defs.trait_sigs[k][fi];
         if self.effect_in_default(body, call, sig) {
             return self.unknown_call(body, call);
         }
-        let sol = self.arguments(body, call, sig, false);
-        if self.function_for_parameter(&sol, call.pos) {
+        let outer = std::mem::replace(&mut self.no_impl, false);
+        let refused = self.refusals;
+        let sol = self.arguments(body, call, sig, false, Some((k, want)));
+        let reported = std::mem::replace(&mut self.no_impl, outer);
+        if reported || self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
             return Ty::Unknown;
         }
         let outs = &defs.outs[k];
@@ -4107,19 +4198,96 @@ impl<'a> Checker<'a> {
             .map(|t| t.clone().unwrap_or(Ty::Unknown))
             .collect();
         match defs.find(k, &types, body.scope, &mut Vec::new()) {
-            Found::Yes(all, _) => sig.gives.subst(&all),
+            Found::Yes(all, _) => {
+                let differs = (sol.iter().zip(&all).zip(outs))
+                    .any(|((t, a), out)| *out && t.as_ref().is_some_and(|t| !agrees(t, a)));
+                if differs {
+                    self.errors.push(Error::new(
+                        call.pos,
+                        format!(
+                            "the types given for `{}` are not those its implementation for \
+                             {} has",
+                            defs.file.traits[k].name,
+                            defs.types_of(k, &types, body.scope)
+                        ),
+                    ));
+                    return Ty::Unknown;
+                }
+                sig.gives.subst(&all)
+            }
             Found::No => {
-                self.errors.push(Error::new(
-                    call.pos,
-                    format!(
-                        "there is no implementation of `{}` for {}",
-                        defs.file.traits[k].name,
-                        defs.types_of(k, &types, body.scope)
-                    ),
-                ));
+                self.errors
+                    .push(self.no_implementation(body, call, k, &types));
                 Ty::Unknown
             }
             Found::Unknown => Ty::Unknown,
+        }
+    }
+
+    /// The error for a call of a function of trait `k` whose types no
+    /// implementation is for.
+    fn no_implementation(&self, body: &Body, call: &Call, k: usize, types: &[Ty]) -> Error {
+        let defs = self.defs;
+        Error::new(
+            call.pos,
+            format!(
+                "there is no implementation of `{}` for {}",
+                defs.file.traits[k].name,
+                defs.types_of(k, types, body.scope)
+            ),
+        )
+    }
+
+    /// Before a lambda is checked against the function a trait's function
+    /// takes, gives the types that are not yet known but which the
+    /// implementation the known ones choose fixes: its `out` types, and the
+    /// type the call gives when the call's value is what is wanted. Gives
+    /// whether an implementation was not found, which is reported.
+    fn completed(
+        &mut self,
+        body: &Body,
+        call: &Call,
+        (k, want): (usize, &Want),
+        sig: &Signature,
+        sol: &mut [Option<Ty>],
+    ) -> bool {
+        let defs = self.defs;
+        let outs = &defs.outs[k];
+        // The type the call gives is that of what the lambda gives, so it
+        // may be known only from what is wanted.
+        let gives = match &sig.gives {
+            Ty::Param(r) if !outs[*r] => Some(*r),
+            _ => None,
+        };
+        if let (Some(r), Want::Ty(wanted)) = (gives, want)
+            && sol[r].is_none()
+            && !wanted.unknown()
+        {
+            sol[r] = Some(wanted.clone());
+        }
+        if (sol.iter().zip(outs).enumerate())
+            .any(|(i, (t, out))| !out && t.is_none() && Some(i) != gives)
+        {
+            return false;
+        }
+        let types: Vec<Ty> = sol
+            .iter()
+            .map(|t| t.clone().unwrap_or(Ty::Unknown))
+            .collect();
+        match defs.fitting(k, &types) {
+            Some(all) => {
+                for (t, a) in sol.iter_mut().zip(all) {
+                    if a != Ty::Unknown {
+                        t.get_or_insert(a);
+                    }
+                }
+                false
+            }
+            None => {
+                self.errors
+                    .push(self.no_implementation(body, call, k, &types));
+                true
+            }
         }
     }
 
@@ -4250,6 +4418,7 @@ impl<'a> Checker<'a> {
         call: &Call,
         signature: &Signature,
         is_print: bool,
+        via: Option<(usize, &Want)>,
     ) -> Vec<Option<Ty>> {
         let vars = &signature.scope;
         let mut sol: Vec<Option<Ty>> = vec![None; vars.names.len()];
@@ -4294,6 +4463,7 @@ impl<'a> Checker<'a> {
                 };
                 if let Some(message) = error {
                     self.errors.push(Error::new(arg.value.pos(), message));
+                    self.refusals += 1;
                     continue;
                 }
             } else {
@@ -4373,8 +4543,20 @@ impl<'a> Checker<'a> {
                     continue;
                 }
             }
+            if let (Some(via), Some(_), Expr::Lambda(_)) = (via, param, &arg.value)
+                && !self.no_impl
+            {
+                self.no_impl = self.completed(body, call, via, signature, &mut sol);
+            }
+            let quiet = self.no_impl || matches!(via, Some((_, Want::Ty(Ty::Unknown))));
             let wanted = match param {
-                Some(i) => Want::Ty(signature.params[i].1.partial(&sol)),
+                Some(_) if quiet => Want::Ty(Ty::Unknown),
+                Some(i) => match signature.params[i].1.partial(&sol) {
+                    // A type that is not known yet is not one a mistake
+                    // already explains.
+                    Ty::Unknown if signature.params[i].1 != Ty::Unknown => Want::Any,
+                    t => Want::Ty(t),
+                },
                 None => Want::Ty(Ty::Unknown),
             };
             let gives = self.expr(body, &arg.value, &wanted);

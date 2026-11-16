@@ -1,0 +1,18 @@
+fn find(name: str, have: Option[str]) -> Result[str, str] {
+  match have {
+    .some(value) { .ok(value) }
+    .none { .err(name) }
+  }
+}
+
+fn both(a: Option[str]) -> Result[str, str] {
+  find("a", a)
+  .ok("done")
+}
+
+fn main() ! console {
+  match both(.none) {
+    .ok(text) { print(text) }
+    .err(why) { print(why) }
+  }
+}

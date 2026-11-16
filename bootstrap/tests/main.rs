@@ -24,6 +24,7 @@ mod sha256;
 mod targets;
 mod text;
 mod traits;
+mod tries;
 mod tuples;
 
 use std::panic::{self, AssertUnwindSafe};

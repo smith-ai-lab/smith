@@ -16,6 +16,7 @@ use crate::programs::{self, Case, PIECES, pos_after};
 use crate::targets;
 use crate::text;
 use crate::traits;
+use crate::tries;
 use crate::tuples;
 
 pub const TESTS: &[Test] = &[
@@ -94,6 +95,18 @@ pub const TESTS: &[Test] = &[
     (
         "every_placed_mistake_about_text_is_one_error_at_its_place",
         every_placed_mistake_about_text_is_one_error_at_its_place,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print,
+    ),
+    (
+        "a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean",
+        a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean,
+    ),
+    (
+        "every_placed_mistake_about_with_and_try_is_one_error_at_its_place",
+        every_placed_mistake_about_with_and_try_is_one_error_at_its_place,
     ),
     (
         "a_function_main_does_not_reach_is_parsed_and_not_checked",
@@ -357,6 +370,46 @@ fn an_expression_in_parentheses_is_the_expression() {
 
 fn every_placed_mistake_about_lambdas_is_one_error_at_its_place() {
     generate::check(31, 500, lambdas::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
+fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print() {
+    generate::check(40, 300, tries::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+    });
+}
+
+/// `with x = f(args)` and the rest of the block mean `f(args) fn(x) { the
+/// rest }`, `with f(args)` means `f(args) { the rest }`, and `x = try e`
+/// means `with x = then(e)`, so the programs written each way build to the
+/// same bytes.
+fn a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean() {
+    let targets = targets::buildable();
+    generate::check(41, 30, tries::program, |case| {
+        let source = case.source.as_bytes();
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+        for (name, other) in [("with", &case.with_form), ("lambdas", &case.lambdas)] {
+            let written = lower(other.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {other}"));
+            assert!(program == written, "differs from the {name} form\n{other}");
+        }
+        for &target in &targets {
+            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            let other =
+                compile(case.lambdas.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert!(bytes == other, "{} differs", target.name());
+        }
+    });
+}
+
+fn every_placed_mistake_about_with_and_try_is_one_error_at_its_place() {
+    generate::check(42, 500, tries::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
