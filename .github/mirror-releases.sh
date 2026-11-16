@@ -1,7 +1,8 @@
 #!/bin/sh
 # Copies to GitLab's package registry every release file it lacks, under the
 # release's version, and fails when GitLab holds a file with another hash or
-# when either list cannot be read whole.
+# when either list cannot be read whole. It reads GitLab's list again when it
+# is done and fails, naming a file, if one is missing or differs.
 # Needs GH_TOKEN, REPOSITORY and GITLAB_PACKAGE_TOKEN in the environment, and
 # GITLAB_API to name another GitLab than the real one and PAGE_SIZE to read
 # its lists in smaller pages.
@@ -31,14 +32,17 @@ gh api --paginate "repos/$REPOSITORY/releases?per_page=100" --jq \
   '.[] | (.tag_name | ltrimstr("v")) as $v | .assets[] | "\($v) \(.name) \(.digest | ltrimstr("sha256:"))"' \
   > "$work/github"
 
-# What GitLab holds, in the same form.
-pages "$api/packages?package_type=generic&package_name=smith&" > "$work/package-pages"
-jq -r '.[] | "\(.id) \(.version)"' "$work/package-pages" > "$work/packages"
-: > "$work/gitlab"
-while read -r id version; do
-  pages "$api/packages/$id/package_files?" > "$work/file-pages"
-  jq -r ".[] | \"$version \\(.file_name) \\(.file_sha256)\"" "$work/file-pages" >> "$work/gitlab"
-done < "$work/packages"
+# What GitLab holds, in the same form, written to the file named.
+read_gitlab() {
+  pages "$api/packages?package_type=generic&package_name=smith&" > "$work/package-pages"
+  jq -r '.[] | "\(.id) \(.version)"' "$work/package-pages" > "$work/packages"
+  : > "$1"
+  while read -r id version; do
+    pages "$api/packages/$id/package_files?" > "$work/file-pages"
+    jq -r ".[] | \"$version \\(.file_name) \\(.file_sha256)\"" "$work/file-pages" >> "$1"
+  done < "$work/packages"
+}
+read_gitlab "$work/gitlab"
 
 sh "$(dirname "$0")/plan-uploads.sh" "$work/github" "$work/gitlab" > "$work/plan"
 
@@ -54,4 +58,14 @@ while read -r version file hash; do
     "$api/packages/generic/smith/$version/$file" > /dev/null
   echo "uploaded $file of $version"
 done < "$work/plan"
+
+# What GitLab holds now must be everything GitHub holds, with the same hashes.
+read_gitlab "$work/gitlab-after"
+sh "$(dirname "$0")/plan-uploads.sh" "$work/github" "$work/gitlab-after" > "$work/lacking"
+if [ -s "$work/lacking" ]; then
+  while read -r version file hash; do
+    echo "GitLab lacks the file $file of $version after the uploads" >&2
+  done < "$work/lacking"
+  exit 1
+fi
 echo "GitLab holds every file of every release"
