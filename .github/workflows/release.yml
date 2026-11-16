@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.plan.outputs.version }}
+      targets: ${{ steps.plan.outputs.targets }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -29,6 +30,7 @@ jobs:
         id: plan
         run: |
           set -eu
+          echo 'targets=[{"target":"linux_x64","os":"ubuntu-latest"},{"target":"macos_arm64","os":"macos-latest"},{"target":"linux_arm64","os":"ubuntu-24.04-arm"},{"target":"macos_x64","os":"macos-15-intel"},{"target":"windows_x64","os":"windows-latest"},{"target":"windows_arm64","os":"windows-11-arm"}]' >> "$GITHUB_OUTPUT"
           # A commit already inside a release makes no second one, so a
           # rerun for the same merge changes nothing.
           if [ -n "$(git tag --list 'v[0-9]*' --contains "$GITHUB_SHA")" ]; then
@@ -54,6 +56,10 @@ jobs:
           name: notes
           path: notes.md
 
+  # GitHub ends a job that waits about fifteen minutes for a machine as
+  # `cancelled`, without a step run, and nothing here sets that limit. So a
+  # target whose job never started is built again, twice at most, by `build2`
+  # and `build3`, and `built` judges each target by its newest job.
   build:
     name: build ${{ matrix.target }}
     needs: plan
@@ -61,42 +67,115 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        include:
-          - { target: linux_x64, os: ubuntu-latest }
-          - { target: macos_arm64, os: macos-latest }
-          - { target: linux_arm64, os: ubuntu-24.04-arm }
-          - { target: macos_x64, os: macos-15-intel }
-          - { target: windows_x64, os: windows-latest }
-          - { target: windows_arm64, os: windows-11-arm }
-    runs-on: ${{ matrix.os }}
+        include: ${{ fromJSON(needs.plan.outputs.targets) }}
+    uses: ./.github/workflows/build.yml
+    with:
+      target: ${{ matrix.target }}
+      os: ${{ matrix.os }}
+      version: ${{ needs.plan.outputs.version }}
+
+  lost1:
+    name: which machines were not found
+    needs: [plan, build]
+    if: ${{ !cancelled() && needs.build.result == 'cancelled' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      targets: ${{ steps.lost.outputs.targets }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Build the optimized compiler
-        shell: bash
-        working-directory: bootstrap
+      - id: lost
         env:
-          SMITH_VERSION: ${{ needs.plan.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          TARGETS: ${{ needs.plan.outputs.targets }}
         run: |
           set -eu
-          cargo build --release --locked
-          case "${{ matrix.target }}" in
-            windows_*) suffix=.exe ;;
-            *) suffix= ;;
-          esac
-          mkdir -p "$RUNNER_TEMP/out"
-          cp "target/release/smith$suffix" "$RUNNER_TEMP/out/smith-${{ matrix.target }}$suffix"
-          "$RUNNER_TEMP/out/smith-${{ matrix.target }}$suffix" --version
-      - uses: actions/upload-artifact@v4
+          sh .github/job-states.sh "build " > states
+          os=$(sh .github/never-started.sh retry < states | jq -Rsc 'split("\n") | map(select(. != ""))')
+          echo "targets=$(echo "$TARGETS" | jq -c --argjson lost "$os" 'map(select(.os as $os | $lost | index($os)))')" >> "$GITHUB_OUTPUT"
+
+  build2:
+    name: build ${{ matrix.target }}
+    needs: [plan, lost1]
+    if: ${{ !cancelled() && needs.lost1.outputs.targets != '' && needs.lost1.outputs.targets != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.lost1.outputs.targets) }}
+    uses: ./.github/workflows/build.yml
+    with:
+      target: ${{ matrix.target }}
+      os: ${{ matrix.os }}
+      version: ${{ needs.plan.outputs.version }}
+
+  lost2:
+    name: which machines were still not found
+    needs: [plan, build2]
+    if: ${{ !cancelled() && needs.build2.result == 'cancelled' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      targets: ${{ steps.lost.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v6
         with:
-          name: smith-${{ matrix.target }}
-          path: ${{ runner.temp }}/out/*
-          if-no-files-found: error
+          persist-credentials: false
+      - id: lost
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGETS: ${{ needs.plan.outputs.targets }}
+        run: |
+          set -eu
+          sh .github/job-states.sh "build " > states
+          os=$(sh .github/never-started.sh retry < states | jq -Rsc 'split("\n") | map(select(. != ""))')
+          echo "targets=$(echo "$TARGETS" | jq -c --argjson lost "$os" 'map(select(.os as $os | $lost | index($os)))')" >> "$GITHUB_OUTPUT"
+
+  build3:
+    name: build ${{ matrix.target }}
+    needs: [plan, lost2]
+    if: ${{ !cancelled() && needs.lost2.outputs.targets != '' && needs.lost2.outputs.targets != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.lost2.outputs.targets) }}
+    uses: ./.github/workflows/build.yml
+    with:
+      target: ${{ matrix.target }}
+      os: ${{ matrix.os }}
+      version: ${{ needs.plan.outputs.version }}
+
+  built:
+    name: every target is built
+    needs: [plan, build, build2, build3]
+    if: ${{ !cancelled() && needs.plan.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TARGETS: ${{ needs.plan.outputs.targets }}
+        run: |
+          set -eu
+          wanted=$(echo "$TARGETS" | jq -r '.[].os')
+          sh .github/job-states.sh "build " > states
+          result=$(sh .github/never-started.sh result $wanted < states)
+          echo "the builds gave $result"
+          test "$result" = success
 
   publish:
     name: publish v${{ needs.plan.outputs.version }}
-    needs: [plan, build]
+    needs: [plan, built]
     runs-on: ubuntu-latest
     permissions:
       # Only this job may write, and only to make a release.

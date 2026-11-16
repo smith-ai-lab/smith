@@ -1,0 +1,48 @@
+name: build
+
+# The optimized compiler for one target. `release` calls it once for each
+# target, and again for a target whose job never started.
+on:
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: true
+      os:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ inputs.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build the optimized compiler
+        shell: bash
+        working-directory: bootstrap
+        env:
+          SMITH_VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          cargo build --release --locked
+          case "${{ inputs.target }}" in
+            windows_*) suffix=.exe ;;
+            *) suffix= ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "target/release/smith$suffix" "$RUNNER_TEMP/out/smith-${{ inputs.target }}$suffix"
+          "$RUNNER_TEMP/out/smith-${{ inputs.target }}$suffix" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smith-${{ inputs.target }}
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error

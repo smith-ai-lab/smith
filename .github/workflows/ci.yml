@@ -24,6 +24,7 @@ jobs:
     outputs:
       compiler: ${{ steps.diff.outputs.compiler }}
       install: ${{ steps.diff.outputs.install }}
+      machines: ${{ steps.diff.outputs.machines }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -34,6 +35,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
+          echo 'machines=["macos-latest","ubuntu-24.04-arm","macos-15-intel","windows-latest","windows-11-arm"]' >> "$GITHUB_OUTPUT"
           echo "compiler=$(sh .github/changed.sh "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
           if git diff --name-only "$BASE" "$HEAD" | grep -Eq '^(install\.sh|\.github/check-install\.sh)$'; then
             echo "install=true" >> "$GITHUB_OUTPUT"
@@ -67,6 +69,12 @@ jobs:
   # The tests whose result depends on the machine, on each other kind of machine
   # a target needs: macos_arm64, linux_arm64, macos_x64, windows_x64, and
   # windows_arm64. linux_x64 is the job above.
+  #
+  # GitHub ends a job that waits about fifteen minutes for a machine as
+  # `cancelled`, without a step run, and nothing here sets that limit. So a job
+  # that never started is started again, twice at most, by `machine2` and
+  # `machine3`, before the run counts it as failed. The jobs that follow the
+  # first `machine` run only for the kinds whose job never started.
   machine:
     name: test on ${{ matrix.os }}
     needs: changes
@@ -74,15 +82,78 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-24.04-arm, macos-15-intel, windows-latest, windows-11-arm]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: bootstrap
+        os: ${{ fromJSON(needs.changes.outputs.machines) }}
+    uses: ./.github/workflows/machine-test.yml
+    with:
+      os: ${{ matrix.os }}
+
+  lost1:
+    name: which machines were not found
+    needs: machine
+    if: ${{ !cancelled() && needs.machine.result == 'cancelled' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      os: ${{ steps.lost.outputs.os }}
     steps:
       - uses: actions/checkout@v6
-      - name: Test
-        run: cargo test --locked -- --group=machine
+      - id: lost
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sh .github/job-states.sh "test on " > states
+          lost=$(sh .github/never-started.sh retry < states)
+          os=$(echo "$lost" | jq -Rsc 'split("\n") | map(select(. != ""))')
+          echo "os=$os" >> "$GITHUB_OUTPUT"
+
+  machine2:
+    name: test on ${{ matrix.os }}
+    needs: lost1
+    if: ${{ !cancelled() && needs.lost1.outputs.os != '' && needs.lost1.outputs.os != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.lost1.outputs.os) }}
+    uses: ./.github/workflows/machine-test.yml
+    with:
+      os: ${{ matrix.os }}
+
+  lost2:
+    name: which machines were still not found
+    needs: machine2
+    if: ${{ !cancelled() && needs.machine2.result == 'cancelled' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      os: ${{ steps.lost.outputs.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: lost
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sh .github/job-states.sh "test on " > states
+          lost=$(sh .github/never-started.sh retry < states)
+          os=$(echo "$lost" | jq -Rsc 'split("\n") | map(select(. != ""))')
+          echo "os=$os" >> "$GITHUB_OUTPUT"
+
+  machine3:
+    name: test on ${{ matrix.os }}
+    needs: lost2
+    if: ${{ !cancelled() && needs.lost2.outputs.os != '' && needs.lost2.outputs.os != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.lost2.outputs.os) }}
+    uses: ./.github/workflows/machine-test.yml
+    with:
+      os: ${{ matrix.os }}
 
   # Installs from the real newest release with the script in this change, on each
   # kind of machine it supports.
@@ -126,9 +197,12 @@ jobs:
 
   ci:
     name: ci
-    needs: [changes, linux, machine, install, commits, status]
+    needs: [changes, linux, machine, machine2, machine3, install, commits, status]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Show what the decision gives
@@ -137,12 +211,28 @@ jobs:
             echo "== a job that gave $result"
             if sh .github/ci-result.sh "job=$result"; then echo "-> passes"; else echo "-> fails"; fi
           done
+      # A machine job that never started and then started again counts by how
+      # the newest one ended, not by the first, and every kind of machine must
+      # show a newest job that succeeded.
+      - name: Judge the machine jobs
+        id: machine
+        if: ${{ needs.changes.outputs.compiler == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACHINES: ${{ needs.changes.outputs.machines }}
+        run: |
+          set -eu
+          wanted=$(echo "$MACHINES" | jq -r '.[]')
+          sh .github/job-states.sh "test on " > states
+          result=$(sh .github/never-started.sh result $wanted < states)
+          echo "the machine jobs gave $result"
+          echo "result=$result" >> "$GITHUB_OUTPUT"
       - name: Decide
         run: >
           sh .github/ci-result.sh
           "changes=${{ needs.changes.result }}"
           "linux=${{ needs.linux.result }}"
-          "machine=${{ needs.machine.result }}"
+          "machine=${{ steps.machine.outputs.result || needs.machine.result }}"
           "install=${{ needs.install.result }}"
           "commits=${{ needs.commits.result }}"
           "status=${{ needs.status.result }}"
