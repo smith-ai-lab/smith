@@ -16,7 +16,7 @@ fn smooth[n: Nat](x: [n]f32) -> f32 {
 }
 ```
 
-A type becomes loopable by implementing `Iterate`. Its one function, `each`, walks the value and calls `body` on every element. `loop v in x { ... }` means `each(x, fn(v) { ... })`.
+A type becomes loopable by implementing `Iterate`. Its one function, `each`, walks the value and calls `body` on every element. `loop v in x { ... }` means `each(x) fn(v) { ... }`.
 
 ```
 trait Iterate[C, out T] {

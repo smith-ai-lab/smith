@@ -84,11 +84,12 @@ pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
 expr       = operand { BINOP operand } ;
 operand    = { "not" } unary ;
 unary      = [ "-" | "try" ] postfix ;
-postfix    = primary { "(" [ args ] ")" | "[" index { "," index } "]" | "." IDENT } ;
+postfix    = primary { call | "[" index { "," index } "]" | "." IDENT } ;
+call       = "(" [ args ] ")" [ lambda ] | lambda ;
 args       = arg { "," arg } [ "," ] ;
 arg        = [ IDENT ":" ] expr ;
 index      = expr | [ expr ] ".." [ expr ] ;
-primary    = IDENT | LITERAL | string | "(" [ expr { "," expr } ] ")" | array | block
+primary    = IDENT | LITERAL | string | "(" [ expr { "," expr } ] ")" | array
            | case | if | match | for | loop | lambda ;
 array      = "[" [ expr { "," expr } [ "," ] ] "]" ;
 
@@ -98,7 +99,7 @@ if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
 for        = "for" IDENT { "," IDENT } block ;
 loop       = "loop" [ IDENT "in" expr ] block ;
-lambda     = "fn" "(" [ IDENT { "," IDENT } ] ")" block ;
+lambda     = [ "fn" "(" IDENT { "," IDENT } ")" ] block ;
 
 type       = statement
            | IDENT [ "[" type_arg { "," type_arg } "]" ]
@@ -115,5 +116,5 @@ type_arg   = type | expr ;
 - **One token of lookahead,** with one exception: a statement that starts like a tuple is read as an expression and converted to a pattern when `=` follows. This is still linear time.
 - **A statement in a type position is a comparison,** such as `value < n`, where `CMP` is one of the comparison operators. It is the type of its proofs.
 - **`f[n](x)` and `a[i]` are the same postfix form.** The type checker tells a type argument from an index.
-- **`{` never continues an expression.** After the condition of an `if`, a `match`, a `loop`, a `for`, or a contract it opens that construct's body, and anywhere else it starts a block. Construction is a call, so `{` never starts a literal.
+- **`{` continues an expression in one way.** On the same line, directly after a call's `)`, or after what is called when a lambda is its only argument, it opens a lambda that is the call's last argument. After the condition of an `if`, the value of a `match`, the head of a `loop` or a `for`, or a contract it opens that construct's body instead, so a call there takes a lambda after it only inside parentheses. Anywhere else `{` starts a lambda. Construction is a call, so `{` never starts a literal.
 - **Files split cheaply.** Top-level items start at column zero, with a keyword or with the name being defined, and only edited definitions are re-parsed.

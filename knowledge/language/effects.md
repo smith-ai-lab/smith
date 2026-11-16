@@ -54,7 +54,7 @@ A handler is an ordinary function that calls the effect's name. This one is a cl
 fn fake_clock[T](body: () -> T ! time) -> T {
   var ticks: u64 = 0
   time(
-    now: fn() {
+    now: {
       ticks = saturating_add(ticks, 1)
       ticks
     },

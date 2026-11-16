@@ -11,8 +11,8 @@ Concurrent work runs in tasks, and there are no raw threads or locks. Data is im
 ```
 fn fetch_both(a: str, b: str) -> Result[(List[u8], List[u8]), NetError] ! net, alloc {
   with tasks()
-  ta = spawn(fn() { fetch(a) })
-  tb = spawn(fn() { fetch(b) })
+  ta = spawn { fetch(a) }
+  tb = spawn { fetch(b) }
   pa = try join(ta)
   pb = try join(tb)
   .ok((pa, pb))
@@ -30,7 +30,7 @@ fn serve(listener: Listener) ! net, alloc, diverge {
   with tasks()
   loop {
     conn = accept(listener)
-    spawn(fn() { handle(conn) })
+    spawn { handle(conn) }
   }
 }
 ```
