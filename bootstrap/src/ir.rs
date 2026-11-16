@@ -49,6 +49,9 @@ pub enum Step {
     /// `{`, and `}`, and each line break and tab written `\n` and `\t`.
     /// It is put in the local, in memory asked of the system as for `Join`.
     Escape { local: usize, value: Value },
+    /// Put in the local case 1 if the texts `a` and `b` have the same bytes,
+    /// and case 0 if they do not.
+    Equal { local: usize, a: Value, b: Value },
     /// Run the steps of the arm at the place of the case `value` is, which
     /// is one of the arms.
     Match { value: Value, arms: Vec<Vec<Step>> },
@@ -78,7 +81,8 @@ impl Function {
                     Step::Write { .. }
                     | Step::Set { .. }
                     | Step::Join { .. }
-                    | Step::Escape { .. } => 0,
+                    | Step::Escape { .. }
+                    | Step::Equal { .. } => 0,
                 })
                 .max()
                 .unwrap_or(0)
@@ -92,7 +96,7 @@ fn allocates(steps: &[Step]) -> bool {
     steps.iter().any(|s| match s {
         Step::Join { .. } | Step::Escape { .. } => true,
         Step::Match { arms, .. } => arms.iter().any(|a| allocates(a)),
-        Step::Write { .. } | Step::Call { .. } | Step::Set { .. } => false,
+        Step::Write { .. } | Step::Call { .. } | Step::Set { .. } | Step::Equal { .. } => false,
     })
 }
 

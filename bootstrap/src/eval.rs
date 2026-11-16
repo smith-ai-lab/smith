@@ -86,6 +86,10 @@ fn steps(program: &Program, steps_: &[Step], locals: &mut [Word], stdout: &mut V
                 let text = text(program, locals, *value);
                 locals[*local] = Word::Text(escaped(&text).into());
             }
+            Step::Equal { local, a, b } => {
+                let same = text(program, locals, *a) == text(program, locals, *b);
+                locals[*local] = Word::Case(usize::from(same));
+            }
             Step::Match { value, arms } => {
                 let Word::Case(c) = word(program, locals, *value) else {
                     panic!("a match on what is not a case")

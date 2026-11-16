@@ -1940,13 +1940,13 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
         }
         Some(Kind::ExpressionNotBuilt) => {
             b.mark(NOT_BUILT, None);
-            b.pick(&["1", "-\"a\"", "[\"a\"]", "if"]);
+            b.pick(&["1", "-\"a\"", "[\"a\"]", "loop"]);
         }
         Some(Kind::Operator) => {
             literal_text(b, pieces, None);
             b.push(" ");
             b.mark(NOT_BUILT, None);
-            b.pick(&["+ \"b\"", "== \"b\"", "and x", "..\"b\""]);
+            b.pick(&["+ \"b\"", "< \"b\"", "* \"b\"", "..\"b\""]);
         }
         Some(Kind::NoClosingQuote) => {
             let opening = pos_after(&b.text);

@@ -3,7 +3,7 @@ type: specification
 title: Functions
 description: Typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
 status: partial
-built: "typed parameters and return types over `str`, blocks, named arguments, defaults, a final lambda parameter after them, and `//` comments"
+built: "typed parameters and return types over `str`, `bool`, and the types a program defines, blocks, named arguments, defaults, a final lambda parameter after them, and `//` comments"
 ---
 
 # Functions

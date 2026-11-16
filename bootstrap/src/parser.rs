@@ -243,13 +243,36 @@ pub struct Lambda {
     pub end: Pos,
 }
 
-/// `match e { pattern { ... } ... }`.
+/// `match e { pattern { ... } ... }`, or what is read as one: `if`,
+/// `not`, `and`, and `or`, each a `match` on a `bool` with a block for
+/// `.true` and one for `.false`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Match {
-    /// Where `match` is.
+    /// Where it starts: at `match`, `if`, or `not`, or at the left side of
+    /// `and` and `or`.
     pub pos: Pos,
     pub of: Expr,
     pub arms: Vec<Arm>,
+    pub form: Form,
+}
+
+/// How a `match` is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Form {
+    Match,
+    /// `if c { a } else { b }`, whose blocks are those of `.true` and then
+    /// `.false`. Without `else`, the block of `.false` is empty.
+    If {
+        otherwise: bool,
+    },
+    /// `not c`, whose blocks give `false` for `.true` and `true` for
+    /// `.false`.
+    Not,
+    /// `a and b`, whose blocks give `b` for `.true` and `false` for
+    /// `.false`.
+    And,
+    /// `a or b`, whose blocks give `true` for `.true` and `b` for `.false`.
+    Or,
 }
 
 /// A pattern of a `match` and the block that runs when it matches.
@@ -479,6 +502,65 @@ fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Er
             after: false,
         }],
         end: pos,
+    }))
+}
+
+/// The block of a `match` on a `bool` for the case `name`.
+fn arm(name: &str, pos: Pos, body: Vec<Stmt>, end: Pos) -> Arm {
+    Arm {
+        pattern: Pattern::Case {
+            name: name.to_string(),
+            pos,
+            inner: None,
+        },
+        body,
+        end,
+    }
+}
+
+/// The case of `bool` named `name`, as a statement.
+fn truth(name: &str, pos: Pos) -> Vec<Stmt> {
+    vec![Stmt::Expr(Expr::Case {
+        name: name.to_string(),
+        pos,
+        payload: None,
+    })]
+}
+
+/// `not operand`, with `not` at `pos`.
+fn negated(pos: Pos, operand: Expr) -> Expr {
+    let at = operand.pos();
+    Expr::Match(Box::new(Match {
+        pos,
+        of: operand,
+        arms: vec![
+            arm("true", at, truth("false", at), at),
+            arm("false", at, truth("true", at), at),
+        ],
+        form: Form::Not,
+    }))
+}
+
+/// `left and right` or `left or right`.
+fn logic(form: Form, left: Expr, right: Expr) -> Expr {
+    let (pos, at) = (left.pos(), right.pos());
+    let right = vec![Stmt::Expr(right)];
+    let arms = if form == Form::And {
+        vec![
+            arm("true", at, right, at),
+            arm("false", at, truth("false", at), at),
+        ]
+    } else {
+        vec![
+            arm("true", at, truth("true", at), at),
+            arm("false", at, right, at),
+        ]
+    };
+    Expr::Match(Box::new(Match {
+        pos,
+        of: left,
+        arms,
+        form,
     }))
 }
 
@@ -1576,9 +1658,168 @@ impl Parser<'_> {
         }
     }
 
-    /// Parses an expression: text, a name, or a call, followed by the
-    /// fields it reads.
+    /// Parses an expression, with its operators grouped as the precedence
+    /// table in `knowledge/grammar.md` says.
     fn expr(&mut self) -> Result<Expr, Error> {
+        let expr = self.either()?;
+        if continues_expression(self.tok()) {
+            return Err(self.continuation());
+        }
+        Ok(expr)
+    }
+
+    /// Parses operands joined by `or`.
+    fn either(&mut self) -> Result<Expr, Error> {
+        let mut left = self.both()?;
+        while self.tok() == &Tok::Keyword("or") {
+            let right = self.right_side("or", Self::both)?;
+            left = logic(Form::Or, left, right);
+        }
+        Ok(left)
+    }
+
+    /// Parses operands joined by `and`.
+    fn both(&mut self) -> Result<Expr, Error> {
+        let mut left = self.negation()?;
+        while self.tok() == &Tok::Keyword("and") {
+            let right = self.right_side("and", Self::negation)?;
+            left = logic(Form::And, left, right);
+        }
+        Ok(left)
+    }
+
+    /// Parses the right side of `and` or `or`, from the operator, with
+    /// `side`. It runs only when the left side has not settled the answer,
+    /// and a `try` in it would pass on the rest of the statement before the
+    /// left side runs, so it is not built yet.
+    fn right_side(
+        &mut self,
+        word: &str,
+        side: fn(&mut Self) -> Result<Expr, Error>,
+    ) -> Result<Expr, Error> {
+        self.bump();
+        self.skip_newlines();
+        let mark = self.hoisted.len();
+        let right = side(self)?;
+        if let Some(h) = self.hoisted[mark..].iter().find(|h| !h.bind) {
+            return Err(Error::unsupported(
+                h.pos,
+                &format!("`try` on the right side of `{word}`"),
+            ));
+        }
+        Ok(right)
+    }
+
+    /// Parses `not` before what it covers, or a comparison.
+    fn negation(&mut self) -> Result<Expr, Error> {
+        if self.tok() != &Tok::Keyword("not") {
+            return self.comparison();
+        }
+        let pos = self.pos();
+        self.bump();
+        self.skip_newlines();
+        let operand = self.negation()?;
+        Ok(negated(pos, operand))
+    }
+
+    /// Parses an operand, and a comparison of it with another if `==` or
+    /// `!=` follows. A comparison takes no other comparison as an operand
+    /// unless it is in parentheses.
+    fn comparison(&mut self) -> Result<Expr, Error> {
+        let mut left = self.operand()?;
+        let op = match self.tok() {
+            Tok::Punct(op @ ("==" | "!=")) => *op,
+            _ => return Ok(left),
+        };
+        let op_pos = self.pos();
+        self.bump();
+        self.skip_newlines();
+        let mark = self.hoisted.len();
+        let right = if self.tok() == &Tok::Keyword("not") {
+            self.negation()?
+        } else {
+            self.operand()?
+        };
+        if self.hoisted.len() > mark {
+            let mut at = mark;
+            self.spill(&mut left, &mut at);
+        }
+        if let Tok::Punct("==" | "!=" | "<" | "<=" | ">" | ">=") = self.tok() {
+            return Err(Error::new(
+                self.pos(),
+                "a comparison cannot compare what another comparison gives \
+                 unless one of them is in parentheses",
+            )
+            .with_fix("put the comparison that runs first in parentheses"));
+        }
+        let pos = left.pos();
+        let same = Expr::Call(Call {
+            qualifier: Some(("Eq".to_string(), op_pos)),
+            callee: "eq".to_string(),
+            pos,
+            name_pos: op_pos,
+            args: [left, right]
+                .into_iter()
+                .map(|value| Arg {
+                    name: None,
+                    value,
+                    after: false,
+                })
+                .collect(),
+            end: op_pos,
+        });
+        Ok(if op == "==" { same } else { negated(pos, same) })
+    }
+
+    /// Parses `if`, through the block that ends it.
+    fn if_expr(&mut self) -> Result<Match, Error> {
+        let pos = self.pos();
+        self.bump();
+        let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+        let of = self.expr();
+        self.no_lambda = no_lambda;
+        let of = of?;
+        self.expect_punct("{", "`{` to open the block of the `if`")?;
+        let (then, then_end) = self.inner_block()?;
+        let has_else = self.tok() == &Tok::Keyword("else");
+        let (otherwise, end) = if has_else {
+            self.bump();
+            if self.tok() == &Tok::Keyword("if") {
+                let inner = self.if_expr()?;
+                let end = inner.arms[1].end;
+                (vec![Stmt::Expr(Expr::Match(Box::new(inner)))], end)
+            } else {
+                self.expect_punct("{", "`{` to open the block of the `else`")?;
+                self.inner_block()?
+            }
+        } else {
+            (Vec::new(), then_end)
+        };
+        Ok(Match {
+            pos,
+            of,
+            arms: vec![
+                arm("true", pos, then, then_end),
+                arm("false", pos, otherwise, end),
+            ],
+            form: Form::If {
+                otherwise: has_else,
+            },
+        })
+    }
+
+    /// Parses the statements of a block after its `{`, where a `{` after a
+    /// call opens a lambda again, through the `}` that closes it.
+    fn inner_block(&mut self) -> Result<(Vec<Stmt>, Pos), Error> {
+        let no_lambda = std::mem::replace(&mut self.no_lambda, false);
+        let block = self.block_rest();
+        self.no_lambda = no_lambda;
+        block
+    }
+
+    /// Parses an operand: text, a name, a call, or any other expression
+    /// that is not made by an operator, followed by the fields it reads.
+    fn operand(&mut self) -> Result<Expr, Error> {
         let pos = self.pos();
         let mut expr = match self.tok() {
             Tok::Str(text) => {
@@ -1652,9 +1893,10 @@ impl Parser<'_> {
                 }
             }
             Tok::Keyword("match") => Expr::Match(Box::new(self.match_expr()?)),
+            Tok::Keyword("if") => Expr::Match(Box::new(self.if_expr()?)),
             Tok::Keyword("try") => {
                 self.bump();
-                let operand = self.expr()?;
+                let operand = self.operand()?;
                 let name = format!("try@{}:{}", pos.line, pos.col);
                 self.hoisted.push(Hoisted {
                     pos,
@@ -1702,9 +1944,6 @@ impl Parser<'_> {
                 },
             };
         }
-        if continues_expression(self.tok()) {
-            return Err(self.continuation());
-        }
         Ok(expr)
     }
 
@@ -1725,10 +1964,7 @@ impl Parser<'_> {
             }
             let pattern = self.pattern()?;
             self.expect_punct("{", "`{` to open the pattern's block")?;
-            let no_lambda = std::mem::replace(&mut self.no_lambda, false);
-            let block = self.block_rest();
-            self.no_lambda = no_lambda;
-            let (body, end) = block?;
+            let (body, end) = self.inner_block()?;
             match self.tok() {
                 Tok::Newline | Tok::Punct("}") => {}
                 tok => return Err(self.expected("a line break or `}`", tok)),
@@ -1736,7 +1972,12 @@ impl Parser<'_> {
             arms.push(Arm { pattern, body, end });
         }
         self.bump();
-        Ok(Match { pos, of, arms })
+        Ok(Match {
+            pos,
+            of,
+            arms,
+            form: Form::Match,
+        })
     }
 
     /// Parses a pattern.

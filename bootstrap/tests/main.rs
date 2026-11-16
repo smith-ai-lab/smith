@@ -11,6 +11,7 @@
 //! naming the targets this machine could not run.
 
 mod check;
+mod choices;
 mod cli;
 mod enums;
 mod generate;

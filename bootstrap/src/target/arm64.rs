@@ -537,6 +537,7 @@ impl<S: System> Frame<'_, S> {
                     asm.bind(end);
                 }
                 Step::Escape { local, value } => self.escape(asm, *local, *value),
+                Step::Equal { local, a, b } => self.equal(asm, *local, *a, *b),
                 Step::Match { value, arms } => {
                     // Each arm but the last is chosen by comparing the case
                     // with its place, and the last runs when none was.
@@ -557,6 +558,33 @@ impl<S: System> Frame<'_, S> {
                 }
             }
         }
+    }
+
+    /// Puts in the local case 1 if the texts have the same bytes, and case 0
+    /// if not. The case is in x0, the texts are at x20 and x3, and their
+    /// lengths are in x21 and x4. x21 counts the bytes still to compare.
+    fn equal(&self, asm: &mut Asm, local: usize, a: Value, b: Value) {
+        let to = self.slot(local);
+        self.load(asm, a, X20, X21);
+        self.load(asm, b, X3, X4);
+        let (compare, same, done) = (asm.label(), asm.label(), asm.label());
+        asm.mov64(X0, 0);
+        asm.cmp(X21, X4);
+        asm.cond(NE, done);
+        asm.bind(compare);
+        asm.cbz(X21, same);
+        asm.load_byte_next(X1, X20);
+        asm.load_byte_next(X2, X3);
+        asm.word(0xd100_0400 | X21 << 5 | X21); // sub x21, x21, #1
+        asm.cmp(X1, X2);
+        asm.cond(NE, done);
+        asm.branch(compare);
+        asm.bind(same);
+        asm.mov64(X0, 1);
+        asm.bind(done);
+        asm.store_stack(to, X0);
+        asm.mov64(X1, 0);
+        asm.store_stack(to + 8, X1);
     }
 
     /// Writes the text as a string literal into the local. The first pass
