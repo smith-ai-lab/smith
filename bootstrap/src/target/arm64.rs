@@ -321,9 +321,10 @@ const SLOT: u32 = 16;
 ///
 /// Every function has a frame on the stack, a multiple of 16 bytes. From
 /// the bottom, it holds the bytes the system may use, the arguments of the
-/// calls it makes, the texts it holds, and the address it returns to. A
-/// function finds its parameters among the arguments in its caller's
-/// frame, and gives back its text in x0 and x1.
+/// calls it makes and the texts those calls give back, the texts it holds,
+/// and the address it returns to. A function finds its parameters among
+/// the arguments in its caller's frame, and puts the texts it gives back
+/// just after them.
 pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     let mut asm = Asm::default();
     let texts: Vec<usize> = program.texts.iter().map(|_| asm.label()).collect();
@@ -359,7 +360,7 @@ fn function<S: System>(
         .steps
         .iter()
         .map(|s| match s {
-            Step::Call { args, .. } => args.len(),
+            Step::Call { args, results, .. } => args.len() + results.len(),
             Step::Write { .. } => 0,
         })
         .max()
@@ -394,7 +395,7 @@ fn function<S: System>(
             Step::Call {
                 function,
                 args,
-                result,
+                results,
             } => {
                 for (i, arg) in args.iter().enumerate() {
                     load(asm, *arg, X0, X1);
@@ -403,15 +404,23 @@ fn function<S: System>(
                     asm.store_stack(at + 8, X1);
                 }
                 asm.call_label(functions[*function]);
-                if let Some(r) = result {
+                for (i, r) in results.iter().enumerate() {
+                    let at = S::RESERVED + SLOT * (args.len() + i) as u32;
+                    asm.load_stack(X0, at);
+                    asm.load_stack(X1, at + 8);
                     asm.store_stack(slot(*r), X0);
                     asm.store_stack(slot(*r) + 8, X1);
                 }
             }
         }
     }
-    if let Some(value) = f.result {
-        load(asm, value, X0, X1);
+    // The texts it gives back go after its parameters in its caller's
+    // frame, so writing one never overwrites a parameter still to be read.
+    for (i, value) in f.results.iter().enumerate() {
+        load(asm, *value, X0, X1);
+        let at = frame + S::RESERVED + SLOT * (f.params + i) as u32;
+        asm.store_stack(at, X0);
+        asm.store_stack(at + 8, X1);
     }
     asm.load_stack(X30, frame - 16);
     asm.release_stack(frame);

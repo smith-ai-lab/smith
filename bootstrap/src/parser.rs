@@ -6,6 +6,29 @@
 use crate::diag::{Error, Pos};
 use crate::lexer::{Tok, Token};
 
+/// The definitions of a file, each kind in the order they are written.
+#[derive(Debug, PartialEq, Eq)]
+pub struct File {
+    pub functions: Vec<Function>,
+    pub structs: Vec<Struct>,
+}
+
+/// A struct definition.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Struct {
+    pub name: String,
+    pub pos: Pos,
+    pub fields: Vec<Field>,
+}
+
+/// A field of a struct, and its type.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    pub pos: Pos,
+    pub ty: Type,
+}
+
 /// A function definition.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Function {
@@ -63,19 +86,30 @@ pub enum Expr {
         name: String,
         pos: Pos,
     },
+    /// A call of a named function, or the construction of a struct.
     Call(Call),
+    /// `e.name`, which reads a field.
+    Field {
+        of: Box<Expr>,
+        name: String,
+        /// Where the field's name is.
+        pos: Pos,
+    },
 }
 
 impl Expr {
+    /// Where the expression starts.
     pub fn pos(&self) -> Pos {
         match self {
             Expr::Text { pos, .. } | Expr::Name { pos, .. } => *pos,
             Expr::Call(call) => call.pos,
+            Expr::Field { of, .. } => of.pos(),
         }
     }
 }
 
-/// A call of a named function.
+/// A call of a named function, or the construction of a struct, which is
+/// written as a call.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Call {
     pub callee: String,
@@ -92,25 +126,33 @@ pub struct Arg {
     pub value: Expr,
 }
 
-/// Parses a file into its functions, in the order they are written.
+/// Parses a file into its definitions.
 ///
 /// Every definition and every statement is parsed on its own, so a mistake
 /// in one is reported and does not hide a mistake in another. Within one
 /// statement, or one function's signature, only the first mistake is
 /// reported, as what follows it cannot be read with any confidence.
-pub fn parse(tokens: &[Token]) -> Result<Vec<Function>, Vec<Error>> {
+pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
     let mut p = Parser {
         tokens,
         at: 0,
         errors: Vec::new(),
     };
     let mut functions = Vec::new();
+    let mut structs = Vec::new();
     loop {
         p.skip_newlines();
         let start = p.at;
         match p.tok() {
             Tok::Eof => break,
             Tok::Keyword("fn") => functions.extend(p.function(start)),
+            Tok::Keyword("struct") => match p.structure() {
+                Ok(s) => structs.push(s),
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
             _ => {
                 let error = p.item();
                 p.errors.push(error);
@@ -119,7 +161,7 @@ pub fn parse(tokens: &[Token]) -> Result<Vec<Function>, Vec<Error>> {
         }
     }
     if p.errors.is_empty() {
-        Ok(functions)
+        Ok(File { functions, structs })
     } else {
         Err(p.errors)
     }
@@ -288,7 +330,6 @@ impl Parser<'_> {
         let pos = self.pos();
         let feature = match self.tok() {
             Tok::Keyword("pub") => "`pub`",
-            Tok::Keyword("struct") => "a struct",
             Tok::Keyword("enum") => "an enum",
             Tok::Keyword("trait") => "a trait",
             Tok::Keyword("effect") => "declaring an effect",
@@ -301,6 +342,43 @@ impl Parser<'_> {
             tok => return self.expected("a definition", tok),
         };
         Error::unsupported(pos, feature)
+    }
+
+    /// Parses a struct and the line break after it.
+    fn structure(&mut self) -> Result<Struct, Error> {
+        self.bump();
+        let (name, pos) = self.ident("the struct's name")?;
+        if self.tok() == &Tok::Punct("[") {
+            return Err(Error::unsupported(self.pos(), "a type parameter"));
+        }
+        self.expect_punct("{", "`{` to open the struct's fields")?;
+        let mut fields = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct("}") => break,
+                Tok::Keyword("pub") => {
+                    return Err(Error::unsupported(self.pos(), "`pub`"));
+                }
+                _ => {}
+            }
+            let (name, pos) = self.ident("a field or `}`")?;
+            self.expect_punct(":", "`:` and the field's type")?;
+            let ty = self.ty()?;
+            match self.tok() {
+                Tok::Punct("=") => {
+                    return Err(Error::unsupported(self.pos(), "a default value"));
+                }
+                Tok::Newline | Tok::Punct("}") => {}
+                tok => return Err(self.expected("a line break or `}`", tok)),
+            }
+            fields.push(Field { name, pos, ty });
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Newline | Tok::Eof => Ok(Struct { name, pos, fields }),
+            tok => Err(self.expected("a line break", tok)),
+        }
     }
 
     /// Parses a function that starts at the token `from`. Its errors are
@@ -482,7 +560,18 @@ impl Parser<'_> {
                     });
                 }
                 Tok::Punct(":=" | "+=" | "-=" | "*=" | "/=") => "assignment",
-                _ => return Ok(Stmt::Expr(self.expr()?)),
+                _ => {
+                    let expr = self.expr()?;
+                    if matches!(expr, Expr::Field { .. })
+                        && matches!(
+                            self.tok(),
+                            Tok::Punct("=" | ":=" | "+=" | "-=" | "*=" | "/=")
+                        )
+                    {
+                        return Err(Error::unsupported(pos, "assigning to a field"));
+                    }
+                    return Ok(Stmt::Expr(expr));
+                }
             },
             Tok::Keyword("var") => "`var`",
             Tok::Keyword("with") => "`with`",
@@ -498,17 +587,17 @@ impl Parser<'_> {
     fn continuation(&self) -> Error {
         let pos = self.pos();
         match self.tok() {
-            Tok::Punct("(") => Error::unsupported(pos, "calling what a call gives"),
+            Tok::Punct("(") => Error::unsupported(pos, "calling what this gives"),
             Tok::Punct("[") => Error::unsupported(pos, "an index"),
-            Tok::Punct(".") => Error::unsupported(pos, "a field"),
             tok => Error::unsupported(pos, &format!("the operator {}", tok.describe())),
         }
     }
 
-    /// Parses an expression: text, a name, or a call.
+    /// Parses an expression: text, a name, or a call, followed by the
+    /// fields it reads.
     fn expr(&mut self) -> Result<Expr, Error> {
         let pos = self.pos();
-        let expr = match self.tok() {
+        let mut expr = match self.tok() {
             Tok::Str(text) => {
                 let text = text.clone();
                 self.bump();
@@ -541,6 +630,15 @@ impl Parser<'_> {
             }
             tok => return Err(self.expected("an expression", tok)),
         };
+        while self.tok() == &Tok::Punct(".") {
+            self.bump();
+            let (name, pos) = self.ident("a field's name")?;
+            expr = Expr::Field {
+                of: Box::new(expr),
+                name,
+                pos,
+            };
+        }
         if continues_expression(self.tok()) {
             return Err(self.continuation());
         }

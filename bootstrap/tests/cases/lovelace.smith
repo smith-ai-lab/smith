@@ -1,0 +1,10 @@
+struct Name {
+  first: str
+  last: str
+}
+
+fn last_of(n: Name) -> str { n.last }
+
+fn main() ! console {
+  print(last_of(Name(first: "Ada", last: "Lovelace")))
+}

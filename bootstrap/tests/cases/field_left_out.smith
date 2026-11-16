@@ -1,0 +1,8 @@
+struct Name {
+  first: str
+  last: str
+}
+
+fn main() ! console {
+  print(Name(first: "Ada").last)
+}
