@@ -30,6 +30,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+mod to_scalar;
+
 use crate::diag::{Error, Pos};
 use crate::ir::{self, Step, Stream, Value};
 use crate::parser::{
@@ -1423,12 +1425,16 @@ enum Claim {
 /// `smith check` reports about it.
 pub struct Checked {
     pub program: ir::Program,
+    /// The same program in the scalar form, or the feature that stopped it,
+    /// when it was asked for.
+    pub scalar: Option<Result<crate::scalar::Program, crate::scalar::Stopped>>,
     pub warnings: Vec<Error>,
 }
 
-/// Checks the file, and lowers what `main` reaches. Every error is
-/// reported, except one that a mistake already reported would explain.
-pub fn check(file: File) -> Result<Checked, Vec<Error>> {
+/// Checks the file, and lowers what `main` reaches, to the scalar form too
+/// when `scalar` says so. Every error is reported, except one that a mistake
+/// already reported would explain.
+pub fn check(file: File, scalar: bool) -> Result<Checked, Vec<Error>> {
     let file = with_prelude(file);
     let mut errors = Vec::new();
 
@@ -1823,6 +1829,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         return Err(errors);
     }
 
+    let scalar = scalar.then(|| to_scalar::lower(&typed, start.clone()));
     let mut lowering = Lowering {
         typed: &typed,
         instances: vec![start],
@@ -1840,6 +1847,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     };
     Ok(Checked {
         program,
+        scalar,
         warnings: warnings(&file, &reached),
     })
 }
