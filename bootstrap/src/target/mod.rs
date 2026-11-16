@@ -14,6 +14,9 @@ mod windows_x64;
 mod x86_64;
 
 use crate::ir::Program;
+use crate::scalar;
+
+pub use x86_64::Frame;
 
 /// Declares the `Target` enum along with `Target::ALL`, its list of cases,
 /// and each case's name, so that a case cannot be added without joining
@@ -88,16 +91,40 @@ impl Target {
         }
     }
 
-    /// The executable for the program, or `None` if the compiler cannot
-    /// build for this target yet.
+    /// Whether the executables for the target are built from the scalar form
+    /// and not from the form `emit` takes.
+    pub fn from_scalar(self) -> bool {
+        match self {
+            Target::LinuxX64 | Target::MacosX64 | Target::WindowsX64 => true,
+            Target::MacosArm64 | Target::LinuxArm64 | Target::WindowsArm64 => false,
+        }
+    }
+
+    /// The executable for the program, or `None` if the target is built
+    /// from the scalar form, or the compiler cannot build for it yet.
     pub fn emit(self, program: &Program) -> Option<Vec<u8>> {
         match self {
-            Target::LinuxX64 => Some(linux_x64::emit(program)),
             Target::MacosArm64 => Some(macos_arm64::emit(program)),
             Target::LinuxArm64 => Some(linux_arm64::emit(program)),
+            Target::WindowsArm64 => Some(windows_arm64::emit(program)),
+            Target::LinuxX64 | Target::MacosX64 | Target::WindowsX64 => None,
+        }
+    }
+
+    /// The executable for the program in the scalar form, or `None` if the
+    /// target is not built from it yet.
+    pub fn emit_scalar(self, program: &scalar::Program) -> Option<Vec<u8>> {
+        match self {
+            Target::LinuxX64 => Some(linux_x64::emit(program)),
             Target::MacosX64 => Some(macos_x64::emit(program)),
             Target::WindowsX64 => Some(windows_x64::emit(program)),
-            Target::WindowsArm64 => Some(windows_arm64::emit(program)),
+            Target::MacosArm64 | Target::LinuxArm64 | Target::WindowsArm64 => None,
         }
+    }
+
+    /// What each function's frame holds in the executable for the program,
+    /// or `None` if the target is not built from the scalar form.
+    pub fn frames(self, program: &scalar::Program) -> Option<Vec<Frame>> {
+        self.from_scalar().then(|| x86_64::frames(program))
     }
 }
