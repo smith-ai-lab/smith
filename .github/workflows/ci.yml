@@ -28,13 +28,13 @@ jobs:
         run: target/debug/smith build --timings tests/cases/hello.smith
 
   # The tests whose result depends on the machine, on each kind of machine
-  # a target needs: linux_x64 and macos_arm64.
+  # a target needs: linux_x64, macos_arm64, and linux_arm64.
   machine:
     name: test on ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

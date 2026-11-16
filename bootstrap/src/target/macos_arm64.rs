@@ -8,6 +8,7 @@
 //! the loader for the library and its symbols, and the signature, are
 //! written here.
 
+use super::arm64::{Asm, EQ, LE, LT, X0, X1, X2, X19, X20};
 use crate::ir::{Program, Step, Stream};
 
 /// Where `__TEXT` is loaded, above the 4 GiB `__PAGEZERO`.
@@ -95,7 +96,7 @@ pub fn emit(program: &Program) -> Vec<u8> {
     let bind = bind_info();
     let strings = string_table();
     let text_offset = MACH_HEADER_SIZE + COMMANDS_SIZE as u64;
-    let text_size = (asm.code.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>()) as u64;
+    let text_size = (asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>()) as u64;
     let text_segment_size = (text_offset + text_size).next_multiple_of(PAGE);
     let data_offset = text_segment_size;
     let linkedit_offset = data_offset + PAGE;
@@ -480,16 +481,6 @@ fn fd(stream: Stream) -> u16 {
     }
 }
 
-const X0: u32 = 0;
-const X1: u32 = 1;
-const X2: u32 = 2;
-/// Kept across calls, so they hold the place and the length still to write.
-const X19: u32 = 19;
-const X20: u32 = 20;
-const LE: u32 = 0xd;
-const EQ: u32 = 0x0;
-const LT: u32 = 0xb;
-
 /// Writes every byte at `text`, retrying a write that is cut short or
 /// interrupted, and branches to `fail` if the system refuses it.
 fn write(asm: &mut Asm, fd: u16, text: usize, len: u64, fail: usize) {
@@ -524,163 +515,6 @@ fn write(asm: &mut Asm, fd: u16, text: usize, len: u64, fail: usize) {
     asm.cond(EQ, again);
     asm.branch(fail);
     asm.bind(done);
-}
-
-/// A place in the code that refers to something placed later.
-enum Fixup {
-    /// `b`, with a 26-bit word offset.
-    Branch { at: usize, label: usize },
-    /// `b.cond` or `cbz`, with a 19-bit word offset.
-    Conditional { at: usize, label: usize },
-    /// `adrp` then `add`, which form the address of a label.
-    Address { at: usize, label: usize },
-    /// `adrp` then `ldr`, which load a slot of `__got`.
-    Slot { at: usize, slot: usize },
-}
-
-/// Machine code with labels, each resolved once the code and its data are
-/// laid out.
-#[derive(Default)]
-struct Asm {
-    code: Vec<u8>,
-    labels: Vec<Option<usize>>,
-    fixups: Vec<Fixup>,
-}
-
-impl Asm {
-    fn label(&mut self) -> usize {
-        self.labels.push(None);
-        self.labels.len() - 1
-    }
-
-    fn bind(&mut self, label: usize) {
-        self.labels[label] = Some(self.code.len());
-    }
-
-    fn word(&mut self, word: u32) {
-        self.code.extend_from_slice(&word.to_le_bytes());
-    }
-
-    fn branch(&mut self, label: usize) {
-        self.fixups.push(Fixup::Branch {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0x1400_0000);
-    }
-
-    fn cond(&mut self, cond: u32, label: usize) {
-        self.fixups.push(Fixup::Conditional {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0x5400_0000 | cond);
-    }
-
-    fn cbz(&mut self, reg: u32, label: usize) {
-        self.fixups.push(Fixup::Conditional {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0xb400_0000 | reg);
-    }
-
-    /// `mov xd, xn`.
-    fn mov(&mut self, rd: u32, rn: u32) {
-        self.word(0xaa00_03e0 | rn << 16 | rd);
-    }
-
-    /// `movz wd, #value`.
-    fn mov_w(&mut self, rd: u32, value: u16) {
-        self.word(0x5280_0000 | (value as u32) << 5 | rd);
-    }
-
-    /// `movz` then a `movk` for each further nonzero half-word.
-    fn mov64(&mut self, rd: u32, value: u64) {
-        self.word(0xd280_0000 | ((value & 0xffff) as u32) << 5 | rd);
-        for hw in 1..4u32 {
-            let part = ((value >> (16 * hw)) & 0xffff) as u32;
-            if part != 0 {
-                self.word(0xf280_0000 | hw << 21 | part << 5 | rd);
-            }
-        }
-    }
-
-    /// The address of a label into `rd`.
-    fn address(&mut self, rd: u32, label: usize) {
-        self.fixups.push(Fixup::Address {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0x9000_0000 | rd);
-        self.word(0x9100_0000 | rd << 5 | rd);
-    }
-
-    /// Calls the import in a slot of `__got`, through x16.
-    fn call(&mut self, slot: usize) {
-        const X16: u32 = 16;
-        self.fixups.push(Fixup::Slot {
-            at: self.code.len(),
-            slot,
-        });
-        self.word(0x9000_0000 | X16);
-        self.word(0xf940_0000 | X16 << 5 | X16);
-        self.word(0xd63f_0000 | X16 << 5); // blr x16
-    }
-
-    fn patch(&mut self, at: usize, bits: u32) {
-        let word = u32::from_le_bytes(self.code[at..at + 4].try_into().unwrap()) | bits;
-        self.code[at..at + 4].copy_from_slice(&word.to_le_bytes());
-    }
-
-    /// The code at `code_address` with each piece of data placed after it
-    /// under its label, and `__got` at `got_address`.
-    fn finish(mut self, data: &[(usize, &[u8])], code_address: u64, got_address: u64) -> Vec<u8> {
-        for (label, bytes) in data {
-            self.bind(*label);
-            self.code.extend_from_slice(bytes);
-        }
-        let fixups = std::mem::take(&mut self.fixups);
-        for fixup in fixups {
-            match fixup {
-                Fixup::Branch { at, label } => {
-                    let words = self.offset(at, label) / 4;
-                    self.patch(at, words as u32 & 0x3ff_ffff);
-                }
-                Fixup::Conditional { at, label } => {
-                    let words = self.offset(at, label) / 4;
-                    self.patch(at, (words as u32 & 0x7_ffff) << 5);
-                }
-                Fixup::Address { at, label } => {
-                    let target = code_address + self.place(label) as u64;
-                    self.page_and_low(at, code_address + at as u64, target, 0);
-                }
-                Fixup::Slot { at, slot } => {
-                    let target = got_address + 8 * slot as u64;
-                    self.page_and_low(at, code_address + at as u64, target, 3);
-                }
-            }
-        }
-        self.code
-    }
-
-    fn place(&self, label: usize) -> usize {
-        self.labels[label].expect("every label is bound")
-    }
-
-    fn offset(&self, at: usize, label: usize) -> i64 {
-        self.place(label) as i64 - at as i64
-    }
-
-    /// Fills an `adrp` at `at` and the instruction after it, whose 12-bit
-    /// offset is scaled down by `scale` bits, so that they reach `target`.
-    fn page_and_low(&mut self, at: usize, pc: u64, target: u64, scale: u32) {
-        let pages = ((target & !0xfff) as i64 - (pc & !0xfff) as i64) >> 12;
-        let pages = pages as u32;
-        self.patch(at, (pages & 0x3) << 29 | ((pages >> 2) & 0x7_ffff) << 5);
-        let low = (target & 0xfff) as u32 >> scale;
-        self.patch(at + 4, low << 10);
-    }
 }
 
 /// The SHA-256 of the bytes, as FIPS 180-4 defines it.
