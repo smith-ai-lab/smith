@@ -57,12 +57,13 @@ pub struct Impl {
     pub functions: Vec<Function>,
 }
 
-/// A field of a struct, and its type.
+/// A field of a struct, its type, and its default, if it has one.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
     pub pos: Pos,
     pub ty: Type,
+    pub default: Option<Expr>,
 }
 
 /// A function definition.
@@ -87,12 +88,13 @@ type Effects = Vec<(String, Pos)>;
 /// parameters, its result, and its effects.
 type Signature = (String, Pos, Vec<Generic>, Vec<Param>, Option<Type>, Effects);
 
-/// A parameter and its type.
+/// A parameter, its type, and its default, if it has one.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Param {
     pub name: String,
     pub pos: Pos,
     pub ty: Type,
+    pub default: Option<Expr>,
 }
 
 /// A type: a name, and the types in brackets after it, if any.
@@ -469,14 +471,21 @@ impl Parser<'_> {
             let (name, pos) = self.ident("a field or `}`")?;
             self.expect_punct(":", "`:` and the field's type")?;
             let ty = self.ty()?;
+            let mut default = None;
+            if self.tok() == &Tok::Punct("=") {
+                self.bump();
+                default = Some(self.expr()?);
+            }
             match self.tok() {
-                Tok::Punct("=") => {
-                    return Err(Error::unsupported(self.pos(), "a default value"));
-                }
                 Tok::Newline | Tok::Punct("}") => {}
                 tok => return Err(self.expected("a line break or `}`", tok)),
             }
-            fields.push(Field { name, pos, ty });
+            fields.push(Field {
+                name,
+                pos,
+                ty,
+                default,
+            });
         }
         self.bump();
         match self.tok() {
@@ -768,7 +777,7 @@ impl Parser<'_> {
         Ok((name, pos, generics, params, result, effects))
     }
 
-    /// Parses `name: type`.
+    /// Parses `name: type`, and `= default` after it if it has one.
     fn param(&mut self) -> Result<Param, Error> {
         let (name, pos) = self.ident("a parameter")?;
         self.expect_punct(":", "`:` and the parameter's type")?;
@@ -776,10 +785,18 @@ impl Parser<'_> {
             return Err(Error::unsupported(self.pos(), "`take`"));
         }
         let ty = self.ty()?;
+        let mut default = None;
         if self.tok() == &Tok::Punct("=") {
-            return Err(Error::unsupported(self.pos(), "a default value"));
+            self.bump();
+            self.skip_newlines();
+            default = Some(self.expr()?);
         }
-        Ok(Param { name, pos, ty })
+        Ok(Param {
+            name,
+            pos,
+            ty,
+            default,
+        })
     }
 
     /// Parses a type: a name, and the types in brackets after it, if any.

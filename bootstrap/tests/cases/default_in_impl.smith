@@ -1,0 +1,15 @@
+struct Cat {
+  name: str
+}
+
+trait Named[T] {
+  fn name_of(x: T, title: str = "Dr") -> str
+}
+
+impl Named[Cat] {
+  fn name_of(x: Cat, title: str = "Dr") -> str { title }
+}
+
+fn main() ! console {
+  print(name_of(Cat(name: "Tom")))
+}

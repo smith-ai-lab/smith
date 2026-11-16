@@ -36,6 +36,10 @@ pub const TESTS: &[Test] = &[
         a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out,
     ),
     (
+        "a_program_with_defaults_builds_to_the_bytes_of_it_written_out",
+        a_program_with_defaults_builds_to_the_bytes_of_it_written_out,
+    ),
+    (
         "an_implementation_with_type_parameters_applies_to_each_type_that_fits",
         an_implementation_with_type_parameters_applies_to_each_type_that_fits,
     ),
@@ -189,6 +193,28 @@ fn a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out() {
         let built = compile(case.source.as_bytes(), target).unwrap();
         let written_out = compile(case.written_out.as_bytes(), target).unwrap();
         assert!(built == written_out, "{} differs", target.name());
+    });
+}
+
+/// A generated program, which may leave arguments and fields to their
+/// defaults, and which of `targets` targets to build it for.
+fn program_with_defaults_and_target(g: &mut Gen, targets: usize) -> (Case, usize) {
+    (programs::program(g), g.below(targets))
+}
+
+fn a_program_with_defaults_builds_to_the_bytes_of_it_written_out() {
+    let targets = targets::buildable();
+    let choose = |g: &mut Gen| program_with_defaults_and_target(g, targets.len());
+    generate::check(20, 60, choose, |(case, target)| {
+        let written_out = String::from_utf8_lossy(&case.written_out);
+        let built = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
+        let expanded =
+            lower(&case.written_out).unwrap_or_else(|e| panic!("{e:?} in\n{written_out}"));
+        assert!(built == expanded, "differs from\n{written_out}");
+        let target = targets[*target];
+        let built = compile(&case.source, target).unwrap();
+        let expanded = compile(&case.written_out, target).unwrap();
+        assert!(built == expanded, "{} differs", target.name());
     });
 }
 
@@ -481,7 +507,9 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ("", ")", Some("statement")),
     ];
     const ITEMS: &[Line] = &[
-        ("struct A { x: str ", "= \"a\" }", Some("not supported yet")),
+        ("struct A { x: str = ", "1 }", Some("not supported yet")),
+        ("", "struct C { x: str = \"a\" }", None),
+        ("fn d(a: str = ", ") {}", Some("an expression")),
         ("", "struct B {\n  x: f32\n}", None),
         ("", "use std.console (input)", Some("not supported yet")),
         ("", ")", Some("definition")),

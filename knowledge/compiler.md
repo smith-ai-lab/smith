@@ -180,6 +180,7 @@ The other layers use a second generator that builds well-typed programs.
 | Laziness | For any root, the lazy result equals what a run over every root gives for the same definitions |
 | Determinism | The same input gives the same bytes |
 | Specialization | A program with type parameters builds to the bytes of the same program written out with one function and one struct for each type it uses |
+| Defaults | A program that leaves arguments and fields to their defaults builds to the bytes of the same program with them written out |
 | Self-hosting | The compiler built by itself twice is byte-identical |
 
 - Each property is a theorem to prove later, so it is written in that form now.

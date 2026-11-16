@@ -6,7 +6,8 @@
 //! A program is a few structs, whose fields are text or other structs, and
 //! a few functions that take and return text and structs, with bindings,
 //! `var` locals, assignments to them and to their fields, constructions,
-//! field reads, and calls nested a few deep. It first builds
+//! field reads, and calls nested a few deep. Fields and parameters may have
+//! defaults, which calls and constructions may leave out. It first builds
 //! a model of the program, works out from the model what the program
 //! prints, and then writes the model out as source, placing the mistake as
 //! it writes.
@@ -20,6 +21,9 @@ use crate::generate::Gen;
 /// A generated file.
 pub struct Case {
     pub source: Vec<u8>,
+    /// The same program with every argument and field it leaves to its
+    /// default written out, when it has no mistake.
+    pub written_out: Vec<u8>,
     /// What the program prints, when it has no mistake.
     pub stdout: Vec<u8>,
     /// The mistake placed in it, if any.
@@ -93,7 +97,6 @@ enum Kind {
     ItemAfter,
     NoName,
     GenericParameter,
-    DefaultValue,
     Contract,
     ExpressionNotBuilt,
     Operator,
@@ -135,6 +138,11 @@ enum Kind {
     NoSuchFieldRead,
     NotAStruct,
     ContainsItself,
+    // About defaults, in the signature of `f1`.
+    DefaultBeforeOther,
+    DefaultUsesParameter,
+    DefaultWithEffect,
+    DefaultWrongType,
 }
 
 const KINDS: &[Kind] = &[
@@ -151,7 +159,6 @@ const KINDS: &[Kind] = &[
     Kind::ItemAfter,
     Kind::NoName,
     Kind::GenericParameter,
-    Kind::DefaultValue,
     Kind::Contract,
     Kind::ExpressionNotBuilt,
     Kind::Operator,
@@ -192,15 +199,23 @@ const KINDS: &[Kind] = &[
     Kind::NoSuchFieldRead,
     Kind::NotAStruct,
     Kind::ContainsItself,
+    Kind::DefaultBeforeOther,
+    Kind::DefaultUsesParameter,
+    Kind::DefaultWithEffect,
+    Kind::DefaultWrongType,
 ];
 
 impl Kind {
     /// Whether the mistake goes in the signature of a function other than
-    /// `main` that takes two parameters or more, or in a call of it.
+    /// `main` that takes two parameters or more, or in a call of it. That
+    /// function has no defaults of its own.
     fn needs_parameters(self) -> bool {
         matches!(
             self,
-            Kind::DefaultValue
+            Kind::DefaultBeforeOther
+                | Kind::DefaultUsesParameter
+                | Kind::DefaultWithEffect
+                | Kind::DefaultWrongType
                 | Kind::TypeNotBuilt
                 | Kind::TooFewArguments
                 | Kind::TooManyArguments
@@ -211,7 +226,7 @@ impl Kind {
     }
 
     /// Whether the mistake needs a struct with a field, and a value of a
-    /// struct for the statement it goes in.
+    /// struct for the statement it goes in. No field then has a default.
     fn needs_struct(self) -> bool {
         matches!(
             self,
@@ -295,11 +310,16 @@ struct StructDef {
     /// Its fields, in the order they are declared. A field's struct comes
     /// before this one, so no struct contains itself.
     fields: Vec<(&'static str, Type)>,
+    /// The default of each field, if it has one.
+    defaults: Vec<Option<Expr>>,
 }
 
 struct Func {
     name: String,
     params: Vec<(&'static str, Type)>,
+    /// The default of each parameter, if it has one. Those with one come
+    /// after those without.
+    defaults: Vec<Option<Expr>>,
     /// What it returns, or `None` for nothing.
     result: Option<Type>,
     body: Vec<Stmt>,
@@ -353,13 +373,15 @@ enum Expr {
     /// A literal, as the pieces it is written with.
     Text(Vec<usize>),
     Name(String),
+    /// A call, which may leave out arguments that have defaults.
     Call {
         /// The function called, or `None` for `print`.
         callee: Option<usize>,
         args: Vec<Arg>,
     },
     /// The construction of a struct, with each field by its place in the
-    /// struct, in the order they are written.
+    /// struct, in the order they are written. It may leave out fields that
+    /// have defaults.
     Construct {
         s: usize,
         fields: Vec<(usize, Expr)>,
@@ -398,14 +420,35 @@ fn some_type(g: &mut Gen, structs: &[StructDef]) -> Type {
     }
 }
 
-/// The structs of a program. `with_field` asks for one with a field.
-fn structs(g: &mut Gen, with_field: bool) -> Vec<StructDef> {
+/// A default for a value of the type: a literal, or a construction that
+/// leaves out some of the fields that have defaults.
+fn default_value(g: &mut Gen, structs: &[StructDef], ty: Type) -> Expr {
+    match ty {
+        Type::Str => literal(g),
+        Type::Struct(s) => {
+            let mut rest: Vec<usize> = (0..structs[s].fields.len()).collect();
+            let mut fields = Vec::new();
+            while !rest.is_empty() {
+                let field = rest.remove(g.below(rest.len()));
+                if structs[s].defaults[field].is_none() || g.one_in(2) {
+                    let ty = structs[s].fields[field].1;
+                    fields.push((field, default_value(g, structs, ty)));
+                }
+            }
+            Expr::Construct { s, fields }
+        }
+    }
+}
+
+/// The structs of a program. `with_field` asks for one with a field, and
+/// `with_defaults` lets fields have defaults.
+fn structs(g: &mut Gen, with_field: bool, with_defaults: bool) -> Vec<StructDef> {
     let count = g.below(STRUCTS.len() + 1).max(usize::from(with_field));
     let mut structs = Vec::new();
     for (i, &name) in STRUCTS[..count].iter().enumerate() {
         let mut names = FIELDS.to_vec();
         let fields = g.below(4).max(usize::from(with_field && i == 0));
-        let fields = (0..fields)
+        let fields: Vec<(&str, Type)> = (0..fields)
             .map(|_| {
                 let field = names.remove(g.below(names.len()));
                 let ty = if i > 0 && g.one_in(3) {
@@ -416,7 +459,14 @@ fn structs(g: &mut Gen, with_field: bool) -> Vec<StructDef> {
                 (field, ty)
             })
             .collect();
-        structs.push(StructDef { name, fields });
+        let defaults = (fields.iter())
+            .map(|&(_, ty)| (with_defaults && g.one_in(3)).then(|| default_value(g, &structs, ty)))
+            .collect();
+        structs.push(StructDef {
+            name,
+            fields,
+            defaults,
+        });
     }
     structs
 }
@@ -425,12 +475,14 @@ fn structs(g: &mut Gen, with_field: bool) -> Vec<StructDef> {
 /// the functions it reaches. A function calls only functions after it, so
 /// none calls itself, and every function is called by one before it.
 /// `shaped` asks for a second function that returns text and takes two
-/// parameters or more, and `with_field` for a struct with a field.
-fn model(g: &mut Gen, shaped: bool, with_field: bool) -> Model {
-    let structs = structs(g, with_field);
+/// parameters or more, with no defaults, `with_field` for a struct with a
+/// field, and `field_defaults` lets fields have defaults.
+fn model(g: &mut Gen, shaped: bool, with_field: bool, field_defaults: bool) -> Model {
+    let structs = structs(g, with_field, field_defaults);
     let mut fns = vec![Func {
         name: "main".to_string(),
         params: Vec::new(),
+        defaults: Vec::new(),
         result: None,
         body: Vec::new(),
         console: false,
@@ -445,13 +497,23 @@ fn model(g: &mut Gen, shaped: bool, with_field: bool) -> Model {
             let result = (!g.one_in(3)).then(|| some_type(g, &structs));
             (count, result)
         };
-        let params = PARAMS[..count]
+        let params: Vec<(&str, Type)> = PARAMS[..count]
             .iter()
             .map(|&p| (p, some_type(g, &structs)))
+            .collect();
+        // The parameters from `first_default` on have defaults.
+        let first_default = if (shaped && i == 1) || g.one_in(2) {
+            count
+        } else {
+            count - g.below(count + 1)
+        };
+        let defaults = (params.iter().enumerate())
+            .map(|(p, &(_, ty))| (p >= first_default).then(|| default_value(g, &structs, ty)))
             .collect();
         fns.push(Func {
             name: format!("f{i}"),
             params,
+            defaults,
             result,
             body: Vec::new(),
             console: false,
@@ -704,7 +766,8 @@ fn value(
     }
 }
 
-/// The construction of struct `s`, with its fields in any order.
+/// The construction of struct `s`, with its fields in any order, leaving
+/// out some of those that have defaults.
 fn construct(
     g: &mut Gen,
     m: &Model,
@@ -717,6 +780,9 @@ fn construct(
     let mut fields = Vec::new();
     while !rest.is_empty() {
         let field = rest.remove(g.below(rest.len()));
+        if m.structs[s].defaults[field].is_some() && g.one_in(2) {
+            continue;
+        }
         let ty = m.structs[s].fields[field].1;
         let value = value(g, m, i, names, ty, depth.saturating_sub(1));
         fields.push((field, value));
@@ -725,7 +791,8 @@ fn construct(
 }
 
 /// A call of function `j` from function `i`. Some arguments are given by
-/// position, and the rest by name in any order.
+/// position, and the rest by name in any order, except some of those that
+/// have defaults, which are left out.
 fn call_of(
     g: &mut Gen,
     m: &Model,
@@ -735,8 +802,14 @@ fn call_of(
     depth: usize,
 ) -> Expr {
     let count = m.fns[j].params.len();
-    let by_position = count - g.below(count + 1);
-    let mut rest: Vec<usize> = (by_position..count).collect();
+    let left_out: Vec<usize> = (0..count)
+        .filter(|&p| m.fns[j].defaults[p].is_some() && g.one_in(2))
+        .collect();
+    // Only the arguments before the first left out can be by position.
+    let by_position = (count - g.below(count + 1)).min(left_out.first().copied().unwrap_or(count));
+    let mut rest: Vec<usize> = (by_position..count)
+        .filter(|p| !left_out.contains(p))
+        .collect();
     let mut order: Vec<usize> = (0..by_position).collect();
     while !rest.is_empty() {
         order.push(rest.remove(g.below(rest.len())));
@@ -798,10 +871,20 @@ fn eval(m: &Model, names: &[(String, Val)], expr: &Expr, out: &mut Vec<u8>) -> V
         Expr::Text(pieces) => Val::Text(pieces.iter().flat_map(|&p| PIECES[p].1.bytes()).collect()),
         Expr::Name(name) => names.iter().find(|(n, _)| n == name).unwrap().1.clone(),
         Expr::Call { callee, args } => {
-            let mut values = vec![Val::Text(Vec::new()); args.len()];
+            let count = callee.map_or(1, |f| m.fns[f].params.len());
+            let mut given = vec![None; count];
             for arg in args {
-                values[arg.param] = eval(m, names, &arg.value, out);
+                given[arg.param] = Some(eval(m, names, &arg.value, out));
             }
+            let values: Vec<Val> = (given.into_iter().enumerate())
+                .map(|(p, value)| {
+                    value.unwrap_or_else(|| {
+                        let f = callee.expect("`print` is given its text");
+                        let default = m.fns[f].defaults[p].as_ref().expect("a default");
+                        eval(m, &[], default, out)
+                    })
+                })
+                .collect();
             match callee {
                 None => {
                     let Val::Text(text) = &values[0] else {
@@ -815,10 +898,16 @@ fn eval(m: &Model, names: &[(String, Val)], expr: &Expr, out: &mut Vec<u8>) -> V
             }
         }
         Expr::Construct { s, fields } => {
-            let mut values = vec![Val::Text(Vec::new()); m.structs[*s].fields.len()];
+            let mut given = vec![None; m.structs[*s].fields.len()];
             for (field, value) in fields {
-                values[*field] = eval(m, names, value, out);
+                given[*field] = Some(eval(m, names, value, out));
             }
+            let defaults = &m.structs[*s].defaults;
+            let values = (given.into_iter().zip(defaults))
+                .map(|(value, default)| {
+                    value.unwrap_or_else(|| eval(m, &[], default.as_ref().expect("a default"), out))
+                })
+                .collect();
             Val::Struct(values)
         }
         Expr::Field { of, field, .. } => match eval(m, names, of, out) {
@@ -849,6 +938,9 @@ struct Builder<'a> {
     plain_calls: usize,
     /// Whether a call of `f1` is written yet.
     f1_called: bool,
+    /// Whether every argument and field left to its default is written
+    /// out.
+    expand: bool,
 }
 
 impl Builder<'_> {
@@ -904,8 +996,8 @@ pub const UNREACHED: &[&str] = &[
 /// A definition of its own, before or after the program's, that holds the
 /// mistake. Each is written as the text before the mistake, and the rest.
 const STRUCTS_NOT_BUILT: &[(&str, &str)] = &[
-    ("struct Spare {\n  a: str ", "= \"a\"\n}"),
     ("struct Spare {\n  ", "pub a: str\n}"),
+    ("struct Spare {\n  a: str = ", "1\n}"),
 ];
 
 /// The same, for a struct that `main` reaches and that contains itself.
@@ -927,7 +1019,8 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> Case {
     let mut m = model(
         g,
         kind.is_some_and(Kind::needs_parameters),
-        kind.is_some_and(Kind::needs_struct),
+        kind.is_some_and(|k| k.needs_struct() || k == Kind::DefaultWrongType),
+        !kind.is_some_and(Kind::needs_struct),
     );
     let mut stdout = Vec::new();
     run(&m, 0, Vec::new(), &mut stdout);
@@ -999,6 +1092,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> Case {
         calls: 0,
         plain_calls: 0,
         f1_called: false,
+        expand: false,
     };
 
     for _ in 0..b.g.below(3) {
@@ -1058,7 +1152,35 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> Case {
         own_item(&mut b);
         b.push("\n");
     }
-    finish(b, stdout, m.fns.len())
+    let mut written_out = Builder {
+        g: &mut *b.g,
+        kind: None,
+        text: String::new(),
+        mistake: None,
+        literal_site: 0,
+        literals: 0,
+        call_site: 0,
+        calls: 0,
+        plain_site: 0,
+        plain_calls: 0,
+        f1_called: false,
+        expand: true,
+    };
+    if kind.is_none() {
+        for item in &items {
+            written_out.push("\n");
+            match *item {
+                Item::Fn(f) => {
+                    function(&mut written_out, &m, f, false, None);
+                }
+                Item::Struct(s) => structure(&mut written_out, &m, s),
+            }
+        }
+    }
+    let written_out = written_out.text.into_bytes();
+    let mut case = finish(b, stdout, m.fns.len());
+    case.written_out = written_out;
+    case
 }
 
 /// Writes the definition of its own that holds the mistake.
@@ -1081,20 +1203,25 @@ fn structure(b: &mut Builder, m: &Model, s: usize) {
     b.push(def.name);
     b.pick(&[" ", "  "]);
     b.push("{");
-    if def.fields.len() == 1 && b.g.one_in(3) {
-        let (name, ty) = def.fields[0];
-        b.push(" ");
+    let field = |b: &mut Builder, f: usize| {
+        let (name, ty) = def.fields[f];
         b.push(name);
         b.pick(&[": ", ":"]);
         b.push(m.type_name(ty));
+        if let Some(default) = &def.defaults[f] {
+            b.pick(&[" = ", "=", "  =  "]);
+            expr(b, m, default, &None);
+        }
+    };
+    if def.fields.len() == 1 && b.g.one_in(3) {
+        b.push(" ");
+        field(b, 0);
         b.push(" }");
         return;
     }
-    for &(name, ty) in &def.fields {
+    for f in 0..def.fields.len() {
         b.pick(&["\n  ", "\n\t", "\n\n  ", "\n  // a field\n  "]);
-        b.push(name);
-        b.pick(&[": ", ":"]);
-        b.push(m.type_name(ty));
+        field(b, f);
     }
     if def.fields.is_empty() {
         b.pick(&["", "\n"]);
@@ -1104,11 +1231,45 @@ fn structure(b: &mut Builder, m: &Model, s: usize) {
     b.push("}");
 }
 
+/// An expression as the compiler's advice writes it, with an escape for
+/// each character in a text that needs one.
+fn advised(m: &Model, e: &Expr) -> String {
+    match e {
+        Expr::Text(pieces) => {
+            let mut text = String::from("\"");
+            for c in pieces.iter().flat_map(|&p| PIECES[p].1.chars()) {
+                match c {
+                    '"' | '\\' | '{' | '}' => {
+                        text.push('\\');
+                        text.push(c);
+                    }
+                    '\n' => text.push_str("\\n"),
+                    '\t' => text.push_str("\\t"),
+                    c => text.push(c),
+                }
+            }
+            text.push('"');
+            text
+        }
+        Expr::Construct { s, fields } => {
+            let def = &m.structs[*s];
+            let fields: Vec<String> = (fields.iter())
+                .map(|(f, e)| format!("{}: {}", def.fields[*f].0, advised(m, e)))
+                .collect();
+            format!("{}({})", def.name, fields.join(", "))
+        }
+        _ => unreachable!("a default is a literal or a construction"),
+    }
+}
+
 /// A function's signature as the compiler's advice writes it, listing
 /// `console`.
 fn signature_with_console(m: &Model, f: &Func) -> String {
-    let params: Vec<String> = (f.params.iter())
-        .map(|(p, ty)| format!("{p}: {}", m.type_name(*ty)))
+    let params: Vec<String> = (f.params.iter().zip(&f.defaults))
+        .map(|((p, ty), default)| match default {
+            Some(e) => format!("{p}: {} = {}", m.type_name(*ty), advised(m, e)),
+            None => format!("{p}: {}", m.type_name(*ty)),
+        })
         .collect();
     let result = match f.result {
         Some(ty) => format!(" -> {}", m.type_name(ty)),
@@ -1148,6 +1309,9 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         if i > 0 {
             b.pick(&[", ", ",", ",\n  "]);
         }
+        if f == 1 && i + 1 == func.params.len() && b.is(Kind::DefaultBeforeOther) {
+            b.mark("no default", Some("move".to_string()));
+        }
         b.push(p);
         b.pick(&[": ", ":"]);
         if f == 1 && i == 0 && b.is(Kind::TypeNotBuilt) {
@@ -1156,10 +1320,12 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         } else {
             b.push(m.type_name(*ty));
         }
-        if f == 1 && i == 1 && b.is(Kind::DefaultValue) {
-            b.push(" ");
-            b.mark(NOT_BUILT, None);
-            b.push("= \"a\"");
+        if let Some(default) = &func.defaults[i] {
+            b.pick(&[" = ", "=", " =\n    "]);
+            expr(b, m, default, &None);
+        }
+        if f == 1 {
+            default_mistake(b, m, i, *ty, func.params.len());
         }
     }
     if !func.params.is_empty() {
@@ -1259,6 +1425,57 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         b.push("// done");
     }
     true
+}
+
+/// A default for a value of the type, which gives every field.
+fn full_default(m: &Model, ty: Type) -> String {
+    match ty {
+        Type::Str => "\"a\"".to_string(),
+        Type::Struct(s) => {
+            let def = &m.structs[s];
+            let fields: Vec<String> = (def.fields.iter())
+                .map(|&(f, ty)| format!("{f}: {}", full_default(m, ty)))
+                .collect();
+            format!("{}({})", def.name, fields.join(", "))
+        }
+    }
+}
+
+/// Writes the default with the mistake after parameter `i` of `f1`, of
+/// type `ty`, if the mistake goes there. `f1` has `count` parameters, and
+/// no defaults of its own.
+fn default_mistake(b: &mut Builder, m: &Model, i: usize, ty: Type, count: usize) {
+    let last = i + 1 == count;
+    match b.kind {
+        Some(Kind::DefaultBeforeOther) if i + 2 == count => {
+            b.push(" = ");
+            b.push(&full_default(m, ty));
+        }
+        Some(Kind::DefaultUsesParameter) if last => {
+            b.push(" = ");
+            b.mark(format!("`{}`", PARAMS[0]), None);
+            b.push(PARAMS[0]);
+        }
+        Some(Kind::DefaultWithEffect) if last => {
+            b.push(" = ");
+            b.mark("effect", None);
+            b.push("print(\"a\")");
+        }
+        Some(Kind::DefaultWrongType) if last => {
+            b.push(" = ");
+            match ty {
+                Type::Str => {
+                    b.mark("where text is needed", None);
+                    b.push(&full_default(m, Type::Struct(0)));
+                }
+                Type::Struct(s) => {
+                    b.mark(format!("a `{}` is needed", m.structs[s].name), None);
+                    b.push("\"a\"");
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The struct a value of a struct is of.
@@ -1611,6 +1828,18 @@ fn construction(
         Some(Kind::NoSuchField) => more(b, "nope", "`nope`".to_string()),
         _ => {}
     }
+    if b.expand {
+        let left_out = (0..def.fields.len()).filter(|f| !fields.iter().any(|(g, _)| g == f));
+        for (i, field) in left_out.enumerate() {
+            if i > 0 || !written.is_empty() {
+                b.push(", ");
+            }
+            b.push(def.fields[field].0);
+            b.push(": ");
+            let default = def.defaults[field].as_ref().expect("a default");
+            expr(b, m, default, console_site);
+        }
+    }
     if !written.is_empty() {
         b.pick(&["", ","]);
     }
@@ -1666,6 +1895,20 @@ fn call_args(
         }
         b.push("\"a\"");
     };
+    if b.expand
+        && let Some(f) = callee
+    {
+        let left_out = (0..params.len()).filter(|p| !args.iter().any(|a| a.param == *p));
+        for (i, p) in left_out.enumerate() {
+            if i > 0 || !written.is_empty() {
+                b.push(", ");
+            }
+            b.push(params[p]);
+            b.push(": ");
+            let default = m.fns[f].defaults[p].as_ref().expect("a default");
+            expr(b, m, default, console_site);
+        }
+    }
     match kind {
         Some(Kind::TooManyArguments) => more(b, "takes".to_string(), None, None),
         Some(Kind::NamedTwice) => {
@@ -1796,6 +2039,7 @@ fn finish(b: Builder, stdout: Vec<u8>, reached: usize) -> Case {
     );
     Case {
         source,
+        written_out: Vec::new(),
         stdout,
         mistake,
         reached,
