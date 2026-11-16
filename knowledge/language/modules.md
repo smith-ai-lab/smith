@@ -24,7 +24,7 @@ pub fn commit(t: take Transaction) -> Result[(), DbError] ! net
 fn next_id(db: Db) -> u64 ! net
 ```
 
-- A struct can be built or taken apart only by code that can see all of its fields. Any module can build a `Rect`. Other modules can hold a `Transaction` and pass it on, but cannot forge one or dispose of one, which is what makes `without` and proof fields trustworthy.
+- A struct can be built or taken apart only by code that can see all of its fields, and a field can be assigned only by code that can see it. Any module can build a `Rect`. Other modules can hold a `Transaction` and pass it on, but cannot forge one or dispose of one, which is what makes `without` and proof fields trustworthy.
 - A private definition can be used only inside its own module.
 
 Another module's names are brought in by an explicit list. There is no way to import everything.

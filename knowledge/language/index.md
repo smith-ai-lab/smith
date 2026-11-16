@@ -10,7 +10,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [functions.md](functions.md): typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
 - [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function, and how a binding states its type.
 - [mutable-locals.md](mutable-locals.md): locals that change, declared with `var`, and `if` as an expression.
-- [structs.md](structs.md): structs with named fields and defaults, tuples, and patterns that take them apart.
+- [structs.md](structs.md): structs with named fields and defaults, assigning to a field of a `var`, tuples, and patterns that take them apart.
 - [enums.md](enums.md): enums that hold one of their cases, and `match` to take a value apart.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
 - [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.

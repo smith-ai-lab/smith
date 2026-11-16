@@ -75,8 +75,8 @@ block      = "{" { stmt } "}" ;
 stmt       = define | var_def | assign | with | "break" | expr ;
 define     = pattern [ ":" type ] "=" expr ;
 var_def    = "var" IDENT [ ":" type ] "=" expr ;
-assign     = IDENT "[" index { "," index } "]" "=" expr
-           | IDENT [ "[" index { "," index } "]" ] ( "+=" | "-=" | "*=" | "/=" ) expr ;
+assign     = place ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
+place      = IDENT { "." IDENT | "[" index { "," index } "]" } ;
 with       = "with" [ pattern "=" ] expr ;
 pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
            | "(" pattern { "," pattern } ")" ;
@@ -109,7 +109,7 @@ type_arg   = type | expr ;
 
 ## Parsing properties
 
-- **No name lookup.** Parsing never needs to know what a name refers to, so definitions parse independently and in parallel. `x = e` is one form to the parser, and the checker decides whether it defines `x` or assigns to a `var`.
+- **No name lookup.** Parsing never needs to know what a name refers to, so definitions parse independently and in parallel. `x = e` with a bare name is one form to the parser, and the checker decides whether it defines `x` or assigns to a `var`.
 - **One token of lookahead,** with one exception: a statement that starts like a tuple is read as an expression and converted to a pattern when `=` follows. This is still linear time.
 - **`f[n](x)` and `a[i]` are the same postfix form.** The type checker tells a type argument from an index.
 - **`{` never continues an expression.** After the condition of an `if`, a `match`, a `loop`, a `for`, or a contract it opens that construct's body, and anywhere else it starts a block. Construction is a call, so `{` never starts a literal.
