@@ -20,7 +20,7 @@ fn sides(r: Rect) -> (f32, f32) { (r.w, r.h) }
 
 fn perimeter(r: Rect) -> f32 {
   (a, var b) = sides(r)
-  b := b * 2.0
+  b = b * 2.0
   a * 2.0 + b
 }
 

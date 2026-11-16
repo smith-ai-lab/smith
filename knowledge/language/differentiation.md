@@ -38,7 +38,7 @@ fn train[n: Nat](data: Dataset[n, 784, 10], steps: Nat, key: take Key) -> Mlp[78
   var m = init_mlp(key)
   loop step in 0..steps {
     (xs, ys) = batch(data, step, 64)
-    m := sgd_step(m, xs, ys, 0.01)
+    m = sgd_step(m, xs, ys, 0.01)
   }
   m
 }
