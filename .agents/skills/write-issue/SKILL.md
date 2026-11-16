@@ -58,21 +58,23 @@ The first three parts are the goal, the finished result, and its limits. "Ask fi
 - Ask for nothing that exists only because of what Smith used to be. Smith has no users and no code to keep working, so when something is removed, the compiler forgets it: no special error, no hint towards the new form, no test that it is gone.
 - Keep the whole issue to one screen.
 
-## Choosing the model
+## Sizing it
 
-Label each issue with the least capable model family that can finish it. A label names a family, and the lead starts the worker on the newest model in it. Opus is the most capable model a worker runs on.
+An issue is small. Many small issues cost less than a few large ones, and each is easier to review. If an issue feels large, split it before anyone starts.
 
-- `model:sonnet`: the issue nearly dictates the work. The design is settled and the tests follow from "Must be true".
-- `model:opus`: the work needs judgment the issue cannot dictate, such as a new stage, a file format written by hand, or a design that several later issues build on.
+Most issues carry no label. Label an issue `trivial` only when both of these hold.
 
-If you cannot choose, the issue is not yet clear enough. Tighten it, or split it.
+- The issue nearly dictates the change, as marking pages, renaming, or correcting a sentence does.
+- A mistake in it would fail a check, and could not pass unseen. A script that moves files or talks to another service is never trivial, however short.
+
+A label names the size of the task and never a model. The `lead-issue` skill says which model each size runs on.
 
 ## Creating it
 
 Create the issue, then attach it to the roadmap as a sub-issue. The sub-issue call takes the new issue's `id`, which is not its number, and it must be sent as a number.
 
 ```
-gh api repos/{owner}/{repo}/issues -f title="<title>" -F body=@issue.md -f "labels[]=model:<name>" --jq '.id'
+gh api repos/{owner}/{repo}/issues -f title="<title>" -F body=@issue.md --jq '.id'
 echo '{"sub_issue_id": <id>}' | gh api repos/{owner}/{repo}/issues/<roadmap>/sub_issues -X POST --input -
 ```
 
