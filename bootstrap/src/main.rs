@@ -8,7 +8,15 @@ use smith::target::Target;
 use smith::timings::Timings;
 
 const USAGE: &str = "usage: smith build [--target <target>] [--timings] [<file>.smith]
-       smith run [--target <target>] [--timings] [<file>.smith]";
+       smith run [--target <target>] [--timings] [<file>.smith]
+       smith --version";
+
+/// The version a release was built as, set by the release workflow. A build
+/// that is not a release has none.
+const VERSION: &str = match option_env!("SMITH_VERSION") {
+    Some(version) => version,
+    None => "dev",
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -33,6 +41,10 @@ fn command(args: &[String]) -> Result<ExitCode, String> {
         return Err(USAGE.to_string());
     };
     match name.as_str() {
+        "--version" if rest.is_empty() => {
+            println!("smith {VERSION}");
+            Ok(ExitCode::SUCCESS)
+        }
         "build" => {
             let request = request(rest)?;
             build(&request)?;
