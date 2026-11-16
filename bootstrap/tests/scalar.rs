@@ -1,12 +1,11 @@
-//! The scalar form: every program the lowering takes gives a form that is
-//! well formed and does what the form every target receives does, a form
-//! that is damaged is refused, and every program the lowering cannot take
-//! says why, and is counted.
+//! The scalar form: every program gives a form that is well formed and does
+//! what the form every target receives does, a form that is damaged is
+//! refused, and what a program needs at run time is written in the form.
 
-use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-use smith::scalar::{self, Bits, Constant, End, Op, Type, Value, Why};
+use smith::scalar::runtime::{self, Runtime};
+use smith::scalar::{self, Bits, Builder, Constant, End, Op, Type, Value, Why};
 use smith::{eval, ir, lower, lower_scalar};
 
 use crate::Test;
@@ -24,10 +23,6 @@ use crate::tuples;
 
 pub const ONCE: &[Test] = &[
     (
-        "every_program_is_lowered_to_the_scalar_form_or_says_what_stopped_it",
-        every_program_is_lowered_to_the_scalar_form_or_says_what_stopped_it,
-    ),
-    (
         "every_lowered_program_is_well_formed",
         every_lowered_program_is_well_formed,
     ),
@@ -36,8 +31,32 @@ pub const ONCE: &[Test] = &[
         the_scalar_form_prints_what_the_form_every_target_receives_prints,
     ),
     (
-        "a_lowered_program_reads_and_writes_no_address",
-        a_lowered_program_reads_and_writes_no_address,
+        "a_texts_bytes_are_read_and_written_as_8_bit_values",
+        a_texts_bytes_are_read_and_written_as_8_bit_values,
+    ),
+    (
+        "a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refused",
+        a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refused,
+    ),
+    (
+        "a_program_ends_with_a_failing_status_when_the_system_refuses_memory",
+        a_program_ends_with_a_failing_status_when_the_system_refuses_memory,
+    ),
+    (
+        "joining_texts_gives_the_texts_one_after_another",
+        joining_texts_gives_the_texts_one_after_another,
+    ),
+    (
+        "writing_a_text_as_a_string_literal_escapes_what_must_be",
+        writing_a_text_as_a_string_literal_escapes_what_must_be,
+    ),
+    (
+        "writing_an_integer_gives_its_digits",
+        writing_an_integer_gives_its_digits,
+    ),
+    (
+        "two_texts_are_equal_when_they_have_the_same_bytes",
+        two_texts_are_equal_when_they_have_the_same_bytes,
     ),
     (
         "a_text_is_an_address_and_a_length_and_a_bool_is_one_byte",
@@ -60,8 +79,8 @@ pub const ONCE: &[Test] = &[
         a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it_should,
     ),
     (
-        "a_program_that_prints_a_number_is_stopped_by_the_text_it_builds",
-        a_program_that_prints_a_number_is_stopped_by_the_text_it_builds,
+        "a_program_that_prints_a_number_is_lowered_and_prints_it",
+        a_program_that_prints_a_number_is_lowered_and_prints_it,
     ),
     (
         "every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives",
@@ -100,6 +119,8 @@ fn operands(op: &mut Op) -> Vec<&mut Value> {
             then,
             otherwise,
         } => vec![on, then, otherwise],
+        Op::Load { address, .. } => vec![address],
+        Op::Store { address, value, .. } => vec![address, value],
         Op::Call { args, .. } | Op::System { args, .. } => args.iter_mut().collect(),
     }
 }
@@ -117,10 +138,10 @@ fn replace_one(op: &mut Op, types: &[Type], ty: Type, v: Value) -> bool {
 }
 
 /// A generated program, in the form every target receives, and in the
-/// scalar form or what stopped it.
+/// scalar form.
 struct Lowered {
     program: ir::Program,
-    scalar: Result<scalar::Program, scalar::Stopped>,
+    scalar: scalar::Program,
 }
 
 /// How many programs each generator contributes.
@@ -158,31 +179,9 @@ fn lowered_from(source: &[u8]) -> Lowered {
     Lowered { program, scalar }
 }
 
-/// The programs the lowering took, in the scalar form.
+/// Every generated program, in the scalar form.
 fn taken() -> Vec<(&'static Lowered, &'static scalar::Program)> {
-    (lowered().iter())
-        .filter_map(|l| l.scalar.as_ref().ok().map(|s| (l, s)))
-        .collect()
-}
-
-fn every_program_is_lowered_to_the_scalar_form_or_says_what_stopped_it() {
-    let mut stopped: BTreeMap<&str, usize> = BTreeMap::new();
-    for l in lowered() {
-        if let Err(scalar::Stopped(feature)) = &l.scalar {
-            assert!(!feature.is_empty(), "a program stopped with no feature");
-            *stopped.entry(feature).or_default() += 1;
-        }
-    }
-    let taken = taken().len();
-    println!(
-        "scalar form: {taken} of {} generated programs lowered, {} stopped",
-        lowered().len(),
-        lowered().len() - taken
-    );
-    for (feature, count) in &stopped {
-        println!("scalar form: {count} stopped by {feature}");
-    }
-    assert!(taken > 0, "no generated program is lowered");
+    lowered().iter().map(|l| (l, &l.scalar)).collect()
 }
 
 fn every_lowered_program_is_well_formed() {
@@ -199,28 +198,11 @@ fn the_scalar_form_prints_what_the_form_every_target_receives_prints() {
     }
 }
 
-fn a_lowered_program_reads_and_writes_no_address() {
-    // The only instructions are constants, calls, and calls into the
-    // system, and the system's call is given the addresses of texts, never
-    // an address the program computed.
-    for (_, s) in taken() {
-        for f in &s.functions {
-            for block in &f.blocks {
-                for instruction in &block.instructions {
-                    if let Op::System { args, .. } = &instruction.op {
-                        assert_eq!(f.types[args[0].0], Type::Address);
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Lowers a program, and gives the types of the parameters of the second
 /// function it holds, which is the first that `main` calls.
 fn parameters_of_the_first_call(source: &str) -> Vec<Type> {
     let l = lowered_from(source.as_bytes());
-    let s = l.scalar.unwrap_or_else(|e| panic!("{e:?}"));
+    let s = l.scalar;
     assert_eq!(scalar::check(&s), Ok(()));
     let f = &s.functions[1];
     f.blocks[0].params.iter().map(|v| f.types[v.0]).collect()
@@ -286,9 +268,7 @@ fn a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it
     let held = (0..CASES).map(|case| sample(75, case, numbers::quiet));
     for case in held {
         let l = lowered_from(case.source.as_bytes());
-        let s = l
-            .scalar
-            .unwrap_or_else(|e| panic!("{e:?} stopped {}", case.source));
+        let s = l.scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{}", case.source);
         let ran = scalar::run(&s);
         assert_eq!(ran.stdout, case.stdout, "{}", case.source);
@@ -296,10 +276,11 @@ fn a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it
     }
 }
 
-fn a_program_that_prints_a_number_is_stopped_by_the_text_it_builds() {
-    let source = "fn main() ! console, alloc { x: i32 = 1\n print(\"{x}\") }\n";
+fn a_program_that_prints_a_number_is_lowered_and_prints_it() {
+    let source = "fn main() ! console, alloc { x: i32 = -12\n print(\"{x}\") }\n";
     let l = lowered_from(source.as_bytes());
-    assert_eq!(l.scalar.unwrap_err().0, "text built at run time");
+    assert_eq!(scalar::check(&l.scalar), Ok(()));
+    assert_eq!(scalar::run(&l.scalar).stdout, b"-12\n");
 }
 
 /// The operations a function of the generated programs for a type does,
@@ -356,7 +337,7 @@ fn every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives() {
         }
         source += "}\n";
         let l = lowered_from(source.as_bytes());
-        let s = l.scalar.unwrap_or_else(|e| panic!("{e:?} in {source}"));
+        let s = l.scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{source}");
         // `main` calls each in order, so they are the functions after it.
         let values: Vec<i128> = sample(76, int.bits as u64, |g| {
@@ -637,7 +618,11 @@ fn a_value_used_at_another_type_is_refused() {
             for f in &mut p.functions {
                 for block in &f.blocks {
                     for instruction in &block.instructions {
-                        if let Op::System { args, .. } = &instruction.op {
+                        if let Op::System {
+                            call: scalar::System::Write(_),
+                            args,
+                        } = &instruction.op
+                        {
                             // The count of a write, which is a 64-bit
                             // integer, becomes an address.
                             f.types[args[1].0] = Type::Address;
@@ -879,14 +864,277 @@ fn places_of(held: &[Vec<Type>]) -> Vec<Type> {
 fn an_enum_has_the_places_its_cases_share_by_type() {
     generate::check(80, 150, layouts, |case| {
         let l = lowered_from(case.source.as_bytes());
-        let s = l
-            .scalar
-            .unwrap_or_else(|e| panic!("{e:?} in {}", case.source));
+        let s = l.scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{}", case.source);
         // The parameter of the first function `main` calls.
         let f = &s.functions[1];
         let params: Vec<Type> = f.blocks[0].params.iter().map(|v| f.types[v.0]).collect();
         assert_eq!(params, scalars_of(&case.defs, &case.ty), "{}", case.source);
         assert_eq!(scalar::run(&s), eval::run(&l.program), "{}", case.source);
+    });
+}
+
+fn a_texts_bytes_are_read_and_written_as_8_bit_values() {
+    let mut moved = 0;
+    for (_, s) in taken() {
+        for f in &s.functions {
+            for block in &f.blocks {
+                for instruction in &block.instructions {
+                    match &instruction.op {
+                        Op::Load { ty, .. } => {
+                            assert_eq!(*ty, BYTE);
+                            assert_eq!(f.types[instruction.results[0].0], *ty);
+                            moved += 1;
+                        }
+                        Op::Store { ty, value, .. } => {
+                            assert_eq!(*ty, BYTE);
+                            assert_eq!(f.types[value.0], *ty);
+                            moved += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    assert!(moved > 0, "no generated program reads or writes memory");
+}
+
+fn a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refused() {
+    let wrong = |why: &Why| matches!(why, Why::WrongType(_));
+    let not_an_address = |op: &Op| match op {
+        Op::Load { address, .. } | Op::Store { address, .. } => *address,
+        _ => unreachable!(),
+    };
+    let damaged = [
+        (
+            "a read through what is not an address",
+            resized(|o| matches!(o, Op::Load { .. }), not_an_address, |_| LENGTH),
+        ),
+        (
+            "a write through what is not an address",
+            resized(
+                |o| matches!(o, Op::Store { .. }),
+                not_an_address,
+                |_| LENGTH,
+            ),
+        ),
+        (
+            "a write of a value that is not of the type it says",
+            resized(
+                |o| matches!(o, Op::Store { .. }),
+                |o| match o {
+                    Op::Store { value, .. } => *value,
+                    _ => unreachable!(),
+                },
+                |_| LENGTH,
+            ),
+        ),
+        (
+            "a read that gives another type than it says",
+            damaging(
+                |p| {
+                    for f in &mut p.functions {
+                        for block in &mut f.blocks {
+                            for instruction in &mut block.instructions {
+                                if let Op::Load { ty, .. } = &mut instruction.op {
+                                    *ty = LENGTH;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    false
+                },
+                wrong,
+            ),
+        ),
+    ];
+    for (how, count) in damaged {
+        damaged_some(count, how);
+    }
+}
+
+fn a_program_ends_with_a_failing_status_when_the_system_refuses_memory() {
+    let mut refused = 0;
+    let limits: Vec<usize> = (0..48)
+        .chain([64, 100, 128, 256, 1000, 4096, 1 << 16])
+        .collect();
+    for (l, s) in taken() {
+        let all = scalar::run(s);
+        assert_eq!(all, eval::run(&l.program), "{:?}", l.program);
+        for &limit in &limits {
+            let ran = scalar::run_with_limit(s, limit);
+            if ran.status == 0 {
+                assert_eq!(ran, all, "with a limit of {limit}: {:?}", l.program);
+            } else {
+                refused += 1;
+                assert!(
+                    all.stdout.starts_with(&ran.stdout),
+                    "with a limit of {limit}: {:?}",
+                    l.program
+                );
+            }
+        }
+    }
+    assert!(refused > 0, "no program was refused memory");
+}
+
+/// A program that runs `main` after the function of the runtime and what it
+/// calls, which have the places from 1.
+fn with_runtime(
+    kind: Runtime,
+    data: Vec<Vec<u8>>,
+    main: impl FnOnce(&mut Builder),
+) -> scalar::Program {
+    let mut kinds = vec![kind];
+    let mut functions = Vec::new();
+    while functions.len() < kinds.len() {
+        let wanted = kinds[functions.len()];
+        let built = runtime::build(wanted, &mut |c| {
+            1 + match kinds.iter().position(|k| *k == c) {
+                Some(at) => at,
+                None => {
+                    kinds.push(c);
+                    kinds.len() - 1
+                }
+            }
+        });
+        functions.push(built);
+    }
+    let mut b = Builder::new();
+    main(&mut b);
+    functions.insert(0, b.finish(&[]));
+    let program = scalar::Program {
+        data,
+        functions,
+        main: 0,
+    };
+    assert_eq!(scalar::check(&program), Ok(()));
+    program
+}
+
+/// The text that is the program's text at the place, as an address and a
+/// length.
+fn data_text(b: &mut Builder, at: usize, length: usize) -> Vec<Value> {
+    let address = b.emit(Op::Constant(Constant::Data(at)), &[ADDRESS])[0];
+    vec![address, b.int(Bits::B64, length as u64)]
+}
+
+fn write_text(b: &mut Builder, text: Vec<Value>) {
+    let call = scalar::System::Write(scalar::Stream::Stdout);
+    b.emit(Op::System { call, args: text }, &[]);
+}
+
+/// A text of the characters the runtime treats in its own way and some it
+/// does not.
+fn some_text(g: &mut Gen) -> Vec<u8> {
+    const BYTES: &[u8] = b"ab \"\\{}\n\t\0\xff-9";
+    (0..g.below(7)).map(|_| *g.pick(BYTES)).collect()
+}
+
+fn joining_texts_gives_the_texts_one_after_another() {
+    generate::check(
+        90,
+        200,
+        |g| (0..g.below(6)).map(|_| some_text(g)).collect::<Vec<_>>(),
+        |texts| {
+            let program = with_runtime(Runtime::Join(texts.len()), texts.clone(), |b| {
+                let mut args = Vec::new();
+                for (at, text) in texts.iter().enumerate() {
+                    args.extend(data_text(b, at, text.len()));
+                }
+                let joined = b.call(1, args, &[ADDRESS, LENGTH]);
+                write_text(b, joined);
+            });
+            let ran = scalar::run(&program);
+            assert_eq!((ran.status, ran.stdout), (0, texts.concat()));
+        },
+    );
+}
+
+/// The text written as a string literal, which is worked out here with no
+/// help from the runtime.
+fn literal(text: &[u8]) -> Vec<u8> {
+    let mut out = String::from("\"");
+    for &b in text {
+        match b {
+            b'"' | b'\\' | b'{' | b'}' => out += &format!("\\{}", b as char),
+            b'\n' => out += "\\n",
+            b'\t' => out += "\\t",
+            _ => out.extend(std::iter::once(b as char)),
+        }
+    }
+    out.push('"');
+    // Bytes that are not characters of one byte are those above 127.
+    out.chars().map(|c| c as u32 as u8).collect()
+}
+
+fn writing_a_text_as_a_string_literal_escapes_what_must_be() {
+    generate::check(91, 200, some_text, |text| {
+        let program = with_runtime(Runtime::Escape, vec![text.clone()], |b| {
+            let args = data_text(b, 0, text.len());
+            let written = b.call(1, args, &[ADDRESS, LENGTH]);
+            write_text(b, written);
+        });
+        let ran = scalar::run(&program);
+        assert_eq!((ran.status, ran.stdout), (0, literal(text)));
+    });
+}
+
+fn writing_an_integer_gives_its_digits() {
+    let generate = |g: &mut Gen| {
+        let int = *g.pick(numbers::INTS);
+        (int, numbers::value(g, int))
+    };
+    generate::check(92, 400, generate, |(int, value)| {
+        let bits = match int.bits {
+            8 => Bits::B8,
+            16 => Bits::B16,
+            32 => Bits::B32,
+            _ => Bits::B64,
+        };
+        let kind = Runtime::Decimal {
+            bits,
+            signed: int.signed,
+        };
+        let program = with_runtime(kind, Vec::new(), |b| {
+            let word = if int.bits == 64 {
+                *value as u64
+            } else {
+                *value as u64 & ((1 << int.bits) - 1)
+            };
+            let n = b.int(bits, word);
+            let written = b.call(1, vec![n], &[ADDRESS, LENGTH]);
+            write_text(b, written);
+        });
+        let ran = scalar::run(&program);
+        assert_eq!(
+            (ran.status, ran.stdout),
+            (0, value.to_string().into_bytes()),
+            "{}",
+            int.name
+        );
+    });
+}
+
+fn two_texts_are_equal_when_they_have_the_same_bytes() {
+    let generate = |g: &mut Gen| {
+        let a = some_text(g);
+        let b = if g.one_in(2) { a.clone() } else { some_text(g) };
+        (a, b)
+    };
+    generate::check(93, 300, generate, |(a, b)| {
+        let data = vec![a.clone(), b.clone(), b"0".to_vec(), b"1".to_vec()];
+        let program = with_runtime(Runtime::Equal, data, |bld| {
+            let args = [data_text(bld, 0, a.len()), data_text(bld, 1, b.len())].concat();
+            let same = bld.call(1, args, &[BYTE])[0];
+            let (no, yes) = (data_text(bld, 2, 1), data_text(bld, 3, 1));
+            let address = bld.choose(same, yes[0], no[0]);
+            write_text(bld, vec![address, yes[1]]);
+        });
+        let ran = scalar::run(&program);
+        let expected = if a == b { b"1" } else { b"0" };
+        assert_eq!((ran.status, ran.stdout), (0, expected.to_vec()));
     });
 }

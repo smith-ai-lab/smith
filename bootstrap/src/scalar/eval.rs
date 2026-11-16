@@ -22,11 +22,23 @@ struct Machine<'a> {
     /// Where each text starts, as an address.
     starts: Vec<usize>,
     stdout: Vec<u8>,
+    /// How many bytes the system will still give.
+    left: usize,
 }
 
+/// The system refused to give memory, so the program ends.
+struct Refused;
+
 /// Runs the program, with standard output going to memory, where no write
-/// is refused.
+/// is refused, and no request for memory is either.
 pub fn run(program: &Program) -> Outcome {
+    run_with_limit(program, usize::MAX)
+}
+
+/// Runs the program as `run` does, except that the system gives no more
+/// than `limit` bytes in all, and a request for more ends the program with
+/// status 1.
+pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
     let mut memory = Vec::new();
     let mut starts = Vec::new();
     for text in &program.data {
@@ -38,11 +50,15 @@ pub fn run(program: &Program) -> Outcome {
         memory,
         starts,
         stdout: Vec::new(),
+        left: limit,
     };
-    machine.call(program.main, Vec::new());
+    let status = match machine.call(program.main, Vec::new()) {
+        Ok(_) => 0,
+        Err(Refused) => 1,
+    };
     Outcome {
         stdout: machine.stdout,
-        status: 0,
+        status,
     }
 }
 
@@ -55,14 +71,19 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
         memory: Vec::new(),
         starts: Vec::new(),
         stdout: Vec::new(),
+        left: usize::MAX,
     };
     let words = args.iter().map(|n| Word::Int(*n)).collect();
-    (machine.call(function, words).into_iter())
-        .map(|w| match w {
-            Word::Int(n) => n,
-            Word::Address(_) => panic!("a function that gives an address"),
-        })
-        .collect()
+    (machine
+        .call(function, words)
+        .ok()
+        .expect("memory")
+        .into_iter())
+    .map(|w| match w {
+        Word::Int(n) => n,
+        Word::Address(_) => panic!("a function that gives an address"),
+    })
+    .collect()
 }
 
 /// The bits of an integer of the size, in a word.
@@ -88,7 +109,7 @@ fn bits_of(ty: Type) -> Bits {
 }
 
 impl Machine<'_> {
-    fn call(&mut self, function: usize, args: Vec<Word>) -> Vec<Word> {
+    fn call(&mut self, function: usize, args: Vec<Word>) -> Result<Vec<Word>, Refused> {
         let program = self.program;
         let f = &program.functions[function];
         let mut values: Vec<Option<Word>> = vec![None; f.types.len()];
@@ -105,6 +126,14 @@ impl Machine<'_> {
                     Op::Constant(Constant::Int(n)) => {
                         let bits = bits_of(f.types[instruction.results[0].0]);
                         vec![Word::Int(n & mask(bits))]
+                    }
+                    Op::Binary { a, b, .. }
+                        if f.types[instruction.results[0].0] == Type::Address =>
+                    {
+                        let (Word::Address(x), Word::Int(y)) = (get(a), get(b)) else {
+                            panic!("a move of what is not an address by a number")
+                        };
+                        vec![Word::Address(x.wrapping_add(y as usize))]
                     }
                     Op::Binary { op, a, b } => {
                         let bits = bits_of(f.types[instruction.results[0].0]);
@@ -170,7 +199,45 @@ impl Machine<'_> {
                     Op::Constant(Constant::Data(t)) => vec![Word::Address(self.starts[*t])],
                     Op::Call { function, args } => {
                         let args = args.iter().map(get).collect();
-                        self.call(*function, args)
+                        self.call(*function, args)?
+                    }
+                    Op::Load { ty, address } => {
+                        let Word::Address(at) = get(address) else {
+                            panic!("a read through what is not an address")
+                        };
+                        let size = bits_of(*ty).count() as usize / 8;
+                        let from = at - BASE;
+                        let mut n = 0u64;
+                        for (k, byte) in self.memory[from..from + size].iter().enumerate() {
+                            n |= (*byte as u64) << (8 * k);
+                        }
+                        vec![Word::Int(n)]
+                    }
+                    Op::Store { ty, address, value } => {
+                        let (Word::Address(at), Word::Int(n)) = (get(address), get(value)) else {
+                            panic!("a write of what is not a number through an address")
+                        };
+                        let size = bits_of(*ty).count() as usize / 8;
+                        let from = at - BASE;
+                        for k in 0..size {
+                            self.memory[from + k] = (n >> (8 * k)) as u8;
+                        }
+                        Vec::new()
+                    }
+                    Op::System {
+                        call: System::Allocate,
+                        args,
+                    } => {
+                        let Word::Int(count) = get(&args[0]) else {
+                            panic!("a request for memory that is not a number")
+                        };
+                        if count > self.left as u64 {
+                            return Err(Refused);
+                        }
+                        self.left -= count as usize;
+                        let at = BASE + self.memory.len();
+                        self.memory.resize(self.memory.len() + count as usize, 0);
+                        vec![Word::Address(at)]
                     }
                     Op::System {
                         call: System::Write(_),
@@ -198,7 +265,7 @@ impl Machine<'_> {
             };
             match &b.end {
                 End::Return(returned) => {
-                    return returned.iter().map(|v| values[v.0].unwrap()).collect();
+                    return Ok(returned.iter().map(|v| values[v.0].unwrap()).collect());
                 }
                 End::Jump(j) => (block, args) = jump(j),
                 End::Switch { on, jumps } => {

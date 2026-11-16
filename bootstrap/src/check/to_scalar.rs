@@ -18,16 +18,17 @@
 //! struct, a tuple, or an enum with a number in it follows the rules above,
 //! the number being one more scalar type when an enum's places are counted.
 //!
-//! A program that builds a text at run time or compares texts is stopped,
-//! and the feature is named.
+//! Text built at run time, a number written as its digits, and a comparison
+//! of two texts are calls of the functions of `scalar::runtime`, which a
+//! program holds only when it reaches them.
 
 use super::*;
-use crate::scalar::{self as form, Stopped};
+use crate::scalar as form;
+use crate::scalar::runtime::{self, Runtime};
 
-const BUILT_TEXT: Stopped = Stopped("text built at run time");
-const COMPARED_TEXT: Stopped = Stopped("a comparison of texts");
-
-type Res<T> = Result<T, Stopped>;
+const BYTE: form::Type = form::Type::Int(form::Bits::B8);
+/// What a text is.
+const TEXT: [form::Type; 2] = [form::Type::Address, form::Type::Int(form::Bits::B64)];
 
 /// How many bits a number of the type has, in the scalar form.
 fn bits_of(t: Int) -> form::Bits {
@@ -40,29 +41,40 @@ fn bits_of(t: Int) -> form::Bits {
 }
 
 /// The program that `start` runs, in the scalar form.
-pub(super) fn lower(typed: &Typed, start: Instance) -> Res<form::Program> {
+pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
     let mut lowering = Lowering {
         typed,
-        instances: vec![start],
+        bodies: vec![Body::Copy(start)],
         data: Vec::new(),
     };
     let mut functions = Vec::new();
-    while functions.len() < lowering.instances.len() {
-        let instance = lowering.instances[functions.len()].clone();
-        functions.push(lowering.function(&instance)?);
+    while functions.len() < lowering.bodies.len() {
+        let body = lowering.bodies[functions.len()].clone();
+        functions.push(match body {
+            Body::Copy(instance) => lowering.function(&instance),
+            Body::Runtime(kind) => runtime::build(kind, &mut |k| lowering.place(Body::Runtime(k))),
+        });
     }
-    Ok(form::Program {
+    form::Program {
         data: lowering.data,
         functions,
         main: 0,
-    })
+    }
+}
+
+/// A function of the program: a copy of one the source defines, or one the
+/// program needs at run time, which the scalar form holds once.
+#[derive(Clone, PartialEq)]
+enum Body {
+    Copy(Instance),
+    Runtime(Runtime),
 }
 
 struct Lowering<'a> {
     typed: &'a Typed<'a>,
-    /// The copies, each at its place in the program, in the order they are
-    /// first called.
-    instances: Vec<Instance>,
+    /// The functions, each at its place in the program, in the order they
+    /// are first called.
+    bodies: Vec<Body>,
     data: Vec<Vec<u8>>,
 }
 
@@ -323,46 +335,46 @@ impl<'a> Lowering<'a> {
     /// and each element for a tuple, for an enum the number of its case and
     /// its places, and none for a function, whose calls are lowered in
     /// place.
-    fn scalars(&self, ty: &Ty) -> Res<Vec<form::Type>> {
+    fn scalars(&self, ty: &Ty) -> Vec<form::Type> {
         let defs = self.typed.defs;
-        Ok(match ty {
+        match ty {
             Ty::Text => vec![form::Type::Address, form::Type::Int(form::Bits::B64)],
             Ty::Int(t) => vec![form::Type::Int(bits_of(*t))],
             Ty::Struct(s, args) => {
                 let mut all = Vec::new();
                 for f in &defs.fields[*s] {
-                    all.extend(self.scalars(&f.subst(args))?);
+                    all.extend(self.scalars(&f.subst(args)));
                 }
                 all
             }
             Ty::Tuple(items) => {
                 let mut all = Vec::new();
                 for t in items {
-                    all.extend(self.scalars(t)?);
+                    all.extend(self.scalars(t));
                 }
                 all
             }
             Ty::Enum(e, args) => {
                 let mut all = vec![form::Type::Int(form::Bits::B8)];
-                all.extend(self.layout(*e, args)?.places);
+                all.extend(self.layout(*e, args).places);
                 all
             }
             Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown => Vec::new(),
-        })
+        }
     }
 
     /// How many scalars a value of the type is lowered to.
-    fn size(&self, ty: &Ty) -> Res<usize> {
-        Ok(self.scalars(ty)?.len())
+    fn size(&self, ty: &Ty) -> usize {
+        self.scalars(ty).len()
     }
 
     /// The places of an enum, as the rule in the head of this file gives.
-    fn layout(&self, e: usize, args: &[Ty]) -> Res<Layout> {
+    fn layout(&self, e: usize, args: &[Ty]) -> Layout {
         let defs = self.typed.defs;
         let mut held = Vec::new();
         for t in &defs.cases[e] {
             held.push(match t {
-                Some(t) => self.scalars(&t.subst(args))?,
+                Some(t) => self.scalars(&t.subst(args)),
                 None => Vec::new(),
             });
         }
@@ -404,32 +416,26 @@ impl<'a> Lowering<'a> {
                     .collect()
             })
             .collect();
-        Ok(Layout { places, cases })
+        Layout { places, cases }
     }
 
     /// The values of each element of a tuple of the types `items`, from the
     /// values of the tuple.
-    fn elements(&self, items: &[Ty], values: &[form::Value]) -> Res<Vec<Vec<form::Value>>> {
+    fn elements(&self, items: &[Ty], values: &[form::Value]) -> Vec<Vec<form::Value>> {
         let mut at = 0;
         let mut all = Vec::new();
         for t in items {
-            let size = self.size(t)?;
+            let size = self.size(t);
             at += size;
             all.push(values[at - size..at].to_vec());
         }
-        Ok(all)
+        all
     }
 
     /// Makes each bare name in a pattern of a binding stand for the values
     /// it matches: a name defined before it, which is a `var`, from then on,
     /// and any other as a new name.
-    fn bind(
-        &self,
-        out: &mut Out<'a>,
-        pattern: &Pattern,
-        ty: &Ty,
-        values: Vec<form::Value>,
-    ) -> Res<()> {
+    fn bind(&self, out: &mut Out<'a>, pattern: &Pattern, ty: &Ty, values: Vec<form::Value>) {
         match pattern {
             Pattern::Bind { name, .. } => match out.find(name) {
                 Some(at) => out.names_mut()[at].values = values,
@@ -439,19 +445,18 @@ impl<'a> Lowering<'a> {
                 let Ty::Tuple(of) = ty else {
                     unreachable!("checked")
                 };
-                for ((item, t), values) in items.iter().zip(of).zip(self.elements(of, &values)?) {
-                    self.bind(out, item, t, values)?;
+                for ((item, t), values) in items.iter().zip(of).zip(self.elements(of, &values)) {
+                    self.bind(out, item, t, values);
                 }
             }
             Pattern::Case { .. } => unreachable!("checked"),
         }
-        Ok(())
     }
 
     /// Where the values of a field, or of a field of a field for each
     /// further name, are among the values of a value of the type, and how
     /// many there are.
-    fn offset(&self, ty: &Ty, fields: &[(String, Pos)]) -> Res<(usize, usize)> {
+    fn offset(&self, ty: &Ty, fields: &[(String, Pos)]) -> (usize, usize) {
         let mut ty = ty.clone();
         let mut start = 0;
         for (name, _) in fields {
@@ -466,25 +471,37 @@ impl<'a> Lowering<'a> {
                     found = Some(t);
                     break;
                 }
-                start += self.size(&t)?;
+                start += self.size(&t);
             }
             ty = found.expect("checked");
         }
-        Ok((start, self.size(&ty)?))
+        (start, self.size(&ty))
     }
 
     /// The place of a copy in the program, which it takes if it has none.
-    fn place(&mut self, instance: Instance) -> usize {
-        match self.instances.iter().position(|i| *i == instance) {
+    fn place(&mut self, body: Body) -> usize {
+        match self.bodies.iter().position(|b| *b == body) {
             Some(at) => at,
             None => {
-                self.instances.push(instance);
-                self.instances.len() - 1
+                self.bodies.push(body);
+                self.bodies.len() - 1
             }
         }
     }
 
-    fn function(&mut self, instance: &Instance) -> Res<form::Function> {
+    /// Calls the function of the runtime, which gives the values it gives.
+    fn call_runtime(
+        &mut self,
+        out: &mut Out<'a>,
+        kind: Runtime,
+        args: Vec<form::Value>,
+        results: Vec<form::Type>,
+    ) -> Vec<form::Value> {
+        let function = self.place(Body::Runtime(kind));
+        out.emit(form::Op::Call { function, args }, results)
+    }
+
+    fn function(&mut self, instance: &Instance) -> form::Function {
         let defs = self.typed.defs;
         if let Template::Given(k) = instance.template {
             return self.given(k, &instance.args[0]);
@@ -493,21 +510,21 @@ impl<'a> Lowering<'a> {
         let mut out = Out::new();
         for (name, ty) in &view.params {
             let ty = ty.subst(&instance.args);
-            let types = self.scalars(&ty)?;
+            let types = self.scalars(&ty);
             let values = out.params(&types);
             out.define(name, ty, values);
         }
-        let mut result = self.block(&mut out, &view.f.body, &instance.args)?;
+        let mut result = self.block(&mut out, &view.f.body, &instance.args);
         if view.gives == Ty::Nothing {
             result.clear();
         }
-        let results = self.scalars(&view.gives.subst(&instance.args))?;
+        let results = self.scalars(&view.gives.subst(&instance.args));
         out.blocks[out.current].end = form::End::Return(result);
-        Ok(form::Function {
+        form::Function {
             types: out.types,
             results,
             blocks: out.blocks,
-        })
+        }
     }
 
     /// What the function the compiler builds for an operation on numbers of
@@ -520,7 +537,7 @@ impl<'a> Lowering<'a> {
         name: &str,
         t: Int,
         args: &[form::Value],
-    ) -> Res<Vec<form::Value>> {
+    ) -> Vec<form::Value> {
         let defs = self.typed.defs;
         let (a, b) = (args[0], args.get(1).copied());
         let case = |out: &mut Out<'a>, e: usize, name: &str| {
@@ -530,7 +547,7 @@ impl<'a> Lowering<'a> {
                 form::Type::Int(form::Bits::B8),
             )
         };
-        Ok(match name {
+        match name {
             "__equal" => vec![out.compare(form::Compare::Equal, a, b.expect("two"))],
             "__compare" => {
                 let b = b.expect("two");
@@ -549,12 +566,18 @@ impl<'a> Lowering<'a> {
                 let after = out.choose(same, e, g);
                 vec![out.choose(below, l, after)]
             }
-            "__decimal" => return Err(BUILT_TEXT),
+            "__decimal" => {
+                let kind = Runtime::Decimal {
+                    bits: bits_of(t),
+                    signed: t.signed(),
+                };
+                self.call_runtime(out, kind, vec![a], TEXT.to_vec())
+            }
             _ => {
                 let (kind, op) = name[2..].split_once('_').expect("a named operation");
                 self.arithmetic(out, kind, op, t, a, b.expect("two"))
             }
-        })
+        }
     }
 
     /// The values of `a` and `b`, numbers of type `t`, put through an
@@ -685,27 +708,27 @@ impl<'a> Lowering<'a> {
     /// the source that builds it, with each part written by its own `Repr`,
     /// and `Eq` says whether two values are the same case with equal parts,
     /// by each part's own `Eq`.
-    fn given(&mut self, k: usize, ty: &Ty) -> Res<form::Function> {
+    fn given(&mut self, k: usize, ty: &Ty) -> form::Function {
         let defs = self.typed.defs;
         let mut out = Out::new();
-        let types = self.scalars(ty)?;
+        let types = self.scalars(ty);
         let a = out.params(&types);
         let (result, results) = if k == defs.fmt {
-            let text = self.run(&mut out, defs.repr, ty, a)?;
-            (text, self.scalars(&Ty::Text)?)
+            let text = self.run(&mut out, defs.repr, ty, a);
+            (text, self.scalars(&Ty::Text))
         } else if k == defs.repr {
-            (self.repr(&mut out, ty, &a)?, self.scalars(&Ty::Text)?)
+            (self.repr(&mut out, ty, &a), self.scalars(&Ty::Text))
         } else {
             let b = out.params(&types);
-            let same = self.equal(&mut out, ty, &a, &b)?;
-            (vec![same], self.scalars(&defs.bool_ty())?)
+            let same = self.equal(&mut out, ty, &a, &b);
+            (vec![same], self.scalars(&defs.bool_ty()))
         };
         out.blocks[out.current].end = form::End::Return(result);
-        Ok(form::Function {
+        form::Function {
             types: out.types,
             results,
             blocks: out.blocks,
-        })
+        }
     }
 
     /// Runs the function of trait `k`, which gives text or a `bool`, for
@@ -716,12 +739,12 @@ impl<'a> Lowering<'a> {
         k: usize,
         ty: &Ty,
         args: Vec<form::Value>,
-    ) -> Res<Vec<form::Value>> {
+    ) -> Vec<form::Value> {
         let defs = self.typed.defs;
         let (instance, _) = defs.chosen(k, 0, vec![ty.clone()]);
-        let function = self.place(instance);
-        let types = self.scalars(&defs.trait_sigs[k][0].gives)?;
-        Ok(out.emit(form::Op::Call { function, args }, types))
+        let function = self.place(Body::Copy(instance));
+        let types = self.scalars(&defs.trait_sigs[k][0].gives);
+        out.emit(form::Op::Call { function, args }, types)
     }
 
     /// `true` or `false`.
@@ -742,13 +765,17 @@ impl<'a> Lowering<'a> {
         ty: &Ty,
         a: &[form::Value],
         b: &[form::Value],
-    ) -> Res<form::Value> {
+    ) -> form::Value {
         let defs = self.typed.defs;
         let parts: Vec<Ty> = match ty {
-            Ty::Text => return Err(COMPARED_TEXT),
+            Ty::Text => {
+                let args = [a, b].concat();
+                let kind = Runtime::Equal;
+                return self.call_runtime(out, kind, args, vec![BYTE])[0];
+            }
             Ty::Enum(e, args) => {
-                let layout = self.layout(*e, args)?;
-                let bool_types = self.scalars(&defs.bool_ty())?;
+                let layout = self.layout(*e, args);
+                let bool_types = self.scalars(&defs.bool_ty());
                 let holds: Vec<Option<Ty>> = (defs.cases[*e].iter())
                     .map(|t| t.as_ref().map(|t| t.subst(args)))
                     .collect();
@@ -768,7 +795,7 @@ impl<'a> Lowering<'a> {
                                         layout.cases[k].iter().map(|&p| values[1 + p]).collect()
                                     };
                                     let args = [take(a), take(b)].concat();
-                                    self.run(out, defs.eq, t, args)?[0]
+                                    self.run(out, defs.eq, t, args)[0]
                                 }
                                 None => self.truth(out, true),
                             }
@@ -776,7 +803,7 @@ impl<'a> Lowering<'a> {
                         ends.push((out.current, vec![same]));
                     }
                 }
-                return Ok(out.join(&bool_types, ends)[0]);
+                return out.join(&bool_types, ends)[0];
             }
             Ty::Struct(s, args) => defs.fields[*s].iter().map(|t| t.subst(args)).collect(),
             Ty::Tuple(of) => of.clone(),
@@ -786,7 +813,7 @@ impl<'a> Lowering<'a> {
         let mut at = 0;
         let mut pairs = Vec::new();
         for t in &parts {
-            let size = self.size(t)?;
+            let size = self.size(t);
             pairs.push((t, a[at..at + size].to_vec(), b[at..at + size].to_vec()));
             at += size;
         }
@@ -799,16 +826,16 @@ impl<'a> Lowering<'a> {
         &mut self,
         out: &mut Out<'a>,
         pairs: &[(&Ty, Vec<form::Value>, Vec<form::Value>)],
-    ) -> Res<form::Value> {
+    ) -> form::Value {
         let defs = self.typed.defs;
         let Some(((t, x, y), rest)) = pairs.split_first() else {
-            return Ok(self.truth(out, true));
+            return self.truth(out, true);
         };
-        let same = self.run(out, defs.eq, t, [x.clone(), y.clone()].concat())?[0];
+        let same = self.run(out, defs.eq, t, [x.clone(), y.clone()].concat())[0];
         if rest.is_empty() {
-            return Ok(same);
+            return same;
         }
-        let types = self.scalars(&defs.bool_ty())?;
+        let types = self.scalars(&defs.bool_ty());
         let arms = out.switch(same, 2);
         let (no, yes) = (
             defs.case_of(defs.boolean, "false").expect("a case"),
@@ -818,59 +845,101 @@ impl<'a> Lowering<'a> {
         let false_ = self.truth(out, false);
         let mut ends = vec![(out.current, vec![false_])];
         out.current = arms[yes];
-        let rest = self.all_equal(out, rest)?;
+        let rest = self.all_equal(out, rest);
         ends.push((out.current, vec![rest]));
-        Ok(out.join(&types, ends)[0])
+        out.join(&types, ends)[0]
     }
 
     /// The text `Repr` gives for the values of a value of the type, as
     /// the implementation it is given writes it.
-    fn repr(
-        &mut self,
-        out: &mut Out<'a>,
-        ty: &Ty,
-        values: &[form::Value],
-    ) -> Res<Vec<form::Value>> {
+    fn repr(&mut self, out: &mut Out<'a>, ty: &Ty, values: &[form::Value]) -> Vec<form::Value> {
         let defs = self.typed.defs;
         match ty {
-            Ty::Nothing => Ok(self.text(out, b"()")),
-            Ty::Text => Err(BUILT_TEXT),
-            Ty::Struct(s, _) => {
+            Ty::Nothing => self.text(out, b"()"),
+            Ty::Text => self.call_runtime(out, Runtime::Escape, values.to_vec(), TEXT.to_vec()),
+            Ty::Struct(s, args) => {
                 let def = &defs.file.structs[*s];
-                if !def.fields.is_empty() {
-                    return Err(BUILT_TEXT);
+                let mut at = 0;
+                let mut items = Vec::new();
+                for (field, t) in def.fields.iter().zip(&defs.fields[*s]) {
+                    let t = t.subst(args);
+                    let size = self.size(&t);
+                    items.push((
+                        format!("{}: ", field.name),
+                        t,
+                        values[at..at + size].to_vec(),
+                    ));
+                    at += size;
                 }
-                Ok(self.text(out, format!("{}()", def.name).as_bytes()))
+                self.listed(out, &format!("{}(", def.name), items)
             }
-            Ty::Tuple(of) if of.is_empty() => Ok(self.text(out, b"()")),
-            Ty::Tuple(_) => Err(BUILT_TEXT),
-            Ty::Enum(e, _) => {
+            Ty::Tuple(of) => {
+                let items = (of.iter().zip(self.elements(of, values)))
+                    .map(|(t, values)| (String::new(), t.clone(), values))
+                    .collect();
+                self.listed(out, "(", items)
+            }
+            Ty::Enum(e, args) => {
                 let def = &defs.file.enums[*e];
-                if defs.cases[*e].iter().any(Option::is_some) {
-                    return Err(BUILT_TEXT);
-                }
-                let types = self.scalars(&Ty::Text)?;
+                let layout = self.layout(*e, args);
                 let arms = out.switch(values[0], def.cases.len());
                 let mut ends = Vec::new();
-                for (case, block) in def.cases.iter().zip(arms) {
+                for (k, ((case, holds), block)) in
+                    def.cases.iter().zip(&defs.cases[*e]).zip(arms).enumerate()
+                {
                     out.current = block;
-                    // The cases of `bool` are written as bare names.
-                    let text = if *e == defs.boolean {
-                        self.text(out, case.name.as_bytes())
-                    } else {
-                        self.text(out, format!(".{}", case.name).as_bytes())
+                    let text = match holds {
+                        Some(t) => {
+                            let held = layout.cases[k].iter().map(|&p| values[1 + p]).collect();
+                            let item = (String::new(), t.subst(args), held);
+                            self.listed(out, &format!(".{}(", case.name), vec![item])
+                        }
+                        // The cases of `bool` are written as bare names.
+                        None if *e == defs.boolean => self.text(out, case.name.as_bytes()),
+                        None => self.text(out, format!(".{}", case.name).as_bytes()),
                     };
                     ends.push((out.current, text));
                 }
-                Ok(out.join(&types, ends))
+                out.join(&TEXT, ends)
             }
             _ => unreachable!("a type given `Repr`"),
         }
     }
 
+    /// The text `open`, then the label of each item and the text its value's
+    /// `Repr` gives, the items separated by commas, and then `)`.
+    fn listed(
+        &mut self,
+        out: &mut Out<'a>,
+        open: &str,
+        items: Vec<(String, Ty, Vec<form::Value>)>,
+    ) -> Vec<form::Value> {
+        let repr = self.typed.defs.repr;
+        let mut parts = Vec::new();
+        let mut known = open.as_bytes().to_vec();
+        for (i, (label, t, values)) in items.into_iter().enumerate() {
+            if i > 0 {
+                known.extend(b", ");
+            }
+            known.extend(label.bytes());
+            let text = self.run(out, repr, &t, values);
+            parts.push(self.text(out, &std::mem::take(&mut known)));
+            parts.push(text);
+        }
+        known.push(b')');
+        let close = self.text(out, &known);
+        if parts.is_empty() {
+            return close;
+        }
+        parts.push(close);
+        let count = parts.len();
+        let args = parts.concat();
+        self.call_runtime(out, Runtime::Join(count), args, TEXT.to_vec())
+    }
+
     /// Lowers the statements of a block, and gives the values of the last
     /// if it is an expression.
-    fn block(&mut self, out: &mut Out<'a>, stmts: &'a [Stmt], env: &[Ty]) -> Res<Vec<form::Value>> {
+    fn block(&mut self, out: &mut Out<'a>, stmts: &'a [Stmt], env: &[Ty]) -> Vec<form::Value> {
         let mut result = Vec::new();
         for stmt in stmts {
             result = match stmt {
@@ -880,7 +949,7 @@ impl<'a> Lowering<'a> {
                     // its statements once each, in order, so an assignment
                     // makes the name stand for the new values from then
                     // on, and a name bound to the old ones keeps them.
-                    let (ty, value) = self.expr(out, value, env)?;
+                    let (ty, value) = self.expr(out, value, env);
                     match out.find(name) {
                         Some(at) => out.names_mut()[at].values = value,
                         None => out.define(name, ty, value),
@@ -893,36 +962,31 @@ impl<'a> Lowering<'a> {
                     value,
                     ..
                 } => {
-                    let (_, value) = self.expr(out, value, env)?;
+                    let (_, value) = self.expr(out, value, env);
                     let at = out.find(name).expect("checked");
-                    let (start, size) = self.offset(&out.names()[at].ty, fields)?;
+                    let (start, size) = self.offset(&out.names()[at].ty, fields);
                     out.names_mut()[at]
                         .values
                         .splice(start..start + size, value);
                     Vec::new()
                 }
                 Stmt::Destructure { pattern, value, .. } => {
-                    let (ty, value) = self.expr(out, value, env)?;
-                    self.bind(out, pattern, &ty, value)?;
+                    let (ty, value) = self.expr(out, value, env);
+                    self.bind(out, pattern, &ty, value);
                     Vec::new()
                 }
-                Stmt::Expr(value) => self.expr(out, value, env)?.1,
+                Stmt::Expr(value) => self.expr(out, value, env).1,
             };
         }
-        Ok(result)
+        result
     }
 
     /// The values an expression gives, and their type, where `env` stands
     /// for the type parameters of the definition it is written in.
-    fn expr(
-        &mut self,
-        out: &mut Out<'a>,
-        expr: &'a Expr,
-        env: &[Ty],
-    ) -> Res<(Ty, Vec<form::Value>)> {
+    fn expr(&mut self, out: &mut Out<'a>, expr: &'a Expr, env: &[Ty]) -> (Ty, Vec<form::Value>) {
         let typed = self.typed;
         let defs = typed.defs;
-        Ok(match expr {
+        match expr {
             Expr::Text { text, .. } => (Ty::Text, self.text(out, text)),
             Expr::Number {
                 magnitude,
@@ -937,7 +1001,18 @@ impl<'a> Lowering<'a> {
                 let value = if *negative { -magnitude } else { magnitude };
                 (ty, vec![out.int(bits_of(t), value)])
             }
-            Expr::Interp { .. } => return Err(BUILT_TEXT),
+            Expr::Interp { parts, .. } => {
+                let count = parts.len();
+                let mut args = Vec::new();
+                for part in parts {
+                    args.extend(match part {
+                        Part::Text(text) => self.text(out, text),
+                        Part::Expr(e) => self.expr(out, e, env).1,
+                    });
+                }
+                let values = self.call_runtime(out, Runtime::Join(count), args, TEXT.to_vec());
+                (Ty::Text, values)
+            }
             Expr::Name { name, .. } => match out.find(name) {
                 Some(at) => (out.names()[at].ty.clone(), out.names()[at].values.clone()),
                 // A function passed as a value is lowered to no values.
@@ -958,17 +1033,17 @@ impl<'a> Lowering<'a> {
             Expr::Call(call) => match typed.callee(call, env) {
                 Callee::Construct(s, args) => {
                     let inner = args.clone();
-                    let values = self.construction(out, call, s, env, &inner)?;
+                    let values = self.construction(out, call, s, env, &inner);
                     (Ty::Struct(s, args), values)
                 }
                 Callee::Case(k) => {
                     let ty = typed.type_of(expr, env);
                     let payload = call.args.first().map(|a| &a.value);
-                    let values = self.case(out, &ty, k, payload, env)?;
+                    let values = self.case(out, &ty, k, payload, env);
                     (ty, values)
                 }
                 Callee::Print => {
-                    let (_, text) = self.expr(out, &call.args[0].value, env)?;
+                    let (_, text) = self.expr(out, &call.args[0].value, env);
                     let newline = self.text(out, b"\n");
                     for args in [text, newline] {
                         out.emit(
@@ -981,44 +1056,44 @@ impl<'a> Lowering<'a> {
                     }
                     (Ty::Nothing, Vec::new())
                 }
-                Callee::Value => self.call_value(out, call, env)?,
+                Callee::Value => self.call_value(out, call, env),
                 Callee::Intrinsic => {
                     let mut args = Vec::new();
                     let mut int = None;
                     for arg in &call.args {
-                        let (ty, values) = self.expr(out, &arg.value, env)?;
+                        let (ty, values) = self.expr(out, &arg.value, env);
                         if let Ty::Int(t) = ty {
                             int = Some(t);
                         }
                         args.push(values[0]);
                     }
                     let int = int.expect("checked");
-                    let values = self.intrinsic(out, &call.callee, int, &args)?;
+                    let values = self.intrinsic(out, &call.callee, int, &args);
                     (typed.type_of(expr, env), values)
                 }
                 Callee::Run(instance, gives)
                     if (defs.params(instance.template).iter())
                         .any(|(_, t)| t.subst(&instance.args).holds_fn()) =>
                 {
-                    self.in_place(out, call, instance, gives, env)?
+                    self.in_place(out, call, instance, gives, env)
                 }
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
                     let params = defs.params(instance.template);
-                    let function = self.place(instance);
+                    let function = self.place(Body::Copy(instance));
                     // Arguments are worked out in the order they are
                     // written, and then passed in the order of the
                     // parameters.
                     let mut args: Vec<Vec<form::Value>> = vec![Vec::new(); params.len()];
                     for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
-                        args[at] = self.expr(out, &arg.value, env)?.1;
+                        args[at] = self.expr(out, &arg.value, env).1;
                     }
                     // Then the defaults it leaves out, in the order of the
                     // parameters, as if they were written after the rest.
                     for (at, default) in defs.left_out(call) {
-                        args[at] = self.expr(out, default, &inner)?.1;
+                        args[at] = self.expr(out, default, &inner).1;
                     }
-                    let types = self.scalars(&gives)?;
+                    let types = self.scalars(&gives);
                     let results = out.emit(
                         form::Op::Call {
                             function,
@@ -1039,18 +1114,18 @@ impl<'a> Lowering<'a> {
                         unreachable!("checked")
                     };
                     let k = defs.case_of(e, name).expect("checked");
-                    let values = self.case(out, &ty, k, None, env)?;
-                    return Ok((ty, values));
+                    let values = self.case(out, &ty, k, None, env);
+                    return (ty, values);
                 }
-                let (Ty::Struct(s, args), values) = self.expr(out, of, env)? else {
+                let (Ty::Struct(s, args), values) = self.expr(out, of, env) else {
                     unreachable!("checked")
                 };
                 let mut at = 0;
                 for (field, ty) in defs.file.structs[s].fields.iter().zip(&defs.fields[s]) {
                     let ty = ty.subst(&args);
-                    let size = self.size(&ty)?;
+                    let size = self.size(&ty);
                     if &field.name == name {
-                        return Ok((ty, values[at..at + size].to_vec()));
+                        return (ty, values[at..at + size].to_vec());
                     }
                     at += size;
                 }
@@ -1062,26 +1137,26 @@ impl<'a> Lowering<'a> {
                     unreachable!("checked")
                 };
                 let k = defs.case_of(e, name).expect("checked");
-                let values = self.case(out, &ty, k, payload.as_deref(), env)?;
+                let values = self.case(out, &ty, k, payload.as_deref(), env);
                 (ty, values)
             }
             Expr::Match(m) => {
                 let ty = typed.type_of(expr, env);
-                let values = self.match_expr(out, m, &ty, env)?;
+                let values = self.match_expr(out, m, &ty, env);
                 (ty, values)
             }
             Expr::Tuple { items, .. } => {
                 let mut types = Vec::new();
                 let mut values = Vec::new();
                 for item in items {
-                    let (ty, value) = self.expr(out, item, env)?;
+                    let (ty, value) = self.expr(out, item, env);
                     types.push(ty);
                     values.extend(value);
                 }
                 (Ty::tuple(types), values)
             }
             Expr::Lambda(_) => unreachable!("checked"),
-        })
+        }
     }
 
     /// Lowers a call of a function that takes a function, in place: its
@@ -1094,7 +1169,7 @@ impl<'a> Lowering<'a> {
         instance: Instance,
         gives: Ty,
         env: &[Ty],
-    ) -> Res<(Ty, Vec<form::Value>)> {
+    ) -> (Ty, Vec<form::Value>) {
         let typed = self.typed;
         let defs = typed.defs;
         let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
@@ -1106,21 +1181,21 @@ impl<'a> Lowering<'a> {
         // the defaults the call leaves out, as for any call.
         let mut args: Vec<Option<Bound<'a>>> = vec![None; params.len()];
         for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
-            args[at] = Some(self.argument(out, &arg.value, &params[at], env)?);
+            args[at] = Some(self.argument(out, &arg.value, &params[at], env));
         }
         for (at, default) in defs.left_out(call) {
-            args[at] = Some(self.argument(out, default, &params[at], &inner)?);
+            args[at] = Some(self.argument(out, default, &params[at], &inner));
         }
         let frame = args.into_iter().map(|a| a.expect("given")).collect();
         out.frames.push(frame);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
-        let mut result = self.block(out, &view.f.body, &instance.args)?;
+        let mut result = self.block(out, &view.f.body, &instance.args);
         out.frames.pop();
         out.at = caller;
         if gives == Ty::Nothing {
             result.clear();
         }
-        Ok((gives, result))
+        (gives, result)
     }
 
     /// An argument for a parameter, as the name the parameter is then.
@@ -1130,7 +1205,7 @@ impl<'a> Lowering<'a> {
         value: &'a Expr,
         (name, ty): &(String, Ty),
         env: &[Ty],
-    ) -> Res<Bound<'a>> {
+    ) -> Bound<'a> {
         let (values, func) = if let Ty::Fn(_) = ty {
             let func = match value {
                 Expr::Lambda(l) => Func::Lambda(l, out.at, env.to_vec()),
@@ -1145,14 +1220,14 @@ impl<'a> Lowering<'a> {
             };
             (Vec::new(), Some(func))
         } else {
-            (self.expr(out, value, env)?.1, None)
+            (self.expr(out, value, env).1, None)
         };
-        Ok(Bound {
+        Bound {
             name: name.clone(),
             ty: ty.clone(),
             values,
             func,
-        })
+        }
     }
 
     /// Lowers a call of a name that holds a function. A lambda's body is
@@ -1163,7 +1238,7 @@ impl<'a> Lowering<'a> {
         out: &mut Out<'a>,
         call: &'a Call,
         env: &[Ty],
-    ) -> Res<(Ty, Vec<form::Value>)> {
+    ) -> (Ty, Vec<form::Value>) {
         let at = out.find(&call.callee).expect("checked");
         let local = &out.names()[at];
         let func = local.func.clone().expect("a function");
@@ -1181,14 +1256,14 @@ impl<'a> Lowering<'a> {
                 next - 1
             };
             let param = (String::new(), params[at].clone());
-            args[at] = Some(self.argument(out, &arg.value, &param, env)?);
+            args[at] = Some(self.argument(out, &arg.value, &param, env));
         }
         let args = args.into_iter().map(|a| a.expect("given"));
         let mut result = match func {
             Func::Named(instance) => {
-                let function = self.place(instance);
+                let function = self.place(Body::Copy(instance));
                 let args = args.flat_map(|a| a.values).collect();
-                let types = self.scalars(gives)?;
+                let types = self.scalars(gives);
                 out.emit(form::Op::Call { function, args }, types)
             }
             Func::Lambda(lambda, frame, lambda_env) => {
@@ -1198,7 +1273,7 @@ impl<'a> Lowering<'a> {
                     arg.name = name.clone();
                     out.names_mut().push(arg);
                 }
-                let result = self.block(out, &lambda.body, &lambda_env)?;
+                let result = self.block(out, &lambda.body, &lambda_env);
                 out.names_mut().truncate(before);
                 out.at = caller;
                 result
@@ -1207,7 +1282,7 @@ impl<'a> Lowering<'a> {
         if *gives == Ty::Nothing {
             result.clear();
         }
-        Ok((gives.clone(), result))
+        (gives.clone(), result)
     }
 
     /// The values of case `k` of the enum `ty`, holding the payload's
@@ -1220,14 +1295,14 @@ impl<'a> Lowering<'a> {
         k: usize,
         payload: Option<&'a Expr>,
         env: &[Ty],
-    ) -> Res<Vec<form::Value>> {
+    ) -> Vec<form::Value> {
         let Ty::Enum(e, args) = ty else {
             unreachable!("checked")
         };
-        let layout = self.layout(*e, args)?;
+        let layout = self.layout(*e, args);
         let mut places: Vec<Option<form::Value>> = vec![None; layout.places.len()];
         if let Some(p) = payload {
-            let (_, values) = self.expr(out, p, env)?;
+            let (_, values) = self.expr(out, p, env);
             for (value, &place) in values.iter().zip(&layout.cases[k]) {
                 places[place] = Some(*value);
             }
@@ -1243,7 +1318,7 @@ impl<'a> Lowering<'a> {
                 None => out.zero(*ty),
             });
         }
-        Ok(values)
+        values
     }
 
     /// Lowers a `match` that gives `ty`: a decision between its blocks,
@@ -1259,9 +1334,9 @@ impl<'a> Lowering<'a> {
         m: &'a Match,
         ty: &Ty,
         env: &[Ty],
-    ) -> Res<Vec<form::Value>> {
-        let (of_ty, of) = self.expr(out, &m.of, env)?;
-        let types = self.scalars(ty)?;
+    ) -> Vec<form::Value> {
+        let (of_ty, of) = self.expr(out, &m.of, env);
+        let types = self.scalars(ty);
         let before: Vec<usize> = out.frames.iter().map(Vec::len).collect();
         let was: Vec<Vec<Vec<form::Value>>> = (out.frames.iter())
             .map(|f| f.iter().map(|l| l.values.clone()).collect())
@@ -1280,7 +1355,7 @@ impl<'a> Lowering<'a> {
             })
             .collect();
         let mut leaves = Vec::new();
-        self.decide(out, &arms, &mut leaves, rows, &[(of_ty, of)])?;
+        self.decide(out, &arms, &mut leaves, rows, &[(of_ty, of)]);
         // The names that a block changed, by their frame and place.
         let mut changed = Vec::new();
         for (f, frame) in was.iter().enumerate() {
@@ -1312,7 +1387,7 @@ impl<'a> Lowering<'a> {
             out.frames[f][at].values = params[at_param..at_param + size].to_vec();
             at_param += size;
         }
-        Ok(params[..types.len()].to_vec())
+        params[..types.len()].to_vec()
     }
 
     /// Chooses between the blocks of the first of `rows` that matches the
@@ -1325,7 +1400,7 @@ impl<'a> Lowering<'a> {
         leaves: &mut Vec<Leaf>,
         rows: Vec<Row>,
         columns: &[(Ty, Vec<form::Value>)],
-    ) -> Res<()> {
+    ) {
         let defs = self.typed.defs;
         // A bare name names what it matches, and then matches anything.
         let rows: Vec<Row> = (rows.into_iter())
@@ -1342,13 +1417,13 @@ impl<'a> Lowering<'a> {
         let Some(first) = rows.first() else {
             // No block matches, which a checked `match` never reaches.
             leaves.push(self.leaf_without_block(out, arms));
-            return Ok(());
+            return;
         };
         // The first value the first row takes apart.
         let Some(c) = first.patterns.iter().position(Option::is_some) else {
-            let leaf = self.leaf(out, arms, first.clone())?;
+            let leaf = self.leaf(out, arms, first.clone());
             leaves.push(leaf);
-            return Ok(());
+            return;
         };
         // The rows and the columns with column `c` replaced by `inner`, and
         // the pattern of each row there by what `replace` gives for it, or
@@ -1376,7 +1451,7 @@ impl<'a> Lowering<'a> {
         match ty {
             Ty::Tuple(items) => {
                 let inner = (items.iter().cloned())
-                    .zip(self.elements(items, value)?)
+                    .zip(self.elements(items, value))
                     .collect();
                 let (rows, cols) = around(inner, &|p| {
                     Some(match p {
@@ -1387,7 +1462,7 @@ impl<'a> Lowering<'a> {
                 self.decide(out, arms, leaves, rows, &cols)
             }
             Ty::Enum(e, args) => {
-                let layout = self.layout(*e, args)?;
+                let layout = self.layout(*e, args);
                 let cases = defs.file.enums[*e].cases.len();
                 let blocks = out.switch(value[0], cases);
                 for (k, case) in defs.file.enums[*e].cases.iter().enumerate() {
@@ -1411,9 +1486,8 @@ impl<'a> Lowering<'a> {
                         Some(_) => None,
                     });
                     out.current = blocks[k];
-                    self.decide(out, arms, leaves, rows, &cols)?;
+                    self.decide(out, arms, leaves, rows, &cols);
                 }
-                Ok(())
             }
             _ => unreachable!("checked"),
         }
@@ -1432,19 +1506,19 @@ impl<'a> Lowering<'a> {
     }
 
     /// The block a row leads to, with the names it binds, which ends a leaf.
-    fn leaf(&mut self, out: &mut Out<'a>, arms: &Arms<'a, '_>, row: Row) -> Res<Leaf> {
+    fn leaf(&mut self, out: &mut Out<'a>, arms: &Arms<'a, '_>, row: Row) -> Leaf {
         let frames = out.frames.clone();
         for (name, ty, value) in row.binds {
             out.define(&name, ty, value);
         }
-        let gives = self.block(out, &arms.arms[row.arm].body, arms.env)?;
+        let gives = self.block(out, &arms.arms[row.arm].body, arms.env);
         let names = self.names(out, arms);
         out.frames = frames;
-        Ok(Leaf {
+        Leaf {
             block: out.current,
             gives,
             names,
-        })
+        }
     }
 
     /// A block that nothing reaches, which gives nothing.
@@ -1468,19 +1542,19 @@ impl<'a> Lowering<'a> {
         s: usize,
         env: &[Ty],
         inner: &[Ty],
-    ) -> Res<Vec<form::Value>> {
+    ) -> Vec<form::Value> {
         let defs = self.typed.defs;
         let def = &defs.file.structs[s];
         let mut fields: Vec<Vec<form::Value>> = vec![Vec::new(); def.fields.len()];
         for Arg { name, value, .. } in &call.args {
-            let (_, value) = self.expr(out, value, env)?;
+            let (_, value) = self.expr(out, value, env);
             let (name, _) = name.as_ref().expect("checked");
             let at = def.fields.iter().position(|f| &f.name == name);
             fields[at.expect("checked")] = value;
         }
         for (at, default) in defs.left_out(call) {
-            fields[at] = self.expr(out, default, inner)?.1;
+            fields[at] = self.expr(out, default, inner).1;
         }
-        Ok(fields.concat())
+        fields.concat()
     }
 }
