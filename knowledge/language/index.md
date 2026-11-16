@@ -25,7 +25,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [storage.md](storage.md): when an array gets a buffer, the `alloc` effect and arenas, recursion without stack overflow, and types that contain themselves.
 - [differentiation.md](differentiation.md): `grad` as a compile-time call that returns the gradient of a function, shown by training an MLP.
 - [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`.
-- [tasks.md](tasks.md): task groups with `spawn` and `join`, async I/O that reads as sequential code, running out of memory, and events.
+- [tasks.md](tasks.md): task groups with `spawn` and `join`, cancellation, async I/O that reads as sequential code, how a task ends, and events.
 - [foreign.md](foreign.md): foreign declarations with C signatures, and how system frameworks are reached for native applications.
 - [modules.md](modules.md): one file as one module, `pub`, and explicit imports with `use`.
 - [projects.md](projects.md): how a folder becomes a project by convention, what `smith new` creates, the standard library, vendored dependencies, build steps and tasks in `project.smith`, and the command line.
