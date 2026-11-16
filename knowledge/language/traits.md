@@ -8,7 +8,7 @@ built: "type parameters, traits with `out` parameters, `impl`, bounds such as `T
 
 # Generics and traits
 
-Type parameters go in brackets after a name. A trait is a set of functions over one or more types, and an `impl` supplies them for particular types. A trait parameter marked `out` is determined by the others: once the two operand types of `add` are known, its result type is fixed. A bound such as `T: Add` requires an implementation in which every parameter is `T`.
+Type parameters go in brackets after a name. A trait is a set of functions over one or more types, and an `impl` supplies them for particular types. A trait parameter marked `out` is determined by the others: once the two operand types of `add` are known, its result type is fixed. A type parameter may have a default, written with `=` as a function's parameter writes one. A default may name a parameter before it, and parameters with defaults come after those without. So `Add[Rect]` means `Add[Rect, Rect, Rect]`, and a bound such as `T: Add` means `Add[T]`.
 
 ```
 enum Option[T] {
@@ -16,11 +16,11 @@ enum Option[T] {
   none
 }
 
-trait Add[A, B, out C] {
+trait Add[A, B = A, out C = A] {
   fn add(a: A, b: B) -> C
 }
 
-impl Add[Rect, Rect, Rect] {
+impl Add[Rect] {
   fn add(a: Rect, b: Rect) -> Rect { Rect(w: a.w + b.w, h: a.h + b.h) }
 }
 
