@@ -61,6 +61,10 @@ pub const ONCE: &[Test] = &[
         a_list_of_jobs_that_cannot_be_read_stops_the_step_that_asked,
     ),
     (
+        "every_job_that_follows_another_says_when_it_runs",
+        every_job_that_follows_another_says_when_it_runs,
+    ),
+    (
         "the_release_workflow_runs_after_a_merge_and_only_its_publish_job_writes",
         the_release_workflow_runs_after_a_merge_and_only_its_publish_job_writes,
     ),
@@ -164,6 +168,35 @@ fn a_build_that_is_not_a_release_reports_dev() {
     assert_eq!(words[0], "smith");
     if option_env!("SMITH_VERSION").is_none() {
         assert_eq!(words[1], "dev");
+    }
+}
+
+/// A job without a condition is skipped when any job before it, at any
+/// distance, was, so each job that needs another says when it runs.
+fn every_job_that_follows_another_says_when_it_runs() {
+    for name in ["release.yml", "ci.yml"] {
+        let path = format!("{}/../.github/workflows/{name}", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(path).unwrap();
+        let jobs = text.split("\njobs:\n").nth(1).unwrap();
+        let mut blocks: Vec<Vec<&str>> = Vec::new();
+        for line in jobs.lines() {
+            let is_name = line.starts_with("  ") && !line.starts_with("   ") && line.ends_with(':');
+            if is_name {
+                blocks.push(Vec::new());
+            }
+            if let Some(block) = blocks.last_mut() {
+                block.push(line);
+            }
+        }
+        for block in blocks {
+            if block.iter().any(|l| l.starts_with("    needs:")) {
+                assert!(
+                    block.iter().any(|l| l.starts_with("    if:")),
+                    "{name}: a job with no condition: {}",
+                    block[0]
+                );
+            }
+        }
     }
 }
 
