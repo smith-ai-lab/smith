@@ -16,6 +16,10 @@
 //! left when the program runs. A struct is lowered to its fields, one after
 //! another, until only texts are left, so the form every target receives
 //! holds texts alone.
+//!
+//! A default is filled in where the call or construction that leaves it out
+//! is written, so it is lowered as if it were written there, and no copy of
+//! a function knows which of its arguments were left out.
 
 use std::collections::HashMap;
 
@@ -213,6 +217,9 @@ struct Signature {
     /// The type parameters its types are written among.
     scope: Scope,
     params: Vec<(String, Ty)>,
+    /// Whether each parameter has a default, so that a call may leave it
+    /// out.
+    defaults: Vec<bool>,
     gives: Ty,
     /// The effects it carries that a caller must have, which are those it
     /// lists that the compiler builds.
@@ -224,6 +231,7 @@ impl Signature {
         Signature {
             scope: Scope::default(),
             params: vec![("text".to_string(), Ty::Text)],
+            defaults: vec![false],
             gives: Ty::Nothing,
             effects: vec!["console".to_string()],
         }
@@ -391,6 +399,7 @@ impl<'a> Defs<'a> {
             params: (f.params.iter())
                 .map(|p| (p.name.clone(), self.quietly(&p.ty, &scope)))
                 .collect(),
+            defaults: f.params.iter().map(|p| p.default.is_some()).collect(),
             gives: match &f.result {
                 Some(t) => self.quietly(t, &scope),
                 None => Ty::Nothing,
@@ -602,7 +611,13 @@ fn written(f: &Function, effects: &[&str]) -> String {
         })
         .collect();
     let params: Vec<String> = (f.params.iter())
-        .map(|p| format!("{}: {}", p.name, written_type(&p.ty)))
+        .map(|p| {
+            let mut text = format!("{}: {}", p.name, written_type(&p.ty));
+            if let Some(value) = &p.default {
+                text.push_str(&format!(" = {}", written_expr(value)));
+            }
+            text
+        })
         .collect();
     let mut text = format!("fn {}", f.name);
     if !generics.is_empty() {
@@ -616,6 +631,43 @@ fn written(f: &Function, effects: &[&str]) -> String {
         text.push_str(&format!(" ! {}", effects.join(", ")));
     }
     text
+}
+
+/// How an expression is written in the source, with each text written with
+/// an escape for every character that needs one.
+fn written_expr(e: &Expr) -> String {
+    match e {
+        Expr::Text { text, .. } => {
+            let mut out = String::from("\"");
+            for c in String::from_utf8_lossy(text).chars() {
+                match c {
+                    '"' | '\\' | '{' | '}' => {
+                        out.push('\\');
+                        out.push(c);
+                    }
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    c => out.push(c),
+                }
+            }
+            out.push('"');
+            out
+        }
+        Expr::Name { name, .. } => name.clone(),
+        Expr::Call(call) => {
+            let args: Vec<String> = (call.args.iter())
+                .map(|a| match &a.name {
+                    Some((name, _)) => format!("{name}: {}", written_expr(&a.value)),
+                    None => written_expr(&a.value),
+                })
+                .collect();
+            match &call.qualifier {
+                Some((q, _)) => format!("{q}.{}({})", call.callee, args.join(", ")),
+                None => format!("{}({})", call.callee, args.join(", ")),
+            }
+        }
+        Expr::Field { of, name, .. } => format!("{}.{name}", written_expr(of)),
+    }
 }
 
 /// A definition of the file, by its place among those of its kind.
@@ -752,11 +804,8 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 found.push(Item::Trait(k));
             }
         };
-        let function = |f: &Function, found: &mut Vec<Item>| {
-            for name in types_named(f) {
-                type_name(name, found);
-            }
-            for call in calls(&f.body) {
+        let called = |calls: Vec<&Call>, found: &mut Vec<Item>| {
+            for call in calls {
                 if let Some((q, _)) = &call.qualifier {
                     type_name(q, found);
                     continue;
@@ -771,6 +820,13 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 }
             }
         };
+        let function = |f: &Function, found: &mut Vec<Item>| {
+            for name in types_named(f) {
+                type_name(name, found);
+            }
+            let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
+            called(calls(values(&f.body).chain(defaults)), found);
+        };
         match reached[i] {
             Item::Fn(f) => function(&file.functions[f], &mut found),
             Item::Struct(s) => {
@@ -783,6 +839,8 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 for name in bounds_named(&s.generics) {
                     type_name(name, &mut found);
                 }
+                let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
+                called(calls(defaults), &mut found);
                 // An implementation lives with its trait or with a type it
                 // is for.
                 for (i, im) in file.impls.iter().enumerate() {
@@ -1012,7 +1070,7 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
 /// reads. A name is defined once in a function, so any read of it is a
 /// read of that binding.
 fn unused_bindings(f: &Function, out: &mut Vec<Error>) {
-    let read: Vec<&str> = (exprs(&f.body).into_iter())
+    let read: Vec<&str> = (exprs(values(&f.body)).into_iter())
         .filter_map(|e| match e {
             Expr::Name { name, .. } => Some(name.as_str()),
             _ => None,
@@ -1141,18 +1199,11 @@ fn not_a_var(body: &Body, name: &str, pos: Pos, at: usize) -> Error {
     }
 }
 
-/// Every expression in a body, each before the expressions inside it, and
-/// then from left to right.
-fn exprs(body: &[Stmt]) -> Vec<&Expr> {
-    let mut out = Vec::new();
-    for stmt in body {
-        match stmt {
-            Stmt::Define { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-                walk(value, &mut out)
-            }
-        }
-    }
-    out
+/// The value of each statement of a body, in order.
+fn values(body: &[Stmt]) -> impl Iterator<Item = &Expr> {
+    body.iter().map(|stmt| match stmt {
+        Stmt::Define { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => value,
+    })
 }
 
 fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
@@ -1168,16 +1219,36 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
-/// Every call in a body, outermost first and then from left to right. A
-/// construction is written as a call, so it is among them.
-fn calls(body: &[Stmt]) -> Vec<&Call> {
-    exprs(body)
-        .into_iter()
+/// Every expression in the expressions, in order, each before the
+/// expressions inside it, and then from left to right.
+fn exprs<'a>(exprs: impl IntoIterator<Item = &'a Expr>) -> Vec<&'a Expr> {
+    let mut inside = Vec::new();
+    for e in exprs {
+        walk(e, &mut inside);
+    }
+    inside
+}
+
+/// Every call in the expressions, in order, each outermost first and then
+/// from left to right. A construction is written as a call, so it is among
+/// them.
+fn calls<'a>(values: impl IntoIterator<Item = &'a Expr>) -> Vec<&'a Call> {
+    (exprs(values).into_iter())
         .filter_map(|e| match e {
             Expr::Call(call) => Some(call),
             _ => None,
         })
         .collect()
+}
+
+/// The error for a call in a default that leaves out that default, directly
+/// or through the defaults it leaves out in turn.
+fn default_cycle(pos: Pos) -> Error {
+    Error::new(
+        pos,
+        "this call leaves out the default it is written in, directly or through others, \
+         so filling it in would never end",
+    )
 }
 
 /// Every name a function uses as a type: in its signature, in its
@@ -1249,6 +1320,93 @@ fn params_of(params: &[(String, Ty)], args: &[Arg]) -> Vec<usize> {
 }
 
 impl<'a> Defs<'a> {
+    /// The defaults a call leaves out, each with the place of its parameter
+    /// or field, in the order of the parameters or fields. A call that
+    /// names nothing there is leaves out nothing.
+    fn left_out(&self, call: &Call) -> Vec<(usize, &'a Expr)> {
+        let file = self.file;
+        let params = |f: &'a Function| -> Vec<(&'a str, Option<&'a Expr>)> {
+            (f.params.iter())
+                .map(|p| (p.name.as_str(), p.default.as_ref()))
+                .collect()
+        };
+        let name = call.callee.as_str();
+        let (slots, by_position) = match &call.qualifier {
+            Some((q, _)) => {
+                let Some(&k) = self.trait_names.get(q.as_str()) else {
+                    return Vec::new();
+                };
+                match file.traits[k].functions.iter().find(|f| f.name == name) {
+                    Some(f) => (params(f), true),
+                    None => return Vec::new(),
+                }
+            }
+            None => {
+                if let Some(&s) = self.struct_names.get(name) {
+                    let fields = (file.structs[s].fields.iter())
+                        .map(|f| (f.name.as_str(), f.default.as_ref()))
+                        .collect();
+                    (fields, false)
+                } else if name == "print" {
+                    return Vec::new();
+                } else if let Some(&f) = self.function_names.get(name) {
+                    (params(&file.functions[f]), true)
+                } else if let Some([(k, fi)]) = self.trait_fns.get(name).map(Vec::as_slice) {
+                    (params(&file.traits[*k].functions[*fi]), true)
+                } else {
+                    return Vec::new();
+                }
+            }
+        };
+        let mut given = vec![false; slots.len()];
+        let mut next = 0;
+        for arg in &call.args {
+            match &arg.name {
+                Some((n, _)) => {
+                    if let Some(i) = slots.iter().position(|(s, _)| s == n) {
+                        given[i] = true;
+                    }
+                }
+                None if by_position => {
+                    if let Some(g) = given.get_mut(next) {
+                        *g = true;
+                    }
+                    next += 1;
+                }
+                None => {}
+            }
+        }
+        (slots.into_iter().zip(given).enumerate())
+            .filter_map(|(i, ((_, default), given))| default.filter(|_| !given).map(|d| (i, d)))
+            .collect()
+    }
+
+    /// The calls in the defaults a call leaves out, which run where the
+    /// call is written, each followed by the calls in the defaults it
+    /// leaves out in turn. A default already in `stack` is not filled in
+    /// again, and the place of the call that leaves it out goes in
+    /// `cycles`.
+    fn defaults_called(
+        &self,
+        call: &Call,
+        stack: &mut Vec<&'a Expr>,
+        out: &mut Vec<&'a Call>,
+        cycles: &mut Vec<Pos>,
+    ) {
+        for (_, default) in self.left_out(call) {
+            if stack.iter().any(|d| std::ptr::eq(*d, default)) {
+                cycles.push(call.pos);
+                continue;
+            }
+            stack.push(default);
+            for inner in calls([default]) {
+                out.push(inner);
+                self.defaults_called(inner, stack, out, cycles);
+            }
+            stack.pop();
+        }
+    }
+
     fn view(&self, t: Template) -> View<'_> {
         let file = self.file;
         match t {
@@ -1372,25 +1530,28 @@ impl<'a> Defs<'a> {
 
     /// The calls in a copy's body that run a function, outermost first and
     /// then from left to right, each with where it is and the copy it runs.
-    fn calls_of(&self, instance: &Instance) -> Vec<(Pos, Instance)> {
+    /// The calls in a default a call leaves out follow that call. Each call
+    /// that leaves out the default it is written in is in the second list.
+    fn calls_of(&self, instance: &Instance) -> (Vec<(Pos, Instance)>, Vec<Pos>) {
         let view = self.view(instance.template);
         let mut names: Vec<(String, Ty)> = (view.params.iter())
             .map(|(n, t)| (n.clone(), t.subst(&instance.args)))
             .collect();
         let mut out = Vec::new();
-        for stmt in &view.f.body {
-            let value = match stmt {
-                Stmt::Define { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-                    value
-                }
-            };
-            let mut inside = Vec::new();
-            walk(value, &mut inside);
-            for e in inside {
-                if let Expr::Call(call) = e
-                    && let Callee::Run(callee, _) = self.callee(call, &names)
-                {
+        let mut cycles = Vec::new();
+        for (stmt, value) in view.f.body.iter().zip(values(&view.f.body)) {
+            for call in calls([value]) {
+                if let Callee::Run(callee, _) = self.callee(call, &names) {
                     out.push((call.pos, callee));
+                }
+                // A default uses no name, so its calls are the same
+                // wherever it is filled in.
+                let mut filled = Vec::new();
+                self.defaults_called(call, &mut Vec::new(), &mut filled, &mut cycles);
+                for inner in filled {
+                    if let Callee::Run(callee, _) = self.callee(inner, &[]) {
+                        out.push((inner.pos, callee));
+                    }
                 }
             }
             if let Stmt::Define { name, value, .. } = stmt
@@ -1400,7 +1561,7 @@ impl<'a> Defs<'a> {
                 names.push((name.clone(), ty));
             }
         }
-        out
+        (out, cycles)
     }
 }
 
@@ -1420,7 +1581,11 @@ struct Checker<'a> {
 
 /// What checking one body needs to keep.
 struct Body<'a> {
-    f: &'a Function,
+    /// The function whose body this is, or `None` for a default.
+    f: Option<&'a Function>,
+    /// For a default, the names of the parameters of the function it is
+    /// in, which it may not use.
+    default: Option<Vec<&'a str>>,
     scope: &'a Scope,
     /// The effects it lists that have a name, each once.
     listed: Vec<&'a str>,
@@ -1435,6 +1600,13 @@ struct Body<'a> {
     params: usize,
     /// The names defined with `var`.
     vars: Vec<String>,
+}
+
+impl<'a> Body<'a> {
+    /// The function whose body this is.
+    fn owner(&self) -> &'a Function {
+        self.f.expect("a function's body")
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -1527,6 +1699,60 @@ impl<'a> Checker<'a> {
             }
             self.ty(&field.ty, scope);
         }
+        for (field, ty) in def.fields.iter().zip(&defs.fields[s]) {
+            if let Some(value) = &field.default {
+                self.default(value, ty, scope, Vec::new());
+            }
+        }
+    }
+
+    /// Checks a default: it uses no name, carries no effect, and gives
+    /// `needed`, among the type parameters of `scope`. `params` are the
+    /// parameters of the function it is in, if it is in one.
+    fn default(&mut self, value: &Expr, needed: &Ty, scope: &'a Scope, params: Vec<&'a str>) {
+        let mut body = Body {
+            f: None,
+            default: Some(params),
+            scope,
+            listed: Vec::new(),
+            unknown_effect: false,
+            missing: Vec::new(),
+            names: Vec::new(),
+            params: 0,
+            vars: Vec::new(),
+        };
+        let gives = self.expr(&mut body, value);
+        self.expect(&body, value, &gives, needed);
+    }
+
+    /// Checks the defaults of the parameters of `f`, whose signature is
+    /// `sig`: the parameters with one come after those without, and each
+    /// default is as `default` requires.
+    fn defaults(&mut self, f: &'a Function, sig: &'a Signature) {
+        let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        let mut first = None;
+        for (p, (_, ty)) in f.params.iter().zip(&sig.params) {
+            match (&p.default, first) {
+                (Some(value), _) => {
+                    first = first.or(Some(p.name.as_str()));
+                    self.default(value, ty, &sig.scope, names.clone());
+                }
+                (None, Some(q)) => self.errors.push(
+                    Error::new(
+                        p.pos,
+                        format!(
+                            "`{}` has no default, and comes after `{q}`, which has one",
+                            p.name
+                        ),
+                    )
+                    .with_fix(format!(
+                        "move `{}` before `{q}`, or give it a default",
+                        p.name
+                    )),
+                ),
+                (None, None) => {}
+            }
+        }
     }
 
     /// Checks a list of effects: each named once, each one there is.
@@ -1593,6 +1819,7 @@ impl<'a> Checker<'a> {
             }
         }
         self.params(def, &defs.signatures[f].scope);
+        self.defaults(def, &defs.signatures[f]);
         self.effects(&def.effects);
     }
 
@@ -1618,6 +1845,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             self.params(f, &defs.trait_sigs[k][i].scope);
+            self.defaults(f, &defs.trait_sigs[k][i]);
             self.effects(&f.effects);
             for p in &f.params {
                 for (name, pos) in type_names(&p.ty) {
@@ -1745,6 +1973,22 @@ impl<'a> Checker<'a> {
         let trait_fn = &defs.file.traits[info.of].functions[fi];
         let sig = &defs.trait_sigs[info.of][fi];
         let scope = &info.scope;
+        let trait_name = &defs.file.traits[info.of].name;
+        for p in &f.params {
+            if let Some(value) = &p.default {
+                self.errors.push(
+                    Error::new(
+                        value.pos(),
+                        format!(
+                            "the defaults of `{}` are stated in `{trait_name}`, and an \
+                             implementation does not repeat them",
+                            f.name
+                        ),
+                    )
+                    .with_fix(format!("remove the default of `{}`", p.name)),
+                );
+            }
+        }
         let before = self.errors.len();
         self.params(f, scope);
         self.effects(&f.effects);
@@ -1786,7 +2030,6 @@ impl<'a> Checker<'a> {
         if !effects.is_empty() {
             text.push_str(&format!(" ! {}", effects.join(", ")));
         }
-        let trait_name = &defs.file.traits[info.of].name;
         self.errors.push(
             Error::new(
                 f.pos,
@@ -1875,7 +2118,8 @@ impl<'a> Checker<'a> {
             }
         }
         let mut body = Body {
-            f,
+            f: Some(f),
+            default: None,
             scope: view.scope,
             listed,
             unknown_effect,
@@ -2008,7 +2252,7 @@ impl<'a> Checker<'a> {
                 pos,
                 format!(
                     "there is no name `{name}` defined before this in `{}`",
-                    body.f.name
+                    body.owner().name
                 ),
             ));
             return None;
@@ -2057,13 +2301,17 @@ impl<'a> Checker<'a> {
                 if let Some((_, ty)) = body.names.iter().find(|(n, _)| n == name) {
                     ty.clone()
                 } else {
-                    self.errors.push(Error::new(
-                        *pos,
-                        format!(
+                    let message = match &body.default {
+                        Some(params) if params.contains(&name.as_str()) => {
+                            format!("a default uses no parameter, and `{name}` is one")
+                        }
+                        Some(_) => format!("there is no name `{name}` for a default to use"),
+                        None => format!(
                             "there is no name `{name}` defined before this in `{}`",
-                            body.f.name
+                            body.owner().name
                         ),
-                    ));
+                    };
+                    self.errors.push(Error::new(*pos, message));
                     Ty::Unknown
                 }
             }
@@ -2133,11 +2381,17 @@ impl<'a> Checker<'a> {
         }
         if name == "print" {
             let print = Signature::print();
+            if self.effect_in_default(body, call, &print) {
+                return self.unknown_call(body, call);
+            }
             self.arguments(body, call, &print, true);
             return Ty::Nothing;
         }
         if let Some(&f) = defs.function_names.get(name) {
             let sig = &defs.signatures[f];
+            if self.effect_in_default(body, call, sig) {
+                return self.unknown_call(body, call);
+            }
             let sol = self.arguments(body, call, sig, false);
             for (g, bound) in sig.scope.bounds.iter().enumerate() {
                 if let (Bound::Trait(k), Some(t)) = (bound, &sol[g])
@@ -2186,6 +2440,9 @@ impl<'a> Checker<'a> {
     fn trait_call(&mut self, body: &mut Body<'a>, call: &Call, k: usize, fi: usize) -> Ty {
         let defs = self.defs;
         let sig = &defs.trait_sigs[k][fi];
+        if self.effect_in_default(body, call, sig) {
+            return self.unknown_call(body, call);
+        }
         let sol = self.arguments(body, call, sig, false);
         let outs = &defs.outs[k];
         if (sol.iter().zip(outs)).any(|(t, out)| !out && t.is_none()) {
@@ -2212,8 +2469,25 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Reports a call in a default of a function with this signature, if it
+    /// carries an effect, and gives whether it does.
+    fn effect_in_default(&mut self, body: &Body, call: &Call, signature: &Signature) -> bool {
+        let (Some(_), Some(effect)) = (&body.default, signature.effects.first()) else {
+            return false;
+        };
+        self.errors.push(Error::new(
+            call.pos,
+            format!(
+                "a default carries no effect, and `{}` needs the `{effect}` effect",
+                call.callee
+            ),
+        ));
+        true
+    }
+
     /// Checks the construction of struct `s`, which gives each of its
-    /// fields once by name, in any order.
+    /// fields once by name, in any order, except those it leaves to their
+    /// defaults.
     fn construction(&mut self, body: &mut Body<'a>, call: &Call, s: usize) -> Ty {
         let defs = self.defs;
         let def = &defs.file.structs[s];
@@ -2257,7 +2531,7 @@ impl<'a> Checker<'a> {
         }
         let missing: Vec<&str> = (def.fields.iter())
             .zip(&given)
-            .filter(|(_, given)| !**given)
+            .filter(|(f, given)| !**given && f.default.is_none())
             .map(|(f, _)| f.name.as_str())
             .collect();
         // A field given by position may be one of those missing.
@@ -2301,10 +2575,11 @@ impl<'a> Checker<'a> {
                     call.pos,
                     format!(
                         "`{}` needs the `{effect}` effect, which `{}` does not declare",
-                        call.callee, body.f.name
+                        call.callee,
+                        body.owner().name
                     ),
                 )
-                .with_fix(format!("write `{}`", written(body.f, &effects))),
+                .with_fix(format!("write `{}`", written(body.owner(), &effects))),
             );
         }
         let mut given: Vec<bool> = vec![false; signature.params.len()];
@@ -2393,8 +2668,8 @@ impl<'a> Checker<'a> {
             }
         }
         let missing: Vec<&str> = (signature.params.iter())
-            .zip(&given)
-            .filter(|(_, given)| !**given)
+            .zip(given.iter().zip(&signature.defaults))
+            .filter(|(_, (given, default))| !**given && !**default)
             .map(|((p, _), _)| p.as_str())
             .collect();
         if is_print && !missing.is_empty() {
@@ -2418,9 +2693,20 @@ impl<'a> Checker<'a> {
     /// Reports each call that closes a cycle of calls between functions
     /// written on their own, in a walk of the calls from `f`. `path` is the
     /// functions being walked, and `done` those already walked.
+    ///
+    /// The calls in a default that a call leaves out are calls of the
+    /// function the call is written in, as the default is filled in there.
     fn recursion(&mut self, f: usize, path: &mut Vec<usize>, done: &mut Vec<usize>) {
         path.push(f);
-        for call in calls(&self.defs.file.functions[f].body) {
+        let defs = self.defs;
+        let mut all = Vec::new();
+        let mut cycles = Vec::new();
+        for call in calls(values(&defs.file.functions[f].body)) {
+            all.push(call);
+            defs.defaults_called(call, &mut Vec::new(), &mut all, &mut cycles);
+        }
+        self.errors.extend(cycles.into_iter().map(default_cycle));
+        for call in all {
             if call.qualifier.is_some() {
                 continue;
             }
@@ -2446,7 +2732,9 @@ impl<'a> Checker<'a> {
     /// walked from `main`, and `done` those already walked.
     fn copies(&mut self, instance: &Instance, path: &mut Vec<Instance>, done: &mut Vec<Instance>) {
         path.push(instance.clone());
-        for (pos, callee) in self.defs.calls_of(instance) {
+        let (calls, cycles) = self.defs.calls_of(instance);
+        self.errors.extend(cycles.into_iter().map(default_cycle));
+        for (pos, callee) in calls {
             let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
             let endless = path.iter().any(|p| {
                 p.template == callee.template && (*p == callee || size(&callee) > size(p))
@@ -2650,6 +2938,11 @@ impl<'a> Lowering<'a> {
                     for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
                         args[at] = self.expr(out, &arg.value).1;
                     }
+                    // Then the defaults it leaves out, in the order of the
+                    // parameters, as if they were written after the rest.
+                    for (at, default) in defs.left_out(call) {
+                        args[at] = self.expr(out, default).1;
+                    }
                     let results = self.locals(out, &gives);
                     out.steps.push(Step::Call {
                         function,
@@ -2677,16 +2970,21 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Works out the fields in the order they are written, and gives their
-    /// texts in the order the struct declares them.
+    /// Works out the fields in the order they are written, and then the
+    /// defaults of those left out in the order the struct declares them,
+    /// and gives their texts in the order the struct declares them.
     fn construction(&mut self, out: &mut Lowered, call: &Call, s: usize) -> Vec<Value> {
-        let def = &self.defs.file.structs[s];
+        let defs = self.defs;
+        let def = &defs.file.structs[s];
         let mut fields: Vec<Vec<Value>> = vec![Vec::new(); def.fields.len()];
         for Arg { name, value } in &call.args {
             let (_, value) = self.expr(out, value);
             let (name, _) = name.as_ref().expect("checked");
             let at = def.fields.iter().position(|f| &f.name == name);
             fields[at.expect("checked")] = value;
+        }
+        for (at, default) in defs.left_out(call) {
+            fields[at] = self.expr(out, default).1;
         }
         fields.concat()
     }

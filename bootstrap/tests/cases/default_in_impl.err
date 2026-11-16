@@ -1,0 +1,4 @@
+default_in_impl.smith:10:35: the defaults of `name_of` are stated in `Named`, and an implementation does not repeat them
+  10 |   fn name_of(x: Cat, title: str = "Dr") -> str { title }
+     |                                   ^
+  fix: remove the default of `title`

@@ -1,0 +1,5 @@
+fn greet(greeting: str = "hello", name: str) -> str { greeting }
+
+fn main() ! console {
+  print(greet(name: "Ada"))
+}

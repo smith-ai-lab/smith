@@ -9,6 +9,9 @@
 //! prints. Then it writes the model out as source, placing the mistake as
 //! it writes.
 //!
+//! A trait's function may give its parameter `note` a default, which a
+//! call may leave out, and which the program written out gives.
+//!
 //! A function or a trait calls only functions and traits that come after
 //! it in a fixed order, and an implementation calls its own trait only for
 //! a type parameter it holds, so no copy of a function calls itself.
@@ -84,8 +87,11 @@ struct StructDef {
 
 struct TraitFn {
     name: &'static str,
-    /// Its parameters, whose types are among the trait's types.
+    /// Its parameters, whose types are among the trait's types. A second
+    /// one is `note`, of type text.
     params: Vec<(&'static str, Ty)>,
+    /// The default of `note`, as the pieces of a literal, if it has one.
+    default: Option<Vec<usize>>,
     result: Ty,
     console: bool,
 }
@@ -198,6 +204,8 @@ enum Kind {
     OutFixed,
     /// A part of traits the compiler does not build yet.
     NotBuilt,
+    /// A default written in an implementation.
+    ImplDefault,
 }
 
 const KINDS: &[Kind] = &[
@@ -211,6 +219,7 @@ const KINDS: &[Kind] = &[
     Kind::Clash,
     Kind::OutFixed,
     Kind::NotBuilt,
+    Kind::ImplDefault,
 ];
 
 const CONCRETE: &[&str] = &["Cat", "Dog", "Bird"];
@@ -447,6 +456,24 @@ fn args(g: &mut Gen, m: &Model, ctx: &Ctx, params: &[Ty], depth: usize) -> Vec<A
         .collect()
 }
 
+/// Arguments for function `func` of trait `of`, for parameters of these
+/// types, which may leave out `note` if it has a default.
+fn trait_args(
+    g: &mut Gen,
+    m: &Model,
+    ctx: &Ctx,
+    (of, func): (usize, usize),
+    params: &[Ty],
+    depth: usize,
+) -> Vec<Arg> {
+    let mut args = args(g, m, ctx, params, depth);
+    if m.traits[of].fns[func].default.is_some() && g.one_in(2) {
+        // `note` is the last parameter, so the rest stay as they were.
+        args.retain(|a| a.param != 1);
+    }
+    args
+}
+
 /// A call of a later function that gives `ty`, if one can.
 fn call(g: &mut Gen, m: &Model, ctx: &Ctx, ty: &Ty, depth: usize) -> Option<Expr> {
     let fits: Vec<usize> = (1..m.fns.len())
@@ -515,7 +542,7 @@ fn trait_call(g: &mut Gen, m: &Model, ctx: &Ctx, ty: &Ty, depth: usize) -> Optio
     let params: Vec<Ty> = (m.traits[of].fns[func].params.iter())
         .map(|(_, t)| t.subst(&types))
         .collect();
-    let args = args(g, m, ctx, &params, depth);
+    let args = trait_args(g, m, ctx, (of, func), &params, depth);
     Some(Expr::TraitCall {
         of,
         func,
@@ -658,8 +685,13 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
                     names.remove(g.below(names.len()))
                 };
                 let mut params = vec![("x", Ty::P(0))];
-                if g.one_in(3) {
+                let mut default = None;
+                if g.one_in(3) || kind == Some(Kind::ImplDefault) && k == 0 && i == 0 {
                     params.push(("note", Ty::Str));
+                    default = g.one_in(2).then(|| {
+                        let count = g.below(6);
+                        (0..count).map(|_| g.below(PIECES.len())).collect()
+                    });
                 }
                 let result = if out && i == 0 && kind == Some(Kind::OutFixed) {
                     Ty::P(1)
@@ -671,6 +703,7 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
                 TraitFn {
                     name,
                     params,
+                    default,
                     result,
                     console: g.one_in(3),
                 }
@@ -825,7 +858,7 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
         let call = Expr::TraitCall {
             of: k,
             func: 0,
-            args: args(g, &m, &main, &params, DEPTH),
+            args: trait_args(g, &m, &main, (k, 0), &params, DEPTH),
             types,
         };
         first.push(use_of(call, &gives, first.len()));
@@ -978,6 +1011,15 @@ impl Model {
         }
     }
 
+    /// The default of `note` for a call of a trait's function, if it has
+    /// one.
+    fn default_of(&self, call: &Expr) -> Option<&[usize]> {
+        match call {
+            Expr::TraitCall { of, func, .. } => self.traits[*of].fns[*func].default.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The copy a call runs, in the copy with types `env`.
     fn target(&self, call: &Expr, env: &[Ty]) -> Copy {
         match call {
@@ -1043,11 +1085,20 @@ fn eval(m: &Model, env: &[Ty], names: &[(String, Val)], expr: &Expr, out: &mut V
             Val::Text(Vec::new())
         }
         Expr::Call { args, .. } | Expr::TraitCall { args, .. } => {
-            let mut values = vec![Val::Text(Vec::new()); args.len()];
+            let copy = m.target(expr, env);
+            let mut given = vec![None; m.params_of(copy.0).len()];
             for arg in args {
-                values[arg.param] = eval(m, env, names, &arg.value, out);
+                given[arg.param] = Some(eval(m, env, names, &arg.value, out));
             }
-            run(m, &m.target(expr, env), values, out)
+            let values = (given.into_iter())
+                .map(|value| {
+                    value.unwrap_or_else(|| {
+                        let pieces = m.default_of(expr).expect("a default");
+                        Val::Text(pieces.iter().flat_map(|&p| PIECES[p].1.bytes()).collect())
+                    })
+                })
+                .collect();
+            run(m, &copy, values, out)
         }
         Expr::Construct { s, fields, .. } => {
             let mut values = vec![Val::Text(Vec::new()); m.structs[*s].fields.len()];
@@ -1208,7 +1259,7 @@ impl WrittenOut<'_> {
                 let copy = m.target(expr, env);
                 let params = m.params_of(copy.0);
                 let name = self.copy_name(copy);
-                let args: Vec<String> = (args.iter())
+                let mut args: Vec<String> = (args.iter())
                     .map(|a| {
                         let value = self.expr(&a.value, env);
                         if a.named {
@@ -1218,6 +1269,13 @@ impl WrittenOut<'_> {
                         }
                     })
                     .collect();
+                // A default left out is written after the rest.
+                if args.len() < params.len()
+                    && let Some(pieces) = m.default_of(expr)
+                {
+                    let text: String = pieces.iter().map(|&p| PIECES[p].0).collect();
+                    args.push(format!("note: \"{text}\""));
+                }
                 format!("{name}({})", args.join(", "))
             }
             Expr::Construct { s, types, fields } => {
@@ -1313,6 +1371,8 @@ enum Item {
 struct Sites {
     /// The implementation the mistake goes in, and its trait's function.
     impl_site: Option<(usize, usize)>,
+    /// The same, for a default written in an implementation.
+    default_site: Option<(usize, usize)>,
     /// The function whose first type parameter's bound is the mistake.
     bound_site: Option<usize>,
 }
@@ -1346,6 +1406,12 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
             Some(Kind::LacksFn | Kind::ExtraFn | Kind::SignatureDiffers)
         )
         .then(|| *g.pick(&firsts)),
+        default_site: (kind == Some(Kind::ImplDefault)).then(|| {
+            let of_first: Vec<usize> = (0..m.impls.len())
+                .filter(|&i| m.impls[i].of == 0 && !m.impls[i].second)
+                .collect();
+            (*g.pick(&of_first), 0)
+        }),
         bound_site: (kind == Some(Kind::BoundNotTrait))
             .then(|| {
                 let with: Vec<usize> = (reached.iter().copied())
@@ -1504,7 +1570,12 @@ fn declared_trait(b: &mut Builder, m: &Model, k: usize) {
     b.push(&format!("trait {}[{params}] {{\n", t.name));
     let own: Vec<Ty> = (0..t.params.len()).map(Ty::P).collect();
     for f in &t.fns {
-        b.push(&format!("  {}\n", trait_fn_text(m, f, &own, &t.params)));
+        let mut text = trait_fn_text(m, f, &own, &t.params);
+        if let Some(pieces) = &f.default {
+            let literal: String = pieces.iter().map(|&p| PIECES[p].0).collect();
+            text = text.replace("note: str", &format!("note: str = \"{literal}\""));
+        }
+        b.push(&format!("  {text}\n"));
     }
     b.push("}\n");
 }
@@ -1533,7 +1604,13 @@ fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites) {
         }
         b.push("  ");
         let wanted = trait_fn_text(m, f, &im.args, &ctx_names);
-        if here && b.kind == Some(Kind::SignatureDiffers) {
+        let repeats = sites.default_site == Some((i, func));
+        if repeats {
+            let (before, after) = wanted.split_once("note: str").expect("a `note`");
+            b.push(&format!("{before}note: str = "));
+            b.mark(format!("`{}`", t.name), Some("remove".to_string()));
+            b.push(&format!("\"a\"{after}"));
+        } else if here && b.kind == Some(Kind::SignatureDiffers) {
             b.push("fn ");
             b.mark(format!("`{}`", f.name), Some(format!("`{wanted}`")));
             let text = differing(b.g, m, f, &im.args, &ctx_names);
@@ -1721,8 +1798,8 @@ fn main_statement(b: &mut Builder, m: &Model, sites: &Sites) {
                 ("", "without Copy for Rock"),
                 ("", "enum Kind {\n  a\n}"),
                 (
-                    "trait Spare[T] {\n  fn spare_of(x: T, note: str ",
-                    "= \"a\") -> str\n}",
+                    "trait Spare[T] {\n  fn spare_of(x: T, note: str = ",
+                    "1) -> str\n}",
                 ),
                 ("impl ", "Copy[Rock] {}"),
                 ("impl ", "Discard[Rock] {}"),
