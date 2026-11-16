@@ -194,7 +194,14 @@ Every target passes the same tests, which take their targets from the target enu
 | The executable does what the evaluator says the program does | For every target this machine can run, on generated programs and on the cases |
 | A target's executables have the same bytes whichever machine builds them | The SHA-256 of each case's executable for each target is kept in `bootstrap/tests/hashes` and compared on every kind of machine. `SMITH_UPDATE=1 cargo test cases`, the command that rewrites the cases' expected output, rewrites it too |
 
-The tests whose result depends on the kind of machine they run on are one group: the last two properties, and what `smith run` and a build with no `--target` do. `cargo test -- --group=machine` runs only that group, and `cargo test -- --group=once` runs only the others. Continuous integration runs the second once, on Linux on x86-64, and the first once on each kind of machine a target needs, building the compiler once in each job.
+The tests whose result depends on the kind of machine they run on are one group: the last two properties, and what `smith run` and a build with no `--target` do. `cargo test -- --group=machine` runs only that group, and `cargo test -- --group=once` runs only the others.
+
+Continuous integration runs for a pull request and in the merge queue, and for nothing else: the `timings` workflow is the only one that runs after a merge. The queue runs every check a pull request runs, and checks the messages of the commits it is about to merge.
+
+- On Linux on x86-64 one job builds the compiler once and runs the format check, the lint, both test groups, and the timings. The machine group also runs once on each other kind of machine a target needs.
+- A change that touches no file under `bootstrap/` or `.github/` and not `.gitattributes`, which sets the bytes of the test cases on checkout, such as one to `knowledge/` or `.agents/` alone, runs no job that builds the compiler. `.github/changed.sh` decides this.
+- A newer push to a pull request cancels the run for the older push.
+- The job named `ci` is the one check the repository requires. `.github/ci-result.sh` makes it succeed only when every other job succeeded or was skipped on purpose, and fail when any failed or was cancelled. Adding a job to the workflow means adding it to what `ci` needs, and changes no rule.
 
 ## Timings
 
