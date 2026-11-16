@@ -5,6 +5,9 @@
 //! Arguments that do not start with `-` keep only the tests whose names
 //! hold one of them.
 //!
+//! A test that computes for more than a second fails the run, and the run
+//! names it, as `LIMIT` says.
+//!
 //! `--fingerprint` runs nothing. It prints, for each target, a hash of
 //! everything the group that depends on the machine would run for it, as
 //! `.github/needs-machines.sh` reads it.
@@ -18,6 +21,7 @@ mod alloc;
 mod check;
 mod choices;
 mod cli;
+mod clock;
 mod enums;
 mod generate;
 #[cfg(unix)]
@@ -41,13 +45,43 @@ use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// A test: its name and what it runs. It fails by panicking.
 pub type Test = (&'static str, fn());
 
 /// How many of the slowest tests a run ends with.
 const SLOWEST: usize = 5;
+
+/// What a test may compute for, as `clock` measures it.
+const LIMIT: Duration = Duration::from_secs(1);
+
+/// The tests the limit applies to, a file at a time. A file joins when every
+/// test in it is under the limit, and never leaves. This list is a stopgap:
+/// the issue that adds the last file deletes it, and the limit then applies
+/// to every test with nothing here to keep by hand. The files that are not
+/// here are `machines.rs`, whose tests share a fingerprint that is made in
+/// `targets.rs`, and `targets.rs`, which is being rewritten.
+fn limited() -> Vec<Test> {
+    let tests = [
+        props::TESTS,
+        cli::ONCE,
+        cli::MACHINE,
+        check::ONCE,
+        release::ONCE,
+        scalar::ONCE,
+    ]
+    .concat();
+    // The installer is for macOS and Linux, and its tests run where a shell does.
+    #[cfg(unix)]
+    let tests = [tests, install::ONCE.to_vec()].concat();
+    tests
+}
+
+/// Whether a test over the limit fails the run. It does on the kind of
+/// machine that the `linux` job of `ci` uses, where every limited test
+/// runs, and elsewhere is only printed.
+const ENFORCED: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -102,9 +136,9 @@ fn main() -> ExitCode {
                     let Some((name, test)) = tests.get(i) else {
                         break;
                     };
-                    let begin = Instant::now();
+                    let begin = clock::thread_time();
                     let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();
-                    let time = begin.elapsed();
+                    let time = clock::thread_time() - begin;
                     println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
                     results.lock().unwrap().push((*name, passed, time));
                 }
@@ -133,11 +167,24 @@ fn main() -> ExitCode {
         }
     }
     results.sort_by_key(|(_, _, time)| std::cmp::Reverse(*time));
-    println!("\nslowest tests:");
+    println!("\nslowest tests, by the time they spent computing:");
     for (name, _, time) in results.iter().take(SLOWEST) {
         println!("{:>10}  {name}", milliseconds(*time));
     }
-    if failed.is_empty() {
+    let limited = limited();
+    let slow: Vec<&str> = results
+        .iter()
+        .filter(|(name, _, time)| *time > LIMIT && limited.iter().any(|(l, _)| l == name))
+        .map(|(name, _, _)| *name)
+        .collect();
+    for name in &slow {
+        println!(
+            "{}: {name} computed for more than {}",
+            if ENFORCED { "too slow" } else { "slow" },
+            milliseconds(LIMIT)
+        );
+    }
+    if failed.is_empty() && !(ENFORCED && !slow.is_empty()) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
