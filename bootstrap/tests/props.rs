@@ -14,6 +14,7 @@ use crate::generate::{self, Gen};
 use crate::lambdas;
 use crate::programs::{self, Case, PIECES, pos_after};
 use crate::targets;
+use crate::text;
 use crate::traits;
 use crate::tuples;
 
@@ -85,6 +86,14 @@ pub const TESTS: &[Test] = &[
     (
         "every_placed_mistake_about_lambdas_is_one_error_at_its_place",
         every_placed_mistake_about_lambdas_is_one_error_at_its_place,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_text_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_text_to_print,
+    ),
+    (
+        "every_placed_mistake_about_text_is_one_error_at_its_place",
+        every_placed_mistake_about_text_is_one_error_at_its_place,
     ),
     (
         "a_function_main_does_not_reach_is_parsed_and_not_checked",
@@ -353,6 +362,24 @@ fn every_placed_mistake_about_lambdas_is_one_error_at_its_place() {
     });
 }
 
+fn the_evaluator_says_what_the_generator_built_a_program_with_text_to_print() {
+    generate::check(34, 300, text::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+    });
+}
+
+fn every_placed_mistake_about_text_is_one_error_at_its_place() {
+    generate::check(35, 500, text::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
 fn an_implementation_with_type_parameters_applies_to_each_type_that_fits() {
     generate::check(16, 200, traits::boxes, |(source, stdout)| {
         let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
@@ -585,7 +612,6 @@ const BAD_PIECES: &[(&str, &str)] = &[
     ("\\ ", "unknown escape"),
     ("\\é", "unknown escape"),
     ("}", "closes no expression"),
-    ("{x}", "not supported yet"),
 ];
 
 /// A file whose only mistakes are in the tokens, each at a known place,
@@ -713,7 +739,7 @@ fn file_with_check_errors(g: &mut Gen) -> (String, Vec<(Pos, String)>) {
             }
             listed.push(effect);
             match effect {
-                "console" => {}
+                "console" | "alloc" => {}
                 "consol" => {
                     unknown = true;
                     expected.push((at, "no effect named `consol`".to_string()));

@@ -3,6 +3,9 @@
 
 use crate::diag::{Error, Pos};
 
+/// The error for a string whose line ends before its closing quote.
+const NO_CLOSING_QUOTE: &str = "this string has no closing quote on the line it starts";
+
 /// The keywords of Smith.
 const KEYWORDS: &[&str] = &[
     "and", "as", "break", "derive", "effect", "else", "ensures", "enum", "fn", "for", "foreign",
@@ -25,6 +28,8 @@ pub enum Tok {
     Number(String),
     /// A string literal with its escapes applied.
     Str(Vec<u8>),
+    /// A string literal that holds expressions, as its pieces in order.
+    Interp(Vec<Piece>),
     Punct(&'static str),
     Newline,
     Eof,
@@ -37,12 +42,22 @@ impl Tok {
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Keyword(word) => format!("`{word}`"),
             Tok::Number(text) => format!("the number `{text}`"),
-            Tok::Str(_) => "a string".to_string(),
+            Tok::Str(_) | Tok::Interp(_) => "a string".to_string(),
             Tok::Punct(p) => format!("`{p}`"),
             Tok::Newline => "a line break".to_string(),
             Tok::Eof => "the end of the file".to_string(),
         }
     }
+}
+
+/// A piece of a string literal that holds expressions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Piece {
+    /// Text, with its escapes applied.
+    Text(Vec<u8>),
+    /// The tokens of an expression in braces, followed by the `}` that
+    /// closes it.
+    Expr(Vec<Token>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,18 +153,11 @@ impl<'a> Lexer<'a> {
         while let Some(c) = self.peek() {
             let start = self.pos;
             match c {
-                ' ' | '\t' => {
-                    self.bump();
-                }
                 '\n' => {
                     self.bump();
                     self.push(Tok::Newline, start);
                 }
-                '/' if self.peek_second() == Some('/') => self.comment(start),
-                '"' => self.string(start),
-                'a'..='z' | 'A'..='Z' | '_' => self.word(start),
-                '0'..='9' => self.number(start),
-                _ => self.punctuation(start, c),
+                _ => self.token(start, c),
             }
         }
         let end = self.pos;
@@ -158,6 +166,21 @@ impl<'a> Lexer<'a> {
             Ok(self.tokens)
         } else {
             Err(self.errors)
+        }
+    }
+
+    /// Reads what starts with `c`, which is not a line break: a space, a
+    /// comment, or a token.
+    fn token(&mut self, start: Pos, c: char) {
+        match c {
+            ' ' | '\t' => {
+                self.bump();
+            }
+            '/' if self.peek_second() == Some('/') => self.comment(start),
+            '"' => self.string(start),
+            'a'..='z' | 'A'..='Z' | '_' => self.word(start),
+            '0'..='9' => self.number(start),
+            _ => self.punctuation(start, c),
         }
     }
 
@@ -219,15 +242,13 @@ impl<'a> Lexer<'a> {
     /// string still becomes a token, so that the rest of the line is read.
     fn string(&mut self, start: Pos) {
         self.bump();
+        let mut pieces = Vec::new();
         let mut value = Vec::new();
         loop {
             let at = self.pos;
             match self.peek() {
                 None | Some('\n') => {
-                    self.error(Error::new(
-                        start,
-                        "this string has no closing quote on the line it starts",
-                    ));
+                    self.error(Error::new(start, NO_CLOSING_QUOTE));
                     break;
                 }
                 Some('"') => {
@@ -235,9 +256,11 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some('{') => {
-                    self.error(Error::unsupported(at, "an expression in a string"));
-                    if !self.skip_expression() {
-                        break;
+                    self.bump();
+                    pieces.push(Piece::Text(std::mem::take(&mut value)));
+                    match self.expression(start) {
+                        Some(tokens) => pieces.push(Piece::Expr(tokens)),
+                        None => break,
                     }
                 }
                 Some('}') => {
@@ -289,29 +312,55 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        self.push(Tok::Str(value), start);
+        if pieces.is_empty() {
+            self.push(Tok::Str(value), start);
+        } else {
+            pieces.push(Piece::Text(value));
+            pieces.retain(|p| *p != Piece::Text(Vec::new()));
+            self.push(Tok::Interp(pieces), start);
+        }
     }
 
-    /// Skips an expression in a string, from its `{` to the `}` that closes
-    /// it. Gives whether that `}` is on the line, so the string goes on.
-    fn skip_expression(&mut self) -> bool {
-        let mut depth = 0;
-        while let Some(c) = self.peek() {
-            match c {
-                '\n' => return false,
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        self.bump();
-                        return true;
-                    }
+    /// Reads the tokens of an expression in a string, the string that
+    /// starts at `start`, from after its `{` through the `}` that closes it.
+    /// Gives `None` when the line ends first, so the string has no closing
+    /// quote, which is reported.
+    fn expression(&mut self, start: Pos) -> Option<Vec<Token>> {
+        let outside = std::mem::take(&mut self.tokens);
+        let mut depth = 0usize;
+        let closed = loop {
+            let at = self.pos;
+            match self.peek() {
+                None | Some('\n') => break false,
+                Some('}') if depth == 0 => {
+                    self.bump();
+                    self.push(Tok::Punct("}"), at);
+                    break true;
                 }
-                _ => {}
+                Some(c) => {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                    self.token(at, c);
+                }
             }
-            self.bump();
+        };
+        let tokens = std::mem::replace(&mut self.tokens, outside);
+        // A string in the braces that the line ends inside is the one
+        // without its quote.
+        let inner = tokens
+            .iter()
+            .any(|t| matches!(t.tok, Tok::Str(_) | Tok::Interp(_)))
+            && self
+                .errors
+                .last()
+                .is_some_and(|e| e.message == NO_CLOSING_QUOTE);
+        if !closed && !inner {
+            self.error(Error::new(start, NO_CLOSING_QUOTE));
         }
-        false
+        closed.then_some(tokens)
     }
 }
 

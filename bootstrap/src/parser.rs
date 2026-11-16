@@ -4,7 +4,7 @@
 //! not supported yet.
 
 use crate::diag::{Error, Pos};
-use crate::lexer::{Tok, Token};
+use crate::lexer::{Piece, Tok, Token};
 
 /// The definitions of a file, each kind in the order they are written.
 #[derive(Debug, PartialEq, Eq)]
@@ -169,6 +169,11 @@ pub enum Expr {
         text: Vec<u8>,
         pos: Pos,
     },
+    /// A string literal that holds expressions, as its parts in order.
+    Interp {
+        pos: Pos,
+        parts: Vec<Part>,
+    },
     Name {
         name: String,
         pos: Pos,
@@ -200,6 +205,16 @@ pub enum Expr {
         items: Vec<Expr>,
     },
     Lambda(Box<Lambda>),
+}
+
+/// A part of a string literal that holds expressions.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Part {
+    /// Text, with its escapes applied, which is never empty.
+    Text(Vec<u8>),
+    /// An expression in braces, held as the call `Fmt.fmt(e)` that turns it
+    /// into text. The call is where the expression is.
+    Expr(Expr),
 }
 
 /// A lambda: a block, with `fn` and the names of its parameters before it
@@ -272,6 +287,7 @@ impl Expr {
     pub fn pos(&self) -> Pos {
         match self {
             Expr::Text { pos, .. }
+            | Expr::Interp { pos, .. }
             | Expr::Name { pos, .. }
             | Expr::Case { pos, .. }
             | Expr::Tuple { pos, .. } => *pos,
@@ -411,6 +427,35 @@ fn place(expr: &Expr) -> Option<(String, Pos, Vec<Named>)> {
     }
 }
 
+/// The expression in braces in a string, from its tokens, which end with
+/// the `}` that closes it, as the call of `Fmt.fmt` that turns it into
+/// text.
+fn interpolated(tokens: &[Token]) -> Result<Expr, Error> {
+    let mut p = Parser {
+        tokens,
+        at: 0,
+        errors: Vec::new(),
+        no_lambda: false,
+    };
+    let value = p.expr()?;
+    if p.at + 1 != tokens.len() {
+        return Err(p.expected("`}` to close the expression in the string", p.tok()));
+    }
+    let pos = value.pos();
+    Ok(Expr::Call(Call {
+        qualifier: Some(("Fmt".to_string(), pos)),
+        callee: "fmt".to_string(),
+        pos,
+        name_pos: pos,
+        args: vec![Arg {
+            name: None,
+            value,
+            after: false,
+        }],
+        end: pos,
+    }))
+}
+
 /// Whether a token can start an expression.
 fn starts_expression(tok: &Tok) -> bool {
     matches!(
@@ -418,6 +463,7 @@ fn starts_expression(tok: &Tok) -> bool {
         Tok::Ident(_)
             | Tok::Number(_)
             | Tok::Str(_)
+            | Tok::Interp(_)
             | Tok::Punct("(" | "[" | "{" | "." | "-")
             | Tok::Keyword("not" | "try" | "if" | "match" | "for" | "loop" | "fn")
     )
@@ -1220,6 +1266,17 @@ impl Parser<'_> {
                 let text = text.clone();
                 self.bump();
                 Expr::Text { text, pos }
+            }
+            Tok::Interp(pieces) => {
+                let pieces = pieces.clone();
+                self.bump();
+                let parts = (pieces.iter())
+                    .map(|piece| match piece {
+                        Piece::Text(text) => Ok(Part::Text(text.clone())),
+                        Piece::Expr(tokens) => interpolated(tokens).map(Part::Expr),
+                    })
+                    .collect::<Result<_, _>>()?;
+                Expr::Interp { pos, parts }
             }
             Tok::Ident(name) => {
                 let name = name.clone();

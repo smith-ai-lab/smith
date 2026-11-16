@@ -22,6 +22,7 @@ mod props;
 mod release;
 mod sha256;
 mod targets;
+mod text;
 mod traits;
 mod tuples;
 

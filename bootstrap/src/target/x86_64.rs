@@ -15,6 +15,7 @@ pub const RSI: Reg = Reg(6);
 pub const RDI: Reg = Reg(7);
 pub const R8: Reg = Reg(8);
 pub const R9: Reg = Reg(9);
+pub const R10: Reg = Reg(10);
 pub const R12: Reg = Reg(12);
 
 /// What a 32-bit offset in the code refers to.
@@ -248,6 +249,12 @@ impl Asm {
         self.bytes(&[0x0f, 0x05]);
     }
 
+    /// `rep movsb`, which copies rcx bytes from rsi to rdi, and leaves rsi
+    /// and rdi just after them.
+    pub fn copy_bytes(&mut self) {
+        self.bytes(&[0xf3, 0xa4]);
+    }
+
     /// The code with each piece of data placed after it under its label.
     /// The code is at `code_address`, and the 8-byte slot `i` is at
     /// `slots_address + 8 * i`.
@@ -278,6 +285,7 @@ pub const Z: u8 = 0x4;
 pub const NE: u8 = 0x5;
 pub const LE: u8 = 0xe;
 pub const L: u8 = 0xc;
+pub const S: u8 = 0x8;
 
 /// What a system gives the code of an x86-64 target: how it writes and how
 /// it ends the program.
@@ -293,6 +301,10 @@ pub trait System {
     fn write(asm: &mut Asm, stream: Stream, fail: usize);
     /// Ends the program with the status.
     fn exit(asm: &mut Asm, status: u32);
+    /// Asks the system for memory for the number of bytes in rsi, which is
+    /// not 0, leaves its address in rax, and jumps to `fail` if the system
+    /// refuses. It may change any register but rsp.
+    fn alloc(asm: &mut Asm, fail: usize);
 }
 
 /// The bytes a piece of text takes in a frame: its address, then its
@@ -443,6 +455,30 @@ impl<S: System> Frame<'_, S> {
                     self.load(asm, *value, (RAX, RDX));
                     asm.store_stack(self.slot(*local), RAX);
                     asm.store_stack(self.slot(*local) + 8, RDX);
+                }
+                Step::Join { local, parts } => {
+                    // The length, in rsi, is the sum of the parts'. Memory
+                    // is asked for only when it is not 0, and then each part
+                    // is copied after the one before it.
+                    let to = self.slot(*local);
+                    let end = asm.label();
+                    asm.mov32(RSI, 0);
+                    for part in parts {
+                        self.load(asm, *part, (RAX, RDX));
+                        asm.add(RSI, RDX);
+                    }
+                    asm.store_stack(to, RSI);
+                    asm.store_stack(to + 8, RSI);
+                    asm.test(RSI);
+                    asm.jcc(Z, end);
+                    S::alloc(asm, self.fail);
+                    asm.store_stack(to, RAX);
+                    asm.mov(RDI, RAX);
+                    for part in parts {
+                        self.load(asm, *part, (RSI, RCX));
+                        asm.copy_bytes();
+                    }
+                    asm.bind(end);
                 }
                 Step::Match { value, arms } => {
                     // Each arm but the last is chosen by comparing the case

@@ -9,6 +9,7 @@ pub const X1: u32 = 1;
 pub const X2: u32 = 2;
 pub const X3: u32 = 3;
 pub const X4: u32 = 4;
+pub const X5: u32 = 5;
 /// Holds the number of a Linux system call.
 pub const X8: u32 = 8;
 /// Kept across calls, so they hold the place and the length still to write.
@@ -217,6 +218,26 @@ impl Asm {
         self.word(0x9100_0000 | rd << 5 | rd);
     }
 
+    /// `add xd, xn, xm`.
+    pub fn add(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.word(0x8b00_0000 | rm << 16 | rn << 5 | rd);
+    }
+
+    /// Copies the `count` bytes at `from` to `to`, one at a time, leaving
+    /// `from` and `to` just after them and `count` at 0. It changes x17.
+    pub fn copy_bytes(&mut self, to: u32, from: u32, count: u32) {
+        let again = self.label();
+        let done = self.label();
+        self.bind(again);
+        self.cbz(count, done);
+        // ldrb w17, [from], #1; strb w17, [to], #1; sub count, count, #1
+        self.word(0x3840_1400 | from << 5 | X17);
+        self.word(0x3800_1400 | to << 5 | X17);
+        self.word(0xd100_0400 | count << 5 | count);
+        self.branch(again);
+        self.bind(done);
+    }
+
     /// `svc #0`, which makes a system call.
     pub fn svc(&mut self) {
         self.word(0xd400_0001);
@@ -311,6 +332,10 @@ pub trait System {
     fn write(asm: &mut Asm, stream: Stream, fail: usize);
     /// Ends the program with the status.
     fn exit(asm: &mut Asm, status: u16);
+    /// Asks the system for memory for the number of bytes in x1, which is
+    /// not 0, leaves its address in x0, and branches to `fail` if the system
+    /// refuses. It may change any register but sp, x29, and x18.
+    fn alloc(asm: &mut Asm, fail: usize);
 }
 
 /// The bytes a piece of text takes in a frame: its address, then its
@@ -458,6 +483,29 @@ impl<S: System> Frame<'_, S> {
                     self.load(asm, *value, X0, X1);
                     asm.store_stack(self.slot(*local), X0);
                     asm.store_stack(self.slot(*local) + 8, X1);
+                }
+                Step::Join { local, parts } => {
+                    // The length, in x1, is the sum of the parts'. Memory is
+                    // asked for only when it is not 0, and then each part is
+                    // copied after the one before it.
+                    let to = self.slot(*local);
+                    let end = asm.label();
+                    asm.mov64(X1, 0);
+                    for part in parts {
+                        self.load(asm, *part, X3, X2);
+                        asm.add(X1, X1, X2);
+                    }
+                    asm.store_stack(to, X1);
+                    asm.store_stack(to + 8, X1);
+                    asm.cbz(X1, end);
+                    S::alloc(asm, self.fail);
+                    asm.store_stack(to, X0);
+                    asm.mov(X19, X0);
+                    for part in parts {
+                        self.load(asm, *part, X20, X21);
+                        asm.copy_bytes(X19, X20, X21);
+                    }
+                    asm.bind(end);
                 }
                 Step::Match { value, arms } => {
                     // Each arm but the last is chosen by comparing the case

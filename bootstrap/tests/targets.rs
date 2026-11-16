@@ -18,6 +18,7 @@ use crate::generate;
 use crate::lambdas;
 use crate::programs;
 use crate::sha256;
+use crate::text;
 use crate::traits;
 use crate::tuples;
 
@@ -62,6 +63,14 @@ pub const MACHINE: &[Test] = &[
     (
         "a_long_literal_is_printed_whole",
         a_long_literal_is_printed_whole,
+    ),
+    (
+        "every_executable_of_a_program_with_text_does_what_the_evaluator_says",
+        every_executable_of_a_program_with_text_does_what_the_evaluator_says,
+    ),
+    (
+        "a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more",
+        a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more,
     ),
     (
         "every_target_builds_the_cases_to_their_kept_hashes",
@@ -113,6 +122,12 @@ pub fn not_run() -> Vec<String> {
 
 /// Runs an executable for this machine and gives what it did.
 pub fn run(bytes: &[u8]) -> Outcome {
+    run_with(bytes, |path| std::process::Command::new(path))
+}
+
+/// Runs an executable for this machine with the command `command` makes of
+/// its path, and gives what it did.
+fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> Outcome {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -132,7 +147,7 @@ pub fn run(bytes: &[u8]) -> Outcome {
     // starts, which makes running it fail as busy.
     let mut tries = 0;
     let output = loop {
-        match std::process::Command::new(&path).output() {
+        match command(&path).output() {
             Err(e) if e.raw_os_error() == Some(26) && tries < 100 => {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -165,6 +180,13 @@ fn every_target_builds_identical_bytes_twice() {
         }
     });
     generate::check(24, 10, enums::program, |case| {
+        for &target in &targets {
+            let first = compile(case.source.as_bytes(), target).unwrap();
+            let second = compile(case.source.as_bytes(), target).unwrap();
+            assert!(first == second, "{} differs", target.name());
+        }
+    });
+    generate::check(36, 10, text::program, |case| {
         for &target in &targets {
             let first = compile(case.source.as_bytes(), target).unwrap();
             let second = compile(case.source.as_bytes(), target).unwrap();
@@ -246,6 +268,65 @@ fn a_struct_bound_to_two_names_is_two_equal_structs() {
         for &target in &targets {
             let bytes = compile(shared.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
             assert_eq!(run(&bytes), copy, "{}", target.name());
+        }
+    });
+}
+
+fn every_executable_of_a_program_with_text_does_what_the_evaluator_says() {
+    let targets = runnable();
+    generate::check(37, 60, text::program, |case| {
+        let source = case.source.as_bytes();
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let said = eval::run(&program);
+        for &target in &targets {
+            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert_eq!(run(&bytes), said, "{}", target.name());
+        }
+    });
+}
+
+/// The most memory, in KiB, a program run under a limit may map.
+const LIMIT_KIB: usize = 64 * 1024;
+
+/// The command that runs the program at `path` with the memory it may map
+/// limited to `LIMIT_KIB`, on a machine where a test can limit it. Only
+/// Linux enforces the limit a shell sets.
+fn limited(path: &Path) -> Option<std::process::Command> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let mut command = std::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg(format!("ulimit -v {LIMIT_KIB} && exec \"$0\""))
+        .arg(path);
+    Some(command)
+}
+
+/// As `tasks.md` says, running out of memory ends the task, and a failure
+/// that reaches `main` ends the program with a failing status. The text the
+/// program builds is larger than the limit lets it map, and everything
+/// before it fits, so the program prints what comes before and no more.
+fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more() {
+    if limited(Path::new("")).is_none() {
+        return;
+    }
+    let targets = runnable();
+    let bytes = LIMIT_KIB * 1024 * 2;
+    let generate = |g: &mut generate::Gen| text::program_with_huge_text(g, bytes);
+    generate::check(38, 20, generate, |(case, before)| {
+        let source = case.source.as_bytes();
+        for &target in &targets {
+            let executable = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            let ran = run_with(&executable, |path| limited(path).expect("a limit"));
+            // A status of its own, not the end a signal gives.
+            assert!(ran.status > 0, "{}: {}", target.name(), ran.status);
+            assert_eq!(
+                String::from_utf8_lossy(&ran.stdout),
+                String::from_utf8_lossy(before),
+                "{}",
+                target.name()
+            );
         }
     });
 }
@@ -472,11 +553,18 @@ fn elf_segment_kinds(bytes: &[u8]) -> Vec<usize> {
         .collect()
 }
 
+/// A program that asks the system for memory.
+const JOIN: &str = "fn main() ! console, alloc {\n  x = \"a\"\n  print(\"{x}{x}\")\n}\n";
+
 fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
     const PT_DYNAMIC: usize = 2;
     const PT_INTERP: usize = 3;
-    for target in buildable() {
-        let bytes = compile(HELLO.as_bytes(), target).unwrap();
+    let programs = [HELLO, JOIN];
+    for (target, source) in buildable()
+        .into_iter()
+        .flat_map(|t| programs.map(|p| (t, p)))
+    {
+        let bytes = compile(source.as_bytes(), target).unwrap();
         let name = target.name();
         if bytes.starts_with(b"\x7fELF") {
             let kinds = elf_segment_kinds(&bytes);

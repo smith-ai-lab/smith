@@ -3,7 +3,8 @@
 //! system's loader links.
 //!
 //! From `KERNEL32.dll` the program uses only thin wrappers over the kernel:
-//! `GetStdHandle`, `WriteFile`, and `ExitProcess`. It uses no C runtime.
+//! `GetStdHandle`, `WriteFile`, `ExitProcess`, and, in a program that asks
+//! for memory, `VirtualAlloc`. It uses no C runtime.
 //! Nothing from the system is needed to build: the import tables that ask
 //! the loader for the library and its symbols are written here.
 
@@ -26,12 +27,25 @@ const HEADERS_SIZE: u32 =
         .next_multiple_of(FILE_ALIGNMENT);
 
 const DLL: &[u8] = b"KERNEL32.dll";
-/// The symbols the program imports, in the order of their slots in the
-/// import address table.
-const IMPORTS: [&str; 3] = ["GetStdHandle", "WriteFile", "ExitProcess"];
+/// The symbols a program may import, in the order of their slots in the
+/// import address table. A program that never asks for memory imports only
+/// the first three.
+const IMPORTS: [&str; 4] = ["GetStdHandle", "WriteFile", "ExitProcess", "VirtualAlloc"];
 pub const GET_STD_HANDLE: usize = 0;
 pub const WRITE_FILE: usize = 1;
 pub const EXIT_PROCESS: usize = 2;
+pub const VIRTUAL_ALLOC: usize = 3;
+
+/// The symbols a program imports: `VirtualAlloc` only if it asks for
+/// memory.
+pub fn imports(allocates: bool) -> &'static [&'static str] {
+    if allocates { &IMPORTS } else { &IMPORTS[..3] }
+}
+
+/// `VirtualAlloc`'s request to reserve and commit pages at once, and its
+/// protection for pages that are read and written.
+pub const MEM_COMMIT_RESERVE: u32 = 0x1000 | 0x2000;
+pub const PAGE_READWRITE: u32 = 0x04;
 
 /// `GetStdHandle`'s name for standard output.
 pub const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
@@ -59,17 +73,19 @@ struct Imports {
     directory_size: u32,
 }
 
-/// The executable, whose code and data take `text_size` bytes. `text` is
-/// given where the code is and where the import address table is, each as
-/// an offset from the image's base, and gives the code and its data.
+/// The executable, whose code and data take `text_size` bytes, which
+/// imports `names`. `text` is given where the code is and where the import
+/// address table is, each as an offset from the image's base, and gives the
+/// code and its data.
 pub fn executable(
     machine: &Machine,
     text_size: usize,
+    names: &[&str],
     text: impl FnOnce(u64, u64) -> Vec<u8>,
 ) -> Vec<u8> {
     let text_rva = SECTION_ALIGNMENT;
     let idata_rva = (text_rva + text_size as u32).next_multiple_of(SECTION_ALIGNMENT);
-    let imports = imports(idata_rva);
+    let imports = import_tables(idata_rva, names);
     let iat_rva = idata_rva + imports.iat;
     let text = text(u64::from(text_rva), u64::from(iat_rva));
     assert_eq!(text.len(), text_size);
@@ -230,15 +246,15 @@ fn section_header(out: &mut Vec<u8>, section: &Section) {
 /// ends it; the lookup table and the address table, each a slot for every
 /// symbol and one that ends it; then each symbol's hint and name, and the
 /// library's name. `rva` is where the section is in memory.
-fn imports(rva: u32) -> Imports {
+fn import_tables(rva: u32, symbols: &[&str]) -> Imports {
     let directory_size = 2 * 20;
-    let table_size = 8 * (IMPORTS.len() as u32 + 1);
+    let table_size = 8 * (symbols.len() as u32 + 1);
     let lookup = directory_size;
     let iat = lookup + table_size;
     let mut names = Vec::new();
     let mut name_offsets = Vec::new();
     let names_start = iat + table_size;
-    for name in IMPORTS {
+    for name in symbols {
         name_offsets.push(names_start + names.len() as u32);
         names.extend_from_slice(&[0, 0]); // no hint
         names.extend_from_slice(name.as_bytes());

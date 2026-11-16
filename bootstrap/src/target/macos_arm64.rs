@@ -2,8 +2,8 @@
 //! `libSystem`, and that carries the ad hoc code signature Apple silicon
 //! requires. The executable is written by `macho`.
 
-use super::arm64::{self, Asm, EQ, LE, LT, System, X0, X1, X2, X19, X20};
-use super::macho::{self, EINTR, ERROR, EXIT, Machine, WRITE};
+use super::arm64::{self, Asm, EQ, LE, LT, System, X0, X1, X2, X3, X4, X5, X19, X20};
+use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
 use crate::ir::{Program, Stream};
 
 const MACHINE: Machine = Machine {
@@ -17,7 +17,8 @@ const MACHINE: Machine = Machine {
 pub fn emit(program: &Program) -> Vec<u8> {
     let (asm, data) = arm64::code::<Macos>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    macho::executable(&MACHINE, size as u64, |code, got| {
+    let imports = macho::imports(program.allocates());
+    macho::executable(&MACHINE, size as u64, imports, |code, got| {
         asm.finish(&data, code, got)
     })
 }
@@ -66,6 +67,20 @@ impl System for Macos {
     fn exit(asm: &mut Asm, status: u16) {
         asm.mov_w(X0, status);
         asm.call(EXIT);
+    }
+
+    /// Maps fresh pages that only this process sees. A failure gives -1.
+    fn alloc(asm: &mut Asm, fail: usize) {
+        let (prot, flags) = MMAP_REQUEST;
+        asm.mov_w(X0, 0);
+        asm.mov_w(X2, prot as u16);
+        asm.mov_w(X3, flags as u16);
+        asm.mov64(X4, u64::MAX);
+        asm.mov_w(X5, 0);
+        asm.call(MMAP);
+        // cmp x0, #0; b.lt fail
+        asm.word(0xf100_001f);
+        asm.cond(LT, fail);
     }
 }
 

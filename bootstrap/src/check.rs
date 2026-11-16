@@ -33,11 +33,14 @@ use std::collections::{HashMap, HashSet};
 use crate::diag::{Error, Pos};
 use crate::ir::{self, Step, Stream, Value};
 use crate::parser::{
-    Arg, Arm, Call, Expr, File, Function, Generic, Lambda, Match, Pattern, Stmt, Type,
+    Arg, Arm, Call, Expr, File, Function, Generic, Lambda, Match, Part, Pattern, Stmt, Type,
 };
 
 /// The effects the standard library declares, other than `console`.
 const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
+
+/// The effects the compiler builds.
+const BUILT: &[&str] = &["console", "alloc"];
 
 /// The effects built into the compiler.
 const BUILT_IN_EFFECTS: &[&str] = &["alloc", "spawn", "gpu", "diverge", "foreign", "exec"];
@@ -64,13 +67,45 @@ const TRAITS_NOT_BUILT: &[&str] = &[
     "Pow",
     "MatMul",
     "Try",
-    "Fmt",
     "Iterate",
     "FromInt",
     "FromFloat",
     "FromString",
     "FromArray",
 ];
+
+/// The traits the prelude defines that the compiler builds, with their
+/// implementations, written in Smith. They are read at line 0, which no file
+/// has, so nothing in a file can be confused with them.
+const PRELUDE: &str = "\
+trait Fmt[T] {
+  fn fmt(value: T) -> str ! alloc
+}
+
+impl Fmt[str] {
+  fn fmt(value: str) -> str ! alloc { value }
+}
+";
+
+/// The names of the traits `PRELUDE` defines.
+const PRELUDE_TRAITS: &[&str] = &["Fmt"];
+
+/// Whether a definition is the prelude's.
+fn of_prelude(pos: Pos) -> bool {
+    pos.line == 0
+}
+
+/// The file with the definitions of `PRELUDE` before its own.
+fn with_prelude(mut file: File) -> File {
+    let mut tokens = crate::lexer::lex(PRELUDE.as_bytes()).expect("the prelude lexes");
+    for t in &mut tokens {
+        t.pos.line = 0;
+    }
+    let prelude = crate::parser::parse(&tokens).expect("the prelude parses");
+    file.traits.splice(0..0, prelude.traits);
+    file.impls.splice(0..0, prelude.impls);
+    file
+}
 
 /// What an expression gives.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -581,11 +616,15 @@ impl<'a> Defs<'a> {
                 Some(t) => self.quietly(t, &scope),
                 None => Ty::Nothing,
             },
-            effects: (f.effects.iter())
-                .filter(|(e, _)| e == "console")
-                .map(|(e, _)| e.clone())
-                .take(1)
-                .collect(),
+            effects: {
+                let mut built: Vec<String> = Vec::new();
+                for (e, _) in &f.effects {
+                    if BUILT.contains(&e.as_str()) && !built.contains(e) {
+                        built.push(e.clone());
+                    }
+                }
+                built
+            },
             scope,
         }
     }
@@ -859,6 +898,28 @@ fn written_expr(e: &Expr) -> String {
             out.push('"');
             out
         }
+        Expr::Interp { parts, .. } => {
+            let mut out = String::from("\"");
+            for part in parts {
+                match part {
+                    Part::Text(text) => {
+                        let quoted = written_expr(&Expr::Text {
+                            text: text.clone(),
+                            pos: Pos::START,
+                        });
+                        out.push_str(&quoted[1..quoted.len() - 1]);
+                    }
+                    Part::Expr(e) => {
+                        let Expr::Call(call) = e else {
+                            unreachable!("the call of `Fmt.fmt`")
+                        };
+                        out.push_str(&format!("{{{}}}", written_expr(&call.args[0].value)));
+                    }
+                }
+            }
+            out.push('"');
+            out
+        }
         Expr::Name { name, .. } => name.clone(),
         Expr::Call(call) => {
             let args: Vec<String> = (call.args.iter())
@@ -926,6 +987,7 @@ pub struct Checked {
 /// Checks the file, and lowers what `main` reaches. Every error is
 /// reported, except one that a mistake already reported would explain.
 pub fn check(file: File) -> Result<Checked, Vec<Error>> {
+    let file = with_prelude(file);
     let mut errors = Vec::new();
 
     // The first definition of a name holds it, and a later one is a
@@ -961,13 +1023,15 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 &format!("defining `{what}`, which the prelude defines,"),
             )
         };
-        let of_prelude = match claim {
+        let prelude_name = match claim {
             Claim::Fn(_) | Claim::TraitFn(..) => name == "print",
             Claim::Struct(_) => name == TEXT,
             Claim::Enum(_) => name == TEXT || name == "Option" || name == "Result",
-            Claim::Trait(_) => name == TEXT || TRAITS_NOT_BUILT.contains(&name),
+            Claim::Trait(_) => {
+                name == TEXT || TRAITS_NOT_BUILT.contains(&name) || PRELUDE_TRAITS.contains(&name)
+            }
         };
-        if of_prelude {
+        if prelude_name && !of_prelude(pos) {
             errors.push(prelude(name));
         } else if is_type && struct_names.contains_key(name) {
             errors.push(Error::new(
@@ -1317,7 +1381,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
 fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     let mut out = Vec::new();
     let mut dead = |item: Item, pos: Pos, what: String| {
-        if !reached.contains(&item) {
+        if !reached.contains(&item) && !of_prelude(pos) {
             out.push(
                 Error::new(
                     pos,
@@ -1575,6 +1639,13 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 walk(value, out);
             }
         }
+        Expr::Interp { parts, .. } => {
+            for part in parts {
+                if let Part::Expr(e) = part {
+                    walk(e, out);
+                }
+            }
+        }
         Expr::Text { .. } | Expr::Name { .. } => {}
     }
 }
@@ -1605,6 +1676,13 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                 }
             }
             Expr::Lambda(l) => out.push(&l.body),
+            Expr::Interp { parts, .. } => {
+                for part in parts {
+                    if let Part::Expr(e) = part {
+                        blocks(e, out);
+                    }
+                }
+            }
             Expr::Case { .. } | Expr::Text { .. } | Expr::Name { .. } => {}
         }
     }
@@ -2544,7 +2622,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             listed.push(effect);
-            if effect == "console" {
+            if BUILT.contains(&effect) {
                 continue;
             }
             if LIBRARY_EFFECTS.contains(&effect) || BUILT_IN_EFFECTS.contains(&effect) {
@@ -2893,7 +2971,7 @@ impl<'a> Checker<'a> {
             let effect = effect.as_str();
             if !listed.contains(&effect) {
                 listed.push(effect);
-                unknown_effect |= effect != "console"
+                unknown_effect |= !BUILT.contains(&effect)
                     && !LIBRARY_EFFECTS.contains(&effect)
                     && !BUILT_IN_EFFECTS.contains(&effect);
             }
@@ -3179,6 +3257,30 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         match expr {
             Expr::Text { .. } => Ty::Text,
+            Expr::Interp { pos, parts } => {
+                let needs = "a string that holds an expression";
+                if body.default.is_some() {
+                    self.errors.push(Error::new(
+                        *pos,
+                        format!(
+                            "a default carries no effect, and {needs} needs the `alloc` effect"
+                        ),
+                    ));
+                    for part in parts {
+                        if let Part::Expr(Expr::Call(call)) = part {
+                            self.unknown_call(body, call);
+                        }
+                    }
+                    return Ty::Unknown;
+                }
+                self.needs(body, "alloc", *pos, needs);
+                for part in parts {
+                    if let Part::Expr(e) = part {
+                        self.expr(body, e, &Want::Ty(Ty::Text));
+                    }
+                }
+                Ty::Text
+            }
             Expr::Name { name, pos } => {
                 if let Some((_, ty)) = body.names.iter().rfind(|(n, _)| n == name) {
                     ty.clone()
@@ -4152,26 +4254,7 @@ impl<'a> Checker<'a> {
         let vars = &signature.scope;
         let mut sol: Vec<Option<Ty>> = vec![None; vars.names.len()];
         for effect in &signature.effects {
-            if body.listed.contains(&effect.as_str())
-                || body.unknown_effect
-                || body.missing.contains(effect)
-            {
-                continue;
-            }
-            body.missing.push(effect.clone());
-            let mut effects = body.listed.clone();
-            effects.extend(body.missing.iter().map(String::as_str));
-            self.errors.push(
-                Error::new(
-                    call.pos,
-                    format!(
-                        "`{}` needs the `{effect}` effect, which `{}` does not declare",
-                        call.callee,
-                        body.owner().name
-                    ),
-                )
-                .with_fix(format!("write `{}`", written(body.owner(), &effects))),
-            );
+            self.needs(body, effect, call.pos, &format!("`{}`", call.callee));
         }
         let mut given: Vec<bool> = vec![false; signature.params.len()];
         let mut named = false;
@@ -4327,6 +4410,31 @@ impl<'a> Checker<'a> {
             ));
         }
         sol
+    }
+
+    /// Reports that what is at `pos`, which an error names as `what`, needs
+    /// an effect the body does not list, unless that is already reported or
+    /// a listed effect with no such name may be it misspelt.
+    fn needs(&mut self, body: &mut Body, effect: &str, pos: Pos, what: &str) {
+        if body.listed.contains(&effect)
+            || body.unknown_effect
+            || body.missing.iter().any(|m| m == effect)
+        {
+            return;
+        }
+        body.missing.push(effect.to_string());
+        let mut effects = body.listed.clone();
+        effects.extend(body.missing.iter().map(String::as_str));
+        self.errors.push(
+            Error::new(
+                pos,
+                format!(
+                    "{what} needs the `{effect}` effect, which `{}` does not declare",
+                    body.owner().name
+                ),
+            )
+            .with_fix(format!("write `{}`", written(body.owner(), &effects))),
+        );
     }
 
     /// Reports each call that closes a cycle of calls between functions
@@ -4673,6 +4781,17 @@ impl<'a> Lowering<'a> {
         let defs = typed.defs;
         match expr {
             Expr::Text { text, .. } => (Ty::Text, vec![self.text(text)]),
+            Expr::Interp { parts, .. } => {
+                let parts = (parts.iter())
+                    .map(|part| match part {
+                        Part::Text(text) => self.text(text),
+                        Part::Expr(e) => self.expr(out, e, env).1[0],
+                    })
+                    .collect();
+                let local = self.locals(out, &Ty::Text)[0];
+                out.steps.push(Step::Join { local, parts });
+                (Ty::Text, vec![Value::Local(local)])
+            }
             Expr::Name { name, .. } => match out.find(name) {
                 Some(at) => (out.names()[at].ty.clone(), out.names()[at].values.clone()),
                 // A function passed as a value is lowered to no values.

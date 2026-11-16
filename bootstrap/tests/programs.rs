@@ -87,7 +87,6 @@ enum Kind {
     // In the tokens, at a literal, or at the end of a function.
     UnknownEscape,
     BraceInString,
-    ExpressionInString,
     NoClosingQuote,
     BackslashAtLineEnd,
     UnexpectedCharacter,
@@ -150,7 +149,6 @@ const KINDS: &[Kind] = &[
     Kind::InvalidUtf8,
     Kind::UnknownEscape,
     Kind::BraceInString,
-    Kind::ExpressionInString,
     Kind::NoClosingQuote,
     Kind::BackslashAtLineEnd,
     Kind::UnexpectedCharacter,
@@ -247,7 +245,6 @@ impl Kind {
             self,
             Kind::UnknownEscape
                 | Kind::BraceInString
-                | Kind::ExpressionInString
                 | Kind::NoClosingQuote
                 | Kind::BackslashAtLineEnd
                 | Kind::UnexpectedCharacter
@@ -1681,9 +1678,8 @@ fn effects(b: &mut Builder, func: &Func, no_console: bool, main: bool) {
     if main {
         let extra = match b.kind {
             Some(Kind::EffectNotBuilt) => {
-                let name = *b.g.pick(&[
-                    "fs", "net", "time", "ui", "alloc", "spawn", "gpu", "diverge", "exec",
-                ]);
+                let name =
+                    *b.g.pick(&["fs", "net", "time", "ui", "spawn", "gpu", "diverge", "exec"]);
                 Some((name, NOT_BUILT.to_string()))
             }
             Some(Kind::UnknownEffect) => {
@@ -1987,10 +1983,6 @@ fn literal_text(b: &mut Builder, pieces: &[usize], kind: Option<Kind>) {
                 Some(Kind::BraceInString) => {
                     b.mark("closes no expression", Some("`\\}`".to_string()));
                     b.push("}");
-                }
-                Some(Kind::ExpressionInString) => {
-                    b.mark(NOT_BUILT, None);
-                    b.pick(&["{x}", "{name}", "{1 + 2}", "{f(\"a\")}"]);
                 }
                 _ => {}
             }

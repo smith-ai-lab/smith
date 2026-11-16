@@ -1,3 +1,0 @@
-interpolation.smith:1:36: an expression in a string is not supported yet
-  1 | fn main() ! console { print("hello {name}") }
-    |                                    ^

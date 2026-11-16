@@ -3,11 +3,14 @@
 //! `macos_arm64` uses, and its file is written by the ELF writer
 //! `linux_x64` uses.
 
-use super::arm64::{self, Asm, EQ, LE, System, X0, X1, X2, X8, X19, X20};
+use super::arm64::{self, Asm, EQ, LE, LT, System, X0, X1, X2, X3, X4, X5, X8, X19, X20};
 use super::elf::{self, CODE_ADDRESS, Machine};
 use crate::ir::{Program, Stream};
 
 const SYS_WRITE: u16 = 64;
+const SYS_MMAP: u16 = 222;
+const PROT_READ_WRITE: u16 = 0x1 | 0x2;
+const MAP_PRIVATE_ANONYMOUS: u16 = 0x02 | 0x20;
 const SYS_EXIT_GROUP: u16 = 94;
 const EINTR: u32 = 4;
 
@@ -56,6 +59,21 @@ impl System for Linux {
         asm.mov_w(X0, status);
         asm.mov_w(X8, SYS_EXIT_GROUP);
         asm.svc();
+    }
+
+    /// Maps fresh pages that only this process sees. The kernel gives a
+    /// failure as minus its error number.
+    fn alloc(asm: &mut Asm, fail: usize) {
+        asm.mov_w(X0, 0);
+        asm.mov_w(X2, PROT_READ_WRITE);
+        asm.mov_w(X3, MAP_PRIVATE_ANONYMOUS);
+        asm.mov64(X4, u64::MAX);
+        asm.mov_w(X5, 0);
+        asm.mov_w(X8, SYS_MMAP);
+        asm.svc();
+        // cmp x0, #0; b.lt fail
+        asm.word(0xf100_001f);
+        asm.cond(LT, fail);
     }
 }
 
