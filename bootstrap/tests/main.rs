@@ -14,6 +14,8 @@ mod check;
 mod cli;
 mod enums;
 mod generate;
+#[cfg(unix)]
+mod install;
 mod programs;
 mod props;
 mod release;
@@ -44,6 +46,9 @@ fn main() -> ExitCode {
         targets::ONCE,
     ]
     .concat();
+    // The installer is for macOS and Linux, and its tests run where a shell does.
+    #[cfg(unix)]
+    let once = [once, install::ONCE.to_vec()].concat();
     let machine = [targets::MACHINE, cli::MACHINE].concat();
     let groups: Vec<&[Test]> = match args.iter().find_map(|a| a.strip_prefix("--group=")) {
         None => vec![&once, &machine],

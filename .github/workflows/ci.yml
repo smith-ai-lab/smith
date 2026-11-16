@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       compiler: ${{ steps.diff.outputs.compiler }}
+      install: ${{ steps.diff.outputs.install }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -32,7 +33,13 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
-        run: echo "compiler=$(sh .github/changed.sh "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "compiler=$(sh .github/changed.sh "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
+          if git diff --name-only "$BASE" "$HEAD" | grep -Eq '^(install\.sh|\.github/check-install\.sh)$'; then
+            echo "install=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "install=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # Linux on x86-64 builds the compiler once for the tests that run once, the
   # tests that depend on the machine, and the timings.
@@ -77,6 +84,22 @@ jobs:
       - name: Test
         run: cargo test --locked -- --group=machine
 
+  # Installs from the real newest release with the script in this change, on each
+  # kind of machine it supports.
+  install:
+    name: install on ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.install == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the newest release
+        run: sh .github/check-install.sh
+
   commits:
     name: conventional commits
     runs-on: ubuntu-latest
@@ -93,7 +116,7 @@ jobs:
 
   ci:
     name: ci
-    needs: [changes, linux, machine, commits]
+    needs: [changes, linux, machine, install, commits]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -110,4 +133,5 @@ jobs:
           "changes=${{ needs.changes.result }}"
           "linux=${{ needs.linux.result }}"
           "machine=${{ needs.machine.result }}"
+          "install=${{ needs.install.result }}"
           "commits=${{ needs.commits.result }}"
