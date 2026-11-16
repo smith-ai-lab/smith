@@ -5,21 +5,20 @@
 //! values. Every value is named once, has a type, and has a size.
 //!
 //! Only what the programs lowered so far need is built: whole numbers, at
-//! the size of their type, but no memory read or written at run time and no
-//! text built. The
-//! rest of the form `knowledge/compiler.md` describes is added with the
-//! features that need it. A program is lowered to it from the checked
-//! program, by `check::to_scalar`.
+//! the size of their type, memory read and written one value at a time, and
+//! a call into the system that asks for memory. The rest of the form
+//! `knowledge/compiler.md` describes is added with the features that need
+//! it. A program is lowered to it from the checked program, by
+//! `check::to_scalar`, and what it needs at run time is in `runtime`.
 
+mod build;
 mod eval;
+pub mod runtime;
 mod wellformed;
 
-pub use eval::{call, run};
+pub use build::Builder;
+pub use eval::{call, run, run_with_limit};
 pub use wellformed::{Malformed, Why, check};
-
-/// The feature that stopped a program from being lowered to the scalar form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stopped(pub &'static str);
 
 /// How many bits an integer has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +83,10 @@ pub enum System {
     /// nothing. A write the system refuses ends the program with a failing
     /// status.
     Write(Stream),
+    /// Asks for as many bytes as a 64-bit integer says, and gives the
+    /// address of the first. The bytes are the program's until it ends. A
+    /// request the system refuses ends the program with a failing status.
+    Allocate,
 }
 
 /// What an instruction does with two integers of the same size. Every one
@@ -92,7 +95,8 @@ pub enum System {
 /// is in the operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Binary {
-    /// `a + b`.
+    /// `a + b`. It is also what moves an address: `a` is an address and `b`
+    /// is a 64-bit integer, the number of bytes, and it gives an address.
     Add,
     /// `a - b`.
     Sub,
@@ -148,6 +152,19 @@ pub enum Op {
         on: Value,
         then: Value,
         otherwise: Value,
+    },
+    /// Gives the integer of the type that is held at the address, in as many
+    /// bytes as its size, least significant first.
+    Load {
+        ty: Type,
+        address: Value,
+    },
+    /// Holds the integer of the type at the address, in as many bytes as its
+    /// size, least significant first. It gives nothing.
+    Store {
+        ty: Type,
+        address: Value,
+        value: Value,
     },
     /// Runs a function, by its place in `Program::functions`, with these
     /// values as the parameters of its first block, in order. It gives the

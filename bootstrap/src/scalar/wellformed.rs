@@ -2,7 +2,7 @@
 //! defined once, is used only where its definition reaches, and is used at
 //! its type, and every jump gives a block the parameters it takes.
 
-use super::{Bits, Constant, End, Function, Jump, Op, Program, System, Type, Value};
+use super::{Binary, Bits, Constant, End, Function, Jump, Op, Program, System, Type, Value};
 
 /// Why a function is not well formed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,11 +109,27 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         return Err(Why::WrongCount);
                     };
                     let ty = f.types[result.0];
-                    if !matches!(ty, Type::Int(_)) {
-                        return Err(Why::WrongType(result));
+                    match ty {
+                        Type::Int(_) => {
+                            used(a, i, ty)?;
+                            used(b, i, ty)?;
+                        }
+                        // The only arithmetic on an address moves it by a
+                        // number of bytes.
+                        Type::Address => {
+                            if !matches!(
+                                instruction.op,
+                                Op::Binary {
+                                    op: Binary::Add,
+                                    ..
+                                }
+                            ) {
+                                return Err(Why::WrongType(result));
+                            }
+                            used(a, i, Type::Address)?;
+                            used(b, i, Type::Int(Bits::B64))?;
+                        }
                     }
-                    used(a, i, ty)?;
-                    used(b, i, ty)?;
                 }
                 Op::Compare { a, b, .. } => {
                     let [result] = instruction.results[..] else {
@@ -177,6 +193,25 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         }
                     }
                 }
+                Op::Load { ty, address } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    if !matches!(ty, Type::Int(_)) || f.types[result.0] != *ty {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(address, i, Type::Address)?;
+                }
+                Op::Store { ty, address, value } => {
+                    if !instruction.results.is_empty() {
+                        return Err(Why::WrongCount);
+                    }
+                    if !matches!(ty, Type::Int(_)) {
+                        return Err(Why::WrongType(*value));
+                    }
+                    used(address, i, Type::Address)?;
+                    used(value, i, *ty)?;
+                }
                 Op::System {
                     call: System::Write(_),
                     args,
@@ -188,6 +223,18 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         return Err(Why::WrongCount);
                     }
                     used(address, i, Type::Address)?;
+                    used(count, i, Type::Int(Bits::B64))?;
+                }
+                Op::System {
+                    call: System::Allocate,
+                    args,
+                } => {
+                    let ([count], [result]) = (&args[..], &instruction.results[..]) else {
+                        return Err(Why::WrongCount);
+                    };
+                    if f.types[result.0] != Type::Address {
+                        return Err(Why::WrongType(*result));
+                    }
                     used(count, i, Type::Int(Bits::B64))?;
                 }
             }

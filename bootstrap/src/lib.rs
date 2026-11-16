@@ -29,12 +29,9 @@ pub fn lower(source: &[u8]) -> Result<Program, Vec<diag::Error>> {
     lower_timed(source, &mut Timings::new())
 }
 
-/// The program a source file describes, in the scalar form, or the feature
-/// that stopped it. Its errors are those `compile` reports before a target
+/// The program a source file describes, in the scalar form. Its errors are
 /// is involved.
-pub fn lower_scalar(
-    source: &[u8],
-) -> Result<Result<scalar::Program, scalar::Stopped>, Vec<diag::Error>> {
+pub fn lower_scalar(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {
     let checked = checked(source, &mut Timings::new(), true)?;
     Ok(checked.scalar.expect("asked for"))
 }

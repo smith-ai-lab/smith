@@ -1425,9 +1425,9 @@ enum Claim {
 /// `smith check` reports about it.
 pub struct Checked {
     pub program: ir::Program,
-    /// The same program in the scalar form, or the feature that stopped it,
+    /// The same program in the scalar form,
     /// when it was asked for.
-    pub scalar: Option<Result<crate::scalar::Program, crate::scalar::Stopped>>,
+    pub scalar: Option<crate::scalar::Program>,
     pub warnings: Vec<Error>,
 }
 
