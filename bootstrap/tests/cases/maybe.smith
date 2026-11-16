@@ -1,0 +1,36 @@
+struct Cat {
+  name: str
+}
+
+enum Maybe[T] {
+  some: T
+  none
+}
+
+enum Pet {
+  cat: Cat
+  stray: str
+  lost: Maybe[Cat]
+}
+
+fn describe(p: Pet) -> str {
+  match p {
+    .cat(c) { c.name }
+    .lost(.some(c)) { c.name }
+    .lost(.none) { "lost" }
+    other { "a stray" }
+  }
+}
+
+fn main() ! console {
+  print(describe(.lost(.some(Cat(name: "Tom")))))
+  print(describe(Pet.lost(Maybe.none)))
+  print(describe(.stray("Rex")))
+  var seen = "nothing"
+  found: Maybe[Pet] = .some(.cat(Cat(name: "Felix")))
+  match found {
+    .some(p) { seen = describe(p) }
+    .none { print("none found") }
+  }
+  print(seen)
+}

@@ -8,7 +8,8 @@ pub enum Stream {
     Stdout,
 }
 
-/// Where a piece of text is.
+/// Where a value is. A value is a piece of text, or which case of an enum
+/// a value of the enum holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Value {
     /// One of the program's texts, by its place in `Program::texts`.
@@ -16,6 +17,10 @@ pub enum Value {
     /// A local of the function running: one of its parameters, which come
     /// first, or a value it holds.
     Local(usize),
+    /// A case of an enum, by its place among the enum's cases. It also
+    /// fills the places a value of an enum keeps for a larger case than
+    /// the one it holds, which nothing reads.
+    Case(usize),
 }
 
 /// One step of a function.
@@ -25,13 +30,18 @@ pub enum Step {
     /// the program with a failing status.
     Write { stream: Stream, value: Value },
     /// Run a function, by its place in `Program::functions`, with these
-    /// values as its parameters, in order. The texts it gives back go to
+    /// values as its parameters, in order. The values it gives back go to
     /// the locals `results`, in order.
     Call {
         function: usize,
         args: Vec<Value>,
         results: Vec<usize>,
     },
+    /// Copy a value to a local.
+    Set { local: usize, value: Value },
+    /// Run the steps of the arm at the place of the case `value` is, which
+    /// is one of the arms.
+    Match { value: Value, arms: Vec<Vec<Step>> },
 }
 
 /// A function: steps run in order, and then it gives back `results`.
@@ -42,8 +52,26 @@ pub struct Function {
     /// How many locals it has, its parameters included.
     pub locals: usize,
     pub steps: Vec<Step>,
-    /// The texts it gives back, in order, which may be none.
+    /// The values it gives back, in order, which may be none.
     pub results: Vec<Value>,
+}
+
+impl Function {
+    /// The most values one call among its steps, in any arm, passes and
+    /// receives.
+    pub fn outgoing(&self) -> usize {
+        fn most(steps: &[Step]) -> usize {
+            (steps.iter())
+                .map(|s| match s {
+                    Step::Call { args, results, .. } => args.len() + results.len(),
+                    Step::Match { arms, .. } => arms.iter().map(|a| most(a)).max().unwrap_or(0),
+                    Step::Write { .. } | Step::Set { .. } => 0,
+                })
+                .max()
+                .unwrap_or(0)
+        }
+        most(&self.steps)
+    }
 }
 
 /// A program: it runs the function `main`, which takes no parameters and

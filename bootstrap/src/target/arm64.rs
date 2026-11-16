@@ -23,6 +23,7 @@ const X30: u32 = 30;
 const SP: u32 = 31;
 pub const LE: u32 = 0xd;
 pub const EQ: u32 = 0x0;
+pub const NE: u32 = 0x1;
 pub const LT: u32 = 0xb;
 /// Unsigned lower or same.
 pub const LS: u32 = 0x9;
@@ -356,73 +357,127 @@ fn function<S: System>(
     functions: &[usize],
     fail: usize,
 ) {
-    let outgoing = f
-        .steps
-        .iter()
-        .map(|s| match s {
-            Step::Call { args, results, .. } => args.len() + results.len(),
-            Step::Write { .. } => 0,
-        })
-        .max()
-        .unwrap_or(0) as u32;
+    let outgoing = f.outgoing() as u32;
     let held = (f.locals - f.params) as u32;
     let frame = S::RESERVED + SLOT * (outgoing + held) + 16;
-    let slot = |local: usize| -> u32 {
-        if local < f.params {
-            frame + S::RESERVED + SLOT * local as u32
-        } else {
-            S::RESERVED + SLOT * (outgoing + (local - f.params) as u32)
-        }
-    };
-    let load = |asm: &mut Asm, value: Value, address: u32, length: u32| match value {
-        Value::Text(t) => {
-            asm.address(address, texts[t]);
-            asm.mov64(length, program.texts[t].len() as u64);
-        }
-        Value::Local(l) => {
-            asm.load_stack(address, slot(l));
-            asm.load_stack(length, slot(l) + 8);
-        }
+    let at = Frame::<S> {
+        program,
+        f,
+        texts,
+        functions,
+        fail,
+        frame,
+        outgoing,
+        system: std::marker::PhantomData,
     };
     asm.reserve_stack(frame);
     asm.store_stack(frame - 16, X30);
-    for step in &f.steps {
-        match step {
-            Step::Write { stream, value } => {
-                load(asm, *value, X19, X20);
-                S::write(asm, *stream, fail);
-            }
-            Step::Call {
-                function,
-                args,
-                results,
-            } => {
-                for (i, arg) in args.iter().enumerate() {
-                    load(asm, *arg, X0, X1);
-                    let at = S::RESERVED + SLOT * i as u32;
-                    asm.store_stack(at, X0);
-                    asm.store_stack(at + 8, X1);
-                }
-                asm.call_label(functions[*function]);
-                for (i, r) in results.iter().enumerate() {
-                    let at = S::RESERVED + SLOT * (args.len() + i) as u32;
-                    asm.load_stack(X0, at);
-                    asm.load_stack(X1, at + 8);
-                    asm.store_stack(slot(*r), X0);
-                    asm.store_stack(slot(*r) + 8, X1);
-                }
-            }
-        }
-    }
-    // The texts it gives back go after its parameters in its caller's
+    at.steps(asm, &f.steps);
+    // The values it gives back go after its parameters in its caller's
     // frame, so writing one never overwrites a parameter still to be read.
     for (i, value) in f.results.iter().enumerate() {
-        load(asm, *value, X0, X1);
-        let at = frame + S::RESERVED + SLOT * (f.params + i) as u32;
-        asm.store_stack(at, X0);
-        asm.store_stack(at + 8, X1);
+        at.load(asm, *value, X0, X1);
+        let to = frame + S::RESERVED + SLOT * (f.params + i) as u32;
+        asm.store_stack(to, X0);
+        asm.store_stack(to + 8, X1);
     }
     asm.load_stack(X30, frame - 16);
     asm.release_stack(frame);
     asm.ret();
+}
+
+/// A function being written, and where its frame keeps each value.
+struct Frame<'a, S> {
+    program: &'a Program,
+    f: &'a Function,
+    texts: &'a [usize],
+    functions: &'a [usize],
+    fail: usize,
+    frame: u32,
+    outgoing: u32,
+    system: std::marker::PhantomData<S>,
+}
+
+impl<S: System> Frame<'_, S> {
+    /// Where a local is, from the bottom of the frame.
+    fn slot(&self, local: usize) -> u32 {
+        if local < self.f.params {
+            self.frame + S::RESERVED + SLOT * local as u32
+        } else {
+            S::RESERVED + SLOT * (self.outgoing + (local - self.f.params) as u32)
+        }
+    }
+
+    /// Loads a value into two registers: a text's address and length, or a
+    /// case's place and 0.
+    fn load(&self, asm: &mut Asm, value: Value, address: u32, length: u32) {
+        match value {
+            Value::Text(t) => {
+                asm.address(address, self.texts[t]);
+                asm.mov64(length, self.program.texts[t].len() as u64);
+            }
+            Value::Case(c) => {
+                asm.mov64(address, c as u64);
+                asm.mov64(length, 0);
+            }
+            Value::Local(l) => {
+                asm.load_stack(address, self.slot(l));
+                asm.load_stack(length, self.slot(l) + 8);
+            }
+        }
+    }
+
+    fn steps(&self, asm: &mut Asm, steps: &[Step]) {
+        for step in steps {
+            match step {
+                Step::Write { stream, value } => {
+                    self.load(asm, *value, X19, X20);
+                    S::write(asm, *stream, self.fail);
+                }
+                Step::Call {
+                    function,
+                    args,
+                    results,
+                } => {
+                    for (i, arg) in args.iter().enumerate() {
+                        self.load(asm, *arg, X0, X1);
+                        let at = S::RESERVED + SLOT * i as u32;
+                        asm.store_stack(at, X0);
+                        asm.store_stack(at + 8, X1);
+                    }
+                    asm.call_label(self.functions[*function]);
+                    for (i, r) in results.iter().enumerate() {
+                        let at = S::RESERVED + SLOT * (args.len() + i) as u32;
+                        asm.load_stack(X0, at);
+                        asm.load_stack(X1, at + 8);
+                        asm.store_stack(self.slot(*r), X0);
+                        asm.store_stack(self.slot(*r) + 8, X1);
+                    }
+                }
+                Step::Set { local, value } => {
+                    self.load(asm, *value, X0, X1);
+                    asm.store_stack(self.slot(*local), X0);
+                    asm.store_stack(self.slot(*local) + 8, X1);
+                }
+                Step::Match { value, arms } => {
+                    // Each arm but the last is chosen by comparing the case
+                    // with its place, and the last runs when none was.
+                    self.load(asm, *value, X0, X1);
+                    let end = asm.label();
+                    for (c, arm) in arms.iter().enumerate() {
+                        let next = asm.label();
+                        if c + 1 < arms.len() {
+                            asm.mov64(X17, c as u64);
+                            asm.cmp(X0, X17);
+                            asm.cond(NE, next);
+                        }
+                        self.steps(asm, arm);
+                        asm.branch(end);
+                        asm.bind(next);
+                    }
+                    asm.bind(end);
+                }
+            }
+        }
+    }
 }

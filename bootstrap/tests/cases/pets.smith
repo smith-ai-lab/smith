@@ -1,0 +1,23 @@
+struct Cat {
+  name: str
+}
+
+enum Pet {
+  cat: Cat
+  stray: str
+  none
+}
+
+fn name_of(p: Pet) -> str {
+  match p {
+    .cat(c) { c.name }
+    .stray(s) { s }
+    .none { "nobody" }
+  }
+}
+
+fn main() ! console {
+  print(name_of(.cat(Cat(name: "Tom"))))
+  print(name_of(.stray("Rex")))
+  print(name_of(Pet.none))
+}

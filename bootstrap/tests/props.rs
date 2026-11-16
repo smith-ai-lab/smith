@@ -9,6 +9,7 @@ use smith::eval::{self, Outcome};
 use smith::{compile, lower};
 
 use crate::Test;
+use crate::enums;
 use crate::generate::{self, Gen};
 use crate::programs::{self, Case, PIECES, pos_after};
 use crate::targets;
@@ -46,6 +47,18 @@ pub const TESTS: &[Test] = &[
     (
         "every_placed_mistake_about_traits_is_one_error_at_its_place",
         every_placed_mistake_about_traits_is_one_error_at_its_place,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_enums_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_enums_to_print,
+    ),
+    (
+        "a_case_written_with_a_dot_builds_to_the_bytes_of_it_written_in_full",
+        a_case_written_with_a_dot_builds_to_the_bytes_of_it_written_in_full,
+    ),
+    (
+        "every_placed_mistake_about_enums_is_one_error_at_its_place",
+        every_placed_mistake_about_enums_is_one_error_at_its_place,
     ),
     (
         "a_function_main_does_not_reach_is_parsed_and_not_checked",
@@ -218,6 +231,45 @@ fn a_program_with_defaults_builds_to_the_bytes_of_it_written_out() {
     });
 }
 
+fn the_evaluator_says_what_the_generator_built_a_program_with_enums_to_print() {
+    generate::check(21, 300, enums::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+    });
+}
+
+/// A generated program with enums, and which of `targets` targets to
+/// build it for.
+fn program_with_enums_and_target(g: &mut Gen, targets: usize) -> (enums::EnumCase, usize) {
+    (enums::program(g), g.below(targets))
+}
+
+fn a_case_written_with_a_dot_builds_to_the_bytes_of_it_written_in_full() {
+    let targets = targets::buildable();
+    let choose = |g: &mut Gen| program_with_enums_and_target(g, targets.len());
+    generate::check(22, 60, choose, |(case, target)| {
+        let built = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let in_full =
+            lower(case.in_full.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in\n{}", case.in_full));
+        assert!(built == in_full, "differs from\n{}", case.in_full);
+        let target = targets[*target];
+        let built = compile(case.source.as_bytes(), target).unwrap();
+        let in_full = compile(case.in_full.as_bytes(), target).unwrap();
+        assert!(built == in_full, "{} differs", target.name());
+    });
+}
+
+fn every_placed_mistake_about_enums_is_one_error_at_its_place() {
+    generate::check(23, 500, enums::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
 fn an_implementation_with_type_parameters_applies_to_each_type_that_fits() {
     generate::check(16, 200, traits::boxes, |(source, stdout)| {
         let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
@@ -312,11 +364,13 @@ pub fn bytes(g: &mut Gen) -> Bytes {
     if g.one_in(10) {
         return Bytes((0..g.below(64)).map(|_| g.below(256) as u8).collect());
     }
-    let mut source = match g.below(4) {
+    let mut source = match g.below(6) {
         0 => programs::program_with_mistake(g).source,
         1 => programs::program(g).source,
         2 => traits::program_with_mistake(g).source.into_bytes(),
-        _ => traits::program(g).source.into_bytes(),
+        3 => traits::program(g).source.into_bytes(),
+        4 => enums::program_with_mistake(g).source.into_bytes(),
+        _ => enums::program(g).source.into_bytes(),
     };
     for _ in 0..1 + g.below(4) {
         let at = g.below(source.len() + 1);

@@ -1,0 +1,16 @@
+enum Pet {
+  cat: str
+  stray: str
+  none
+}
+
+fn name_of(p: Pet) -> str {
+  match p {
+    .cat(c) { c }
+    .none { "nobody" }
+  }
+}
+
+fn main() ! console {
+  print(name_of(.none))
+}

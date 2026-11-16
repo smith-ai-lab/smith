@@ -6,8 +6,8 @@ use crate::diag::{Error, Pos};
 /// The keywords of Smith.
 const KEYWORDS: &[&str] = &[
     "and", "as", "break", "derive", "effect", "else", "ensures", "enum", "fn", "for", "foreign",
-    "if", "impl", "in", "loop", "match", "not", "or", "out", "pub", "requires", "some", "struct",
-    "take", "trait", "try", "use", "var", "with", "without",
+    "if", "impl", "in", "loop", "match", "not", "or", "out", "pub", "requires", "struct", "take",
+    "trait", "try", "use", "var", "with", "without",
 ];
 
 /// Punctuation and operators, longest first so that the first match is the
