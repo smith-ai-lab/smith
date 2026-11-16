@@ -24,6 +24,10 @@ pub const ONCE: &[Test] = &[
     ),
     ("no_test_names_a_target", no_test_names_a_target),
     ("the_kept_hashes_are_sha256", the_kept_hashes_are_sha256),
+    (
+        "every_executable_uses_only_thin_wrappers_over_the_kernel",
+        every_executable_uses_only_thin_wrappers_over_the_kernel,
+    ),
 ];
 
 pub const MACHINE: &[Test] = &[
@@ -253,6 +257,93 @@ fn no_test_names_a_target() {
                     file.display()
                 );
             }
+        }
+    }
+}
+
+/// The functions of a system library that are thin wrappers over the
+/// kernel, as "Standing alone" in `knowledge/compiler.md` allows, by the
+/// names a Mach-O file gives them.
+const THIN_WRAPPERS: &[&str] = &["_write", "__exit", "___error", "_mmap", "_munmap"];
+
+fn u16_at(bytes: &[u8], at: usize) -> usize {
+    u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()) as usize
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> usize {
+    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
+}
+
+fn c_string(bytes: &[u8], at: usize) -> String {
+    let end = bytes[at..].iter().position(|&b| b == 0).unwrap();
+    String::from_utf8(bytes[at..at + end].to_vec()).unwrap()
+}
+
+/// The libraries a Mach-O executable loads, and the symbols it imports.
+fn mach_o_imports(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
+    const LC_SYMTAB: usize = 0x2;
+    const LC_LOAD_DYLIB: usize = 0xc;
+    let mut libraries = Vec::new();
+    let mut symbols = Vec::new();
+    let mut at = 32;
+    for _ in 0..u32_at(bytes, 16) {
+        let (cmd, size) = (u32_at(bytes, at), u32_at(bytes, at + 4));
+        if cmd == LC_LOAD_DYLIB {
+            libraries.push(c_string(bytes, at + u32_at(bytes, at + 8)));
+        } else if cmd == LC_SYMTAB {
+            let (table, count) = (u32_at(bytes, at + 8), u32_at(bytes, at + 12));
+            let strings = u32_at(bytes, at + 16);
+            for i in 0..count {
+                let entry = table + 16 * i;
+                let kind = bytes[entry + 4];
+                // External, and undefined: a symbol the loader finds.
+                if kind & 0x01 != 0 && kind & 0x0e == 0 {
+                    symbols.push(c_string(bytes, strings + u32_at(bytes, entry)));
+                }
+            }
+        }
+        at += size;
+    }
+    (libraries, symbols)
+}
+
+/// The kinds of the segments an ELF executable's program headers list.
+fn elf_segment_kinds(bytes: &[u8]) -> Vec<usize> {
+    let headers = u32_at(bytes, 32);
+    let size = u16_at(bytes, 54);
+    (0..u16_at(bytes, 56))
+        .map(|i| u32_at(bytes, headers + i * size))
+        .collect()
+}
+
+fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
+    const PT_DYNAMIC: usize = 2;
+    const PT_INTERP: usize = 3;
+    for target in buildable() {
+        let bytes = compile(HELLO.as_bytes(), target).unwrap();
+        let name = target.name();
+        if bytes.starts_with(b"\x7fELF") {
+            let kinds = elf_segment_kinds(&bytes);
+            assert!(
+                !kinds.contains(&PT_INTERP) && !kinds.contains(&PT_DYNAMIC),
+                "{name} links a library"
+            );
+        } else if bytes.starts_with(&0xfeed_facfu32.to_le_bytes()) {
+            let (libraries, symbols) = mach_o_imports(&bytes);
+            assert_eq!(
+                libraries,
+                ["/usr/lib/libSystem.B.dylib"],
+                "{name} links only libSystem"
+            );
+            assert!(!symbols.is_empty(), "{name} imports what it calls");
+            for symbol in symbols {
+                assert!(
+                    THIN_WRAPPERS.contains(&symbol.as_str()),
+                    "{name} imports {symbol}, which is not a thin wrapper over the kernel"
+                );
+            }
+        } else {
+            panic!("{name} writes an executable in a form this test does not read");
         }
     }
 }
