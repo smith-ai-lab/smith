@@ -7,6 +7,7 @@ pub mod eval;
 pub mod ir;
 mod lexer;
 mod parser;
+pub mod scalar;
 pub mod target;
 pub mod timings;
 
@@ -28,6 +29,16 @@ pub fn lower(source: &[u8]) -> Result<Program, Vec<diag::Error>> {
     lower_timed(source, &mut Timings::new())
 }
 
+/// The program a source file describes, in the scalar form, or the feature
+/// that stopped it. Its errors are those `compile` reports before a target
+/// is involved.
+pub fn lower_scalar(
+    source: &[u8],
+) -> Result<Result<scalar::Program, scalar::Stopped>, Vec<diag::Error>> {
+    let checked = checked(source, &mut Timings::new(), true)?;
+    Ok(checked.scalar.expect("asked for"))
+}
+
 /// The warnings `smith check` reports about a source file, in the order of
 /// their places, or the errors `compile` reports before a target is
 /// involved. No code is generated for a target.
@@ -40,7 +51,7 @@ pub fn check_timed(
     source: &[u8],
     timings: &mut Timings,
 ) -> Result<Vec<diag::Error>, Vec<diag::Error>> {
-    checked(source, timings).map(|checked| in_order(checked.warnings))
+    checked(source, timings, false).map(|checked| in_order(checked.warnings))
 }
 
 /// `compile`, recording how long each stage takes.
@@ -61,10 +72,14 @@ pub fn compile_timed(
 }
 
 fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<Program, Vec<diag::Error>> {
-    checked(source, timings).map(|checked| checked.program)
+    checked(source, timings, false).map(|checked| checked.program)
 }
 
-fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<diag::Error>> {
+fn checked(
+    source: &[u8],
+    timings: &mut Timings,
+    scalar: bool,
+) -> Result<check::Checked, Vec<diag::Error>> {
     let tokens = timings
         .stage("lex", || lexer::lex(source))
         .map_err(in_order)?;
@@ -72,7 +87,7 @@ fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<d
         .stage("parse", || parser::parse(&tokens))
         .map_err(in_order)?;
     timings
-        .stage("check", || check::check(file))
+        .stage("check", || check::check(file, scalar))
         .map_err(in_order)
 }
 

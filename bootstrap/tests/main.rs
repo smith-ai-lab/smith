@@ -28,6 +28,7 @@ mod programs;
 mod props;
 mod release;
 mod reprs;
+mod scalar;
 mod sha256;
 mod targets;
 mod text;
@@ -63,6 +64,7 @@ fn main() -> ExitCode {
         release::ONCE,
         machines::ONCE,
         targets::ONCE,
+        scalar::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.
