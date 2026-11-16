@@ -49,6 +49,18 @@ pub const ONCE: &[Test] = &[
         a_build_that_is_not_a_release_reports_dev,
     ),
     (
+        "a_job_that_never_started_is_started_again_twice_and_then_counts_as_failed",
+        a_job_that_never_started_is_started_again_twice_and_then_counts_as_failed,
+    ),
+    (
+        "a_run_passes_only_when_every_machine_it_must_see_has_a_newest_job_that_succeeded",
+        a_run_passes_only_when_every_machine_it_must_see_has_a_newest_job_that_succeeded,
+    ),
+    (
+        "a_list_of_jobs_that_cannot_be_read_stops_the_step_that_asked",
+        a_list_of_jobs_that_cannot_be_read_stops_the_step_that_asked,
+    ),
+    (
         "the_release_workflow_runs_after_a_merge_and_only_its_publish_job_writes",
         the_release_workflow_runs_after_a_merge_and_only_its_publish_job_writes,
     ),
@@ -667,4 +679,215 @@ fn a_run_whose_uploads_are_lost_or_changed_fails_and_names_a_file() {
         }
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+
+/// How a job can end: it never started, it ran and succeeded, it ran and
+/// failed, it was stopped while running, or it was skipped, as the place of a
+/// job that never ran is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum End {
+    NeverStarted,
+    Success,
+    Failure,
+    Stopped,
+    Skipped,
+}
+
+/// The jobs asking for each kind of machine, oldest first, and some that name
+/// no machine. A job that never started is followed by another only while
+/// fewer than three have not.
+#[derive(Debug)]
+struct Jobs {
+    machines: Vec<(String, Vec<End>)>,
+    /// The order the jobs are listed in, as (machine, attempt) pairs.
+    order: Vec<(usize, usize)>,
+    /// Jobs that name no machine, listed after the others.
+    unlabelled: Vec<End>,
+    /// A machine the run must show that no job asks for.
+    absent: bool,
+}
+
+fn jobs(g: &mut Gen) -> Jobs {
+    let mut machines = Vec::new();
+    for m in 0..g.below(6) {
+        let mut ends = Vec::new();
+        loop {
+            let end = *g.pick(&[
+                End::NeverStarted,
+                End::NeverStarted,
+                End::Success,
+                End::Failure,
+                End::Stopped,
+            ]);
+            ends.push(end);
+            if end != End::NeverStarted || ends.len() == 3 {
+                break;
+            }
+        }
+        // The place of a job that was lost, standing in for it.
+        if g.one_in(6) {
+            ends.push(End::Skipped);
+        }
+        machines.push((format!("machine-{m}"), ends));
+    }
+    // Interleave the kinds, each kind's own jobs staying in order.
+    let mut next = vec![0; machines.len()];
+    let mut order = Vec::new();
+    let total: usize = machines.iter().map(|(_, ends)| ends.len()).sum();
+    while order.len() < total {
+        let m = g.below(machines.len());
+        if next[m] < machines[m].1.len() {
+            order.push((m, next[m]));
+            next[m] += 1;
+        }
+    }
+    let unlabelled = (0..g.below(3))
+        .map(|_| {
+            *g.pick(&[
+                End::Skipped,
+                End::Skipped,
+                End::Success,
+                End::Failure,
+                End::NeverStarted,
+            ])
+        })
+        .collect();
+    Jobs {
+        machines,
+        order,
+        unlabelled,
+        absent: g.one_in(5),
+    }
+}
+
+fn line(label: &str, end: End) -> String {
+    let (conclusion, steps) = match end {
+        End::NeverStarted => ("cancelled", 0),
+        End::Success => ("success", 4),
+        End::Failure => ("failure", 3),
+        End::Stopped => ("cancelled", 2),
+        End::Skipped => ("skipped", 0),
+    };
+    format!("{label}\t{conclusion}\t{steps}\n")
+}
+
+fn states(jobs: &Jobs) -> String {
+    let mut text = String::new();
+    for &(m, a) in &jobs.order {
+        text.push_str(&line(&jobs.machines[m].0, jobs.machines[m].1[a]));
+    }
+    for &end in &jobs.unlabelled {
+        text.push_str(&line("", end));
+    }
+    text
+}
+
+fn decide(mode: &str, machines: &[&str], input: &str) -> (bool, String) {
+    let mut child = Command::new("sh")
+        .arg(format!(
+            "{}/../.github/never-started.sh",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg(mode)
+        .args(machines)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // A script that stops without reading its input closes the pipe.
+    let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
+    let output = child.wait_with_output().unwrap();
+    (
+        output.status.success(),
+        String::from_utf8(output.stdout).unwrap(),
+    )
+}
+
+fn first_seen(jobs: &Jobs) -> Vec<usize> {
+    let mut seen: Vec<usize> = Vec::new();
+    for &(m, _) in &jobs.order {
+        if !seen.contains(&m) {
+            seen.push(m);
+        }
+    }
+    seen
+}
+
+fn a_job_that_never_started_is_started_again_twice_and_then_counts_as_failed() {
+    generate::check(33, 120, jobs, |case| {
+        let input = states(case);
+        // A kind is started again when its newest job never started, and
+        // fewer than three have not.
+        let expected: Vec<&str> = first_seen(case)
+            .iter()
+            .map(|&m| &case.machines[m])
+            .filter(|(_, ends)| ends.last() == Some(&End::NeverStarted) && ends.len() < 3)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let (ok, got) = decide("retry", &[], &input);
+        assert!(ok);
+        assert_eq!(got.lines().collect::<Vec<_>>(), expected, "{input}");
+    });
+}
+
+fn a_run_passes_only_when_every_machine_it_must_see_has_a_newest_job_that_succeeded() {
+    generate::check(34, 200, jobs, |case| {
+        let input = states(case);
+        let mut wanted: Vec<&str> = case.machines.iter().map(|(n, _)| n.as_str()).collect();
+        if case.absent {
+            wanted.push("machine-absent");
+        }
+        let name = |end: &End| match end {
+            End::Success => "success",
+            End::Failure => "failure",
+            End::Skipped => "skipped",
+            End::NeverStarted | End::Stopped => "cancelled",
+        };
+        let expected = if case.unlabelled.iter().any(|end| *end != End::Skipped) {
+            "unlabelled".to_string()
+        } else {
+            wanted
+                .iter()
+                .find_map(|want| match case.machines.iter().find(|(n, _)| n == want) {
+                    None => Some("missing"),
+                    Some((_, ends)) => {
+                        let end = ends.last().unwrap();
+                        (*end != End::Success).then(|| name(end))
+                    }
+                })
+                .unwrap_or("success")
+                .to_string()
+        };
+        if wanted.is_empty() {
+            // No machine to see is a mistake, not a pass.
+            let (ok, _) = decide("result", &wanted, &input);
+            assert!(!ok);
+            return;
+        }
+        let (ok, got) = decide("result", &wanted, &input);
+        assert!(ok);
+        assert_eq!(got.trim(), expected, "{input}");
+    });
+}
+
+fn a_list_of_jobs_that_cannot_be_read_stops_the_step_that_asked() {
+    let dir = std::env::temp_dir().join(format!("smith-job-states-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("gh"), "#!/bin/sh\nexit 1\n").unwrap();
+    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
+    let output = Command::new("sh")
+        .arg(format!(
+            "{}/../.github/job-states.sh",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg("test on ")
+        .env("PATH", path)
+        .env("GITHUB_REPOSITORY", "o/r")
+        .env("GITHUB_RUN_ID", "1")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
 }

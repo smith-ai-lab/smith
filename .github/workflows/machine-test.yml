@@ -1,0 +1,25 @@
+name: machine-test
+
+# The tests that depend on the machine, on one kind of machine. `ci` calls it
+# once for each kind, and again for a kind whose job never started.
+on:
+  workflow_call:
+    inputs:
+      os:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ${{ inputs.os }}
+    defaults:
+      run:
+        working-directory: bootstrap
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test
+        run: cargo test --locked -- --group=machine
