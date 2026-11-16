@@ -44,7 +44,11 @@ programs=
 for out in "$root"/bootstrap/tests/cases/*.out; do
   case_name=$(basename "$out" .out)
   source="$root/bootstrap/tests/cases/$case_name.smith"
-  for target in linux_x64 macos_arm64 linux_arm64 macos_x64; do
+  for target in linux_x64 macos_arm64 linux_arm64 macos_x64 windows_x64; do
+    executable=$case_name
+    if [ "$target" = windows_x64 ]; then
+      executable=$case_name.exe
+    fi
     dir="$work/$case_name.$target"
     mkdir "$dir"
     # A target the compiler cannot build for yet fails here and is skipped.
@@ -54,10 +58,10 @@ for out in "$root"/bootstrap/tests/cases/*.out; do
     while read -r stage time unit; do
       programs="$programs $case_name/$target/${stage}_ms=${time}"
     done <"$dir/stages"
-    programs="$programs $case_name/$target/bytes=$(wc -c <"$dir/$case_name" | tr -d ' ')"
+    programs="$programs $case_name/$target/bytes=$(wc -c <"$dir/$executable" | tr -d ' ')"
     if [ "$target" = "$host" ]; then
       begin=$(now)
-      "$dir/$case_name" >/dev/null 2>&1 || true
+      "$dir/$executable" >/dev/null 2>&1 || true
       programs="$programs $case_name/$target/run_ms=$(($(now) - begin))"
     fi
   done

@@ -119,8 +119,9 @@ The first two targets are built together. A target is one case of an enum, and a
 - **macOS on arm64,** named `macos_arm64`. A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
 - **Linux on arm64,** named `linux_arm64`. A static ELF executable that talks to the kernel directly.
 - **macOS on x86-64,** named `macos_x64`. A Mach-O executable like that of `macos_arm64`, for an Intel Mac.
+- **Windows on x86-64,** named `windows_x64`. A PE executable for the console that reaches the kernel through `KERNEL32.dll`, which it links dynamically.
 
-Targets share what they have in common: the arm64 instructions are written once for both arm64 targets, the x86-64 instructions once for both x86-64 targets, the ELF writer once for both Linux targets, and the Mach-O writer once for both macOS targets.
+Targets share what they have in common: the arm64 instructions are written once for both arm64 targets, the x86-64 instructions once for every x86-64 target, the ELF writer once for both Linux targets, and the Mach-O writer once for both macOS targets.
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
 
@@ -132,9 +133,9 @@ A Smith executable carries everything it runs. All of its code is compiled from 
 | --- | --- | --- |
 | Linux | The kernel's system calls, made directly | The kernel keeps them stable, so the executable is fully static and uses no C library |
 | macOS, iOS | `libSystem`, loaded by the system's dynamic loader | Apple changes system call numbers between releases, and Apple silicon does not run a static executable |
-| Windows | The system DLLs | Windows changes system call numbers between builds |
+| Windows | `KERNEL32.dll`, loaded by the system's loader | Windows changes system call numbers between builds |
 
-- From a system library a program calls only the thin wrappers over the kernel, such as `write`, `mmap`, and `exit`. It never uses the C library behind them. Allocation, formatting, and everything else are written in Smith and behave the same on every target.
+- From a system library a program calls only the thin wrappers over the kernel, such as `write`, `mmap`, and `exit`, or on Windows `WriteFile` and `ExitProcess`. It never uses the C library behind them. Allocation, formatting, and everything else are written in Smith and behave the same on every target.
 - Nothing from the system is needed to build. The compiler writes the records that ask the loader for a library and its symbols, so it needs no SDK and can build for any target from any machine.
 
 ## Why builds are fast

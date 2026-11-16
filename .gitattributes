@@ -1,0 +1,3 @@
+# Every text file is checked out with line feeds on every machine, so a
+# case's source and expected output hold no carriage return on Windows.
+* text=auto eol=lf

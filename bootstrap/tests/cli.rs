@@ -109,19 +109,26 @@ fn the_cases_build_or_report_their_error() {
             std::fs::copy(&source, dir.join(&file)).unwrap();
             let built = build(&dir, target, &file);
             let shown = format!("{file} for {}", target.name());
+            let executable = target.executable_name(name);
             if updating() {
                 update(&source, &built);
                 break;
             }
             if out.exists() {
                 assert!(built.status.success(), "{shown}: {}", stderr(&built));
-                assert!(dir.join(name).is_file(), "{shown} writes {name}");
+                assert!(
+                    dir.join(&executable).is_file(),
+                    "{shown} writes {executable}"
+                );
             } else {
                 assert!(!built.status.success(), "{shown} is rejected");
                 let expected = std::fs::read_to_string(&err)
                     .unwrap_or_else(|_| panic!("{file} has a .out or .err file beside it"));
                 assert_eq!(stderr(&built), expected, "{shown}");
-                assert!(!dir.join(name).exists(), "{shown} writes no executable");
+                assert!(
+                    !dir.join(&executable).exists(),
+                    "{shown} writes no executable"
+                );
             }
         }
     }

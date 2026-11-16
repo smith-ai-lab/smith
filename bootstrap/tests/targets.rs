@@ -266,6 +266,15 @@ fn no_test_names_a_target() {
 /// names a Mach-O file gives them.
 const THIN_WRAPPERS: &[&str] = &["_write", "__exit", "___error", "_mmap", "_munmap"];
 
+/// The same, by the names `KERNEL32.dll` gives them.
+const KERNEL32_THIN_WRAPPERS: &[&str] = &[
+    "GetStdHandle",
+    "WriteFile",
+    "ExitProcess",
+    "VirtualAlloc",
+    "VirtualFree",
+];
+
 fn u16_at(bytes: &[u8], at: usize) -> usize {
     u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()) as usize
 }
@@ -307,6 +316,50 @@ fn mach_o_imports(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
     (libraries, symbols)
 }
 
+/// The libraries a PE executable loads, and the symbols it imports from
+/// them.
+fn pe_imports(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
+    let pe = u32_at(bytes, 0x3c);
+    let sections = u16_at(bytes, pe + 6);
+    let optional = pe + 24;
+    let section_table = optional + u16_at(bytes, pe + 20);
+    // Where an address in memory is in the file.
+    let offset = |rva: usize| {
+        (0..sections)
+            .map(|i| section_table + 40 * i)
+            .find_map(|h| {
+                let (start, size) = (u32_at(bytes, h + 12), u32_at(bytes, h + 8));
+                (start..start + size)
+                    .contains(&rva)
+                    .then(|| rva - start + u32_at(bytes, h + 20))
+            })
+            .expect("an address inside a section")
+    };
+    let mut libraries = Vec::new();
+    let mut symbols = Vec::new();
+    // The import directory, the second data directory of PE32+.
+    let directory = u32_at(bytes, optional + 112 + 8);
+    if directory == 0 {
+        return (libraries, symbols);
+    }
+    let mut entry = offset(directory);
+    while u32_at(bytes, entry + 12) != 0 {
+        libraries.push(c_string(bytes, offset(u32_at(bytes, entry + 12))));
+        let mut slot = offset(u32_at(bytes, entry));
+        loop {
+            let value = u64::from_le_bytes(bytes[slot..slot + 8].try_into().unwrap());
+            if value == 0 {
+                break;
+            }
+            assert!(value >> 63 == 0, "a symbol is imported by its name");
+            symbols.push(c_string(bytes, offset(value as usize) + 2));
+            slot += 8;
+        }
+        entry += 20;
+    }
+    (libraries, symbols)
+}
+
 /// The kinds of the segments an ELF executable's program headers list.
 fn elf_segment_kinds(bytes: &[u8]) -> Vec<usize> {
     let headers = u32_at(bytes, 32);
@@ -339,6 +392,16 @@ fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
             for symbol in symbols {
                 assert!(
                     THIN_WRAPPERS.contains(&symbol.as_str()),
+                    "{name} imports {symbol}, which is not a thin wrapper over the kernel"
+                );
+            }
+        } else if bytes.starts_with(b"MZ") {
+            let (libraries, symbols) = pe_imports(&bytes);
+            assert_eq!(libraries, ["KERNEL32.dll"], "{name} links only KERNEL32");
+            assert!(!symbols.is_empty(), "{name} imports what it calls");
+            for symbol in symbols {
+                assert!(
+                    KERNEL32_THIN_WRAPPERS.contains(&symbol.as_str()),
                     "{name} imports {symbol}, which is not a thin wrapper over the kernel"
                 );
             }

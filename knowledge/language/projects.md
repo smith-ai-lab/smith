@@ -11,7 +11,7 @@ A project is a folder, and its layout says most of what a build needs to know. A
 - **The root** is the nearest folder, at or above where the command ran, that holds a `project.smith`. When there is none, it is the folder the command ran in.
 - **The entry** is `main.smith` at the root. `smith build` and `smith run` can name another file instead, as in `smith run hello.smith`, and that file's `main` is where the program starts.
 - **A module's name** is its path from the root, and the standard library lives under `std`.
-- **The executable** is named after the entry file without `.smith`, so `hello.smith` gives `hello`. When the entry is `main.smith` it takes the package's name, or the root folder's name when there is no `project.smith`.
+- **The executable** is named after the entry file without `.smith`, so `hello.smith` gives `hello`. When the entry is `main.smith` it takes the package's name, or the root folder's name when there is no `project.smith`. An executable for Windows ends in `.exe`, so there `hello.smith` gives `hello.exe`.
 
 ## Starting a project
 
