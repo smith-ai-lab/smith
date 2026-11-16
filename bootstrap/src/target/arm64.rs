@@ -4,14 +4,21 @@
 pub const X0: u32 = 0;
 pub const X1: u32 = 1;
 pub const X2: u32 = 2;
+pub const X3: u32 = 3;
+pub const X4: u32 = 4;
 /// Holds the number of a Linux system call.
 pub const X8: u32 = 8;
 /// Kept across calls, so they hold the place and the length still to write.
 pub const X19: u32 = 19;
 pub const X20: u32 = 20;
+pub const X21: u32 = 21;
+/// The stack pointer, where an instruction takes it in place of a register.
+const SP: u32 = 31;
 pub const LE: u32 = 0xd;
 pub const EQ: u32 = 0x0;
 pub const LT: u32 = 0xb;
+/// Unsigned lower or same.
+pub const LS: u32 = 0x9;
 
 /// A place in the code that refers to something placed later.
 enum Fixup {
@@ -71,6 +78,45 @@ impl Asm {
             label,
         });
         self.word(0xb400_0000 | reg);
+    }
+
+    /// `cbz wt, label`, which looks at the low 32 bits only.
+    pub fn cbz_w(&mut self, reg: u32, label: usize) {
+        self.fixups.push(Fixup::Conditional {
+            at: self.code.len(),
+            label,
+        });
+        self.word(0x3400_0000 | reg);
+    }
+
+    /// `cmp xn, xm`.
+    pub fn cmp(&mut self, rn: u32, rm: u32) {
+        self.word(0xeb00_001f | rm << 16 | rn << 5);
+    }
+
+    /// `csel xd, xn, xm, cond`, which takes `xn` if `cond` holds and `xm`
+    /// if not.
+    pub fn csel(&mut self, rd: u32, rn: u32, rm: u32, cond: u32) {
+        self.word(0x9a80_0000 | rm << 16 | cond << 12 | rn << 5 | rd);
+    }
+
+    /// `sub sp, sp, #bytes`, which makes room on the stack. `bytes` keeps
+    /// the stack on 16 bytes.
+    pub fn reserve_stack(&mut self, bytes: u32) {
+        assert!(bytes.is_multiple_of(16) && bytes < 1 << 12);
+        self.word(0xd100_0000 | bytes << 10 | SP << 5 | SP);
+    }
+
+    /// `add xd, sp, #offset`, the address of a place on the stack.
+    pub fn stack_address(&mut self, rd: u32, offset: u32) {
+        assert!(offset < 1 << 12);
+        self.word(0x9100_0000 | offset << 10 | SP << 5 | rd);
+    }
+
+    /// `ldr wt, [sp, #offset]`, which loads 32 bits from the stack.
+    pub fn load32_stack(&mut self, rt: u32, offset: u32) {
+        assert!(offset.is_multiple_of(4) && offset / 4 < 1 << 12);
+        self.word(0xb940_0000 | (offset / 4) << 10 | SP << 5 | rt);
     }
 
     /// `mov xd, xn`.
