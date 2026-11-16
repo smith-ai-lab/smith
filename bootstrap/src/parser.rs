@@ -115,7 +115,8 @@ pub struct Param {
     pub default: Option<Expr>,
 }
 
-/// A type: a name, and the types in brackets after it, if any.
+/// A type: a name, and the types in brackets after it, if any. A tuple
+/// type has no name, and its elements are its `args`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Type {
     pub name: String,
@@ -143,6 +144,14 @@ pub enum Stmt {
         name: String,
         pos: Pos,
         fields: Vec<Named>,
+        value: Expr,
+    },
+    /// `(a, var b) = e`, which takes a tuple apart. Whether each bare name
+    /// in it defines a name or assigns to a `var` is for the checker to
+    /// decide.
+    Destructure {
+        pattern: Pattern,
+        ty: Option<Type>,
         value: Expr,
     },
     Expr(Expr),
@@ -179,6 +188,12 @@ pub enum Expr {
         payload: Option<Box<Expr>>,
     },
     Match(Box<Match>),
+    /// A tuple, `()` or one of two values or more.
+    Tuple {
+        /// Where the `(` is.
+        pos: Pos,
+        items: Vec<Expr>,
+    },
 }
 
 /// `match e { pattern { ... } ... }`.
@@ -199,13 +214,17 @@ pub struct Arm {
     pub end: Pos,
 }
 
-/// A pattern: a bare name, which matches anything and names it, or a case
-/// with a leading dot and the pattern for what it holds, if it holds one.
+/// A pattern: a bare name, which matches anything and names it, a case
+/// with a leading dot and the pattern for what it holds, if it holds one,
+/// or a tuple of patterns.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Pattern {
     Bind {
         name: String,
+        /// Where the name is.
         pos: Pos,
+        /// Where `var` is, if the name is marked as one that can change.
+        var: Option<Pos>,
     },
     Case {
         name: String,
@@ -213,12 +232,19 @@ pub enum Pattern {
         pos: Pos,
         inner: Option<Box<Pattern>>,
     },
+    Tuple {
+        /// Where the `(` is.
+        pos: Pos,
+        items: Vec<Pattern>,
+    },
 }
 
 impl Pattern {
+    /// Where the pattern starts.
     pub fn pos(&self) -> Pos {
         match self {
-            Pattern::Bind { pos, .. } | Pattern::Case { pos, .. } => *pos,
+            Pattern::Bind { pos, var, .. } => var.unwrap_or(*pos),
+            Pattern::Case { pos, .. } | Pattern::Tuple { pos, .. } => *pos,
         }
     }
 }
@@ -227,7 +253,10 @@ impl Expr {
     /// Where the expression starts.
     pub fn pos(&self) -> Pos {
         match self {
-            Expr::Text { pos, .. } | Expr::Name { pos, .. } | Expr::Case { pos, .. } => *pos,
+            Expr::Text { pos, .. }
+            | Expr::Name { pos, .. }
+            | Expr::Case { pos, .. }
+            | Expr::Tuple { pos, .. } => *pos,
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),
             Expr::Match(m) => m.pos,
@@ -929,9 +958,48 @@ impl Parser<'_> {
                 Ok(Type { name, pos, args })
             }
             Tok::Punct("[") => Err(Error::unsupported(pos, "an array type")),
-            Tok::Punct("(") => Err(Error::unsupported(pos, "a tuple or function type")),
+            Tok::Punct("(") => {
+                let args = self.list(Self::ty)?;
+                if self.tok() == &Tok::Punct("->") {
+                    return Err(Error::unsupported(pos, "a function type"));
+                }
+                if args.len() == 1 {
+                    return Err(Error::unsupported(pos, "one type in parentheses"));
+                }
+                Ok(Type {
+                    name: String::new(),
+                    pos,
+                    args,
+                })
+            }
             tok => Err(self.expected("a type", tok)),
         }
+    }
+
+    /// Parses the items of a tuple, separated by commas, from its `(`
+    /// through its `)`. There may be none.
+    fn list<T>(&mut self, item: fn(&mut Self) -> Result<T, Error>) -> Result<Vec<T>, Error> {
+        self.bump();
+        self.skip_newlines();
+        let mut items = Vec::new();
+        if self.tok() == &Tok::Punct(")") {
+            self.bump();
+            return Ok(items);
+        }
+        loop {
+            items.push(item(self)?);
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct(",") => {
+                    self.bump();
+                    self.skip_newlines();
+                }
+                Tok::Punct(")") => break,
+                tok => return Err(self.expected("`,` or `)`", tok)),
+            }
+        }
+        self.bump();
+        Ok(items)
     }
 
     /// Parses types separated by commas, after a `[`, through the `]`.
@@ -999,12 +1067,52 @@ impl Parser<'_> {
                 let (name, pos) = self.ident("the name of the `var`")?;
                 return self.definition(name, pos, true);
             }
+            Tok::Punct("(") => return self.tuple_statement(),
             Tok::Keyword("with") => "`with`",
             Tok::Keyword("break") => "`break`",
             tok if starts_expression(tok) => return Ok(Stmt::Expr(self.expr()?)),
             tok => return Err(self.expected("a statement", tok)),
         };
         Err(Error::unsupported(pos, feature))
+    }
+
+    /// Parses a statement that starts like a tuple: one that takes a value
+    /// apart, when a pattern is followed by `:` or `=`, and otherwise an
+    /// expression.
+    fn tuple_statement(&mut self) -> Result<Stmt, Error> {
+        let start = self.at;
+        let mistake = match self.pattern() {
+            Ok(pattern) if matches!(self.tok(), Tok::Punct(":" | "=")) => {
+                return self.destructure(pattern);
+            }
+            Ok(_) => None,
+            Err(e) => Some(e),
+        };
+        self.at = start;
+        let expr = self.expr()?;
+        // A value followed by `=` is meant as a pattern, so the mistake that
+        // keeps it from being one is the one to report.
+        if let Some(e) = mistake
+            && self.tok() == &Tok::Punct("=")
+        {
+            return Err(e);
+        }
+        self.assignment_not_built()?;
+        Ok(Stmt::Expr(expr))
+    }
+
+    /// Parses the rest of a statement that takes a value apart, from the
+    /// `:` or `=` after its pattern.
+    fn destructure(&mut self, pattern: Pattern) -> Result<Stmt, Error> {
+        let mut ty = None;
+        if self.tok() == &Tok::Punct(":") {
+            self.bump();
+            ty = Some(self.ty()?);
+        }
+        self.assignment_not_built()?;
+        self.expect_punct("=", "`=`")?;
+        let value = self.expr()?;
+        Ok(Stmt::Destructure { pattern, ty, value })
     }
 
     /// Parses the rest of a definition, from the `:` or `=` after its name.
@@ -1095,10 +1203,16 @@ impl Parser<'_> {
                 }
             }
             Tok::Keyword("match") => Expr::Match(Box::new(self.match_expr()?)),
+            Tok::Punct("(") => {
+                let items = self.list(Self::expr)?;
+                if items.len() == 1 {
+                    return Err(Error::unsupported(pos, "an expression in parentheses"));
+                }
+                Expr::Tuple { pos, items }
+            }
             tok if starts_expression(tok) => {
                 let feature = match tok {
                     Tok::Number(_) => "a number",
-                    Tok::Punct("(") => "a tuple or an expression in parentheses",
                     Tok::Punct("[") => "an array",
                     Tok::Punct("{") => "a block",
                     Tok::Punct("-") => "the operator `-`",
@@ -1176,7 +1290,20 @@ impl Parser<'_> {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
-                Ok(Pattern::Bind { name, pos })
+                Ok(Pattern::Bind {
+                    name,
+                    pos,
+                    var: None,
+                })
+            }
+            Tok::Keyword("var") => {
+                self.bump();
+                let (name, at) = self.ident("the name of the `var`")?;
+                Ok(Pattern::Bind {
+                    name,
+                    pos: at,
+                    var: Some(pos),
+                })
             }
             Tok::Punct(".") => {
                 self.bump();
@@ -1189,8 +1316,14 @@ impl Parser<'_> {
                 }
                 Ok(Pattern::Case { name, pos, inner })
             }
-            Tok::Keyword("var") => Err(Error::unsupported(pos, "a `var` in a pattern")),
-            Tok::Punct("(") => Err(Error::unsupported(pos, "a tuple in a pattern")),
+            Tok::Punct("(") => {
+                let items = self.list(Self::pattern)?;
+                match items.len() {
+                    0 => Err(Error::new(pos, "expected a pattern, found `()`")),
+                    1 => Err(Error::unsupported(pos, "one pattern in parentheses")),
+                    _ => Ok(Pattern::Tuple { pos, items }),
+                }
+            }
             tok => Err(self.expected("a pattern", tok)),
         }
     }

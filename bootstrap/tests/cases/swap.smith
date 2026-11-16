@@ -1,0 +1,10 @@
+fn swap(pair: (str, str)) -> (str, str) {
+  (first, second) = pair
+  (second, first)
+}
+
+fn main() ! console {
+  (left, right) = swap(("a", "b"))
+  print(left)
+  print(right)
+}
