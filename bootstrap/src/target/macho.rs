@@ -4,7 +4,8 @@
 //! requires.
 //!
 //! From `libSystem` the program uses only thin wrappers over the kernel:
-//! `write`, `_exit`, and `__error`, which gives the thread's error number.
+//! `write`, `_exit`, `__error`, which gives the thread's error number, and,
+//! in a program that asks for memory, `mmap`.
 //! Nothing from the system is needed to build: the load commands that ask
 //! the loader for the library and its symbols, and the signature, are
 //! written here.
@@ -14,15 +15,27 @@ const BASE: u64 = 0x1_0000_0000;
 /// The page size the code signature hashes in.
 const SIGNATURE_PAGE: usize = 0x1000;
 
-/// The symbols the program imports from `libSystem`, in the order of their
-/// slots in `__got`.
-const IMPORTS: [&str; 3] = ["_write", "___error", "__exit"];
+/// The symbols a program may import from `libSystem`, in the order of their
+/// slots in `__got`. A program that never asks for memory imports only the
+/// first three.
+const IMPORTS: [&str; 4] = ["_write", "___error", "__exit", "_mmap"];
 /// `write`, which writes bytes to a file.
 pub const WRITE: usize = 0;
 /// `__error`, which gives the address of the thread's error number.
 pub const ERROR: usize = 1;
 /// `_exit`, which ends the process.
 pub const EXIT: usize = 2;
+/// `mmap`, which maps memory.
+pub const MMAP: usize = 3;
+
+/// The symbols a program imports: `mmap` only if it asks for memory.
+pub fn imports(allocates: bool) -> &'static [&'static str] {
+    if allocates { &IMPORTS } else { &IMPORTS[..3] }
+}
+
+/// What `mmap` is asked for: pages that are read and written, and fresh
+/// pages that only this process sees.
+pub const MMAP_REQUEST: (u32, u32) = (0x1 | 0x2, 0x0002 | 0x1000);
 
 /// The error number of a call that a signal interrupted.
 pub const EINTR: u32 = 4;
@@ -77,6 +90,8 @@ const fn padded(size: u32) -> u32 {
 
 /// Where each part of the file is, in the file and in memory.
 struct Layout {
+    /// How many symbols are imported.
+    imports: u32,
     text_offset: u64,
     text_size: u64,
     text_segment_size: u64,
@@ -105,28 +120,30 @@ impl Layout {
     }
 }
 
-/// The executable whose `__text` holds `code_size` bytes. `code` gives
-/// those bytes, for code placed at its first argument, where the slot `i`
-/// of `__got`, which the loader fills with the address of import `i`, is
-/// at its second argument plus `8 * i`.
+/// The executable whose `__text` holds `code_size` bytes, which imports
+/// `imports`. `code` gives those bytes, for code placed at its first
+/// argument, where the slot `i` of `__got`, which the loader fills with the
+/// address of import `i`, is at its second argument plus `8 * i`.
 pub fn executable(
     machine: &Machine,
     code_size: u64,
+    imports: &[&str],
     code: impl FnOnce(u64, u64) -> Vec<u8>,
 ) -> Vec<u8> {
     let page = machine.page;
-    let bind = bind_info();
-    let strings = string_table();
+    let bind = bind_info(imports);
+    let strings = string_table(imports);
     let text_offset = MACH_HEADER_SIZE + COMMANDS_SIZE as u64;
     let text_size = code_size;
     let text_segment_size = (text_offset + text_size).next_multiple_of(page);
     let data_offset = text_segment_size;
     let linkedit_offset = data_offset + page;
     let symbols_offset = linkedit_offset + bind.len() as u64;
-    let indirect_offset = symbols_offset + 16 * IMPORTS.len() as u64;
-    let strings_offset = indirect_offset + 4 * IMPORTS.len() as u64;
+    let indirect_offset = symbols_offset + 16 * imports.len() as u64;
+    let strings_offset = indirect_offset + 4 * imports.len() as u64;
     let signature_offset = (strings_offset + strings.len() as u64).next_multiple_of(16);
     let layout = Layout {
+        imports: imports.len() as u32,
         text_offset,
         text_size,
         text_segment_size,
@@ -151,10 +168,10 @@ pub fn executable(
     // The rest of `__TEXT`, and `__DATA`, whose `__got` the loader fills.
     out.resize(linkedit_offset as usize, 0);
     out.extend_from_slice(&bind);
-    for (i, _) in IMPORTS.iter().enumerate() {
-        symbol(&mut out, string_index(i));
+    for i in 0..imports.len() {
+        symbol(&mut out, string_index(imports, i));
     }
-    for i in 0..IMPORTS.len() as u32 {
+    for i in 0..imports.len() as u32 {
         out.extend_from_slice(&i.to_le_bytes());
     }
     out.extend_from_slice(&strings);
@@ -219,7 +236,7 @@ fn commands(out: &mut Vec<u8>, machine: &Machine, l: &Layout) {
         b"__got",
         b"__DATA",
         l.data_address(),
-        8 * IMPORTS.len() as u64,
+        8 * u64::from(l.imports),
         l.data_offset as u32,
         3,
         0x6, // pointers the loader binds before the program starts
@@ -250,7 +267,7 @@ fn commands(out: &mut Vec<u8>, machine: &Machine, l: &Layout) {
     put32(out, LC_SYMTAB);
     put32(out, 24);
     put32(out, l.symbols_offset as u32);
-    put32(out, IMPORTS.len() as u32);
+    put32(out, l.imports);
     put32(out, l.strings_offset as u32);
     put32(out, l.strings_size as u32);
 
@@ -261,12 +278,12 @@ fn commands(out: &mut Vec<u8>, machine: &Machine, l: &Layout) {
     put32(out, 0); // no defined external symbols
     put32(out, 0);
     put32(out, 0); // every symbol is undefined
-    put32(out, IMPORTS.len() as u32);
+    put32(out, l.imports);
     for _ in 0..6 {
         put32(out, 0); // no table of contents, modules, or references
     }
     put32(out, l.indirect_offset as u32);
-    put32(out, IMPORTS.len() as u32);
+    put32(out, l.imports);
     for _ in 0..4 {
         put32(out, 0); // no relocations
     }
@@ -372,7 +389,7 @@ fn put32(out: &mut Vec<u8>, value: u32) {
 
 /// The loader's instructions for filling `__got`: each slot gets its
 /// symbol's address in `libSystem`, the first library loaded.
-fn bind_info() -> Vec<u8> {
+fn bind_info(imports: &[&str]) -> Vec<u8> {
     const SET_DYLIB_ORDINAL: u8 = 0x10;
     const SET_SYMBOL: u8 = 0x40;
     const SET_TYPE_POINTER: u8 = 0x51;
@@ -381,7 +398,7 @@ fn bind_info() -> Vec<u8> {
     /// `__DATA`, after `__PAGEZERO` and `__TEXT`.
     const DATA_SEGMENT: u8 = 2;
     let mut out = vec![SET_DYLIB_ORDINAL | 1, SET_TYPE_POINTER];
-    for (i, name) in IMPORTS.iter().enumerate() {
+    for (i, name) in imports.iter().enumerate() {
         out.push(SET_SYMBOL);
         out.extend_from_slice(name.as_bytes());
         out.push(0);
@@ -395,9 +412,9 @@ fn bind_info() -> Vec<u8> {
 }
 
 /// The names of the imports, after the empty name at index 1.
-fn string_table() -> Vec<u8> {
+fn string_table(imports: &[&str]) -> Vec<u8> {
     let mut out = b" \0".to_vec();
-    for name in IMPORTS {
+    for name in imports {
         out.extend_from_slice(name.as_bytes());
         out.push(0);
     }
@@ -405,8 +422,8 @@ fn string_table() -> Vec<u8> {
     out
 }
 
-fn string_index(import: usize) -> u32 {
-    2 + IMPORTS[..import]
+fn string_index(imports: &[&str], import: usize) -> u32 {
+    2 + imports[..import]
         .iter()
         .map(|n| n.len() as u32 + 1)
         .sum::<u32>()

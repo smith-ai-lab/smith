@@ -5,7 +5,8 @@
 
 use super::arm64::{self, Asm, LS, System, X0, X1, X2, X3, X4, X19, X20, X21};
 use super::pe::{
-    self, EXIT_PROCESS, GET_STD_HANDLE, MOST_PER_WRITE, Machine, STD_OUTPUT_HANDLE, WRITE_FILE,
+    self, EXIT_PROCESS, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE, Machine,
+    PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use crate::ir::{Program, Stream};
 
@@ -31,7 +32,10 @@ const WRITTEN: u32 = 0;
 pub fn emit(program: &Program) -> Vec<u8> {
     let (asm, data) = arm64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    pe::executable(&MACHINE, size, |code, iat| asm.finish(&data, code, iat))
+    let imports = pe::imports(program.allocates());
+    pe::executable(&MACHINE, size, imports, |code, iat| {
+        asm.finish(&data, code, iat)
+    })
 }
 
 struct Windows;
@@ -75,6 +79,15 @@ impl System for Windows {
     fn exit(asm: &mut Asm, status: u16) {
         asm.mov_w(X0, status);
         asm.call(EXIT_PROCESS);
+    }
+
+    /// Reserves and commits fresh pages. A failure gives no address.
+    fn alloc(asm: &mut Asm, fail: usize) {
+        asm.mov_w(X0, 0);
+        asm.mov64(X2, u64::from(MEM_COMMIT_RESERVE));
+        asm.mov_w(X3, PAGE_READWRITE as u16);
+        asm.call(VIRTUAL_ALLOC);
+        asm.cbz(X0, fail);
     }
 }
 

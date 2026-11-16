@@ -39,6 +39,11 @@ pub enum Step {
     },
     /// Copy a value to a local.
     Set { local: usize, value: Value },
+    /// Make a new text that is the texts `parts` one after another, in
+    /// memory asked of the system, and put it in the local. Memory the
+    /// system refuses ends the program with a failing status. Memory is
+    /// never given back while the program runs.
+    Join { local: usize, parts: Vec<Value> },
     /// Run the steps of the arm at the place of the case `value` is, which
     /// is one of the arms.
     Match { value: Value, arms: Vec<Vec<Step>> },
@@ -65,13 +70,22 @@ impl Function {
                 .map(|s| match s {
                     Step::Call { args, results, .. } => args.len() + results.len(),
                     Step::Match { arms, .. } => arms.iter().map(|a| most(a)).max().unwrap_or(0),
-                    Step::Write { .. } | Step::Set { .. } => 0,
+                    Step::Write { .. } | Step::Set { .. } | Step::Join { .. } => 0,
                 })
                 .max()
                 .unwrap_or(0)
         }
         most(&self.steps)
     }
+}
+
+/// Whether any of the steps, in any arm, asks the system for memory.
+fn allocates(steps: &[Step]) -> bool {
+    steps.iter().any(|s| match s {
+        Step::Join { .. } => true,
+        Step::Match { arms, .. } => arms.iter().any(|a| allocates(a)),
+        Step::Write { .. } | Step::Call { .. } | Step::Set { .. } => false,
+    })
 }
 
 /// A program: it runs the function `main`, which takes no parameters and
@@ -82,4 +96,12 @@ pub struct Program {
     pub texts: Vec<Vec<u8>>,
     pub functions: Vec<Function>,
     pub main: usize,
+}
+
+impl Program {
+    /// Whether it ever asks the system for memory. A target reaches for the
+    /// system's allocator only in a program that does.
+    pub fn allocates(&self) -> bool {
+        self.functions.iter().any(|f| allocates(&f.steps))
+    }
 }

@@ -2,8 +2,10 @@
 //! `libSystem`. The executable is written by `macho`, and its instructions
 //! by `x86_64`.
 
-use super::macho::{self, EINTR, ERROR, EXIT, Machine, WRITE};
-use super::x86_64::{self, Asm, L, LE, R12, RAX, RBX, RDI, RDX, RSI, Reg, System, Z};
+use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
+use super::x86_64::{
+    self, Asm, L, LE, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
+};
 use crate::ir::{Program, Stream};
 
 const MACHINE: Machine = Machine {
@@ -17,7 +19,8 @@ const MACHINE: Machine = Machine {
 pub fn emit(program: &Program) -> Vec<u8> {
     let (asm, data) = x86_64::code::<Macos>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    macho::executable(&MACHINE, size as u64, |code, got| {
+    let imports = macho::imports(program.allocates());
+    macho::executable(&MACHINE, size as u64, imports, |code, got| {
         asm.finish(&data, code, got)
     })
 }
@@ -63,6 +66,19 @@ impl System for Macos {
     fn exit(asm: &mut Asm, status: u32) {
         asm.mov32(RDI, status);
         asm.call_slot(EXIT);
+    }
+
+    /// Maps fresh pages that only this process sees. A failure gives -1.
+    fn alloc(asm: &mut Asm, fail: usize) {
+        let (prot, flags) = MMAP_REQUEST;
+        asm.mov32(RDI, 0);
+        asm.mov32(RDX, prot);
+        asm.mov32(RCX, flags);
+        asm.mov64(R8, u64::MAX);
+        asm.mov32(R9, 0);
+        asm.call_slot(MMAP);
+        asm.test(RAX);
+        asm.jcc(S, fail);
     }
 }
 

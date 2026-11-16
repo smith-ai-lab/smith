@@ -3,7 +3,8 @@
 //! executable is written by `pe`.
 
 use super::pe::{
-    self, EXIT_PROCESS, GET_STD_HANDLE, MOST_PER_WRITE, Machine, STD_OUTPUT_HANDLE, WRITE_FILE,
+    self, EXIT_PROCESS, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE, Machine,
+    PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use super::x86_64::{self, Asm, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
 use crate::ir::{Program, Stream};
@@ -29,7 +30,10 @@ const WRITTEN: i8 = 40;
 pub fn emit(program: &Program) -> Vec<u8> {
     let (asm, data) = x86_64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    pe::executable(&MACHINE, size, |code, iat| asm.finish(&data, code, iat))
+    let imports = pe::imports(program.allocates());
+    pe::executable(&MACHINE, size, imports, |code, iat| {
+        asm.finish(&data, code, iat)
+    })
 }
 
 struct Windows;
@@ -76,6 +80,17 @@ impl System for Windows {
     fn exit(asm: &mut Asm, status: u32) {
         asm.mov32(RCX, status);
         asm.call_slot(EXIT_PROCESS);
+    }
+
+    /// Reserves and commits fresh pages. A failure gives no address.
+    fn alloc(asm: &mut Asm, fail: usize) {
+        asm.mov32(RCX, 0);
+        asm.mov(RDX, RSI);
+        asm.mov32(R8, MEM_COMMIT_RESERVE);
+        asm.mov32(R9, PAGE_READWRITE);
+        asm.call_slot(VIRTUAL_ALLOC);
+        asm.test(RAX);
+        asm.jcc(Z, fail);
     }
 }
 

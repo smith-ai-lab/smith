@@ -2,7 +2,8 @@
 type: specification
 title: Storage and arenas
 description: When an array gets a buffer, the alloc effect and arenas, recursion without stack overflow, and types that contain themselves.
-status: planned
+status: partial
+built: "the `alloc` effect, carried by every function that builds a text at run time, whose memory is kept until the program ends"
 ---
 
 # Storage and arenas
