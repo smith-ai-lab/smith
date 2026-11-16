@@ -52,8 +52,24 @@ pub const ONCE: &[Test] = &[
         an_enum_has_the_places_its_cases_share_by_type,
     ),
     (
-        "a_program_that_holds_a_number_says_so",
-        a_program_that_holds_a_number_says_so,
+        "a_number_is_one_scalar_of_the_size_of_its_type",
+        a_number_is_one_scalar_of_the_size_of_its_type,
+    ),
+    (
+        "a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it_should",
+        a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it_should,
+    ),
+    (
+        "a_program_that_prints_a_number_is_stopped_by_the_text_it_builds",
+        a_program_that_prints_a_number_is_stopped_by_the_text_it_builds,
+    ),
+    (
+        "every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives",
+        every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives,
+    ),
+    (
+        "an_instruction_on_numbers_used_at_a_wrong_size_is_refused",
+        an_instruction_on_numbers_used_at_a_wrong_size_is_refused,
     ),
     (
         "a_value_defined_twice_is_refused",
@@ -72,6 +88,33 @@ pub const ONCE: &[Test] = &[
         a_jump_that_gives_the_wrong_parameters_is_refused,
     ),
 ];
+
+/// The values an instruction reads.
+fn operands(op: &mut Op) -> Vec<&mut Value> {
+    match op {
+        Op::Constant(_) => Vec::new(),
+        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => vec![a, b],
+        Op::Widen { value, .. } | Op::Narrow(value) => vec![value],
+        Op::Choose {
+            on,
+            then,
+            otherwise,
+        } => vec![on, then, otherwise],
+        Op::Call { args, .. } | Op::System { args, .. } => args.iter_mut().collect(),
+    }
+}
+
+/// Gives the first value the instruction reads that has the type, if it
+/// reads one, the value `v`, and says whether it did.
+fn replace_one(op: &mut Op, types: &[Type], ty: Type, v: Value) -> bool {
+    match operands(op).into_iter().find(|a| types[a.0] == ty) {
+        Some(a) => {
+            *a = v;
+            true
+        }
+        None => false,
+    }
+}
 
 /// A generated program, in the form every target receives, and in the
 /// scalar form or what stopped it.
@@ -103,6 +146,7 @@ fn lowered() -> &'static [Lowered] {
             sources.push(sample(64, case, reprs::program).source.into_bytes());
             sources.push(sample(68, case, choices::program).source.into_bytes());
             sources.push(sample(74, case, numbers::program).source.into_bytes());
+            sources.push(sample(75, case, numbers::quiet).source.into_bytes());
         }
         sources.into_iter().map(|s| lowered_from(&s)).collect()
     })
@@ -218,10 +262,221 @@ fn a_struct_a_tuple_and_an_enum_are_their_parts() {
     );
 }
 
-fn a_program_that_holds_a_number_says_so() {
+/// The scalar type of a whole number type: an integer of its size.
+fn size_of(int: numbers::Int) -> Type {
+    Type::Int(match int.bits {
+        8 => Bits::B8,
+        16 => Bits::B16,
+        32 => Bits::B32,
+        _ => Bits::B64,
+    })
+}
+
+fn a_number_is_one_scalar_of_the_size_of_its_type() {
+    for int in numbers::INTS {
+        let source = format!(
+            "fn say(n: {0}) ! console {{ print(\"x\") }}\nfn main() ! console {{ say(1) }}\n",
+            int.name
+        );
+        assert_eq!(parameters_of_the_first_call(&source), [size_of(*int)]);
+    }
+}
+
+fn a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it_should() {
+    let held = (0..CASES).map(|case| sample(75, case, numbers::quiet));
+    for case in held {
+        let l = lowered_from(case.source.as_bytes());
+        let s = l
+            .scalar
+            .unwrap_or_else(|e| panic!("{e:?} stopped {}", case.source));
+        assert_eq!(scalar::check(&s), Ok(()), "{}", case.source);
+        let ran = scalar::run(&s);
+        assert_eq!(ran.stdout, case.stdout, "{}", case.source);
+        assert_eq!(ran, eval::run(&l.program), "{}", case.source);
+    }
+}
+
+fn a_program_that_prints_a_number_is_stopped_by_the_text_it_builds() {
     let source = "fn main() ! console, alloc { x: i32 = 1\n print(\"{x}\") }\n";
     let l = lowered_from(source.as_bytes());
-    assert_eq!(l.scalar.unwrap_err().0, "a number");
+    assert_eq!(l.scalar.unwrap_err().0, "text built at run time");
+}
+
+/// The operations a function of the generated programs for a type does,
+/// each as the source of the function that does it.
+fn operations(ty: &str) -> Vec<(String, String, String)> {
+    let mut all = Vec::new();
+    for (name, op) in [
+        ("equal", "=="),
+        ("unequal", "!="),
+        ("below", "<"),
+        ("at_most", "<="),
+        ("above", ">"),
+        ("at_least", ">="),
+    ] {
+        let body = format!("a {op} b");
+        all.push((name.to_string(), "bool".to_string(), body));
+    }
+    for kind in ["wrapping", "saturating", "checked"] {
+        for op in ["add", "sub", "mul"] {
+            let gives = if kind == "checked" {
+                format!("Option[{ty}]")
+            } else {
+                ty.to_string()
+            };
+            all.push((format!("{kind}_{op}"), gives, format!("{kind}_{op}(a, b)")));
+        }
+    }
+    all
+}
+
+/// The number the bits stand for, in the type.
+fn number_of(int: numbers::Int, bits: u64) -> i128 {
+    if int.signed {
+        let up = 64 - int.bits;
+        (((bits << up) as i64) >> up) as i128
+    } else {
+        bits as i128
+    }
+}
+
+fn every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives() {
+    for int in numbers::INTS {
+        let ops = operations(int.name);
+        let mut source = String::new();
+        for (i, (_, gives, body)) in ops.iter().enumerate() {
+            source += &format!(
+                "fn op{i}(a: {0}, b: {0}) -> {gives} {{ {body} }}\n",
+                int.name
+            );
+        }
+        source += "fn main() {\n";
+        for i in 0..ops.len() {
+            source += &format!("  r{i} = op{i}(1, 2)\n");
+        }
+        source += "}\n";
+        let l = lowered_from(source.as_bytes());
+        let s = l.scalar.unwrap_or_else(|e| panic!("{e:?} in {source}"));
+        assert_eq!(scalar::check(&s), Ok(()), "{source}");
+        // `main` calls each in order, so they are the functions after it.
+        let values: Vec<i128> = sample(76, int.bits as u64, |g| {
+            let mut all = vec![int.min(), int.max()];
+            all.extend((0..24).map(|_| numbers::value(g, *int)));
+            all
+        });
+        let mask = if int.bits == 64 {
+            u64::MAX
+        } else {
+            (1 << int.bits) - 1
+        };
+        for &a in &values {
+            for &b in &values {
+                let args = [a as u64 & mask, b as u64 & mask];
+                for (i, (name, _, _)) in ops.iter().enumerate() {
+                    let given = scalar::call(&s, 1 + i, &args);
+                    let (expected, got) = if i < 6 {
+                        let op = ["==", "!=", "<", "<=", ">", ">="][i];
+                        (
+                            numbers::compare(op, a, b).to_string(),
+                            ["false", "true"][given[0] as usize].to_string(),
+                        )
+                    } else {
+                        let (kind, op) = name.split_once('_').unwrap();
+                        let expected = numbers::arithmetic(kind, op, *int, a, b);
+                        let got = match (kind, &given[..]) {
+                            // The case `some` is the first of an `Option`.
+                            ("checked", [0, n]) => format!(".some({})", number_of(*int, *n)),
+                            ("checked", _) => ".none".to_string(),
+                            (_, [n]) => number_of(*int, *n).to_string(),
+                            _ => panic!("{given:?}"),
+                        };
+                        (expected, got)
+                    };
+                    assert_eq!(got, expected, "{name} of {a} and {b} as {}", int.name);
+                }
+            }
+        }
+    }
+}
+
+/// Damages the first instruction `of` finds, by giving the value `which`
+/// picks the other size than it has, and checks that the form is refused.
+fn resized(
+    of: impl Fn(&Op) -> bool,
+    which: impl Fn(&Op) -> Value,
+    size: impl Fn(Type) -> Type,
+) -> usize {
+    damaging(
+        |p| {
+            for f in &mut p.functions {
+                for block in &f.blocks {
+                    for instruction in &block.instructions {
+                        if of(&instruction.op) {
+                            let v = which(&instruction.op);
+                            f.types[v.0] = size(f.types[v.0]);
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        },
+        |why| matches!(why, Why::WrongType(_)),
+    )
+}
+
+fn an_instruction_on_numbers_used_at_a_wrong_size_is_refused() {
+    let other = |t: Type| {
+        if t == Type::Int(Bits::B8) {
+            Type::Int(Bits::B16)
+        } else {
+            Type::Int(Bits::B8)
+        }
+    };
+    let widest = |_: Type| Type::Int(Bits::B64);
+    let narrowest = |_: Type| Type::Int(Bits::B8);
+    let operand = |op: &Op| match op {
+        Op::Binary { a, .. } | Op::Compare { a, .. } => *a,
+        Op::Widen { value, .. } | Op::Narrow(value) => *value,
+        Op::Choose { then, .. } => *then,
+        _ => unreachable!(),
+    };
+    let damaged = [
+        (
+            "arithmetic on numbers of two sizes",
+            resized(|o| matches!(o, Op::Binary { .. }), operand, other),
+        ),
+        (
+            "a comparison of numbers of two sizes",
+            resized(|o| matches!(o, Op::Compare { .. }), operand, other),
+        ),
+        (
+            "a widening of a number that is not narrower",
+            resized(|o| matches!(o, Op::Widen { .. }), operand, widest),
+        ),
+        (
+            "a narrowing of a number that is not wider",
+            resized(|o| matches!(o, Op::Narrow(_)), operand, narrowest),
+        ),
+        (
+            "a choice between values of two sizes",
+            resized(|o| matches!(o, Op::Choose { .. }), operand, other),
+        ),
+        (
+            "a choice on a number that is not of 8 bits",
+            resized(
+                |o| matches!(o, Op::Choose { .. }),
+                |o| match o {
+                    Op::Choose { on, .. } => *on,
+                    _ => unreachable!(),
+                },
+                other,
+            ),
+        ),
+    ];
+    for (how, count) in damaged {
+        damaged_some(count, how);
+    }
 }
 
 /// How many programs were damaged, for a test to say it damaged some.
@@ -302,10 +557,10 @@ fn a_value_used_where_its_definition_does_not_reach_is_refused() {
             for f in &mut p.functions {
                 for block in &mut f.blocks {
                     for (j, user) in block.instructions.iter().enumerate() {
-                        let used = match &user.op {
-                            Op::Call { args, .. } | Op::System { args, .. } => args.clone(),
-                            Op::Constant(_) => Vec::new(),
-                        };
+                        let used: Vec<Value> = operands(&mut user.op.clone())
+                            .into_iter()
+                            .map(|v| *v)
+                            .collect();
                         let defined = block.instructions[..j]
                             .iter()
                             .position(|i| i.results.iter().any(|r| used.contains(r)));
@@ -350,17 +605,14 @@ fn a_value_used_where_its_definition_does_not_reach_is_refused() {
                                     }
                                 };
                                 let block = &mut f.blocks[b];
-                                let done =
-                                    match &mut block.end {
-                                        End::Jump(j) => replace(&mut j.args),
-                                        End::Return(values) => replace(values),
-                                        End::Switch { .. } => false,
-                                    } || block.instructions.iter_mut().any(|i| match &mut i.op {
-                                        Op::Call { args, .. } | Op::System { args, .. } => {
-                                            replace(args)
-                                        }
-                                        Op::Constant(_) => false,
-                                    });
+                                let done = match &mut block.end {
+                                    End::Jump(j) => replace(&mut j.args),
+                                    End::Return(values) => replace(values),
+                                    End::Switch { .. } => false,
+                                } || block
+                                    .instructions
+                                    .iter_mut()
+                                    .any(|i| replace_one(&mut i.op, &types, ty, v));
                                 if done {
                                     return true;
                                 }
@@ -450,6 +702,8 @@ fn a_jump_that_gives_the_wrong_parameters_is_refused() {
 enum Model {
     Text,
     Bool,
+    /// A whole number, by its place in `numbers::INTS`.
+    Int(usize),
     Tuple(Vec<Model>),
     /// A struct or an enum the program defines, by its place among them.
     Named(usize),
@@ -473,12 +727,13 @@ struct Layouts {
 }
 
 fn model(g: &mut Gen, defs: &[Def], depth: usize) -> Model {
-    let choices = if depth == 0 { 2 } else { 5 };
+    let choices = if depth == 0 { 3 } else { 6 };
     match g.below(choices) {
         0 => Model::Text,
         1 => Model::Bool,
-        2 if !defs.is_empty() => Model::Named(g.below(defs.len())),
-        2 | 3 => {
+        2 => Model::Int(g.below(numbers::INTS.len())),
+        3 if !defs.is_empty() => Model::Named(g.below(defs.len())),
+        3 | 4 => {
             let items = 2 + g.below(2);
             Model::Tuple((0..items).map(|_| model(g, defs, depth - 1)).collect())
         }
@@ -490,6 +745,7 @@ fn written(m: &Model) -> String {
     match m {
         Model::Text => "str".to_string(),
         Model::Bool => "bool".to_string(),
+        Model::Int(i) => numbers::INTS[*i].name.to_string(),
         Model::Tuple(items) => {
             let items: Vec<String> = items.iter().map(written).collect();
             format!("({})", items.join(", "))
@@ -504,6 +760,7 @@ fn built(g: &mut Gen, defs: &[Def], m: &Model) -> String {
     match m {
         Model::Text => "\"x\"".to_string(),
         Model::Bool => if g.one_in(2) { "true" } else { "false" }.to_string(),
+        Model::Int(i) => numbers::value(g, numbers::INTS[*i]).to_string(),
         Model::Tuple(items) => {
             let items: Vec<String> = items.iter().map(|t| built(g, defs, t)).collect();
             format!("({})", items.join(", "))
@@ -583,6 +840,7 @@ fn scalars_of(defs: &[Def], m: &Model) -> Vec<Type> {
     match m {
         Model::Text => vec![ADDRESS, LENGTH],
         Model::Bool => vec![BYTE],
+        Model::Int(i) => vec![size_of(numbers::INTS[*i])],
         Model::Tuple(items) => items.iter().flat_map(|t| scalars_of(defs, t)).collect(),
         Model::Named(i) => match &defs[*i] {
             Def::Struct(fields) => fields.iter().flat_map(|t| scalars_of(defs, t)).collect(),
