@@ -54,7 +54,7 @@ fn_sig     = "fn" IDENT [ generics ] "(" [ params ] ")" [ "->" result ]
              [ effects ] { contract } ;
 result     = [ IDENT ":" ] type ;
 generics   = "[" generic { "," generic } "]" ;
-generic    = [ "out" ] IDENT [ ":" type ] ;
+generic    = [ "out" ] IDENT [ ":" type ] [ "=" type ] ;
 params     = param { "," param } [ "," ] ;
 param      = IDENT ":" [ "take" ] type [ "=" expr ] ;
 effects    = "!" IDENT { "," IDENT } ;
