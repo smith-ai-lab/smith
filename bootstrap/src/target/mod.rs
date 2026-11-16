@@ -9,6 +9,7 @@ mod macho;
 mod macos_arm64;
 mod macos_x64;
 mod pe;
+mod windows_arm64;
 mod windows_x64;
 mod x86_64;
 
@@ -44,6 +45,7 @@ targets! {
     LinuxArm64 => "linux_arm64",
     MacosX64 => "macos_x64",
     WindowsX64 => "windows_x64",
+    WindowsArm64 => "windows_arm64",
 }
 
 impl Target {
@@ -63,6 +65,8 @@ impl Target {
             Some(Target::MacosX64)
         } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
             Some(Target::WindowsX64)
+        } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+            Some(Target::WindowsArm64)
         } else {
             None
         }
@@ -80,7 +84,7 @@ impl Target {
             Target::LinuxX64 | Target::MacosArm64 | Target::LinuxArm64 | Target::MacosX64 => {
                 stem.to_string()
             }
-            Target::WindowsX64 => format!("{stem}.exe"),
+            Target::WindowsX64 | Target::WindowsArm64 => format!("{stem}.exe"),
         }
     }
 
@@ -93,6 +97,7 @@ impl Target {
             Target::LinuxArm64 => Some(linux_arm64::emit(program)),
             Target::MacosX64 => Some(macos_x64::emit(program)),
             Target::WindowsX64 => Some(windows_x64::emit(program)),
+            Target::WindowsArm64 => Some(windows_arm64::emit(program)),
         }
     }
 }
