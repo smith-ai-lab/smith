@@ -11,9 +11,10 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use smith::diag::Error;
-use smith::eval::{self, Outcome};
-use smith::target::Target;
-use smith::{compile, lower};
+use smith::eval::Outcome;
+use smith::scalar::{self, Bits, Builder, Constant, Op, Type, Value};
+use smith::target::{Frame, Target};
+use smith::{compile, lower, lower_scalar};
 
 use crate::Test;
 use crate::choices;
@@ -35,6 +36,10 @@ pub const ONCE: &[Test] = &[
         every_target_builds_identical_bytes_twice,
     ),
     ("no_test_names_a_target", no_test_names_a_target),
+    (
+        "every_value_is_held_at_the_size_of_its_type",
+        every_value_is_held_at_the_size_of_its_type,
+    ),
     ("the_kept_hashes_are_sha256", the_kept_hashes_are_sha256),
     (
         "every_executable_uses_only_thin_wrappers_over_the_kernel",
@@ -72,6 +77,14 @@ pub const MACHINE: &[Test] = &[
         every_executable_of_a_program_with_numbers_does_what_the_evaluator_says,
     ),
     (
+        "a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once",
+        a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once,
+    ),
+    (
+        "a_jump_that_swaps_two_values_swaps_them",
+        a_jump_that_swaps_two_values_swaps_them,
+    ),
+    (
         "a_struct_bound_to_two_names_is_two_equal_structs",
         a_struct_bound_to_two_names_is_two_equal_structs,
     ),
@@ -107,12 +120,17 @@ const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
 /// fingerprint of one target, that one alone.
 pub fn buildable() -> Vec<Target> {
     let program = lower(HELLO.as_bytes()).unwrap();
+    let scalar = lower_scalar(HELLO.as_bytes()).unwrap();
     let only = FINGERPRINT.with_borrow(|f| f.as_ref().map(|f| f.only));
     Target::ALL
         .iter()
         .copied()
         .filter(|t| only.is_none_or(|only| only == *t))
-        .filter(|t| t.emit(&program).is_some())
+        .filter(|t| {
+            t.emit(&program)
+                .or_else(|| t.emit_scalar(&scalar))
+                .is_some()
+        })
         .collect()
 }
 
@@ -182,6 +200,20 @@ pub fn record_for_every_target(source: &[u8]) {
     for target in buildable() {
         let bytes = build(source, target).unwrap_or_else(|e| panic!("{e:?}"));
         record(target, &[&bytes]);
+    }
+}
+
+/// Builds a program in the scalar form for `target`, which is built from it,
+/// and checks that its executable does what `said` says, or, for a
+/// fingerprint, notes both.
+fn scalar_runs_as(program: &scalar::Program, target: Target, said: &Outcome) {
+    let bytes = target
+        .emit_scalar(program)
+        .expect("built from the scalar form");
+    if fingerprinting() {
+        record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
+    } else {
+        assert_eq!(run(&bytes), *said, "{}", target.name());
     }
 }
 
@@ -364,8 +396,8 @@ fn every_executable_agrees<T: Debug>(
     let targets = runnable();
     generate::check(seed, cases, generate, |case| {
         let source = source(case);
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
+        let program = lower_scalar(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let said = scalar::run(&program);
         for &target in &targets {
             runs_as(source, target, &said);
         }
@@ -399,8 +431,10 @@ fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says(
 fn a_struct_bound_to_two_names_is_two_equal_structs() {
     let targets = runnable();
     generate::check(13, 100, programs::shared_and_copied, |(shared, copied)| {
-        let said = eval::run(&lower(shared.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
-        let copy = eval::run(&lower(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        let said =
+            scalar::run(&lower_scalar(shared.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        let copy =
+            scalar::run(&lower_scalar(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
         assert_eq!(said, copy);
         for &target in &targets {
             runs_as(shared.as_bytes(), target, &copy);
@@ -422,6 +456,182 @@ fn every_executable_of_a_program_with_numbers_does_what_the_evaluator_says() {
 
 fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
     every_executable_agrees(68, 60, choices::program, |case| case.source.as_bytes());
+}
+
+/// What a form of the target holds in the frame of a function, worked out
+/// from the types of its values alone: every value but the function's
+/// parameters, in the order of their numbers, at the next multiple of its
+/// size, and, for the calls it makes, room for the most any one takes, where
+/// the parameters of what is called go, and after them its results.
+fn frame_of(program: &scalar::Program, f: &scalar::Function) -> Frame {
+    let size = |ty: Type| match ty {
+        Type::Int(bits) => bits.count() / 8,
+        Type::Address => 8,
+    };
+    let after = |end: u32, ty: Type| end.div_ceil(size(ty)) * size(ty) + size(ty);
+    let parameters = &f.blocks[0].params;
+    let mut end = 0;
+    let places = (0..f.types.len())
+        .map(|v| {
+            if parameters.contains(&Value(v)) {
+                return None;
+            }
+            end = after(end, f.types[v]);
+            Some(end - size(f.types[v]))
+        })
+        .collect();
+    let mut outgoing = 0;
+    for instruction in f.blocks.iter().flat_map(|b| &b.instructions) {
+        if let Op::Call { function, .. } = &instruction.op {
+            let callee = &program.functions[*function];
+            let passed = callee.blocks[0].params.iter().map(|v| callee.types[v.0]);
+            let area = passed.chain(callee.results.iter().copied());
+            outgoing = outgoing.max(area.fold(0, after));
+        }
+    }
+    Frame {
+        outgoing: outgoing.div_ceil(8) * 8,
+        held: end,
+        places,
+    }
+}
+
+fn every_value_is_held_at_the_size_of_its_type() {
+    generate::check(81, 40, numbers::program, |case| {
+        let program = lower_scalar(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        for target in Target::ALL {
+            let Some(frames) = target.frames(&program) else {
+                continue;
+            };
+            assert_eq!(frames.len(), program.functions.len());
+            for (f, frame) in program.functions.iter().zip(&frames) {
+                assert_eq!(*frame, frame_of(&program, f), "{}", target.name());
+            }
+        }
+    });
+}
+
+const TYPES: [Type; 5] = [
+    Type::Int(Bits::B8),
+    Type::Int(Bits::B16),
+    Type::Int(Bits::B32),
+    Type::Int(Bits::B64),
+    Type::Address,
+];
+
+/// A program in the scalar form that holds values of the types, and goes
+/// round a loop `rounds` times, in which each value is given the one that
+/// was at the place `sources` says in the round before, all at once. It
+/// writes the values at the end, each as 8 bytes.
+fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> scalar::Program {
+    let int = |b: &mut Builder, n: u64| b.int(Bits::B64, n);
+    let mut b = Builder::new();
+    let mut first = vec![int(&mut b, 0)];
+    for (ty, n) in types.iter().zip(starts) {
+        first.push(match ty {
+            Type::Int(bits) => b.int(*bits, *n),
+            Type::Address => {
+                let text = Constant::Data(*n as usize % 2);
+                b.emit(Op::Constant(text), &[Type::Address])[0]
+            }
+        });
+    }
+    let mut held = vec![Type::Int(Bits::B64)];
+    held.extend(types);
+    let (head, in_head) = b.block(&held);
+    let (again, _) = b.block(&[]);
+    let (done, in_done) = b.block(types);
+    b.jump(head, first);
+    b.at(head);
+    let limit = int(&mut b, rounds);
+    let finished = b.compare(scalar::Compare::Equal, in_head[0], limit);
+    b.switch(
+        finished,
+        vec![(again, vec![]), (done, in_head[1..].to_vec())],
+    );
+    b.at(again);
+    let one = int(&mut b, 1);
+    let next = b.binary(scalar::Binary::Add, in_head[0], one);
+    let mut carried = vec![next];
+    carried.extend(sources.iter().map(|s| in_head[1 + s]));
+    b.jump(head, carried);
+    b.at(done);
+    let total = int(&mut b, 8 * types.len() as u64);
+    let buffer = b.allocate(total);
+    for (i, (ty, v)) in types.iter().zip(&in_done).enumerate() {
+        let wide = match ty {
+            Type::Int(Bits::B64) => *v,
+            Type::Int(_) => b.widen(false, *v, Bits::B64),
+            Type::Address => {
+                let byte = b.load(Type::Int(Bits::B8), *v);
+                b.widen(false, byte, Bits::B64)
+            }
+        };
+        let offset = int(&mut b, 8 * i as u64);
+        let at = b.binary(scalar::Binary::Add, buffer, offset);
+        b.store(at, wide);
+    }
+    let call = scalar::System::Write(scalar::Stream::Stdout);
+    b.emit(
+        Op::System {
+            call,
+            args: vec![buffer, total],
+        },
+        &[],
+    );
+    b.ret(vec![]);
+    let program = scalar::Program {
+        data: vec![b"swap".to_vec(), b"x".to_vec()],
+        functions: vec![b.finish(&[])],
+        main: 0,
+    };
+    assert_eq!(scalar::check(&program), Ok(()));
+    program
+}
+
+/// The targets that are built from the scalar form and that this machine can
+/// run.
+fn runnable_from_scalar() -> Vec<Target> {
+    let mut targets = runnable();
+    targets.retain(|t| t.from_scalar());
+    targets
+}
+
+fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
+    let targets = runnable_from_scalar();
+    let generate = |g: &mut Gen| {
+        let count = 2 + g.below(5);
+        let types: Vec<Type> = (0..count).map(|_| *g.pick(&TYPES)).collect();
+        let starts: Vec<u64> = (0..count)
+            .map(|_| (g.below(1 << 20) as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        // Each value comes from one of the same type, and two may come from
+        // the same one.
+        let sources: Vec<usize> = (0..count)
+            .map(|i| {
+                let same: Vec<usize> = (0..count).filter(|j| types[*j] == types[i]).collect();
+                *g.pick(&same)
+            })
+            .collect();
+        rotating(&types, &starts, &sources, g.below(4) as u64)
+    };
+    generate::check(80, 100, generate, |program| {
+        let said = scalar::run(program);
+        for &target in &targets {
+            scalar_runs_as(program, target, &said);
+        }
+    });
+}
+
+fn a_jump_that_swaps_two_values_swaps_them() {
+    let int = Type::Int(Bits::B64);
+    let program = rotating(&[int, int], &[1, 2], &[1, 0], 1);
+    let said = scalar::run(&program);
+    let swapped: Vec<u8> = [2u64, 1].iter().flat_map(|n| n.to_le_bytes()).collect();
+    assert_eq!(said.stdout, swapped);
+    for target in runnable_from_scalar() {
+        scalar_runs_as(&program, target, &said);
+    }
 }
 
 /// The most memory, in KiB, a program run under a limit may map.
@@ -479,8 +689,8 @@ fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothi
 fn a_long_literal_is_printed_whole() {
     let text = "abcdefghij".repeat(100_000);
     let source = format!("fn main() ! console {{ print(\"{text}\") }}\n");
-    let program = lower(source.as_bytes()).unwrap();
-    let said = eval::run(&program);
+    let program = lower_scalar(source.as_bytes()).unwrap();
+    let said = scalar::run(&program);
     assert_eq!(said.stdout, format!("{text}\n").into_bytes());
     for target in runnable() {
         runs_as(source.as_bytes(), target, &said);

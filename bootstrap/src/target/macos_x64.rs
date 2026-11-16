@@ -6,7 +6,7 @@ use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE}
 use super::x86_64::{
     self, Asm, L, LE, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
 };
-use crate::ir::{Program, Stream};
+use crate::scalar::{Program, Stream};
 
 const MACHINE: Machine = Machine {
     cpu_type: 0x0100_0007, // x86-64

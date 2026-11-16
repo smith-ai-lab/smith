@@ -7,7 +7,7 @@ use super::pe::{
     PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use super::x86_64::{self, Asm, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
-use crate::ir::{Program, Stream};
+use crate::scalar::{Program, Stream};
 
 const MACHINE: Machine = Machine {
     machine: 0x8664, // x86-64

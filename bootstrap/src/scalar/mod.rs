@@ -236,3 +236,19 @@ pub struct Program {
     pub functions: Vec<Function>,
     pub main: usize,
 }
+
+impl Program {
+    /// Whether the program asks the system for memory.
+    pub fn allocates(&self) -> bool {
+        let instructions = self.functions.iter().flat_map(|f| &f.blocks);
+        instructions.flat_map(|b| &b.instructions).any(|i| {
+            matches!(
+                i.op,
+                Op::System {
+                    call: System::Allocate,
+                    ..
+                }
+            )
+        })
+    }
+}

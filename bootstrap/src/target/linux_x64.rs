@@ -4,7 +4,7 @@
 
 use super::elf::{self, Machine};
 use super::x86_64::{self, Asm, LE, R8, R9, R10, RAX, RDI, RDX, RSI, Reg, S, System, Z};
-use crate::ir::{Program, Stream};
+use crate::scalar::{Program, Stream};
 
 const SYS_WRITE: u32 = 1;
 const SYS_MMAP: u32 = 9;

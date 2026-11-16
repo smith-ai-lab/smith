@@ -57,15 +57,17 @@ pub fn compile_timed(
     target: Target,
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
-    let program = lower_timed(source, timings)?;
-    timings
-        .stage("emit", || target.emit(&program))
-        .ok_or_else(|| {
-            vec![diag::Error::unsupported(
-                diag::Pos::START,
-                &format!("building for {}", target.name()),
-            )]
-        })
+    let checked = checked(source, timings, target.from_scalar())?;
+    let built = timings.stage("emit", || match &checked.scalar {
+        Some(scalar) => target.emit_scalar(scalar),
+        None => target.emit(&checked.program),
+    });
+    built.ok_or_else(|| {
+        vec![diag::Error::unsupported(
+            diag::Pos::START,
+            &format!("building for {}", target.name()),
+        )]
+    })
 }
 
 fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<Program, Vec<diag::Error>> {
