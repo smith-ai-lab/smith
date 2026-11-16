@@ -18,9 +18,19 @@ Smith's compiler is an optimizing compiler built around `for` expressions. Its o
 - **Layout.** No address is observable, so the compiler is free to store an array of structs as one array per field.
 - **Devices.** Inside `with device(gpu)`, each fused loop nest becomes a GPU kernel.
 
-## Scalar code
+## Scalar form
 
-The compiler's own code and the edges of a server are scalar. They get a fixed list of roughly linear-time passes: inlining small functions, constant folding, dead-code and common-subexpression elimination, instruction selection, and register allocation. Nothing iterates to a fixpoint, and value semantics means no alias analysis is needed. New passes are added one at a time, each proven or validated.
+Below the kernel form, every program is scalar code in one small typed form, which is the same for every target. A feature of the language is lowered to it once, and no target's code changes when a feature is added. The compiler's own code and the edges of a server are scalar from the start, and a kernel reaches this form as explicit vector operations.
+
+- **Every value is named once.** A function is a list of blocks. A block takes parameters, runs its instructions in order, and ends by jumping to a block with arguments, by choosing between blocks, or by returning values. An instruction gives a value that never changes, which is the form known as SSA, and a block's parameters are how values meet where paths join.
+- **Every value has a type and a size:** an integer of 8, 16, 32, or 64 bits, a float of 16, 32, or 64 bits, an address, or a vector of a fixed number of one of those. Whether an integer is signed belongs to the operation, not to the value.
+- **Nothing is a group.** A struct or a tuple is its parts, each a value of its own. A text is an address and a length. An enum is the number of the case it holds and the values of that case. No address is observable in Smith, so nothing forces a value into memory, and a struct lives in registers like any other values. Memory is for what has a size known only at run time, such as an array's elements, and is read and written through an address at the element's real size.
+- **The instructions are few:** constants, arithmetic and comparison at each width, widening and narrowing, a choice between two values, a read and a write through an address, a call of a function, which may give back several values, and a call into the system.
+- **The passes are a fixed list,** each roughly linear in time: inlining small functions, constant folding, and the removal of dead code and of common subexpressions. Nothing iterates to a fixpoint, and value semantics means no alias analysis is needed. Each pass takes the form to the form, so a pass is tested by running a program before it and after it.
+- **A target is thin.** For each kind of chip, instruction selection picks instructions for the form's operations, and tuning for that chip happens there. One register allocator serves every chip and is told its registers: values live in registers, and only what does not fit goes to the frame. Calls between Smith functions pass arguments and results in registers, by one convention for each kind of chip on every system, and only a call into the system follows the system's convention.
+- **The form runs.** It has an evaluator, which says what a program in it does, and that is what each target's executables are tested against.
+
+The idea of keeping several levels, and lowering through them one step at a time, is the one MLIR is built on. Smith borrows the idea and none of the code. Each level here is its own small type with its own evaluator, so every step from one level to the next has the same test: a generated program does the same thing before the step and after it.
 
 ## Effects
 
@@ -101,8 +111,9 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 | --- | --- |
 | Surface tree | Parsing and formatting |
 | Typed core term | Checking and `grad`. About ten node kinds |
-| Kernel form | Fusion, contractions, and vectorization. Shared by the CPU backend and both GPU emitters |
-| Machine form | Instruction selection and register allocation |
+| Kernel form | Fusion, contractions, and vectorization. Shared by the CPU backend and both GPU emitters, which leave from here |
+| [Scalar form](#scalar-form) | Inlining, folding, and the removal of dead code. The same for every chip |
+| Machine form | Instruction selection and register allocation, for one kind of chip |
 
 ## Backends
 
@@ -215,6 +226,10 @@ Continuous integration runs for a pull request and in the merge queue, and for n
 - A machine may not be available. GitHub ends a job that waits about fifteen minutes for one as `cancelled`, with no step run, and nothing in the workflows sets that limit, so a job that never started is not a failure of the change. Each machine job that never started is started again, and again a second time, in the same run, and only then counts as failed. `.github/never-started.sh` decides this from the list of jobs and how each ended, so it is tested without GitHub. Whether to look for such a job never depends on the result GitHub gives the matrix of machine jobs, only on the run not having been cancelled. `ci` judges each kind of machine by its newest job, so the merge queue never removes a pull request for a wait, while a job that ran and failed, or was stopped while running, is never started again. It passes only when it has read the list of jobs and found, for every kind of machine the change needs, a newest job that succeeded: a list that could not be read, an empty one, a machine with no job, a job that names no machine, and a skipped place standing for a lost job all fail.
 - The job named `ci` is the one check the repository requires. `.github/ci-result.sh` makes it succeed only when every other job succeeded or was skipped on purpose, and fail when any failed or was cancelled. Adding a job to the workflow means adding it to what `ci` needs, and changes no rule.
 
+## Speed
+
+Smith's scalar code is meant to be as fast as C's. A set of programs is each written in Smith and in C, the C built at its compiler's highest level of optimization, and the run time of both is recorded with the [timings](#timings) after every merge. A pass or a change to a target is judged by what it does to those numbers.
+
 ## Timings
 
 The time each step takes is measured from the first program, so a slowdown is seen in the change that causes it.
@@ -260,7 +275,7 @@ Every file of every release is also on GitLab, in the package registry of `gitla
 
 ## Bootstrap
 
-The first compiler is written in Rust with no dependencies. It is kept small and retired early.
+The first compiler is written in Rust with no dependencies. It is retired once Smith compiles itself, and until then its code is the measure: the port must match it byte for byte, so it is made fast before the port and not after.
 
 - **It implements only enough Smith to write a compiler:** functions, structs, enums, `match`, generics and traits, strings, lists, maps, files, arenas, `with`, and `try`, followed by contracts and the `arith` procedure. Arrays with `for`, differentiation, devices, and tasks are built afterwards, in Smith.
 - **It grows one feature at a time, end to end.** Each step takes a feature from source text to a running executable on each target built so far, starting with a program that prints one line. A program that uses a feature not built yet gets an ordinary error, with a line and column, that says so. The test generators cover what the compiler accepts so far and grow with it.
