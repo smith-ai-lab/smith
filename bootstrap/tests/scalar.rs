@@ -198,6 +198,14 @@ fn taken() -> Vec<(&'static Lowered, &'static scalar::Program)> {
     lowered().iter().map(|l| (l, &l.scalar)).collect()
 }
 
+/// Every function of every generated program, in the scalar form.
+pub fn every_function() -> Vec<&'static scalar::Function> {
+    taken()
+        .into_iter()
+        .flat_map(|(_, s)| &s.functions)
+        .collect()
+}
+
 fn every_lowered_program_is_well_formed() {
     for (l, s) in taken() {
         if let Err(malformed) = scalar::check(s) {

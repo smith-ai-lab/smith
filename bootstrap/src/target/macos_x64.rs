@@ -4,7 +4,7 @@
 
 use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
 use super::x86_64::{
-    self, Asm, L, LE, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
+    self, Asm, L, LE, Place, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
 };
 use crate::scalar::{Program, Stream};
 
@@ -28,13 +28,19 @@ pub fn emit(program: &Program) -> Vec<u8> {
 struct Macos;
 
 impl System for Macos {
-    const RESERVED: u32 = 0;
-    /// rbx and r12, which calls keep.
-    const TEXT: (Reg, Reg) = (RBX, R12);
+    /// Room for rbx and r12, which the write below keeps its place and its
+    /// length in, and puts back.
+    const RESERVED: u32 = 16;
+    const TEXT: (Reg, Reg) = (RSI, RDX);
 
     /// Writes every byte, retrying a write that is cut short or
-    /// interrupted, and jumps to `fail` if the system refuses it.
+    /// interrupted, and jumps to `fail` if the system refuses it. The place
+    /// and the length still to write stay in rbx and r12, which calls keep.
     fn write(asm: &mut Asm, stream: Stream, fail: usize) {
+        asm.store(Place::Frame(0), RBX, 8);
+        asm.store(Place::Frame(8), R12, 8);
+        asm.mov(RBX, RSI);
+        asm.mov(R12, RDX);
         let again = asm.label();
         let done = asm.label();
         let refused = asm.label();
@@ -61,6 +67,8 @@ impl System for Macos {
         asm.jcc(Z, again);
         asm.jmp(fail);
         asm.bind(done);
+        asm.load(RBX, 8, false, Place::Frame(0));
+        asm.load(R12, 8, false, Place::Frame(8));
     }
 
     fn exit(asm: &mut Asm, status: u32) {

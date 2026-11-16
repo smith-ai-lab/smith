@@ -11,8 +11,8 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use smith::diag::Error;
-use smith::scalar::{self, Bits, Builder, Constant, Op, Outcome, Type, Value};
-use smith::target::{Frame, Target};
+use smith::scalar::{self, Bits, Builder, Constant, Op, Outcome, Type};
+use smith::target::Target;
 use smith::{compile, lower};
 
 use crate::Test;
@@ -35,10 +35,6 @@ pub const ONCE: &[Test] = &[
         every_target_builds_identical_bytes_twice,
     ),
     ("no_test_names_a_target", no_test_names_a_target),
-    (
-        "every_value_is_held_at_the_size_of_its_type",
-        every_value_is_held_at_the_size_of_its_type,
-    ),
     ("the_kept_hashes_are_sha256", the_kept_hashes_are_sha256),
     (
         "every_executable_uses_only_thin_wrappers_over_the_kernel",
@@ -445,57 +441,6 @@ fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
     every_executable_agrees(68, 60, choices::program, |case| case.source.as_bytes());
 }
 
-/// What the frame of a function holds, worked out
-/// from the types of its values alone: every value but the function's
-/// parameters, in the order of their numbers, at the next multiple of its
-/// size, and, for the calls it makes, room for the most any one takes, where
-/// the parameters of what is called go, and after them its results.
-fn frame_of(program: &scalar::Program, f: &scalar::Function) -> Frame {
-    let size = |ty: Type| match ty {
-        Type::Int(bits) => bits.count() / 8,
-        Type::Address => 8,
-    };
-    let after = |end: u32, ty: Type| end.div_ceil(size(ty)) * size(ty) + size(ty);
-    let parameters = &f.blocks[0].params;
-    let mut end = 0;
-    let places = (0..f.types.len())
-        .map(|v| {
-            if parameters.contains(&Value(v)) {
-                return None;
-            }
-            end = after(end, f.types[v]);
-            Some(end - size(f.types[v]))
-        })
-        .collect();
-    let mut outgoing = 0;
-    for instruction in f.blocks.iter().flat_map(|b| &b.instructions) {
-        if let Op::Call { function, .. } = &instruction.op {
-            let callee = &program.functions[*function];
-            let passed = callee.blocks[0].params.iter().map(|v| callee.types[v.0]);
-            let area = passed.chain(callee.results.iter().copied());
-            outgoing = outgoing.max(area.fold(0, after));
-        }
-    }
-    Frame {
-        outgoing: outgoing.div_ceil(8) * 8,
-        held: end,
-        places,
-    }
-}
-
-fn every_value_is_held_at_the_size_of_its_type() {
-    generate::check(81, 40, numbers::program, |case| {
-        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
-        for target in Target::ALL {
-            let frames = target.frames(&program);
-            assert_eq!(frames.len(), program.functions.len());
-            for (f, frame) in program.functions.iter().zip(&frames) {
-                assert_eq!(*frame, frame_of(&program, f), "{}", target.name());
-            }
-        }
-    });
-}
-
 const TYPES: [Type; 5] = [
     Type::Int(Bits::B8),
     Type::Int(Bits::B16),
@@ -577,7 +522,7 @@ fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> s
 fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
     let targets = runnable();
     let generate = |g: &mut Gen| {
-        let count = 2 + g.below(5);
+        let count = 2 + g.below(40);
         let types: Vec<Type> = (0..count).map(|_| *g.pick(&TYPES)).collect();
         let starts: Vec<u64> = (0..count)
             .map(|_| (g.below(1 << 20) as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))

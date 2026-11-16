@@ -6,7 +6,7 @@ use super::pe::{
     self, EXIT_PROCESS, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE, Machine,
     PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
-use super::x86_64::{self, Asm, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
+use super::x86_64::{self, Asm, Place, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
 use crate::scalar::{Program, Stream};
 
 const MACHINE: Machine = Machine {
@@ -21,10 +21,12 @@ const MACHINE: Machine = Machine {
 };
 
 /// The bytes at the bottom of each frame: 32 the callee may use, the fifth
-/// argument of `WriteFile`, and the count it writes back.
-const RESERVED: u32 = 48;
+/// argument of `WriteFile`, the count it writes back, and rbx, which the
+/// write keeps the handle in and puts back.
+const RESERVED: u32 = 64;
 const FIFTH_ARGUMENT: i8 = 32;
 const WRITTEN: i8 = 40;
+const RBX_AT: u32 = 48;
 
 /// The executable for the program.
 pub fn emit(program: &Program) -> Vec<u8> {
@@ -50,6 +52,7 @@ impl System for Windows {
     fn write(asm: &mut Asm, stream: Stream, fail: usize) {
         let again = asm.label();
         let done = asm.label();
+        asm.store(Place::Frame(RBX_AT), RBX, 8);
         asm.mov32(RCX, handle(stream));
         asm.call_slot(GET_STD_HANDLE);
         asm.mov(RBX, RAX);
@@ -75,6 +78,7 @@ impl System for Windows {
         asm.sub(RDI, RAX);
         asm.jmp(again);
         asm.bind(done);
+        asm.load(RBX, 8, false, Place::Frame(RBX_AT));
     }
 
     fn exit(asm: &mut Asm, status: u32) {

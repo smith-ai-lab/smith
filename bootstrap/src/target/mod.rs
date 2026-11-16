@@ -1,6 +1,7 @@
 //! The targets the compiler builds for. Each target turns the program into
 //! the bytes of an executable.
 
+pub mod alloc;
 mod arm64;
 mod elf;
 mod frame;
@@ -9,14 +10,13 @@ mod linux_x64;
 mod macho;
 mod macos_arm64;
 mod macos_x64;
+pub mod moves;
 mod pe;
 mod windows_arm64;
 mod windows_x64;
 mod x86_64;
 
 use crate::scalar::Program;
-
-pub use frame::{Frame, frames};
 
 /// Declares the `Target` enum along with `Target::ALL`, its list of cases,
 /// and each case's name, so that a case cannot be added without joining
@@ -101,10 +101,5 @@ impl Target {
             Target::LinuxArm64 => linux_arm64::emit(program),
             Target::WindowsArm64 => windows_arm64::emit(program),
         }
-    }
-
-    /// What each function's frame holds in the executable for the program.
-    pub fn frames(self, program: &Program) -> Vec<Frame> {
-        frames(program)
     }
 }

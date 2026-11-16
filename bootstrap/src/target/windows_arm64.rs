@@ -24,9 +24,11 @@ const MACHINE: Machine = Machine {
 };
 
 /// The bytes at the bottom of each frame: the count `WriteFile` writes
-/// back, in a space that keeps the stack on 16 bytes.
-const RESERVED: u32 = 16;
+/// back, and x19, x20, and x21, which the write keeps what it needs in and
+/// puts back.
+const RESERVED: u32 = 32;
 const WRITTEN: u32 = 0;
+const SAVED: u32 = 8;
 
 /// The executable for the program.
 pub fn emit(program: &Program) -> Vec<u8> {
@@ -51,6 +53,11 @@ impl System for Windows {
     fn write(asm: &mut Asm, stream: Stream, fail: usize) {
         let again = asm.label();
         let done = asm.label();
+        for (i, r) in [X19, X20, X21].into_iter().enumerate() {
+            asm.store(Place::Frame(SAVED + 8 * i as u32), r, 8);
+        }
+        asm.mov(X19, X1);
+        asm.mov(X20, X2);
         asm.mov64(X0, u64::from(handle(stream)));
         asm.call(GET_STD_HANDLE);
         asm.mov(X21, X0);
@@ -74,6 +81,9 @@ impl System for Windows {
         asm.word(0xcb00_0000 | X0 << 16 | X20 << 5 | X20);
         asm.branch(again);
         asm.bind(done);
+        for (i, r) in [X19, X20, X21].into_iter().enumerate() {
+            asm.load(r, 8, false, Place::Frame(SAVED + 8 * i as u32));
+        }
     }
 
     fn exit(asm: &mut Asm, status: u16) {

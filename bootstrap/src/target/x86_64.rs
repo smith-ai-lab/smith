@@ -2,25 +2,45 @@
 //! how a program in the scalar form becomes it. It reads the scalar form
 //! and nothing else.
 
+use super::alloc::{self, Home, Registers};
 use super::frame::{self, call_area, round_up, size};
+use super::moves::{self, Move, Step};
 use crate::scalar::{
-    Binary, Compare, Constant, End, Function, Jump, Op, Program, Stream, System as Call, Value,
+    Binary, Compare, Constant, End, Function, Op, Program, Stream, System as Call, Value,
 };
 
 /// A register, by its number in the instruction encoding.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Reg(u8);
 
 pub const RAX: Reg = Reg(0);
 pub const RCX: Reg = Reg(1);
 pub const RDX: Reg = Reg(2);
 pub const RBX: Reg = Reg(3);
+pub const RBP: Reg = Reg(5);
 pub const RSI: Reg = Reg(6);
 pub const RDI: Reg = Reg(7);
 pub const R8: Reg = Reg(8);
 pub const R9: Reg = Reg(9);
 pub const R10: Reg = Reg(10);
+pub const R11: Reg = Reg(11);
 pub const R12: Reg = Reg(12);
+pub const R13: Reg = Reg(13);
+pub const R14: Reg = Reg(14);
+pub const R15: Reg = Reg(15);
+
+/// The registers that hold values, in the order the allocator numbers them.
+/// A call may change the first five, and leaves the other six as they were,
+/// on every system. Every register that is left is kept for the chip: rax,
+/// rcx, and rdx, which the instructions below work in, as multiplying and
+/// comparing need them, r11, which holds the value that breaks a circle of
+/// copies, and rsp.
+const HOMES: [Reg; 11] = [RDI, RSI, R8, R9, R10, RBX, RBP, R12, R13, R14, R15];
+
+const REGISTERS: Registers = Registers {
+    changed: 5,
+    preserved: 6,
+};
 
 /// What a 32-bit offset in the code refers to.
 enum Ref {
@@ -32,11 +52,11 @@ enum Ref {
 
 /// Where a read or a write of memory is.
 #[derive(Clone, Copy)]
-enum Place {
+pub enum Place {
     /// `[rsp + disp]`.
     Frame(u32),
-    /// `[rax]`.
-    AtRax,
+    /// `[reg]`.
+    At(Reg),
 }
 
 /// Machine code with labels, each resolved once the code and its data are
@@ -109,10 +129,49 @@ impl Asm {
         self.bytes(&[Self::rex_w(r, r), 0x85, Self::modrm(r, r)]);
     }
 
-    /// `test r32, r32`, for a register below r8.
+    /// `test r32, r32`.
     pub fn test32(&mut self, r: Reg) {
-        assert!(r.0 < 8);
+        if r.0 >= 8 {
+            self.bytes(&[0x45]);
+        }
         self.bytes(&[0x85, Self::modrm(r, r)]);
+    }
+
+    /// `mov r32, r32`, which clears the upper half.
+    fn mov32_rr(&mut self, rd: Reg, rs: Reg) {
+        if rd.0 >= 8 || rs.0 >= 8 {
+            self.bytes(&[0x40 | (rs.0 >> 3) << 2 | rd.0 >> 3]);
+        }
+        self.bytes(&[0x89, Self::modrm(rs, rd)]);
+    }
+
+    /// `movzx r32, r8`, the low byte of `rs`.
+    fn movzx8(&mut self, rd: Reg, rs: Reg) {
+        if rs.0 >= 4 || rd.0 >= 8 {
+            self.bytes(&[0x40 | (rd.0 >> 3) << 2 | rs.0 >> 3]);
+        }
+        self.bytes(&[0x0f, 0xb6, Self::modrm(rd, rs)]);
+    }
+
+    /// `movzx r32, r16`, the low 16 bits of `rs`.
+    fn movzx16(&mut self, rd: Reg, rs: Reg) {
+        if rd.0 >= 8 || rs.0 >= 8 {
+            self.bytes(&[0x40 | (rd.0 >> 3) << 2 | rs.0 >> 3]);
+        }
+        self.bytes(&[0x0f, 0xb7, Self::modrm(rd, rs)]);
+    }
+
+    /// `movsx r64, r8`, `r16`, or `r32`: the low `width` bytes of `rs`,
+    /// extended as a signed number.
+    fn movsx(&mut self, rd: Reg, rs: Reg, width: u32) {
+        self.bytes(&[Self::rex_w(rd, rs)]);
+        match width {
+            1 => self.bytes(&[0x0f, 0xbe]),
+            2 => self.bytes(&[0x0f, 0xbf]),
+            4 => self.bytes(&[0x63]),
+            _ => unreachable!("an integer of {width} bytes"),
+        }
+        self.bytes(&[Self::modrm(rd, rs)]);
     }
 
     /// `cmp ra, rb`, which compares `ra - rb`.
@@ -195,19 +254,35 @@ impl Asm {
     /// The ModRM, and what follows it, of a place, with `reg` in the ModRM
     /// reg field.
     fn place(&mut self, reg: Reg, place: Place) {
+        let reg = (reg.0 & 7) << 3;
         match place {
+            Place::Frame(disp) if disp < 0x80 => self.bytes(&[0x44 | reg, 0x24, disp as u8]),
             Place::Frame(disp) => {
-                self.bytes(&[0x84 | (reg.0 & 7) << 3, 0x24]);
+                self.bytes(&[0x84 | reg, 0x24]);
                 self.bytes(&disp.to_le_bytes());
             }
-            Place::AtRax => self.bytes(&[(reg.0 & 7) << 3]),
+            // rsp and r12 take a SIB byte, and rbp and r13 a displacement.
+            Place::At(base) => match base.0 & 7 {
+                4 => self.bytes(&[reg | 4, 0x24]),
+                5 => self.bytes(&[0x40 | reg | 5, 0]),
+                n => self.bytes(&[reg | n]),
+            },
+        }
+    }
+
+    /// The register the place is based on, as a number, for the REX prefix.
+    fn base(place: Place) -> u8 {
+        match place {
+            Place::Frame(_) => 0,
+            Place::At(base) => base.0,
         }
     }
 
     /// Reads an integer of `width` bytes into the whole of `rd`, extended to
     /// 64 bits as its sign says when `signed` and with zeros when not.
-    fn load(&mut self, rd: Reg, width: u32, signed: bool, from: Place) {
-        let rex = (u8::from(width == 8 || signed) << 3) | ((rd.0 >> 3) << 2);
+    pub fn load(&mut self, rd: Reg, width: u32, signed: bool, from: Place) {
+        let rex =
+            (u8::from(width == 8 || signed) << 3) | ((rd.0 >> 3) << 2) | (Self::base(from) >> 3);
         if rex != 0 {
             self.bytes(&[0x40 | rex]);
         }
@@ -223,15 +298,14 @@ impl Asm {
         self.place(rd, from);
     }
 
-    /// Writes the low `width` bytes of `rs`. A single byte comes from rax,
-    /// rcx, rdx, or rbx.
-    fn store(&mut self, to: Place, rs: Reg, width: u32) {
-        assert!(width != 1 || rs.0 < 4);
+    /// Writes the low `width` bytes of `rs`.
+    pub fn store(&mut self, to: Place, rs: Reg, width: u32) {
         if width == 2 {
             self.bytes(&[0x66]);
         }
-        let rex = (u8::from(width == 8) << 3) | ((rs.0 >> 3) << 2);
-        if rex != 0 {
+        let rex = (u8::from(width == 8) << 3) | ((rs.0 >> 3) << 2) | (Self::base(to) >> 3);
+        // The low byte of rsi, rdi, rbp, and rsp is reached with a prefix.
+        if rex != 0 || (width == 1 && rs.0 >= 4) {
             self.bytes(&[0x40 | rex]);
         }
         self.bytes(&[if width == 1 { 0x88 } else { 0x89 }]);
@@ -377,13 +451,15 @@ pub trait System {
     /// The registers that hold the address and the number of bytes to write.
     const TEXT: (Reg, Reg);
     /// Writes every byte in `TEXT`, and jumps to `fail` if the system
-    /// refuses it. It may change any register but rsp.
+    /// refuses it. It may change rax, rcx, rdx, and the registers a call may
+    /// change, and leaves the others as they were, which it may do by
+    /// holding them in the bytes at the bottom of the frame.
     fn write(asm: &mut Asm, stream: Stream, fail: usize);
     /// Ends the program with the status.
     fn exit(asm: &mut Asm, status: u32);
     /// Asks the system for memory for the number of bytes in rsi, which is
     /// not 0, leaves its address in rax, and jumps to `fail` if the system
-    /// refuses. It may change any register but rsp.
+    /// refuses. It may change what `write` may.
     fn alloc(asm: &mut Asm, fail: usize);
 }
 
@@ -392,9 +468,9 @@ pub trait System {
 ///
 /// Every function has a frame on the stack that keeps the stack on 16
 /// bytes at each call. From the bottom, it holds the bytes the system may
-/// use, the places of the calls it makes, and its values. A function finds
-/// its parameters in its caller's frame, and puts what it gives back just
-/// after them.
+/// use, the places of the calls it makes, the values that have no register,
+/// and the registers it must put back. A function finds its parameters in
+/// its caller's frame, and puts what it gives back just after them.
 pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     let mut asm = Asm::default();
     let texts: Vec<usize> = program.data.iter().map(|_| asm.label()).collect();
@@ -417,7 +493,15 @@ pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     (asm, data)
 }
 
-/// A function being written, and where its frame keeps each value.
+/// Where a value is held, in the code.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Loc {
+    Register(Reg),
+    /// `[rsp + disp]`.
+    Frame(u32),
+}
+
+/// A function being written, and where each value is.
 struct Writer<'a, S> {
     program: &'a Program,
     f: &'a Function,
@@ -427,11 +511,14 @@ struct Writer<'a, S> {
     /// How far below its caller's frame the function's frame reaches, with
     /// the return address.
     frame: u32,
-    /// Where each value is, from the bottom of the frame.
-    at: Vec<u32>,
+    /// Where each value is.
+    at: Vec<Loc>,
     /// Where each parameter and result of the function is, in the call
     /// area, from the bottom of the frame.
     passed: Vec<u32>,
+    /// The registers a call does not change that the function uses, and
+    /// where it keeps what they held.
+    saved: Vec<(Reg, u32)>,
     labels: Vec<usize>,
     system: std::marker::PhantomData<S>,
 }
@@ -444,24 +531,25 @@ fn function<S: System>(
     functions: &[usize],
     fail: usize,
 ) {
-    let held = frame::frame(program, f);
-    let below = S::RESERVED + held.outgoing;
+    let allocation = alloc::allocate(f, REGISTERS);
+    let below = S::RESERVED + frame::outgoing(program, f);
+    let saved_from = round_up(below + allocation.frame, 8);
     // The call pushed the return address, so the frame takes 8 bytes more
     // than a multiple of 16.
-    let total = round_up(below + held.held, 16) + 8;
+    let total = round_up(saved_from + 8 * allocation.saved.len() as u32, 16) + 8;
     let (offsets, _) = call_area(f);
     let passed: Vec<u32> = offsets
         .iter()
         .map(|o| total + 8 + S::RESERVED + o)
         .collect();
-    let at = (held.places.iter().enumerate())
-        .map(|(v, place)| match place {
-            Some(place) => below + place,
-            None => {
-                let i = f.blocks[0].params.iter().position(|p| p.0 == v);
-                passed[i.expect("a parameter")]
-            }
+    let at = (allocation.homes.iter())
+        .map(|home| match home {
+            Home::Register(r) => Loc::Register(HOMES[*r]),
+            Home::Frame(place) => Loc::Frame(below + place),
         })
+        .collect();
+    let saved = (allocation.saved.iter().enumerate())
+        .map(|(i, r)| (HOMES[*r], saved_from + 8 * i as u32))
         .collect();
     let labels = f.blocks.iter().map(|_| asm.label()).collect();
     let w = Writer::<S> {
@@ -473,16 +561,24 @@ fn function<S: System>(
         frame: total,
         at,
         passed,
+        saved,
         labels,
         system: std::marker::PhantomData,
     };
     asm.reserve_stack(total);
+    for (r, at) in &w.saved {
+        asm.store(Place::Frame(*at), *r, 8);
+    }
+    // The function's own parameters are in the caller's frame.
+    for (p, from) in f.blocks[0].params.iter().zip(&w.passed) {
+        w.copy(asm, w.at[p.0], Loc::Frame(*from), w.width(*p));
+    }
     for (b, block) in f.blocks.iter().enumerate() {
         asm.bind(w.labels[b]);
         for instruction in &block.instructions {
             w.instruction(asm, &instruction.results, &instruction.op);
         }
-        w.end(asm, &block.end);
+        w.end(asm, b);
     }
 }
 
@@ -491,30 +587,116 @@ impl<S: System> Writer<'_, S> {
         size(self.f.types[v.0])
     }
 
-    fn place(&self, v: Value) -> Place {
-        Place::Frame(self.at[v.0])
+    /// Copies `width` bytes from one place to another, through rax when both
+    /// are in the frame.
+    fn copy(&self, asm: &mut Asm, to: Loc, from: Loc, width: u32) {
+        match (to, from) {
+            (Loc::Register(to), Loc::Register(from)) => {
+                if to != from {
+                    asm.mov(to, from);
+                }
+            }
+            (Loc::Register(to), Loc::Frame(from)) => {
+                asm.load(to, width, false, Place::Frame(from));
+            }
+            (Loc::Frame(to), Loc::Register(from)) => {
+                asm.store(Place::Frame(to), from, width);
+            }
+            (Loc::Frame(to), Loc::Frame(from)) => {
+                asm.load(RAX, width, false, Place::Frame(from));
+                asm.store(Place::Frame(to), RAX, width);
+            }
+        }
+    }
+
+    /// Does the moves as if all were copied at once. A place that another
+    /// move is still to read is held in r11 first, when they go in a circle.
+    fn run(&self, asm: &mut Asm, moves: &[Move<Loc>]) {
+        for step in moves::sequence(moves) {
+            match step {
+                Step::Copy { to, from, width } => self.copy(asm, to, from, width),
+                Step::Save { from, width } => self.copy(asm, Loc::Register(R11), from, width),
+                Step::Restore { to, width } => self.copy(asm, to, Loc::Register(R11), width),
+            }
+        }
+    }
+
+    /// A register that holds the value, with zeros above it: its own, or rax,
+    /// rcx, or rdx, the one `tmp` says, with the value read into it.
+    fn read(&self, asm: &mut Asm, tmp: Reg, v: Value) -> Reg {
+        match self.at[v.0] {
+            Loc::Register(r) => r,
+            Loc::Frame(at) => {
+                asm.load(tmp, self.width(v), false, Place::Frame(at));
+                tmp
+            }
+        }
     }
 
     /// Reads the value into the register, with zeros above it.
-    fn get(&self, asm: &mut Asm, r: Reg, v: Value) {
-        asm.load(r, self.width(v), false, self.place(v));
+    fn read_into(&self, asm: &mut Asm, rd: Reg, v: Value) {
+        self.copy(asm, Loc::Register(rd), self.at[v.0], self.width(v));
     }
 
     /// Reads the value into the register, extended as a signed number.
-    fn get_signed(&self, asm: &mut Asm, r: Reg, v: Value) {
-        asm.load(r, self.width(v), true, self.place(v));
+    fn read_signed_into(&self, asm: &mut Asm, rd: Reg, v: Value) {
+        let width = self.width(v);
+        match self.at[v.0] {
+            Loc::Register(r) if width == 8 => {
+                if r != rd {
+                    asm.mov(rd, r);
+                }
+            }
+            Loc::Register(r) => asm.movsx(rd, r, width),
+            Loc::Frame(at) => asm.load(rd, width, true, Place::Frame(at)),
+        }
     }
 
-    /// Writes the low bytes of the register to the value, as many as its
-    /// type takes.
-    fn put(&self, asm: &mut Asm, v: Value, r: Reg) {
-        asm.store(self.place(v), r, self.width(v));
+    /// A register that holds the value extended as a signed number: its own
+    /// when it takes 64 bits, and otherwise `tmp`.
+    fn read_signed(&self, asm: &mut Asm, tmp: Reg, v: Value) -> Reg {
+        match self.at[v.0] {
+            Loc::Register(r) if self.width(v) == 8 => r,
+            _ => {
+                self.read_signed_into(asm, tmp, v);
+                tmp
+            }
+        }
+    }
+
+    /// The register to work out a result in: its own, unless that is one of
+    /// the registers `avoid` that the work still reads, and then rax.
+    fn target(&self, v: Value, avoid: &[Reg]) -> Reg {
+        match self.at[v.0] {
+            Loc::Register(r) if !avoid.contains(&r) => r,
+            _ => RAX,
+        }
+    }
+
+    /// Puts the result, which is in the low bytes of `r`, in its home. The
+    /// bits above it are zeros when `extended`, and anything when not.
+    fn finish(&self, asm: &mut Asm, v: Value, r: Reg, extended: bool) {
+        let width = self.width(v);
+        match self.at[v.0] {
+            Loc::Frame(at) => asm.store(Place::Frame(at), r, width),
+            Loc::Register(h) if extended || width == 8 => {
+                if h != r {
+                    asm.mov(h, r);
+                }
+            }
+            Loc::Register(h) => match width {
+                4 => asm.mov32_rr(h, r),
+                2 => asm.movzx16(h, r),
+                _ => asm.movzx8(h, r),
+            },
+        }
     }
 
     fn instruction(&self, asm: &mut Asm, results: &[Value], op: &Op) {
         match op {
             Op::Constant(c) => {
                 let result = results[0];
+                let t = self.target(result, &[]);
                 match c {
                     Constant::Int(n) => {
                         let n = match self.width(result) {
@@ -522,99 +704,106 @@ impl<S: System> Writer<'_, S> {
                             w => n & ((1 << (8 * w)) - 1),
                         };
                         match u32::try_from(n) {
-                            Ok(n) => asm.mov32(RAX, n),
-                            Err(_) => asm.mov64(RAX, n),
+                            Ok(n) => asm.mov32(t, n),
+                            Err(_) => asm.mov64(t, n),
                         }
                     }
-                    Constant::Null => asm.mov32(RAX, 0),
-                    Constant::Data(t) => asm.address(RAX, self.texts[*t]),
+                    Constant::Null => asm.mov32(t, 0),
+                    Constant::Data(d) => asm.address(t, self.texts[*d]),
                 }
-                self.put(asm, result, RAX);
+                self.finish(asm, result, t, true);
             }
             Op::Binary { op, a, b } => self.binary(asm, results[0], *op, *a, *b),
             Op::Compare { op, a, b } => {
-                if matches!(op, Compare::LessS) {
-                    self.get_signed(asm, RAX, *a);
-                    self.get_signed(asm, RCX, *b);
+                let (ra, rb) = if matches!(op, Compare::LessS) {
+                    (
+                        self.read_signed(asm, RAX, *a),
+                        self.read_signed(asm, RCX, *b),
+                    )
                 } else {
-                    self.get(asm, RAX, *a);
-                    self.get(asm, RCX, *b);
-                }
-                asm.cmp(RAX, RCX);
+                    (self.read(asm, RAX, *a), self.read(asm, RCX, *b))
+                };
+                asm.cmp(ra, rb);
                 asm.truth(match op {
                     Compare::Equal => Z,
                     Compare::LessU => B,
                     Compare::LessS => L,
                 });
-                self.put(asm, results[0], RAX);
+                self.finish(asm, results[0], RAX, true);
             }
             Op::Widen { signed, value } => {
+                let t = self.target(results[0], &[]);
                 if *signed {
-                    self.get_signed(asm, RAX, *value);
+                    self.read_signed_into(asm, t, *value);
                 } else {
-                    self.get(asm, RAX, *value);
+                    self.read_into(asm, t, *value);
                 }
-                self.put(asm, results[0], RAX);
+                self.finish(asm, results[0], t, !*signed);
             }
             Op::Narrow(value) => {
-                self.get(asm, RAX, *value);
-                self.put(asm, results[0], RAX);
+                let t = self.target(results[0], &[]);
+                self.read_into(asm, t, *value);
+                self.finish(asm, results[0], t, false);
             }
             Op::Choose {
                 on,
                 then,
                 otherwise,
             } => {
-                self.get(asm, RAX, *otherwise);
-                self.get(asm, RCX, *then);
-                self.get(asm, RDX, *on);
-                asm.test32(RDX);
-                asm.cmovne(RAX, RCX);
-                self.put(asm, results[0], RAX);
+                let on = self.read(asm, RDX, *on);
+                let then = self.read(asm, RCX, *then);
+                let t = self.target(results[0], &[on, then]);
+                asm.test32(on);
+                self.read_into(asm, t, *otherwise);
+                asm.cmovne(t, then);
+                self.finish(asm, results[0], t, true);
             }
             Op::Load { ty, address } => {
-                self.get(asm, RAX, *address);
-                asm.load(RCX, size(*ty), false, Place::AtRax);
-                self.put(asm, results[0], RCX);
+                let address = self.read(asm, RAX, *address);
+                let t = self.target(results[0], &[]);
+                asm.load(t, size(*ty), false, Place::At(address));
+                self.finish(asm, results[0], t, true);
             }
             Op::Store { ty, address, value } => {
-                self.get(asm, RAX, *address);
-                self.get(asm, RCX, *value);
-                asm.store(Place::AtRax, RCX, size(*ty));
+                let address = self.read(asm, RAX, *address);
+                let value = self.read(asm, RCX, *value);
+                asm.store(Place::At(address), value, size(*ty));
             }
             Op::Call { function, args } => {
                 let callee = &self.program.functions[*function];
                 let (offsets, _) = call_area(callee);
                 for (arg, offset) in args.iter().zip(&offsets) {
-                    self.get(asm, RAX, *arg);
-                    asm.store(Place::Frame(S::RESERVED + offset), RAX, self.width(*arg));
+                    let to = Loc::Frame(S::RESERVED + offset);
+                    self.copy(asm, to, self.at[arg.0], self.width(*arg));
                 }
                 asm.call(self.functions[*function]);
                 for (result, offset) in results.iter().zip(&offsets[args.len()..]) {
-                    asm.load(
-                        RAX,
-                        self.width(*result),
-                        false,
-                        Place::Frame(S::RESERVED + offset),
-                    );
-                    self.put(asm, *result, RAX);
+                    let from = Loc::Frame(S::RESERVED + offset);
+                    self.copy(asm, self.at[result.0], from, self.width(*result));
                 }
             }
             Op::System {
                 call: Call::Write(stream),
                 args,
             } => {
-                self.get(asm, S::TEXT.0, args[0]);
-                self.get(asm, S::TEXT.1, args[1]);
+                let text = [S::TEXT.0, S::TEXT.1];
+                let moves: Vec<Move<Loc>> = (args.iter().zip(text))
+                    .map(|(arg, to)| Move {
+                        to: Loc::Register(to),
+                        from: self.at[arg.0],
+                        width: self.width(*arg),
+                    })
+                    .collect();
+                self.run(asm, &moves);
                 S::write(asm, *stream, self.fail);
             }
             Op::System {
                 call: Call::Allocate,
                 args,
             } => {
-                self.get(asm, RSI, args[0]);
+                self.read_into(asm, RSI, args[0]);
                 S::alloc(asm, self.fail);
-                self.put(asm, results[0], RAX);
+                self.finish(asm, results[0], RAX, true);
             }
         }
     }
@@ -623,113 +812,98 @@ impl<S: System> Writer<'_, S> {
         let bits = self.width(result) * 8;
         let wide = bits == 64;
         match op {
-            Binary::MulHighS => {
-                self.get_signed(asm, RAX, a);
-                self.get_signed(asm, RCX, b);
+            Binary::MulHighU | Binary::MulHighS if wide => {
+                self.read_into(asm, RAX, a);
+                let b = self.read(asm, RCX, b);
+                asm.group(if matches!(op, Binary::MulHighU) { 4 } else { 5 }, b);
+                self.finish(asm, result, RDX, true);
             }
-            _ => {
-                self.get(asm, RAX, a);
-                self.get(asm, RCX, b);
-            }
-        }
-        match op {
-            Binary::Add => asm.add(RAX, RCX),
-            Binary::Sub => asm.sub(RAX, RCX),
-            Binary::Mul => asm.imul(RAX, RCX),
-            Binary::And => asm.and(RAX, RCX),
-            Binary::Xor => asm.xor(RAX, RCX),
             // The product of two integers of fewer than 64 bits fits in
             // rax, and its high half is what is left after the shift.
-            Binary::MulHighU if wide => {
-                asm.group(4, RCX);
-                asm.mov(RAX, RDX);
-            }
-            Binary::MulHighS if wide => {
-                asm.group(5, RCX);
-                asm.mov(RAX, RDX);
-            }
             Binary::MulHighU => {
-                asm.imul(RAX, RCX);
+                self.read_into(asm, RAX, a);
+                let b = self.read(asm, RCX, b);
+                asm.imul(RAX, b);
                 asm.shr_imm(RAX, bits as u8);
+                self.finish(asm, result, RAX, false);
             }
             Binary::MulHighS => {
-                asm.imul(RAX, RCX);
-                asm.sar_imm(RAX, bits as u8);
+                let a = self.read_signed(asm, RAX, a);
+                let b = self.read_signed(asm, RCX, b);
+                asm.mov(RDX, a);
+                asm.imul(RDX, b);
+                asm.sar_imm(RDX, bits as u8);
+                self.finish(asm, result, RDX, false);
+            }
+            _ => {
+                let b = self.read(asm, RCX, b);
+                let t = self.target(result, &[b]);
+                self.read_into(asm, t, a);
+                match op {
+                    Binary::Add => asm.add(t, b),
+                    Binary::Sub => asm.sub(t, b),
+                    Binary::Mul => asm.imul(t, b),
+                    Binary::And => asm.and(t, b),
+                    Binary::Xor => asm.xor(t, b),
+                    Binary::MulHighU | Binary::MulHighS => unreachable!(),
+                }
+                self.finish(asm, result, t, matches!(op, Binary::And | Binary::Xor));
             }
         }
-        self.put(asm, result, RAX);
     }
 
-    /// Where the values of a jump go, as if all were copied at once: a value
-    /// that another is to be copied from is saved, in rdx, before it is
-    /// overwritten.
-    fn jump(&self, asm: &mut Asm, jump: &Jump) {
-        /// Where what a move writes comes from.
-        #[derive(Clone, Copy, PartialEq)]
-        enum From {
-            Frame(u32),
-            Saved,
-        }
+    /// Makes the jump: gives the block its parameters as if all were copied
+    /// at once, and goes there, unless it is the next block.
+    fn jump(&self, asm: &mut Asm, jump: &crate::scalar::Jump, next: usize) {
         let target = &self.f.blocks[jump.block];
-        let mut moves: Vec<(u32, From, u32)> = (jump.args.iter().zip(&target.params))
-            .map(|(from, to)| (self.at[to.0], From::Frame(self.at[from.0]), self.width(*to)))
-            .filter(|(to, from, _)| From::Frame(*to) != *from)
+        let moves: Vec<Move<Loc>> = (jump.args.iter().zip(&target.params))
+            .map(|(from, to)| Move {
+                to: self.at[to.0],
+                from: self.at[from.0],
+                width: self.width(*to),
+            })
             .collect();
-        while !moves.is_empty() {
-            let free = (0..moves.len()).find(|&i| {
-                let to = From::Frame(moves[i].0);
-                moves.iter().all(|m| m.1 != to)
-            });
-            match free {
-                Some(i) => {
-                    let (to, from, width) = moves.remove(i);
-                    if let From::Frame(from) = from {
-                        asm.load(RAX, width, false, Place::Frame(from));
-                        asm.store(Place::Frame(to), RAX, width);
-                    } else {
-                        asm.store(Place::Frame(to), RDX, width);
-                    }
-                }
-                // Every place is still to be read, so they go round in a
-                // circle. Saving one breaks it.
-                None => {
-                    let (place, _, width) = moves[0];
-                    asm.load(RDX, width, false, Place::Frame(place));
-                    for m in &mut moves {
-                        if m.1 == From::Frame(place) {
-                            m.1 = From::Saved;
-                        }
-                    }
-                }
-            }
+        self.run(asm, &moves);
+        if jump.block != next {
+            asm.jmp(self.labels[jump.block]);
         }
-        asm.jmp(self.labels[jump.block]);
     }
 
-    fn end(&self, asm: &mut Asm, end: &End) {
-        match end {
-            End::Jump(jump) => {
-                self.jump(asm, jump);
-            }
+    fn end(&self, asm: &mut Asm, block: usize) {
+        let next = block + 1;
+        match &self.f.blocks[block].end {
+            End::Jump(jump) => self.jump(asm, jump, next),
             End::Switch { on, jumps } => {
                 // Each jump but the last is chosen by comparing the number
                 // with its place, and the last is made when none was.
-                self.get(asm, RAX, *on);
+                let on = self.read(asm, RAX, *on);
                 for (i, jump) in jumps.iter().enumerate() {
-                    let next = asm.label();
+                    let skip = asm.label();
                     if i + 1 < jumps.len() {
-                        asm.cmp_imm32(RAX, i as u32);
-                        asm.jcc(NE, next);
+                        match i8::try_from(i) {
+                            Ok(i) => asm.cmp_imm8(on, i),
+                            Err(_) => asm.cmp_imm32(on, i as u32),
+                        }
+                        asm.jcc(NE, skip);
                     }
-                    self.jump(asm, jump);
-                    asm.bind(next);
+                    // Only the last may fall through to the next block, as
+                    // the others are followed by the comparison for the next.
+                    let falls = if i + 1 == jumps.len() {
+                        next
+                    } else {
+                        usize::MAX
+                    };
+                    self.jump(asm, jump, falls);
+                    asm.bind(skip);
                 }
             }
             End::Return(values) => {
                 let results = &self.passed[self.passed.len() - values.len()..];
                 for (value, to) in values.iter().zip(results) {
-                    self.get(asm, RAX, *value);
-                    asm.store(Place::Frame(*to), RAX, self.width(*value));
+                    self.copy(asm, Loc::Frame(*to), self.at[value.0], self.width(*value));
+                }
+                for (r, at) in &self.saved {
+                    asm.load(*r, 8, false, Place::Frame(*at));
                 }
                 asm.release_stack(self.frame);
                 asm.ret();

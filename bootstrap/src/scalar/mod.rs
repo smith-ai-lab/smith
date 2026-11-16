@@ -179,6 +179,31 @@ pub enum Op {
     },
 }
 
+impl Op {
+    /// The values the instruction reads, in order.
+    pub fn operands(&self) -> Vec<Value> {
+        match self {
+            Op::Constant(_) => Vec::new(),
+            Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => vec![*a, *b],
+            Op::Widen { value, .. } | Op::Narrow(value) => vec![*value],
+            Op::Choose {
+                on,
+                then,
+                otherwise,
+            } => vec![*on, *then, *otherwise],
+            Op::Load { address, .. } => vec![*address],
+            Op::Store { address, value, .. } => vec![*address, *value],
+            Op::Call { args, .. } | Op::System { args, .. } => args.clone(),
+        }
+    }
+
+    /// Whether the instruction runs a function or asks the system for
+    /// something, which may change any register that is not kept for it.
+    pub fn is_call(&self) -> bool {
+        matches!(self, Op::Call { .. } | Op::System { .. })
+    }
+}
+
 /// An instruction: what it does, and the values it defines.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Instruction {
@@ -204,6 +229,30 @@ pub enum End {
         jumps: Vec<Jump>,
     },
     Return(Vec<Value>),
+}
+
+impl End {
+    /// The values the end reads, in order.
+    pub fn operands(&self) -> Vec<Value> {
+        match self {
+            End::Jump(jump) => jump.args.clone(),
+            End::Switch { on, jumps } => {
+                let mut values = vec![*on];
+                values.extend(jumps.iter().flat_map(|j| j.args.iter().copied()));
+                values
+            }
+            End::Return(values) => values.clone(),
+        }
+    }
+
+    /// The blocks the end may go to, in order.
+    pub fn successors(&self) -> Vec<usize> {
+        match self {
+            End::Jump(jump) => vec![jump.block],
+            End::Switch { jumps, .. } => jumps.iter().map(|j| j.block).collect(),
+            End::Return(_) => Vec::new(),
+        }
+    }
 }
 
 /// A block: it is entered with its parameters, runs its instructions in
