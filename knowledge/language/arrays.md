@@ -20,6 +20,8 @@ fn zeros(n: Nat) -> [n]f32 { for i { 0.0 } }
 
 - An element of a `var` array is assigned as a field is, as in `a[0] = 1.0`, and only that `var` sees the change.
 - A literal index is checked against the size at compile time, so `a[3]` on a `[3]f32` is a compile error.
+- Arithmetic on sizes inside a type, such as `[n + w - 1]f32`, is exact and has no limit, because it is reasoned about and never computed.
+- A `Nat` that the program holds when it runs is 64 bits on every target. The size of an array that exists always fits. A `Nat` worked out from others, such as `n * 2`, must be shown to fit, like any other integer.
 - A size may be known only when the program runs, as the `n` of `zeros` is. An array that is kept together with its size is a [`List`](../library/list.md).
 - A range is `a..b` and excludes `b`. `x[a..b]` has size `b - a`, with `x[..k]` and `x[k..]` as short forms.
 
