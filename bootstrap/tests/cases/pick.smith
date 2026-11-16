@@ -1,0 +1,6 @@
+fn pick(first: str, second: str) -> str { second }
+
+fn main() ! console {
+  word = pick("a", second: "b")
+  print(word)
+}

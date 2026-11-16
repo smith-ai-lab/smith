@@ -1,5 +1,8 @@
 //! The arm64 instructions the arm64 targets share, with labels resolved
-//! once the code and its data are laid out.
+//! once the code and its data are laid out, and how a program's functions
+//! become them.
+
+use crate::ir::{Function, Program, Step, Stream, Value};
 
 pub const X0: u32 = 0;
 pub const X1: u32 = 1;
@@ -12,6 +15,10 @@ pub const X8: u32 = 8;
 pub const X19: u32 = 19;
 pub const X20: u32 = 20;
 pub const X21: u32 = 21;
+/// Free for any use between two instructions.
+const X17: u32 = 17;
+/// The link register, which a call puts its return address in.
+const X30: u32 = 30;
 /// The stack pointer, where an instruction takes it in place of a register.
 const SP: u32 = 31;
 pub const LE: u32 = 0xd;
@@ -103,8 +110,67 @@ impl Asm {
     /// `sub sp, sp, #bytes`, which makes room on the stack. `bytes` keeps
     /// the stack on 16 bytes.
     pub fn reserve_stack(&mut self, bytes: u32) {
-        assert!(bytes.is_multiple_of(16) && bytes < 1 << 12);
-        self.word(0xd100_0000 | bytes << 10 | SP << 5 | SP);
+        assert!(bytes.is_multiple_of(16));
+        self.add_immediate(0xd100_0000, SP, SP, bytes);
+    }
+
+    /// `add sp, sp, #bytes`, which gives back room on the stack.
+    pub fn release_stack(&mut self, bytes: u32) {
+        assert!(bytes.is_multiple_of(16));
+        self.add_immediate(0x9100_0000, SP, SP, bytes);
+    }
+
+    /// An `add` or a `sub` of an immediate below 2^24, as at most two
+    /// instructions: one for the upper 12 bits, one for the lower.
+    fn add_immediate(&mut self, op: u32, rd: u32, rn: u32, value: u32) {
+        assert!(value < 1 << 24);
+        let (high, low) = (value >> 12, value & 0xfff);
+        let mut from = rn;
+        if high != 0 {
+            self.word(op | 1 << 22 | high << 10 | from << 5 | rd);
+            from = rd;
+        }
+        if low != 0 || from == rn && rd != rn {
+            self.word(op | low << 10 | from << 5 | rd);
+        }
+    }
+
+    /// The base register and the offset from it of the 8 bytes at
+    /// `sp + offset`, which `ldr` and `str` reach.
+    fn stack_place(&mut self, offset: u32) -> (u32, u32) {
+        assert!(offset.is_multiple_of(8));
+        if offset / 8 < 1 << 12 {
+            (SP, offset)
+        } else {
+            self.add_immediate(0x9100_0000, X17, SP, offset);
+            (X17, 0)
+        }
+    }
+
+    /// `ldr xt, [sp, #offset]`.
+    pub fn load_stack(&mut self, rt: u32, offset: u32) {
+        let (base, offset) = self.stack_place(offset);
+        self.word(0xf940_0000 | (offset / 8) << 10 | base << 5 | rt);
+    }
+
+    /// `str xt, [sp, #offset]`.
+    pub fn store_stack(&mut self, offset: u32, rt: u32) {
+        let (base, offset) = self.stack_place(offset);
+        self.word(0xf900_0000 | (offset / 8) << 10 | base << 5 | rt);
+    }
+
+    /// `bl label`.
+    pub fn call_label(&mut self, label: usize) {
+        self.fixups.push(Fixup::Branch {
+            at: self.code.len(),
+            label,
+        });
+        self.word(0x9400_0000);
+    }
+
+    /// `ret`.
+    pub fn ret(&mut self) {
+        self.word(0xd65f_03c0);
     }
 
     /// `add xd, sp, #offset`, the address of a place on the stack.
@@ -230,4 +296,124 @@ impl Asm {
         let low = (target & 0xfff) as u32 >> scale;
         self.patch(at + 4, low << 10);
     }
+}
+
+/// What a system gives the code of an arm64 target: how it writes and how
+/// it ends the program.
+pub trait System {
+    /// How many bytes at the bottom of every frame a call to the system may
+    /// use. A multiple of 16.
+    const RESERVED: u32;
+    /// Writes every byte of the text whose address is in x19 and whose
+    /// length is in x20, and branches to `fail` if the system refuses it.
+    /// It may change any register but sp, x29, and x18.
+    fn write(asm: &mut Asm, stream: Stream, fail: usize);
+    /// Ends the program with the status.
+    fn exit(asm: &mut Asm, status: u16);
+}
+
+/// The bytes a piece of text takes in a frame: its address, then its
+/// length.
+const SLOT: u32 = 16;
+
+/// The machine code of the program, and the data it reads, each piece
+/// under its label.
+///
+/// Every function has a frame on the stack, a multiple of 16 bytes. From
+/// the bottom, it holds the bytes the system may use, the arguments of the
+/// calls it makes, the texts it holds, and the address it returns to. A
+/// function finds its parameters among the arguments in its caller's
+/// frame, and gives back its text in x0 and x1.
+pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
+    let mut asm = Asm::default();
+    let texts: Vec<usize> = program.texts.iter().map(|_| asm.label()).collect();
+    let functions: Vec<usize> = program.functions.iter().map(|_| asm.label()).collect();
+    let fail = asm.label();
+    if S::RESERVED > 0 {
+        asm.reserve_stack(S::RESERVED);
+    }
+    asm.call_label(functions[program.main]);
+    S::exit(&mut asm, 0);
+    asm.bind(fail);
+    S::exit(&mut asm, 1);
+    for (f, &label) in program.functions.iter().zip(&functions) {
+        asm.bind(label);
+        function::<S>(&mut asm, program, f, &texts, &functions, fail);
+    }
+    let data = texts
+        .into_iter()
+        .zip(program.texts.iter().map(Vec::as_slice))
+        .collect();
+    (asm, data)
+}
+
+fn function<S: System>(
+    asm: &mut Asm,
+    program: &Program,
+    f: &Function,
+    texts: &[usize],
+    functions: &[usize],
+    fail: usize,
+) {
+    let outgoing = f
+        .steps
+        .iter()
+        .map(|s| match s {
+            Step::Call { args, .. } => args.len(),
+            Step::Write { .. } => 0,
+        })
+        .max()
+        .unwrap_or(0) as u32;
+    let held = (f.locals - f.params) as u32;
+    let frame = S::RESERVED + SLOT * (outgoing + held) + 16;
+    let slot = |local: usize| -> u32 {
+        if local < f.params {
+            frame + S::RESERVED + SLOT * local as u32
+        } else {
+            S::RESERVED + SLOT * (outgoing + (local - f.params) as u32)
+        }
+    };
+    let load = |asm: &mut Asm, value: Value, address: u32, length: u32| match value {
+        Value::Text(t) => {
+            asm.address(address, texts[t]);
+            asm.mov64(length, program.texts[t].len() as u64);
+        }
+        Value::Local(l) => {
+            asm.load_stack(address, slot(l));
+            asm.load_stack(length, slot(l) + 8);
+        }
+    };
+    asm.reserve_stack(frame);
+    asm.store_stack(frame - 16, X30);
+    for step in &f.steps {
+        match step {
+            Step::Write { stream, value } => {
+                load(asm, *value, X19, X20);
+                S::write(asm, *stream, fail);
+            }
+            Step::Call {
+                function,
+                args,
+                result,
+            } => {
+                for (i, arg) in args.iter().enumerate() {
+                    load(asm, *arg, X0, X1);
+                    let at = S::RESERVED + SLOT * i as u32;
+                    asm.store_stack(at, X0);
+                    asm.store_stack(at + 8, X1);
+                }
+                asm.call_label(functions[*function]);
+                if let Some(r) = result {
+                    asm.store_stack(slot(*r), X0);
+                    asm.store_stack(slot(*r) + 8, X1);
+                }
+            }
+        }
+    }
+    if let Some(value) = f.result {
+        load(asm, value, X0, X1);
+    }
+    asm.load_stack(X30, frame - 16);
+    asm.release_stack(frame);
+    asm.ret();
 }
