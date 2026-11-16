@@ -63,7 +63,14 @@ There is no `panic`. A `check` that fails returns `.none`, and a failure that ca
 - Every function terminates unless it carries `diverge`, which means it may not finish. Structural recursion is accepted automatically, and anything else states a decreasing measure. Callers inherit `diverge`, and it is not allowed in a contract or a GPU kernel.
 - `hole(name)` stands in for code or a proof not yet written. The compiler reports the type and the goal it needs.
 
-Facts that recur belong in a type, so they are proved once and travel with the value. `Pos` is a `Nat` proven above zero and can be used wherever a `Nat` is expected, so a size declared `[n: Pos]` needs no `requires n > 0`. It is a struct with a proof as a field, as `Fin` is. Tooling proposes the remaining `requires` lines, as it proposes effects.
+Facts that recur belong in a type, so they are proved once and travel with the value. A struct with exactly one field that is not a proof can be used wherever that field's type is expected, because when the program runs it is that value and nothing more. So a `Fin[n]` is used as a `Nat`, and the fact that it is below `n` goes with it into `arith`. It goes one way only: making a `Fin` from a `Nat` needs the proof. `Pos` is defined the same way, as a `Nat` proven above zero, so a size declared `[n: Pos]` needs no `requires n > 0`. Tooling proposes the remaining `requires` lines, as it proposes effects.
+
+```
+struct Pos {
+  value: Nat
+  above: value > 0
+}
+```
 
 ```
 fn average[n: Pos](x: [n]f32) -> f32 { sum(x) / float(n) }
