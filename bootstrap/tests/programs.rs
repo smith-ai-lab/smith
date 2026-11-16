@@ -980,7 +980,7 @@ pub const UNREACHED: &[&str] = &[
     "fn unused() { print(\"a\") }",
     "fn unused() -> str { nope() }",
     "fn unused() ! console { unused() }",
-    "fn unused(a: i32) {}",
+    "fn unused(a: f32) {}",
     "fn unused() ! console {\n  x = \"a\"\n  x = \"b\"\n  print(x, \"c\")\n}",
     "fn unused() -> str {}",
     "fn unused(n: Nope) -> str { n.x }",
@@ -994,7 +994,7 @@ pub const UNREACHED: &[&str] = &[
 /// mistake. Each is written as the text before the mistake, and the rest.
 const STRUCTS_NOT_BUILT: &[(&str, &str)] = &[
     ("struct Spare {\n  ", "pub a: str\n}"),
-    ("struct Spare {\n  a: str = ", "1\n}"),
+    ("struct Spare {\n  a: str = ", "1.5\n}"),
 ];
 
 /// The same, for a struct that `main` reaches and that contains itself.
@@ -1313,7 +1313,7 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         b.pick(&[": ", ":"]);
         if f == 1 && i == 0 && b.is(Kind::TypeNotBuilt) {
             b.mark(NOT_BUILT, None);
-            b.push("i32");
+            b.push("f32");
         } else {
             b.push(m.type_name(*ty));
         }
@@ -1940,13 +1940,13 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
         }
         Some(Kind::ExpressionNotBuilt) => {
             b.mark(NOT_BUILT, None);
-            b.pick(&["1", "-\"a\"", "[\"a\"]", "loop"]);
+            b.pick(&["1.5", "-\"a\"", "[\"a\"]", "loop"]);
         }
         Some(Kind::Operator) => {
             literal_text(b, pieces, None);
             b.push(" ");
             b.mark(NOT_BUILT, None);
-            b.pick(&["+ \"b\"", "< \"b\"", "* \"b\"", "..\"b\""]);
+            b.pick(&["+ \"b\"", "- \"b\"", "* \"b\"", "..\"b\""]);
         }
         Some(Kind::NoClosingQuote) => {
             let opening = pos_after(&b.text);

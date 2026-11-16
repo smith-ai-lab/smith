@@ -79,6 +79,11 @@ fn xorshift(state: &mut u64) -> u64 {
     *state
 }
 
+/// The input the generator makes for the case of the seed.
+pub fn sample<T>(seed: u64, case: u64, generate: impl Fn(&mut Gen) -> T) -> T {
+    generate(&mut Gen::random(seed, case))
+}
+
 /// A failing input after shrinking: the input, the choices that generate
 /// it, and why the property failed for it.
 pub struct Failure<T> {

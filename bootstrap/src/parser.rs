@@ -183,6 +183,16 @@ pub enum Expr {
         text: Vec<u8>,
         pos: Pos,
     },
+    /// A whole number literal, with a `-` before it when it is written
+    /// with one. It keeps its source spelling, and its value is kept as the
+    /// size of the number, which is the largest value that fits when the
+    /// number is larger than any type holds.
+    Number {
+        text: String,
+        magnitude: u128,
+        negative: bool,
+        pos: Pos,
+    },
     /// A string literal that holds expressions, as its parts in order.
     Interp {
         pos: Pos,
@@ -324,6 +334,7 @@ impl Expr {
     pub fn pos(&self) -> Pos {
         match self {
             Expr::Text { pos, .. }
+            | Expr::Number { pos, .. }
             | Expr::Interp { pos, .. }
             | Expr::Name { pos, .. }
             | Expr::Case { pos, .. }
@@ -503,6 +514,31 @@ fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Er
         }],
         end: pos,
     }))
+}
+
+/// The literal for the number written as `text`, which the lexer has found
+/// well formed, with a `-` before it if `negative`, starting at `pos`.
+fn number(text: String, negative: bool, pos: Pos) -> Result<Expr, Error> {
+    let (digits, base) = match (text.strip_prefix("0x"), text.strip_prefix("0b")) {
+        (Some(rest), _) => (rest, 16),
+        (_, Some(rest)) => (rest, 2),
+        _ if text.contains(['.', 'e', 'E']) => return Err(Error::unsupported(pos, "a float")),
+        _ => (text.as_str(), 10),
+    };
+    let mut magnitude = 0u128;
+    for c in digits.chars().filter(|c| *c != '_') {
+        let digit = c.to_digit(base).expect("a digit the lexer found") as u128;
+        magnitude = magnitude
+            .checked_mul(base as u128)
+            .and_then(|m| m.checked_add(digit))
+            .unwrap_or(u128::MAX);
+    }
+    Ok(Expr::Number {
+        text,
+        magnitude,
+        negative,
+        pos,
+    })
 }
 
 /// The error for a definition that gives the name `true` or `false`, which
@@ -1281,6 +1317,7 @@ impl Parser<'_> {
             }
             Expr::Field { of, .. } => self.spill(of, at),
             Expr::Text { .. }
+            | Expr::Number { .. }
             | Expr::Name { .. }
             | Expr::Case { payload: None, .. }
             | Expr::Lambda(_) => {}
@@ -1758,7 +1795,7 @@ impl Parser<'_> {
     fn comparison(&mut self) -> Result<Expr, Error> {
         let mut left = self.operand()?;
         let op = match self.tok() {
-            Tok::Punct(op @ ("==" | "!=")) => *op,
+            Tok::Punct(op @ ("==" | "!=" | "<" | "<=" | ">" | ">=")) => *op,
             _ => return Ok(left),
         };
         let op_pos = self.pos();
@@ -1783,9 +1820,10 @@ impl Parser<'_> {
             .with_fix("put the comparison that runs first in parentheses"));
         }
         let pos = left.pos();
+        let ordered = !matches!(op, "==" | "!=");
         let same = Expr::Call(Call {
-            qualifier: Some(("Eq".to_string(), op_pos)),
-            callee: "eq".to_string(),
+            qualifier: Some((if ordered { "Ord" } else { "Eq" }.to_string(), op_pos)),
+            callee: if ordered { "compare" } else { "eq" }.to_string(),
             pos,
             name_pos: op_pos,
             args: [left, right]
@@ -1798,7 +1836,40 @@ impl Parser<'_> {
                 .collect(),
             end: op_pos,
         });
-        Ok(if op == "==" { same } else { negated(pos, same) })
+        Ok(match op {
+            "==" => same,
+            "!=" => negated(pos, same),
+            // `a < b` is the `match` on how `a` and `b` stand that says
+            // whether the answer is among the cases it holds.
+            _ => {
+                let holds = |case: &str| {
+                    matches!(
+                        (op, case),
+                        ("<", "less")
+                            | (">", "greater")
+                            | ("<=", "less" | "equal")
+                            | (">=", "greater" | "equal")
+                    )
+                };
+                let arms = ["less", "equal", "greater"]
+                    .into_iter()
+                    .map(|case| {
+                        let name = if holds(case) { "true" } else { "false" };
+                        let value = Expr::Name {
+                            name: name.to_string(),
+                            pos: op_pos,
+                        };
+                        arm(case, op_pos, vec![Stmt::Expr(value)], op_pos)
+                    })
+                    .collect();
+                Expr::Match(Box::new(Match {
+                    pos,
+                    of: same,
+                    arms,
+                    form: Form::Match,
+                }))
+            }
+        })
     }
 
     /// Parses `if`, through the block that ends it.
@@ -1886,6 +1957,28 @@ impl Parser<'_> {
                 }
                 Expr::Interp { pos, parts }
             }
+            Tok::Number(text) => {
+                let text = text.clone();
+                self.bump();
+                number(text, false, pos)?
+            }
+            // A `-` directly before a number, where a value may begin, is
+            // part of the number.
+            Tok::Punct("-")
+                if matches!(self.next_tok(), Tok::Number(_))
+                    && self.tokens[self.at + 1].pos
+                        == (Pos {
+                            line: pos.line,
+                            col: pos.col + 1,
+                        }) =>
+            {
+                self.bump();
+                let Tok::Number(text) = self.tok().clone() else {
+                    unreachable!("a number")
+                };
+                self.bump();
+                number(text, true, pos)?
+            }
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
@@ -1947,7 +2040,6 @@ impl Parser<'_> {
             Tok::Punct("{") | Tok::Keyword("fn") => Expr::Lambda(Box::new(self.lambda()?)),
             tok if starts_expression(tok) => {
                 let feature = match tok {
-                    Tok::Number(_) => "a number",
                     Tok::Punct("[") => "an array",
                     Tok::Punct("-") => "the operator `-`",
                     Tok::Keyword(word) => {

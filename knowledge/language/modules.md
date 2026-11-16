@@ -39,7 +39,7 @@ fn transfer(db: Db) -> Result[(), DbError] ! net {
 }
 ```
 
-- A small prelude is in scope everywhere: `Option`, `Result`, the `Try`, `Fmt`, and `Repr` traits, the numeric types and `bool`, the operator traits with `Eq` and `Ord`, the effects `console`, `fs`, `net`, `time`, and `ui`, `print`, and the array functions such as `sum` and `map`.
+- A small prelude is in scope everywhere: `Option`, `Result`, `Order`, the `Try`, `Fmt`, and `Repr` traits, the numeric types and `bool`, the operator traits with `Eq` and `Ord`, the effects `console`, `fs`, `net`, `time`, and `ui`, `print`, and the array functions such as `sum` and `map`.
 - When two modules export the same name, the modules are imported and the name is qualified, as in `transaction.begin(db)`.
 - The formatter sorts the list. A missing import is an error that names the module to import from, and an unused one is a warning from `smith check`.
 - An `impl` is not imported. It is visible everywhere, and it must live in the module that defines the trait or the type, which keeps one implementation per type checkable.

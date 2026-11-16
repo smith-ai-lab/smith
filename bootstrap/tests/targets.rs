@@ -20,6 +20,7 @@ use crate::choices;
 use crate::enums;
 use crate::generate::{self, Gen};
 use crate::lambdas;
+use crate::numbers;
 use crate::programs;
 use crate::reprs;
 use crate::sha256;
@@ -65,6 +66,10 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says",
         every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says,
+    ),
+    (
+        "every_executable_of_a_program_with_numbers_does_what_the_evaluator_says",
+        every_executable_of_a_program_with_numbers_does_what_the_evaluator_says,
     ),
     (
         "a_struct_bound_to_two_names_is_two_equal_structs",
@@ -339,6 +344,13 @@ fn every_target_builds_identical_bytes_twice() {
             assert!(first == second, "{} differs", target.name());
         }
     });
+    generate::check(73, 10, numbers::program, |case| {
+        for &target in &targets {
+            let first = compile(case.source.as_bytes(), target).unwrap();
+            let second = compile(case.source.as_bytes(), target).unwrap();
+            assert!(first == second, "{} differs", target.name());
+        }
+    });
 }
 
 /// Checks, for `cases` generated programs, that each executable does what
@@ -402,6 +414,10 @@ fn every_executable_of_a_program_with_text_does_what_the_evaluator_says() {
 
 fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says() {
     every_executable_agrees(64, 60, reprs::program, |case| case.source.as_bytes());
+}
+
+fn every_executable_of_a_program_with_numbers_does_what_the_evaluator_says() {
+    every_executable_agrees(74, 150, numbers::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {

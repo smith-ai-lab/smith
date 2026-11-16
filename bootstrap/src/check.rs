@@ -51,9 +51,88 @@ const TEXT: &str = "str";
 /// The types the language and its library define that the compiler does
 /// not build yet.
 const TYPES_NOT_BUILT: &[&str] = &[
-    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "f16", "bf16", "f32", "f64",
-    "Nat", "Pos", "Fin", "Ptr", "List", "Map",
+    "usize", "f16", "bf16", "f32", "f64", "Nat", "Pos", "Fin", "Ptr", "List", "Map",
 ];
+
+/// The whole number types, which the compiler builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Int {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+}
+
+impl Int {
+    const ALL: [Int; 8] = [
+        Int::I8,
+        Int::I16,
+        Int::I32,
+        Int::I64,
+        Int::U8,
+        Int::U16,
+        Int::U32,
+        Int::U64,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Int::I8 => "i8",
+            Int::I16 => "i16",
+            Int::I32 => "i32",
+            Int::I64 => "i64",
+            Int::U8 => "u8",
+            Int::U16 => "u16",
+            Int::U32 => "u32",
+            Int::U64 => "u64",
+        }
+    }
+
+    fn named(name: &str) -> Option<Int> {
+        Int::ALL.into_iter().find(|t| t.name() == name)
+    }
+
+    fn signed(self) -> bool {
+        matches!(self, Int::I8 | Int::I16 | Int::I32 | Int::I64)
+    }
+
+    fn bits(self) -> u32 {
+        match self {
+            Int::I8 | Int::U8 => 8,
+            Int::I16 | Int::U16 => 16,
+            Int::I32 | Int::U32 => 32,
+            Int::I64 | Int::U64 => 64,
+        }
+    }
+
+    /// The least value of the type.
+    fn min(self) -> i128 {
+        if self.signed() {
+            -(1i128 << (self.bits() - 1))
+        } else {
+            0
+        }
+    }
+
+    /// The greatest value of the type.
+    fn max(self) -> i128 {
+        if self.signed() {
+            (1i128 << (self.bits() - 1)) - 1
+        } else {
+            (1i128 << self.bits()) - 1
+        }
+    }
+}
+
+/// The word a value of a whole number type is held as: its value extended
+/// to 64 bits, which is its bits in two's complement.
+fn word_of(value: i128) -> u64 {
+    value as u64
+}
 
 /// The traits the language and its prelude define, which the compiler
 /// does not build yet.
@@ -72,6 +151,69 @@ const TRAITS_NOT_BUILT: &[&str] = &[
     "FromString",
     "FromArray",
 ];
+
+/// The functions of the three traits that name how arithmetic that may not
+/// fit goes on, and what an operation gives for each: the trait, the
+/// function's stem, and what it gives, written with `T` for the type.
+const ARITHMETIC: &[(&str, &str, &str)] = &[
+    ("Wrapping", "wrapping", "T"),
+    ("Saturating", "saturating", "T"),
+    ("Checked", "checked", "Option[T]"),
+];
+
+/// The operations of those traits.
+const OPERATIONS: &[&str] = &["add", "sub", "mul"];
+
+/// The implementations of the prelude's traits for a whole number type,
+/// which call the functions the compiler builds. Only the prelude may call
+/// them, and their names start with two underscores.
+fn integer_impls(t: Int) -> String {
+    let name = t.name();
+    let mut out = format!(
+        "impl Eq[{name}] {{
+  fn eq(a: {name}, b: {name}) -> bool {{ __equal(a, b) }}
+}}
+
+impl Ord[{name}] {{
+  fn compare(a: {name}, b: {name}) -> Order {{ __compare(a, b) }}
+}}
+
+impl Fmt[{name}] {{
+  fn fmt(value: {name}) -> str ! alloc {{ __decimal(value) }}
+}}
+
+impl Repr[{name}] {{
+  fn repr(value: {name}) -> str ! alloc {{ __decimal(value) }}
+}}
+"
+    );
+    for (tr, stem, gives) in ARITHMETIC {
+        let gives = gives.replace('T', name);
+        out.push_str(&format!("\nimpl {tr}[{name}] {{\n"));
+        for op in OPERATIONS {
+            out.push_str(&format!(
+                "  fn {stem}_{op}(a: {name}, b: {name}) -> {gives} {{ __{stem}_{op}(a, b) }}\n"
+            ));
+        }
+        out.push_str("}\n");
+    }
+    out
+}
+
+/// The traits the language defines whose functions the prelude names for
+/// every whole number type.
+fn integer_traits() -> String {
+    let mut out = String::new();
+    for (tr, stem, gives) in ARITHMETIC {
+        out.push_str(&format!("trait {tr}[T] {{\n"));
+        for op in OPERATIONS {
+            let gives = if *gives == "T" { "T" } else { "Option[T]" };
+            out.push_str(&format!("  fn {stem}_{op}(a: T, b: T) -> {gives}\n"));
+        }
+        out.push_str("}\n\n");
+    }
+    out
+}
 
 /// The types and traits the prelude defines that the compiler builds, with
 /// their implementations, written in Smith. They are read at line 0, which
@@ -92,8 +234,18 @@ enum bool {
   true
 }
 
+enum Order {
+  less
+  equal
+  greater
+}
+
 trait Eq[T] {
   fn eq(a: T, b: T) -> bool
+}
+
+trait Ord[T] {
+  fn compare(a: T, b: T) -> Order
 }
 
 trait Fmt[T] {
@@ -132,10 +284,21 @@ impl[T, U] Try[Option[T], Option[U], T] {
 ";
 
 /// The names of the traits `PRELUDE` defines.
-const PRELUDE_TRAITS: &[&str] = &["Fmt", "Repr", "Try", "Eq"];
+const PRELUDE_TRAITS: &[&str] = &[
+    "Fmt",
+    "Repr",
+    "Try",
+    "Eq",
+    "Ord",
+    "Wrapping",
+    "Saturating",
+    "Checked",
+];
 
 /// The names of the types `PRELUDE` defines.
-const PRELUDE_TYPES: &[&str] = &[TEXT, "Option", "Result", "bool"];
+const PRELUDE_TYPES: &[&str] = &[
+    TEXT, "Option", "Result", "bool", "Order", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+];
 
 /// The place of the prelude's trait with the name among the file's.
 fn prelude_trait(file: &File, name: &str) -> usize {
@@ -151,7 +314,14 @@ fn of_prelude(pos: Pos) -> bool {
 
 /// The file with the definitions of `PRELUDE` before its own.
 fn with_prelude(mut file: File) -> File {
-    let mut tokens = crate::lexer::lex(PRELUDE.as_bytes()).expect("the prelude lexes");
+    let mut source = String::from(PRELUDE);
+    source.push('\n');
+    source.push_str(&integer_traits());
+    for t in Int::ALL {
+        source.push('\n');
+        source.push_str(&integer_impls(t));
+    }
+    let mut tokens = crate::lexer::lex(source.as_bytes()).expect("the prelude lexes");
     for t in &mut tokens {
         t.pos.line = 0;
     }
@@ -166,6 +336,8 @@ fn with_prelude(mut file: File) -> File {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
     Text,
+    /// A whole number type.
+    Int(Int),
     /// A struct, by its place in the file's structs, with a type for each
     /// of its type parameters.
     Struct(usize, Vec<Ty>),
@@ -486,8 +658,11 @@ struct Defs<'a> {
     fmt: usize,
     repr: usize,
     eq: usize,
-    /// The prelude's `bool`, by its place in the file's enums.
+    /// The prelude's `bool`, `Order`, and `Option`, by their places in the
+    /// file's enums.
     boolean: usize,
+    order: usize,
+    option: usize,
     /// Each trait taken away from a struct or an enum by `without`.
     withouts: Vec<(usize, Def)>,
 }
@@ -591,12 +766,12 @@ impl<'a> Defs<'a> {
                 Ty::enumeration(e, args)
             };
         }
-        if name == TEXT {
+        if name == TEXT || Int::named(name).is_some() {
             no_args("the type", errors);
-            return if t.args.is_empty() {
-                Ty::Text
-            } else {
-                Ty::Unknown
+            return match (t.args.is_empty(), Int::named(name)) {
+                (false, _) => Ty::Unknown,
+                (_, Some(int)) => Ty::Int(int),
+                (_, None) => Ty::Text,
             };
         }
         errors.push(if self.trait_names.contains_key(name) {
@@ -659,6 +834,7 @@ impl<'a> Defs<'a> {
         self.struct_names.contains_key(name)
             || self.enum_names.contains_key(name)
             || name == TEXT
+            || Int::named(name).is_some()
             || TYPES_NOT_BUILT.contains(&name)
     }
 
@@ -726,6 +902,7 @@ impl<'a> Defs<'a> {
     fn text(&self, ty: &Ty, scope: &Scope) -> String {
         match ty {
             Ty::Text => TEXT.to_string(),
+            Ty::Int(int) => int.name().to_string(),
             Ty::Struct(_, args) | Ty::Enum(_, args) => {
                 let name = self.type_name(ty);
                 if args.is_empty() {
@@ -1130,6 +1307,9 @@ fn written(f: &Function, effects: &[&str]) -> String {
 /// an escape for every character that needs one.
 fn written_expr(e: &Expr) -> String {
     match e {
+        Expr::Number { text, negative, .. } => {
+            format!("{}{text}", if *negative { "-" } else { "" })
+        }
         Expr::Text { text, .. } => {
             let mut out = String::from("\"");
             for c in String::from_utf8_lossy(text).chars() {
@@ -1510,6 +1690,12 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         eq: prelude_trait(&file, "Eq"),
         boolean: (file.enums.iter())
             .position(|e| e.name == "bool" && of_prelude(e.pos))
+            .expect("the prelude defines it"),
+        order: (file.enums.iter())
+            .position(|e| e.name == "Order" && of_prelude(e.pos))
+            .expect("the prelude defines it"),
+        option: (file.enums.iter())
+            .position(|e| e.name == "Option" && of_prelude(e.pos))
             .expect("the prelude defines it"),
         withouts: Vec::new(),
     };
@@ -2010,7 +2196,7 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 }
             }
         }
-        Expr::Text { .. } | Expr::Name { .. } => {}
+        Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } => {}
     }
 }
 
@@ -2047,7 +2233,7 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                     }
                 }
             }
-            Expr::Case { .. } | Expr::Text { .. } | Expr::Name { .. } => {}
+            Expr::Case { .. } | Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } => {}
         }
     }
     let mut out = Vec::new();
@@ -2156,6 +2342,8 @@ enum Callee {
     /// The function a name holds, which a parameter or a lambda's parameter
     /// was given.
     Value,
+    /// A function the compiler builds, which only the prelude calls.
+    Intrinsic,
 }
 
 /// For each argument of a checked call, the place of its parameter.
@@ -2313,6 +2501,12 @@ impl<'a> Defs<'a> {
 }
 
 /// The address of a node of the syntax tree, by which its type is recorded.
+/// Whether a call is of a function the compiler builds, whose name starts
+/// with two underscores and which only the prelude calls.
+fn is_intrinsic(call: &Call) -> bool {
+    call.qualifier.is_none() && call.callee.starts_with("__") && of_prelude(call.pos)
+}
+
 fn addr<T>(node: &T) -> usize {
     node as *const T as usize
 }
@@ -2365,6 +2559,9 @@ impl<'a> Typed<'a> {
                 if name == "print" {
                     return Callee::Print;
                 }
+                if is_intrinsic(call) {
+                    return Callee::Intrinsic;
+                }
                 if let Some(&f) = defs.function_names.get(name) {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
@@ -2405,7 +2602,7 @@ impl<'a> Typed<'a> {
                 }
             },
             Callee::Construct(_, args) => args.clone(),
-            Callee::Print | Callee::Case(_) | Callee::Value => Vec::new(),
+            Callee::Print | Callee::Case(_) | Callee::Value | Callee::Intrinsic => Vec::new(),
         }
     }
 
@@ -3647,6 +3844,12 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         match expr {
             Expr::Text { .. } => Ty::Text,
+            Expr::Number {
+                magnitude,
+                negative,
+                pos,
+                ..
+            } => self.number(body, expr, *magnitude, *negative, *pos, want),
             Expr::Interp { pos, parts } => {
                 let needs = "a string that holds an expression";
                 if body.default.is_some() {
@@ -3773,6 +3976,79 @@ impl<'a> Checker<'a> {
                     .collect();
                 Ty::tuple(items)
             }
+        }
+    }
+
+    /// Checks a whole number literal, which becomes the type that is wanted
+    /// of it, as `FromInt` says, when it fits.
+    fn number(
+        &mut self,
+        body: &Body,
+        expr: &Expr,
+        magnitude: u128,
+        negative: bool,
+        pos: Pos,
+        want: &Want,
+    ) -> Ty {
+        let defs = self.defs;
+        match want {
+            Want::Ty(Ty::Int(int)) => {
+                let fits = if negative {
+                    magnitude <= int.min().unsigned_abs()
+                } else {
+                    magnitude <= int.max() as u128
+                };
+                if !fits {
+                    self.errors.push(Error::new(
+                        pos,
+                        format!(
+                            "`{}` does not fit `{}`, which holds {} to {}",
+                            written_expr(expr),
+                            int.name(),
+                            int.min(),
+                            int.max()
+                        ),
+                    ));
+                }
+                Ty::Int(*int)
+            }
+            Want::Ty(Ty::Unknown) => Ty::Unknown,
+            Want::Ty(needed) => {
+                let needed = defs.describe(needed, body.scope);
+                self.errors.push(Error::new(
+                    pos,
+                    format!("this is a number, where {needed} is needed"),
+                ));
+                Ty::Unknown
+            }
+            Want::Any | Want::Unused => {
+                self.errors.push(
+                    Error::new(pos, "this number has no type to become")
+                        .with_fix("state the type of a binding, as in `limit: i32 = 100`"),
+                );
+                Ty::Unknown
+            }
+        }
+    }
+
+    /// Checks a call of a function the compiler builds for the prelude: it
+    /// takes whole numbers of one type, and gives the type, a `bool`, an
+    /// `Order`, an `Option` of the type, or text.
+    fn intrinsic(&mut self, body: &mut Body<'a>, call: &Call) -> Ty {
+        let defs = self.defs;
+        let tys: Vec<Ty> = (call.args.iter())
+            .map(|a| self.expr(body, &a.value, &Want::Any))
+            .collect();
+        let ty = tys[0].clone();
+        match call.callee.as_str() {
+            "__equal" => defs.bool_ty(),
+            "__compare" => Ty::Enum(defs.order, Vec::new()),
+            "__decimal" => {
+                self.needs(body, "alloc", call.pos, "`__decimal`");
+                Ty::Text
+            }
+            name if name.starts_with("__checked_") => Ty::Enum(defs.option, vec![ty]),
+            _ => ty,
         }
     }
 
@@ -4506,6 +4782,9 @@ impl<'a> Checker<'a> {
         if let Some(&s) = defs.struct_names.get(name) {
             return self.construction(body, call, s, want);
         }
+        if is_intrinsic(call) {
+            return self.intrinsic(body, call);
+        }
         if name == "print" {
             let print = Signature::print();
             if self.effect_in_default(body, call, &print) {
@@ -4832,6 +5111,10 @@ impl<'a> Checker<'a> {
             self.needs(body, effect, call.pos, &format!("`{}`", call.callee));
         }
         let mut given: Vec<bool> = vec![false; signature.params.len()];
+        // The whole number literals whose type is not known when they are
+        // reached, which are checked after the other arguments, with the
+        // place of the parameter each is for.
+        let mut deferred: Vec<(usize, &Expr)> = Vec::new();
         let mut named = false;
         let mut too_many = false;
         let mut next = 0;
@@ -4965,6 +5248,10 @@ impl<'a> Checker<'a> {
                 },
                 None => Want::Ty(Ty::Unknown),
             };
+            if let (Some(i), Expr::Number { .. }, Want::Any) = (param, &arg.value, &wanted) {
+                deferred.push((i, &arg.value));
+                continue;
+            }
             let gives = self.expr(body, &arg.value, &wanted);
             match param {
                 Some(i) => {
@@ -4976,6 +5263,22 @@ impl<'a> Checker<'a> {
                 }
                 None => {}
             }
+        }
+        // A literal takes the type the other arguments settle. When they do
+        // not, only the first of them is reported.
+        let mut reported = false;
+        for (i, value) in deferred {
+            let pattern = &signature.params[i].1;
+            let wanted = match pattern.partial(&sol) {
+                Ty::Unknown if reported => Want::Ty(Ty::Unknown),
+                Ty::Unknown => {
+                    reported = true;
+                    Want::Any
+                }
+                t => Want::Ty(t),
+            };
+            let gives = self.expr(body, value, &wanted);
+            self.fit(body, value, &gives, pattern, &mut sol, vars);
         }
         let missing: Vec<&str> = (signature.params.iter())
             .zip(given.iter().zip(&signature.defaults))
@@ -5196,7 +5499,7 @@ impl<'a> Lowering<'a> {
     fn width(&self, ty: &Ty) -> usize {
         let defs = self.typed.defs;
         match ty {
-            Ty::Text => 1,
+            Ty::Text | Ty::Int(_) => 1,
             Ty::Struct(s, args) => (defs.fields[*s].iter())
                 .map(|f| self.width(&f.subst(args)))
                 .sum(),
@@ -5364,6 +5667,275 @@ impl<'a> Lowering<'a> {
             results: vec![local],
         });
         Value::Local(local)
+    }
+
+    /// A new local that holds one word.
+    fn fresh(&self, out: &mut Lowered<'a>) -> usize {
+        out.locals += 1;
+        out.locals - 1
+    }
+
+    /// The step that puts what `op` makes of `a` and `b` in a new local,
+    /// and the local.
+    fn word(&self, out: &mut Lowered<'a>, op: ir::Word, a: Value, b: Value) -> Value {
+        let local = self.fresh(out);
+        out.steps.push(Step::Word { local, op, a, b });
+        Value::Local(local)
+    }
+
+    /// `true` or `false`.
+    fn truth(&self, value: bool) -> Value {
+        let defs = self.typed.defs;
+        let name = if value { "true" } else { "false" };
+        Value::Case(defs.case_of(defs.boolean, name).expect("a case"))
+    }
+
+    /// Runs the steps `then` makes when `condition`, a `bool`, is true and
+    /// the steps `otherwise` makes when it is false.
+    fn choose(
+        &mut self,
+        out: &mut Lowered<'a>,
+        condition: Value,
+        then: impl FnOnce(&mut Self, &mut Lowered<'a>),
+        otherwise: impl FnOnce(&mut Self, &mut Lowered<'a>),
+    ) {
+        let defs = self.typed.defs;
+        let before = std::mem::take(&mut out.steps);
+        then(self, out);
+        let then = std::mem::take(&mut out.steps);
+        otherwise(self, out);
+        let otherwise = std::mem::replace(&mut out.steps, before);
+        let mut arms = vec![Vec::new(), Vec::new()];
+        arms[defs.case_of(defs.boolean, "true").expect("a case")] = then;
+        arms[defs.case_of(defs.boolean, "false").expect("a case")] = otherwise;
+        out.steps.push(Step::Match {
+            value: condition,
+            arms,
+        });
+    }
+
+    /// A new local that holds `then` when `condition` is true and
+    /// `otherwise` when it is false.
+    fn select(
+        &mut self,
+        out: &mut Lowered<'a>,
+        condition: Value,
+        then: Value,
+        otherwise: Value,
+    ) -> Value {
+        let local = self.fresh(out);
+        let set = |value| Step::Set { local, value };
+        self.choose(
+            out,
+            condition,
+            |_, out| out.steps.push(set(then)),
+            |_, out| out.steps.push(set(otherwise)),
+        );
+        Value::Local(local)
+    }
+
+    /// Whether both `a` and `b`, which are `bool`s, are true.
+    fn both(&mut self, out: &mut Lowered<'a>, a: Value, b: Value) -> Value {
+        let no = self.truth(false);
+        self.select(out, a, b, no)
+    }
+
+    /// Whether either of `a` and `b`, which are `bool`s, is true.
+    fn either(&mut self, out: &mut Lowered<'a>, a: Value, b: Value) -> Value {
+        let yes = self.truth(true);
+        self.select(out, a, yes, b)
+    }
+
+    /// Whether `a`, a `bool`, is false.
+    fn opposite(&mut self, out: &mut Lowered<'a>, a: Value) -> Value {
+        let (yes, no) = (self.truth(true), self.truth(false));
+        self.select(out, a, no, yes)
+    }
+
+    /// The steps of a function the compiler builds for the prelude, on the
+    /// values of a whole number type, and the values it gives.
+    fn intrinsic(
+        &mut self,
+        out: &mut Lowered<'a>,
+        name: &str,
+        t: Int,
+        args: &[Value],
+    ) -> Vec<Value> {
+        let defs = self.typed.defs;
+        let number = |n: i128| Value::Number(word_of(n));
+        let a = args[0];
+        match name {
+            "__equal" => vec![self.word(out, ir::Word::Equal, a, args[1])],
+            "__compare" => {
+                let b = args[1];
+                let less = if t.signed() {
+                    ir::Word::LessS
+                } else {
+                    ir::Word::LessU
+                };
+                let below = self.word(out, less, a, b);
+                let same = self.word(out, ir::Word::Equal, a, b);
+                let case =
+                    |name: &str| Value::Case(defs.case_of(defs.order, name).expect("a case"));
+                let (equal, greater) = (case("equal"), case("greater"));
+                let after = self.select(out, same, equal, greater);
+                vec![self.select(out, below, case("less"), after)]
+            }
+            "__decimal" => {
+                let local = self.fresh(out);
+                if !t.signed() {
+                    out.steps.push(Step::Decimal { local, value: a });
+                    return vec![Value::Local(local)];
+                }
+                let negative = self.word(out, ir::Word::LessS, a, number(0));
+                let minus = self.text(b"-");
+                self.choose(
+                    out,
+                    negative,
+                    |this, out| {
+                        let size = this.word(out, ir::Word::Sub, number(0), a);
+                        let digits = this.fresh(out);
+                        out.steps.push(Step::Decimal {
+                            local: digits,
+                            value: size,
+                        });
+                        out.steps.push(Step::Join {
+                            local,
+                            parts: vec![minus, Value::Local(digits)],
+                        });
+                    },
+                    |_, out| out.steps.push(Step::Decimal { local, value: a }),
+                );
+                vec![Value::Local(local)]
+            }
+            _ => {
+                let (kind, op) = name[2..].split_once('_').expect("a named operation");
+                self.arithmetic(out, kind, op, t, a, args[1])
+            }
+        }
+    }
+
+    /// The values of `a` and `b`, whole numbers of type `t`, put through
+    /// an operation: `add`, `sub`, or `mul`. `wrapping` gives the result
+    /// with the bits that do not fit left off, `saturating` gives the
+    /// nearest value that fits, and `checked` gives an `Option` that holds
+    /// the result if it fits.
+    ///
+    /// A number is held as a word of 64 bits, so for a type of fewer bits
+    /// the operation on the words is exact, and whether it fits is whether
+    /// it is in the limits of the type. For a type of 64 bits the word
+    /// wraps, and whether it fit is read from the bits that did not stay.
+    fn arithmetic(
+        &mut self,
+        out: &mut Lowered<'a>,
+        kind: &str,
+        op: &str,
+        t: Int,
+        a: Value,
+        b: Value,
+    ) -> Vec<Value> {
+        use ir::Word::*;
+        let defs = self.typed.defs;
+        let number = |n: i128| Value::Number(word_of(n));
+        let zero = number(0);
+        let word = match op {
+            "add" => Add,
+            "sub" => Sub,
+            _ => Mul,
+        };
+        let r = self.word(out, word, a, b);
+        if kind == "wrapping" {
+            let bits = t.bits();
+            return vec![if bits == 64 {
+                r
+            } else if t.signed() {
+                let up = self.word(out, ShiftLeft, r, number(64 - bits as i128));
+                self.word(out, ShiftRightS, up, number(64 - bits as i128))
+            } else {
+                self.word(out, And, r, number(t.max()))
+            }];
+        }
+        let no = self.truth(false);
+        // Whether the result is below the least value of the type, and
+        // whether it is above the greatest.
+        let (below, above) = if t.bits() < 64 && t.signed() {
+            let below = self.word(out, LessS, r, number(t.min()));
+            (below, self.word(out, LessS, number(t.max()), r))
+        } else if t.bits() < 64 {
+            match op {
+                "sub" => (self.word(out, LessU, a, b), no),
+                _ => (no, self.word(out, LessU, number(t.max()), r)),
+            }
+        } else if !t.signed() {
+            match op {
+                "add" => (no, self.word(out, LessU, r, a)),
+                "sub" => (self.word(out, LessU, a, b), no),
+                _ => {
+                    let high = self.word(out, MulHighU, a, b);
+                    (no, self.word(out, LessU, zero, high))
+                }
+            }
+        } else {
+            // Which way an overflow went is decided by the sign of the
+            // second operand, or for a product by whether the signs of the
+            // operands differ.
+            let negative = match op {
+                "mul" => {
+                    let signs = self.word(out, Xor, a, b);
+                    self.word(out, LessS, signs, zero)
+                }
+                _ => self.word(out, LessS, b, zero),
+            };
+            let overflowed = match op {
+                "add" => {
+                    let (x, y) = (self.word(out, Xor, a, r), self.word(out, Xor, b, r));
+                    let both = self.word(out, And, x, y);
+                    self.word(out, LessS, both, zero)
+                }
+                "sub" => {
+                    let (x, y) = (self.word(out, Xor, a, b), self.word(out, Xor, a, r));
+                    let both = self.word(out, And, x, y);
+                    self.word(out, LessS, both, zero)
+                }
+                _ => {
+                    let high = self.word(out, MulHighS, a, b);
+                    let sign = self.word(out, ShiftRightS, r, number(63));
+                    let same = self.word(out, Equal, high, sign);
+                    self.opposite(out, same)
+                }
+            };
+            let positive = self.opposite(out, negative);
+            // An addition goes below when the operand added is negative, a
+            // subtraction when the operand taken is not, and a product when
+            // the operands' signs differ.
+            let (down, up) = match op {
+                "sub" => (positive, negative),
+                "add" => (negative, positive),
+                _ => (negative, positive),
+            };
+            (
+                self.both(out, overflowed, down),
+                self.both(out, overflowed, up),
+            )
+        };
+        let least = number(t.min());
+        let greatest = number(t.max());
+        if kind == "saturating" {
+            let local = self.fresh(out);
+            let set = |value| Step::Set { local, value };
+            out.steps.push(set(r));
+            self.choose(
+                out,
+                above,
+                |_, out| out.steps.push(set(greatest)),
+                |this, out| this.choose(out, below, |_, out| out.steps.push(set(least)), |_, _| {}),
+            );
+            return vec![Value::Local(local)];
+        }
+        let wrong = self.either(out, below, above);
+        let some = Value::Case(defs.case_of(defs.option, "some").expect("a case"));
+        let none = Value::Case(defs.case_of(defs.option, "none").expect("a case"));
+        vec![self.select(out, wrong, none, some), r]
     }
 
     /// Whether the values `a` and `b` of the type are equal, as the `Eq` it
@@ -5593,6 +6165,18 @@ impl<'a> Lowering<'a> {
         let defs = typed.defs;
         match expr {
             Expr::Text { text, .. } => (Ty::Text, vec![self.text(text)]),
+            Expr::Number {
+                magnitude,
+                negative,
+                ..
+            } => {
+                let magnitude = *magnitude as i128;
+                let value = if *negative { -magnitude } else { magnitude };
+                (
+                    typed.type_of(expr, env),
+                    vec![Value::Number(word_of(value))],
+                )
+            }
             Expr::Interp { parts, .. } => {
                 let parts = (parts.iter())
                     .map(|part| match part {
@@ -5640,6 +6224,20 @@ impl<'a> Lowering<'a> {
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Value => self.call_value(out, call, env),
+                Callee::Intrinsic => {
+                    let mut args = Vec::new();
+                    let mut int = None;
+                    for arg in &call.args {
+                        let (ty, values) = self.expr(out, &arg.value, env);
+                        if let Ty::Int(t) = ty {
+                            int = Some(t);
+                        }
+                        args.push(values[0]);
+                    }
+                    let int = int.expect("checked");
+                    let values = self.intrinsic(out, &call.callee, int, &args);
+                    (typed.type_of(expr, env), values)
+                }
                 Callee::Run(instance, gives)
                     if (defs.params(instance.template).iter())
                         .any(|(_, t)| t.subst(&instance.args).holds_fn()) =>

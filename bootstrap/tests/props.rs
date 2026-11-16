@@ -13,6 +13,7 @@ use crate::choices;
 use crate::enums;
 use crate::generate::{self, Gen};
 use crate::lambdas;
+use crate::numbers;
 use crate::programs::{self, Case, PIECES, pos_after};
 use crate::reprs;
 use crate::targets;
@@ -109,6 +110,22 @@ pub const TESTS: &[Test] = &[
     (
         "every_placed_mistake_about_reprs_is_one_error_at_its_place",
         every_placed_mistake_about_reprs_is_one_error_at_its_place,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print,
+    ),
+    (
+        "the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type",
+        the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type,
+    ),
+    (
+        "every_placed_mistake_about_numbers_is_one_error_at_its_place",
+        every_placed_mistake_about_numbers_is_one_error_at_its_place,
+    ),
+    (
+        "a_program_that_holds_no_number_builds_to_the_same_bytes_whatever_numbers_it_defines",
+        a_program_that_holds_no_number_builds_to_the_same_bytes_whatever_numbers_it_defines,
     ),
     (
         "what_a_program_does_not_print_is_given_nothing",
@@ -242,7 +259,7 @@ fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
         // A mistake in its syntax is still found, as it is parsed.
         let broken = format!("{text}fn broken() {{ x = ");
         let at = pos_after(&broken);
-        let found = errors(&format!("{broken}1 }}\n"));
+        let found = errors(&format!("{broken}1.5 }}\n"));
         assert_eq!(found.iter().map(|e| e.pos).collect::<Vec<_>>(), [at]);
     });
 }
@@ -489,6 +506,69 @@ fn every_placed_mistake_about_choices_is_one_error_at_its_place() {
 }
 
 /// What a program prints, by the evaluator.
+fn the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print() {
+    generate::check(70, 300, numbers::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(
+            eval::run(&program),
+            Outcome {
+                stdout: case.stdout.clone(),
+                status: 0
+            }
+        );
+    });
+}
+
+/// Over the programs it generates, every value bound is a value of its
+/// type, and some bind the least and some the greatest value of each type.
+fn the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type() {
+    let mut reached: Vec<(numbers::Int, bool, bool)> =
+        numbers::INTS.iter().map(|t| (*t, false, false)).collect();
+    for case in 0..300 {
+        let program = generate::sample(70, case, numbers::program);
+        for (ty, value) in &program.bound {
+            assert!(
+                (ty.min()..=ty.max()).contains(value),
+                "{value} in {}",
+                ty.name
+            );
+            let entry = reached.iter_mut().find(|(t, ..)| t == ty).expect("a type");
+            entry.1 |= *value == ty.min();
+            entry.2 |= *value == ty.max();
+        }
+    }
+    for (ty, least, greatest) in reached {
+        assert!(least, "no program binds the least value of {}", ty.name);
+        assert!(
+            greatest,
+            "no program binds the greatest value of {}",
+            ty.name
+        );
+    }
+}
+
+fn every_placed_mistake_about_numbers_is_one_error_at_its_place() {
+    generate::check(71, 600, numbers::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
+/// A program that holds no number builds to the same bytes whatever the
+/// numbers its unreached functions use, and the prelude's implementations
+/// for them add nothing.
+fn a_program_that_holds_no_number_builds_to_the_same_bytes_whatever_numbers_it_defines() {
+    const UNREACHED: &str = "fn spare(a: u8, b: u8) -> bool { a < b }\n\
+        fn more(a: i64) -> str ! alloc { \"{wrapping_add(a, 1)}\" }\n";
+    generate::check(72, 100, programs::program, |case| {
+        let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut with = case.source.clone();
+        with.extend_from_slice(b"\n");
+        with.extend_from_slice(UNREACHED.as_bytes());
+        assert_eq!(lower(&with), Ok(program), "{case:?}");
+    });
+}
+
 fn stdout_of(source: &str) -> Vec<u8> {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in\n{source}"));
     eval::run(&program).stdout
@@ -853,22 +933,22 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
     const STATEMENTS: &[Line] = &[
         ("", "print(\"a\")", None),
         ("", "x = \"a\"", None),
-        ("x = ", "1", Some("not supported yet")),
-        ("var x = ", "1", Some("not supported yet")),
+        ("x = ", "1.5", Some("not supported yet")),
+        ("var x = ", "1.5", Some("not supported yet")),
         ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
         ("print(\"a\")", "[0]", Some("not supported yet")),
         ("x.y ", "+= \"a\"", Some("not supported yet")),
         ("", ")", Some("statement")),
     ];
     const ITEMS: &[Line] = &[
-        ("struct A { x: str = ", "1 }", Some("not supported yet")),
+        ("struct A { x: str = ", "1.5 }", Some("not supported yet")),
         ("", "struct C { x: str = \"a\" }", None),
         ("fn d(a: str = ", ") {}", Some("an expression")),
         ("", "struct B {\n  x: f32\n}", None),
         ("", "use std.console (input)", Some("not supported yet")),
         ("", ")", Some("definition")),
         ("", "fn f() ! console { print(\"a\") }", None),
-        ("fn g()\n{\n  x = ", "1\n}", Some("not supported yet")),
+        ("fn g()\n{\n  x = ", "1.5\n}", Some("not supported yet")),
         ("fn h(a: str ", "b: str) {}", Some("`,` or `)`")),
     ];
     {

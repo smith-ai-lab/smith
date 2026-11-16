@@ -1,0 +1,8 @@
+fn main() ! console, alloc {
+  least: i64 = -9_223_372_036_854_775_808
+  greatest: u64 = 0xffff_ffff_ffff_ffff
+  print("{least} {greatest} {repr(least)}")
+  print("{wrapping_sub(least, 1)} {saturating_mul(greatest, 2)} {checked_mul(least, -1)}")
+  print("{saturating_add(least, -1)} {checked_sub(greatest, greatest)} {(least, greatest)}")
+  print("{least < 0} {greatest > 0} {greatest == 18446744073709551615}")
+}

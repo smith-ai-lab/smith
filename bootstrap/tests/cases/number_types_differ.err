@@ -1,0 +1,3 @@
+number_types_differ.smith:4:16: this gives a `u8`, where a `i32` is needed
+  4 |   print("{a == b}")
+    |                ^

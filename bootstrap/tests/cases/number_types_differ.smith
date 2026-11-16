@@ -1,0 +1,5 @@
+fn main() ! console, alloc {
+  a: i32 = 1
+  b: u8 = 2
+  print("{a == b}")
+}
