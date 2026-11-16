@@ -1,13 +1,8 @@
 //! Linux on x86-64: a static ELF executable that talks to the kernel
-//! directly through system calls.
+//! directly through system calls, written by the shared ELF writer.
 
+use super::elf::{self, Machine};
 use crate::ir::{Program, Step, Stream};
-
-/// Where the executable is loaded.
-const BASE: u64 = 0x40_0000;
-const ELF_HEADER_SIZE: usize = 64;
-const PROGRAM_HEADER_SIZE: usize = 56;
-const HEADERS_SIZE: usize = ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE;
 
 const SYS_WRITE: u32 = 1;
 const SYS_EXIT_GROUP: u32 = 231;
@@ -15,43 +10,7 @@ const EINTR: u8 = 4;
 
 /// The executable for the program.
 pub fn emit(program: &Program) -> Vec<u8> {
-    let image = code(program);
-    let mut out = Vec::with_capacity(HEADERS_SIZE + image.len());
-    elf_header(&mut out);
-    program_header(&mut out, (HEADERS_SIZE + image.len()) as u64);
-    out.extend_from_slice(&image);
-    out
-}
-
-fn elf_header(out: &mut Vec<u8>) {
-    out.extend_from_slice(&[0x7f, b'E', b'L', b'F']);
-    // 64-bit, little-endian, ELF version 1, System V ABI, and padding.
-    out.extend_from_slice(&[2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    out.extend_from_slice(&2u16.to_le_bytes()); // an executable
-    out.extend_from_slice(&0x3eu16.to_le_bytes()); // x86-64
-    out.extend_from_slice(&1u32.to_le_bytes()); // version
-    out.extend_from_slice(&(BASE + HEADERS_SIZE as u64).to_le_bytes()); // entry
-    out.extend_from_slice(&(ELF_HEADER_SIZE as u64).to_le_bytes()); // program headers
-    out.extend_from_slice(&0u64.to_le_bytes()); // no section headers
-    out.extend_from_slice(&0u32.to_le_bytes()); // flags
-    out.extend_from_slice(&(ELF_HEADER_SIZE as u16).to_le_bytes());
-    out.extend_from_slice(&(PROGRAM_HEADER_SIZE as u16).to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes()); // one program header
-    out.extend_from_slice(&64u16.to_le_bytes()); // section header size
-    out.extend_from_slice(&0u16.to_le_bytes()); // no sections
-    out.extend_from_slice(&0u16.to_le_bytes()); // no section names
-}
-
-/// One segment, readable and executable, that maps the whole file.
-fn program_header(out: &mut Vec<u8>, size: u64) {
-    out.extend_from_slice(&1u32.to_le_bytes()); // a loadable segment
-    out.extend_from_slice(&5u32.to_le_bytes()); // read and execute
-    out.extend_from_slice(&0u64.to_le_bytes()); // file offset
-    out.extend_from_slice(&BASE.to_le_bytes()); // virtual address
-    out.extend_from_slice(&BASE.to_le_bytes()); // physical address
-    out.extend_from_slice(&size.to_le_bytes()); // size in the file
-    out.extend_from_slice(&size.to_le_bytes()); // size in memory
-    out.extend_from_slice(&0x1000u64.to_le_bytes()); // alignment
+    elf::executable(Machine::X86_64, &code(program))
 }
 
 /// The machine code followed by the data it reads.

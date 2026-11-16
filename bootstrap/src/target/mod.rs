@@ -1,6 +1,9 @@
 //! The targets the compiler builds for. Each target turns the program into
 //! the bytes of an executable.
 
+mod arm64;
+mod elf;
+mod linux_arm64;
 mod linux_x64;
 mod macos_arm64;
 
@@ -33,6 +36,7 @@ macro_rules! targets {
 targets! {
     LinuxX64 => "linux_x64",
     MacosArm64 => "macos_arm64",
+    LinuxArm64 => "linux_arm64",
 }
 
 impl Target {
@@ -46,6 +50,8 @@ impl Target {
             Some(Target::LinuxX64)
         } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             Some(Target::MacosArm64)
+        } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            Some(Target::LinuxArm64)
         } else {
             None
         }
@@ -62,6 +68,7 @@ impl Target {
         match self {
             Target::LinuxX64 => Some(linux_x64::emit(program)),
             Target::MacosArm64 => Some(macos_arm64::emit(program)),
+            Target::LinuxArm64 => Some(linux_arm64::emit(program)),
         }
     }
 }
