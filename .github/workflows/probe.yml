@@ -1,5 +1,8 @@
 name: probe
 on: push
+permissions:
+  contents: read
+
 jobs:
   machine:
     name: test on ${{ matrix.leg }}
