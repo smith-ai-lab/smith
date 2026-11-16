@@ -9,6 +9,7 @@ use smith::eval::{self, Outcome};
 use smith::{compile, lower};
 
 use crate::Test;
+use crate::choices;
 use crate::enums;
 use crate::generate::{self, Gen};
 use crate::lambdas;
@@ -112,6 +113,14 @@ pub const TESTS: &[Test] = &[
     (
         "what_a_program_does_not_print_is_given_nothing",
         what_a_program_does_not_print_is_given_nothing,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print,
+    ),
+    (
+        "every_placed_mistake_about_choices_is_one_error_at_its_place",
+        every_placed_mistake_about_choices_is_one_error_at_its_place,
     ),
     (
         "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print",
@@ -461,6 +470,24 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
     });
 }
 
+fn the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print() {
+    generate::check(66, 300, choices::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+    });
+}
+
+fn every_placed_mistake_about_choices_is_one_error_at_its_place() {
+    generate::check(67, 500, choices::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
 /// What a program prints, by the evaluator.
 fn stdout_of(source: &str) -> Vec<u8> {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in\n{source}"));
@@ -512,9 +539,9 @@ fn given_to(source: &str) -> Vec<&str> {
 }
 
 fn what_a_program_does_not_print_is_given_nothing() {
-    // Programs that print no struct, enum, or tuple with the `Fmt` or the
-    // `Repr` it is given build to the same bytes when nothing is given to
-    // any of their types.
+    // Programs that print and compare no struct, enum, or tuple with the
+    // `Fmt`, the `Repr`, or the `Eq` it is given build to the same bytes
+    // when nothing is given to any of their types.
     let targets = targets::buildable();
     let choose = |g: &mut Gen| {
         let source = match g.below(4) {
@@ -529,7 +556,7 @@ fn what_a_program_does_not_print_is_given_nothing() {
         let mut taken = source.clone();
         for name in given_to(source) {
             taken.push_str(&format!(
-                "\nwithout Fmt for {name}\nwithout Repr for {name}\n"
+                "\nwithout Fmt for {name}\nwithout Repr for {name}\nwithout Eq for {name}\n"
             ));
         }
         let built = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));

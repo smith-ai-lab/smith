@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 use crate::diag::{Error, Pos};
 use crate::ir::{self, Step, Stream, Value};
 use crate::parser::{
-    Arg, Arm, Call, Expr, File, Function, Generic, Lambda, Match, Part, Pattern, Stmt, Type,
+    Arg, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Match, Part, Pattern, Stmt, Type,
 };
 
 /// The effects the standard library declares, other than `console`.
@@ -51,8 +51,8 @@ const TEXT: &str = "str";
 /// The types the language and its library define that the compiler does
 /// not build yet.
 const TYPES_NOT_BUILT: &[&str] = &[
-    "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "f16", "bf16", "f32",
-    "f64", "Nat", "Pos", "Fin", "Ptr", "List", "Map",
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "f16", "bf16", "f32", "f64",
+    "Nat", "Pos", "Fin", "Ptr", "List", "Map",
 ];
 
 /// The traits the language and its prelude define, which the compiler
@@ -85,6 +85,15 @@ enum Option[T] {
 enum Result[T, E] {
   ok: T
   err: E
+}
+
+enum bool {
+  false
+  true
+}
+
+trait Eq[T] {
+  fn eq(a: T, b: T) -> bool
 }
 
 trait Fmt[T] {
@@ -123,7 +132,10 @@ impl[T, U] Try[Option[T], Option[U], T] {
 ";
 
 /// The names of the traits `PRELUDE` defines.
-const PRELUDE_TRAITS: &[&str] = &["Fmt", "Repr", "Try"];
+const PRELUDE_TRAITS: &[&str] = &["Fmt", "Repr", "Try", "Eq"];
+
+/// The names of the types `PRELUDE` defines.
+const PRELUDE_TYPES: &[&str] = &[TEXT, "Option", "Result", "bool"];
 
 /// The place of the prelude's trait with the name among the file's.
 fn prelude_trait(file: &File, name: &str) -> usize {
@@ -469,10 +481,13 @@ struct Defs<'a> {
     impls: Vec<Option<ImplInfo>>,
     /// The implementations of each trait, in the order they are written.
     impls_of: Vec<Vec<usize>>,
-    /// The prelude's `Fmt` and `Repr`, which a type is given
+    /// The prelude's `Fmt`, `Repr`, and `Eq`, which a type is given
     /// automatically, by their places in the file's traits.
     fmt: usize,
     repr: usize,
+    eq: usize,
+    /// The prelude's `bool`, by its place in the file's enums.
+    boolean: usize,
     /// Each trait taken away from a struct or an enum by `without`.
     withouts: Vec<(usize, Def)>,
 }
@@ -592,6 +607,11 @@ impl<'a> Defs<'a> {
             Error::new(t.pos, format!("there is no type named `{name}`"))
         });
         Ty::Unknown
+    }
+
+    /// The prelude's `bool`.
+    fn bool_ty(&self) -> Ty {
+        Ty::Enum(self.boolean, Vec::new())
     }
 
     /// Whether the type is the prelude's `Result`, whose failure must not be
@@ -879,14 +899,16 @@ impl<'a> Defs<'a> {
     /// writes it with, if the trait is one a type is given automatically
     /// and the type is one it is given to, and nothing takes it away: the
     /// fields of a struct, what the cases of an enum hold, and the elements
-    /// of a tuple. A `str` is given `Repr`, which has no parts.
+    /// of a tuple. A `str` is given `Repr` and `Eq`, and `()` each of the
+    /// three, which have no parts.
     fn given_parts(&self, k: usize, types: &[Ty]) -> Option<Vec<Ty>> {
-        if k != self.fmt && k != self.repr {
+        if k != self.fmt && k != self.repr && k != self.eq {
             return None;
         }
         let taken = |d: Def| self.withouts.contains(&(k, d));
         match &types[0] {
-            Ty::Text if k == self.repr => Some(Vec::new()),
+            Ty::Text if k != self.fmt => Some(Vec::new()),
+            Ty::Nothing => Some(Vec::new()),
             Ty::Struct(s, args) if !taken(Def::Struct(*s)) => {
                 Some(self.fields[*s].iter().map(|t| t.subst(args)).collect())
             }
@@ -945,7 +967,7 @@ impl<'a> Defs<'a> {
     }
 
     /// The copies a copy of a given implementation runs: for `Fmt`, the
-    /// `Repr` of its type, and for `Repr`, that of each part.
+    /// `Repr` of its type, and for `Repr` and `Eq`, that of each part.
     fn given_calls(&self, k: usize, types: &[Ty]) -> Vec<Instance> {
         let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()]).0;
         if k == self.fmt {
@@ -1169,7 +1191,21 @@ fn written_expr(e: &Expr) -> String {
             Some(p) => format!(".{name}({})", written_expr(p)),
             None => format!(".{name}"),
         },
-        Expr::Match(m) => format!("match {} {{ ... }}", written_expr(&m.of)),
+        Expr::Match(m) => {
+            // The side of `and` or `or` that runs only sometimes is what one
+            // of the blocks gives.
+            let side = |arm: usize| match m.arms[arm].body.as_slice() {
+                [Stmt::Expr(e)] => written_expr(e),
+                _ => "...".to_string(),
+            };
+            match m.form {
+                Form::Match => format!("match {} {{ ... }}", written_expr(&m.of)),
+                Form::If { .. } => format!("if {} {{ ... }}", written_expr(&m.of)),
+                Form::Not => format!("not ({})", written_expr(&m.of)),
+                Form::And => format!("({}) and ({})", written_expr(&m.of), side(0)),
+                Form::Or => format!("({}) or ({})", written_expr(&m.of), side(1)),
+            }
+        }
         Expr::Tuple { items, .. } => {
             let items: Vec<String> = items.iter().map(written_expr).collect();
             format!("({})", items.join(", "))
@@ -1251,8 +1287,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         };
         let prelude_name = match claim {
             Claim::Fn(_) | Claim::TraitFn(..) => name == "print",
-            Claim::Struct(_) => name == TEXT,
-            Claim::Enum(_) => name == TEXT || name == "Option" || name == "Result",
+            Claim::Struct(_) | Claim::Enum(_) => PRELUDE_TYPES.contains(&name),
             Claim::Trait(_) => {
                 name == TEXT || TRAITS_NOT_BUILT.contains(&name) || PRELUDE_TRAITS.contains(&name)
             }
@@ -1472,6 +1507,10 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         impls_of: vec![Vec::new(); file.traits.len()],
         fmt: prelude_trait(&file, "Fmt"),
         repr: prelude_trait(&file, "Repr"),
+        eq: prelude_trait(&file, "Eq"),
+        boolean: (file.enums.iter())
+            .position(|e| e.name == "bool" && of_prelude(e.pos))
+            .expect("the prelude defines it"),
         withouts: Vec::new(),
     };
     let mut done = Vec::new();
@@ -1626,7 +1665,7 @@ fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)> {
     for w in &defs.file.withouts {
         let name = w.name.as_str();
         let k = match defs.trait_names.get(name) {
-            Some(&k) if k == defs.fmt || k == defs.repr => k,
+            Some(&k) if k == defs.fmt || k == defs.repr || k == defs.eq => k,
             Some(_) => {
                 errors.push(Error::new(
                     w.name_pos,
@@ -1636,7 +1675,7 @@ fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)> {
                 ));
                 continue;
             }
-            None if TRAITS_NOT_BUILT.contains(&name) || name == "Eq" => {
+            None if TRAITS_NOT_BUILT.contains(&name) => {
                 errors.push(Error::unsupported(w.pos, &format!("`without {name}`")));
                 continue;
             }
@@ -3505,17 +3544,7 @@ impl<'a> Checker<'a> {
                     let want = if is_last { last } else { &Want::Unused };
                     let gives = self.expr(body, value, want);
                     if !is_last && self.defs.is_result(&gives) {
-                        self.errors.push(
-                            Error::new(
-                                value.pos(),
-                                format!(
-                                    "this gives {}, which nothing uses, so a failure would be \
-                                     dropped",
-                                    self.defs.describe(&gives, body.scope)
-                                ),
-                            )
-                            .with_fix("write `try` before it, or match on it"),
-                        );
+                        self.dropped(body, value, &gives);
                     }
                     End::Value(gives, value)
                 }
@@ -3647,6 +3676,8 @@ impl<'a> Checker<'a> {
                     (defs.function_names.get(name.as_str()), &body.default)
                 {
                     self.function_value(expr, f, *pos)
+                } else if name == "true" || name == "false" {
+                    defs.bool_ty()
                 } else {
                     let message = match &body.default {
                         Some(params) if params.contains(&name.as_str()) => {
@@ -4038,6 +4069,11 @@ impl<'a> Checker<'a> {
     /// its blocks give the same type, which it gives.
     fn match_expr(&mut self, body: &mut Body<'a>, m: &Match, want: &Want) -> Ty {
         let defs = self.defs;
+        match m.form {
+            Form::Match => {}
+            Form::If { otherwise } => return self.if_expr(body, m, otherwise, want),
+            Form::Not | Form::And | Form::Or => return self.logic(body, m),
+        }
         let of = self.expr(body, &m.of, &Want::Any);
         let outer = body.names.len();
         let vars = body.vars.len();
@@ -4061,17 +4097,7 @@ impl<'a> Checker<'a> {
             }
             patterns.push(pattern);
             body.define(binds);
-            let arm_want = match (want, &first) {
-                (Want::Unused, _) => Want::Unused,
-                (Want::Ty(t), _) => Want::Ty(t.clone()),
-                (Want::Any, Some(t)) => Want::Ty(t.clone()),
-                (Want::Any, None) => Want::Any,
-            };
-            let end = self.block(body, &arm.body, &arm_want);
-            if !matches!(want, Want::Unused) {
-                let gives = self.arm_gives(body, arm, end, want, &first);
-                first = first.or(Some(gives));
-            }
+            self.arm(body, arm, want, &mut first, "a `match`");
             body.names.truncate(outer);
             body.vars.truncate(vars);
         }
@@ -4098,9 +4124,99 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Checks what the block of an arm gives, where the `match` is used as
-    /// an expression, against what is wanted of it or what the first block
-    /// gives, and gives it.
+    /// Checks the block of an arm of a `match`, or of an `if`, which an
+    /// error names as `what`, against what is wanted of the whole or what
+    /// the first block gives, which is `first` once known.
+    fn arm(
+        &mut self,
+        body: &mut Body<'a>,
+        arm: &Arm,
+        want: &Want,
+        first: &mut Option<Ty>,
+        what: &str,
+    ) {
+        let arm_want = match (want, &*first) {
+            (Want::Unused, _) => Want::Unused,
+            (Want::Ty(t), _) => Want::Ty(t.clone()),
+            (Want::Any, Some(t)) => Want::Ty(t.clone()),
+            (Want::Any, None) => Want::Any,
+        };
+        let end = self.block(body, &arm.body, &arm_want);
+        if !matches!(want, Want::Unused) {
+            let gives = self.arm_gives(body, arm, end, want, first, what);
+            first.get_or_insert(gives);
+        }
+    }
+
+    /// Checks an `if`: its condition, which is a `bool`, and its blocks.
+    /// Without `else`, it gives `()`, and what its block gives is not read,
+    /// unless it is a `Result`, whose failure must not be dropped.
+    fn if_expr(&mut self, body: &mut Body<'a>, m: &Match, otherwise: bool, want: &Want) -> Ty {
+        self.condition(body, &m.of);
+        let outer = body.names.len();
+        let vars = body.vars.len();
+        if !otherwise {
+            let arm = &m.arms[0];
+            if let End::Value(gives, value) = self.block(body, &arm.body, &Want::Unused)
+                && self.defs.is_result(&gives)
+            {
+                self.dropped(body, value, &gives);
+            }
+            body.names.truncate(outer);
+            body.vars.truncate(vars);
+            return Ty::Nothing;
+        }
+        let mut first = None;
+        for arm in &m.arms {
+            self.arm(body, arm, want, &mut first, "an `if`");
+            body.names.truncate(outer);
+            body.vars.truncate(vars);
+        }
+        match want {
+            Want::Unused => Ty::Nothing,
+            Want::Ty(t) if !t.unknown() => t.clone(),
+            _ => first.unwrap_or(Ty::Nothing),
+        }
+    }
+
+    /// Checks `not`, `and`, or `or`, each of whose sides is a `bool`, and
+    /// which gives a `bool`.
+    fn logic(&mut self, body: &mut Body<'a>, m: &Match) -> Ty {
+        let truth = self.defs.bool_ty();
+        self.condition(body, &m.of);
+        for arm in &m.arms {
+            if let End::Value(gives, value) = self.block(body, &arm.body, &Want::Ty(truth.clone()))
+            {
+                self.expect(body, value, &gives, &truth);
+            }
+        }
+        truth
+    }
+
+    /// Checks a value that must be a `bool`.
+    fn condition(&mut self, body: &mut Body<'a>, value: &Expr) {
+        let truth = self.defs.bool_ty();
+        let gives = self.expr(body, value, &Want::Ty(truth.clone()));
+        self.expect(body, value, &gives, &truth);
+    }
+
+    /// Reports a `Result` that a statement gives and nothing uses.
+    fn dropped(&mut self, body: &Body, value: &Expr, gives: &Ty) {
+        self.errors.push(
+            Error::new(
+                value.pos(),
+                format!(
+                    "this gives {}, which nothing uses, so a failure would be dropped",
+                    self.defs.describe(gives, body.scope)
+                ),
+            )
+            .with_fix("write `try` before it, or match on it"),
+        );
+    }
+
+    /// Checks what the block of an arm gives, where the `match` or the `if`
+    /// is used as an expression, against what is wanted of it or what the
+    /// first block gives, and gives it.
     fn arm_gives(
         &mut self,
         body: &Body,
@@ -4108,6 +4224,7 @@ impl<'a> Checker<'a> {
         end: End,
         want: &Want,
         first: &Option<Ty>,
+        what: &str,
     ) -> Ty {
         let defs = self.defs;
         let needed = match (want, first) {
@@ -4127,7 +4244,7 @@ impl<'a> Checker<'a> {
         if agrees(needed, &gives) {
             return gives;
         }
-        let what = match (&end, &gives) {
+        let gives_what = match (&end, &gives) {
             (End::Empty, _) => "this block is empty, which gives nothing".to_string(),
             (End::Binding(_), _) => {
                 "this block ends with a binding or an assignment, which gives nothing".to_string()
@@ -4138,10 +4255,10 @@ impl<'a> Checker<'a> {
             _ => format!("this gives {}", describe(&gives)),
         };
         let message = match want {
-            Want::Ty(t) => format!("{what}, where {} is needed", describe(t)),
+            Want::Ty(t) => format!("{gives_what}, where {} is needed", describe(t)),
             _ => format!(
-                "{what}, and the first block gives {}, where the blocks of a `match` give the \
-                 same type",
+                "{gives_what}, and the first block gives {}, where the blocks of {what} give \
+                 the same type",
                 describe(needed)
             ),
         };
@@ -5201,9 +5318,10 @@ impl<'a> Lowering<'a> {
     }
 
     /// The function of the implementation of trait `k` given to `ty`. `Fmt`
-    /// gives what the type's `Repr` gives, and `Repr` writes the type's
-    /// value as the source that builds it, with each part written by its
-    /// own `Repr`.
+    /// gives what the type's `Repr` gives, `Repr` writes the type's value as
+    /// the source that builds it, with each part written by its own `Repr`,
+    /// and `Eq` says whether two values are the same case with equal parts,
+    /// by each part's own `Eq`.
     fn given(&mut self, k: usize, ty: &Ty) -> ir::Function {
         let defs = self.typed.defs;
         let mut out = Lowered {
@@ -5212,27 +5330,32 @@ impl<'a> Lowering<'a> {
             locals: 0,
             steps: Vec::new(),
         };
-        let params = self.locals(&mut out, ty);
-        let values: Vec<Value> = params.iter().map(|&l| Value::Local(l)).collect();
+        let values =
+            |locals: Vec<usize>| -> Vec<Value> { locals.into_iter().map(Value::Local).collect() };
+        let a = values(self.locals(&mut out, ty));
         let result = if k == defs.fmt {
-            self.run(&mut out, defs.repr, ty, values)
+            self.run(&mut out, defs.repr, ty, a)
+        } else if k == defs.repr {
+            self.repr(&mut out, ty, &a)
         } else {
-            self.repr(&mut out, ty, &values)
+            let b = values(self.locals(&mut out, ty));
+            self.equal(&mut out, ty, &a, &b)
         };
         ir::Function {
-            params: params.len(),
+            params: self.width(ty) * if k == defs.eq { 2 } else { 1 },
             locals: out.locals,
             steps: out.steps,
             results: vec![result],
         }
     }
 
-    /// Runs the function of trait `k`, which gives text, for a value of
-    /// the type, and gives the text.
+    /// Runs the function of trait `k`, which gives text or a `bool`, for
+    /// values of the type, and gives what it gives.
     fn run(&mut self, out: &mut Lowered<'a>, k: usize, ty: &Ty, args: Vec<Value>) -> Value {
-        let (instance, _) = self.typed.defs.chosen(k, 0, vec![ty.clone()]);
+        let defs = self.typed.defs;
+        let (instance, _) = defs.chosen(k, 0, vec![ty.clone()]);
         let function = self.place(instance);
-        let local = self.locals(out, &Ty::Text)[0];
+        let local = self.locals(out, &defs.trait_sigs[k][0].gives)[0];
         out.steps.push(Step::Call {
             function,
             args,
@@ -5241,11 +5364,90 @@ impl<'a> Lowering<'a> {
         Value::Local(local)
     }
 
+    /// Whether the values `a` and `b` of the type are equal, as the `Eq` it
+    /// is given says: two texts when they have the same bytes, `()` always,
+    /// two values of a struct or a tuple when each part is equal to its
+    /// own, and two values of an enum when they hold the same case and what
+    /// it holds is equal. A part is compared only when those before it are
+    /// equal.
+    fn equal(&mut self, out: &mut Lowered<'a>, ty: &Ty, a: &[Value], b: &[Value]) -> Value {
+        let defs = self.typed.defs;
+        let truth = defs.bool_ty();
+        let case = |name: &str| Value::Case(defs.case_of(defs.boolean, name).expect("a case"));
+        let local = self.locals(out, &truth)[0];
+        let set = |value: Value| Step::Set { local, value };
+        let parts: Vec<Ty> = match ty {
+            Ty::Text => {
+                out.steps.push(Step::Equal {
+                    local,
+                    a: a[0],
+                    b: b[0],
+                });
+                return Value::Local(local);
+            }
+            Ty::Enum(e, args) => {
+                let holds: Vec<Option<Ty>> = (defs.cases[*e].iter())
+                    .map(|t| t.as_ref().map(|t| t.subst(args)))
+                    .collect();
+                let mut arms = Vec::new();
+                for (k, held) in holds.iter().enumerate() {
+                    let mut inner = Vec::new();
+                    for j in 0..holds.len() {
+                        if j != k {
+                            inner.push(vec![set(case("false"))]);
+                            continue;
+                        }
+                        let before = std::mem::take(&mut out.steps);
+                        let same = match held {
+                            Some(t) => {
+                                let width = self.width(t);
+                                let (a, b) = (a[1..1 + width].to_vec(), b[1..1 + width].to_vec());
+                                self.run(out, defs.eq, t, [a, b].concat())
+                            }
+                            None => case("true"),
+                        };
+                        out.steps.push(set(same));
+                        inner.push(std::mem::replace(&mut out.steps, before));
+                    }
+                    arms.push(vec![Step::Match {
+                        value: b[0],
+                        arms: inner,
+                    }]);
+                }
+                out.steps.push(Step::Match { value: a[0], arms });
+                return Value::Local(local);
+            }
+            Ty::Struct(s, args) => defs.fields[*s].iter().map(|t| t.subst(args)).collect(),
+            Ty::Tuple(of) => of.clone(),
+            Ty::Nothing => Vec::new(),
+            _ => unreachable!("a type given `Eq`"),
+        };
+        // From the last part back, each part's steps run those of the parts
+        // after it only when it is equal.
+        let mut rest = vec![set(case("true"))];
+        let mut at = a.len();
+        for t in parts.iter().rev() {
+            let width = self.width(t);
+            at -= width;
+            let before = std::mem::take(&mut out.steps);
+            let (x, y) = (a[at..at + width].to_vec(), b[at..at + width].to_vec());
+            let same = self.run(out, defs.eq, t, [x, y].concat());
+            let mut arms = vec![Vec::new(), Vec::new()];
+            arms[defs.case_of(defs.boolean, "false").expect("a case")] = vec![set(case("false"))];
+            arms[defs.case_of(defs.boolean, "true").expect("a case")] = rest;
+            out.steps.push(Step::Match { value: same, arms });
+            rest = std::mem::replace(&mut out.steps, before);
+        }
+        out.steps.extend(rest);
+        Value::Local(local)
+    }
+
     /// The text `Repr` gives for the values of a value of the type, as
     /// the implementation it is given writes it.
     fn repr(&mut self, out: &mut Lowered<'a>, ty: &Ty, values: &[Value]) -> Value {
         let defs = self.typed.defs;
         match ty {
+            Ty::Nothing => self.text(b"()"),
             Ty::Text => {
                 let local = self.locals(out, &Ty::Text)[0];
                 out.steps.push(Step::Escape {
@@ -5288,6 +5490,8 @@ impl<'a> Lowering<'a> {
                             let item = (String::new(), t, &values[1..1 + width]);
                             self.listed(out, &format!(".{}(", case.name), vec![item])
                         }
+                        // The cases of `bool` are written as bare names.
+                        None if *e == defs.boolean => self.text(case.name.as_bytes()),
                         None => self.text(format!(".{}", case.name).as_bytes()),
                     };
                     out.steps.push(Step::Set { local, value: text });
@@ -5401,7 +5605,14 @@ impl<'a> Lowering<'a> {
             Expr::Name { name, .. } => match out.find(name) {
                 Some(at) => (out.names()[at].ty.clone(), out.names()[at].values.clone()),
                 // A function passed as a value is lowered to no values.
-                None => (typed.type_of(expr, env), Vec::new()),
+                None if typed.fn_values.contains_key(&addr(expr)) => {
+                    (typed.type_of(expr, env), Vec::new())
+                }
+                None => {
+                    let truth = defs.bool_ty();
+                    let k = defs.case_of(defs.boolean, name).expect("checked");
+                    (truth, vec![Value::Case(k)])
+                }
             },
             Expr::Call(call) => match typed.callee(call, env) {
                 Callee::Construct(s, args) => {

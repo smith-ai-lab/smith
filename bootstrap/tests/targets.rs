@@ -13,6 +13,7 @@ use smith::target::Target;
 use smith::{compile, lower};
 
 use crate::Test;
+use crate::choices;
 use crate::enums;
 use crate::generate;
 use crate::lambdas;
@@ -77,6 +78,10 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_of_a_program_with_reprs_does_what_the_evaluator_says",
         every_executable_of_a_program_with_reprs_does_what_the_evaluator_says,
+    ),
+    (
+        "every_executable_of_a_program_with_choices_does_what_the_evaluator_says",
+        every_executable_of_a_program_with_choices_does_what_the_evaluator_says,
     ),
     (
         "a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more",
@@ -210,6 +215,13 @@ fn every_target_builds_identical_bytes_twice() {
             assert!(first == second, "{} differs", target.name());
         }
     });
+    generate::check(69, 10, choices::program, |case| {
+        for &target in &targets {
+            let first = compile(case.source.as_bytes(), target).unwrap();
+            let second = compile(case.source.as_bytes(), target).unwrap();
+            assert!(first == second, "{} differs", target.name());
+        }
+    });
 }
 
 fn every_executable_does_what_the_evaluator_says() {
@@ -318,6 +330,19 @@ fn every_executable_of_a_program_with_text_does_what_the_evaluator_says() {
 fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says() {
     let targets = runnable();
     generate::check(64, 60, reprs::program, |case| {
+        let source = case.source.as_bytes();
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let said = eval::run(&program);
+        for &target in &targets {
+            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert_eq!(run(&bytes), said, "{}", target.name());
+        }
+    });
+}
+
+fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
+    let targets = runnable();
+    generate::check(68, 60, choices::program, |case| {
         let source = case.source.as_bytes();
         let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         let said = eval::run(&program);

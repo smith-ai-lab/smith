@@ -521,7 +521,7 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
                 .push(Stmt::Raw("w = ".into(), "[note]".into(), NOT_BUILT.into())),
             1 => m.main.push(Stmt::Raw(
                 "w = ".into(),
-                "if note { \"a\" }".into(),
+                "loop { note }".into(),
                 NOT_BUILT.into(),
             )),
             2 => m.main.push(Stmt::Raw(
