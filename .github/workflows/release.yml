@@ -59,7 +59,9 @@ jobs:
   # GitHub ends a job that waits about fifteen minutes for a machine as
   # `cancelled`, without a step run, and nothing here sets that limit. So a
   # target whose job never started is built again, twice at most, by `build2`
-  # and `build3`, and `built` judges each target by its newest job.
+  # and `build3`, and `built` judges each target by its newest job. Which
+  # builds never started is read from the list of jobs, never from the result
+  # GitHub gives the matrix.
   build:
     name: build ${{ matrix.target }}
     needs: plan
@@ -77,7 +79,7 @@ jobs:
   lost1:
     name: which machines were not found
     needs: [plan, build]
-    if: ${{ !cancelled() && needs.build.result == 'cancelled' }}
+    if: ${{ !cancelled() && needs.plan.outputs.version != '' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -114,8 +116,8 @@ jobs:
 
   lost2:
     name: which machines were still not found
-    needs: [plan, build2]
-    if: ${{ !cancelled() && needs.build2.result == 'cancelled' }}
+    needs: [plan, lost1, build2]
+    if: ${{ !cancelled() && needs.lost1.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
