@@ -2,7 +2,7 @@
 //! once the code and its data are laid out, and how a program's functions
 //! become them.
 
-use crate::ir::{Function, Program, Step, Stream, Value};
+use crate::ir::{Function, Program, Step, Stream, Value, Word};
 
 pub const X0: u32 = 0;
 pub const X1: u32 = 1;
@@ -26,6 +26,10 @@ pub const LE: u32 = 0xd;
 pub const EQ: u32 = 0x0;
 pub const NE: u32 = 0x1;
 pub const LT: u32 = 0xb;
+/// Unsigned higher or same.
+pub const HS: u32 = 0x2;
+/// Signed greater than or equal.
+pub const GE: u32 = 0xa;
 /// Unsigned lower or same.
 pub const LS: u32 = 0x9;
 
@@ -96,6 +100,32 @@ impl Asm {
             label,
         });
         self.word(0x3400_0000 | reg);
+    }
+
+    /// `cbnz xt, label`.
+    pub fn cbnz(&mut self, reg: u32, label: usize) {
+        self.fixups.push(Fixup::Conditional {
+            at: self.code.len(),
+            label,
+        });
+        self.word(0xb500_0000 | reg);
+    }
+
+    /// An instruction on three registers, `xd`, `xn`, and `xm`, from the
+    /// bits that choose it.
+    pub fn three(&mut self, bits: u32, rd: u32, rn: u32, rm: u32) {
+        self.word(bits | rm << 16 | rn << 5 | rd);
+    }
+
+    /// `cset xd, cond`, which sets `xd` to 1 if `cond` holds and to 0 if
+    /// not. `inverse` is the condition that holds when `cond` does not.
+    pub fn cset(&mut self, rd: u32, inverse: u32) {
+        self.word(0x9a9f_07e0 | inverse << 12 | rd);
+    }
+
+    /// `strb wt, [xn]`.
+    pub fn store_byte(&mut self, rt: u32, rn: u32) {
+        self.word(0x3900_0000 | rn << 5 | rt);
     }
 
     /// `cmp xn, xm`.
@@ -474,6 +504,10 @@ impl<S: System> Frame<'_, S> {
                 asm.mov64(address, c as u64);
                 asm.mov64(length, 0);
             }
+            Value::Number(n) => {
+                asm.mov64(address, n);
+                asm.mov64(length, 0);
+            }
             Value::Local(l) => {
                 asm.load_stack(address, self.slot(l));
                 asm.load_stack(length, self.slot(l) + 8);
@@ -536,6 +570,8 @@ impl<S: System> Frame<'_, S> {
                     }
                     asm.bind(end);
                 }
+                Step::Word { local, op, a, b } => self.word(asm, *local, *op, *a, *b),
+                Step::Decimal { local, value } => self.decimal(asm, *local, *value),
                 Step::Escape { local, value } => self.escape(asm, *local, *value),
                 Step::Equal { local, a, b } => self.equal(asm, *local, *a, *b),
                 Step::Match { value, arms } => {
@@ -558,6 +594,74 @@ impl<S: System> Frame<'_, S> {
                 }
             }
         }
+    }
+
+    /// Puts in the local what `op` makes of the numbers `a` and `b`, which
+    /// are in x2 and x3. The result is made in x0.
+    fn word(&self, asm: &mut Asm, local: usize, op: Word, a: Value, b: Value) {
+        self.load(asm, a, X2, X1);
+        self.load(asm, b, X3, X1);
+        match op {
+            Word::Add => asm.add(X0, X2, X3),
+            Word::Sub => asm.three(0xcb00_0000, X0, X2, X3),
+            Word::Mul => asm.three(0x9b00_7c00, X0, X2, X3),
+            Word::MulHighU => asm.three(0x9bc0_7c00, X0, X2, X3),
+            Word::MulHighS => asm.three(0x9b40_7c00, X0, X2, X3),
+            Word::And => asm.three(0x8a00_0000, X0, X2, X3),
+            Word::Xor => asm.three(0xca00_0000, X0, X2, X3),
+            Word::ShiftLeft => asm.three(0x9ac0_2000, X0, X2, X3),
+            Word::ShiftRightS => asm.three(0x9ac0_2800, X0, X2, X3),
+            Word::Equal => {
+                asm.cmp(X2, X3);
+                asm.cset(X0, NE);
+            }
+            Word::LessU => {
+                asm.cmp(X2, X3);
+                asm.cset(X0, HS);
+            }
+            Word::LessS => {
+                asm.cmp(X2, X3);
+                asm.cset(X0, GE);
+            }
+        }
+        let to = self.slot(local);
+        asm.store_stack(to, X0);
+        asm.mov64(X1, 0);
+        asm.store_stack(to + 8, X1);
+    }
+
+    /// Writes the digits of the number into a new text in the local. The
+    /// first pass counts them in x2, by dividing a copy of the number in x3
+    /// by 10 until nothing is left, and the second writes each digit before
+    /// the one after it, from the end, at x20. The number is kept in x19,
+    /// which the system leaves alone.
+    fn decimal(&self, asm: &mut Asm, local: usize, value: Value) {
+        let to = self.slot(local);
+        self.load(asm, value, X19, X1);
+        asm.mov(X3, X19);
+        asm.mov64(X2, 0);
+        asm.mov64(X4, 10);
+        let count = asm.label();
+        asm.bind(count);
+        asm.add_imm(X2, X2, 1);
+        asm.three(0x9ac0_0800, X3, X3, X4); // udiv x3, x3, x4
+        asm.cbnz(X3, count);
+        asm.store_stack(to + 8, X2);
+        asm.mov(X1, X2);
+        S::alloc(asm, self.fail);
+        asm.store_stack(to, X0);
+        asm.load_stack(X2, to + 8);
+        asm.add(X20, X0, X2);
+        asm.mov64(X4, 10);
+        let write = asm.label();
+        asm.bind(write);
+        asm.three(0x9ac0_0800, X3, X19, X4); // udiv x3, x19, x4
+        asm.word(0x9b00_8000 | X19 << 10 | X3 << 5 | X5 | X4 << 16); // msub x5, x3, x4, x19
+        asm.add_imm(X5, X5, b'0' as u32);
+        asm.word(0xd100_0400 | X20 << 5 | X20); // sub x20, x20, #1
+        asm.store_byte(X5, X20);
+        asm.mov(X19, X3);
+        asm.cbnz(X19, write);
     }
 
     /// Puts in the local case 1 if the texts have the same bytes, and case 0

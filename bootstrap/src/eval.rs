@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use crate::ir::{Program, Step, Stream, Value};
+use crate::ir::{Program, Step, Stream, Value, Word as Op};
 
 /// What a program did: what it wrote to standard output, and the status it
 /// ended with.
@@ -14,12 +14,13 @@ pub struct Outcome {
     pub status: i32,
 }
 
-/// What a local holds: a text, or a case of an enum by its place among the
-/// enum's cases.
+/// What a local holds: a text, a case of an enum by its place among the
+/// enum's cases, or a number as its word of 64 bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Word {
     Text(Rc<[u8]>),
     Case(usize),
+    Number(u64),
     Unset,
 }
 
@@ -47,7 +48,15 @@ fn word(program: &Program, locals: &[Word], value: Value) -> Word {
     match value {
         Value::Text(t) => Word::Text(program.texts[t].as_slice().into()),
         Value::Case(c) => Word::Case(c),
+        Value::Number(n) => Word::Number(n),
         Value::Local(l) => locals[l].clone(),
+    }
+}
+
+fn number(program: &Program, locals: &[Word], value: Value) -> u64 {
+    match word(program, locals, value) {
+        Word::Number(n) => n,
+        _ => panic!("a number that is not one"),
     }
 }
 
@@ -89,6 +98,29 @@ fn steps(program: &Program, steps_: &[Step], locals: &mut [Word], stdout: &mut V
             Step::Equal { local, a, b } => {
                 let same = text(program, locals, *a) == text(program, locals, *b);
                 locals[*local] = Word::Case(usize::from(same));
+            }
+            Step::Word { local, op, a, b } => {
+                let (a, b) = (number(program, locals, *a), number(program, locals, *b));
+                locals[*local] = match op {
+                    Op::Add => Word::Number(a.wrapping_add(b)),
+                    Op::Sub => Word::Number(a.wrapping_sub(b)),
+                    Op::Mul => Word::Number(a.wrapping_mul(b)),
+                    Op::MulHighU => Word::Number(((a as u128 * b as u128) >> 64) as u64),
+                    Op::MulHighS => {
+                        Word::Number(((a as i64 as i128 * b as i64 as i128) >> 64) as u64)
+                    }
+                    Op::And => Word::Number(a & b),
+                    Op::Xor => Word::Number(a ^ b),
+                    Op::ShiftLeft => Word::Number(a << b),
+                    Op::ShiftRightS => Word::Number(((a as i64) >> b) as u64),
+                    Op::Equal => Word::Case(usize::from(a == b)),
+                    Op::LessU => Word::Case(usize::from(a < b)),
+                    Op::LessS => Word::Case(usize::from((a as i64) < (b as i64))),
+                };
+            }
+            Step::Decimal { local, value } => {
+                let n = number(program, locals, *value);
+                locals[*local] = Word::Text(n.to_string().into_bytes().into());
             }
             Step::Match { value, arms } => {
                 let Word::Case(c) = word(program, locals, *value) else {
