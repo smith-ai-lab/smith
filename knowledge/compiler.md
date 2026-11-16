@@ -240,6 +240,14 @@ Everything git holds is also on GitLab, at `gitlab.com/smith-ai-lab/smith`, so t
 - It never forces. If GitLab holds something GitHub does not, or the push fails for any reason, such as a key GitLab refuses, the workflow fails and says why.
 - It signs in with the private key in the secret `GITLAB_MIRROR_KEY`, a deploy key of that one GitLab project, and trusts GitLab only by the host key in `.github/gitlab-known-hosts`. Only the job that pushes reads the secret, and it cannot write to this repository.
 
+Every file of every release is also on GitLab, in the package registry of `gitlab.com/smith-ai-lab/smith`, so that the compiler can be fetched when GitHub is unavailable.
+
+- The files of the release `v0.5.0` are the package `smith` at version `0.5.0`, and anyone can download one without signing in, as in `https://gitlab.com/api/v4/projects/smith-ai-lab%2Fsmith/packages/generic/smith/0.5.0/smith-linux_x64`. `SHA256SUMS` is among them, and each file has the hash GitHub's `SHA256SUMS` gives it.
+- The `mirror-releases` workflow runs after the `release` workflow finishes, and can be started by hand, which copies every file of every release that GitLab lacks. Pull requests and the merge queue never run it, and nothing waits on it.
+- A file already on GitLab is never uploaded again or changed. If its hash differs from GitHub's, the workflow fails and names the file. Which files to upload is decided by `.github/plan-uploads.sh` from two lists alone, so it is tested without GitLab or GitHub.
+- Both lists are read whole, however many releases and files there are, and a list that cannot be read fails the run before anything is uploaded.
+- It signs in with the secret `GITLAB_PACKAGE_TOKEN`, a deploy token that may write to the project's package registry and nothing else. Only the job that copies reads it.
+
 ## Bootstrap
 
 The first compiler is written in Rust with no dependencies. It is kept small and retired early.
