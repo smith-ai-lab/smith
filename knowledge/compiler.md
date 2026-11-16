@@ -1,7 +1,7 @@
 ---
 type: specification
 title: The Smith compiler
-description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, timings, and bootstrap.
+description: How the compiler is designed. It covers how for expressions and effects are compiled, the compiler's structure and commands, its representation, backends, what an executable depends on, testing, timings, releases, and bootstrap.
 ---
 
 # The Smith compiler
@@ -196,7 +196,7 @@ Every target passes the same tests, which take their targets from the target enu
 
 The tests whose result depends on the kind of machine they run on are one group: the last two properties, and what `smith run` and a build with no `--target` do. `cargo test -- --group=machine` runs only that group, and `cargo test -- --group=once` runs only the others.
 
-Continuous integration runs for a pull request and in the merge queue, and for nothing else: the `timings` workflow is the only one that runs after a merge. The queue runs every check a pull request runs, and checks the messages of the commits it is about to merge.
+Continuous integration runs for a pull request and in the merge queue, and for nothing else: the `timings` and `release` workflows are the only ones that run after a merge. The queue runs every check a pull request runs, and checks the messages of the commits it is about to merge.
 
 - On Linux on x86-64 one job builds the compiler once and runs the format check, the lint, both test groups, and the timings. The machine group also runs once on each other kind of machine a target needs.
 - A change that touches no file under `bootstrap/` or `.github/` and not `.gitattributes`, which sets the bytes of the test cases on checkout, such as one to `knowledge/` or `.agents/` alone, runs no job that builds the compiler. `.github/changed.sh` decides this.
@@ -213,6 +213,18 @@ The time each step takes is measured from the first program, so a slowdown is se
 - After every merge to `main`, the `timings` workflow adds one line to `history.csv` on the `timings` branch and changes no earlier line. Pull requests record nothing. The job is the only one that can write to the repository, and it writes only to that branch. `.github/record-timings.sh` makes the line, and `--header` prints the first line.
 - The first line names the fields: `commit`, `date`, `compiler_build_ms`, `compiler_bytes` (the optimized executable), `test_ms`, `job_ms`, and `programs`. `programs` holds space-separated `<case>/<target>/<field>=<value>` entries, for each file in `bootstrap/tests/cases` that builds and each target the job's machine can build for. The fields are the five stages and `total` as `<stage>_ms`, and `bytes`, and `run_ms` only for the target the machine can run. The entries grow with the cases and targets, so the first line stays the same.
 - To trace a change for the worse, read `history.csv` on the `timings` branch, find the first line where a field jumped, and take its `commit`.
+
+## Releases
+
+Every merge to `main` that changes what the compiler does publishes a release on GitHub.
+
+- The version comes from the subjects of the commits since the last release, and from nothing else. `.github/next-version.sh` works it out and can be run by hand. While the first number is 0, a commit marked breaking with `!`, or a `feat`, raises the second number and sets the third to 0, and otherwise a `fix` or a `perf` raises the third. The first release is `v0.1.0`.
+- A merge is released only when one of its commits is a `feat`, a `fix`, or a `perf`. Merges of `docs`, `test`, `ci`, `refactor`, `build`, `chore`, and `revert` commits publish nothing.
+- A release holds the optimized compiler for each of the six kinds of machine a target needs, named for its target, as in `smith-linux_x64` and `smith-windows_x64.exe`, and `SHA256SUMS`, the SHA-256 hash of each. Its notes list the subject of each commit since the last release.
+- `smith --version` prints `smith` and the version the compiler was released as. A build that is not a release prints `smith dev`.
+- After every merge to `main`, the `release` workflow works out the version, builds on each kind of machine, and publishes. Pull requests and the merge queue never run it, and nothing waits on it. Only the job that publishes can write to the repository. Running it again for a commit already in a release makes no second one and changes none.
+- Every release is kept. None is deleted or replaced.
+- Once Smith compiles itself, each release is built by the release before it, and then by itself. The two results are the same byte for byte, as in [Bootstrap](#bootstrap).
 
 ## Bootstrap
 
