@@ -9,11 +9,20 @@ The lead does not write the code. It starts a worker on an issue, stays out of t
 
 The owner and the lead decide the design of Smith together, in conversation, and both agree before anything is written into `knowledge/`. An issue that only builds what `knowledge/` already decides needs no further agreement: the lead writes it and starts a worker, so that building goes on while the design is discussed. Any other issue is agreed first. Everything else is the lead's to do: writing the issues they agreed, starting workers, reviewing pull requests, and merging them. The owner does not do those, and is not asked to.
 
+## Starting as a new lead
+
+A lead's session ends and another begins, so nothing the work depends on lives only in a conversation. Read these before anything else.
+
+- `knowledge/index.md` and the files it leads to say what Smith is. Each page of `knowledge/language/` says in its `status` how much of it the compiler builds.
+- The roadmap is the issue titled "Roadmap". Its open sub-issues are the work, in order.
+- The issue titled "Open design questions" lists what the owner and the lead have not yet agreed, with the lead's recommendation for each. Keep it current: add a question when one appears, and remove it when its answer is in `knowledge/`.
+- The skills in `.agents/skills/` say how the work is done.
+
 ## Steps
 
-1. Take every open sub-issue of the roadmap whose "After" issues are all closed, in roadmap order. Read each, and read its `model:` label.
+1. Take the first open sub-issue of the roadmap whose "After" issues are all closed. Read it, and read its `model:` label.
 
-2. Start one worker for each: a cloud agent on this repository, on the newest model in the family the label names, at the default effort. Give it this brief and nothing more, with your own session's id in it.
+2. Start one worker for it: a cloud agent on this repository, on the newest model in the family the label names, at the default effort. Give it this brief and nothing more, with your own session's id in it.
 
    ```
    Do issue #<n> in <owner>/<repo>. Follow the ship-change skill.
@@ -25,7 +34,7 @@ The owner and the lead decide the design of Smith together, in conversation, and
 
    The issue is the brief. If the worker would need more than this, the issue is missing something: fix the issue.
 
-3. Wait for the worker's message. Do not message it or check on it while it works. A message can fail to arrive, so also watch GitHub in the background for the two ways a worker can stop: a pull request for the issue whose checks have finished, or a comment on the issue.
+3. Wait for the worker's message, and for nothing else. Do not message it or check on it while it works, do not subscribe to its pull request, and do not schedule a check. Each of those wakes the lead, and a wake costs the whole conversation again. If the owner writes and no message has come, look at GitHub once then.
 
 4. If it stopped with a question, answer in a comment on the issue. Answer from `knowledge/`. If it does not answer the question, it is a design question: ask the owner, agree on the answer, write it into `knowledge/` with the `update-knowledge` skill, and then answer. Then tell the worker the answer is on the issue.
 
@@ -45,9 +54,9 @@ The owner and the lead decide the design of Smith together, in conversation, and
    every check passes.
    ```
 
-7. Repeat steps 5 and 6 until nothing is left. Then add the pull request to the merge queue, as the `ship-change` skill describes.
+7. Repeat steps 5 and 6 until nothing is left. Then add the pull request to the merge queue, as the `ship-change` skill describes. Ask for the merge only when every check has passed, and do not watch it. The queue merges it.
 
-8. Remove the closed issue from the roadmap's sub-issues, so that the roadmap lists only what is left. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
+8. Start the next worker. Before that, confirm the pull request merged, and remove its closed issue from the roadmap's sub-issues, so that the roadmap lists only what is left. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
 
 ## When a worker falls short
 
@@ -60,9 +69,8 @@ Work through these in order, and stop at the first that applies.
 
 ## Rules
 
-- One worker per issue. Issues run at the same time only when neither is listed under the other's "After".
-- When several issues that could run together would each have to move the same code into a shared place, start one, and start the others when it has merged. Otherwise each does that work alone and all but the first must redo it.
-- Merge pull requests in roadmap order when several are ready. A worker whose branch falls behind `main` rebases it, as `ship-change` says.
+- One worker runs at a time, unless the owner asks for more. Then issues run together only when neither is listed under the other's "After", and never when each would have to move the same code into a shared place.
+- A second review round means the issue left something out. Before starting the next worker, put what it left out into `write-issue` or the next issue, so that one round is the usual number.
 - The lead owns the issues. It writes and corrects them with the `write-issue` skill. A worker is assigned an issue and never edits one.
 - `knowledge/` is changed by whoever makes the change. A worker updates it in its own pull request when its work alters what Smith is. The lead updates it when a decision is made outside a worker's pull request, such as an answer to a worker's question.
 - Never push to the worker's branch. Review in comments, and let the worker change the code.
