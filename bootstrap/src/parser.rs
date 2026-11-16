@@ -11,12 +11,69 @@ use crate::lexer::{Tok, Token};
 pub struct Function {
     pub name: String,
     pub pos: Pos,
+    pub params: Vec<Param>,
+    /// The type after `->`, if there is one.
+    pub result: Option<Type>,
     pub effects: Effects,
-    pub body: Call,
+    pub body: Vec<Stmt>,
+    /// Where the `}` that closes the body is.
+    pub end: Pos,
 }
 
 /// The effects after `!`, each with where it is written.
 type Effects = Vec<(String, Pos)>;
+
+/// A parameter and its type.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Param {
+    pub name: String,
+    pub pos: Pos,
+    pub ty: Type,
+}
+
+/// A type, written as a name.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Type {
+    pub name: String,
+    pub pos: Pos,
+}
+
+/// A statement of a block.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Stmt {
+    /// `x = e`, or `x: T = e`, which defines a name.
+    Define {
+        name: String,
+        pos: Pos,
+        ty: Option<Type>,
+        value: Expr,
+    },
+    Expr(Expr),
+}
+
+/// An expression.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Expr {
+    /// A string literal with its escapes applied.
+    Text {
+        text: Vec<u8>,
+        pos: Pos,
+    },
+    Name {
+        name: String,
+        pos: Pos,
+    },
+    Call(Call),
+}
+
+impl Expr {
+    pub fn pos(&self) -> Pos {
+        match self {
+            Expr::Text { pos, .. } | Expr::Name { pos, .. } => *pos,
+            Expr::Call(call) => call.pos,
+        }
+    }
+}
 
 /// A call of a named function.
 #[derive(Debug, PartialEq, Eq)]
@@ -28,42 +85,32 @@ pub struct Call {
     pub end: Pos,
 }
 
-/// An argument given by position: a string literal with its escapes applied.
+/// An argument, given by position or by the name of its parameter.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Arg {
-    pub text: Vec<u8>,
-    pub pos: Pos,
+    pub name: Option<(String, Pos)>,
+    pub value: Expr,
 }
 
-/// Parses a file. A file with no definitions gives `None`.
+/// Parses a file into its functions, in the order they are written.
 ///
 /// Every definition and every statement is parsed on its own, so a mistake
 /// in one is reported and does not hide a mistake in another. Within one
 /// statement, or one function's signature, only the first mistake is
 /// reported, as what follows it cannot be read with any confidence.
-pub fn parse(tokens: &[Token]) -> Result<Option<Function>, Vec<Error>> {
+pub fn parse(tokens: &[Token]) -> Result<Vec<Function>, Vec<Error>> {
     let mut p = Parser {
         tokens,
         at: 0,
         errors: Vec::new(),
     };
-    let mut function = None;
-    let mut seen_function = false;
+    let mut functions = Vec::new();
     loop {
         p.skip_newlines();
         let start = p.at;
-        let pos = p.pos();
         match p.tok() {
             Tok::Eof => break,
-            Tok::Keyword("fn") if seen_function => {
-                p.errors
-                    .push(Error::unsupported(pos, "a definition after the first"));
-                p.skip_item(start);
-            }
-            Tok::Keyword("fn") => {
-                seen_function = true;
-                function = p.function(start);
-            }
+            Tok::Keyword("fn") => functions.extend(p.function(start)),
             _ => {
                 let error = p.item();
                 p.errors.push(error);
@@ -72,7 +119,7 @@ pub fn parse(tokens: &[Token]) -> Result<Option<Function>, Vec<Error>> {
         }
     }
     if p.errors.is_empty() {
-        Ok(function)
+        Ok(functions)
     } else {
         Err(p.errors)
     }
@@ -259,7 +306,7 @@ impl Parser<'_> {
     /// Parses a function that starts at the token `from`. Its errors are
     /// recorded, and a function with any gives `None`.
     fn function(&mut self, from: usize) -> Option<Function> {
-        let (name, pos, effects) = match self.signature() {
+        let (name, pos, params, result, effects) = match self.signature() {
             Ok(signature) => signature,
             Err(e) => {
                 self.errors.push(e);
@@ -267,47 +314,33 @@ impl Parser<'_> {
                 return None;
             }
         };
-        let mut body = None;
+        let mut body = Vec::new();
         let mut ok = true;
-        let mut count = 0;
-        loop {
+        let end = loop {
             self.skip_newlines();
             let start = self.at;
-            let at = self.pos();
             match self.tok() {
                 Tok::Punct("}") => {
-                    if count == 0 {
-                        self.errors
-                            .push(Error::unsupported(at, "a body with no statements"));
-                        ok = false;
-                    }
+                    let end = self.pos();
                     self.bump();
-                    break;
+                    break end;
                 }
                 Tok::Eof => {
                     self.errors.push(self.expected("`}`", &Tok::Eof));
                     return None;
                 }
-                _ => {
-                    match self.statement_line() {
-                        Ok(call) if count == 0 => body = Some(call),
-                        Ok(_) => {
-                            self.errors
-                                .push(Error::unsupported(at, "a statement after the first"));
-                            ok = false;
-                        }
-                        Err(e) => {
-                            self.errors.push(e);
-                            ok = false;
-                            if !self.skip_statement(start) {
-                                return None;
-                            }
+                _ => match self.statement_line() {
+                    Ok(stmt) => body.push(stmt),
+                    Err(e) => {
+                        self.errors.push(e);
+                        ok = false;
+                        if !self.skip_statement(start) {
+                            return None;
                         }
                     }
-                    count += 1;
-                }
+                },
             }
-        }
+        };
         match self.tok() {
             Tok::Newline | Tok::Eof => {}
             tok => {
@@ -317,31 +350,52 @@ impl Parser<'_> {
                 return None;
             }
         }
-        let body = body.filter(|_| ok)?;
-        Some(Function {
+        ok.then_some(Function {
             name,
             pos,
+            params,
+            result,
             effects,
             body,
+            end,
         })
     }
 
     /// Parses a function's signature, through the `{` that opens its body.
-    fn signature(&mut self) -> Result<(String, Pos, Effects), Error> {
+    #[allow(clippy::type_complexity)]
+    fn signature(&mut self) -> Result<(String, Pos, Vec<Param>, Option<Type>, Effects), Error> {
         self.bump();
         let (name, pos) = self.ident("the function's name")?;
         if self.tok() == &Tok::Punct("[") {
             return Err(Error::unsupported(self.pos(), "a generic parameter"));
         }
         self.expect_punct("(", "`(`")?;
+        let mut params = Vec::new();
         self.skip_newlines();
-        match self.tok() {
-            Tok::Punct(")") => self.bump(),
-            Tok::Ident(_) => return Err(Error::unsupported(self.pos(), "a parameter")),
-            tok => return Err(self.expected("`)`", tok)),
+        loop {
+            match self.tok() {
+                Tok::Punct(")") => break,
+                Tok::Ident(_) => params.push(self.param()?),
+                tok => return Err(self.expected("a parameter or `)`", tok)),
+            }
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct(",") => {
+                    self.bump();
+                    self.skip_newlines();
+                }
+                Tok::Punct(")") => break,
+                tok => return Err(self.expected("`,` or `)`", tok)),
+            }
         }
+        self.bump();
+        let mut result = None;
         if self.tok() == &Tok::Punct("->") {
-            return Err(Error::unsupported(self.pos(), "a return type"));
+            self.bump();
+            if matches!(self.tok(), Tok::Ident(_)) && self.next_tok() == &Tok::Punct(":") {
+                return Err(Error::unsupported(self.pos(), "a named result"));
+            }
+            result = Some(self.ty()?);
         }
         let mut effects = Vec::new();
         if self.tok() == &Tok::Punct("!") {
@@ -361,47 +415,136 @@ impl Parser<'_> {
             }
             tok => return Err(self.expected("`{` to open the function's body", tok)),
         }
-        Ok((name, pos, effects))
+        Ok((name, pos, params, result, effects))
+    }
+
+    /// Parses `name: type`.
+    fn param(&mut self) -> Result<Param, Error> {
+        let (name, pos) = self.ident("a parameter")?;
+        self.expect_punct(":", "`:` and the parameter's type")?;
+        if self.tok() == &Tok::Keyword("take") {
+            return Err(Error::unsupported(self.pos(), "`take`"));
+        }
+        let ty = self.ty()?;
+        if self.tok() == &Tok::Punct("=") {
+            return Err(Error::unsupported(self.pos(), "a default value"));
+        }
+        Ok(Param { name, pos, ty })
+    }
+
+    /// Parses a type, which so far is only ever a name.
+    fn ty(&mut self) -> Result<Type, Error> {
+        let pos = self.pos();
+        match self.tok() {
+            Tok::Ident(name) => {
+                let name = name.clone();
+                self.bump();
+                if self.tok() == &Tok::Punct("[") {
+                    return Err(Error::unsupported(self.pos(), "a type argument"));
+                }
+                Ok(Type { name, pos })
+            }
+            Tok::Punct("[") => Err(Error::unsupported(pos, "an array type")),
+            Tok::Punct("(") => Err(Error::unsupported(pos, "a tuple or function type")),
+            tok => Err(self.expected("a type", tok)),
+        }
     }
 
     /// Parses a statement and the line break or `}` after it.
-    fn statement_line(&mut self) -> Result<Call, Error> {
-        let call = self.statement()?;
+    fn statement_line(&mut self) -> Result<Stmt, Error> {
+        let stmt = self.statement()?;
         match self.tok() {
-            Tok::Newline | Tok::Punct("}") => Ok(call),
-            tok if continues_expression(tok) => Err(Error::unsupported(
-                self.pos(),
-                "an expression other than a call to `print`",
-            )),
+            Tok::Newline | Tok::Punct("}") => Ok(stmt),
+            tok if continues_expression(tok) => Err(self.continuation()),
             tok => Err(self.expected("a line break or `}`", tok)),
         }
     }
 
-    fn statement(&mut self) -> Result<Call, Error> {
+    fn statement(&mut self) -> Result<Stmt, Error> {
         let pos = self.pos();
         let feature = match self.tok() {
-            Tok::Ident(_) => match self.next_tok() {
-                Tok::Punct("(") => return self.call(),
-                Tok::Punct("=" | ":") => "a binding",
-                Tok::Punct(":=" | "+=" | "-=" | "*=" | "/=") => "assignment",
-                tok if continues_expression(tok)
-                    || matches!(tok, Tok::Newline | Tok::Eof | Tok::Punct("}")) =>
-                {
-                    "an expression other than a call to `print`"
-                }
-                _ => {
-                    let found = self.next_tok().clone();
+            Tok::Ident(name) => match self.next_tok() {
+                Tok::Punct("=" | ":") => {
+                    let name = name.clone();
                     self.bump();
-                    return Err(self.expected("a line break or `}`", &found));
+                    let mut ty = None;
+                    if self.tok() == &Tok::Punct(":") {
+                        self.bump();
+                        ty = Some(self.ty()?);
+                    }
+                    self.expect_punct("=", "`=`")?;
+                    let value = self.expr()?;
+                    return Ok(Stmt::Define {
+                        name,
+                        pos,
+                        ty,
+                        value,
+                    });
                 }
+                Tok::Punct(":=" | "+=" | "-=" | "*=" | "/=") => "assignment",
+                _ => return Ok(Stmt::Expr(self.expr()?)),
             },
             Tok::Keyword("var") => "`var`",
             Tok::Keyword("with") => "`with`",
             Tok::Keyword("break") => "`break`",
-            tok if starts_expression(tok) => "an expression other than a call to `print`",
+            tok if starts_expression(tok) => return Ok(Stmt::Expr(self.expr()?)),
             tok => return Err(self.expected("a statement", tok)),
         };
         Err(Error::unsupported(pos, feature))
+    }
+
+    /// The error for a token that would continue an expression, which the
+    /// compiler does not build yet.
+    fn continuation(&self) -> Error {
+        let pos = self.pos();
+        match self.tok() {
+            Tok::Punct("(") => Error::unsupported(pos, "calling what a call gives"),
+            Tok::Punct("[") => Error::unsupported(pos, "an index"),
+            Tok::Punct(".") => Error::unsupported(pos, "a field"),
+            tok => Error::unsupported(pos, &format!("the operator {}", tok.describe())),
+        }
+    }
+
+    /// Parses an expression: text, a name, or a call.
+    fn expr(&mut self) -> Result<Expr, Error> {
+        let pos = self.pos();
+        let expr = match self.tok() {
+            Tok::Str(text) => {
+                let text = text.clone();
+                self.bump();
+                Expr::Text { text, pos }
+            }
+            Tok::Ident(name) => {
+                if self.next_tok() == &Tok::Punct("(") {
+                    Expr::Call(self.call()?)
+                } else {
+                    let name = name.clone();
+                    self.bump();
+                    Expr::Name { name, pos }
+                }
+            }
+            tok if starts_expression(tok) => {
+                let feature = match tok {
+                    Tok::Number(_) => "a number",
+                    Tok::Punct("(") => "a tuple or an expression in parentheses",
+                    Tok::Punct("[") => "an array",
+                    Tok::Punct("{") => "a block",
+                    Tok::Punct(".") => "a case",
+                    Tok::Punct("-") => "the operator `-`",
+                    Tok::Keyword("fn") => "a lambda",
+                    Tok::Keyword(word) => {
+                        return Err(Error::unsupported(pos, &format!("`{word}`")));
+                    }
+                    _ => "this expression",
+                };
+                return Err(Error::unsupported(pos, feature));
+            }
+            tok => return Err(self.expected("an expression", tok)),
+        };
+        if continues_expression(self.tok()) {
+            return Err(self.continuation());
+        }
+        Ok(expr)
     }
 
     fn call(&mut self) -> Result<Call, Error> {
@@ -421,12 +564,6 @@ impl Parser<'_> {
                     self.skip_newlines();
                 }
                 Tok::Punct(")") => break,
-                tok if continues_expression(tok) => {
-                    return Err(Error::unsupported(
-                        self.pos(),
-                        "an argument other than a string literal",
-                    ));
-                }
                 tok => return Err(self.expected("`,` or `)`", tok)),
             }
         }
@@ -441,21 +578,16 @@ impl Parser<'_> {
     }
 
     fn arg(&mut self) -> Result<Arg, Error> {
-        let pos = self.pos();
-        match self.tok() {
-            Tok::Str(text) => {
-                let text = text.clone();
-                self.bump();
-                Ok(Arg { text, pos })
-            }
-            Tok::Ident(_) if self.next_tok() == &Tok::Punct(":") => {
-                Err(Error::unsupported(pos, "a named argument"))
-            }
-            tok if starts_expression(tok) => Err(Error::unsupported(
-                pos,
-                "an argument other than a string literal",
-            )),
-            tok => Err(self.expected("an argument", tok)),
+        let mut name = None;
+        if let Tok::Ident(n) = self.tok()
+            && self.next_tok() == &Tok::Punct(":")
+        {
+            name = Some((n.clone(), self.pos()));
+            self.bump();
+            self.bump();
+            self.skip_newlines();
         }
+        let value = self.expr()?;
+        Ok(Arg { name, value })
     }
 }

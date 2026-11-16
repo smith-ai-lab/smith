@@ -19,8 +19,16 @@ pub const TESTS: &[Test] = &[
         the_shrinker_gives_the_smallest_failing_input,
     ),
     (
-        "the_evaluator_says_a_program_prints_its_literal_and_a_line_break",
-        the_evaluator_says_a_program_prints_its_literal_and_a_line_break,
+        "the_evaluator_says_what_the_generator_built_the_program_to_print",
+        the_evaluator_says_what_the_generator_built_the_program_to_print,
+    ),
+    (
+        "the_form_every_target_receives_holds_each_function_main_reaches",
+        the_form_every_target_receives_holds_each_function_main_reaches,
+    ),
+    (
+        "a_function_main_does_not_reach_is_parsed_and_not_checked",
+        a_function_main_does_not_reach_is_parsed_and_not_checked,
     ),
     (
         "every_placed_mistake_is_one_error_at_its_place",
@@ -88,7 +96,7 @@ fn the_shrinker_gives_the_smallest_failing_input() {
     );
 }
 
-fn the_evaluator_says_a_program_prints_its_literal_and_a_line_break() {
+fn the_evaluator_says_what_the_generator_built_the_program_to_print() {
     generate::check(2, 500, programs::program, |case| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
@@ -96,6 +104,35 @@ fn the_evaluator_says_a_program_prints_its_literal_and_a_line_break() {
             status: 0,
         };
         assert_eq!(eval::run(&program), expected);
+    });
+}
+
+fn the_form_every_target_receives_holds_each_function_main_reaches() {
+    generate::check(11, 300, programs::program, |case| {
+        let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(program.functions.len(), case.reached);
+    });
+}
+
+/// A generated program, and a function that `main` does not reach, which
+/// holds a mistake for the checker.
+fn program_and_unreached(g: &mut Gen) -> (Case, &'static str) {
+    (programs::program(g), *g.pick(programs::UNREACHED))
+}
+
+fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
+    generate::check(12, 200, program_and_unreached, |(case, unreached)| {
+        let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut text = String::from_utf8(case.source.clone()).unwrap();
+        text.push_str("\n\n");
+        // The program may hold a function named `unused` already.
+        let with_unreached = format!("{text}{}\n", unreached.replace("unused", "spare"));
+        assert_eq!(lower(with_unreached.as_bytes()), Ok(program));
+        // A mistake in its syntax is still found, as it is parsed.
+        let broken = format!("{text}fn broken() {{ x = ");
+        let at = pos_after(&broken);
+        let found = errors(&format!("{broken}1 }}\n"));
+        assert_eq!(found.iter().map(|e| e.pos).collect::<Vec<_>>(), [at]);
     });
 }
 
@@ -112,9 +149,11 @@ fn every_placed_mistake_is_one_error_at_its_place() {
             "{e} does not mention {}",
             expected.mentions
         );
-        match (expected.fix, &e.fix) {
+        match (&expected.fix, &e.fix) {
             (None, None) => {}
-            (Some(wanted), Some(fix)) => assert!(fix.contains(wanted), "{fix} lacks {wanted}"),
+            (Some(wanted), Some(fix)) => {
+                assert!(fix.contains(wanted.as_str()), "{fix} lacks {wanted}")
+            }
             (wanted, fix) => panic!("the fix is {fix:?}, not {wanted:?}"),
         }
         let printed = diag::render("f.smith", &case.source, &found);
@@ -203,6 +242,7 @@ const BEFORE_THE_SEAM: &[(&str, &str)] = &[
     ("parser.rs", include_str!("../src/parser.rs")),
     ("check.rs", include_str!("../src/check.rs")),
     ("ir.rs", include_str!("../src/ir.rs")),
+    ("eval.rs", include_str!("../src/eval.rs")),
 ];
 
 fn nothing_before_the_target_seam_names_a_system_or_machine() {
@@ -344,56 +384,61 @@ fn file_with_token_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
 /// definition that holds one, at known places. Its `main` lacks `console`,
 /// which must not be reported.
 fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
-    const STATEMENTS: &[(&str, &str, Option<&str>)] = &[
+    // Each is written as the text before the mistake, and the rest. A
+    // statement or a definition with no mistake has no error to mention.
+    type Line = (&'static str, &'static str, Option<&'static str>);
+    const STATEMENTS: &[Line] = &[
         ("", "print(\"a\")", None),
-        ("", "x = 1", Some("not supported yet")),
+        ("", "x = \"a\"", None),
+        ("x = ", "1", Some("not supported yet")),
         ("", "var x = 1", Some("not supported yet")),
         ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
         ("print(\"a\")", ".x", Some("not supported yet")),
         ("", ")", Some("statement")),
     ];
-    const ITEMS: &[(&str, &str)] = &[
-        ("struct A { x: f32 }", "not supported yet"),
-        ("use std.console (input)", "not supported yet"),
-        (")", "definition"),
-        ("fn f() ! console { print(\"a\") }", "after the first"),
-        ("fn g()\n{\n  x = 1\n}", "after the first"),
+    const ITEMS: &[Line] = &[
+        ("", "struct A { x: f32 }", Some("not supported yet")),
+        ("", "use std.console (input)", Some("not supported yet")),
+        ("", ")", Some("definition")),
+        ("", "fn f() ! console { print(\"a\") }", None),
+        ("fn g()\n{\n  x = ", "1\n}", Some("not supported yet")),
+        ("fn h(a: str ", "b: str) {}", Some("`,` or `)`")),
     ];
-    loop {
+    {
         let mut source = String::new();
         let mut expected = Vec::new();
         let items = g.below(3);
         let main_at = g.below(items + 1);
         for i in 0..=items {
-            if i == main_at {
+            let (lines, indent): (Vec<&Line>, &str) = if i == main_at {
                 source.push_str("fn main() {\n");
-                for n in 0..1 + g.below(4) {
-                    source.push_str("  ");
-                    let (before, rest, bad) = g.pick(STATEMENTS);
-                    let start = pos_after(&source);
-                    source.push_str(before);
-                    if let Some(what) = bad {
-                        expected.push((pos_after(&source), *what));
-                    } else if n > 0 {
-                        expected.push((start, "after the first"));
-                    }
-                    source.push_str(rest);
-                    source.push('\n');
-                }
-                source.push_str("}\n");
+                (
+                    (0..1 + g.below(4)).map(|_| g.pick(STATEMENTS)).collect(),
+                    "  ",
+                )
             } else {
-                let (text, what) = g.pick(ITEMS);
-                if i < main_at && text.starts_with("fn") {
-                    continue;
+                (vec![g.pick(ITEMS)], "")
+            };
+            for (before, rest, bad) in lines {
+                source.push_str(indent);
+                source.push_str(before);
+                if let Some(what) = bad {
+                    expected.push((pos_after(&source), *what));
                 }
-                expected.push((pos_after(&source), *what));
-                source.push_str(text);
+                source.push_str(rest);
                 source.push('\n');
             }
+            if i == main_at {
+                source.push_str("}\n");
+            }
         }
-        if !expected.is_empty() {
-            return (source, expected);
+        if expected.is_empty() {
+            // Every statement and definition came out right, so one more
+            // definition holds the mistake.
+            expected.push((pos_after(&source), "definition"));
+            source.push_str(")\n");
         }
+        (source, expected)
     }
 }
 
@@ -431,11 +476,14 @@ fn file_with_check_errors(g: &mut Gen) -> (String, Vec<(Pos, String)>) {
         source.push('(');
         let args = g.below(3);
         for i in 0..args {
-            if i == 1 {
+            if i > 0 {
                 source.push_str(", ");
-                if callee == "print" {
-                    expected.push((pos_after(&source), "`end` and `to`".to_string()));
-                }
+            }
+            let arg = pos_after(&source);
+            match (callee, i) {
+                ("print", 1) => expected.push((arg, "`end` and `to`".to_string())),
+                ("main", 0) => expected.push((arg, "takes 0 arguments".to_string())),
+                _ => {}
             }
             source.push_str("\"a\"");
         }

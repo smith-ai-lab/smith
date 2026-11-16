@@ -1,4 +1,7 @@
-//! x86-64 machine code, shared by every target that runs on x86-64.
+//! x86-64 machine code, shared by every target that runs on x86-64, and
+//! how a program's functions become it.
+
+use crate::ir::{Function, Program, Step, Stream, Value};
 
 /// A register, by its number in the instruction encoding.
 #[derive(Clone, Copy)]
@@ -87,14 +90,6 @@ impl Asm {
         self.bytes(&[Self::rex_w(rs, rd), 0x89, Self::modrm(rs, rd)]);
     }
 
-    /// `xor r32, r32`, which sets the register to 0.
-    pub fn zero(&mut self, rd: Reg) {
-        if rd.0 >= 8 {
-            self.bytes(&[0x45]);
-        }
-        self.bytes(&[0x31, Self::modrm(rd, rd)]);
-    }
-
     /// `test r64, r64`.
     pub fn test(&mut self, r: Reg) {
         self.bytes(&[Self::rex_w(r, r), 0x85, Self::modrm(r, r)]);
@@ -171,9 +166,51 @@ impl Asm {
         self.bytes(&[0x83, 7 << 3 | r.0, value as u8]);
     }
 
-    /// `sub rsp, imm8`.
-    pub fn reserve_stack(&mut self, bytes: i8) {
-        self.bytes(&[0x48, 0x83, 0xec, bytes as u8]);
+    /// The ModRM, SIB, and 32-bit displacement of `[rsp + disp]`, with
+    /// `reg` in the ModRM reg field.
+    fn far_stack_slot(&mut self, reg: u8, disp: u32) {
+        self.bytes(&[0x84 | (reg & 7) << 3, 0x24]);
+        self.bytes(&disp.to_le_bytes());
+    }
+
+    /// `mov rd, qword [rsp + disp]`.
+    pub fn load_stack(&mut self, rd: Reg, disp: u32) {
+        self.bytes(&[Self::rex_w(rd, RAX), 0x8b]);
+        self.far_stack_slot(rd.0, disp);
+    }
+
+    /// `mov qword [rsp + disp], rs`.
+    pub fn store_stack(&mut self, disp: u32, rs: Reg) {
+        self.bytes(&[Self::rex_w(rs, RAX), 0x89]);
+        self.far_stack_slot(rs.0, disp);
+    }
+
+    /// `sub rsp, imm32`.
+    pub fn reserve_stack(&mut self, bytes: u32) {
+        self.bytes(&[0x48, 0x81, 0xec]);
+        self.bytes(&bytes.to_le_bytes());
+    }
+
+    /// `add rsp, imm32`.
+    pub fn release_stack(&mut self, bytes: u32) {
+        self.bytes(&[0x48, 0x81, 0xc4]);
+        self.bytes(&bytes.to_le_bytes());
+    }
+
+    /// `and rsp, -16`, which puts the stack on 16 bytes.
+    pub fn align_stack(&mut self) {
+        self.bytes(&[0x48, 0x83, 0xe4, 0xf0]);
+    }
+
+    /// `call label`.
+    pub fn call(&mut self, label: usize) {
+        self.bytes(&[0xe8]);
+        self.offset_to(Ref::Label(label));
+    }
+
+    /// `ret`.
+    pub fn ret(&mut self) {
+        self.bytes(&[0xc3]);
     }
 
     /// `lea rd, [rip + label]`.
@@ -234,3 +271,128 @@ impl Asm {
 pub const Z: u8 = 0x4;
 pub const LE: u8 = 0xe;
 pub const L: u8 = 0xc;
+
+/// What a system gives the code of an x86-64 target: how it writes and how
+/// it ends the program.
+pub trait System {
+    /// How many bytes at the bottom of every frame a call to the system may
+    /// use. A multiple of 16.
+    const RESERVED: u32;
+    /// The registers that hold the address and the length of the text to
+    /// write.
+    const TEXT: (Reg, Reg);
+    /// Writes every byte of the text in `TEXT`, and jumps to `fail` if the
+    /// system refuses it. It may change any register but rsp.
+    fn write(asm: &mut Asm, stream: Stream, fail: usize);
+    /// Ends the program with the status.
+    fn exit(asm: &mut Asm, status: u32);
+}
+
+/// The bytes a piece of text takes in a frame: its address, then its
+/// length.
+const SLOT: u32 = 16;
+
+/// The machine code of the program, and the data it reads, each piece
+/// under its label.
+///
+/// Every function has a frame on the stack that keeps the stack on 16
+/// bytes at each call. From the bottom, it holds the bytes the system may
+/// use, the arguments of the calls it makes, and the texts it holds. A
+/// function finds its parameters among the arguments in its caller's
+/// frame, and gives back its text in rax and rdx.
+pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
+    let mut asm = Asm::default();
+    let texts: Vec<usize> = program.texts.iter().map(|_| asm.label()).collect();
+    let functions: Vec<usize> = program.functions.iter().map(|_| asm.label()).collect();
+    let fail = asm.label();
+    asm.align_stack();
+    asm.reserve_stack(S::RESERVED);
+    asm.call(functions[program.main]);
+    S::exit(&mut asm, 0);
+    asm.bind(fail);
+    S::exit(&mut asm, 1);
+    for (f, &label) in program.functions.iter().zip(&functions) {
+        asm.bind(label);
+        function::<S>(&mut asm, program, f, &texts, &functions, fail);
+    }
+    let data = texts
+        .into_iter()
+        .zip(program.texts.iter().map(Vec::as_slice))
+        .collect();
+    (asm, data)
+}
+
+fn function<S: System>(
+    asm: &mut Asm,
+    program: &Program,
+    f: &Function,
+    texts: &[usize],
+    functions: &[usize],
+    fail: usize,
+) {
+    let outgoing = f
+        .steps
+        .iter()
+        .map(|s| match s {
+            Step::Call { args, .. } => args.len(),
+            Step::Write { .. } => 0,
+        })
+        .max()
+        .unwrap_or(0) as u32;
+    let held = (f.locals - f.params) as u32;
+    // The call pushed the return address, so the frame takes 8 bytes more
+    // than a multiple of 16.
+    let frame = S::RESERVED + SLOT * (outgoing + held) + 8;
+    let slot = |local: usize| -> u32 {
+        if local < f.params {
+            frame + 8 + S::RESERVED + SLOT * local as u32
+        } else {
+            S::RESERVED + SLOT * (outgoing + (local - f.params) as u32)
+        }
+    };
+    let load = |asm: &mut Asm, value: Value, (address, length): (Reg, Reg)| match value {
+        Value::Text(t) => {
+            asm.address(address, texts[t]);
+            let len = program.texts[t].len() as u64;
+            match u32::try_from(len) {
+                Ok(len) => asm.mov32(length, len),
+                Err(_) => asm.mov64(length, len),
+            }
+        }
+        Value::Local(l) => {
+            asm.load_stack(address, slot(l));
+            asm.load_stack(length, slot(l) + 8);
+        }
+    };
+    asm.reserve_stack(frame);
+    for step in &f.steps {
+        match step {
+            Step::Write { stream, value } => {
+                load(asm, *value, S::TEXT);
+                S::write(asm, *stream, fail);
+            }
+            Step::Call {
+                function,
+                args,
+                result,
+            } => {
+                for (i, arg) in args.iter().enumerate() {
+                    load(asm, *arg, (RAX, RDX));
+                    let at = S::RESERVED + SLOT * i as u32;
+                    asm.store_stack(at, RAX);
+                    asm.store_stack(at + 8, RDX);
+                }
+                asm.call(functions[*function]);
+                if let Some(r) = result {
+                    asm.store_stack(slot(*r), RAX);
+                    asm.store_stack(slot(*r) + 8, RDX);
+                }
+            }
+        }
+    }
+    if let Some(value) = f.result {
+        load(asm, value, (RAX, RDX));
+    }
+    asm.release_stack(frame);
+    asm.ret();
+}

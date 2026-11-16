@@ -1,0 +1,5 @@
+fn greeting() -> str { "hello world" }
+
+fn main() ! console {
+  print(greeting())
+}
