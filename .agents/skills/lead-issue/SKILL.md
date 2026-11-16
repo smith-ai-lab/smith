@@ -61,6 +61,7 @@ Work through these in order, and stop at the first that applies.
 ## Rules
 
 - One worker per issue. Issues run at the same time only when neither is listed under the other's "After".
+- When several issues that could run together would each have to move the same code into a shared place, start one, and start the others when it has merged. Otherwise each does that work alone and all but the first must redo it.
 - Merge pull requests in roadmap order when several are ready. A worker whose branch falls behind `main` rebases it, as `ship-change` says.
 - The lead owns the issues. It writes and corrects them with the `write-issue` skill. A worker is assigned an issue and never edits one.
 - `knowledge/` is changed by whoever makes the change. A worker updates it in its own pull request when its work alters what Smith is. The lead updates it when a decision is made outside a worker's pull request, such as an answer to a worker's question.
