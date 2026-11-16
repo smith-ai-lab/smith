@@ -16,6 +16,8 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 - An identifier, `IDENT`, is a letter or `_` followed by letters, digits, and `_`, and is not a keyword. The letters are `a` to `z` and `A` to `Z`.
 - The keywords are `and`, `as`, `break`, `derive`, `effect`, `else`, `ensures`, `enum`, `fn`, `for`, `foreign`, `if`, `impl`, `in`, `loop`, `match`, `not`, `or`, `out`, `pub`, `requires`, `struct`, `take`, `trait`, `try`, `use`, `var`, `with`, and `without`.
 - A comment starts with `//`, stands on its own line, and attaches to the definition, field, case, or statement that follows it.
+- A whole number is written in decimal, as `1000`, in hexadecimal after `0x`, as `0xff`, or in binary after `0b`, as `0b1010`. A float has a digit on both sides of its point, as `2.5`, and may end with an exponent, as `2.5e3`, and a decimal number with an exponent alone is a float too, as `1e-5`. An `_` may stand between two digits, as in `1_000_000`. There is no octal form and no suffix that names a type.
+- A `-` written where a value may begin, directly before a number, is part of the literal, so `-128` is one literal. After a value, `-` is subtraction.
 - Literals keep their source spelling, so `0x10` and `16` stay distinct in the syntax tree.
 - A string may hold expressions in braces. The lexer returns the text before a `{`, then ordinary tokens up to the matching `}`, then resumes the string.
 - Inside a string, `TEXT` is a run of characters other than `"`, `\`, `{`, `}`, and a line break. `ESCAPE` is a backslash followed by one of `"`, `\`, `{`, `}`, `n`, or `t`. A backslash before anything else, a `}` that closes no expression, and a line break before the closing quote are errors.

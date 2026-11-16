@@ -17,6 +17,7 @@ Every literal form is backed by a trait, and the expected type picks which imple
 | `"hi"` | `FromString[T]` | `str` |
 | `[1, 2, 3]` | `FromArray[T]` | An array of three elements |
 
+- A whole number may be written in decimal, hexadecimal, or binary, with `_` between digits, as `1_000_000`, `0xff`, and `0b1010`. A float has a digit on both sides of its point and may have an exponent, as `2.5` and `1e-5`. A `-` directly before a number is part of the literal, so `-128` is an `i8`.
 - Conversion runs at compile time, so `300` as a `u8` is a compile error.
 - A literal with nothing to determine its type is an error. A binding gives it one by stating its type, as in `limit: i32 = 100`.
 - A literal that is an operand takes the one type that fits: a type it can become, for which the operator has an implementation with the other operand's type. With `x: f32`, the `2` in `x * 2` is an `f32`. When more than one type fits, or both operands are literals, it is a compile error, and a binding that states its type settles it.
@@ -40,6 +41,8 @@ fn next_saturating(i: u8) -> u8 { saturating_add(i, 1) }
 // 255 gives .none.
 fn next_checked(i: u8) -> Option[u8] { checked_add(i, 1) }
 ```
+
+`wrapping_`, `saturating_`, and `checked_` each exist for `add`, `sub`, and `mul`.
 
 Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic.
 
