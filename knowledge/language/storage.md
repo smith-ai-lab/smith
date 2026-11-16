@@ -107,4 +107,4 @@ fn eval(e: Expr) -> f64 ! alloc {
 - No address is observable, so the compiler picks the layout, such as 32-bit offsets within the arena.
 - Changing a tree builds new nodes and leaves the old ones until the arena is dropped. A pass that rewrites a tree many times runs in its own arena and builds its result in the parent's.
 
-Next: [Differentiation](differentiation.md)
+Next: [Functions over code](code.md)

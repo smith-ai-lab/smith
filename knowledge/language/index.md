@@ -23,7 +23,8 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [loop.md](loop.md): `loop` for steps that run in order, the `Iterate` trait, and `break`.
 - [contracts.md](contracts.md): `requires`, `ensures`, and `check`, what the `arith` procedure can prove, termination, and `hole`.
 - [storage.md](storage.md): when an array gets a buffer, the `alloc` effect and arenas, recursion without stack overflow, and types that contain themselves.
-- [differentiation.md](differentiation.md): `grad` as a compile-time call that returns the gradient of a function, shown by training an MLP.
+- [code.md](code.md): functions that receive the checked code of an argument when the program is built and return code, which is how `expect` and `grad` are library functions.
+- [differentiation.md](differentiation.md): `grad`, a function over code that returns the gradient of a function, shown by training an MLP.
 - [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`.
 - [tasks.md](tasks.md): task groups with `spawn` and `join`, cancellation, async I/O that reads as sequential code, how a task ends, and events.
 - [foreign.md](foreign.md): foreign declarations with C signatures, and how system frameworks are reached for native applications.
