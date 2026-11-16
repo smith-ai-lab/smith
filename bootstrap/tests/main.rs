@@ -20,6 +20,7 @@ mod release;
 mod sha256;
 mod targets;
 mod traits;
+mod tuples;
 
 use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;

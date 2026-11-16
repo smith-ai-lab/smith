@@ -1514,7 +1514,6 @@ fn main_statement(
                 ("", "with a"),
                 ("", "break"),
                 ("", "loop {}"),
-                ("", "(a, var b) = f()"),
                 ("x", "[0] = \"a\""),
             ]);
             b.push(before);
