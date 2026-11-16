@@ -51,7 +51,7 @@ use std::time::Duration;
 pub type Test = (&'static str, fn());
 
 /// How many of the slowest tests a run ends with.
-const SLOWEST: usize = 5;
+const SLOWEST: usize = 70;
 
 /// What a test may compute for, as `clock` measures it.
 const LIMIT: Duration = Duration::from_secs(1);
@@ -64,6 +64,7 @@ const LIMIT: Duration = Duration::from_secs(1);
 /// `targets.rs`, and `targets.rs`, which is being rewritten.
 fn limited() -> Vec<Test> {
     let tests = [
+        alloc::ONCE,
         props::TESTS,
         cli::ONCE,
         cli::MACHINE,
@@ -93,6 +94,7 @@ fn main() -> ExitCode {
     }
     let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let once = [
+        machines::FIRST,
         props::TESTS,
         cli::ONCE,
         check::ONCE,

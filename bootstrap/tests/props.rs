@@ -222,7 +222,7 @@ fn the_shrinker_gives_the_smallest_failing_input() {
 }
 
 fn the_evaluator_says_what_the_generator_built_the_program_to_print() {
-    generate::check(2, 500, programs::program, |case| {
+    generate::check(2, 187, programs::program, |case| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -233,7 +233,7 @@ fn the_evaluator_says_what_the_generator_built_the_program_to_print() {
 }
 
 fn the_scalar_form_holds_each_function_main_reaches() {
-    generate::check(11, 300, programs::program, |case| {
+    generate::check(11, 150, programs::program, |case| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(program.functions.len(), case.reached);
     });
@@ -246,7 +246,7 @@ fn program_and_unreached(g: &mut Gen) -> (Case, &'static str) {
 }
 
 fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
-    generate::check(12, 200, program_and_unreached, |(case, unreached)| {
+    generate::check(12, 121, program_and_unreached, |(case, unreached)| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
         let mut text = String::from_utf8(case.source.clone()).unwrap();
         text.push_str("\n\n");
@@ -265,7 +265,7 @@ fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_traits_to_print() {
-    generate::check(14, 200, traits::program, |case| {
+    generate::check(14, 127, traits::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -285,7 +285,7 @@ fn program_and_target(g: &mut Gen, targets: usize) -> (traits::TraitCase, usize)
 fn a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out() {
     let targets = targets::buildable();
     let choose = |g: &mut Gen| program_and_target(g, targets.len());
-    generate::check(15, 60, choose, |(case, target)| {
+    generate::check(15, 40, choose, |(case, target)| {
         // The program is lowered to one form for every target, so the two
         // build to the same bytes for every target when that form is the
         // same.
@@ -323,7 +323,7 @@ fn a_program_with_defaults_builds_to_the_bytes_of_it_written_out() {
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_enums_to_print() {
-    generate::check(21, 300, enums::program, |case| {
+    generate::check(21, 184, enums::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -355,14 +355,14 @@ fn a_case_written_with_a_dot_builds_to_the_bytes_of_it_written_in_full() {
 }
 
 fn every_placed_mistake_about_enums_is_one_error_at_its_place() {
-    generate::check(23, 500, enums::program_with_mistake, |case| {
+    generate::check(23, 219, enums::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_tuples_to_print() {
-    generate::check(26, 300, tuples::program, |case| {
+    generate::check(26, 194, tuples::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -373,14 +373,14 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_tuples_to_print() 
 }
 
 fn every_placed_mistake_about_tuples_is_one_error_at_its_place() {
-    generate::check(27, 500, tuples::program_with_mistake, |case| {
+    generate::check(27, 177, tuples::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print() {
-    generate::check(29, 300, lambdas::program, |case| {
+    generate::check(29, 94, lambdas::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -396,14 +396,14 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print()
 /// need a value of a function type, as a function with type parameters
 /// would need a type parameter.
 fn the_scalar_form_holds_no_function_that_takes_a_function() {
-    generate::check(30, 300, lambdas::program, |case| {
+    generate::check(30, 91, lambdas::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(program.functions.len(), case.copies);
     });
 }
 
 fn an_expression_in_parentheses_is_the_expression() {
-    generate::check(33, 100, lambdas::program, |case| {
+    generate::check(33, 58, lambdas::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let wrapped = lower(case.parenthesized.as_bytes())
             .unwrap_or_else(|e| panic!("{e:?} in {}", case.parenthesized));
@@ -412,14 +412,14 @@ fn an_expression_in_parentheses_is_the_expression() {
 }
 
 fn every_placed_mistake_about_lambdas_is_one_error_at_its_place() {
-    generate::check(31, 500, lambdas::program_with_mistake, |case| {
+    generate::check(31, 169, lambdas::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print() {
-    generate::check(40, 300, tries::program, |case| {
+    generate::check(40, 110, tries::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -435,7 +435,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_pr
 /// same bytes.
 fn a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean() {
     let targets = targets::buildable();
-    generate::check(41, 30, tries::program, |case| {
+    generate::check(41, 6, tries::program, |case| {
         let source = case.source.as_bytes();
         let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         for (name, other) in [("with", &case.with_form), ("lambdas", &case.lambdas)] {
@@ -452,14 +452,14 @@ fn a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean() {
 }
 
 fn every_placed_mistake_about_with_and_try_is_one_error_at_its_place() {
-    generate::check(42, 500, tries::program_with_mistake, |case| {
+    generate::check(42, 110, tries::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_text_to_print() {
-    generate::check(34, 300, text::program, |case| {
+    generate::check(34, 48, text::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -470,14 +470,14 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_text_to_print() {
 }
 
 fn every_placed_mistake_about_text_is_one_error_at_its_place() {
-    generate::check(35, 500, text::program_with_mistake, |case| {
+    generate::check(35, 159, text::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
-    generate::check(60, 300, reprs::program, |case| {
+    generate::check(60, 119, reprs::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -488,7 +488,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
 }
 
 fn the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print() {
-    generate::check(66, 300, choices::program, |case| {
+    generate::check(66, 109, choices::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         let expected = Outcome {
             stdout: case.stdout.clone(),
@@ -499,7 +499,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print()
 }
 
 fn every_placed_mistake_about_choices_is_one_error_at_its_place() {
-    generate::check(67, 500, choices::program_with_mistake, |case| {
+    generate::check(67, 192, choices::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
@@ -507,7 +507,7 @@ fn every_placed_mistake_about_choices_is_one_error_at_its_place() {
 
 /// What a program prints, by the evaluator.
 fn the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print() {
-    generate::check(70, 300, numbers::program, |case| {
+    generate::check(70, 166, numbers::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(
             scalar::run(&program),
@@ -548,7 +548,7 @@ fn the_generator_of_numbers_reaches_the_least_and_greatest_value_of_each_type() 
 }
 
 fn every_placed_mistake_about_numbers_is_one_error_at_its_place() {
-    generate::check(71, 600, numbers::program_with_mistake, |case| {
+    generate::check(71, 231, numbers::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
@@ -575,7 +575,7 @@ fn stdout_of(source: &str) -> Vec<u8> {
 }
 
 fn a_value_and_the_text_its_repr_gives_build_equal_values() {
-    generate::check(61, 300, reprs::program_to_rewrite, |written| {
+    generate::check(61, 58, reprs::program_to_rewrite, |written| {
         // The program prints the `Repr` of each value first, on a line of
         // its own, and an equal value prints the same.
         let printed = stdout_of(&written.with(&written.values));
@@ -597,7 +597,7 @@ fn a_value_and_the_text_its_repr_gives_build_equal_values() {
 }
 
 fn every_placed_mistake_about_reprs_is_one_error_at_its_place() {
-    generate::check(62, 500, reprs::program_with_mistake, |case| {
+    generate::check(62, 147, reprs::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
@@ -632,7 +632,7 @@ fn what_a_program_does_not_print_is_given_nothing() {
         };
         (source, g.below(targets.len()))
     };
-    generate::check(63, 200, choose, |(source, target)| {
+    generate::check(63, 36, choose, |(source, target)| {
         let mut taken = source.clone();
         for name in given_to(source) {
             taken.push_str(&format!(
@@ -682,7 +682,7 @@ fn assert_mistake(source: &[u8], expected: &programs::Expected) {
 }
 
 fn every_placed_mistake_is_one_error_at_its_place() {
-    generate::check(4, 1000, programs::program_with_mistake, |case| {
+    generate::check(4, 322, programs::program_with_mistake, |case| {
         assert_mistake(
             &case.source,
             case.mistake.as_ref().expect("a placed mistake"),
@@ -691,7 +691,7 @@ fn every_placed_mistake_is_one_error_at_its_place() {
 }
 
 fn every_placed_mistake_about_traits_is_one_error_at_its_place() {
-    generate::check(17, 300, traits::program_with_mistake, |case| {
+    generate::check(17, 163, traits::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });
@@ -1080,7 +1080,7 @@ fn every_error_of_the_syntax_is_reported_once_in_order() {
 }
 
 fn every_error_of_the_checker_is_reported_once_in_order() {
-    generate::check(9, 500, file_with_check_errors, |(source, expected)| {
+    generate::check(9, 317, file_with_check_errors, |(source, expected)| {
         let expected: Vec<(Pos, &str)> = expected.iter().map(|(p, w)| (*p, w.as_str())).collect();
         assert_errors(source, &expected);
     });

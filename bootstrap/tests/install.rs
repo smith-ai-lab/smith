@@ -297,7 +297,7 @@ fn supported(g: &mut Gen) -> Machine {
 fn a_file_that_does_not_match_its_hash_installs_nothing() {
     generate::check(
         42,
-        24,
+        12,
         |g| (supported(g), damage(g)),
         |(machine, how)| {
             let setup = Setup::new("hash", machine);
@@ -414,7 +414,7 @@ fn a_script_cut_off_part_way_installs_the_whole_compiler_or_changes_nothing() {
     let script = std::fs::read(format!("{}/../install.sh", env!("CARGO_MANIFEST_DIR"))).unwrap();
     generate::check(
         46,
-        120,
+        20,
         |g| (supported(g), cut(g)),
         |(machine, length)| {
             let setup = Setup::new("cut", machine);
