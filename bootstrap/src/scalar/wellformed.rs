@@ -104,6 +104,61 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         return Err(Why::WrongType(result));
                     }
                 }
+                Op::Binary { a, b, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(ty, Type::Int(_)) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::Compare { a, b, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    if f.types[result.0] != Type::Int(Bits::B8) {
+                        return Err(Why::WrongType(result));
+                    }
+                    let ty = f.types.get(a.0).copied().ok_or(Why::Missing)?;
+                    if !matches!(ty, Type::Int(_)) {
+                        return Err(Why::WrongType(*a));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::Widen { value, .. } | Op::Narrow(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let (Type::Int(to), Some(&Type::Int(from))) =
+                        (f.types[result.0], f.types.get(value.0))
+                    else {
+                        return Err(Why::WrongType(result));
+                    };
+                    let widens = matches!(instruction.op, Op::Widen { .. });
+                    if (widens && from.count() >= to.count())
+                        || (!widens && from.count() <= to.count())
+                    {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(value, i, Type::Int(from))?;
+                }
+                Op::Choose {
+                    on,
+                    then,
+                    otherwise,
+                } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    used(on, i, Type::Int(Bits::B8))?;
+                    used(then, i, ty)?;
+                    used(otherwise, i, ty)?;
+                }
                 Op::Call { function, args } => {
                     let callee = program.functions.get(*function).ok_or(Why::Missing)?;
                     let params = callee.blocks.first().ok_or(Why::Missing)?.params.iter();

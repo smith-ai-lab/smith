@@ -87,7 +87,7 @@ struct Var {
 
 /// A value of the type: its least, its greatest, a few next to them, and
 /// any other.
-fn value(g: &mut Gen, ty: Int) -> i128 {
+pub fn value(g: &mut Gen, ty: Int) -> i128 {
     match g.below(9) {
         0 => ty.min(),
         1 => ty.max(),
@@ -168,7 +168,7 @@ fn operand(g: &mut Gen, vars: &[Var], ty: Int) -> (String, i128) {
     }
 }
 
-fn compare(op: &str, a: i128, b: i128) -> bool {
+pub fn compare(op: &str, a: i128, b: i128) -> bool {
     match op {
         "==" => a == b,
         "!=" => a != b,
@@ -181,7 +181,7 @@ fn compare(op: &str, a: i128, b: i128) -> bool {
 
 /// What `wrapping_`, `saturating_`, or `checked_` of the operation gives
 /// for the values, as text.
-fn arithmetic(kind: &str, op: &str, ty: Int, a: i128, b: i128) -> String {
+pub fn arithmetic(kind: &str, op: &str, ty: Int, a: i128, b: i128) -> String {
     // A product of two values of a type of 64 bits may not fit even 128
     // bits, and then it fits no type, and the bits that stay are the same.
     let exact = match op {
@@ -289,7 +289,8 @@ struct Model {
     lines: Vec<Line>,
 }
 
-fn model(g: &mut Gen) -> Model {
+/// The names a program binds: two or three of each of one type to three.
+fn variables(g: &mut Gen) -> Vec<Var> {
     let kinds = 1 + g.below(3);
     let mut tys: Vec<Int> = vec![*g.pick(INTS)];
     for _ in 1..kinds {
@@ -306,6 +307,11 @@ fn model(g: &mut Gen) -> Model {
             });
         }
     }
+    vars
+}
+
+fn model(g: &mut Gen) -> Model {
+    let vars = variables(g);
     let count = 1 + g.below(8);
     let lines = (0..count).map(|_| line(g, &vars)).collect();
     Model { vars, lines }
@@ -442,5 +448,83 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
         stdout: Vec::new(),
         bound: Vec::new(),
         mistake,
+    }
+}
+
+/// A line that decides between two fixed texts by numbers, and the text it
+/// prints.
+fn quiet_line(g: &mut Gen, vars: &[Var]) -> (String, &'static str) {
+    let first = g.pick(vars).clone();
+    let (yes, no) = (r#"print("yes")"#, r#"print("no")"#);
+    let choose = |test: &str, truth: bool| {
+        let source = format!("if {test} {{ {yes} }} else {{ {no} }}");
+        (source, if truth { "yes" } else { "no" })
+    };
+    match g.below(5) {
+        0 | 1 => {
+            let op = *g.pick(&["==", "!=", "<", "<=", ">", ">="]);
+            let (other, b) = operand(g, vars, first.ty);
+            let test = format!("{} {op} {other}", first.name);
+            choose(&test, compare(op, first.value, b))
+        }
+        2 => {
+            let kind = *g.pick(&["wrapping", "saturating"]);
+            let op = *g.pick(&["add", "sub", "mul"]);
+            let (other, b) = operand(g, vars, first.ty);
+            let (expected, c) = operand(g, vars, first.ty);
+            let test = format!("{kind}_{op}({}, {other}) == {expected}", first.name);
+            let result = arithmetic(kind, op, first.ty, first.value, b);
+            choose(&test, result == c.to_string())
+        }
+        3 => {
+            let op = *g.pick(&["add", "sub", "mul"]);
+            let (other, b) = operand(g, vars, first.ty);
+            let (expected, c) = operand(g, vars, first.ty);
+            let source = format!(
+                "match checked_{op}({}, {other}) {{\n    .some(x) {{ if x == {expected} {{ {yes} }} else {{ {no} }} }}\n    .none {{ print(\"none\") }}\n  }}",
+                first.name
+            );
+            let printed = match arithmetic("checked", op, first.ty, first.value, b) {
+                r if r == ".none" => "none",
+                r if r == format!(".some({c})") => "yes",
+                _ => "no",
+            };
+            (source, printed)
+        }
+        _ => {
+            let same: Vec<&Var> = vars.iter().filter(|v| v.ty == vars[0].ty).collect();
+            let (x, y) = ((*g.pick(&same)).clone(), (*g.pick(&same)).clone());
+            let (z, w) = ((*g.pick(&same)).clone(), (*g.pick(&same)).clone());
+            let made = |a: &Var, b: &Var| format!("Pair(a: {}, b: {})", a.name, b.name);
+            let test = format!("{} == {}", made(&x, &y), made(&z, &w));
+            choose(&test, x.value == z.value && y.value == w.value)
+        }
+    }
+}
+
+/// A program that holds numbers and does arithmetic and comparisons on
+/// them, and builds no text at run time: it prints only what a decision
+/// between fixed texts says.
+pub fn quiet(g: &mut Gen) -> NumberCase {
+    let vars = variables(g);
+    let first = vars[0].ty;
+    let mut source = format!("struct Pair {{\n  a: {0}\n  b: {0}\n}}\n\n", first.name);
+    source.push_str("fn main() ! console {\n");
+    for v in &vars {
+        let spelling = spelled(g, v.value);
+        source.push_str(&format!("  {}: {} = {spelling}\n", v.name, v.ty.name));
+    }
+    let mut stdout = String::new();
+    for _ in 0..1 + g.below(8) {
+        let (line, printed) = quiet_line(g, &vars);
+        source.push_str(&format!("  {line}\n"));
+        stdout.push_str(&format!("{printed}\n"));
+    }
+    source.push_str("}\n");
+    NumberCase {
+        source,
+        stdout: stdout.into_bytes(),
+        bound: vars.iter().map(|v| (v.ty, v.value)).collect(),
+        mistake: None,
     }
 }

@@ -13,17 +13,31 @@
 //! order. A place that the case a value holds does not use holds the zero of
 //! its type, and nothing reads it.
 //!
-//! A program that holds a number, builds a text at run time, or compares
-//! texts is stopped, and the feature is named.
+//! A number is one scalar of its type's size: 8, 16, 32, or 64 bits, with no
+//! sign, since whether it is signed is in the operation that reads it. A
+//! struct, a tuple, or an enum with a number in it follows the rules above,
+//! the number being one more scalar type when an enum's places are counted.
+//!
+//! A program that builds a text at run time or compares texts is stopped,
+//! and the feature is named.
 
 use super::*;
 use crate::scalar::{self as form, Stopped};
 
-const NUMBER: Stopped = Stopped("a number");
 const BUILT_TEXT: Stopped = Stopped("text built at run time");
 const COMPARED_TEXT: Stopped = Stopped("a comparison of texts");
 
 type Res<T> = Result<T, Stopped>;
+
+/// How many bits a number of the type has, in the scalar form.
+fn bits_of(t: Int) -> form::Bits {
+    match t.bits() {
+        8 => form::Bits::B8,
+        16 => form::Bits::B16,
+        32 => form::Bits::B32,
+        _ => form::Bits::B64,
+    }
+}
 
 /// The program that `start` runs, in the scalar form.
 pub(super) fn lower(typed: &Typed, start: Instance) -> Res<form::Program> {
@@ -151,6 +165,54 @@ impl<'a> Out<'a> {
         self.emit(form::Op::Constant(constant), vec![ty])[0]
     }
 
+    /// A constant integer of the size, which stands for the number, as its
+    /// bits in two's complement when it is negative.
+    fn int(&mut self, bits: form::Bits, number: i128) -> form::Value {
+        let mask = if bits == form::Bits::B64 {
+            u64::MAX
+        } else {
+            (1 << bits.count()) - 1
+        };
+        let n = number as u64 & mask;
+        self.constant(form::Constant::Int(n), form::Type::Int(bits))
+    }
+
+    fn binary(&mut self, op: form::Binary, a: form::Value, b: form::Value) -> form::Value {
+        let ty = self.types[a.0];
+        self.emit(form::Op::Binary { op, a, b }, vec![ty])[0]
+    }
+
+    /// Whether `a` and `b` stand in the relation, as a `bool`: 1 if they do
+    /// and 0 if they do not, which are the numbers of its cases.
+    fn compare(&mut self, op: form::Compare, a: form::Value, b: form::Value) -> form::Value {
+        let ty = form::Type::Int(form::Bits::B8);
+        self.emit(form::Op::Compare { op, a, b }, vec![ty])[0]
+    }
+
+    fn widen(&mut self, signed: bool, value: form::Value) -> form::Value {
+        let ty = form::Type::Int(form::Bits::B64);
+        self.emit(form::Op::Widen { signed, value }, vec![ty])[0]
+    }
+
+    fn narrow(&mut self, value: form::Value, to: form::Bits) -> form::Value {
+        self.emit(form::Op::Narrow(value), vec![form::Type::Int(to)])[0]
+    }
+
+    fn choose(
+        &mut self,
+        on: form::Value,
+        then: form::Value,
+        otherwise: form::Value,
+    ) -> form::Value {
+        let ty = self.types[then.0];
+        let op = form::Op::Choose {
+            on,
+            then,
+            otherwise,
+        };
+        self.emit(op, vec![ty])[0]
+    }
+
     /// The value that fills a place nothing reads.
     fn zero(&mut self, ty: form::Type) -> form::Value {
         match ty {
@@ -265,7 +327,7 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         Ok(match ty {
             Ty::Text => vec![form::Type::Address, form::Type::Int(form::Bits::B64)],
-            Ty::Int(_) => return Err(NUMBER),
+            Ty::Int(t) => vec![form::Type::Int(bits_of(*t))],
             Ty::Struct(s, args) => {
                 let mut all = Vec::new();
                 for f in &defs.fields[*s] {
@@ -446,6 +508,176 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
         })
+    }
+
+    /// What the function the compiler builds for an operation on numbers of
+    /// type `t` gives for the values `args`: whether they are equal, how
+    /// they are ordered, or the result of `wrapping_`, `saturating_`, or
+    /// `checked_` `add`, `sub`, or `mul`.
+    fn intrinsic(
+        &mut self,
+        out: &mut Out<'a>,
+        name: &str,
+        t: Int,
+        args: &[form::Value],
+    ) -> Res<Vec<form::Value>> {
+        let defs = self.typed.defs;
+        let (a, b) = (args[0], args.get(1).copied());
+        let case = |out: &mut Out<'a>, e: usize, name: &str| {
+            let k = defs.case_of(e, name).expect("a case");
+            out.constant(
+                form::Constant::Int(k as u64),
+                form::Type::Int(form::Bits::B8),
+            )
+        };
+        Ok(match name {
+            "__equal" => vec![out.compare(form::Compare::Equal, a, b.expect("two"))],
+            "__compare" => {
+                let b = b.expect("two");
+                let less = if t.signed() {
+                    form::Compare::LessS
+                } else {
+                    form::Compare::LessU
+                };
+                let below = out.compare(less, a, b);
+                let same = out.compare(form::Compare::Equal, a, b);
+                let (l, e, g) = (
+                    case(out, defs.order, "less"),
+                    case(out, defs.order, "equal"),
+                    case(out, defs.order, "greater"),
+                );
+                let after = out.choose(same, e, g);
+                vec![out.choose(below, l, after)]
+            }
+            "__decimal" => return Err(BUILT_TEXT),
+            _ => {
+                let (kind, op) = name[2..].split_once('_').expect("a named operation");
+                self.arithmetic(out, kind, op, t, a, b.expect("two"))
+            }
+        })
+    }
+
+    /// The values of `a` and `b`, numbers of type `t`, put through an
+    /// operation: `add`, `sub`, or `mul`. `wrapping` gives the result with
+    /// the bits that do not fit left off, `saturating` gives the nearest
+    /// value that fits, and `checked` gives an `Option` that holds the
+    /// result if it fits.
+    ///
+    /// A type of fewer than 64 bits is worked out in 64, where the result is
+    /// exact, and it fits if it is between the limits of the type. For a
+    /// type of 64 bits the result wraps, and whether it fit is read from the
+    /// half of the product that did not stay, or from the signs.
+    fn arithmetic(
+        &mut self,
+        out: &mut Out<'a>,
+        kind: &str,
+        op: &str,
+        t: Int,
+        a: form::Value,
+        b: form::Value,
+    ) -> Vec<form::Value> {
+        use form::Binary::*;
+        use form::Compare::*;
+        let defs = self.typed.defs;
+        let bits = bits_of(t);
+        let word = match op {
+            "add" => Add,
+            "sub" => Sub,
+            _ => Mul,
+        };
+        if kind == "wrapping" {
+            return vec![out.binary(word, a, b)];
+        }
+        let (r, below, above) = if t.bits() < 64 {
+            let (x, y) = (out.widen(t.signed(), a), out.widen(t.signed(), b));
+            let r = out.binary(word, x, y);
+            let wide = form::Bits::B64;
+            let (least, greatest) = (out.int(wide, t.min()), out.int(wide, t.max()));
+            let no = out.int(form::Bits::B8, 0);
+            let (below, above) = if t.signed() {
+                (
+                    out.compare(LessS, r, least),
+                    out.compare(LessS, greatest, r),
+                )
+            } else if op == "sub" {
+                (out.compare(LessU, x, y), no)
+            } else {
+                (no, out.compare(LessU, greatest, r))
+            };
+            (out.narrow(r, bits), below, above)
+        } else {
+            let r = out.binary(word, a, b);
+            let zero = out.int(bits, 0);
+            let no = out.int(form::Bits::B8, 0);
+            let one = out.int(form::Bits::B8, 1);
+            let (below, above) = if !t.signed() {
+                match op {
+                    "add" => (no, out.compare(LessU, r, a)),
+                    "sub" => (out.compare(LessU, a, b), no),
+                    _ => {
+                        let high = out.binary(MulHighU, a, b);
+                        (no, out.compare(LessU, zero, high))
+                    }
+                }
+            } else {
+                // Which way an overflow went is decided by the sign of the
+                // second operand, or for a product by whether the signs of
+                // the operands differ.
+                let negative = match op {
+                    "mul" => {
+                        let signs = out.binary(Xor, a, b);
+                        out.compare(LessS, signs, zero)
+                    }
+                    _ => out.compare(LessS, b, zero),
+                };
+                let overflowed = match op {
+                    "add" => {
+                        let (x, y) = (out.binary(Xor, a, r), out.binary(Xor, b, r));
+                        let both = out.binary(And, x, y);
+                        out.compare(LessS, both, zero)
+                    }
+                    "sub" => {
+                        let (x, y) = (out.binary(Xor, a, b), out.binary(Xor, a, r));
+                        let both = out.binary(And, x, y);
+                        out.compare(LessS, both, zero)
+                    }
+                    _ => {
+                        let high = out.binary(MulHighS, a, b);
+                        let below_zero = out.compare(LessS, r, zero);
+                        let all = out.int(bits, -1);
+                        let sign = out.choose(below_zero, all, zero);
+                        let same = out.compare(Equal, high, sign);
+                        out.binary(Xor, same, one)
+                    }
+                };
+                let positive = out.binary(Xor, negative, one);
+                // An addition goes below when the operand added is negative,
+                // a subtraction when the operand taken is not, and a product
+                // when the operands' signs differ.
+                let (down, up) = match op {
+                    "sub" => (positive, negative),
+                    _ => (negative, positive),
+                };
+                (
+                    out.binary(And, overflowed, down),
+                    out.binary(And, overflowed, up),
+                )
+            };
+            (r, below, above)
+        };
+        if kind == "saturating" {
+            let (least, greatest) = (out.int(bits, t.min()), out.int(bits, t.max()));
+            let low = out.choose(below, least, r);
+            return vec![out.choose(above, greatest, low)];
+        }
+        let one = out.int(form::Bits::B8, 1);
+        let wrong = out.choose(below, one, above);
+        let some = defs.case_of(defs.option, "some").expect("a case");
+        let none = defs.case_of(defs.option, "none").expect("a case");
+        let some = out.int(form::Bits::B8, some as i128);
+        let none = out.int(form::Bits::B8, none as i128);
+        let zero = out.int(bits, 0);
+        vec![out.choose(wrong, none, some), out.choose(wrong, zero, r)]
     }
 
     /// The function of the implementation of trait `k` given to `ty`. `Fmt`
@@ -692,7 +924,19 @@ impl<'a> Lowering<'a> {
         let defs = typed.defs;
         Ok(match expr {
             Expr::Text { text, .. } => (Ty::Text, self.text(out, text)),
-            Expr::Number { .. } => return Err(NUMBER),
+            Expr::Number {
+                magnitude,
+                negative,
+                ..
+            } => {
+                let ty = typed.type_of(expr, env);
+                let Ty::Int(t) = ty else {
+                    unreachable!("checked")
+                };
+                let magnitude = *magnitude as i128;
+                let value = if *negative { -magnitude } else { magnitude };
+                (ty, vec![out.int(bits_of(t), value)])
+            }
             Expr::Interp { .. } => return Err(BUILT_TEXT),
             Expr::Name { name, .. } => match out.find(name) {
                 Some(at) => (out.names()[at].ty.clone(), out.names()[at].values.clone()),
@@ -738,7 +982,20 @@ impl<'a> Lowering<'a> {
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Value => self.call_value(out, call, env)?,
-                Callee::Intrinsic => return Err(NUMBER),
+                Callee::Intrinsic => {
+                    let mut args = Vec::new();
+                    let mut int = None;
+                    for arg in &call.args {
+                        let (ty, values) = self.expr(out, &arg.value, env)?;
+                        if let Ty::Int(t) = ty {
+                            int = Some(t);
+                        }
+                        args.push(values[0]);
+                    }
+                    let int = int.expect("checked");
+                    let values = self.intrinsic(out, &call.callee, int, &args)?;
+                    (typed.type_of(expr, env), values)
+                }
                 Callee::Run(instance, gives)
                     if (defs.params(instance.template).iter())
                         .any(|(_, t)| t.subst(&instance.args).holds_fn()) =>

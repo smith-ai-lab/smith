@@ -4,8 +4,9 @@
 //! block with arguments, by choosing between blocks, or by returning
 //! values. Every value is named once, has a type, and has a size.
 //!
-//! Only what the programs lowered so far need is built: no number is held,
-//! no memory is read or written at run time, and no text is built. The
+//! Only what the programs lowered so far need is built: whole numbers, at
+//! the size of their type, but no memory read or written at run time and no
+//! text built. The
 //! rest of the form `knowledge/compiler.md` describes is added with the
 //! features that need it. A program is lowered to it from the checked
 //! program, by `check::to_scalar`.
@@ -13,7 +14,7 @@
 mod eval;
 mod wellformed;
 
-pub use eval::run;
+pub use eval::{call, run};
 pub use wellformed::{Malformed, Why, check};
 
 /// The feature that stopped a program from being lowered to the scalar form.
@@ -27,6 +28,19 @@ pub enum Bits {
     B16,
     B32,
     B64,
+}
+
+impl Bits {
+    pub const ALL: [Bits; 4] = [Bits::B8, Bits::B16, Bits::B32, Bits::B64];
+
+    pub fn count(self) -> u32 {
+        match self {
+            Bits::B8 => 8,
+            Bits::B16 => 16,
+            Bits::B32 => 32,
+            Bits::B64 => 64,
+        }
+    }
 }
 
 /// What a value is, which also says its size.
@@ -72,10 +86,69 @@ pub enum System {
     Write(Stream),
 }
 
+/// What an instruction does with two integers of the same size. Every one
+/// gives an integer of that size, in which the bits that do not fit are
+/// left off, so no overflow is ever reported. Whether a number is signed
+/// is in the operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binary {
+    /// `a + b`.
+    Add,
+    /// `a - b`.
+    Sub,
+    /// The low half of `a * b`.
+    Mul,
+    /// The high half of `a * b`, with `a` and `b` as unsigned numbers.
+    MulHighU,
+    /// The high half of `a * b`, with `a` and `b` as signed numbers.
+    MulHighS,
+    /// The bits `a` and `b` both have.
+    And,
+    /// The bits that only one of `a` and `b` has.
+    Xor,
+}
+
+/// What an instruction asks of two integers of the same size. It gives an
+/// integer of 8 bits that is 1 if it is so and 0 if it is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compare {
+    /// Whether `a` and `b` are the same.
+    Equal,
+    /// Whether `a` is below `b`, as unsigned numbers.
+    LessU,
+    /// Whether `a` is below `b`, as signed numbers.
+    LessS,
+}
+
 /// What an instruction does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
     Constant(Constant),
+    Binary {
+        op: Binary,
+        a: Value,
+        b: Value,
+    },
+    Compare {
+        op: Compare,
+        a: Value,
+        b: Value,
+    },
+    /// Gives an integer with more bits that stands for the same number,
+    /// read as signed or as unsigned.
+    Widen {
+        signed: bool,
+        value: Value,
+    },
+    /// Gives an integer with fewer bits: the low bits of the value.
+    Narrow(Value),
+    /// Gives `then` if the integer of 8 bits `on` is not 0, and `otherwise`
+    /// if it is. Both are values of the type the instruction gives.
+    Choose {
+        on: Value,
+        then: Value,
+        otherwise: Value,
+    },
     /// Runs a function, by its place in `Program::functions`, with these
     /// values as the parameters of its first block, in order. It gives the
     /// values the function returns, in order.
