@@ -132,11 +132,11 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
     })?;
     let cwd = std::env::current_dir().map_err(|e| format!("cannot find this folder: {e}"))?;
     let name = if stem == "main" {
-        cwd.file_name().unwrap_or(stem).to_owned()
+        cwd.file_name().unwrap_or(stem)
     } else {
-        stem.to_owned()
+        stem
     };
-    let output = cwd.join(name);
+    let output = cwd.join(request.target.executable_name(&name.to_string_lossy()));
     timings
         .stage("write", || write_executable(&output, &bytes))
         .map_err(|e| format!("{}: {e}", output.display()))?;

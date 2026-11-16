@@ -5,10 +5,13 @@
 pub struct Reg(u8);
 
 pub const RAX: Reg = Reg(0);
+pub const RCX: Reg = Reg(1);
 pub const RDX: Reg = Reg(2);
 pub const RBX: Reg = Reg(3);
 pub const RSI: Reg = Reg(6);
 pub const RDI: Reg = Reg(7);
+pub const R8: Reg = Reg(8);
+pub const R9: Reg = Reg(9);
 pub const R12: Reg = Reg(12);
 
 /// What a 32-bit offset in the code refers to.
@@ -95,6 +98,50 @@ impl Asm {
     /// `test r64, r64`.
     pub fn test(&mut self, r: Reg) {
         self.bytes(&[Self::rex_w(r, r), 0x85, Self::modrm(r, r)]);
+    }
+
+    /// `test r32, r32`, for a register below r8.
+    pub fn test32(&mut self, r: Reg) {
+        assert!(r.0 < 8);
+        self.bytes(&[0x85, Self::modrm(r, r)]);
+    }
+
+    /// `cmp ra, rb`, which compares `ra - rb`.
+    pub fn cmp(&mut self, ra: Reg, rb: Reg) {
+        self.bytes(&[Self::rex_w(rb, ra), 0x39, Self::modrm(rb, ra)]);
+    }
+
+    /// `cmova rd, rs`: copies `rs` when the last comparison found its first
+    /// operand above its second, as unsigned numbers.
+    pub fn cmova(&mut self, rd: Reg, rs: Reg) {
+        self.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x47, Self::modrm(rd, rs)]);
+    }
+
+    /// The ModRM, SIB, and 8-bit displacement of `[rsp + disp]`, with `reg`
+    /// in the ModRM reg field.
+    fn stack_slot(&mut self, reg: u8, disp: i8) {
+        self.bytes(&[0x44 | (reg & 7) << 3, 0x24, disp as u8]);
+    }
+
+    /// `lea rd, [rsp + disp]`.
+    pub fn stack_address(&mut self, rd: Reg, disp: i8) {
+        self.bytes(&[Self::rex_w(rd, RAX), 0x8d]);
+        self.stack_slot(rd.0, disp);
+    }
+
+    /// `mov qword [rsp + disp], imm32`, sign-extended.
+    pub fn store_stack_imm32(&mut self, disp: i8, value: u32) {
+        self.bytes(&[0x48, 0xc7]);
+        self.stack_slot(0, disp);
+        self.bytes(&value.to_le_bytes());
+    }
+
+    /// `mov r32, dword [rsp + disp]`, which clears the upper half, for a
+    /// register below r8.
+    pub fn load32_stack(&mut self, rd: Reg, disp: i8) {
+        assert!(rd.0 < 8);
+        self.bytes(&[0x8b]);
+        self.stack_slot(rd.0, disp);
     }
 
     /// `add rd, rs`.
