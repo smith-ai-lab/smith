@@ -8,7 +8,7 @@ built: "`var` and `=` on text, and an error for assigning to a name that is not 
 
 # Mutable locals and `if`
 
-`var` defines a local that can change, and it may state its type, as in `var n: i32 = 0`. `=` gives a `var` a new value, and `+=`, `-=`, `*=`, and `/=` accumulate into it. A name that is not a `var` never changes, and assigning to one is a compile error. `if` is an expression, and the words `not`, `and`, and `or` combine conditions.
+`var` defines a local that can change, and it may state its type, as in `var n: i32 = 0`. `=` gives a `var` a new value, and `+=`, `-=`, `*=`, and `/=` accumulate into it. A name that is not a `var` never changes, and assigning to one is a compile error. `if` is an expression, and the words `not`, `and`, and `or` combine conditions. With an `else`, an `if` gives what the block that runs gives, and both blocks give the same type. With none it gives `()`, and what its block gives is not read. `and` and `or` evaluate their right side only when the left side has not settled the answer.
 
 ```
 fn relu(x: f32) -> f32 {

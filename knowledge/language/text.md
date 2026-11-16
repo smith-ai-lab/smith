@@ -55,7 +55,7 @@ fn describe(tom: Cat) ! console, alloc {
 
 - `repr` is an ordinary function, called inside the braces like any other. The braces always use `Fmt`, and a value never prints differently because of where it is.
 - The `Repr` of a `str` is the text in quotes, with its escapes. The `Fmt` of a `str` is the text alone. For a number and a `bool` the two are the same, and a float always shows its point, as in `2.0`.
-- The `Repr` of a struct is its construction, as in `Cat(name: "tom")`, with the `Repr` of each field. A tuple is `("a", "b")`, a case is `.cat(Cat(name: "tom"))` or `.none`, and an array or list is `[1, 2, 3]`.
+- The `Repr` of a struct is its construction, as in `Cat(name: "tom")`, with the `Repr` of each field. A tuple is `("a", "b")` and the empty tuple is `()`, a case is `.cat(Cat(name: "tom"))` or `.none`, and an array or list is `[1, 2, 3]`.
 - A struct with exactly one field that is not a proof, such as `Fin`, is written as that field's value.
 - Both traits are given automatically, as [`Copy`](ownership.md) is: a struct, an enum, or a tuple has each unless one of its fields lacks it. Its `Fmt` is its `Repr`. `without Fmt for Secret` takes one away.
 - A type that should read differently to a person implements `Fmt` itself, and its implementation replaces the one it was given. Its `Repr` stays.
