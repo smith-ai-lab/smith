@@ -1,0 +1,3 @@
+no_implementation.smith:21:9: there is no implementation of `Named` for `Bird`, which `show` needs
+  21 |   print(show(Bird(name: "Tweety")))
+     |         ^
