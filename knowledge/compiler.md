@@ -229,6 +229,15 @@ Every merge to `main` that changes what the compiler does publishes a release on
 - Every release is kept. None is deleted or replaced.
 - Once Smith compiles itself, each release is built by the release before it, and then by itself. The two results are the same byte for byte, as in [Bootstrap](#bootstrap).
 
+## Mirror
+
+Everything git holds is also on GitLab, at `gitlab.com/smith-ai-lab/smith`, so that it survives if GitHub is unavailable.
+
+- It holds `main`, the `timings` branch, and every `v*` tag, each at the same commit as on GitHub. It does not hold release files, issues, or pull requests, which git does not hold.
+- The `mirror` workflow runs after a push to `main` or a `v*` tag, and after the `timings` and `release` workflows finish, since a push made with a workflow's own token starts no other workflow. It can also be started by hand. Pull requests and the merge queue never run it, and nothing waits on it.
+- It never forces. If GitLab holds something GitHub does not, or the push fails for any reason, such as a key GitLab refuses, the workflow fails and says why.
+- It signs in with the private key in the secret `GITLAB_MIRROR_KEY`, a deploy key of that one GitLab project, and trusts GitLab only by the host key in `.github/gitlab-known-hosts`. Only the job that pushes reads the secret, and it cannot write to this repository.
+
 ## Bootstrap
 
 The first compiler is written in Rust with no dependencies. It is kept small and retired early.

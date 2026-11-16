@@ -1,0 +1,64 @@
+name: mirror
+
+# Copies main, the timings branch, and every v* tag to GitLab, so the history
+# survives if GitHub is unavailable. A push made with a workflow's own token
+# starts no workflow, so the timings and release workflows are named here and
+# the mirror runs when either finishes. Never for a pull request or the merge
+# queue, so it cannot hold one up.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_run:
+    workflows: [timings, release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  push:
+    name: push to GitLab
+    runs-on: ubuntu-latest
+    # Only this job reads the secret. It can read this repository and nothing more.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Push what GitHub holds
+        env:
+          GITLAB_MIRROR_KEY: ${{ secrets.GITLAB_MIRROR_KEY }}
+        run: |
+          set -eu
+          if [ -z "$GITLAB_MIRROR_KEY" ]; then
+            echo "the secret GITLAB_MIRROR_KEY is not set, so nothing can be pushed to GitLab" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ssh"
+          chmod 700 "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$GITLAB_MIRROR_KEY" > "$RUNNER_TEMP/ssh/key"
+          chmod 600 "$RUNNER_TEMP/ssh/key"
+          # GitLab is trusted only by the host key kept in this repository.
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/ssh/key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$GITHUB_WORKSPACE/.github/gitlab-known-hosts"
+          # What GitHub holds now, not what it held when this run began.
+          git fetch --quiet origin '+refs/heads/main:refs/mirror/heads/main' '+refs/tags/v*:refs/mirror/tags/*'
+          refs="refs/mirror/heads/main:refs/heads/main"
+          if git fetch --quiet origin '+refs/heads/timings:refs/mirror/heads/timings' 2>/dev/null; then
+            refs="$refs refs/mirror/heads/timings:refs/heads/timings"
+          fi
+          for tag in $(git for-each-ref --format='%(refname:strip=3)' refs/mirror/tags); do
+            refs="$refs refs/mirror/tags/$tag:refs/tags/$tag"
+          done
+          # Never forced: if GitLab holds something GitHub does not, this fails.
+          # shellcheck disable=SC2086
+          if ! git push --atomic git@gitlab.com:smith-ai-lab/smith.git $refs; then
+            echo "could not update the mirror on GitLab: see the error above" >&2
+            exit 1
+          fi
