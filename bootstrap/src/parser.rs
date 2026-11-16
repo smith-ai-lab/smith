@@ -894,12 +894,10 @@ impl Parser<'_> {
         })
     }
 
-    /// The error for `:=`, which Smith does not have, and for an
-    /// accumulating assignment, which the compiler does not build yet.
+    /// The error for an accumulating assignment, which the compiler does not
+    /// build yet.
     fn assignment_not_built(&self) -> Result<(), Error> {
         match self.tok() {
-            Tok::Punct(":=") => Err(Error::new(self.pos(), "Smith has no `:=`")
-                .with_fix("write `=`, which defines a name or assigns to a `var`")),
             Tok::Punct(op @ ("+=" | "-=" | "*=" | "/=")) => {
                 Err(Error::unsupported(self.pos(), &format!("`{op}`")))
             }
