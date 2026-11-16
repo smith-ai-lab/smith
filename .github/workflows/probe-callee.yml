@@ -9,7 +9,5 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    concurrency:
-      group: probe-${{ github.run_id }}
     steps:
       - run: sleep 45
