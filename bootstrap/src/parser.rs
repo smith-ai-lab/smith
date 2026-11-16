@@ -106,11 +106,23 @@ pub struct Type {
 /// A statement of a block.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Stmt {
-    /// `x = e`, or `x: T = e`, which defines a name.
+    /// `x = e` or `x: T = e`, which defines a name, or `var x = e` or
+    /// `var x: T = e`, which defines a name that can change. Whether a
+    /// bare `x = e` defines `x` or assigns to a `var` is for the checker to
+    /// decide.
     Define {
         name: String,
         pos: Pos,
         ty: Option<Type>,
+        var: bool,
+        value: Expr,
+    },
+    /// `x.f = e`, which assigns to a field of `x`, or to a field of a field
+    /// for each further name.
+    Assign {
+        name: String,
+        pos: Pos,
+        fields: Vec<Named>,
         value: Expr,
     },
     Expr(Expr),
@@ -238,6 +250,28 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
         })
     } else {
         Err(p.errors)
+    }
+}
+
+/// A name and where it is.
+type Named = (String, Pos);
+
+/// The name, its place, and the fields a place names, if the expression is
+/// one: a field of a name, or of a field of one.
+fn place(expr: &Expr) -> Option<(String, Pos, Vec<Named>)> {
+    match expr {
+        Expr::Field { of, name, pos } => match &**of {
+            Expr::Name {
+                name: root,
+                pos: at,
+            } => Some((root.clone(), *at, vec![(name.clone(), *pos)])),
+            of => {
+                let (root, at, mut fields) = place(of)?;
+                fields.push((name.clone(), *pos));
+                Some((root, at, fields))
+            }
+        },
+        _ => None,
     }
 }
 
@@ -808,41 +842,69 @@ impl Parser<'_> {
                 Tok::Punct("=" | ":") => {
                     let name = name.clone();
                     self.bump();
-                    let mut ty = None;
-                    if self.tok() == &Tok::Punct(":") {
-                        self.bump();
-                        ty = Some(self.ty()?);
-                    }
-                    self.expect_punct("=", "`=`")?;
-                    let value = self.expr()?;
-                    return Ok(Stmt::Define {
-                        name,
-                        pos,
-                        ty,
-                        value,
-                    });
+                    return self.definition(name, pos, false);
                 }
-                Tok::Punct(":=" | "+=" | "-=" | "*=" | "/=") => "assignment",
                 _ => {
                     let expr = self.expr()?;
-                    if matches!(expr, Expr::Field { .. })
-                        && matches!(
-                            self.tok(),
-                            Tok::Punct("=" | ":=" | "+=" | "-=" | "*=" | "/=")
-                        )
+                    if self.tok() == &Tok::Punct("=")
+                        && let Some((name, pos, fields)) = place(&expr)
                     {
-                        return Err(Error::unsupported(pos, "assigning to a field"));
+                        self.bump();
+                        let value = self.expr()?;
+                        return Ok(Stmt::Assign {
+                            name,
+                            pos,
+                            fields,
+                            value,
+                        });
                     }
+                    self.assignment_not_built()?;
                     return Ok(Stmt::Expr(expr));
                 }
             },
-            Tok::Keyword("var") => "`var`",
+            Tok::Keyword("var") => {
+                self.bump();
+                let (name, pos) = self.ident("the name of the `var`")?;
+                return self.definition(name, pos, true);
+            }
             Tok::Keyword("with") => "`with`",
             Tok::Keyword("break") => "`break`",
             tok if starts_expression(tok) => return Ok(Stmt::Expr(self.expr()?)),
             tok => return Err(self.expected("a statement", tok)),
         };
         Err(Error::unsupported(pos, feature))
+    }
+
+    /// Parses the rest of a definition, from the `:` or `=` after its name.
+    fn definition(&mut self, name: String, pos: Pos, var: bool) -> Result<Stmt, Error> {
+        let mut ty = None;
+        if self.tok() == &Tok::Punct(":") {
+            self.bump();
+            ty = Some(self.ty()?);
+        }
+        self.assignment_not_built()?;
+        self.expect_punct("=", "`=`")?;
+        let value = self.expr()?;
+        Ok(Stmt::Define {
+            name,
+            pos,
+            ty,
+            var,
+            value,
+        })
+    }
+
+    /// The error for `:=`, which Smith does not have, and for an
+    /// accumulating assignment, which the compiler does not build yet.
+    fn assignment_not_built(&self) -> Result<(), Error> {
+        match self.tok() {
+            Tok::Punct(":=") => Err(Error::new(self.pos(), "Smith has no `:=`")
+                .with_fix("write `=`, which defines a name or assigns to a `var`")),
+            Tok::Punct(op @ ("+=" | "-=" | "*=" | "/=")) => {
+                Err(Error::unsupported(self.pos(), &format!("`{op}`")))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// The error for a token that would continue an expression, which the

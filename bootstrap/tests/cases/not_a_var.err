@@ -1,0 +1,4 @@
+not_a_var.smith:3:3: `word` is not a `var`, so it cannot be assigned to
+  3 |   word = "second"
+    |   ^
+  fix: declare it with `var`: write `var word` where it is defined

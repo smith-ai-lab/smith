@@ -1,0 +1,12 @@
+struct Name {
+  first: str
+  last: str
+}
+
+fn main() ! console {
+  var name = Name(first: "Ada", last: "Byron")
+  kept = name
+  name.last = "Lovelace"
+  print(name.last)
+  print(kept.last)
+}
