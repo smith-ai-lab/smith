@@ -22,6 +22,15 @@ A test exists to fail when something that must be true stops being true, and for
 - **A test that needs a kind of machine to run and fails elsewhere.** Run what the machine can run and say what was skipped.
 - **A sleep, a retry, or anything that depends on timing.**
 
+## How long a test may take
+
+- **One second of its own computing.** A run fails, and names the test, when a test spends more. The harness measures the processor time of the thread that ran the test, so a busy machine does not make a quick test slow, and the verdict is the same alone and beside every other test.
+- **A test that starts a program or a thread has not spent that time.** Call a function where you can, and start a program only to check what starting it does.
+- **Aim for under half the limit,** so that a slower machine still passes. Work that every test of a file needs is done once, in a place that `OnceLock` holds, and costs the first test that asks for it.
+- **A property runs as few cases as make it fail when what it checks is broken.** Break the code once and watch it fail with the cases you chose.
+- **The limit applies to a file at a time,** to the files `limited` in `bootstrap/tests/main.rs` lists. A file joins when every test in it is under the limit and never leaves. The list is there only until every file is on it, and the issue that adds the last file deletes it.
+- **A run fails on the kind of machine the `linux` job of `ci` uses,** and elsewhere prints a slow test and passes.
+
 ## Where each kind goes
 
 - **Properties** run in-process over generated input, with a fixed seed so a failure repeats, and shrink a failing input before reporting it.
@@ -32,4 +41,4 @@ A test exists to fail when something that must be true stops being true, and for
 
 - Every line of the issue's "Must be true" has a test.
 - No test you added names a place or a message by hand.
-- The run ends with its slowest tests. If one of yours is on the list, make its input smaller.
+- The run ends with its slowest tests, by the time they computed. If one of yours is on the list, make its input smaller.
