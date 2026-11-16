@@ -2,6 +2,7 @@
 type: specification
 title: Lambdas, with, and try
 description: Lambdas written as blocks after a call, with to pass the rest of a block to a function, and try to continue only on success.
+status: planned
 ---
 
 # Lambdas, `with`, and `try`

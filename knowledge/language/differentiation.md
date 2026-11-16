@@ -2,6 +2,7 @@
 type: specification
 title: Differentiation
 description: grad as a compile-time call that returns the gradient of a function, shown by training an MLP.
+status: planned
 ---
 
 # Differentiation

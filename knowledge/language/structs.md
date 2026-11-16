@@ -2,6 +2,8 @@
 type: specification
 title: Structs and tuples
 description: Structs with named fields and defaults, assigning to a field of a var, tuples, and patterns that take them apart.
+status: partial
+built: "structs with fields and defaults, assigning to a field of a `var`, tuples, and patterns that define and assign"
 ---
 
 # Structs and tuples

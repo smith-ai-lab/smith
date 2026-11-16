@@ -2,6 +2,7 @@
 type: specification
 title: Foreign calls and native applications
 description: Foreign declarations with C signatures, and how system frameworks are reached for native applications.
+status: planned
 ---
 
 # Foreign calls and native applications

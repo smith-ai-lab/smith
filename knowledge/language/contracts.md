@@ -2,6 +2,7 @@
 type: specification
 title: Contracts and proofs
 description: requires, ensures, and check, what the arith procedure can prove, termination, and hole.
+status: planned
 ---
 
 # Contracts and proofs

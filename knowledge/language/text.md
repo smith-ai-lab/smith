@@ -2,6 +2,8 @@
 type: specification
 title: Text and printing
 description: Where a program starts, print, and string literals that hold expressions formatted by the Fmt trait.
+status: partial
+built: "`main`, `print`, string literals, and their escapes"
 ---
 
 # Text and printing

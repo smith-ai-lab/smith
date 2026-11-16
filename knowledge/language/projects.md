@@ -2,6 +2,8 @@
 type: specification
 title: Projects and packages
 description: How a folder becomes a project by convention, what smith new creates, the standard library, vendored dependencies, build steps and tasks in project.smith, and the command line.
+status: partial
+built: "`smith build`, `smith run`, and `smith check` on `main.smith` or a named file"
 ---
 
 # Projects and packages

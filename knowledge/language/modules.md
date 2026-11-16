@@ -2,6 +2,7 @@
 type: specification
 title: Modules
 description: One file as one module, pub, and explicit imports with use.
+status: planned
 ---
 
 # Modules

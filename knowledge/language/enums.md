@@ -2,6 +2,7 @@
 type: specification
 title: Enums and match
 description: Enums that hold one of their cases, and match to take a value apart.
+status: built
 ---
 
 # Enums and `match`

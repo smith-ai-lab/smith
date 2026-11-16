@@ -2,6 +2,7 @@
 type: specification
 title: Storage and arenas
 description: When an array gets a buffer, the alloc effect and arenas, recursion without stack overflow, and types that contain themselves.
+status: planned
 ---
 
 # Storage and arenas

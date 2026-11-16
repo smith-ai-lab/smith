@@ -2,6 +2,7 @@
 type: specification
 title: A transformer
 description: A decoder-only transformer in under a hundred lines, built from everything before it.
+status: planned
 ---
 
 # A transformer

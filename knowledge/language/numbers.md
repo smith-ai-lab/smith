@@ -2,6 +2,8 @@
 type: specification
 title: Literals and numbers
 description: Literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
+status: partial
+built: "string literals that become `str`"
 ---
 
 # Literals and numbers

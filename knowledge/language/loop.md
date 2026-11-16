@@ -2,6 +2,7 @@
 type: specification
 title: loop and iteration
 description: loop for steps that run in order, the Iterate trait, and break.
+status: planned
 ---
 
 # `loop` and iteration
