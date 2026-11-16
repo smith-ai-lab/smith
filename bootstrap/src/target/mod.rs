@@ -8,6 +8,7 @@ mod linux_x64;
 mod macho;
 mod macos_arm64;
 mod macos_x64;
+mod pe;
 mod windows_x64;
 mod x86_64;
 
