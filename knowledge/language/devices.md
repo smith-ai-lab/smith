@@ -2,6 +2,7 @@
 type: specification
 title: Devices
 description: Running the same source on a GPU with with device(gpu).
+status: planned
 ---
 
 # Devices

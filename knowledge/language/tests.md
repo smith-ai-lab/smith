@@ -2,6 +2,7 @@
 type: specification
 title: Tests
 description: Tests found by convention, examples and properties driven by a Key, and how they run.
+status: planned
 ---
 
 # Tests

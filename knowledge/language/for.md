@@ -2,6 +2,7 @@
 type: specification
 title: for expressions
 description: for as an unordered description of an array, reductions, element-wise operators, @, and the rules for float arithmetic.
+status: planned
 ---
 
 # `for` expressions

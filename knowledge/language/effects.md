@@ -2,6 +2,8 @@
 type: specification
 title: Effects
 description: Effects listed in a signature as permissions, how an effect is declared, how a handler is used and written, and the effects Smith provides.
+status: partial
+built: "`console` in a signature, required of every caller of `print` and listed once"
 ---
 
 # Effects

@@ -2,6 +2,8 @@
 type: specification
 title: Generics and traits
 description: Type parameters, traits over one or more types, impl, operators as trait functions, and derive.
+status: partial
+built: "type parameters, traits with `out` parameters, `impl`, bounds such as `T: Plus`, and calls of trait functions with defaults"
 ---
 
 # Generics and traits

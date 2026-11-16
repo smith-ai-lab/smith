@@ -2,6 +2,8 @@
 type: specification
 title: Mutable locals and if
 description: Locals that change, declared with var, and if as an expression.
+status: partial
+built: "`var` and `=` on text, and an error for assigning to a name that is not a `var`"
 ---
 
 # Mutable locals and `if`

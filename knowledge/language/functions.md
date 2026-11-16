@@ -2,6 +2,8 @@
 type: specification
 title: Functions
 description: Typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
+status: partial
+built: "typed parameters and return types over `str`, blocks, named arguments, defaults, and `//` comments"
 ---
 
 # Functions

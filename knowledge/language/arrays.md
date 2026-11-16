@@ -2,6 +2,7 @@
 type: specification
 title: Arrays and sizes
 description: Arrays whose sizes are part of their types, Fin indices that need no bounds check, indexing as the Index trait, and ranges.
+status: planned
 ---
 
 # Arrays and sizes

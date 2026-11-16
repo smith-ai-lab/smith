@@ -2,6 +2,7 @@
 type: specification
 title: Tasks and async
 description: Task groups with spawn and join, cancellation, async I/O that reads as sequential code, how a task ends, and events.
+status: planned
 ---
 
 # Tasks and async
