@@ -1,7 +1,7 @@
 //! x86-64 machine code, shared by every target that runs on x86-64, and
 //! how a program's functions become it.
 
-use crate::ir::{Function, Program, Step, Stream, Value};
+use crate::ir::{Function, Program, Step, Stream, Value, Word};
 
 /// A register, by its number in the instruction encoding.
 #[derive(Clone, Copy)]
@@ -295,6 +295,60 @@ impl Asm {
         self.bytes(&[0xf3, 0xa4]);
     }
 
+    /// `and rd, rs`.
+    pub fn and(&mut self, rd: Reg, rs: Reg) {
+        self.bytes(&[Self::rex_w(rs, rd), 0x21, Self::modrm(rs, rd)]);
+    }
+
+    /// `xor rd, rs`.
+    pub fn xor(&mut self, rd: Reg, rs: Reg) {
+        self.bytes(&[Self::rex_w(rs, rd), 0x31, Self::modrm(rs, rd)]);
+    }
+
+    /// `imul rd, rs`, which keeps the low 64 bits.
+    pub fn imul(&mut self, rd: Reg, rs: Reg) {
+        self.bytes(&[Self::rex_w(rd, rs), 0x0f, 0xaf, Self::modrm(rd, rs)]);
+    }
+
+    /// An instruction of the group that shifts and takes its count from cl,
+    /// or multiplies or divides rdx:rax, by the number of the operation in
+    /// the ModRM reg field.
+    fn group(&mut self, opcode: u8, op: u8, r: Reg) {
+        self.bytes(&[Self::rex_w(RAX, r), opcode, Self::modrm(Reg(op), r)]);
+    }
+
+    /// `shl r, cl`.
+    pub fn shl_cl(&mut self, r: Reg) {
+        self.group(0xd3, 4, r);
+    }
+
+    /// `sar r, cl`.
+    pub fn sar_cl(&mut self, r: Reg) {
+        self.group(0xd3, 7, r);
+    }
+
+    /// `mul r`: rdx:rax is rax times `r`, as unsigned numbers.
+    pub fn mul_wide(&mut self, r: Reg) {
+        self.group(0xf7, 4, r);
+    }
+
+    /// `imul r`: rdx:rax is rax times `r`, as signed numbers.
+    pub fn imul_wide(&mut self, r: Reg) {
+        self.group(0xf7, 5, r);
+    }
+
+    /// `div r`: rax is rdx:rax divided by `r`, and rdx is the remainder, as
+    /// unsigned numbers.
+    pub fn div(&mut self, r: Reg) {
+        self.group(0xf7, 6, r);
+    }
+
+    /// `setcc al` then `movzx eax, al`: rax is 1 when the condition holds
+    /// and 0 when not.
+    pub fn truth(&mut self, cond: u8) {
+        self.bytes(&[0x0f, 0x90 | cond, 0xc0, 0x0f, 0xb6, 0xc0]);
+    }
+
     /// The code with each piece of data placed after it under its label.
     /// The code is at `code_address`, and the 8-byte slot `i` is at
     /// `slots_address + 8 * i`.
@@ -326,6 +380,8 @@ pub const NE: u8 = 0x5;
 pub const LE: u8 = 0xe;
 pub const L: u8 = 0xc;
 pub const S: u8 = 0x8;
+/// Below, as unsigned numbers.
+pub const B: u8 = 0x2;
 
 /// What a system gives the code of an x86-64 target: how it writes and how
 /// it ends the program.
@@ -457,6 +513,10 @@ impl<S: System> Frame<'_, S> {
                 asm.mov32(address, c as u32);
                 asm.mov32(length, 0);
             }
+            Value::Number(n) => {
+                asm.mov64(address, n);
+                asm.mov32(length, 0);
+            }
             Value::Local(l) => {
                 asm.load_stack(address, self.slot(l));
                 asm.load_stack(length, self.slot(l) + 8);
@@ -520,6 +580,8 @@ impl<S: System> Frame<'_, S> {
                     }
                     asm.bind(end);
                 }
+                Step::Word { local, op, a, b } => self.word(asm, *local, *op, *a, *b),
+                Step::Decimal { local, value } => self.decimal(asm, *local, *value),
                 Step::Escape { local, value } => self.escape(asm, *local, *value),
                 Step::Equal { local, a, b } => self.equal(asm, *local, *a, *b),
                 Step::Match { value, arms } => {
@@ -541,6 +603,86 @@ impl<S: System> Frame<'_, S> {
                 }
             }
         }
+    }
+
+    /// Puts in the local what `op` makes of the numbers `a` and `b`, which
+    /// are in rax and rcx.
+    fn word(&self, asm: &mut Asm, local: usize, op: Word, a: Value, b: Value) {
+        self.load(asm, a, (RAX, RDX));
+        self.load(asm, b, (RCX, RSI));
+        match op {
+            Word::Add => asm.add(RAX, RCX),
+            Word::Sub => asm.sub(RAX, RCX),
+            Word::Mul => asm.imul(RAX, RCX),
+            Word::MulHighU => {
+                asm.mul_wide(RCX);
+                asm.mov(RAX, RDX);
+            }
+            Word::MulHighS => {
+                asm.imul_wide(RCX);
+                asm.mov(RAX, RDX);
+            }
+            Word::And => asm.and(RAX, RCX),
+            Word::Xor => asm.xor(RAX, RCX),
+            Word::ShiftLeft => asm.shl_cl(RAX),
+            Word::ShiftRightS => asm.sar_cl(RAX),
+            Word::Equal => {
+                asm.cmp(RAX, RCX);
+                asm.truth(Z);
+            }
+            Word::LessU => {
+                asm.cmp(RAX, RCX);
+                asm.truth(B);
+            }
+            Word::LessS => {
+                asm.cmp(RAX, RCX);
+                asm.truth(L);
+            }
+        }
+        let to = self.slot(local);
+        asm.store_stack(to, RAX);
+        asm.mov32(RDX, 0);
+        asm.store_stack(to + 8, RDX);
+    }
+
+    /// Writes the digits of the number into a new text in the local. The
+    /// first pass counts them in rcx, by dividing a copy of the number in
+    /// r8 by 10 until nothing is left, and the second writes each digit
+    /// before the one after it, from the end, at rdi.
+    fn decimal(&self, asm: &mut Asm, local: usize, value: Value) {
+        let to = self.slot(local);
+        self.load(asm, value, (R8, R9));
+        asm.mov32(RCX, 0);
+        let count = asm.label();
+        asm.bind(count);
+        asm.add_imm8(RCX, 1);
+        asm.mov(RAX, R8);
+        asm.mov32(RDX, 0);
+        asm.mov32(RSI, 10);
+        asm.div(RSI);
+        asm.mov(R8, RAX);
+        asm.test(RAX);
+        asm.jcc(NE, count);
+        asm.store_stack(to + 8, RCX);
+        asm.mov(RSI, RCX);
+        S::alloc(asm, self.fail);
+        asm.store_stack(to, RAX);
+        asm.load_stack(RCX, to + 8);
+        asm.mov(RDI, RAX);
+        asm.add(RDI, RCX);
+        self.load(asm, value, (R8, R9));
+        let write = asm.label();
+        asm.bind(write);
+        asm.mov(RAX, R8);
+        asm.mov32(RDX, 0);
+        asm.mov32(RSI, 10);
+        asm.div(RSI);
+        asm.mov(R8, RAX);
+        asm.add_imm8(RDX, b'0' as i8);
+        asm.add_imm8(RDI, -1);
+        asm.store_byte(RDI, RDX);
+        asm.test(R8);
+        asm.jcc(NE, write);
     }
 
     /// Puts in the local case 1 if the texts have the same bytes, and case 0
