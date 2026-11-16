@@ -204,6 +204,7 @@ Continuous integration runs for a pull request and in the merge queue, and for n
 
 - On Linux on x86-64 one job builds the compiler once and runs the format check, the lint, both test groups, and the timings. The machine group also runs once on each other kind of machine a target needs.
 - A change that touches no file under `bootstrap/` or `.github/` and not `.gitattributes`, which sets the bytes of the test cases on checkout, or `install.sh`, which the tests run, such as one to `knowledge/` or `.agents/` alone, runs no job that builds the compiler. `.github/changed.sh` decides this.
+- A job that builds nothing, `.github/check-status.sh`, runs for every change and fails when a page of `language/` other than `index.md` has no `status`, a `status` other than `built`, `partial`, or `planned`, or `partial` without `built`.
 - A newer push to a pull request cancels the run for the older push.
 - The job named `ci` is the one check the repository requires. `.github/ci-result.sh` makes it succeed only when every other job succeeded or was skipped on purpose, and fail when any failed or was cancelled. Adding a job to the workflow means adding it to what `ci` needs, and changes no rule.
 

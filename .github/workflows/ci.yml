@@ -114,9 +114,19 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: sh .github/check-commits.sh "$BASE" "$HEAD"
 
+  # Every page of the language says how much of it is built. It builds nothing,
+  # so it runs for every change.
+  status:
+    name: language status
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the status of every language page
+        run: sh .github/check-status.sh
+
   ci:
     name: ci
-    needs: [changes, linux, machine, install, commits]
+    needs: [changes, linux, machine, install, commits, status]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -135,3 +145,4 @@ jobs:
           "machine=${{ needs.machine.result }}"
           "install=${{ needs.install.result }}"
           "commits=${{ needs.commits.result }}"
+          "status=${{ needs.status.result }}"
