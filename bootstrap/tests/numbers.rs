@@ -328,11 +328,37 @@ fn write(
     let mut text = String::from("struct Pair {\n");
     let first = m.vars[0].ty;
     text.push_str(&format!("  a: {0}\n  b: {0}\n}}\n\n", first.name));
-    text.push_str("fn main() ! console, alloc {\n");
+    // A function for each type that takes one, so that a name bound without
+    // its type is decided by being passed to it.
+    let mut taken: Vec<Int> = Vec::new();
+    let mut bindings = String::new();
     for v in &m.vars {
         let spelling = spelled(g, v.value);
-        text.push_str(&format!("  {}: {} = {spelling}\n", v.name, v.ty.name));
+        if g.one_in(2) {
+            bindings.push_str(&format!("  {} = {spelling}\n", v.name));
+            if v.ty.name != "i64" {
+                bindings.push_str(&format!("  id_{}({})\n", v.ty.name, v.name));
+                if !taken.contains(&v.ty) {
+                    taken.push(v.ty);
+                }
+            }
+        } else {
+            bindings.push_str(&format!("  {}: {} = {spelling}\n", v.name, v.ty.name));
+        }
     }
+    if let Some((_, before, after, ..)) = mistake {
+        for ty in INTS {
+            let call = format!("id_{}(", ty.name);
+            if (before.contains(&call) || after.contains(&call)) && !taken.contains(ty) {
+                taken.push(*ty);
+            }
+        }
+    }
+    for ty in taken {
+        text.push_str(&format!("fn id_{0}(n: {0}) -> {0} {{ n }}\n\n", ty.name));
+    }
+    text.push_str("fn main() ! console, alloc {\n");
+    text.push_str(&bindings);
     let mut expected = None;
     for (i, l) in m.lines.iter().enumerate() {
         if let Some((at, before, after, mentions, fix)) = mistake
@@ -407,7 +433,11 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
     let literal = value(g, ty);
     let literal = spelled(g, literal);
     let (before, after, mentions): (String, String, String) = match kind {
-        0 => ("x = ".into(), "5".into(), "no type".into()),
+        0 => (
+            format!("x = 5\n  id_{}(x)\n  id_{}(", ty.name, other.name),
+            "x)".into(),
+            format!("where a `{}` is needed", other.name),
+        ),
         1 => (
             format!("small: {} = ", ty.name),
             too_far.to_string(),
@@ -439,9 +469,13 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
             format!("{literal})"),
             "where text is needed".into(),
         ),
-        _ => ("x = ".into(), literal.clone(), "no type".into()),
+        _ => (
+            "x = ".into(),
+            format!("{too_far}\n  id_{}(x)", ty.name),
+            format!("does not fit `{}`", ty.name),
+        ),
     };
-    let fix = matches!(kind, 0 | 6).then_some("limit: i32");
+    let fix: Option<&str> = None;
     let (source, mistake) = write(g, &m, Some((at, &before, &after, &mentions, fix)));
     NumberCase {
         source,

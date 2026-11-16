@@ -5,7 +5,7 @@ use std::fmt;
 
 /// A place in a source file. Lines and columns count from 1, and a column
 /// counts characters, not bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
     pub line: usize,
     pub col: usize,

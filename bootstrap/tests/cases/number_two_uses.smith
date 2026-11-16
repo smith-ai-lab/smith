@@ -1,0 +1,9 @@
+fn byte(n: u8) -> u8 { n }
+
+fn word(n: i32) -> i32 { n }
+
+fn main() ! console {
+  x = 10
+  byte(x)
+  word(x)
+}

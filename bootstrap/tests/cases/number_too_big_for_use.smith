@@ -1,0 +1,6 @@
+fn byte(n: u8) -> u8 { n }
+
+fn main() ! console {
+  x = 300
+  byte(x)
+}

@@ -358,7 +358,7 @@ impl<'a> Lowering<'a> {
                 all.extend(self.layout(*e, args).places);
                 all
             }
-            Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown => Vec::new(),
+            Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown | Ty::Flex(_) => Vec::new(),
         }
     }
 

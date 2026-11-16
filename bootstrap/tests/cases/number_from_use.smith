@@ -1,0 +1,13 @@
+fn double(n: u8) -> u8 { saturating_mul(n, 2) }
+
+fn main() ! console, alloc {
+  x = 10
+  print("{double(x)}")
+  y = 10
+  print("hello {y} {20}")
+  var total = 1
+  total = double_i16(total)
+  print("{total}")
+}
+
+fn double_i16(n: i16) -> i16 { saturating_mul(n, 2) }

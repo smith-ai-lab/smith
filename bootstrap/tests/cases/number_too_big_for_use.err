@@ -1,0 +1,3 @@
+number_too_big_for_use.smith:4:7: `300` does not fit `u8`, as the use at 5:8 needs, which holds 0 to 255
+  4 |   x = 300
+    |       ^
