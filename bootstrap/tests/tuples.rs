@@ -672,7 +672,6 @@ fn mistake(w: &mut Writing, ctx: &mut Ctx, kind: Kind) -> Stmt {
         }
         Kind::NotBuilt => {
             let (before, rest) = *w.g.pick(&[
-                ("w = ", "(\"a\")"),
                 ("w: ", "(str) = \"a\""),
                 ("w: ", "(str) -> str = \"a\""),
                 ("(", ".none, w) = (Pet.none, \"a\")"),

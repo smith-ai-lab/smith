@@ -1,0 +1,14 @@
+fn apply(text: str, f: (str) -> str) -> str { f(text) }
+
+fn pick(first: () -> str, second: () -> str) -> str { second() }
+
+fn main() ! console {
+  var seen = "none"
+  given = apply("a") fn(t) {
+    seen = t
+    "b"
+  }
+  print(given)
+  print(seen)
+  print(pick(first: { "x" }) { "c" })
+}

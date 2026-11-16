@@ -1,0 +1,6 @@
+fn repeat(word: str = "again", body: (str) -> str) -> str { body(word) }
+
+fn main() ! console {
+  print(repeat fn(w) { w })
+  print(repeat("once") fn(w) { w })
+}

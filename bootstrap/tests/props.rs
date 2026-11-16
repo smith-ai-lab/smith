@@ -11,6 +11,7 @@ use smith::{compile, lower};
 use crate::Test;
 use crate::enums;
 use crate::generate::{self, Gen};
+use crate::lambdas;
 use crate::programs::{self, Case, PIECES, pos_after};
 use crate::targets;
 use crate::traits;
@@ -68,6 +69,22 @@ pub const TESTS: &[Test] = &[
     (
         "every_placed_mistake_about_tuples_is_one_error_at_its_place",
         every_placed_mistake_about_tuples_is_one_error_at_its_place,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print,
+    ),
+    (
+        "the_form_every_target_receives_holds_no_function_that_takes_a_function",
+        the_form_every_target_receives_holds_no_function_that_takes_a_function,
+    ),
+    (
+        "an_expression_in_parentheses_is_the_expression",
+        an_expression_in_parentheses_is_the_expression,
+    ),
+    (
+        "every_placed_mistake_about_lambdas_is_one_error_at_its_place",
+        every_placed_mistake_about_lambdas_is_one_error_at_its_place,
     ),
     (
         "a_function_main_does_not_reach_is_parsed_and_not_checked",
@@ -292,6 +309,45 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_tuples_to_print() 
 
 fn every_placed_mistake_about_tuples_is_one_error_at_its_place() {
     generate::check(27, 500, tuples::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
+fn the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print() {
+    generate::check(29, 300, lambdas::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+    });
+}
+
+/// The form every target receives holds a function for each function with
+/// a name that runs, and none for a function that takes a function, which
+/// is lowered in place with the lambdas it is given. Such a function would
+/// need a value of a function type, as a function with type parameters
+/// would need a type parameter.
+fn the_form_every_target_receives_holds_no_function_that_takes_a_function() {
+    generate::check(30, 300, lambdas::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(program.functions.len(), case.copies);
+    });
+}
+
+fn an_expression_in_parentheses_is_the_expression() {
+    generate::check(33, 100, lambdas::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let wrapped = lower(case.parenthesized.as_bytes())
+            .unwrap_or_else(|e| panic!("{e:?} in {}", case.parenthesized));
+        assert!(program == wrapped, "differs from\n{}", case.parenthesized);
+    });
+}
+
+fn every_placed_mistake_about_lambdas_is_one_error_at_its_place() {
+    generate::check(31, 500, lambdas::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
     });

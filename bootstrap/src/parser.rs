@@ -116,12 +116,16 @@ pub struct Param {
 }
 
 /// A type: a name, and the types in brackets after it, if any. A tuple
-/// type has no name, and its elements are its `args`.
+/// type has no name, and its elements are its `args`. A function type has
+/// no name either, and its `args` are the types of its parameters followed
+/// by the type it gives.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Type {
     pub name: String,
     pub pos: Pos,
     pub args: Vec<Type>,
+    /// Whether it is a function type, written `(T) -> U`.
+    pub function: bool,
 }
 
 /// A statement of a block.
@@ -169,7 +173,8 @@ pub enum Expr {
         name: String,
         pos: Pos,
     },
-    /// A call of a named function, or the construction of a struct.
+    /// A call of a named function or of a name that holds a function, or
+    /// the construction of a struct.
     Call(Call),
     /// `e.name`, which reads a field, or names a case in full when `e` is
     /// the name of an enum.
@@ -194,6 +199,19 @@ pub enum Expr {
         pos: Pos,
         items: Vec<Expr>,
     },
+    Lambda(Box<Lambda>),
+}
+
+/// A lambda: a block, with `fn` and the names of its parameters before it
+/// when it takes any.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Lambda {
+    /// Where it starts: at `fn`, or at the `{` when it takes no parameters.
+    pub pos: Pos,
+    pub params: Vec<Named>,
+    pub body: Vec<Stmt>,
+    /// Where the `}` that closes its body is.
+    pub end: Pos,
 }
 
 /// `match e { pattern { ... } ... }`.
@@ -260,6 +278,7 @@ impl Expr {
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),
             Expr::Match(m) => m.pos,
+            Expr::Lambda(l) => l.pos,
         }
     }
 }
@@ -278,15 +297,20 @@ pub struct Call {
     /// Where the callee's own name is.
     pub name_pos: Pos,
     pub args: Vec<Arg>,
-    /// Where the closing parenthesis is.
+    /// Where the closing parenthesis is, or where the lambda after the call
+    /// starts when it has no parentheses.
     pub end: Pos,
 }
 
-/// An argument, given by position or by the name of its parameter.
+/// An argument, given by position or by the name of its parameter, or a
+/// lambda written after the call, which is its last argument and is for its
+/// last parameter.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Arg {
     pub name: Option<(String, Pos)>,
     pub value: Expr,
+    /// Whether it is a lambda written after the call.
+    pub after: bool,
 }
 
 /// Parses a file into its definitions.
@@ -300,6 +324,7 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
         tokens,
         at: 0,
         errors: Vec::new(),
+        no_lambda: false,
     };
     let mut functions = Vec::new();
     let mut structs = Vec::new();
@@ -426,6 +451,10 @@ struct Parser<'a> {
     tokens: &'a [Token],
     at: usize,
     errors: Vec<Error>,
+    /// Whether a `{` after a call opens the body of a construct, as it does
+    /// after the value of a `match`, rather than a lambda. Inside
+    /// parentheses and braces it opens a lambda again.
+    no_lambda: bool,
 }
 
 impl Parser<'_> {
@@ -955,13 +984,31 @@ impl Parser<'_> {
                     self.bump();
                     args = self.types()?;
                 }
-                Ok(Type { name, pos, args })
+                Ok(Type {
+                    name,
+                    pos,
+                    args,
+                    function: false,
+                })
             }
             Tok::Punct("[") => Err(Error::unsupported(pos, "an array type")),
             Tok::Punct("(") => {
-                let args = self.list(Self::ty)?;
+                let mut args = self.list(Self::ty)?;
                 if self.tok() == &Tok::Punct("->") {
-                    return Err(Error::unsupported(pos, "a function type"));
+                    self.bump();
+                    args.push(self.ty()?);
+                    if self.tok() == &Tok::Punct("!") {
+                        return Err(Error::unsupported(
+                            self.pos(),
+                            "an effect on a function type",
+                        ));
+                    }
+                    return Ok(Type {
+                        name: String::new(),
+                        pos,
+                        args,
+                        function: true,
+                    });
                 }
                 if args.len() == 1 {
                     return Err(Error::unsupported(pos, "one type in parentheses"));
@@ -970,6 +1017,7 @@ impl Parser<'_> {
                     name: String::new(),
                     pos,
                     args,
+                    function: false,
                 })
             }
             tok => Err(self.expected("a type", tok)),
@@ -979,6 +1027,13 @@ impl Parser<'_> {
     /// Parses the items of a tuple, separated by commas, from its `(`
     /// through its `)`. There may be none.
     fn list<T>(&mut self, item: fn(&mut Self) -> Result<T, Error>) -> Result<Vec<T>, Error> {
+        let no_lambda = std::mem::replace(&mut self.no_lambda, false);
+        let items = self.list_items(item);
+        self.no_lambda = no_lambda;
+        items
+    }
+
+    fn list_items<T>(&mut self, item: fn(&mut Self) -> Result<T, Error>) -> Result<Vec<T>, Error> {
         self.bump();
         self.skip_newlines();
         let mut items = Vec::new();
@@ -1167,20 +1222,20 @@ impl Parser<'_> {
                 Expr::Text { text, pos }
             }
             Tok::Ident(name) => {
-                if self.next_tok() == &Tok::Punct("(") {
-                    Expr::Call(self.call()?)
-                } else {
-                    let name = name.clone();
-                    self.bump();
-                    Expr::Name { name, pos }
-                }
+                let name = name.clone();
+                self.bump();
+                self.call_or_name(None, name, pos)?
             }
             Tok::Punct(".") => {
                 self.bump();
                 let (name, _) = self.ident("a case's name")?;
                 let mut payload = None;
                 if self.tok() == &Tok::Punct("(") {
-                    let call = self.call_rest(None, name.clone(), pos)?;
+                    // A case takes no lambda after it.
+                    let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+                    let call = self.call_rest(None, name.clone(), pos);
+                    self.no_lambda = no_lambda;
+                    let call = call?;
                     let mut args = call.args.into_iter();
                     payload = args.next().map(|arg| match arg.name {
                         Some((_, at)) => Err(Error::new(
@@ -1204,19 +1259,19 @@ impl Parser<'_> {
             }
             Tok::Keyword("match") => Expr::Match(Box::new(self.match_expr()?)),
             Tok::Punct("(") => {
-                let items = self.list(Self::expr)?;
+                let mut items = self.list(Self::expr)?;
                 if items.len() == 1 {
-                    return Err(Error::unsupported(pos, "an expression in parentheses"));
+                    items.pop().expect("one")
+                } else {
+                    Expr::Tuple { pos, items }
                 }
-                Expr::Tuple { pos, items }
             }
+            Tok::Punct("{") | Tok::Keyword("fn") => Expr::Lambda(Box::new(self.lambda()?)),
             tok if starts_expression(tok) => {
                 let feature = match tok {
                     Tok::Number(_) => "a number",
                     Tok::Punct("[") => "an array",
-                    Tok::Punct("{") => "a block",
                     Tok::Punct("-") => "the operator `-`",
-                    Tok::Keyword("fn") => "a lambda",
                     Tok::Keyword(word) => {
                         return Err(Error::unsupported(pos, &format!("`{word}`")));
                     }
@@ -1233,9 +1288,7 @@ impl Parser<'_> {
                 Expr::Name {
                     name: qualifier,
                     pos: at,
-                } if self.tok() == &Tok::Punct("(") => {
-                    Expr::Call(self.call_rest(Some((qualifier, at)), name, pos)?)
-                }
+                } => self.call_or_name(Some((qualifier, at)), name, pos)?,
                 of => Expr::Field {
                     of: Box::new(of),
                     name,
@@ -1253,7 +1306,10 @@ impl Parser<'_> {
     fn match_expr(&mut self) -> Result<Match, Error> {
         let pos = self.pos();
         self.bump();
-        let of = self.expr()?;
+        let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+        let of = self.expr();
+        self.no_lambda = no_lambda;
+        let of = of?;
         self.expect_punct("{", "`{` to open the blocks of the `match`")?;
         let mut arms = Vec::new();
         loop {
@@ -1263,16 +1319,10 @@ impl Parser<'_> {
             }
             let pattern = self.pattern()?;
             self.expect_punct("{", "`{` to open the pattern's block")?;
-            let mut body = Vec::new();
-            let end = loop {
-                self.skip_newlines();
-                if self.tok() == &Tok::Punct("}") {
-                    let end = self.pos();
-                    self.bump();
-                    break end;
-                }
-                body.push(self.statement_line()?);
-            };
+            let no_lambda = std::mem::replace(&mut self.no_lambda, false);
+            let block = self.block_rest();
+            self.no_lambda = no_lambda;
+            let (body, end) = block?;
             match self.tok() {
                 Tok::Newline | Tok::Punct("}") => {}
                 tok => return Err(self.expected("a line break or `}`", tok)),
@@ -1328,9 +1378,109 @@ impl Parser<'_> {
         }
     }
 
-    fn call(&mut self) -> Result<Call, Error> {
-        let (callee, pos) = self.ident("a function's name")?;
-        self.call_rest(None, callee, pos)
+    /// Parses what follows a name, which is at `pos` and after the name
+    /// before the `.` if one is written: a call, if parentheses or a lambda
+    /// follow it, and otherwise the name, or the field of the name before
+    /// the `.`.
+    fn call_or_name(
+        &mut self,
+        qualifier: Option<(String, Pos)>,
+        name: String,
+        pos: Pos,
+    ) -> Result<Expr, Error> {
+        if self.tok() == &Tok::Punct("(") {
+            return Ok(Expr::Call(self.call_rest(qualifier, name, pos)?));
+        }
+        if let Some(lambda) = self.lambda_after()? {
+            let end = lambda.value.pos();
+            return Ok(Expr::Call(Call {
+                pos: qualifier.as_ref().map_or(pos, |(_, at)| *at),
+                qualifier,
+                callee: name,
+                name_pos: pos,
+                args: vec![lambda],
+                end,
+            }));
+        }
+        Ok(match qualifier {
+            None => Expr::Name { name, pos },
+            Some((q, at)) => Expr::Field {
+                of: Box::new(Expr::Name { name: q, pos: at }),
+                name,
+                pos,
+            },
+        })
+    }
+
+    /// Parses a lambda written after a call, if one is, as the call's last
+    /// argument.
+    fn lambda_after(&mut self) -> Result<Option<Arg>, Error> {
+        if self.no_lambda || !matches!(self.tok(), Tok::Punct("{") | Tok::Keyword("fn")) {
+            return Ok(None);
+        }
+        Ok(Some(Arg {
+            name: None,
+            value: Expr::Lambda(Box::new(self.lambda()?)),
+            after: true,
+        }))
+    }
+
+    /// Parses a lambda, from its `fn` or its `{` through the `}` that closes
+    /// it.
+    fn lambda(&mut self) -> Result<Lambda, Error> {
+        let pos = self.pos();
+        let mut params = Vec::new();
+        if self.tok() == &Tok::Keyword("fn") {
+            self.bump();
+            self.expect_punct("(", "`(` and the lambda's parameters")?;
+            self.skip_newlines();
+            if self.tok() == &Tok::Punct(")") {
+                return Err(Error::new(
+                    pos,
+                    "a lambda that takes no parameters is a block alone, with no `fn()`",
+                )
+                .with_fix("leave out `fn()`"));
+            }
+            loop {
+                params.push(self.ident("a parameter's name")?);
+                self.skip_newlines();
+                match self.tok() {
+                    Tok::Punct(",") => {
+                        self.bump();
+                        self.skip_newlines();
+                    }
+                    Tok::Punct(")") => break,
+                    tok => return Err(self.expected("`,` or `)`", tok)),
+                }
+            }
+            self.bump();
+        }
+        self.expect_punct("{", "`{` to open the lambda's body")?;
+        let no_lambda = std::mem::replace(&mut self.no_lambda, false);
+        let body = self.block_rest();
+        self.no_lambda = no_lambda;
+        let (body, end) = body?;
+        Ok(Lambda {
+            pos,
+            params,
+            body,
+            end,
+        })
+    }
+
+    /// Parses the statements of a block, after its `{`, through the `}` that
+    /// closes it, and gives where that is.
+    fn block_rest(&mut self) -> Result<(Vec<Stmt>, Pos), Error> {
+        let mut body = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.tok() == &Tok::Punct("}") {
+                let end = self.pos();
+                self.bump();
+                return Ok((body, end));
+            }
+            body.push(self.statement_line()?);
+        }
     }
 
     /// Parses the arguments of a call, from its `(`.
@@ -1344,6 +1494,26 @@ impl Parser<'_> {
         self.bump();
         let mut args = Vec::new();
         self.skip_newlines();
+        let no_lambda = std::mem::replace(&mut self.no_lambda, false);
+        let inside = self.args(&mut args);
+        self.no_lambda = no_lambda;
+        inside?;
+        let end = self.pos();
+        self.bump();
+        args.extend(self.lambda_after()?);
+        Ok(Call {
+            qualifier,
+            callee,
+            pos,
+            name_pos,
+            args,
+            end,
+        })
+    }
+
+    /// Parses the arguments inside the parentheses of a call, up to the
+    /// `)`.
+    fn args(&mut self, args: &mut Vec<Arg>) -> Result<(), Error> {
         loop {
             if self.tok() == &Tok::Punct(")") {
                 break;
@@ -1359,16 +1529,7 @@ impl Parser<'_> {
                 tok => return Err(self.expected("`,` or `)`", tok)),
             }
         }
-        let end = self.pos();
-        self.bump();
-        Ok(Call {
-            qualifier,
-            callee,
-            pos,
-            name_pos,
-            args,
-            end,
-        })
+        Ok(())
     }
 
     fn arg(&mut self) -> Result<Arg, Error> {
@@ -1382,6 +1543,10 @@ impl Parser<'_> {
             self.skip_newlines();
         }
         let value = self.expr()?;
-        Ok(Arg { name, value })
+        Ok(Arg {
+            name,
+            value,
+            after: false,
+        })
     }
 }

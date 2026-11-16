@@ -1944,7 +1944,7 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
         }
         Some(Kind::ExpressionNotBuilt) => {
             b.mark(NOT_BUILT, None);
-            b.pick(&["1", "(\"a\")", "-\"a\"", "[\"a\"]", "fn() { \"a\" }", "if"]);
+            b.pick(&["1", "-\"a\"", "[\"a\"]", "if"]);
         }
         Some(Kind::Operator) => {
             literal_text(b, pieces, None);
