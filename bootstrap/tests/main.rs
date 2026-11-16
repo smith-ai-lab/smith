@@ -10,6 +10,7 @@
 //! runs only the others. A run that includes the first group ends by
 //! naming the targets this machine could not run.
 
+mod check;
 mod cli;
 mod generate;
 mod programs;
@@ -34,7 +35,14 @@ const SLOWEST: usize = 5;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let once = [props::TESTS, cli::ONCE, release::ONCE, targets::ONCE].concat();
+    let once = [
+        props::TESTS,
+        cli::ONCE,
+        check::ONCE,
+        release::ONCE,
+        targets::ONCE,
+    ]
+    .concat();
     let machine = [targets::MACHINE, cli::MACHINE].concat();
     let groups: Vec<&[Test]> = match args.iter().find_map(|a| a.strip_prefix("--group=")) {
         None => vec![&once, &machine],

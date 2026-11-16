@@ -59,7 +59,7 @@ The compiler is lazy. It starts from the roots and does only the work they reach
 
 An error stops every command. A warning is reported only by `smith check`, which fails if there are any, so it is the lint step and a continuous integration run needs no extra flag.
 
-What the compiler prints is written to be read by a model, and there is one form of it. An error gives its place, what is wrong, the line of source with a mark under the place, and what to write when the compiler knows.
+What the compiler prints is written to be read by a model, and there is one form of it, for an error and for a warning alike. An error gives its place, what is wrong, the line of source with a mark under the place, and what to write when the compiler knows.
 
 ```
 hello.smith:1:13: `print` needs the `console` effect, which `main` does not declare
@@ -74,8 +74,9 @@ hello.smith:1:13: `print` needs the `console` effect, which `main` does not decl
 - A file is read in stages: its text, which must be UTF-8 with no carriage return, then its tokens, its syntax, and the check. Only the errors of the earliest stage that finds any are reported, because each later stage reads what the earlier ones produced.
 - An error that another error explains is not reported. A mistake in the syntax hides the rest of its statement, or of its signature, and a listed effect with no such name hides a missing effect, which it may be a misspelling of. A function that lacks an effect is told so once, at the first call that needs it, and nothing is reported about what a call of a function that does not exist gives.
 
-- Dead code, meaning a definition no root reaches, is a warning.
-- An unused variable or an unused import is a warning.
+- Dead code, meaning a definition no root reaches, whether a function, a struct, a trait, or an implementation, is a warning at its name.
+- A binding whose name is never read is a warning at the name, and so is an unused import. A parameter is not a binding.
+- A warning is printed in the form above, with a `fix:` line when the compiler knows what to write. Warnings are reported only when there is no error, every one of them, in the order of their places.
 - An unused value whose type cannot be discarded is an error, as [Ownership](language/ownership.md) requires.
 
 ### Commands that report
@@ -208,7 +209,7 @@ Continuous integration runs for a pull request and in the merge queue, and for n
 
 The time each step takes is measured from the first program, so a slowdown is seen in the change that causes it.
 
-- `smith build --timings`, and `smith run --timings` before the program runs, print to standard error one line for each stage in the order they run, then a line for the total. The stages are `lex`, `parse`, `check`, `emit`, and `write`, which saves the executable. A build that fails lists the stages that ran, after its errors. The executable is the same with the flag and without it.
+- `smith build --timings`, and `smith run --timings` before the program runs, print to standard error one line for each stage in the order they run, then a line for the total. The stages are `lex`, `parse`, `check`, `emit`, and `write`, which saves the executable. A build that fails lists the stages that ran, after its errors. The executable is the same with the flag and without it. `smith check --timings` prints the same, after what the check reports, and as nothing is built its stages end at `check`.
 - A test run ends with its slowest tests and how long each took.
 - Continuous integration prints both on every run.
 - After every merge to `main`, the `timings` workflow adds one line to `history.csv` on the `timings` branch and changes no earlier line. Pull requests record nothing. The job is the only one that can write to the repository, and it writes only to that branch. `.github/record-timings.sh` makes the line, and `--header` prints the first line.

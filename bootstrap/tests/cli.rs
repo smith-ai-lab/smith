@@ -68,7 +68,7 @@ pub const MACHINE: &[Test] = &[
 const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
 
 /// A new, empty folder for one test.
-fn folder(name: &str) -> PathBuf {
+pub fn folder(name: &str) -> PathBuf {
     static COUNT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir()
         .join(format!(
@@ -81,7 +81,7 @@ fn folder(name: &str) -> PathBuf {
     dir
 }
 
-fn smith(dir: &Path, args: &[&str]) -> Output {
+pub fn smith(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_smith"))
         .args(args)
         .current_dir(dir)
@@ -89,7 +89,7 @@ fn smith(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn stderr(output: &Output) -> String {
+pub fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
@@ -260,7 +260,7 @@ fn a_file_must_be_named_smith() {
 
 /// The stage lines of a `--timings` report: each stage's name and its time
 /// in milliseconds, with `total` last.
-fn timing_lines(text: &str) -> Vec<(String, f64)> {
+pub fn timing_lines(text: &str) -> Vec<(String, f64)> {
     let lines: Vec<&str> = text.lines().collect();
     let first = lines
         .iter()
@@ -282,7 +282,7 @@ fn timing_lines(text: &str) -> Vec<(String, f64)> {
 const STAGES: [&str; 5] = ["lex", "parse", "check", "emit", "write"];
 
 /// The cases with a file of this extension beside them.
-fn cases(extension: &str) -> Vec<PathBuf> {
+pub fn cases(extension: &str) -> Vec<PathBuf> {
     let found: Vec<_> = case_files()
         .into_iter()
         .filter(|p| p.with_extension(extension).exists())

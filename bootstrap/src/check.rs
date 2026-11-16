@@ -6,6 +6,9 @@
 //! and every implementation of those traits or for those structs. A
 //! definition that `main` does not reach is parsed and not checked.
 //!
+//! It also finds what `smith check` warns of: each definition `main` does
+//! not reach, and each binding whose name is never read.
+//!
 //! A function with type parameters is checked once, with its parameters
 //! standing for any type that meets their bounds. It is lowered once for
 //! each choice of types a call makes, and a call of a trait's function
@@ -634,9 +637,16 @@ enum Claim {
     TraitFn(usize, usize),
 }
 
+/// A file that has no error: the program it describes, and the warnings
+/// `smith check` reports about it.
+pub struct Checked {
+    pub program: ir::Program,
+    pub warnings: Vec<Error>,
+}
+
 /// Checks the file, and lowers what `main` reaches. Every error is
 /// reported, except one that a mistake already reported would explain.
-pub fn check(file: File) -> Result<ir::Program, Vec<Error>> {
+pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     let mut errors = Vec::new();
 
     // The first definition of a name holds it, and a later one is a
@@ -951,11 +961,76 @@ pub fn check(file: File) -> Result<ir::Program, Vec<Error>> {
         let instance = lowering.instances[lowered.len()].clone();
         lowered.push(lowering.function(&instance));
     }
-    Ok(ir::Program {
+    let program = ir::Program {
         texts: lowering.texts,
         functions: lowered,
         main: 0,
+    };
+    Ok(Checked {
+        program,
+        warnings: warnings(&file, &reached),
     })
+}
+
+/// A warning for each definition `main` does not reach, at its name, and
+/// for each binding whose name is never read, at the name.
+fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
+    let mut out = Vec::new();
+    let mut dead = |item: Item, pos: Pos, what: String| {
+        if !reached.contains(&item) {
+            out.push(
+                Error::new(
+                    pos,
+                    format!("{what} is dead code: `main` does not reach it"),
+                )
+                .with_fix("delete it, or use it from code that `main` reaches"),
+            );
+        }
+    };
+    for (i, f) in file.functions.iter().enumerate() {
+        dead(Item::Fn(i), f.pos, format!("the function `{}`", f.name));
+    }
+    for (i, s) in file.structs.iter().enumerate() {
+        dead(Item::Struct(i), s.pos, format!("the struct `{}`", s.name));
+    }
+    for (i, t) in file.traits.iter().enumerate() {
+        dead(Item::Trait(i), t.pos, format!("the trait `{}`", t.name));
+    }
+    for (i, im) in file.impls.iter().enumerate() {
+        let args: Vec<String> = im.args.iter().map(written_type).collect();
+        let what = format!("the implementation `{}[{}]`", im.name, args.join(", "));
+        dead(Item::Impl(i), im.pos, what);
+    }
+    let bodies = (file.functions.iter()).chain(file.impls.iter().flat_map(|im| &im.functions));
+    for f in bodies {
+        unused_bindings(f, &mut out);
+    }
+    out
+}
+
+/// A warning for each binding of the function whose name its body never
+/// reads. A name is defined once in a function, so any read of it is a
+/// read of that binding.
+fn unused_bindings(f: &Function, out: &mut Vec<Error>) {
+    let read: Vec<&str> = (exprs(&f.body).into_iter())
+        .filter_map(|e| match e {
+            Expr::Name { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for stmt in &f.body {
+        if let Stmt::Define { name, pos, .. } = stmt
+            && !read.contains(&name.as_str())
+        {
+            out.push(
+                Error::new(
+                    *pos,
+                    format!("`{name}` is defined in `{}` and never read", f.name),
+                )
+                .with_fix(format!("delete the binding, or read `{name}`")),
+            );
+        }
+    }
 }
 
 /// What is known of an implementation before it is checked, if its trait

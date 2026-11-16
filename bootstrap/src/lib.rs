@@ -28,6 +28,21 @@ pub fn lower(source: &[u8]) -> Result<Program, Vec<diag::Error>> {
     lower_timed(source, &mut Timings::new())
 }
 
+/// The warnings `smith check` reports about a source file, in the order of
+/// their places, or the errors `compile` reports before a target is
+/// involved. No code is generated for a target.
+pub fn check(source: &[u8]) -> Result<Vec<diag::Error>, Vec<diag::Error>> {
+    check_timed(source, &mut Timings::new())
+}
+
+/// `check`, recording how long each stage takes.
+pub fn check_timed(
+    source: &[u8],
+    timings: &mut Timings,
+) -> Result<Vec<diag::Error>, Vec<diag::Error>> {
+    checked(source, timings).map(|checked| in_order(checked.warnings))
+}
+
 /// `compile`, recording how long each stage takes.
 pub fn compile_timed(
     source: &[u8],
@@ -46,6 +61,10 @@ pub fn compile_timed(
 }
 
 fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<Program, Vec<diag::Error>> {
+    checked(source, timings).map(|checked| checked.program)
+}
+
+fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<diag::Error>> {
     let tokens = timings
         .stage("lex", || lexer::lex(source))
         .map_err(in_order)?;
