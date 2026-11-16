@@ -1,0 +1,4 @@
+number_without_type.smith:2:11: this number has no type to become
+  2 |   limit = 100
+    |           ^
+  fix: state the type of a binding, as in `limit: i32 = 100`

@@ -23,6 +23,7 @@ mod generate;
 mod install;
 mod lambdas;
 mod machines;
+mod numbers;
 mod programs;
 mod props;
 mod release;

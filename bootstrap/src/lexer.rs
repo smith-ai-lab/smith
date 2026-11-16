@@ -219,7 +219,23 @@ impl<'a> Lexer<'a> {
             self.bump();
             self.take_while(word);
         }
+        // The sign of an exponent belongs to the number.
+        let so_far = &before[..before.len() - self.rest.len()];
+        if so_far.ends_with(['e', 'E'])
+            && !so_far.starts_with("0x")
+            && matches!(self.peek(), Some('+' | '-'))
+            && self.peek_second().is_some_and(|c| c.is_ascii_digit())
+        {
+            self.bump();
+            self.take_while(word);
+        }
         let text = &before[..before.len() - self.rest.len()];
+        if let Err(why) = check_number(text) {
+            self.error(Error::new(
+                start,
+                format!("`{text}` is not a number: {why}"),
+            ));
+        }
         self.push(Tok::Number(text.to_string()), start);
     }
 
@@ -371,4 +387,56 @@ fn show_char(c: char) -> String {
     } else {
         format!("`{c}`")
     }
+}
+
+/// Whether a run of digits of a base, which `valid` says, is written as the
+/// lexical rules say: at least one digit, and an `_` only between two
+/// digits.
+fn digits(text: &str, valid: impl Fn(char) -> bool, base: &str) -> Result<(), String> {
+    if text.is_empty() {
+        return Err(format!("{base} digits are needed here"));
+    }
+    let mut previous = None;
+    for c in text.chars() {
+        if c == '_' {
+            if previous.is_none_or(|p| p == '_') {
+                return Err("an `_` stands only between two digits".to_string());
+            }
+        } else if !valid(c) {
+            return Err(format!("{} is not a {base} digit", show_char(c)));
+        }
+        previous = Some(c);
+    }
+    if previous == Some('_') {
+        return Err("an `_` stands only between two digits".to_string());
+    }
+    Ok(())
+}
+
+/// Whether the text of a number, as the lexer reads it, is written as the
+/// lexical rules say, and why not if it is not.
+fn check_number(text: &str) -> Result<(), String> {
+    if let Some(rest) = text.strip_prefix("0x") {
+        return digits(rest, |c| c.is_ascii_hexdigit(), "hexadecimal");
+    }
+    if let Some(rest) = text.strip_prefix("0b") {
+        return digits(rest, |c| c == '0' || c == '1', "binary");
+    }
+    let decimal = |c: char| c.is_ascii_digit();
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(at) => (&text[..at], Some(&text[at + 1..])),
+        None => (text, None),
+    };
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (mantissa, None),
+    };
+    digits(whole, decimal, "decimal")?;
+    if let Some(fraction) = fraction {
+        digits(fraction, decimal, "decimal")?;
+    }
+    if let Some(exponent) = exponent {
+        digits(exponent.trim_start_matches(['+', '-']), decimal, "decimal")?;
+    }
+    Ok(())
 }

@@ -1799,7 +1799,7 @@ fn main_statement(b: &mut Builder, m: &Model, sites: &Sites) {
                 ("", "effect Kind {\n  fn kind()\n}"),
                 (
                     "trait Spare[T] {\n  fn spare_of(x: T, note: str = ",
-                    "1) -> str\n}",
+                    "1.5) -> str\n}",
                 ),
                 ("impl ", "Copy[Rock] {}"),
                 ("impl ", "Discard[Rock] {}"),

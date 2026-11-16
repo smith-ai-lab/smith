@@ -1,0 +1,4 @@
+fn main() ! console {
+  limit = 100
+  print("done")
+}

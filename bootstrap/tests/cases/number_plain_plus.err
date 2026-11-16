@@ -1,0 +1,3 @@
+number_plain_plus.smith:3:13: the operator `+` is not supported yet
+  3 |   print("{a + 1}")
+    |             ^

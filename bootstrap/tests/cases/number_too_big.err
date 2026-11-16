@@ -1,0 +1,3 @@
+number_too_big.smith:2:15: `256` does not fit `u8`, which holds 0 to 255
+  2 |   small: u8 = 256
+    |               ^

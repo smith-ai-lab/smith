@@ -1,0 +1,10 @@
+fn main() ! console, alloc {
+  a: i32 = 40
+  b: u8 = 250
+  print("{a} {wrapping_add(b, 10)} {saturating_add(b, 10)} {checked_add(b, 10)} {checked_add(b, 5)}")
+  print("{a == 40} {a < 41} {a >= 0x29}")
+  low: i8 = -128
+  hex: u8 = 0xff
+  bin: u8 = 0b1010
+  print("{low} {hex} {bin}")
+}

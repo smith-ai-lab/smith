@@ -1,0 +1,4 @@
+fn main() ! console, alloc {
+  a: i32 = 1
+  print("{a + 1}")
+}

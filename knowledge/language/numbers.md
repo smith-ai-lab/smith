@@ -3,7 +3,7 @@ type: specification
 title: Literals and numbers
 description: Literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
 status: partial
-built: "string literals that become `str`, and `bool` with `true` and `false`"
+built: "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, and `wrapping_`, `saturating_`, and `checked_` `add`, `sub`, and `mul` on those types"
 ---
 
 # Literals and numbers
@@ -42,7 +42,7 @@ fn next_saturating(i: u8) -> u8 { saturating_add(i, 1) }
 fn next_checked(i: u8) -> Option[u8] { checked_add(i, 1) }
 ```
 
-`wrapping_`, `saturating_`, and `checked_` each exist for `add`, `sub`, and `mul`.
+`wrapping_`, `saturating_`, and `checked_` each exist for `add`, `sub`, and `mul`, as the functions of the traits `Wrapping`, `Saturating`, and `Checked`, which every integer type implements.
 
 Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic.
 

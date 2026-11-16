@@ -1,0 +1,4 @@
+fn main() ! console {
+  small: u8 = 256
+  print("done")
+}
