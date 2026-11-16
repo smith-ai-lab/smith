@@ -1,4 +1,5 @@
-//! The `smith` command: `build` and `run`, over the compiler in `lib.rs`.
+//! The `smith` command: `build`, `run`, and `check`, over the compiler in
+//! `lib.rs`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,6 +10,7 @@ use smith::timings::Timings;
 
 const USAGE: &str = "usage: smith build [--target <target>] [--timings] [<file>.smith]
        smith run [--target <target>] [--timings] [<file>.smith]
+       smith check [--timings] [<file>.smith]
        smith --version";
 
 /// The version a release was built as, set by the release workflow. A build
@@ -61,7 +63,8 @@ fn command(args: &[String]) -> Result<ExitCode, String> {
             let executable = build(&request)?;
             run(&executable)
         }
-        "new" | "check" | "test" | "fmt" | "vendor" | "hole" | "find" | "deps" | "cost" => {
+        "check" => check(rest),
+        "new" | "test" | "fmt" | "vendor" | "hole" | "find" | "deps" | "cost" => {
             Err(format!("smith {name} is not supported yet"))
         }
         _ => Err(format!("unknown command `{name}`\n{USAGE}")),
@@ -111,6 +114,54 @@ fn request(args: &[String]) -> Result<Request, String> {
     })
 }
 
+/// Checks the entry, `main.smith` unless a file is named, and reports its
+/// errors, or else its warnings, writing no file. It fails if there are
+/// any. With `--timings` it then prints how long each stage took.
+fn check(args: &[String]) -> Result<ExitCode, String> {
+    let mut entry = None;
+    let mut timings = false;
+    for arg in args {
+        if arg == "--timings" {
+            timings = true;
+        } else if arg.starts_with("--") {
+            return Err(format!("unknown flag `{arg}`\n{USAGE}"));
+        } else if entry.is_some() {
+            return Err(format!("only one file can be checked\n{USAGE}"));
+        } else {
+            entry = Some(PathBuf::from(arg));
+        }
+    }
+    let entry = entry.unwrap_or_else(|| PathBuf::from("main.smith"));
+    let (_, source) = read_entry(&entry)?;
+    let mut stages = Timings::new();
+    let found = match smith::check_timed(&source, &mut stages) {
+        Ok(warnings) => warnings,
+        Err(errors) => errors,
+    };
+    let mut report = diag::render(&entry.to_string_lossy(), &source, &found);
+    if timings {
+        report.push_str(&stages.report());
+        report.push('\n');
+    }
+    eprint!("{report}");
+    Ok(if found.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+/// The stem of an entry's name, and its text.
+fn read_entry(entry: &Path) -> Result<(&std::ffi::OsStr, Vec<u8>), String> {
+    let shown = entry.display();
+    let stem = match (entry.extension(), entry.file_stem()) {
+        (Some(ext), Some(stem)) if ext == "smith" && !stem.is_empty() => stem,
+        _ => return Err(format!("{shown}: a Smith file's name ends in .smith")),
+    };
+    let source = std::fs::read(entry).map_err(|e| format!("{shown}: {e}"))?;
+    Ok((stem, source))
+}
+
 /// Builds the entry, and with `--timings` prints how long each stage took:
 /// after the errors when the build fails, and before returning when it
 /// succeeds.
@@ -131,12 +182,7 @@ fn build(request: &Request) -> Result<PathBuf, String> {
 /// its path.
 fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, String> {
     let entry = &request.entry;
-    let shown = entry.display();
-    let stem = match (entry.extension(), entry.file_stem()) {
-        (Some(ext), Some(stem)) if ext == "smith" && !stem.is_empty() => stem,
-        _ => return Err(format!("{shown}: a Smith file's name ends in .smith")),
-    };
-    let source = std::fs::read(entry).map_err(|e| format!("{shown}: {e}"))?;
+    let (stem, source) = read_entry(entry)?;
     let bytes = smith::compile_timed(&source, request.target, timings).map_err(|errors| {
         let file = entry.to_string_lossy();
         let text = diag::render(&file, &source, &errors);

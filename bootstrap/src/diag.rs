@@ -1,5 +1,5 @@
-//! Errors found in a program, each at a line and a column, and how they are
-//! written out.
+//! Errors and warnings found in a program, each at a line and a column, and
+//! how they are written out. A warning is written in the form an error is.
 
 use std::fmt;
 
@@ -15,7 +15,8 @@ impl Pos {
     pub const START: Pos = Pos { line: 1, col: 1 };
 }
 
-/// An error in a program, at the place it was found.
+/// An error in a program, or a warning about it, at the place it was
+/// found.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     pub pos: Pos,

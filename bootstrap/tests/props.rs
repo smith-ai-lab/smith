@@ -241,7 +241,7 @@ fn every_placed_mistake_about_traits_is_one_error_at_its_place() {
 }
 
 /// Bytes, shown as text.
-struct Bytes(Vec<u8>);
+pub struct Bytes(pub Vec<u8>);
 
 impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -257,7 +257,7 @@ fn damaged(g: &mut Gen, targets: usize) -> (Bytes, usize) {
     (bytes(g), target)
 }
 
-fn bytes(g: &mut Gen) -> Bytes {
+pub fn bytes(g: &mut Gen) -> Bytes {
     const NOISE: &[&[u8]] = &[
         b"\"",
         b"{",
