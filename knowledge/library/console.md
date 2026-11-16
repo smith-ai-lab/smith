@@ -57,7 +57,7 @@ fn capture[T](body: () -> T ! console) -> (T, List[str]) ! console, alloc {
   r = console(
     print: fn(text, end, to) {
       match to {
-        .stdout { out := push(out, "{text}{end}") }
+        .stdout { out = push(out, "{text}{end}") }
         .stderr { print(text, end: end, to: .stderr) }
       }
     },

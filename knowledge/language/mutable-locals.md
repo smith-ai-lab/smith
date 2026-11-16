@@ -1,12 +1,12 @@
 ---
 type: specification
 title: Mutable locals and if
-description: Locals that change with var and :=, and if as an expression.
+description: Locals that change, declared with var, and if as an expression.
 ---
 
 # Mutable locals and `if`
 
-`var` defines a local that can change, and it may state its type, as in `var n: i32 = 0`. `:=` replaces its value, and `+=`, `-=`, `*=`, and `/=` accumulate into it. `if` is an expression, and the words `not`, `and`, and `or` combine conditions.
+`var` defines a local that can change, and it may state its type, as in `var n: i32 = 0`. `=` gives a `var` a new value, and `+=`, `-=`, `*=`, and `/=` accumulate into it. A name that is not a `var` never changes, and assigning to one is a compile error. `if` is an expression, and the words `not`, `and`, and `or` combine conditions.
 
 ```
 fn relu(x: f32) -> f32 {
@@ -15,10 +15,12 @@ fn relu(x: f32) -> f32 {
 
 fn grow(start: f32, rate: f32) -> f32 {
   var total = start
-  total := total * (1.0 + rate)
+  total = total * (1.0 + rate)
   total += 1.0
   total
 }
 ```
+
+So `x = e` defines `x` when the function has no such name, and assigns when `x` is a `var`. A pattern may do both at once: in `(total, rest) = split(total)`, `total` is assigned and `rest` is defined.
 
 Next: [Structs and tuples](structs.md)

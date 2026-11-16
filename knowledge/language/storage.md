@@ -40,7 +40,7 @@ Data whose size is known only at run time, such as a growing list or a map, allo
 ```
 fn squares(n: Nat) -> List[f32] ! alloc {
   var out: List[f32] = []
-  loop i in 0..n { out := push(out, float(i) * float(i)) }
+  loop i in 0..n { out = push(out, float(i) * float(i)) }
   out
 }
 

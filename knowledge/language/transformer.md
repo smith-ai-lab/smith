@@ -81,7 +81,7 @@ struct Gpt[v: Nat, t: Nat, d: Nat, h: Nat, l: Nat] {
 
 fn logits[v: Nat, t: Pos, d: Pos, h: Nat, l: Nat](m: Gpt[v, t, d, h, l], ids: [t]Fin[v]) -> [t, v]f32 {
   var x = for i, c { m.tok[ids[i], c] + m.pos[i, c] }
-  loop n in 0..l { x := block(m.blocks[n], x) }
+  loop n in 0..l { x = block(m.blocks[n], x) }
   for i { apply(m.out, x[i]) }
 }
 ```

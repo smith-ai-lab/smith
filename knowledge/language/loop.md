@@ -11,7 +11,7 @@ The keyword states whether order matters: a `for` has no order, and a `loop` run
 ```
 fn smooth[n: Nat](x: [n]f32) -> f32 {
   var acc = 0.0
-  loop i in 0..n { acc := acc * 0.9 + x[i] }
+  loop i in 0..n { acc = acc * 0.9 + x[i] }
   acc
 }
 ```
@@ -35,7 +35,7 @@ impl Iterate[Countdown, i32] {
 
 fn largest(c: Countdown) -> i32 {
   var top = 0
-  loop v in c { top := max(top, v) }
+  loop v in c { top = max(top, v) }
   top
 }
 ```
