@@ -834,13 +834,14 @@ pub const UNREACHED: &[&str] = &[
     "fn unused(n: Nope) -> str { n.x }",
     "struct Unused {\n  a: Nope\n}",
     "struct Unused {\n  next: Unused\n}",
+    "fn unused[T](a: Nope) -> T { a }",
+    "trait Unused[T] {\n  fn unused_of(x: T) -> Nope\n}\n\nimpl Unused[Nope] {\n  fn unused_of(x: Nope) -> str { nope() }\n}",
 ];
 
 /// A definition of its own, before or after the program's, that holds the
 /// mistake. Each is written as the text before the mistake, and the rest.
 const STRUCTS_NOT_BUILT: &[(&str, &str)] = &[
     ("struct Spare {\n  a: str ", "= \"a\"\n}"),
-    ("struct Spare", "[T] {}"),
     ("struct Spare {\n  ", "pub a: str\n}"),
 ];
 
@@ -1070,8 +1071,11 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         b.push(&func.name);
     }
     if here(Kind::GenericParameter) {
+        // A type parameter that no parameter's type names, which `main`
+        // may not have at all.
+        b.push("[");
         b.mark(NOT_BUILT, None);
-        b.push("[T]");
+        b.push("T]");
     }
     b.push("(");
     if func.params.is_empty() {

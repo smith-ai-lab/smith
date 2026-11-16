@@ -16,6 +16,7 @@ mod programs;
 mod props;
 mod sha256;
 mod targets;
+mod traits;
 
 use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;

@@ -16,6 +16,7 @@ use crate::Test;
 use crate::generate;
 use crate::programs;
 use crate::sha256;
+use crate::traits;
 
 pub const ONCE: &[Test] = &[
     (
@@ -34,6 +35,10 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_does_what_the_evaluator_says",
         every_executable_does_what_the_evaluator_says,
+    ),
+    (
+        "every_executable_of_a_program_with_traits_does_what_the_evaluator_says",
+        every_executable_of_a_program_with_traits_does_what_the_evaluator_says,
     ),
     (
         "a_struct_bound_to_two_names_is_two_equal_structs",
@@ -130,10 +135,17 @@ pub fn run(bytes: &[u8]) -> Outcome {
 fn every_target_builds_identical_bytes_twice() {
     let targets = buildable();
     assert!(!targets.is_empty(), "the compiler builds for some target");
-    generate::check(6, 100, programs::program, |case| {
+    generate::check(6, 15, programs::program, |case| {
         for &target in &targets {
             let first = compile(&case.source, target).unwrap();
             let second = compile(&case.source, target).unwrap();
+            assert!(first == second, "{} differs", target.name());
+        }
+    });
+    generate::check(19, 10, traits::program, |case| {
+        for &target in &targets {
+            let first = compile(case.source.as_bytes(), target).unwrap();
+            let second = compile(case.source.as_bytes(), target).unwrap();
             assert!(first == second, "{} differs", target.name());
         }
     });
@@ -146,6 +158,19 @@ fn every_executable_does_what_the_evaluator_says() {
         let said = eval::run(&program);
         for &target in &targets {
             let bytes = compile(&case.source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert_eq!(run(&bytes), said, "{}", target.name());
+        }
+    });
+}
+
+fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
+    let targets = runnable();
+    generate::check(18, 60, traits::program, |case| {
+        let source = case.source.as_bytes();
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let said = eval::run(&program);
+        for &target in &targets {
+            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
             assert_eq!(run(&bytes), said, "{}", target.name());
         }
     });

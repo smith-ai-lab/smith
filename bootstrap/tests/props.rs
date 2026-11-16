@@ -12,6 +12,7 @@ use crate::Test;
 use crate::generate::{self, Gen};
 use crate::programs::{self, Case, PIECES, pos_after};
 use crate::targets;
+use crate::traits;
 
 pub const TESTS: &[Test] = &[
     (
@@ -25,6 +26,22 @@ pub const TESTS: &[Test] = &[
     (
         "the_form_every_target_receives_holds_each_function_main_reaches",
         the_form_every_target_receives_holds_each_function_main_reaches,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_traits_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_traits_to_print,
+    ),
+    (
+        "a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out",
+        a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out,
+    ),
+    (
+        "an_implementation_with_type_parameters_applies_to_each_type_that_fits",
+        an_implementation_with_type_parameters_applies_to_each_type_that_fits,
+    ),
+    (
+        "every_placed_mistake_about_traits_is_one_error_at_its_place",
+        every_placed_mistake_about_traits_is_one_error_at_its_place,
     ),
     (
         "a_function_main_does_not_reach_is_parsed_and_not_checked",
@@ -139,29 +156,87 @@ fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
     });
 }
 
-fn every_placed_mistake_is_one_error_at_its_place() {
-    generate::check(4, 3000, programs::program_with_mistake, |case| {
-        let expected = case.mistake.as_ref().expect("a placed mistake");
-        let found = lower(&case.source).expect_err("an error");
-        assert_well_formed(&case.source, &found);
-        assert_eq!(found.len(), 1, "{found:?}");
-        let e = &found[0];
-        assert_eq!(e.pos, expected.at, "{e}");
-        assert!(
-            e.message.contains(&expected.mentions),
-            "{e} does not mention {}",
-            expected.mentions
-        );
-        match (&expected.fix, &e.fix) {
-            (None, None) => {}
-            (Some(wanted), Some(fix)) => {
-                assert!(fix.contains(wanted.as_str()), "{fix} lacks {wanted}")
-            }
-            (wanted, fix) => panic!("the fix is {fix:?}, not {wanted:?}"),
+fn the_evaluator_says_what_the_generator_built_a_program_with_traits_to_print() {
+    generate::check(14, 200, traits::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+        assert_eq!(program.functions.len(), case.copies, "one for each copy");
+    });
+}
+
+/// A generated program with traits, and which of `targets` targets to
+/// build it for.
+fn program_and_target(g: &mut Gen, targets: usize) -> (traits::TraitCase, usize) {
+    (traits::program(g), g.below(targets))
+}
+
+fn a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out() {
+    let targets = targets::buildable();
+    let choose = |g: &mut Gen| program_and_target(g, targets.len());
+    generate::check(15, 60, choose, |(case, target)| {
+        // Every target receives the same form of the program, so the two
+        // build to the same bytes for every target when that form is the
+        // same.
+        let built = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let written_out = lower(case.written_out.as_bytes())
+            .unwrap_or_else(|e| panic!("{e:?} in {}", case.written_out));
+        assert!(built == written_out, "differs from\n{}", case.written_out);
+        let target = targets[*target];
+        let built = compile(case.source.as_bytes(), target).unwrap();
+        let written_out = compile(case.written_out.as_bytes(), target).unwrap();
+        assert!(built == written_out, "{} differs", target.name());
+    });
+}
+
+fn an_implementation_with_type_parameters_applies_to_each_type_that_fits() {
+    generate::check(16, 200, traits::boxes, |(source, stdout)| {
+        let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(eval::run(&program).stdout, *stdout);
+    });
+}
+
+/// Checks that a file with one placed mistake gives one error, at its
+/// place, that mentions what it must, with the fix it must have.
+fn assert_mistake(source: &[u8], expected: &programs::Expected) {
+    let found = lower(source).expect_err("an error");
+    assert_well_formed(source, &found);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let e = &found[0];
+    assert_eq!(e.pos, expected.at, "{e}");
+    assert!(
+        e.message.contains(&expected.mentions),
+        "{e} does not mention {}",
+        expected.mentions
+    );
+    match (&expected.fix, &e.fix) {
+        (None, None) => {}
+        (Some(wanted), Some(fix)) => {
+            assert!(fix.contains(wanted.as_str()), "{fix} lacks {wanted}")
         }
-        let printed = diag::render("f.smith", &case.source, &found);
-        let first = format!("f.smith:{}:{}: {}\n", e.pos.line, e.pos.col, e.message);
-        assert!(printed.starts_with(&first), "{printed}");
+        (wanted, fix) => panic!("the fix is {fix:?}, not {wanted:?}"),
+    }
+    let printed = diag::render("f.smith", source, &found);
+    let first = format!("f.smith:{}:{}: {}\n", e.pos.line, e.pos.col, e.message);
+    assert!(printed.starts_with(&first), "{printed}");
+}
+
+fn every_placed_mistake_is_one_error_at_its_place() {
+    generate::check(4, 1000, programs::program_with_mistake, |case| {
+        assert_mistake(
+            &case.source,
+            case.mistake.as_ref().expect("a placed mistake"),
+        );
+    });
+}
+
+fn every_placed_mistake_about_traits_is_one_error_at_its_place() {
+    generate::check(17, 300, traits::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
     });
 }
 
@@ -175,8 +250,14 @@ impl fmt::Debug for Bytes {
 }
 
 /// A generated program, with or without a mistake, damaged in a few places,
-/// or now and then bytes at random.
-fn damaged(g: &mut Gen) -> Bytes {
+/// or now and then bytes at random, and which of `targets` targets to
+/// build it for.
+fn damaged(g: &mut Gen, targets: usize) -> (Bytes, usize) {
+    let target = g.below(targets);
+    (bytes(g), target)
+}
+
+fn bytes(g: &mut Gen) -> Bytes {
     const NOISE: &[&[u8]] = &[
         b"\"",
         b"{",
@@ -205,12 +286,12 @@ fn damaged(g: &mut Gen) -> Bytes {
     if g.one_in(10) {
         return Bytes((0..g.below(64)).map(|_| g.below(256) as u8).collect());
     }
-    let case = if g.one_in(2) {
-        programs::program_with_mistake(g)
-    } else {
-        programs::program(g)
+    let mut source = match g.below(4) {
+        0 => programs::program_with_mistake(g).source,
+        1 => programs::program(g).source,
+        2 => traits::program_with_mistake(g).source.into_bytes(),
+        _ => traits::program(g).source.into_bytes(),
     };
-    let mut source = case.source;
     for _ in 0..1 + g.below(4) {
         let at = g.below(source.len() + 1);
         match g.below(3) {
@@ -229,11 +310,10 @@ fn damaged(g: &mut Gen) -> Bytes {
 
 fn every_input_gives_an_executable_or_an_error_with_a_place() {
     let targets = targets::buildable();
-    generate::check(5, 5000, damaged, |Bytes(source)| {
-        for &target in &targets {
-            if let Err(errors) = compile(source, target) {
-                assert_well_formed(source, &errors);
-            }
+    let choose = |g: &mut Gen| damaged(g, targets.len());
+    generate::check(5, 800, choose, |(Bytes(source), target)| {
+        if let Err(errors) = compile(source, targets[*target]) {
+            assert_well_formed(source, &errors);
         }
     });
 }

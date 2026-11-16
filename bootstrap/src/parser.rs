@@ -11,6 +11,19 @@ use crate::lexer::{Tok, Token};
 pub struct File {
     pub functions: Vec<Function>,
     pub structs: Vec<Struct>,
+    pub traits: Vec<Trait>,
+    pub impls: Vec<Impl>,
+}
+
+/// A type parameter, as in `[T: Named]` or `[A, out B]`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Generic {
+    pub name: String,
+    pub pos: Pos,
+    /// Where `out` is written, if it is.
+    pub out: Option<Pos>,
+    /// The trait after `:`, if there is one.
+    pub bound: Option<Type>,
 }
 
 /// A struct definition.
@@ -18,7 +31,30 @@ pub struct File {
 pub struct Struct {
     pub name: String,
     pub pos: Pos,
+    pub generics: Vec<Generic>,
     pub fields: Vec<Field>,
+}
+
+/// A trait: a name, its types, and the signatures of its functions, each a
+/// function with no body.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Trait {
+    pub name: String,
+    pub pos: Pos,
+    pub generics: Vec<Generic>,
+    pub functions: Vec<Function>,
+}
+
+/// An implementation of a trait for the types in its brackets.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Impl {
+    /// Its own type parameters, written after `impl`.
+    pub generics: Vec<Generic>,
+    /// The trait, and where its name is.
+    pub name: String,
+    pub pos: Pos,
+    pub args: Vec<Type>,
+    pub functions: Vec<Function>,
 }
 
 /// A field of a struct, and its type.
@@ -34,6 +70,7 @@ pub struct Field {
 pub struct Function {
     pub name: String,
     pub pos: Pos,
+    pub generics: Vec<Generic>,
     pub params: Vec<Param>,
     /// The type after `->`, if there is one.
     pub result: Option<Type>,
@@ -46,6 +83,10 @@ pub struct Function {
 /// The effects after `!`, each with where it is written.
 type Effects = Vec<(String, Pos)>;
 
+/// A function's name and where it is, its type parameters, its
+/// parameters, its result, and its effects.
+type Signature = (String, Pos, Vec<Generic>, Vec<Param>, Option<Type>, Effects);
+
 /// A parameter and its type.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Param {
@@ -54,11 +95,12 @@ pub struct Param {
     pub ty: Type,
 }
 
-/// A type, written as a name.
+/// A type: a name, and the types in brackets after it, if any.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Type {
     pub name: String,
     pub pos: Pos,
+    pub args: Vec<Type>,
 }
 
 /// A statement of a block.
@@ -109,11 +151,18 @@ impl Expr {
 }
 
 /// A call of a named function, or the construction of a struct, which is
-/// written as a call.
+/// written as a call. A function of a trait may be named with its trait,
+/// as in `Named.name_of(x)`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Call {
+    /// The name before the `.`, and where it is, if one is written.
+    pub qualifier: Option<(String, Pos)>,
     pub callee: String,
+    /// Where the call starts, which is where its qualifier is if it has
+    /// one.
     pub pos: Pos,
+    /// Where the callee's own name is.
+    pub name_pos: Pos,
     pub args: Vec<Arg>,
     /// Where the closing parenthesis is.
     pub end: Pos,
@@ -140,14 +189,34 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
     };
     let mut functions = Vec::new();
     let mut structs = Vec::new();
+    let mut traits = Vec::new();
+    let mut impls = Vec::new();
     loop {
         p.skip_newlines();
         let start = p.at;
         match p.tok() {
             Tok::Eof => break,
-            Tok::Keyword("fn") => functions.extend(p.function(start)),
+            Tok::Keyword("fn") => {
+                if let Ok(f) = p.function(start, false) {
+                    functions.extend(f);
+                }
+            }
             Tok::Keyword("struct") => match p.structure() {
                 Ok(s) => structs.push(s),
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
+            Tok::Keyword("trait") => match p.declare_trait() {
+                Ok(t) => traits.push(t),
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
+            Tok::Keyword("impl") => match p.implementation() {
+                Ok(i) => impls.extend(i),
                 Err(e) => {
                     p.errors.push(e);
                     p.skip_item(start);
@@ -161,7 +230,12 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
         }
     }
     if p.errors.is_empty() {
-        Ok(File { functions, structs })
+        Ok(File {
+            functions,
+            structs,
+            traits,
+            impls,
+        })
     } else {
         Err(p.errors)
     }
@@ -331,9 +405,7 @@ impl Parser<'_> {
         let feature = match self.tok() {
             Tok::Keyword("pub") => "`pub`",
             Tok::Keyword("enum") => "an enum",
-            Tok::Keyword("trait") => "a trait",
             Tok::Keyword("effect") => "declaring an effect",
-            Tok::Keyword("impl") => "`impl`",
             Tok::Keyword("derive") => "`derive`",
             Tok::Keyword("without") => "`without`",
             Tok::Keyword("foreign") => "a foreign function",
@@ -348,9 +420,7 @@ impl Parser<'_> {
     fn structure(&mut self) -> Result<Struct, Error> {
         self.bump();
         let (name, pos) = self.ident("the struct's name")?;
-        if self.tok() == &Tok::Punct("[") {
-            return Err(Error::unsupported(self.pos(), "a type parameter"));
-        }
+        let generics = self.generics()?;
         self.expect_punct("{", "`{` to open the struct's fields")?;
         let mut fields = Vec::new();
         loop {
@@ -376,20 +446,167 @@ impl Parser<'_> {
         }
         self.bump();
         match self.tok() {
-            Tok::Newline | Tok::Eof => Ok(Struct { name, pos, fields }),
+            Tok::Newline | Tok::Eof => Ok(Struct {
+                name,
+                pos,
+                generics,
+                fields,
+            }),
             tok => Err(self.expected("a line break", tok)),
         }
     }
 
-    /// Parses a function that starts at the token `from`. Its errors are
-    /// recorded, and a function with any gives `None`.
-    fn function(&mut self, from: usize) -> Option<Function> {
-        let (name, pos, params, result, effects) = match self.signature() {
+    /// Parses the type parameters in brackets after a name, if there are
+    /// any.
+    fn generics(&mut self) -> Result<Vec<Generic>, Error> {
+        let mut generics = Vec::new();
+        if self.tok() != &Tok::Punct("[") {
+            return Ok(generics);
+        }
+        self.bump();
+        self.skip_newlines();
+        loop {
+            let out = if self.tok() == &Tok::Keyword("out") {
+                let at = self.pos();
+                self.bump();
+                Some(at)
+            } else {
+                None
+            };
+            let (name, pos) = self.ident("a type parameter")?;
+            let bound = if self.tok() == &Tok::Punct(":") {
+                self.bump();
+                Some(self.ty()?)
+            } else {
+                None
+            };
+            generics.push(Generic {
+                name,
+                pos,
+                out,
+                bound,
+            });
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct(",") => {
+                    self.bump();
+                    self.skip_newlines();
+                    if self.tok() == &Tok::Punct("]") {
+                        break;
+                    }
+                }
+                Tok::Punct("]") => break,
+                tok => return Err(self.expected("`,` or `]`", tok)),
+            }
+        }
+        self.bump();
+        Ok(generics)
+    }
+
+    /// Parses a trait and the line break after it.
+    fn declare_trait(&mut self) -> Result<Trait, Error> {
+        self.bump();
+        let (name, pos) = self.ident("the trait's name")?;
+        if self.tok() != &Tok::Punct("[") {
+            return Err(self.expected("`[` and the trait's types", self.tok()));
+        }
+        let generics = self.generics()?;
+        self.expect_punct("{", "`{` to open the trait's functions")?;
+        let mut functions = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct("}") => break,
+                Tok::Keyword("fn") => {}
+                tok => return Err(self.expected("a function's signature or `}`", tok)),
+            }
+            let (name, pos, generics, params, result, effects) = self.signature()?;
+            match self.tok() {
+                Tok::Newline | Tok::Punct("}") => {}
+                Tok::Keyword("requires" | "ensures") => {
+                    return Err(Error::unsupported(self.pos(), "a contract"));
+                }
+                tok => return Err(self.expected("a line break or `}`", tok)),
+            }
+            functions.push(Function {
+                name,
+                pos,
+                generics,
+                params,
+                result,
+                effects,
+                body: Vec::new(),
+                end: pos,
+            });
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Newline | Tok::Eof => Ok(Trait {
+                name,
+                pos,
+                generics,
+                functions,
+            }),
+            tok => Err(self.expected("a line break", tok)),
+        }
+    }
+
+    /// Parses an implementation. A mistake in its first line or in the
+    /// signature of one of its functions is the one error reported for it,
+    /// and a mistake in a statement of a function is reported along with
+    /// those in its other statements, which gives `None`.
+    fn implementation(&mut self) -> Result<Option<Impl>, Error> {
+        self.bump();
+        let generics = self.generics()?;
+        let (name, pos) = self.ident("the trait's name")?;
+        if self.tok() != &Tok::Punct("[") {
+            return Err(self.expected("`[` and the types it is implemented for", self.tok()));
+        }
+        self.bump();
+        let args = self.types()?;
+        self.expect_punct("{", "`{` to open the implementation's functions")?;
+        let mut functions = Vec::new();
+        let mut ok = true;
+        loop {
+            self.skip_newlines();
+            let start = self.at;
+            match self.tok() {
+                Tok::Punct("}") => break,
+                Tok::Keyword("fn") => {}
+                tok => return Err(self.expected("a function or `}`", tok)),
+            }
+            match self.function(start, true)? {
+                Some(f) => functions.push(f),
+                None => ok = false,
+            }
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Newline | Tok::Eof => Ok(ok.then_some(Impl {
+                generics,
+                name,
+                pos,
+                args,
+                functions,
+            })),
+            tok => Err(self.expected("a line break", tok)),
+        }
+    }
+
+    /// Parses a function that starts at the token `from`. The errors of its
+    /// statements are recorded, and a function with any gives `None`.
+    ///
+    /// A mistake in the signature of a function inside an implementation
+    /// is given back, for the implementation to report. Elsewhere it is
+    /// recorded, and the function is skipped.
+    fn function(&mut self, from: usize, nested: bool) -> Result<Option<Function>, Error> {
+        let (name, pos, generics, params, result, effects) = match self.body_signature() {
             Ok(signature) => signature,
+            Err(e) if nested => return Err(e),
             Err(e) => {
                 self.errors.push(e);
                 self.skip_item(from);
-                return None;
+                return Ok(None);
             }
         };
         let mut body = Vec::new();
@@ -404,8 +621,12 @@ impl Parser<'_> {
                     break end;
                 }
                 Tok::Eof => {
-                    self.errors.push(self.expected("`}`", &Tok::Eof));
-                    return None;
+                    let error = self.expected("`}`", &Tok::Eof);
+                    if nested {
+                        return Err(error);
+                    }
+                    self.errors.push(error);
+                    return Ok(None);
                 }
                 _ => match self.statement_line() {
                     Ok(stmt) => body.push(stmt),
@@ -413,7 +634,7 @@ impl Parser<'_> {
                         self.errors.push(e);
                         ok = false;
                         if !self.skip_statement(start) {
-                            return None;
+                            return Ok(None);
                         }
                     }
                 },
@@ -421,32 +642,49 @@ impl Parser<'_> {
         };
         match self.tok() {
             Tok::Newline | Tok::Eof => {}
+            Tok::Punct("}") if nested => {}
             tok => {
-                self.errors.push(self.expected("a line break", tok));
+                let error = self.expected("a line break", tok);
+                if nested {
+                    return Err(error);
+                }
+                self.errors.push(error);
                 let at = self.at;
                 self.skip_item(at);
-                return None;
+                return Ok(None);
             }
         }
-        ok.then_some(Function {
+        Ok(ok.then_some(Function {
             name,
             pos,
+            generics,
             params,
             result,
             effects,
             body,
             end,
-        })
+        }))
     }
 
     /// Parses a function's signature, through the `{` that opens its body.
-    #[allow(clippy::type_complexity)]
-    fn signature(&mut self) -> Result<(String, Pos, Vec<Param>, Option<Type>, Effects), Error> {
+    fn body_signature(&mut self) -> Result<Signature, Error> {
+        let signature = self.signature()?;
+        self.skip_newlines();
+        match self.tok() {
+            Tok::Punct("{") => self.bump(),
+            Tok::Keyword("requires" | "ensures") => {
+                return Err(Error::unsupported(self.pos(), "a contract"));
+            }
+            tok => return Err(self.expected("`{` to open the function's body", tok)),
+        }
+        Ok(signature)
+    }
+
+    /// Parses a function's signature, through its list of effects.
+    fn signature(&mut self) -> Result<Signature, Error> {
         self.bump();
         let (name, pos) = self.ident("the function's name")?;
-        if self.tok() == &Tok::Punct("[") {
-            return Err(Error::unsupported(self.pos(), "a generic parameter"));
-        }
+        let generics = self.generics()?;
         self.expect_punct("(", "`(`")?;
         let mut params = Vec::new();
         self.skip_newlines();
@@ -485,15 +723,15 @@ impl Parser<'_> {
                 effects.push(self.ident("an effect")?);
             }
         }
-        self.skip_newlines();
-        match self.tok() {
-            Tok::Punct("{") => self.bump(),
-            Tok::Keyword("requires" | "ensures") => {
-                return Err(Error::unsupported(self.pos(), "a contract"));
-            }
-            tok => return Err(self.expected("`{` to open the function's body", tok)),
+        if self.tok() == &Tok::Newline
+            && matches!(
+                self.tokens.get(self.at + 1).map(|t| &t.tok),
+                Some(Tok::Keyword("requires" | "ensures"))
+            )
+        {
+            self.bump();
         }
-        Ok((name, pos, params, result, effects))
+        Ok((name, pos, generics, params, result, effects))
     }
 
     /// Parses `name: type`.
@@ -510,22 +748,47 @@ impl Parser<'_> {
         Ok(Param { name, pos, ty })
     }
 
-    /// Parses a type, which so far is only ever a name.
+    /// Parses a type: a name, and the types in brackets after it, if any.
     fn ty(&mut self) -> Result<Type, Error> {
         let pos = self.pos();
         match self.tok() {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
+                let mut args = Vec::new();
                 if self.tok() == &Tok::Punct("[") {
-                    return Err(Error::unsupported(self.pos(), "a type argument"));
+                    self.bump();
+                    args = self.types()?;
                 }
-                Ok(Type { name, pos })
+                Ok(Type { name, pos, args })
             }
             Tok::Punct("[") => Err(Error::unsupported(pos, "an array type")),
             Tok::Punct("(") => Err(Error::unsupported(pos, "a tuple or function type")),
             tok => Err(self.expected("a type", tok)),
         }
+    }
+
+    /// Parses types separated by commas, after a `[`, through the `]`.
+    fn types(&mut self) -> Result<Vec<Type>, Error> {
+        let mut types = Vec::new();
+        self.skip_newlines();
+        loop {
+            types.push(self.ty()?);
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct(",") => {
+                    self.bump();
+                    self.skip_newlines();
+                    if self.tok() == &Tok::Punct("]") {
+                        break;
+                    }
+                }
+                Tok::Punct("]") => break,
+                tok => return Err(self.expected("`,` or `]`", tok)),
+            }
+        }
+        self.bump();
+        Ok(types)
     }
 
     /// Parses a statement and the line break or `}` after it.
@@ -633,10 +896,18 @@ impl Parser<'_> {
         while self.tok() == &Tok::Punct(".") {
             self.bump();
             let (name, pos) = self.ident("a field's name")?;
-            expr = Expr::Field {
-                of: Box::new(expr),
-                name,
-                pos,
+            expr = match expr {
+                Expr::Name {
+                    name: qualifier,
+                    pos: at,
+                } if self.tok() == &Tok::Punct("(") => {
+                    Expr::Call(self.call_rest(Some((qualifier, at)), name, pos)?)
+                }
+                of => Expr::Field {
+                    of: Box::new(of),
+                    name,
+                    pos,
+                },
             };
         }
         if continues_expression(self.tok()) {
@@ -647,6 +918,17 @@ impl Parser<'_> {
 
     fn call(&mut self) -> Result<Call, Error> {
         let (callee, pos) = self.ident("a function's name")?;
+        self.call_rest(None, callee, pos)
+    }
+
+    /// Parses the arguments of a call, from its `(`.
+    fn call_rest(
+        &mut self,
+        qualifier: Option<(String, Pos)>,
+        callee: String,
+        name_pos: Pos,
+    ) -> Result<Call, Error> {
+        let pos = qualifier.as_ref().map_or(name_pos, |(_, at)| *at);
         self.bump();
         let mut args = Vec::new();
         self.skip_newlines();
@@ -668,8 +950,10 @@ impl Parser<'_> {
         let end = self.pos();
         self.bump();
         Ok(Call {
+            qualifier,
             callee,
             pos,
+            name_pos,
             args,
             end,
         })

@@ -1,0 +1,26 @@
+struct Cat {
+  name: str
+}
+
+struct Dog {
+  name: str
+}
+
+trait Named[T] {
+  fn name_of(x: T) -> str
+}
+
+impl Named[Cat] {
+  fn name_of(x: Cat) -> str { x.name }
+}
+
+impl Named[Dog] {
+  fn name_of(x: Dog) -> str { "dog" }
+}
+
+fn show[T: Named](x: T) -> str { name_of(x) }
+
+fn main() ! console {
+  print(show(Cat(name: "Tom")))
+  print(show(Dog(name: "Rex")))
+}
