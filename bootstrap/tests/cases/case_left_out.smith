@@ -1,13 +1,19 @@
+enum Maybe[T] {
+  some: T
+  none
+}
+
 enum Pet {
   cat: str
+  lost: Maybe[str]
   stray: str
   none
 }
 
 fn name_of(p: Pet) -> str {
   match p {
-    .cat(c) { c }
-    .none { "nobody" }
+    .lost(.some(name)) { name }
+    .stray(s) { s }
   }
 }
 
