@@ -13,6 +13,10 @@ pub const ONCE: &[Test] = &[
         the_next_version_follows_the_rules_for_every_list_of_commits,
     ),
     (
+        "the_mirror_pushes_every_tag_under_its_own_name",
+        the_mirror_pushes_every_tag_under_its_own_name,
+    ),
+    (
         "a_build_that_is_not_a_release_reports_dev",
         a_build_that_is_not_a_release_reports_dev,
     ),
@@ -155,4 +159,81 @@ fn the_release_workflow_runs_after_a_merge_and_only_its_publish_job_writes() {
             "a release is never changed: {forbidden}"
         );
     }
+}
+
+/// A list of tag names, each beginning with `v`.
+fn tag_names(g: &mut Gen) -> Vec<String> {
+    let mut names = Vec::new();
+    for _ in 0..g.below(6) {
+        let name = format!("v{}.{}.{}", g.below(12), g.below(12), g.below(12));
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn the_mirror_pushes_every_tag_under_its_own_name() {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let script = format!("{}/../.github/mirror-tags.sh", env!("CARGO_MANIFEST_DIR"));
+    generate::check(33, 8, tag_names, |names| {
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("smith-mirror-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let origin = root.join("origin");
+        let clone = root.join("clone");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "--quiet"]);
+        git(&origin, &["commit", "--quiet", "--allow-empty", "-m", "x"]);
+        for name in names {
+            git(&origin, &["tag", name]);
+        }
+        // A tag that does not begin with `v` is not mirrored.
+        git(&origin, &["tag", "other"]);
+        std::fs::create_dir_all(&clone).unwrap();
+        git(&clone, &["init", "--quiet"]);
+        git(
+            &clone,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        let output = Command::new("sh")
+            .arg(&script)
+            .current_dir(&clone)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let mut pushed: Vec<String> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let (from, to) = line.split_once(':').unwrap();
+                let name = to.strip_prefix("refs/tags/").unwrap();
+                assert!(from.ends_with(name), "{line}");
+                name.to_string()
+            })
+            .collect();
+        pushed.sort();
+        let mut expected = names.clone();
+        expected.sort();
+        assert_eq!(pushed, expected);
+        let _ = std::fs::remove_dir_all(&root);
+    });
 }
