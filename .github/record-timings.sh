@@ -23,6 +23,7 @@ case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) host=linux_x64 ;;
   Darwin-arm64) host=macos_arm64 ;;
   Linux-aarch64) host=linux_arm64 ;;
+  Darwin-x86_64) host=macos_x64 ;;
 esac
 
 cd "$root/bootstrap"
@@ -43,7 +44,7 @@ programs=
 for out in "$root"/bootstrap/tests/cases/*.out; do
   case_name=$(basename "$out" .out)
   source="$root/bootstrap/tests/cases/$case_name.smith"
-  for target in linux_x64 macos_arm64 linux_arm64; do
+  for target in linux_x64 macos_arm64 linux_arm64 macos_x64; do
     dir="$work/$case_name.$target"
     mkdir "$dir"
     # A target the compiler cannot build for yet fails here and is skipped.
