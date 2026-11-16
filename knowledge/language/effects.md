@@ -9,7 +9,7 @@ description: Effects listed in a signature as permissions, how an effect is decl
 A function with no `!` clause is pure. Effects are listed after the return type, and a caller must have every effect its callees use. A function without an effect cannot perform it, so effects work as permissions. Below, `load` is shown by its signature alone.
 
 ```
-fn load(path: str) -> Result[Bytes, IoError] ! fs, alloc
+fn load(path: str) -> Result[List[u8], IoError] ! fs, alloc
 
 fn fixture_config() -> Result[Config, IoError] ! alloc {
   with memory_fs(fixtures)

@@ -9,7 +9,7 @@ description: Task groups with spawn and join, async I/O that reads as sequential
 Concurrent work runs in tasks, and there are no raw threads or locks. Data is immutable or uniquely owned, so data races cannot be written. `with tasks()` opens a task group. `spawn` takes the child's work as a lambda and starts it in the nearest group, and `join` waits for its result. Every child finishes before the block ends. A function that spawns without opening its own group carries the `spawn` effect.
 
 ```
-fn fetch_both(a: str, b: str) -> Result[(Bytes, Bytes), NetError] ! net, alloc {
+fn fetch_both(a: str, b: str) -> Result[(List[u8], List[u8]), NetError] ! net, alloc {
   with tasks()
   ta = spawn(fn() { fetch(a) })
   tb = spawn(fn() { fetch(b) })

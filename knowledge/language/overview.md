@@ -14,6 +14,8 @@ What Smith is after is the fastest and the safest program that can be had, on ev
 
 This folder builds the language up one concept at a time. Each file uses only what earlier files introduced, and the examples grow into an MLP and then a transformer. The syntax is defined in [grammar.md](../grammar.md), and how it is compiled is in [compiler.md](../compiler.md). Nothing here has been implemented or measured.
 
+Smith's types are dependent: a type may mention a value, as `[n]f32` mentions `n`, and a statement about values is itself a type whose values are its proofs. A proof is written in the source, checked when the program is built, and gone when it runs, along with anything else that only a type or a proof uses. Numbers are machine integers, and the proof is that a value fits. So what other languages test while the program runs, an index in range or a sum that does not overflow, Smith settles beforehand and pays nothing for.
+
 A few rules hold throughout. Every body is a block in braces, statements are separated by newlines, and each program has one canonical formatting. A function's signature states everything a caller needs. Values are never shared by reference. Proofs are written in the source and only checked by the compiler.
 
 The design follows four principles:
