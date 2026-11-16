@@ -20,7 +20,7 @@ A few rules hold throughout. Every body is a block in braces, statements are sep
 
 The design follows four principles:
 
-- Fewest features. Nothing speculative is included, and a feature is added only when real code needs it.
+- Fewest features. Nothing speculative is included, and a feature is added only when real code needs it. Nothing is kept for the sake of what came before.
 - The syntax is fixed and its meaning is extensible through traits, as with operators, literals, `loop`, and `try`.
 - Effects are permissions. What a function may do is visible in its signature.
 - No dependencies. Everything is written in Smith, with no other language in a Smith program.
