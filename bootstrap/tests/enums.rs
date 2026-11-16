@@ -445,19 +445,25 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
         };
         let arms = match (f, kind) {
             (0, Some(Kind::CaseLeftOut)) => {
+                // One block or more is left out, and the error names each
+                // case they were for, in the order the enum declares them.
                 let mut arms = every_case(g, &m, &mut ctx, &param);
-                let left = arms.remove(g.below(arms.len()));
-                let Pat::Case(_, name, _) = left.pat else {
-                    unreachable!("a case")
-                };
-                return_mark(
-                    &mut m,
-                    f,
-                    ctx,
-                    arms,
-                    format!("`.{name}"),
-                    Some(format!("add a block for `.{name}")),
-                );
+                let mut left = Vec::new();
+                for _ in 0..1 + g.below(arms.len()) {
+                    left.push(arms.remove(g.below(arms.len())).pat);
+                }
+                let mut left: Vec<(usize, String)> = (left.into_iter())
+                    .map(|p| match p {
+                        Pat::Case(c, name, Some(_)) => (c, format!("`.{name}(_)`")),
+                        Pat::Case(c, name, None) => (c, format!("`.{name}`")),
+                        _ => unreachable!("a case"),
+                    })
+                    .collect();
+                left.sort();
+                let left: Vec<String> = left.into_iter().map(|(_, l)| l).collect();
+                let left = sentence(&left);
+                let mentions = format!("does not cover {left}");
+                return_mark(&mut m, f, ctx, arms, mentions, Some(format!("for {left}")));
                 continue;
             }
             (0, Some(Kind::NameTaken)) => {
@@ -562,6 +568,16 @@ fn every_case(g: &mut Gen, m: &Model, ctx: &mut Ctx, ty: &Ty) -> Vec<ArmM> {
         out.push(block(g, m, ctx, Pat::Case(c, name, inner), ty, 1, true));
     }
     out
+}
+
+/// The items joined as a sentence joins them.
+fn sentence(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
 }
 
 /// Makes the body of function `f` a `match` with these blocks, whose

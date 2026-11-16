@@ -1940,35 +1940,39 @@ fn inside_case<'p>(rows: &[&'p Pat], k: usize) -> Vec<&'p Pat> {
         .collect()
 }
 
-/// A value of type `ty` that none of the patterns matches, as a pattern
-/// that matches it is written, if there is one.
-fn missing(defs: &Defs, rows: &[&Pat], ty: &Ty) -> Option<String> {
+/// The values of type `ty` that none of the patterns matches, as the
+/// patterns that match them are written, in the order the enum declares
+/// its cases. A case none of the patterns names is one pattern, with a bare
+/// name for what it holds.
+fn missing(defs: &Defs, rows: &[&Pat], ty: &Ty) -> Vec<String> {
     if rows.iter().any(|r| matches!(r, Pat::Any)) {
-        return None;
+        return Vec::new();
     }
     let Ty::Enum(e, args) = ty else {
-        return Some("_".to_string());
+        return vec!["_".to_string()];
     };
+    let mut out = Vec::new();
     for (k, case) in defs.file.enums[*e].cases.iter().enumerate() {
         let inside = inside_case(rows, k);
         match &defs.cases[*e][k] {
-            None if inside.is_empty() => return Some(format!(".{}", case.name)),
+            None if inside.is_empty() => out.push(format!(".{}", case.name)),
             None => {}
+            Some(_) if inside.is_empty() => out.push(format!(".{}(_)", case.name)),
             Some(holds) => {
-                if let Some(left) = missing(defs, &inside, &holds.subst(args)) {
-                    return Some(format!(".{}({left})", case.name));
+                for left in missing(defs, &inside, &holds.subst(args)) {
+                    out.push(format!(".{}({left})", case.name));
                 }
             }
         }
     }
-    None
+    out
 }
 
 /// Whether the pattern matches some value of type `ty` that none of the
 /// patterns before it matches.
 fn useful(defs: &Defs, before: &[&Pat], pattern: &Pat, ty: &Ty) -> bool {
     match pattern {
-        Pat::Any => missing(defs, before, ty).is_some(),
+        Pat::Any => !missing(defs, before, ty).is_empty(),
         Pat::Case(k, inner) => {
             let Ty::Enum(e, args) = ty else {
                 unreachable!("checked")
@@ -2935,7 +2939,7 @@ impl<'a> Checker<'a> {
     fn match_expr(&mut self, body: &mut Body<'a>, m: &Match, want: &Want) -> Ty {
         let defs = self.defs;
         let of = self.expr(body, &m.of, &Want::Any);
-        let names = body.names.len();
+        let outer = body.names.len();
         let vars = body.vars.len();
         let mut patterns: Vec<Option<Pat>> = Vec::new();
         let mut first: Option<Ty> = None;
@@ -2968,16 +2972,20 @@ impl<'a> Checker<'a> {
                 let gives = self.arm_gives(body, arm, end, want, &first);
                 first = first.or(Some(gives));
             }
-            body.names.truncate(names);
+            body.names.truncate(outer);
             body.vars.truncate(vars);
         }
         if !of.unknown() && patterns.iter().all(Option::is_some) {
             let all: Vec<&Pat> = patterns.iter().flatten().collect();
-            if let Some(left) = missing(defs, &all, &of) {
+            let left = missing(defs, &all, &of);
+            if !left.is_empty() {
+                let left: Vec<&str> = left.iter().map(String::as_str).collect();
+                let blocks = if left.len() == 1 { "a block" } else { "blocks" };
+                let left = names(&left);
                 self.errors.push(
-                    Error::new(m.pos, format!("this `match` does not cover `{left}`")).with_fix(
+                    Error::new(m.pos, format!("this `match` does not cover {left}")).with_fix(
                         format!(
-                            "add a block for `{left}`, or end with a bare name that covers the rest"
+                            "add {blocks} for {left}, or end with a bare name that covers the rest"
                         ),
                     ),
                 );
