@@ -505,6 +505,19 @@ fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Er
     }))
 }
 
+/// The error for a definition that gives the name `true` or `false`, which
+/// are the cases of `bool` wherever they are written. The prelude's `bool`
+/// is read at line 0 and defines them.
+fn truth_named(name: &str, pos: Pos) -> Result<(), Error> {
+    if (name == "true" || name == "false") && pos.line != 0 {
+        return Err(Error::new(
+            pos,
+            format!("`{name}` is a case of `bool`, so nothing else can be named `{name}`"),
+        ));
+    }
+    Ok(())
+}
+
 /// The block of a `match` on a `bool` for the case `name`.
 fn arm(name: &str, pos: Pos, body: Vec<Stmt>, end: Pos) -> Arm {
     Arm {
@@ -737,6 +750,16 @@ impl Parser<'_> {
         }
     }
 
+    /// Parses a name that a definition gives, which is not `true` or
+    /// `false` outside the prelude.
+    fn defined(&mut self, what: &str) -> Result<(String, Pos), Error> {
+        let pos = self.pos();
+        if let Tok::Ident(name) = self.tok() {
+            truth_named(name, pos)?;
+        }
+        self.ident(what)
+    }
+
     /// Skips the tokens of a definition that holds a mistake, from its
     /// first token to the next token outside any bracket that starts a line
     /// at its first column. A brace, `requires`, or `ensures` there belongs
@@ -839,7 +862,7 @@ impl Parser<'_> {
     /// Parses a struct and the line break after it.
     fn structure(&mut self) -> Result<Struct, Error> {
         self.bump();
-        let (name, pos) = self.ident("the struct's name")?;
+        let (name, pos) = self.defined("the struct's name")?;
         let generics = self.generics()?;
         self.expect_punct("{", "`{` to open the struct's fields")?;
         let mut fields = Vec::new();
@@ -852,7 +875,7 @@ impl Parser<'_> {
                 }
                 _ => {}
             }
-            let (name, pos) = self.ident("a field or `}`")?;
+            let (name, pos) = self.defined("a field or `}`")?;
             self.expect_punct(":", "`:` and the field's type")?;
             let ty = self.ty()?;
             let mut default = None;
@@ -886,7 +909,7 @@ impl Parser<'_> {
     /// Parses an enum and the line break after it.
     fn enumeration(&mut self) -> Result<Enum, Error> {
         self.bump();
-        let (name, pos) = self.ident("the enum's name")?;
+        let (name, pos) = self.defined("the enum's name")?;
         let generics = self.generics()?;
         self.expect_punct("{", "`{` to open the enum's cases")?;
         let mut cases = Vec::new();
@@ -895,7 +918,7 @@ impl Parser<'_> {
             if self.tok() == &Tok::Punct("}") {
                 break;
             }
-            let (name, pos) = self.ident("a case or `}`")?;
+            let (name, pos) = self.defined("a case or `}`")?;
             let mut ty = None;
             if self.tok() == &Tok::Punct(":") {
                 self.bump();
@@ -936,7 +959,7 @@ impl Parser<'_> {
             } else {
                 None
             };
-            let (name, pos) = self.ident("a type parameter")?;
+            let (name, pos) = self.defined("a type parameter")?;
             let bound = if self.tok() == &Tok::Punct(":") {
                 self.bump();
                 Some(self.ty()?)
@@ -969,7 +992,7 @@ impl Parser<'_> {
     /// Parses a trait and the line break after it.
     fn declare_trait(&mut self) -> Result<Trait, Error> {
         self.bump();
-        let (name, pos) = self.ident("the trait's name")?;
+        let (name, pos) = self.defined("the trait's name")?;
         if self.tok() != &Tok::Punct("[") {
             return Err(self.expected("`[` and the trait's types", self.tok()));
         }
@@ -1146,7 +1169,7 @@ impl Parser<'_> {
     /// Parses a function's signature, through its list of effects.
     fn signature(&mut self) -> Result<Signature, Error> {
         self.bump();
-        let (name, pos) = self.ident("the function's name")?;
+        let (name, pos) = self.defined("the function's name")?;
         let generics = self.generics()?;
         self.expect_punct("(", "`(`")?;
         let mut params = Vec::new();
@@ -1266,7 +1289,7 @@ impl Parser<'_> {
 
     /// Parses `name: type`, and `= default` after it if it has one.
     fn param(&mut self) -> Result<Param, Error> {
-        let (name, pos) = self.ident("a parameter")?;
+        let (name, pos) = self.defined("a parameter")?;
         self.expect_punct(":", "`:` and the parameter's type")?;
         if self.tok() == &Tok::Keyword("take") {
             return Err(Error::unsupported(self.pos(), "`take`"));
@@ -1544,6 +1567,7 @@ impl Parser<'_> {
             Tok::Ident(name) => match self.next_tok() {
                 Tok::Punct("=" | ":") => {
                     let name = name.clone();
+                    truth_named(&name, pos)?;
                     self.bump();
                     return self.definition(name, pos, false);
                 }
@@ -1567,7 +1591,7 @@ impl Parser<'_> {
             },
             Tok::Keyword("var") => {
                 self.bump();
-                let (name, pos) = self.ident("the name of the `var`")?;
+                let (name, pos) = self.defined("the name of the `var`")?;
                 return self.definition(name, pos, true);
             }
             Tok::Punct("(") => return self.tuple_statement(),
@@ -1591,7 +1615,13 @@ impl Parser<'_> {
             Err(e) => Some(e),
         };
         self.at = start;
-        let expr = self.expr()?;
+        // When neither reads it, the mistake to report is the one the
+        // reading that got further found.
+        let expr = match (self.expr(), &mistake) {
+            (Ok(expr), _) => expr,
+            (Err(e), Some(m)) if m.pos > e.pos => return Err(mistake.expect("a mistake")),
+            (Err(e), _) => return Err(e),
+        };
         // A value followed by `=` is meant as a pattern, so the mistake that
         // keeps it from being one is the one to report.
         if let Some(e) = mistake
@@ -1984,6 +2014,16 @@ impl Parser<'_> {
     fn pattern(&mut self) -> Result<Pattern, Error> {
         let pos = self.pos();
         match self.tok() {
+            // `true` and `false` are the cases of `bool` in a pattern too.
+            Tok::Ident(name) if name == "true" || name == "false" => {
+                let name = name.clone();
+                self.bump();
+                Ok(Pattern::Case {
+                    name,
+                    pos,
+                    inner: None,
+                })
+            }
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();
@@ -1995,7 +2035,7 @@ impl Parser<'_> {
             }
             Tok::Keyword("var") => {
                 self.bump();
-                let (name, at) = self.ident("the name of the `var`")?;
+                let (name, at) = self.defined("the name of the `var`")?;
                 Ok(Pattern::Bind {
                     name,
                     pos: at,
@@ -2089,7 +2129,7 @@ impl Parser<'_> {
                 .with_fix("leave out `fn()`"));
             }
             loop {
-                params.push(self.ident("a parameter's name")?);
+                params.push(self.defined("a parameter's name")?);
                 self.skip_newlines();
                 match self.tok() {
                     Tok::Punct(",") => {

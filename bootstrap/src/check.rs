@@ -2661,6 +2661,8 @@ fn missing_rows(defs: &Defs, rows: &[Vec<&Pat>], tys: &[Ty]) -> Vec<Vec<String>>
                 for left in left {
                     let (first, after) = match holds {
                         Some(_) => (format!(".{}({})", case.name, left[0]), &left[1..]),
+                        // The cases of `bool` are written as bare names.
+                        None if *e == defs.boolean => (case.name.clone(), &left[..]),
                         None => (format!(".{}", case.name), &left[..]),
                     };
                     let mut row = vec![first];

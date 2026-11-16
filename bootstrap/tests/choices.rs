@@ -390,8 +390,9 @@ enum Stmt {
     Unit(usize, Cond, usize, bool),
     /// `var x{i} = "a"`, `if c { x{i} = "b" }`, then `print(x{i})`.
     Assign(usize, Cond, usize, usize),
-    /// `match c { .true { ... } .false { ... } }`.
-    Match(Cond, Vec<Stmt>, Vec<Stmt>),
+    /// `match c { true { ... } false { ... } }`, with each case written
+    /// with a leading dot if it says so.
+    Match(Cond, Vec<Stmt>, Vec<Stmt>, bool),
     /// `twice { ... }`, which runs the lambda's body twice.
     Twice(Vec<Stmt>),
 }
@@ -602,7 +603,9 @@ fn stmt(g: &mut Gen, s: &mut Scope, nesting: usize, top: bool) -> Stmt {
         }
         8 => {
             let given = c(g, s);
-            Stmt::Match(given, block(g, s, nesting - 1), block(g, s, nesting - 1))
+            let then = block(g, s, nesting - 1);
+            let otherwise = block(g, s, nesting - 1);
+            Stmt::Match(given, then, otherwise, g.one_in(2))
         }
         _ => Stmt::Twice(block(g, s, nesting - 1)),
     }
@@ -730,11 +733,12 @@ fn write_stmt(m: &Model, s: &Stmt, depth: usize, out: &mut String) {
                 LABELS[*b]
             ));
         }
-        Stmt::Match(given, then, otherwise) => {
+        Stmt::Match(given, then, otherwise, dot) => {
+            let dot = if *dot { "." } else { "" };
             out.push_str(&format!("{at}match {} {{\n", c(given)));
-            out.push_str(&format!("{at}  .true {{\n"));
+            out.push_str(&format!("{at}  {dot}true {{\n"));
             write_block(m, then, depth + 2, out);
-            out.push_str(&format!("{at}  }}\n{at}  .false {{\n"));
+            out.push_str(&format!("{at}  }}\n{at}  {dot}false {{\n"));
             write_block(m, otherwise, depth + 2, out);
             out.push_str(&format!("{at}  }}\n{at}}}\n"));
         }
@@ -786,7 +790,7 @@ fn run(m: &Model, stmts: &[Stmt], bools: &mut Vec<bool>, out: &mut Vec<u8>) {
                 let given = truth(m, bools, c, out);
                 line(out, LABELS[if given { *b } else { *a }]);
             }
-            Stmt::Match(c, then, otherwise) => {
+            Stmt::Match(c, then, otherwise, _) => {
                 if truth(m, bools, c, out) {
                     run(m, then, bools, out);
                 } else {
@@ -900,7 +904,36 @@ pub fn program_with_mistake(g: &mut Gen) -> ChoiceCase {
     let ok = |g: &mut Gen| written(&m, &cond(g, &s, 1), 5);
     // The statement, as the text before the mistake and the rest, what the
     // error must mention, and what its fix must mention, if it has one.
-    let (lead, rest, mentions, fix) = match g.below(6) {
+    let word = *g.pick(&["true", "false"]);
+    let named = format!("`{word}` is a case of `bool`");
+    // A definition named `true` or `false` after `main`, as the text before
+    // the name and the rest, if the mistake is one.
+    let mut item = None;
+    let (lead, rest, mentions, fix) = match g.below(8) {
+        6 => {
+            let (lead, rest) = *g.pick(&[
+                ("fn ", "() {}"),
+                ("fn spare(", ": str) {}"),
+                ("fn spare[", "]() {}"),
+                ("struct ", " {\n  a: str\n}"),
+                ("struct Spare {\n  ", ": str\n}"),
+                ("enum ", " {\n  a\n}"),
+                ("enum Spare {\n  a\n  ", "\n}"),
+                ("trait ", "[T] {\n  fn spare_of(x: T)\n}"),
+            ]);
+            item = Some((lead.to_string(), format!("{word}{rest}")));
+            (String::new(), String::new(), named, None)
+        }
+        7 => {
+            let (lead, rest) = *g.pick(&[
+                ("", " = \"a\""),
+                ("", ": str = \"a\""),
+                ("var ", " = \"a\""),
+                ("(var ", ", spare) = (\"a\", \"b\")"),
+                ("twice fn(", ") { }"),
+            ]);
+            (lead.to_string(), format!("{word}{rest}"), named, None)
+        }
         0 => {
             let (value, _) = not_bool(g);
             let (lead, rest) = match g.below(5) {
@@ -983,13 +1016,22 @@ pub fn program_with_mistake(g: &mut Gen) -> ChoiceCase {
             Some("write `try` before it".to_string()),
         ),
     };
-    let line = format!("  {lead}");
-    let place = pos_after(&format!("{source}{line}"));
-    source.push_str(&format!("{line}{rest}\n"));
+    let mut place = None;
+    if item.is_none() {
+        let line = format!("  {lead}");
+        place = Some(pos_after(&format!("{source}{line}")));
+        source.push_str(&format!("{line}{rest}\n"));
+    }
     let mut after = String::new();
     write_block(&m, &m.main[at..], 1, &mut after);
     source.push_str(&after);
     source.push_str("}\n");
+    if let Some((lead, rest)) = item {
+        source.push_str(&format!("\n{lead}"));
+        place = Some(pos_after(&source));
+        source.push_str(&format!("{rest}\n"));
+    }
+    let place = place.expect("a place");
     ChoiceCase {
         source,
         stdout: Vec::new(),
