@@ -349,6 +349,10 @@ enum Ty {
     Param(usize),
     /// The empty tuple, `()`, which a function with no return type gives.
     Nothing,
+    /// A whole number bound to a name, whose type the uses of the name have
+    /// not yet decided, by its place among those of the function. It exists
+    /// only while the uses are looked at, before the body is checked.
+    Flex(usize),
     /// The expression holds a mistake already reported, so what it gives
     /// is not known and nothing about it is reported again. A type that
     /// holds an unknown type is itself unknown.
@@ -403,6 +407,15 @@ impl Ty {
         match self {
             Ty::Struct(_, args) | Ty::Enum(_, args) | Ty::Tuple(args) | Ty::Fn(args) => args,
             _ => &[],
+        }
+    }
+
+    /// The type with each undecided whole number made an `i64`, which is
+    /// what it is when nothing decides it.
+    fn concrete(&self) -> Ty {
+        match self {
+            Ty::Flex(_) => Ty::Int(Int::I64),
+            t => t.with_args(t.args().iter().map(Ty::concrete).collect()),
         }
     }
 
@@ -497,8 +510,17 @@ fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
                 sol[*i] = Some(given.clone());
                 true
             }
-            Some(t) => t == given || *t == Ty::Unknown,
+            Some(t) if *t == Ty::Unknown => true,
+            Some(t) if t == given => true,
+            Some(t) => {
+                let agreed = flex_pair(t, given);
+                if agreed && matches!(t, Ty::Flex(_)) {
+                    sol[*i] = Some(given.clone());
+                }
+                agreed
+            }
         },
+        (a, b) if flex_pair(a, b) => true,
         (Ty::Struct(s, a), Ty::Struct(t, b)) | (Ty::Enum(s, a), Ty::Enum(t, b)) => {
             s == t && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
@@ -507,6 +529,47 @@ fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
         }
         (a, b) => a == b,
     }
+}
+
+/// What the uses of the whole numbers bound to names, whose types are not
+/// yet decided, have asked of them while a body is looked at.
+#[derive(Default)]
+struct Uses {
+    /// The place of the use being looked at.
+    at: Option<Pos>,
+    /// The type a use asked of a number, and where.
+    wants: Vec<(usize, Int, Pos)>,
+    /// Two numbers that must be of one type.
+    same: Vec<(usize, usize)>,
+}
+
+thread_local! {
+    static USES: std::cell::RefCell<Uses> = std::cell::RefCell::new(Uses::default());
+}
+
+/// Notes the place of the use that is looked at next.
+fn use_at(pos: Pos) {
+    USES.with(|u| u.borrow_mut().at = Some(pos));
+}
+
+/// Whether one of two types is an undecided whole number and the other asks
+/// of it a whole number type or another undecided one, which is noted.
+fn flex_pair(a: &Ty, b: &Ty) -> bool {
+    USES.with(|u| {
+        let mut u = u.borrow_mut();
+        let at = u.at.unwrap_or(Pos::START);
+        match (a, b) {
+            (Ty::Flex(k), Ty::Int(t)) | (Ty::Int(t), Ty::Flex(k)) => {
+                u.wants.push((*k, *t, at));
+                true
+            }
+            (Ty::Flex(j), Ty::Flex(k)) => {
+                u.same.push((*j, *k));
+                true
+            }
+            _ => false,
+        }
+    })
 }
 
 /// Whether some choice of the type parameters in both makes the two types
@@ -919,6 +982,7 @@ impl<'a> Defs<'a> {
             Ty::Param(p) => scope.names[*p].clone(),
             Ty::Nothing => "()".to_string(),
             Ty::Unknown => "nothing".to_string(),
+            Ty::Flex(_) => "number".to_string(),
         }
     }
 
@@ -1767,6 +1831,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         fn_values: HashMap::new(),
         no_impl: false,
         refusals: 0,
+        deciding: None,
     };
     checker.main(&file.functions[main]);
     for &item in &reached {
@@ -2724,6 +2789,9 @@ struct Checker<'a> {
     /// function that cannot take them, so that a call that had one is not
     /// reported again for what it gives.
     refusals: usize,
+    /// While a number literal is checked against the type the uses of its
+    /// name decided, the place of the use that decided it.
+    deciding: Option<Pos>,
 }
 
 /// What is expected of an expression's value.
@@ -2936,6 +3004,24 @@ struct Body<'a> {
     params: usize,
     /// The names defined with `var`.
     vars: Vec<String>,
+    /// What looking at the uses of the whole numbers bound to names has
+    /// found, or is finding.
+    numbers: Numbers,
+    /// The names of numbers with no type written that the uses decided, with
+    /// the type and the place of the use that decided it.
+    decided: HashMap<String, (Int, Option<Pos>)>,
+}
+
+/// The whole numbers a body binds to names with no type written.
+enum Numbers {
+    /// None are looked for, as in a default.
+    Off,
+    /// The first look, at how each is used, which gives each an undecided
+    /// type. The places of the literals, in order, are noted.
+    Finding(Vec<Pos>),
+    /// The second look, with each type decided, by the place of its
+    /// literal, with the place of the use that decided it, if one did.
+    Decided(HashMap<Pos, (Int, Option<Pos>)>),
 }
 
 impl<'a> Body<'a> {
@@ -3145,6 +3231,8 @@ impl<'a> Checker<'a> {
             names: Vec::new(),
             params: 0,
             vars: Vec::new(),
+            numbers: Numbers::Off,
+            decided: HashMap::new(),
         };
         let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
         self.expect(&body, value, &gives, needed);
@@ -3468,18 +3556,24 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         match (given, needed) {
             (_, Ty::Unknown) | (Ty::Unknown, _) => {}
+            (g, n)
+                if {
+                    use_at(value.pos());
+                    flex_pair(g, n)
+                } => {}
             (Ty::Nothing, needed) if needed != given => {
                 let needed = defs.describe(needed, body.scope);
                 self.errors.push(self.nothing_where(value, &needed));
             }
-            (given, needed) if given != needed => self.errors.push(Error::new(
-                value.pos(),
-                format!(
-                    "this gives {}, where {} is needed",
+            (given, needed) if given != needed => {
+                let message = self.mismatch(
+                    body,
+                    value,
                     defs.describe(given, body.scope),
-                    defs.describe(needed, body.scope)
-                ),
-            )),
+                    defs.describe(needed, body.scope),
+                );
+                self.errors.push(Error::new(value.pos(), message));
+            }
             _ => {}
         }
     }
@@ -3504,18 +3598,31 @@ impl<'a> Checker<'a> {
                 self.errors.push(self.nothing_where(value, &needed));
             }
             (given, pattern) => {
+                use_at(value.pos());
                 let needed = defs.describe_pattern(pattern, sol, vars, body.scope);
                 if !unify(pattern, given, sol) {
-                    self.errors.push(Error::new(
-                        value.pos(),
-                        format!(
-                            "this gives {}, where {needed} is needed",
-                            defs.describe(given, body.scope)
-                        ),
-                    ));
+                    let message =
+                        self.mismatch(body, value, defs.describe(given, body.scope), needed);
+                    self.errors.push(Error::new(value.pos(), message));
                 }
             }
         }
+    }
+
+    /// What is wrong with `value`, which gives `given` where `needed` is
+    /// needed. A name bound to a number whose type a use decided says which.
+    fn mismatch(&self, body: &Body, value: &Expr, given: String, needed: String) -> String {
+        if let Expr::Name { name, .. } = value
+            && let Some((int, Some(at))) = body.decided.get(name)
+        {
+            return format!(
+                "`{name}` is `{}`, as the use at {}:{} needs, where {needed} is needed",
+                int.name(),
+                at.line,
+                at.col
+            );
+        }
+        format!("this gives {given}, where {needed} is needed")
     }
 
     fn nothing_where(&self, value: &Expr, needed: &str) -> Error {
@@ -3526,7 +3633,49 @@ impl<'a> Checker<'a> {
         Error::new(value.pos(), format!("{what}, where {needed} is needed"))
     }
 
+    /// Checks the body of a function. A whole number bound to a name with no
+    /// type written takes the type its uses need, so the body is first looked
+    /// at with each such number undecided, to find what its uses ask of it,
+    /// and then checked, with each decided and the mistakes reported.
     fn body(&mut self, template: Template) {
+        USES.with(|u| *u.borrow_mut() = Uses::default());
+        let (errors, refusals, no_impl) = (self.errors.len(), self.refusals, self.no_impl);
+        let places = self.run_body(template, Numbers::Finding(Vec::new()));
+        self.errors.truncate(errors);
+        self.refusals = refusals;
+        self.no_impl = no_impl;
+        let uses = USES.with(|u| std::mem::take(&mut *u.borrow_mut()));
+        // The numbers that must be of one type are decided together.
+        let mut root: Vec<usize> = (0..places.len()).collect();
+        fn find(root: &mut [usize], k: usize) -> usize {
+            if root[k] != k {
+                let r = find(root, root[k]);
+                root[k] = r;
+            }
+            root[k]
+        }
+        for (j, k) in &uses.same {
+            let (j, k) = (find(&mut root, *j), find(&mut root, *k));
+            root[j.max(k)] = j.min(k);
+        }
+        let mut decided = HashMap::new();
+        for (k, pos) in places.iter().enumerate() {
+            let r = find(&mut root, k);
+            let first = (uses.wants.iter())
+                .filter(|(w, ..)| find(&mut root, *w) == r)
+                .min_by_key(|(.., at)| *at);
+            let decision = match first {
+                Some((_, int, at)) => (*int, Some(*at)),
+                None => (Int::I64, None),
+            };
+            decided.insert(*pos, decision);
+        }
+        self.run_body(template, Numbers::Decided(decided));
+    }
+
+    /// One look at the body of a function, which gives the places of the
+    /// literals of the numbers it bound to names with no type written.
+    fn run_body(&mut self, template: Template, numbers: Numbers) -> Vec<Pos> {
         let defs = self.defs;
         let view = defs.view(template);
         let f = view.f;
@@ -3551,6 +3700,8 @@ impl<'a> Checker<'a> {
             names: view.params.clone(),
             params: view.params.len(),
             vars: Vec::new(),
+            numbers,
+            decided: HashMap::new(),
         };
         let want = match view.result {
             Some(_) => Want::Ty(view.gives.clone()),
@@ -3583,6 +3734,10 @@ impl<'a> Checker<'a> {
                 ),
             )),
             _ => {}
+        }
+        match body.numbers {
+            Numbers::Finding(places) => places,
+            _ => Vec::new(),
         }
     }
 
@@ -3675,6 +3830,11 @@ impl<'a> Checker<'a> {
                                     self.expect(body, value, &gives, &needed);
                                     needed
                                 }
+                                None if matches!(value, Expr::Number { .. })
+                                    && !matches!(body.numbers, Numbers::Off) =>
+                                {
+                                    self.literal_binding(body, name, value)
+                                }
                                 None => self.expr(body, value, &Want::Any),
                             };
                             let bound = self.not_stored(value, bound);
@@ -3732,6 +3892,32 @@ impl<'a> Checker<'a> {
             };
         }
         end
+    }
+
+    /// Checks a whole number literal bound to `name` with no type written.
+    /// While the uses are looked at, it is an undecided number. Once they
+    /// have decided its type, it is that type, and the literal must fit.
+    fn literal_binding(&mut self, body: &mut Body<'a>, name: &str, value: &Expr) -> Ty {
+        let pos = value.pos();
+        match &mut body.numbers {
+            Numbers::Off => unreachable!("numbers are looked for"),
+            Numbers::Finding(places) => {
+                places.push(pos);
+                self.expr(body, value, &Want::Ty(Ty::Unknown));
+                let Numbers::Finding(places) = &body.numbers else {
+                    unreachable!()
+                };
+                Ty::Flex(places.len() - 1)
+            }
+            Numbers::Decided(decided) => {
+                let (int, by) = decided[&pos];
+                self.deciding = by;
+                let ty = self.expr(body, value, &Want::Ty(Ty::Int(int)));
+                self.deciding = None;
+                body.decided.insert(name.to_string(), (int, by));
+                ty
+            }
+        }
     }
 
     /// Reports a value of type `ty` that holds a function, which a binding
@@ -3973,44 +4159,41 @@ impl<'a> Checker<'a> {
         want: &Want,
     ) -> Ty {
         let defs = self.defs;
-        match want {
-            Want::Ty(Ty::Int(int)) => {
-                let fits = if negative {
-                    magnitude <= int.min().unsigned_abs()
-                } else {
-                    magnitude <= int.max() as u128
-                };
-                if !fits {
-                    self.errors.push(Error::new(
-                        pos,
-                        format!(
-                            "`{}` does not fit `{}`, which holds {} to {}",
-                            written_expr(expr),
-                            int.name(),
-                            int.min(),
-                            int.max()
-                        ),
-                    ));
-                }
-                Ty::Int(*int)
-            }
-            Want::Ty(Ty::Unknown) => Ty::Unknown,
+        let int = match want {
+            Want::Ty(Ty::Int(int)) => *int,
+            Want::Any | Want::Unused => Int::I64,
+            Want::Ty(t @ (Ty::Unknown | Ty::Flex(_))) => return t.clone(),
             Want::Ty(needed) => {
                 let needed = defs.describe(needed, body.scope);
                 self.errors.push(Error::new(
                     pos,
                     format!("this is a number, where {needed} is needed"),
                 ));
-                Ty::Unknown
+                return Ty::Unknown;
             }
-            Want::Any | Want::Unused => {
-                self.errors.push(
-                    Error::new(pos, "this number has no type to become")
-                        .with_fix("state the type of a binding, as in `limit: i32 = 100`"),
-                );
-                Ty::Unknown
-            }
+        };
+        let fits = if negative {
+            magnitude <= int.min().unsigned_abs()
+        } else {
+            magnitude <= int.max() as u128
+        };
+        if !fits {
+            let because = match self.deciding {
+                Some(at) => format!(", as the use at {}:{} needs", at.line, at.col),
+                None => String::new(),
+            };
+            self.errors.push(Error::new(
+                pos,
+                format!(
+                    "`{}` does not fit `{}`{because}, which holds {} to {}",
+                    written_expr(expr),
+                    int.name(),
+                    int.min(),
+                    int.max()
+                ),
+            ));
         }
+        Ty::Int(int)
     }
 
     /// Checks a call of a function the compiler builds for the prelude: it
@@ -4856,7 +5039,7 @@ impl<'a> Checker<'a> {
         }
         let types: Vec<Ty> = sol
             .iter()
-            .map(|t| t.clone().unwrap_or(Ty::Unknown))
+            .map(|t| t.as_ref().map_or(Ty::Unknown, Ty::concrete))
             .collect();
         match defs.find(k, &types, body.scope, &mut Vec::new()) {
             Found::Yes(all, _) => {
@@ -4939,7 +5122,7 @@ impl<'a> Checker<'a> {
         }
         let types: Vec<Ty> = sol
             .iter()
-            .map(|t| t.clone().unwrap_or(Ty::Unknown))
+            .map(|t| t.as_ref().map_or(Ty::Unknown, Ty::concrete))
             .collect();
         match defs.fitting(k, &types) {
             Some(all) => {

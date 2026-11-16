@@ -3,7 +3,7 @@ type: specification
 title: Literals and numbers
 description: Literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
 status: partial
-built: "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, and `wrapping_`, `saturating_`, and `checked_` `add`, `sub`, and `mul` on those types"
+built: "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, and `wrapping_`, `saturating_`, and `checked_` `add`, `sub`, and `mul` on those types"
 ---
 
 # Literals and numbers
