@@ -178,6 +178,7 @@ The other layers use a second generator that builds well-typed programs.
 | Differentiation | `grad` matches finite differences |
 | Laziness | For any root, the lazy result equals what a run over every root gives for the same definitions |
 | Determinism | The same input gives the same bytes |
+| Specialization | A program with type parameters builds to the bytes of the same program written out with one function and one struct for each type it uses |
 | Self-hosting | The compiler built by itself twice is byte-identical |
 
 - Each property is a theorem to prove later, so it is written in that form now.
@@ -220,6 +221,7 @@ The first compiler is written in Rust with no dependencies. It is kept small and
 
 - **It implements only enough Smith to write a compiler:** functions, structs, enums, `match`, generics and traits, strings, lists, maps, files, arenas, `with`, and `try`, followed by contracts and the `arith` procedure. Arrays with `for`, differentiation, devices, and tasks are built afterwards, in Smith.
 - **It grows one feature at a time, end to end.** Each step takes a feature from source text to a running executable on each target built so far, starting with a program that prints one line. A program that uses a feature not built yet gets an ordinary error, with a line and column, that says so. The test generators cover what the compiler accepts so far and grow with it.
+- **Type parameters are gone before the target seam.** A function with type parameters is checked once, with each parameter standing for any type that meets its bound. It is lowered once for each choice of types that a call from `main` makes, and a call of a trait's function becomes a call of the implementation its types choose. The form every target receives holds no type parameter and no trait.
 - **Its machine code is plain.** Every value a function holds lives in its frame on the stack, a struct as its fields one after another. A function finds its arguments in its caller's frame and leaves what it gives back there, just after them, and calls between Smith functions follow this one convention on every target. Only a call into the system follows the system's convention.
 - **The standard library starts inside the compiler.** Until the bootstrap compiler can compile the library's own source, it supplies what a program uses from it, beginning with `print` and the `console` effect.
 - **Types depend on numbers first.** The bootstrap compiler lets a type mention a `Nat` and checks statements of arithmetic with `arith`. Statements about anything else, and proofs written out as functions, are built afterwards, in Smith. What the bootstrap compiler accepts is a part of that larger system and never a different one.
