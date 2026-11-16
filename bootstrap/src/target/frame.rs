@@ -1,8 +1,8 @@
-//! Where a function's values are held, which every target says the same way:
-//! each value at the size of its type, at a place that is a multiple of that
-//! size.
+//! How a function's frame is laid out, which every target says the same way:
+//! each value that is in the frame at the size of its type, at a place that
+//! is a multiple of that size, and where a call's arguments and results go.
 
-use crate::scalar::{Bits, Function, Op, Program, Type, Value};
+use crate::scalar::{Bits, Function, Op, Program, Type};
 
 /// How many bytes a value of the type takes, and so where it is a multiple
 /// of.
@@ -42,49 +42,14 @@ pub fn call_area(f: &Function) -> (Vec<u32>, u32) {
     lay_out(params.chain(f.results.iter().copied()))
 }
 
-/// What a function's frame holds, apart from the bytes the system may use
-/// and what a caller passes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Frame {
-    /// The bytes for the calls the function makes: the most any one takes,
-    /// as `call_area` says.
-    pub outgoing: u32,
-    /// The bytes its values take: each value but its parameters, in the
-    /// order of their numbers, at the next multiple of its size.
-    pub held: u32,
-    /// Where each value is in those bytes, or `None` for a parameter, which
-    /// is passed.
-    pub places: Vec<Option<u32>>,
-}
-
-/// The frame of each function of the program.
-pub fn frames(program: &Program) -> Vec<Frame> {
-    program
-        .functions
-        .iter()
-        .map(|f| frame(program, f))
-        .collect()
-}
-
-pub fn frame(program: &Program, f: &Function) -> Frame {
-    let passed = &f.blocks[0].params;
-    let held: Vec<usize> = (0..f.types.len())
-        .filter(|v| !passed.contains(&Value(*v)))
-        .collect();
-    let (at, end) = lay_out(held.iter().map(|v| f.types[*v]));
-    let mut places = vec![None; f.types.len()];
-    for (v, at) in held.into_iter().zip(at) {
-        places[v] = Some(at);
-    }
+/// The bytes a function keeps at the bottom of its frame for the calls it
+/// makes: the most any one takes, as `call_area` says, rounded up to 8.
+pub fn outgoing(program: &Program, f: &Function) -> u32 {
     let mut outgoing = 0;
     for instruction in f.blocks.iter().flat_map(|b| &b.instructions) {
         if let Op::Call { function, .. } = &instruction.op {
             outgoing = outgoing.max(call_area(&program.functions[*function]).1);
         }
     }
-    Frame {
-        outgoing: round_up(outgoing, 8),
-        held: end,
-        places,
-    }
+    round_up(outgoing, 8)
 }

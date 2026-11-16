@@ -2,7 +2,7 @@
 //! `libSystem`, and that carries the ad hoc code signature Apple silicon
 //! requires. The executable is written by `macho`.
 
-use super::arm64::{self, Asm, EQ, LE, LT, System, X0, X1, X2, X3, X4, X5, X19, X20};
+use super::arm64::{self, Asm, EQ, LE, LT, Place, System, X0, X1, X2, X3, X4, X5, X19, X20};
 use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
 use crate::scalar::{Program, Stream};
 
@@ -26,13 +26,19 @@ pub fn emit(program: &Program) -> Vec<u8> {
 struct Macos;
 
 impl System for Macos {
-    const RESERVED: u32 = 0;
+    /// Room for x19 and x20, which the write below keeps its place and its
+    /// length in, and puts back.
+    const RESERVED: u32 = 16;
 
     /// Writes every byte, retrying a write that is cut short or
     /// interrupted, and branches to `fail` if the system refuses it. The
     /// place and the length still to write stay in x19 and x20, which
     /// calls keep.
     fn write(asm: &mut Asm, stream: Stream, fail: usize) {
+        asm.store(Place::Frame(0), X19, 8);
+        asm.store(Place::Frame(8), X20, 8);
+        asm.mov(X19, X1);
+        asm.mov(X20, X2);
         let again = asm.label();
         let done = asm.label();
         let refused = asm.label();
@@ -62,6 +68,8 @@ impl System for Macos {
         asm.cond(EQ, again);
         asm.branch(fail);
         asm.bind(done);
+        asm.load(X19, 8, false, Place::Frame(0));
+        asm.load(X20, 8, false, Place::Frame(8));
     }
 
     fn exit(asm: &mut Asm, status: u16) {

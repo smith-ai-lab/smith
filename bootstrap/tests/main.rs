@@ -14,6 +14,7 @@
 //! runs only the others. A run that includes the first group ends by
 //! naming the targets this machine could not run.
 
+mod alloc;
 mod check;
 mod choices;
 mod cli;
@@ -65,6 +66,7 @@ fn main() -> ExitCode {
         machines::ONCE,
         targets::ONCE,
         scalar::ONCE,
+        alloc::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.
