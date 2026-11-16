@@ -5,6 +5,10 @@
 //! Arguments that do not start with `-` keep only the tests whose names
 //! hold one of them.
 //!
+//! `--fingerprint` runs nothing. It prints, for each target, a hash of
+//! everything the group that depends on the machine would run for it, as
+//! `.github/needs-machines.sh` reads it.
+//!
 //! The tests are in two groups. `--group=machine` runs only the tests whose
 //! result depends on the kind of machine they run on, and `--group=once`
 //! runs only the others. A run that includes the first group ends by
@@ -18,6 +22,7 @@ mod generate;
 #[cfg(unix)]
 mod install;
 mod lambdas;
+mod machines;
 mod programs;
 mod props;
 mod release;
@@ -43,19 +48,26 @@ const SLOWEST: usize = 5;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--fingerprint") {
+        for (target, hash) in targets::fingerprint(smith::compile) {
+            println!("{} {hash}", target.name());
+        }
+        return ExitCode::SUCCESS;
+    }
     let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let once = [
         props::TESTS,
         cli::ONCE,
         check::ONCE,
         release::ONCE,
+        machines::ONCE,
         targets::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.
     #[cfg(unix)]
     let once = [once, install::ONCE.to_vec()].concat();
-    let machine = [targets::MACHINE, cli::MACHINE].concat();
+    let machine = targets::machine();
     let groups: Vec<&[Test]> = match args.iter().find_map(|a| a.strip_prefix("--group=")) {
         None => vec![&once, &machine],
         Some("once") => vec![&once],
