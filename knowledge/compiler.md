@@ -72,7 +72,7 @@ hello.smith:1:13: `print` needs the `console` effect, which `main` does not decl
 - The line of source is shown as written, except that a tab is shown as a space and any other control character as `�`. The mark is placed for a terminal, where a wide character takes two places. Advice is only ever on the `fix:` line, and an error with none has no such line.
 - Every error in a file is reported, each once, in the order of their places, so one round of changes can fix them all.
 - A file is read in stages: its text, which must be UTF-8 with no carriage return, then its tokens, its syntax, and the check. Only the errors of the earliest stage that finds any are reported, because each later stage reads what the earlier ones produced.
-- An error that another error explains is not reported. A mistake in the syntax hides the rest of its statement, or of its signature, and a listed effect with no such name hides a missing `console`, which it may be a misspelling of.
+- An error that another error explains is not reported. A mistake in the syntax hides the rest of its statement, or of its signature, and a listed effect with no such name hides a missing effect, which it may be a misspelling of. A function that lacks an effect is told so once, at the first call that needs it, and nothing is reported about what a call of a function that does not exist gives.
 
 - Dead code, meaning a definition no root reaches, is a warning.
 - An unused variable or an unused import is a warning.
@@ -213,6 +213,7 @@ The first compiler is written in Rust with no dependencies. It is kept small and
 
 - **It implements only enough Smith to write a compiler:** functions, structs, enums, `match`, generics and traits, strings, lists, maps, files, arenas, `with`, and `try`, followed by contracts and the `arith` procedure. Arrays with `for`, differentiation, devices, and tasks are built afterwards, in Smith.
 - **It grows one feature at a time, end to end.** Each step takes a feature from source text to a running executable on each target built so far, starting with a program that prints one line. A program that uses a feature not built yet gets an ordinary error, with a line and column, that says so. The test generators cover what the compiler accepts so far and grow with it.
+- **Its machine code is plain.** Every value a function holds lives in its frame on the stack, a function finds its arguments in its caller's frame, and calls between Smith functions follow this one convention on every target. Only a call into the system follows the system's convention.
 - **The standard library starts inside the compiler.** Until the bootstrap compiler can compile the library's own source, it supplies what a program uses from it, beginning with `print` and the `console` effect.
 - **Contracts come before the port,** so that the compiler's own source, which is full of integer arithmetic, is the first real test of arithmetic that must be proven to fit.
 - **The port is done by hand and checked by comparison.** The compiler is rewritten in Smith. For every program a generator produces, the Rust compiler and the Smith compiler must emit identical bytes.
