@@ -34,7 +34,15 @@ both = add(unit, unit)
 - Operators are trait functions: `a + b` means `Add.add(a, b)`. The arithmetic operators are `+`, `-`, `*`, `/`, and `^` for a power.
 - A trait has at most one implementation for each choice of its types that are not `out`, and calls are specialized at compile time, so traits cost nothing at run time.
 
-  The operands of an operator may differ in type, so a matrix times a vector, or a scalar times a struct of weights, is one more `impl` of `Mul`.
+  The operands of an arithmetic operator may differ in type, so a number times an array, or a number times a struct of weights, is one more `impl` of `Mul`.
+- Comparisons are trait functions too. `a == b` means `Eq.eq(a, b)` and `a != b` means `not (a == b)`. `<`, `<=`, `>`, and `>=` come from `Ord`. Both sides of a comparison have the same type, and a comparison always gives one `bool`, on arrays too: `x == y` says whether two arrays are the same, and the comparison of each pair of elements is `for i { x[i] == y[i] }`.
+
+  ```
+  trait Eq[T] {
+    fn eq(a: T, b: T) -> bool
+  }
+  ```
+- `Eq` is given automatically, as [`Copy`](ownership.md) is: a struct, an enum, a tuple, or an array has it unless one of its parts lacks it, and `without Eq for T` takes it away. `Ord` is not given: an order is a choice, made with `derive Ord for T` or an `impl`.
 - `derive Add for Circle` generates an implementation field by field.
 - A trait states the defaults of its functions' parameters, and an `impl` does not repeat them.
 
