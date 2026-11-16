@@ -6,7 +6,7 @@ description: Arrays whose sizes are part of their types, Fin indices that need n
 
 # Arrays and sizes
 
-An array's size is part of its type: `[3]f32` is three floats and `[m, k]f32` is an `m` by `k` matrix. Size parameters are written in brackets with type `Nat`. An index into an axis of size `n` has type `Fin[n]`, a number known to be below `n`, so indexing needs no bounds check.
+An array's size is part of its type: `[3]f32` is three floats and `[m, k]f32` is an `m` by `k` matrix. A size is a `Nat`, and it may be any name that cannot change: one in brackets, which the compiler works out from the arguments, an ordinary parameter, a binding, or an earlier field of the same struct. An index into an axis of size `n` has type `Fin[n]`, a number known to be below `n`, so indexing needs no bounds check.
 
 ```
 fn first_of_three(a: [3]f32) -> f32 { a[0] }
@@ -14,11 +14,13 @@ fn first_of_three(a: [3]f32) -> f32 { a[0] }
 fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Fin[m], c: Fin[k]) -> f32 {
   a[r, c]
 }
+
+fn zeros(n: Nat) -> [n]f32 { for i { 0.0 } }
 ```
 
 - An element of a `var` array is assigned as a field is, as in `a[0] = 1.0`, and only that `var` sees the change.
 - A literal index is checked against the size at compile time, so `a[3]` on a `[3]f32` is a compile error.
-- A size known only at run time is written `[some n]T`.
+- A size may be known only when the program runs, as the `n` of `zeros` is. An array that is kept together with its size is a [`List`](../library/list.md).
 - A range is `a..b` and excludes `b`. `x[a..b]` has size `b - a`, with `x[..k]` and `x[k..]` as short forms.
 
 Next: [`for` expressions](for.md)

@@ -23,7 +23,7 @@ fn clamp(x: f32, lo: f32, hi: f32) -> r: f32
 }
 ```
 
-Contracts are discharged by `arith`, a small deterministic procedure for arithmetic over sizes and indices. The compiler only checks. It never searches for a proof.
+A statement about values, such as `n > 0`, is a type, and a value of that type is a proof of the statement. A contract is a proof that travels with a call. `requires` is a proof the caller passes, and `ensures` is a proof the function gives back with its result. Neither is written out: `arith`, a small deterministic procedure for arithmetic, builds them. The compiler only checks. It never searches for a proof.
 
 | Keyword | Who owes the proof | About |
 | --- | --- | --- |
@@ -40,9 +40,14 @@ Contracts are discharged by `arith`, a small deterministic procedure for arithme
 
 So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller with sizes known only at run time gets it from a `check`.
 
-`Fin[n]` from [Arrays and sizes](arrays.md) is a number paired with a proof that it is below `n`. `check` is how outside data becomes one.
+A struct can hold a proof as a field, whose type is the statement it proves. `Fin[n]` from [Arrays and sizes](arrays.md) is defined that way in the standard library, as a number paired with a proof that it is below `n`. `check` is how outside data becomes one.
 
 ```
+struct Fin[n: Nat] {
+  value: Nat
+  below: value < n
+}
+
 fn token[v: Nat](raw: Nat) -> Option[Fin[v]] {
   match check(raw < v) {
     .some(p) { .some(Fin(value: raw, below: p)) }
@@ -53,12 +58,12 @@ fn token[v: Nat](raw: Nat) -> Option[Fin[v]] {
 
 There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](tasks.md) when the system runs out of what they stand for.
 
-- A proof comes from `arith` or from a `check` that passed, and it is erased before code generation.
+- A proof comes from `arith` or from a `check` that passed, and it is erased before code generation. `check` and `hole` are built in, because nothing written in Smith could make a proof from nothing.
 - Predicates used in contracts are ordinary functions returning `bool`, so a contract can be run on real data.
 - Every function terminates unless it carries `diverge`, which means it may not finish. Structural recursion is accepted automatically, and anything else states a decreasing measure. Callers inherit `diverge`, and it is not allowed in a contract or a GPU kernel.
 - `hole(name)` stands in for code or a proof not yet written. The compiler reports the type and the goal it needs.
 
-Facts that recur belong in a type, so they are proved once and travel with the value. `Pos` is a `Nat` proven above zero and can be used wherever a `Nat` is expected, so a size declared `[n: Pos]` needs no `requires n > 0`. A struct can hold a proof as a field in the same way. Tooling proposes the remaining `requires` lines, as it proposes effects.
+Facts that recur belong in a type, so they are proved once and travel with the value. `Pos` is a `Nat` proven above zero and can be used wherever a `Nat` is expected, so a size declared `[n: Pos]` needs no `requires n > 0`. It is a struct with a proof as a field, as `Fin` is. Tooling proposes the remaining `requires` lines, as it proposes effects.
 
 ```
 fn average[n: Pos](x: [n]f32) -> f32 { sum(x) / float(n) }
