@@ -1,0 +1,13 @@
+enum Pet {
+  cat: str
+  none
+}
+
+fn main() ! console {
+  p: Pet = .cat("Tom")
+  name = match p {
+    .cat(c) { c }
+    .none { Pet.none }
+  }
+  print(name)
+}

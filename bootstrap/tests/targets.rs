@@ -13,6 +13,7 @@ use smith::target::Target;
 use smith::{compile, lower};
 
 use crate::Test;
+use crate::enums;
 use crate::generate;
 use crate::programs;
 use crate::sha256;
@@ -39,6 +40,10 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_of_a_program_with_traits_does_what_the_evaluator_says",
         every_executable_of_a_program_with_traits_does_what_the_evaluator_says,
+    ),
+    (
+        "every_executable_of_a_program_with_enums_does_what_the_evaluator_says",
+        every_executable_of_a_program_with_enums_does_what_the_evaluator_says,
     ),
     (
         "a_struct_bound_to_two_names_is_two_equal_structs",
@@ -149,6 +154,13 @@ fn every_target_builds_identical_bytes_twice() {
             assert!(first == second, "{} differs", target.name());
         }
     });
+    generate::check(24, 10, enums::program, |case| {
+        for &target in &targets {
+            let first = compile(case.source.as_bytes(), target).unwrap();
+            let second = compile(case.source.as_bytes(), target).unwrap();
+            assert!(first == second, "{} differs", target.name());
+        }
+    });
 }
 
 fn every_executable_does_what_the_evaluator_says() {
@@ -166,6 +178,19 @@ fn every_executable_does_what_the_evaluator_says() {
 fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
     let targets = runnable();
     generate::check(18, 60, traits::program, |case| {
+        let source = case.source.as_bytes();
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let said = eval::run(&program);
+        for &target in &targets {
+            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert_eq!(run(&bytes), said, "{}", target.name());
+        }
+    });
+}
+
+fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says() {
+    let targets = runnable();
+    generate::check(25, 60, enums::program, |case| {
         let source = case.source.as_bytes();
         let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         let said = eval::run(&program);

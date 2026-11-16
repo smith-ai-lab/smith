@@ -972,7 +972,7 @@ impl Builder<'_> {
 const ITEMS: &[(&str, &str)] = &[
     ("derive Eq for A", NOT_BUILT),
     ("use std.console (input)", NOT_BUILT),
-    ("enum E {\n  a\n}", NOT_BUILT),
+    ("effect E {\n  fn e()\n}", NOT_BUILT),
     ("pub fn f() {}", NOT_BUILT),
     (")", "definition"),
 ];

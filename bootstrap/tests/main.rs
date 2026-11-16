@@ -12,6 +12,7 @@
 
 mod check;
 mod cli;
+mod enums;
 mod generate;
 mod programs;
 mod props;

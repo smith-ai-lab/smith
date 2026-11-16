@@ -1,0 +1,4 @@
+case_left_out.smith:8:3: this `match` does not cover `.stray(_)`
+  8 |   match p {
+    |   ^
+  fix: add a block for `.stray(_)`, or end with a bare name that covers the rest

@@ -1796,7 +1796,7 @@ fn main_statement(b: &mut Builder, m: &Model, sites: &Sites) {
             b.last = Some(*b.g.pick(&[
                 ("", "derive Named for Rock"),
                 ("", "without Copy for Rock"),
-                ("", "enum Kind {\n  a\n}"),
+                ("", "effect Kind {\n  fn kind()\n}"),
                 (
                     "trait Spare[T] {\n  fn spare_of(x: T, note: str = ",
                     "1) -> str\n}",

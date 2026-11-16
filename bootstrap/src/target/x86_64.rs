@@ -159,6 +159,12 @@ impl Asm {
         ]);
     }
 
+    /// `cmp r64, imm32`, sign-extended.
+    pub fn cmp_imm32(&mut self, r: Reg, value: u32) {
+        self.bytes(&[Self::rex_w(RAX, r), 0x81, Self::modrm(Reg(7), r)]);
+        self.bytes(&value.to_le_bytes());
+    }
+
     /// `cmp dword [r], imm8`, sign-extended, for a register below r8 other
     /// than rsp and rbp.
     pub fn cmp_load32_imm8(&mut self, r: Reg, value: i8) {
@@ -269,6 +275,7 @@ impl Asm {
 
 /// The condition codes `jcc` takes.
 pub const Z: u8 = 0x4;
+pub const NE: u8 = 0x5;
 pub const LE: u8 = 0xe;
 pub const L: u8 = 0xc;
 
@@ -331,77 +338,130 @@ fn function<S: System>(
     functions: &[usize],
     fail: usize,
 ) {
-    let outgoing = f
-        .steps
-        .iter()
-        .map(|s| match s {
-            Step::Call { args, results, .. } => args.len() + results.len(),
-            Step::Write { .. } => 0,
-        })
-        .max()
-        .unwrap_or(0) as u32;
+    let outgoing = f.outgoing() as u32;
     let held = (f.locals - f.params) as u32;
     // The call pushed the return address, so the frame takes 8 bytes more
     // than a multiple of 16.
     let frame = S::RESERVED + SLOT * (outgoing + held) + 8;
-    let slot = |local: usize| -> u32 {
-        if local < f.params {
-            frame + 8 + S::RESERVED + SLOT * local as u32
-        } else {
-            S::RESERVED + SLOT * (outgoing + (local - f.params) as u32)
-        }
-    };
-    let load = |asm: &mut Asm, value: Value, (address, length): (Reg, Reg)| match value {
-        Value::Text(t) => {
-            asm.address(address, texts[t]);
-            let len = program.texts[t].len() as u64;
-            match u32::try_from(len) {
-                Ok(len) => asm.mov32(length, len),
-                Err(_) => asm.mov64(length, len),
-            }
-        }
-        Value::Local(l) => {
-            asm.load_stack(address, slot(l));
-            asm.load_stack(length, slot(l) + 8);
-        }
+    let at = Frame::<S> {
+        program,
+        f,
+        texts,
+        functions,
+        fail,
+        frame,
+        outgoing,
+        system: std::marker::PhantomData,
     };
     asm.reserve_stack(frame);
-    for step in &f.steps {
-        match step {
-            Step::Write { stream, value } => {
-                load(asm, *value, S::TEXT);
-                S::write(asm, *stream, fail);
-            }
-            Step::Call {
-                function,
-                args,
-                results,
-            } => {
-                for (i, arg) in args.iter().enumerate() {
-                    load(asm, *arg, (RAX, RDX));
-                    let at = S::RESERVED + SLOT * i as u32;
-                    asm.store_stack(at, RAX);
-                    asm.store_stack(at + 8, RDX);
-                }
-                asm.call(functions[*function]);
-                for (i, r) in results.iter().enumerate() {
-                    let at = S::RESERVED + SLOT * (args.len() + i) as u32;
-                    asm.load_stack(RAX, at);
-                    asm.load_stack(RDX, at + 8);
-                    asm.store_stack(slot(*r), RAX);
-                    asm.store_stack(slot(*r) + 8, RDX);
-                }
-            }
-        }
-    }
-    // The texts it gives back go after its parameters in its caller's
+    at.steps(asm, &f.steps);
+    // The values it gives back go after its parameters in its caller's
     // frame, so writing one never overwrites a parameter still to be read.
     for (i, value) in f.results.iter().enumerate() {
-        load(asm, *value, (RAX, RDX));
-        let at = frame + 8 + S::RESERVED + SLOT * (f.params + i) as u32;
-        asm.store_stack(at, RAX);
-        asm.store_stack(at + 8, RDX);
+        at.load(asm, *value, (RAX, RDX));
+        let to = frame + 8 + S::RESERVED + SLOT * (f.params + i) as u32;
+        asm.store_stack(to, RAX);
+        asm.store_stack(to + 8, RDX);
     }
     asm.release_stack(frame);
     asm.ret();
+}
+
+/// A function being written, and where its frame keeps each value.
+struct Frame<'a, S> {
+    program: &'a Program,
+    f: &'a Function,
+    texts: &'a [usize],
+    functions: &'a [usize],
+    fail: usize,
+    frame: u32,
+    outgoing: u32,
+    system: std::marker::PhantomData<S>,
+}
+
+impl<S: System> Frame<'_, S> {
+    /// Where a local is, from the bottom of the frame.
+    fn slot(&self, local: usize) -> u32 {
+        if local < self.f.params {
+            self.frame + 8 + S::RESERVED + SLOT * local as u32
+        } else {
+            S::RESERVED + SLOT * (self.outgoing + (local - self.f.params) as u32)
+        }
+    }
+
+    /// Loads a value into two registers: a text's address and length, or a
+    /// case's place and 0.
+    fn load(&self, asm: &mut Asm, value: Value, (address, length): (Reg, Reg)) {
+        match value {
+            Value::Text(t) => {
+                asm.address(address, self.texts[t]);
+                let len = self.program.texts[t].len() as u64;
+                match u32::try_from(len) {
+                    Ok(len) => asm.mov32(length, len),
+                    Err(_) => asm.mov64(length, len),
+                }
+            }
+            Value::Case(c) => {
+                asm.mov32(address, c as u32);
+                asm.mov32(length, 0);
+            }
+            Value::Local(l) => {
+                asm.load_stack(address, self.slot(l));
+                asm.load_stack(length, self.slot(l) + 8);
+            }
+        }
+    }
+
+    fn steps(&self, asm: &mut Asm, steps: &[Step]) {
+        for step in steps {
+            match step {
+                Step::Write { stream, value } => {
+                    self.load(asm, *value, S::TEXT);
+                    S::write(asm, *stream, self.fail);
+                }
+                Step::Call {
+                    function,
+                    args,
+                    results,
+                } => {
+                    for (i, arg) in args.iter().enumerate() {
+                        self.load(asm, *arg, (RAX, RDX));
+                        let at = S::RESERVED + SLOT * i as u32;
+                        asm.store_stack(at, RAX);
+                        asm.store_stack(at + 8, RDX);
+                    }
+                    asm.call(self.functions[*function]);
+                    for (i, r) in results.iter().enumerate() {
+                        let at = S::RESERVED + SLOT * (args.len() + i) as u32;
+                        asm.load_stack(RAX, at);
+                        asm.load_stack(RDX, at + 8);
+                        asm.store_stack(self.slot(*r), RAX);
+                        asm.store_stack(self.slot(*r) + 8, RDX);
+                    }
+                }
+                Step::Set { local, value } => {
+                    self.load(asm, *value, (RAX, RDX));
+                    asm.store_stack(self.slot(*local), RAX);
+                    asm.store_stack(self.slot(*local) + 8, RDX);
+                }
+                Step::Match { value, arms } => {
+                    // Each arm but the last is chosen by comparing the case
+                    // with its place, and the last runs when none was.
+                    self.load(asm, *value, (RAX, RDX));
+                    let end = asm.label();
+                    for (c, arm) in arms.iter().enumerate() {
+                        let next = asm.label();
+                        if c + 1 < arms.len() {
+                            asm.cmp_imm32(RAX, c as u32);
+                            asm.jcc(NE, next);
+                        }
+                        self.steps(asm, arm);
+                        asm.jmp(end);
+                        asm.bind(next);
+                    }
+                    asm.bind(end);
+                }
+            }
+        }
+    }
 }

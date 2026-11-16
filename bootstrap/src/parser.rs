@@ -11,6 +11,7 @@ use crate::lexer::{Tok, Token};
 pub struct File {
     pub functions: Vec<Function>,
     pub structs: Vec<Struct>,
+    pub enums: Vec<Enum>,
     pub traits: Vec<Trait>,
     pub impls: Vec<Impl>,
 }
@@ -33,6 +34,23 @@ pub struct Struct {
     pub pos: Pos,
     pub generics: Vec<Generic>,
     pub fields: Vec<Field>,
+}
+
+/// An enum definition.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Enum {
+    pub name: String,
+    pub pos: Pos,
+    pub generics: Vec<Generic>,
+    pub cases: Vec<CaseDef>,
+}
+
+/// A case of an enum, and the type it holds, if it holds one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CaseDef {
+    pub name: String,
+    pub pos: Pos,
+    pub ty: Option<Type>,
 }
 
 /// A trait: a name, its types, and the signatures of its functions, each a
@@ -144,22 +162,75 @@ pub enum Expr {
     },
     /// A call of a named function, or the construction of a struct.
     Call(Call),
-    /// `e.name`, which reads a field.
+    /// `e.name`, which reads a field, or names a case in full when `e` is
+    /// the name of an enum.
     Field {
         of: Box<Expr>,
         name: String,
         /// Where the field's name is.
         pos: Pos,
     },
+    /// A case written with a leading dot, as in `.none` or `.cat(c)`, with
+    /// the value it holds, if one is written.
+    Case {
+        name: String,
+        /// Where the dot is.
+        pos: Pos,
+        payload: Option<Box<Expr>>,
+    },
+    Match(Box<Match>),
+}
+
+/// `match e { pattern { ... } ... }`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Match {
+    /// Where `match` is.
+    pub pos: Pos,
+    pub of: Expr,
+    pub arms: Vec<Arm>,
+}
+
+/// A pattern of a `match` and the block that runs when it matches.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Arm {
+    pub pattern: Pattern,
+    pub body: Vec<Stmt>,
+    /// Where the `}` that closes the block is.
+    pub end: Pos,
+}
+
+/// A pattern: a bare name, which matches anything and names it, or a case
+/// with a leading dot and the pattern for what it holds, if it holds one.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Pattern {
+    Bind {
+        name: String,
+        pos: Pos,
+    },
+    Case {
+        name: String,
+        /// Where the dot is.
+        pos: Pos,
+        inner: Option<Box<Pattern>>,
+    },
+}
+
+impl Pattern {
+    pub fn pos(&self) -> Pos {
+        match self {
+            Pattern::Bind { pos, .. } | Pattern::Case { pos, .. } => *pos,
+        }
+    }
 }
 
 impl Expr {
     /// Where the expression starts.
     pub fn pos(&self) -> Pos {
         match self {
-            Expr::Text { pos, .. } | Expr::Name { pos, .. } => *pos,
+            Expr::Text { pos, .. } | Expr::Name { pos, .. } | Expr::Case { pos, .. } => *pos,
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),
+            Expr::Match(m) => m.pos,
         }
     }
 }
@@ -203,6 +274,7 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
     };
     let mut functions = Vec::new();
     let mut structs = Vec::new();
+    let mut enums = Vec::new();
     let mut traits = Vec::new();
     let mut impls = Vec::new();
     loop {
@@ -217,6 +289,13 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
             }
             Tok::Keyword("struct") => match p.structure() {
                 Ok(s) => structs.push(s),
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
+            Tok::Keyword("enum") => match p.enumeration() {
+                Ok(e) => enums.push(e),
                 Err(e) => {
                     p.errors.push(e);
                     p.skip_item(start);
@@ -247,6 +326,7 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
         Ok(File {
             functions,
             structs,
+            enums,
             traits,
             impls,
         })
@@ -440,7 +520,6 @@ impl Parser<'_> {
         let pos = self.pos();
         let feature = match self.tok() {
             Tok::Keyword("pub") => "`pub`",
-            Tok::Keyword("enum") => "an enum",
             Tok::Keyword("effect") => "declaring an effect",
             Tok::Keyword("derive") => "`derive`",
             Tok::Keyword("without") => "`without`",
@@ -494,6 +573,42 @@ impl Parser<'_> {
                 pos,
                 generics,
                 fields,
+            }),
+            tok => Err(self.expected("a line break", tok)),
+        }
+    }
+
+    /// Parses an enum and the line break after it.
+    fn enumeration(&mut self) -> Result<Enum, Error> {
+        self.bump();
+        let (name, pos) = self.ident("the enum's name")?;
+        let generics = self.generics()?;
+        self.expect_punct("{", "`{` to open the enum's cases")?;
+        let mut cases = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.tok() == &Tok::Punct("}") {
+                break;
+            }
+            let (name, pos) = self.ident("a case or `}`")?;
+            let mut ty = None;
+            if self.tok() == &Tok::Punct(":") {
+                self.bump();
+                ty = Some(self.ty()?);
+            }
+            match self.tok() {
+                Tok::Newline | Tok::Punct("}") => {}
+                tok => return Err(self.expected("a line break or `}`", tok)),
+            }
+            cases.push(CaseDef { name, pos, ty });
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Newline | Tok::Eof => Ok(Enum {
+                name,
+                pos,
+                generics,
+                cases,
             }),
             tok => Err(self.expected("a line break", tok)),
         }
@@ -952,13 +1067,40 @@ impl Parser<'_> {
                     Expr::Name { name, pos }
                 }
             }
+            Tok::Punct(".") => {
+                self.bump();
+                let (name, _) = self.ident("a case's name")?;
+                let mut payload = None;
+                if self.tok() == &Tok::Punct("(") {
+                    let call = self.call_rest(None, name.clone(), pos)?;
+                    let mut args = call.args.into_iter();
+                    payload = args.next().map(|arg| match arg.name {
+                        Some((_, at)) => Err(Error::new(
+                            at,
+                            "the value a case holds is given by position",
+                        )),
+                        None => Ok(Box::new(arg.value)),
+                    });
+                    if let Some(extra) = args.next() {
+                        return Err(Error::new(
+                            extra.value.pos(),
+                            "a case holds one value, and this is one more",
+                        ));
+                    }
+                }
+                Expr::Case {
+                    name,
+                    pos,
+                    payload: payload.transpose()?,
+                }
+            }
+            Tok::Keyword("match") => Expr::Match(Box::new(self.match_expr()?)),
             tok if starts_expression(tok) => {
                 let feature = match tok {
                     Tok::Number(_) => "a number",
                     Tok::Punct("(") => "a tuple or an expression in parentheses",
                     Tok::Punct("[") => "an array",
                     Tok::Punct("{") => "a block",
-                    Tok::Punct(".") => "a case",
                     Tok::Punct("-") => "the operator `-`",
                     Tok::Keyword("fn") => "a lambda",
                     Tok::Keyword(word) => {
@@ -991,6 +1133,66 @@ impl Parser<'_> {
             return Err(self.continuation());
         }
         Ok(expr)
+    }
+
+    /// Parses a `match`, through the `}` that closes it.
+    fn match_expr(&mut self) -> Result<Match, Error> {
+        let pos = self.pos();
+        self.bump();
+        let of = self.expr()?;
+        self.expect_punct("{", "`{` to open the blocks of the `match`")?;
+        let mut arms = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.tok() == &Tok::Punct("}") {
+                break;
+            }
+            let pattern = self.pattern()?;
+            self.expect_punct("{", "`{` to open the pattern's block")?;
+            let mut body = Vec::new();
+            let end = loop {
+                self.skip_newlines();
+                if self.tok() == &Tok::Punct("}") {
+                    let end = self.pos();
+                    self.bump();
+                    break end;
+                }
+                body.push(self.statement_line()?);
+            };
+            match self.tok() {
+                Tok::Newline | Tok::Punct("}") => {}
+                tok => return Err(self.expected("a line break or `}`", tok)),
+            }
+            arms.push(Arm { pattern, body, end });
+        }
+        self.bump();
+        Ok(Match { pos, of, arms })
+    }
+
+    /// Parses a pattern.
+    fn pattern(&mut self) -> Result<Pattern, Error> {
+        let pos = self.pos();
+        match self.tok() {
+            Tok::Ident(name) => {
+                let name = name.clone();
+                self.bump();
+                Ok(Pattern::Bind { name, pos })
+            }
+            Tok::Punct(".") => {
+                self.bump();
+                let (name, _) = self.ident("a case's name")?;
+                let mut inner = None;
+                if self.tok() == &Tok::Punct("(") {
+                    self.bump();
+                    inner = Some(Box::new(self.pattern()?));
+                    self.expect_punct(")", "`)`")?;
+                }
+                Ok(Pattern::Case { name, pos, inner })
+            }
+            Tok::Keyword("var") => Err(Error::unsupported(pos, "a `var` in a pattern")),
+            Tok::Punct("(") => Err(Error::unsupported(pos, "a tuple in a pattern")),
+            tok => Err(self.expected("a pattern", tok)),
+        }
     }
 
     fn call(&mut self) -> Result<Call, Error> {

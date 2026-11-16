@@ -14,8 +14,14 @@
 //! each choice of types a call makes, and a call of a trait's function
 //! becomes a call of the implementation the types choose, so no trait is
 //! left when the program runs. A struct is lowered to its fields, one after
-//! another, until only texts are left, so the form every target receives
-//! holds texts alone.
+//! another, until only texts are left, and an enum to which case it holds,
+//! followed by the texts of that case, in as many places as its largest
+//! case takes. The form every target receives holds texts and cases alone.
+//!
+//! The type of each expression is recorded as it is checked, among the
+//! type parameters of the definition it is written in, so lowering a copy
+//! of a function reads the types of its expressions with its type
+//! parameters replaced.
 //!
 //! A default is filled in where the call or construction that leaves it out
 //! is written, so it is lowered as if it were written there, and no copy of
@@ -25,7 +31,7 @@ use std::collections::HashMap;
 
 use crate::diag::{Error, Pos};
 use crate::ir::{self, Step, Stream, Value};
-use crate::parser::{Arg, Call, Expr, File, Function, Generic, Stmt, Type};
+use crate::parser::{Arg, Arm, Call, Expr, File, Function, Generic, Match, Pattern, Stmt, Type};
 
 /// The effects the standard library declares, other than `console`.
 const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
@@ -70,6 +76,9 @@ enum Ty {
     /// A struct, by its place in the file's structs, with a type for each
     /// of its type parameters.
     Struct(usize, Vec<Ty>),
+    /// An enum, by its place in the file's enums, with a type for each of
+    /// its type parameters.
+    Enum(usize, Vec<Ty>),
     /// A type parameter of the function, the implementation, the struct,
     /// or the trait the type is written in, by its place among them.
     Param(usize),
@@ -90,13 +99,38 @@ impl Ty {
         }
     }
 
+    /// The enum `e` with these types, or unknown if one of them is.
+    fn enumeration(e: usize, args: Vec<Ty>) -> Ty {
+        if args.contains(&Ty::Unknown) {
+            Ty::Unknown
+        } else {
+            Ty::Enum(e, args)
+        }
+    }
+
+    /// The types in its brackets, for a struct or an enum.
+    fn args(&self) -> &[Ty] {
+        match self {
+            Ty::Struct(_, args) | Ty::Enum(_, args) => args,
+            _ => &[],
+        }
+    }
+
+    /// The same kind of type, with these types in its brackets.
+    fn with_args(&self, args: Vec<Ty>) -> Ty {
+        match self {
+            Ty::Struct(s, _) => Ty::structure(*s, args),
+            Ty::Enum(e, _) => Ty::enumeration(*e, args),
+            t => t.clone(),
+        }
+    }
+
     /// The type with each type parameter replaced by the type at its place
     /// in `args`.
     fn subst(&self, args: &[Ty]) -> Ty {
         match self {
             Ty::Param(i) => args[*i].clone(),
-            Ty::Struct(s, of) => Ty::structure(*s, of.iter().map(|t| t.subst(args)).collect()),
-            t => t.clone(),
+            t => t.with_args(t.args().iter().map(|t| t.subst(args)).collect()),
         }
     }
 
@@ -104,25 +138,49 @@ impl Ty {
     fn solved(&self, args: &[Option<Ty>]) -> Ty {
         match self {
             Ty::Param(i) => args[*i].clone().unwrap_or(Ty::Unknown),
-            Ty::Struct(s, of) => Ty::structure(*s, of.iter().map(|t| t.solved(args)).collect()),
+            t => t.with_args(t.args().iter().map(|t| t.solved(args)).collect()),
+        }
+    }
+
+    /// The same, where a parameter with no type in `args` is unknown, and
+    /// a type that holds an unknown type keeps what is known of it, so that
+    /// what is expected of a value can be partly known.
+    fn partial(&self, args: &[Option<Ty>]) -> Ty {
+        match self {
+            Ty::Param(i) => args[*i].clone().unwrap_or(Ty::Unknown),
+            Ty::Struct(s, of) => Ty::Struct(*s, of.iter().map(|t| t.partial(args)).collect()),
+            Ty::Enum(e, of) => Ty::Enum(*e, of.iter().map(|t| t.partial(args)).collect()),
             t => t.clone(),
         }
+    }
+
+    /// Whether some part of it is not known.
+    fn unknown(&self) -> bool {
+        *self == Ty::Unknown || self.args().iter().any(Ty::unknown)
     }
 
     fn mentions(&self, p: usize) -> bool {
         match self {
             Ty::Param(i) => *i == p,
-            Ty::Struct(_, args) => args.iter().any(|t| t.mentions(p)),
-            _ => false,
+            t => t.args().iter().any(|t| t.mentions(p)),
         }
     }
 
     /// How many names it takes to write the type.
     fn size(&self) -> usize {
-        match self {
-            Ty::Struct(_, args) => 1 + args.iter().map(Ty::size).sum::<usize>(),
-            _ => 1,
+        1 + self.args().iter().map(Ty::size).sum::<usize>()
+    }
+}
+
+/// Whether two types, either of which may be partly known, can be the
+/// same.
+fn agrees(a: &Ty, b: &Ty) -> bool {
+    match (a, b) {
+        (Ty::Unknown, _) | (_, Ty::Unknown) => true,
+        (Ty::Struct(s, x), Ty::Struct(t, y)) | (Ty::Enum(s, x), Ty::Enum(t, y)) => {
+            s == t && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
+        (a, b) => a == b,
     }
 }
 
@@ -139,7 +197,7 @@ fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
             }
             Some(t) => t == given || *t == Ty::Unknown,
         },
-        (Ty::Struct(s, a), Ty::Struct(t, b)) => {
+        (Ty::Struct(s, a), Ty::Struct(t, b)) | (Ty::Enum(s, a), Ty::Enum(t, b)) => {
             s == t && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
         (a, b) => a == b,
@@ -163,8 +221,7 @@ fn overlap(a: &Ty, b: &Ty, sol: &mut Vec<Option<Ty>>) -> bool {
     fn occurs(p: usize, t: &Ty, sol: &[Option<Ty>]) -> bool {
         match t {
             Ty::Param(i) => *i == p || sol[*i].as_ref().is_some_and(|u| occurs(p, u, sol)),
-            Ty::Struct(_, args) => args.iter().any(|t| occurs(p, t, sol)),
-            _ => false,
+            t => t.args().iter().any(|t| occurs(p, t, sol)),
         }
     }
     match (walk(a, sol), walk(b, sol)) {
@@ -177,7 +234,7 @@ fn overlap(a: &Ty, b: &Ty, sol: &mut Vec<Option<Ty>>) -> bool {
                 true
             }
         }
-        (Ty::Struct(s, x), Ty::Struct(t, y)) => {
+        (Ty::Struct(s, x), Ty::Struct(t, y)) | (Ty::Enum(s, x), Ty::Enum(t, y)) => {
             s == t && x.iter().zip(&y).all(|(a, b)| overlap(a, b, sol))
         }
         (Ty::Unknown, _) | (_, Ty::Unknown) => true,
@@ -189,8 +246,7 @@ fn overlap(a: &Ty, b: &Ty, sol: &mut Vec<Option<Ty>>) -> bool {
 fn shifted(t: &Ty, by: usize) -> Ty {
     match t {
         Ty::Param(i) => Ty::Param(i + by),
-        Ty::Struct(s, args) => Ty::Struct(*s, args.iter().map(|t| shifted(t, by)).collect()),
-        t => t.clone(),
+        t => t.with_args(t.args().iter().map(|t| shifted(t, by)).collect()),
     }
 }
 
@@ -258,6 +314,7 @@ struct Defs<'a> {
     file: &'a File,
     function_names: HashMap<&'a str, usize>,
     struct_names: HashMap<&'a str, usize>,
+    enum_names: HashMap<&'a str, usize>,
     trait_names: HashMap<&'a str, usize>,
     /// The functions of traits with each name, as the trait and the
     /// function's place in it.
@@ -265,9 +322,15 @@ struct Defs<'a> {
     /// Whether each struct contains itself, directly or through others, as
     /// already reported. A type that names one is not known.
     cyclic: Vec<bool>,
+    /// The same, for each enum.
+    cyclic_enums: Vec<bool>,
     struct_scopes: Vec<Scope>,
     /// The type of each field of each struct, among its type parameters.
     fields: Vec<Vec<Ty>>,
+    enum_scopes: Vec<Scope>,
+    /// The type each case of each enum holds, if it holds one, among the
+    /// enum's type parameters.
+    cases: Vec<Vec<Option<Ty>>>,
     signatures: Vec<Signature>,
     /// The signature of each function of each trait, among the trait's
     /// types.
@@ -334,6 +397,30 @@ impl<'a> Defs<'a> {
                 Ty::structure(s, args)
             };
         }
+        if let Some(&e) = self.enum_names.get(name) {
+            let args: Vec<Ty> = t
+                .args
+                .iter()
+                .map(|a| self.resolve(a, scope, errors))
+                .collect();
+            let wanted = self.file.enums[e].generics.len();
+            if args.len() != wanted {
+                errors.push(Error::new(
+                    t.pos,
+                    format!(
+                        "`{name}` takes {}, and this gives {}",
+                        count(wanted, "type argument"),
+                        args.len()
+                    ),
+                ));
+                return Ty::Unknown;
+            }
+            return if self.cyclic_enums[e] {
+                Ty::Unknown
+            } else {
+                Ty::enumeration(e, args)
+            };
+        }
         if name == TEXT {
             no_args("the type", errors);
             return if t.args.is_empty() {
@@ -371,16 +458,47 @@ impl<'a> Defs<'a> {
             Error::unsupported(t.pos, "a size parameter")
         } else if TRAITS_NOT_BUILT.contains(&name) {
             Error::unsupported(t.pos, &format!("the trait `{name}`"))
-        } else if self.struct_names.contains_key(name)
-            || name == TEXT
-            || TYPES_NOT_BUILT.contains(&name)
-        {
+        } else if self.is_type(name) {
             Error::new(t.pos, format!("`{name}` is not a trait"))
         } else {
             Error::new(t.pos, format!("there is no trait named `{name}`"))
         };
         errors.push(error);
         Bound::Invalid
+    }
+
+    /// Whether the name is that of a type, other than a type parameter.
+    fn is_type(&self, name: &str) -> bool {
+        self.struct_names.contains_key(name)
+            || self.enum_names.contains_key(name)
+            || name == TEXT
+            || TYPES_NOT_BUILT.contains(&name)
+    }
+
+    /// The name of a struct or an enum.
+    fn type_name(&self, ty: &Ty) -> &'a str {
+        match ty {
+            Ty::Struct(s, _) => &self.file.structs[*s].name,
+            Ty::Enum(e, _) => &self.file.enums[*e].name,
+            _ => unreachable!("a struct or an enum"),
+        }
+    }
+
+    /// The place of the case named `name` of enum `e`, if it has one.
+    fn case_of(&self, e: usize, name: &str) -> Option<usize> {
+        self.file.enums[e].cases.iter().position(|c| c.name == name)
+    }
+
+    /// The enum and its case, if the expression names a case in full, as
+    /// in `Pet.none`, where `names` are the names defined.
+    fn qualified_case(&self, of: &Expr, names: &[(String, Ty)]) -> Option<usize> {
+        let Expr::Name { name, .. } = of else {
+            return None;
+        };
+        if names.iter().any(|(n, _)| n == name) {
+            return None;
+        }
+        self.enum_names.get(name.as_str()).copied()
     }
 
     /// The type parameters of a definition, with nothing reported.
@@ -417,10 +535,10 @@ impl<'a> Defs<'a> {
     fn text(&self, ty: &Ty, scope: &Scope) -> String {
         match ty {
             Ty::Text => TEXT.to_string(),
-            Ty::Struct(s, args) => {
-                let name = &self.file.structs[*s].name;
+            Ty::Struct(_, args) | Ty::Enum(_, args) => {
+                let name = self.type_name(ty);
                 if args.is_empty() {
-                    name.clone()
+                    name.to_string()
                 } else {
                     let args: Vec<String> = args.iter().map(|t| self.text(t, scope)).collect();
                     format!("{name}[{}]", args.join(", "))
@@ -455,12 +573,12 @@ impl<'a> Defs<'a> {
                     Some(t) => defs.text(t, scope),
                     None => vars.names[*i].clone(),
                 },
-                Ty::Struct(s, args) if !args.is_empty() => {
+                Ty::Struct(_, args) | Ty::Enum(_, args) if !args.is_empty() => {
                     let args: Vec<String> = args
                         .iter()
                         .map(|a| text(defs, a, sol, vars, scope))
                         .collect();
-                    format!("{}[{}]", defs.file.structs[*s].name, args.join(", "))
+                    format!("{}[{}]", defs.type_name(t), args.join(", "))
                 }
                 t => defs.text(t, scope),
             }
@@ -667,6 +785,11 @@ fn written_expr(e: &Expr) -> String {
             }
         }
         Expr::Field { of, name, .. } => format!("{}.{name}", written_expr(of)),
+        Expr::Case { name, payload, .. } => match payload {
+            Some(p) => format!(".{name}({})", written_expr(p)),
+            None => format!(".{name}"),
+        },
+        Expr::Match(m) => format!("match {} {{ ... }}", written_expr(&m.of)),
     }
 }
 
@@ -675,6 +798,7 @@ fn written_expr(e: &Expr) -> String {
 enum Item {
     Fn(usize),
     Struct(usize),
+    Enum(usize),
     Trait(usize),
     Impl(usize),
 }
@@ -684,6 +808,7 @@ enum Item {
 enum Claim {
     Fn(usize),
     Struct(usize),
+    Enum(usize),
     Trait(usize),
     /// A function of a trait: the trait, and its place there.
     TraitFn(usize, usize),
@@ -711,6 +836,9 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     defined.extend(
         (file.structs.iter().enumerate()).map(|(i, s)| (s.pos, s.name.as_str(), Claim::Struct(i))),
     );
+    defined.extend(
+        (file.enums.iter().enumerate()).map(|(i, e)| (e.pos, e.name.as_str(), Claim::Enum(i))),
+    );
     for (k, t) in file.traits.iter().enumerate() {
         defined.push((t.pos, t.name.as_str(), Claim::Trait(k)));
         for (i, f) in t.functions.iter().enumerate() {
@@ -720,10 +848,11 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     defined.sort_by_key(|(pos, _, _)| *pos);
     let mut function_names: HashMap<&str, usize> = HashMap::new();
     let mut struct_names: HashMap<&str, usize> = HashMap::new();
+    let mut enum_names: HashMap<&str, usize> = HashMap::new();
     let mut trait_names: HashMap<&str, usize> = HashMap::new();
     let mut trait_fns: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
     for (pos, name, claim) in defined {
-        let is_type = matches!(claim, Claim::Struct(_) | Claim::Trait(_));
+        let is_type = matches!(claim, Claim::Struct(_) | Claim::Enum(_) | Claim::Trait(_));
         let prelude = |what: &str| {
             Error::unsupported(
                 pos,
@@ -733,6 +862,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         let of_prelude = match claim {
             Claim::Fn(_) | Claim::TraitFn(..) => name == "print",
             Claim::Struct(_) => name == TEXT,
+            Claim::Enum(_) => name == TEXT || name == "Option" || name == "Result",
             Claim::Trait(_) => name == TEXT || TRAITS_NOT_BUILT.contains(&name),
         };
         if of_prelude {
@@ -741,6 +871,11 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
             errors.push(Error::new(
                 pos,
                 format!("there is already a struct named `{name}`"),
+            ));
+        } else if is_type && enum_names.contains_key(name) {
+            errors.push(Error::new(
+                pos,
+                format!("there is already an enum named `{name}`"),
             ));
         } else if is_type && trait_names.contains_key(name) {
             errors.push(Error::new(
@@ -769,6 +904,9 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 }
                 Claim::Struct(i) => {
                     struct_names.insert(name, i);
+                }
+                Claim::Enum(i) => {
+                    enum_names.insert(name, i);
                 }
                 Claim::Trait(k) => {
                     trait_names.insert(name, k);
@@ -800,12 +938,22 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         let type_name = |name: &str, found: &mut Vec<Item>| {
             if let Some(&s) = struct_names.get(name) {
                 found.push(Item::Struct(s));
+            } else if let Some(&e) = enum_names.get(name) {
+                found.push(Item::Enum(e));
             } else if let Some(&k) = trait_names.get(name) {
                 found.push(Item::Trait(k));
             }
         };
-        let called = |calls: Vec<&Call>, found: &mut Vec<Item>| {
-            for call in calls {
+        // A case written in full names its enum.
+        let called = |values: Vec<&Expr>, found: &mut Vec<Item>| {
+            for e in exprs(values.iter().copied()) {
+                if let Expr::Field { of, .. } = e
+                    && let Expr::Name { name, .. } = &**of
+                {
+                    type_name(name, found);
+                }
+            }
+            for call in calls(values) {
                 if let Some((q, _)) = &call.qualifier {
                     type_name(q, found);
                     continue;
@@ -825,7 +973,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 type_name(name, found);
             }
             let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
-            called(calls(values(&f.body).chain(defaults)), found);
+            called(values(&f.body).chain(defaults).collect(), found);
         };
         match reached[i] {
             Item::Fn(f) => function(&file.functions[f], &mut found),
@@ -840,18 +988,20 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                     type_name(name, &mut found);
                 }
                 let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
-                called(calls(defaults), &mut found);
-                // An implementation lives with its trait or with a type it
-                // is for.
-                for (i, im) in file.impls.iter().enumerate() {
-                    let names: Vec<&str> = (im.args.iter())
-                        .flat_map(type_names)
-                        .map(|(name, _)| name)
-                        .collect();
-                    if names.contains(&s.name.as_str()) {
-                        found.push(Item::Impl(i));
+                called(defaults.collect(), &mut found);
+                found.extend(impls_for(&file, &s.name));
+            }
+            Item::Enum(e) => {
+                let e = &file.enums[e];
+                for t in e.cases.iter().filter_map(|c| c.ty.as_ref()) {
+                    for (name, _) in type_names(t) {
+                        type_name(name, &mut found);
                     }
                 }
+                for name in bounds_named(&e.generics) {
+                    type_name(name, &mut found);
+                }
+                found.extend(impls_for(&file, &e.name));
             }
             Item::Trait(k) => {
                 let t = &file.traits[k];
@@ -890,9 +1040,10 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         }
         i += 1;
     }
-    let reached_structs: Vec<usize> = (reached.iter())
+    let reached_types: Vec<Def> = (reached.iter())
         .filter_map(|r| match r {
-            Item::Struct(s) => Some(*s),
+            Item::Struct(s) => Some(Def::Struct(*s)),
+            Item::Enum(e) => Some(Def::Enum(*e)),
             _ => None,
         })
         .collect();
@@ -901,11 +1052,15 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         file: &file,
         function_names,
         struct_names,
+        enum_names,
         trait_names,
         trait_fns,
         cyclic: vec![false; file.structs.len()],
+        cyclic_enums: vec![false; file.enums.len()],
         struct_scopes: Vec::new(),
         fields: Vec::new(),
+        enum_scopes: Vec::new(),
+        cases: Vec::new(),
         signatures: Vec::new(),
         trait_sigs: Vec::new(),
         outs: (file.traits.iter())
@@ -915,9 +1070,9 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         impls_of: vec![Vec::new(); file.traits.len()],
     };
     let mut done = Vec::new();
-    for &s in &reached_structs {
-        if !done.contains(&s) {
-            cycles(&mut defs, s, &mut Vec::new(), &mut done, &mut errors);
+    for &d in &reached_types {
+        if !done.contains(&d) {
+            cycles(&mut defs, d, &mut Vec::new(), &mut done, &mut errors);
         }
     }
     defs.struct_scopes = file
@@ -929,6 +1084,14 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         .map(|(i, s)| {
             (s.fields.iter())
                 .map(|f| defs.quietly(&f.ty, &defs.struct_scopes[i]))
+                .collect()
+        })
+        .collect();
+    defs.enum_scopes = file.enums.iter().map(|e| defs.scope(&e.generics)).collect();
+    defs.cases = (file.enums.iter().enumerate())
+        .map(|(i, e)| {
+            (e.cases.iter())
+                .map(|c| c.ty.as_ref().map(|t| defs.quietly(t, &defs.enum_scopes[i])))
                 .collect()
         })
         .collect();
@@ -971,12 +1134,14 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     let mut checker = Checker {
         defs: &defs,
         errors,
+        types: HashMap::new(),
     };
     checker.main(&file.functions[main]);
     for &item in &reached {
         match item {
             Item::Fn(f) => checker.signature(f),
             Item::Struct(s) => checker.structure(s),
+            Item::Enum(e) => checker.enumeration(e),
             Item::Trait(k) => checker.declared_trait(k),
             Item::Impl(i) => checker.implementation(i),
         }
@@ -993,7 +1158,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                     }
                 }
             }
-            Item::Struct(_) | Item::Trait(_) => {}
+            Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
         }
     }
     checker.recursion(main, &mut Vec::new(), &mut Vec::new());
@@ -1004,13 +1169,18 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         template: Template::Free(main),
         args: Vec::new(),
     };
-    checker.copies(&start, &mut Vec::new(), &mut Vec::new());
-    if !checker.errors.is_empty() {
-        return Err(checker.errors);
+    let typed = Typed {
+        defs: &defs,
+        types: checker.types,
+    };
+    let mut errors = Vec::new();
+    typed.copies(&start, &mut Vec::new(), &mut Vec::new(), &mut errors);
+    if !errors.is_empty() {
+        return Err(errors);
     }
 
     let mut lowering = Lowering {
-        defs: &defs,
+        typed: &typed,
         instances: vec![start],
         texts: Vec::new(),
     };
@@ -1051,6 +1221,9 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     for (i, s) in file.structs.iter().enumerate() {
         dead(Item::Struct(i), s.pos, format!("the struct `{}`", s.name));
     }
+    for (i, e) in file.enums.iter().enumerate() {
+        dead(Item::Enum(i), e.pos, format!("the enum `{}`", e.name));
+    }
     for (i, t) in file.traits.iter().enumerate() {
         dead(Item::Trait(i), t.pos, format!("the trait `{}`", t.name));
     }
@@ -1076,7 +1249,7 @@ fn unused_bindings(f: &Function, out: &mut Vec<Error>) {
             _ => None,
         })
         .collect();
-    for stmt in &f.body {
+    for stmt in statements(&f.body) {
         if let Stmt::Define { name, pos, .. } = stmt
             && !read.contains(&name.as_str())
         {
@@ -1128,30 +1301,62 @@ fn overlaps(outs: &[bool], a: &ImplInfo, b: &ImplInfo) -> bool {
         .all(|((x, y), _)| overlap(x, &shifted(y, by), &mut sol))
 }
 
-/// Reports each field whose type closes a cycle of structs that contain one
-/// another, in a walk of the fields from struct `s`, and marks the structs
-/// on the cycle. `path` is the structs being walked, and `done` those
-/// already walked.
+/// A struct or an enum, by its place among those of its kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Def {
+    Struct(usize),
+    Enum(usize),
+}
+
+/// The implementations whose types name `name`, which live with that type.
+fn impls_for(file: &File, name: &str) -> Vec<Item> {
+    (file.impls.iter().enumerate())
+        .filter(|(_, im)| im.args.iter().flat_map(type_names).any(|(n, _)| n == name))
+        .map(|(i, _)| Item::Impl(i))
+        .collect()
+}
+
+/// Reports each type, of a field or of a case, that closes a cycle of
+/// structs and enums that contain one another, in a walk from `d`, and
+/// marks those on the cycle. `path` is the definitions being walked, and
+/// `done` those already walked.
 fn cycles(
     defs: &mut Defs,
-    s: usize,
-    path: &mut Vec<usize>,
-    done: &mut Vec<usize>,
+    d: Def,
+    path: &mut Vec<Def>,
+    done: &mut Vec<Def>,
     errors: &mut Vec<Error>,
 ) {
-    path.push(s);
-    for field in &defs.file.structs[s].fields {
-        for (name, pos) in type_names(&field.ty) {
-            let Some(&t) = defs.struct_names.get(name) else {
+    path.push(d);
+    let file = defs.file;
+    let types: Vec<&Type> = match d {
+        Def::Struct(s) => file.structs[s].fields.iter().map(|f| &f.ty).collect(),
+        Def::Enum(e) => file.enums[e]
+            .cases
+            .iter()
+            .filter_map(|c| c.ty.as_ref())
+            .collect(),
+    };
+    for ty in types {
+        for (name, pos) in type_names(ty) {
+            let t = if let Some(&s) = defs.struct_names.get(name) {
+                Def::Struct(s)
+            } else if let Some(&e) = defs.enum_names.get(name) {
+                Def::Enum(e)
+            } else {
                 continue;
             };
             if let Some(at) = path.iter().position(|p| *p == t) {
-                errors.push(Error::unsupported(
-                    pos,
-                    "a struct that contains itself, directly or through others,",
-                ));
+                let what = match t {
+                    Def::Struct(_) => "a struct that contains itself, directly or through others,",
+                    Def::Enum(_) => "an enum that contains itself, directly or through others,",
+                };
+                errors.push(Error::unsupported(pos, what));
                 for &p in &path[at..] {
-                    defs.cyclic[p] = true;
+                    match p {
+                        Def::Struct(s) => defs.cyclic[s] = true,
+                        Def::Enum(e) => defs.cyclic_enums[e] = true,
+                    }
                 }
             } else if !done.contains(&t) {
                 cycles(defs, t, path, done, errors);
@@ -1159,7 +1364,7 @@ fn cycles(
         }
     }
     path.pop();
-    done.push(s);
+    done.push(d);
 }
 
 /// Every name in a type, with where it is: its own, and those of the
@@ -1215,8 +1420,57 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
             }
         }
         Expr::Field { of, .. } => walk(of, out),
+        Expr::Case { payload, .. } => {
+            if let Some(p) = payload {
+                walk(p, out);
+            }
+        }
+        Expr::Match(m) => {
+            walk(&m.of, out);
+            for arm in &m.arms {
+                for value in values(&arm.body) {
+                    walk(value, out);
+                }
+            }
+        }
         Expr::Text { .. } | Expr::Name { .. } => {}
     }
+}
+
+/// Every statement of a body, and those of the blocks of each `match` in
+/// them, each before those inside it.
+fn statements(body: &[Stmt]) -> Vec<&Stmt> {
+    /// Each `match` in the expression that is not inside another's block.
+    fn matches<'a>(e: &'a Expr, out: &mut Vec<&'a Match>) {
+        match e {
+            Expr::Call(call) => {
+                for arg in &call.args {
+                    matches(&arg.value, out);
+                }
+            }
+            Expr::Field { of, .. } => matches(of, out),
+            Expr::Case {
+                payload: Some(p), ..
+            } => matches(p, out),
+            Expr::Match(m) => {
+                matches(&m.of, out);
+                out.push(m);
+            }
+            Expr::Case { .. } | Expr::Text { .. } | Expr::Name { .. } => {}
+        }
+    }
+    let mut out = Vec::new();
+    for (stmt, value) in body.iter().zip(values(body)) {
+        out.push(stmt);
+        let mut found = Vec::new();
+        matches(value, &mut found);
+        for m in found {
+            for arm in &m.arms {
+                out.extend(statements(&arm.body));
+            }
+        }
+    }
+    out
 }
 
 /// Every expression in the expressions, in order, each before the
@@ -1256,7 +1510,7 @@ fn default_cycle(pos: Pos) -> Error {
 fn types_named(f: &Function) -> Vec<&str> {
     let mut types: Vec<&Type> = f.params.iter().map(|p| &p.ty).collect();
     types.extend(&f.result);
-    for stmt in &f.body {
+    for stmt in statements(&f.body) {
         if let Stmt::Define { ty: Some(t), .. } = stmt {
             types.push(t);
         }
@@ -1301,6 +1555,9 @@ struct View<'a> {
 enum Callee {
     Print,
     Construct(usize, Vec<Ty>),
+    /// A case of an enum written in full, by its place among the enum's
+    /// cases.
+    Case(usize),
     /// A copy of a function to run, and what it gives.
     Run(Instance, Ty),
 }
@@ -1441,38 +1698,32 @@ impl<'a> Defs<'a> {
             }
         }
     }
+}
 
-    /// The type of a checked expression, where every name has a type with
-    /// no type parameters.
-    fn type_of(&self, e: &Expr, names: &[(String, Ty)]) -> Ty {
-        match e {
-            Expr::Text { .. } => Ty::Text,
-            Expr::Name { name, .. } => {
-                let found = names.iter().rev().find(|(n, _)| n == name);
-                found.expect("checked").1.clone()
-            }
-            Expr::Call(call) => match self.callee(call, names) {
-                Callee::Print => Ty::Nothing,
-                Callee::Construct(s, args) => Ty::Struct(s, args),
-                Callee::Run(_, gives) => gives,
-            },
-            Expr::Field { of, name, .. } => {
-                let Ty::Struct(s, args) = self.type_of(of, names) else {
-                    unreachable!("checked")
-                };
-                let at = self.file.structs[s]
-                    .fields
-                    .iter()
-                    .position(|f| &f.name == name);
-                self.fields[s][at.expect("checked")].subst(&args)
-            }
-        }
+/// The address of a node of the syntax tree, by which its type is recorded.
+fn addr<T>(node: &T) -> usize {
+    node as *const T as usize
+}
+
+/// The definitions, with the type of each expression checked, among the
+/// type parameters of the definition it is written in.
+struct Typed<'a> {
+    defs: &'a Defs<'a>,
+    types: HashMap<usize, Ty>,
+}
+
+impl<'a> Typed<'a> {
+    /// The type of a checked expression, with the type parameters of the
+    /// definition it is written in replaced by `env`.
+    fn type_of(&self, e: &Expr, env: &[Ty]) -> Ty {
+        self.types[&addr(e)].subst(env)
     }
 
-    /// What a checked call does, where every name has a type with no type
-    /// parameters.
-    fn callee(&self, call: &Call, names: &[(String, Ty)]) -> Callee {
-        let given = |i: usize| self.type_of(&call.args[i].value, names);
+    /// What a checked call does, with the type parameters of the definition
+    /// it is written in replaced by `env`.
+    fn callee(&self, call: &Call, env: &[Ty]) -> Callee {
+        let defs = self.defs;
+        let given = |i: usize| self.type_of(&call.args[i].value, env);
         let solve = |params: &[(String, Ty)], vars: usize| {
             let mut sol = vec![None; vars];
             for (i, p) in params_of(params, &call.args).into_iter().enumerate() {
@@ -1485,42 +1736,40 @@ impl<'a> Defs<'a> {
         let (k, fi) = match &call.qualifier {
             None => {
                 let name = call.callee.as_str();
-                if let Some(&s) = self.struct_names.get(name) {
-                    let def = &self.file.structs[s];
-                    let mut sol = vec![None; def.generics.len()];
-                    for (i, arg) in call.args.iter().enumerate() {
-                        let (field, _) = arg.name.as_ref().expect("checked");
-                        let at = def.fields.iter().position(|f| &f.name == field);
-                        unify(&self.fields[s][at.expect("checked")], &given(i), &mut sol);
-                    }
-                    let args = sol.into_iter().map(|t| t.expect("checked")).collect();
+                if defs.struct_names.contains_key(name) {
+                    let Ty::Struct(s, args) = self.types[&addr(call)].subst(env) else {
+                        unreachable!("checked")
+                    };
                     return Callee::Construct(s, args);
                 }
                 if name == "print" {
                     return Callee::Print;
                 }
-                if let Some(&f) = self.function_names.get(name) {
-                    let sig = &self.signatures[f];
+                if let Some(&f) = defs.function_names.get(name) {
+                    let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
                     let gives = sig.gives.subst(&args);
                     let template = Template::Free(f);
                     return Callee::Run(Instance { template, args }, gives);
                 }
-                self.trait_fns[name][0]
+                defs.trait_fns[name][0]
             }
             Some((q, _)) => {
-                let k = self.trait_names[q.as_str()];
-                let at = self.file.traits[k]
+                if let Some(&e) = defs.enum_names.get(q.as_str()) {
+                    return Callee::Case(defs.case_of(e, &call.callee).expect("checked"));
+                }
+                let k = defs.trait_names[q.as_str()];
+                let at = defs.file.traits[k]
                     .functions
                     .iter()
                     .position(|f| f.name == call.callee);
                 (k, at.expect("checked"))
             }
         };
-        let sig = &self.trait_sigs[k][fi];
+        let sig = &defs.trait_sigs[k][fi];
         let types = solve(&sig.params, sig.scope.names.len());
         let Found::Yes(all, Some((i, args))) =
-            self.find(k, &types, &Scope::default(), &mut Vec::new())
+            defs.find(k, &types, &Scope::default(), &mut Vec::new())
         else {
             unreachable!("checked")
         };
@@ -1528,40 +1777,106 @@ impl<'a> Defs<'a> {
         Callee::Run(Instance { template, args }, sig.gives.subst(&all))
     }
 
+    /// The types that stand for the type parameters of the defaults a call
+    /// leaves out: those of the function, of the trait, or of the struct
+    /// they are written in.
+    fn env_of(&self, callee: &Callee) -> Vec<Ty> {
+        match callee {
+            Callee::Run(instance, _) => match instance.template {
+                Template::Free(_) => instance.args.clone(),
+                Template::Impl(i, _) => {
+                    let info = self.defs.impls[i].as_ref().expect("known");
+                    info.args.iter().map(|t| t.subst(&instance.args)).collect()
+                }
+            },
+            Callee::Construct(_, args) => args.clone(),
+            Callee::Print | Callee::Case(_) => Vec::new(),
+        }
+    }
+
+    /// The calls in the defaults a call leaves out, which run where the
+    /// call is written, each with the types that stand for the type
+    /// parameters of the definition the default is in, and each followed
+    /// by the calls in the defaults it leaves out in turn. A default
+    /// already in `stack` is not filled in again, and the place of the call
+    /// that leaves it out goes in `cycles`.
+    fn filled(
+        &self,
+        call: &'a Call,
+        env: &[Ty],
+        stack: &mut Vec<&'a Expr>,
+        out: &mut Vec<(&'a Call, Vec<Ty>)>,
+        cycles: &mut Vec<Pos>,
+    ) {
+        let left_out = self.defs.left_out(call);
+        if left_out.is_empty() {
+            return;
+        }
+        let inner_env = self.env_of(&self.callee(call, env));
+        for (_, default) in left_out {
+            if stack.iter().any(|d| std::ptr::eq(*d, default)) {
+                cycles.push(call.pos);
+                continue;
+            }
+            stack.push(default);
+            for inner in calls([default]) {
+                out.push((inner, inner_env.clone()));
+                self.filled(inner, &inner_env, stack, out, cycles);
+            }
+            stack.pop();
+        }
+    }
+
     /// The calls in a copy's body that run a function, outermost first and
     /// then from left to right, each with where it is and the copy it runs.
     /// The calls in a default a call leaves out follow that call. Each call
     /// that leaves out the default it is written in is in the second list.
     fn calls_of(&self, instance: &Instance) -> (Vec<(Pos, Instance)>, Vec<Pos>) {
-        let view = self.view(instance.template);
-        let mut names: Vec<(String, Ty)> = (view.params.iter())
-            .map(|(n, t)| (n.clone(), t.subst(&instance.args)))
-            .collect();
+        let view = self.defs.view(instance.template);
         let mut out = Vec::new();
         let mut cycles = Vec::new();
-        for (stmt, value) in view.f.body.iter().zip(values(&view.f.body)) {
-            for call in calls([value]) {
-                if let Callee::Run(callee, _) = self.callee(call, &names) {
+        for call in calls(values(&view.f.body)) {
+            let mut all = vec![(call, instance.args.clone())];
+            self.filled(call, &instance.args, &mut Vec::new(), &mut all, &mut cycles);
+            for (call, env) in all {
+                if let Callee::Run(callee, _) = self.callee(call, &env) {
                     out.push((call.pos, callee));
                 }
-                // A default uses no name, so its calls are the same
-                // wherever it is filled in.
-                let mut filled = Vec::new();
-                self.defaults_called(call, &mut Vec::new(), &mut filled, &mut cycles);
-                for inner in filled {
-                    if let Callee::Run(callee, _) = self.callee(inner, &[]) {
-                        out.push((inner.pos, callee));
-                    }
-                }
-            }
-            if let Stmt::Define { name, value, .. } = stmt
-                && !names.iter().any(|(n, _)| n == name)
-            {
-                let ty = self.type_of(value, &names);
-                names.push((name.clone(), ty));
             }
         }
         (out, cycles)
+    }
+
+    /// Reports each call that would need a copy of a function without end:
+    /// one already being walked, or one of a function being walked for
+    /// larger types, which would grow forever. `path` is the copies being
+    /// walked from `main`, and `done` those already walked.
+    fn copies(
+        &self,
+        instance: &Instance,
+        path: &mut Vec<Instance>,
+        done: &mut Vec<Instance>,
+        errors: &mut Vec<Error>,
+    ) {
+        path.push(instance.clone());
+        let (calls, cycles) = self.calls_of(instance);
+        errors.extend(cycles.into_iter().map(default_cycle));
+        for (pos, callee) in calls {
+            let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
+            let endless = path.iter().any(|p| {
+                p.template == callee.template && (*p == callee || size(&callee) > size(p))
+            });
+            if endless {
+                errors.push(Error::unsupported(
+                    pos,
+                    "a function that calls itself, directly or through others,",
+                ));
+            } else if !done.contains(&callee) {
+                self.copies(&callee, path, done, errors);
+            }
+        }
+        path.pop();
+        done.push(instance.clone());
     }
 }
 
@@ -1570,6 +1885,7 @@ impl<'a> Defs<'a> {
 enum Owner {
     Function,
     Struct,
+    Enum,
     Trait,
     Impl,
 }
@@ -1577,6 +1893,96 @@ enum Owner {
 struct Checker<'a> {
     defs: &'a Defs<'a>,
     errors: Vec<Error>,
+    /// The type of each expression checked, by its address.
+    types: HashMap<usize, Ty>,
+}
+
+/// What is expected of an expression's value.
+#[derive(Clone, Debug)]
+enum Want {
+    /// It is a statement, and its value is not used.
+    Unused,
+    /// Its value is used, and nothing says what type it must be.
+    Any,
+    /// Its value must be of this type, which may be partly known.
+    Ty(Ty),
+}
+
+/// How a block ends.
+enum End<'e> {
+    Empty,
+    /// With a binding or an assignment, at this place.
+    Binding(Pos),
+    /// With an expression, which gives this type.
+    Value(Ty, &'e Expr),
+}
+
+/// A pattern once checked: `Any` matches every value, as a bare name does,
+/// and `Case` matches one case of an enum, by its place, and what it holds
+/// if a pattern for it is given.
+enum Pat {
+    Any,
+    Case(usize, Option<Box<Pat>>),
+}
+
+const ANY: Pat = Pat::Any;
+
+/// The patterns for what case `k` holds, from those of `rows` that match
+/// that case, where a pattern that matches anything matches what it holds
+/// with anything too.
+fn inside_case<'p>(rows: &[&'p Pat], k: usize) -> Vec<&'p Pat> {
+    (rows.iter())
+        .filter_map(|r| match r {
+            Pat::Any => Some(&ANY),
+            Pat::Case(j, inner) if *j == k => Some(inner.as_deref().unwrap_or(&ANY)),
+            Pat::Case(..) => None,
+        })
+        .collect()
+}
+
+/// A value of type `ty` that none of the patterns matches, as a pattern
+/// that matches it is written, if there is one.
+fn missing(defs: &Defs, rows: &[&Pat], ty: &Ty) -> Option<String> {
+    if rows.iter().any(|r| matches!(r, Pat::Any)) {
+        return None;
+    }
+    let Ty::Enum(e, args) = ty else {
+        return Some("_".to_string());
+    };
+    for (k, case) in defs.file.enums[*e].cases.iter().enumerate() {
+        let inside = inside_case(rows, k);
+        match &defs.cases[*e][k] {
+            None if inside.is_empty() => return Some(format!(".{}", case.name)),
+            None => {}
+            Some(holds) => {
+                if let Some(left) = missing(defs, &inside, &holds.subst(args)) {
+                    return Some(format!(".{}({left})", case.name));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether the pattern matches some value of type `ty` that none of the
+/// patterns before it matches.
+fn useful(defs: &Defs, before: &[&Pat], pattern: &Pat, ty: &Ty) -> bool {
+    match pattern {
+        Pat::Any => missing(defs, before, ty).is_some(),
+        Pat::Case(k, inner) => {
+            let Ty::Enum(e, args) = ty else {
+                unreachable!("checked")
+            };
+            let inside = inside_case(before, *k);
+            match &defs.cases[*e][*k] {
+                None => inside.is_empty(),
+                Some(holds) => {
+                    let inner = inner.as_deref().unwrap_or(&ANY);
+                    useful(defs, &inside, inner, &holds.subst(args))
+                }
+            }
+        }
+    }
 }
 
 /// What checking one body needs to keep.
@@ -1606,6 +2012,12 @@ impl<'a> Body<'a> {
     /// The function whose body this is.
     fn owner(&self) -> &'a Function {
         self.f.expect("a function's body")
+    }
+
+    /// Where the body is, as an error names it after a place.
+    fn in_owner(&self) -> String {
+        self.f
+            .map_or(String::new(), |f| format!(" in `{}`", f.name))
     }
 }
 
@@ -1645,6 +2057,7 @@ impl<'a> Checker<'a> {
                 ));
             } else if name == TEXT
                 || defs.struct_names.contains_key(name)
+                || defs.enum_names.contains_key(name)
                 || defs.trait_names.contains_key(name)
             {
                 self.errors.push(Error::new(
@@ -1662,6 +2075,10 @@ impl<'a> Checker<'a> {
                 (Some(b), Owner::Struct) => self.errors.push(Error::unsupported(
                     b.pos,
                     "a bound on a type parameter of a struct",
+                )),
+                (Some(b), Owner::Enum) => self.errors.push(Error::unsupported(
+                    b.pos,
+                    "a bound on a type parameter of an enum",
                 )),
                 (Some(b), Owner::Trait) => self
                     .errors
@@ -1706,6 +2123,37 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Checks an enum: its type parameters, each named by a case's type,
+    /// and its cases, each named once, each of a type there is.
+    fn enumeration(&mut self, e: usize) {
+        let defs = self.defs;
+        let def = &defs.file.enums[e];
+        let scope = &defs.enum_scopes[e];
+        self.generics(&def.generics, &format!("`{}`", def.name), Owner::Enum);
+        for g in &def.generics {
+            let named = (def.cases.iter())
+                .filter_map(|c| c.ty.as_ref())
+                .any(|t| type_names(t).iter().any(|(n, _)| *n == g.name));
+            if !named {
+                self.errors.push(Error::unsupported(
+                    g.pos,
+                    "a type parameter that no case's type names",
+                ));
+            }
+        }
+        for (i, case) in def.cases.iter().enumerate() {
+            if def.cases[..i].iter().any(|c| c.name == case.name) {
+                self.errors.push(Error::new(
+                    case.pos,
+                    format!("`{}` is already a case of `{}`", case.name, def.name),
+                ));
+            }
+            if let Some(t) = &case.ty {
+                self.ty(t, scope);
+            }
+        }
+    }
+
     /// Checks a default: it uses no name, carries no effect, and gives
     /// `needed`, among the type parameters of `scope`. `params` are the
     /// parameters of the function it is in, if it is in one.
@@ -1721,7 +2169,7 @@ impl<'a> Checker<'a> {
             params: 0,
             vars: Vec::new(),
         };
-        let gives = self.expr(&mut body, value);
+        let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
         self.expect(&body, value, &gives, needed);
     }
 
@@ -1884,10 +2332,7 @@ impl<'a> Checker<'a> {
         let Some(&k) = defs.trait_names.get(name) else {
             self.errors.push(if TRAITS_NOT_BUILT.contains(&name) {
                 Error::unsupported(im.pos, &format!("implementing `{name}`"))
-            } else if defs.struct_names.contains_key(name)
-                || name == TEXT
-                || TYPES_NOT_BUILT.contains(&name)
-            {
+            } else if defs.is_type(name) {
                 Error::new(im.pos, format!("`{name}` is not a trait"))
             } else {
                 Error::new(im.pos, format!("there is no trait named `{name}`"))
@@ -2128,9 +2573,54 @@ impl<'a> Checker<'a> {
             params: view.params.len(),
             vars: Vec::new(),
         };
-        for (i, stmt) in f.body.iter().enumerate() {
-            let last = i + 1 == f.body.len();
-            let (gives, value) = match stmt {
+        let want = match view.result {
+            Some(_) => Want::Ty(view.gives.clone()),
+            None => Want::Unused,
+        };
+        match (self.block(&mut body, &f.body, &want), &view.result) {
+            (End::Empty, Some(t)) => self.errors.push(Error::new(
+                f.end,
+                format!(
+                    "`{}` returns `{t}`, and its body is empty, which gives nothing",
+                    f.name
+                ),
+            )),
+            (End::Binding(pos), Some(t)) => self.ends_with_nothing(f, pos, t),
+            (End::Value(gives, value), Some(_)) => self.expect(&body, value, &gives, &view.gives),
+            (
+                End::Value(
+                    gives @ (Ty::Text | Ty::Struct(..) | Ty::Enum(..) | Ty::Param(_)),
+                    value,
+                ),
+                None,
+            ) => self.errors.push(Error::new(
+                value.pos(),
+                format!(
+                    "`{}` returns nothing, and its body ends with {}",
+                    f.name,
+                    defs.describe(&gives, view.scope)
+                ),
+            )),
+            _ => {}
+        }
+    }
+
+    /// The error for defining `name` at `pos` where it is already defined.
+    fn defined_twice(&self, body: &Body, name: &str, pos: Pos) -> Error {
+        match body.f {
+            Some(f) => Error::new(pos, format!("`{name}` is already defined in `{}`", f.name)),
+            None => Error::new(pos, format!("`{name}` is already defined here")),
+        }
+    }
+
+    /// Checks the statements of a block in order, the last against `last`,
+    /// and gives how it ends.
+    fn block<'e>(&mut self, body: &mut Body<'a>, stmts: &'e [Stmt], last: &Want) -> End<'e> {
+        let defs = self.defs;
+        let mut end = End::Empty;
+        for (i, stmt) in stmts.iter().enumerate() {
+            let is_last = i + 1 == stmts.len();
+            end = match stmt {
                 Stmt::Define {
                     name,
                     pos,
@@ -2138,26 +2628,29 @@ impl<'a> Checker<'a> {
                     var,
                     value,
                 } => {
-                    let gives = self.expr(&mut body, value);
                     let defined = body.names.iter().position(|(n, _)| n == name);
                     match (defined, ty, var) {
                         (Some(at), None, false) => {
+                            let needed = body.names[at].1.clone();
                             if body.vars.contains(name) {
-                                let needed = body.names[at].1.clone();
-                                self.expect(&body, value, &gives, &needed);
+                                let gives = self.expr(body, value, &Want::Ty(needed.clone()));
+                                self.expect(body, value, &gives, &needed);
                             } else {
-                                self.errors.push(not_a_var(&body, name, *pos, at));
+                                self.expr(body, value, &Want::Any);
+                                self.errors.push(not_a_var(body, name, *pos, at));
                             }
                         }
                         _ => {
                             let bound = match ty {
                                 Some(t) => {
-                                    self.ty(t, view.scope);
-                                    let needed = defs.quietly(t, view.scope);
-                                    self.expect(&body, value, &gives, &needed);
+                                    self.ty(t, body.scope);
+                                    let needed = defs.quietly(t, body.scope);
+                                    let gives = self.expr(body, value, &Want::Ty(needed.clone()));
+                                    self.expect(body, value, &gives, &needed);
                                     needed
                                 }
                                 None => {
+                                    let gives = self.expr(body, value, &Want::Any);
                                     if gives == Ty::Nothing {
                                         self.errors.push(Error::unsupported(
                                             value.pos(),
@@ -2168,10 +2661,7 @@ impl<'a> Checker<'a> {
                                 }
                             };
                             if defined.is_some() {
-                                self.errors.push(Error::new(
-                                    *pos,
-                                    format!("`{name}` is already defined in `{}`", f.name),
-                                ));
+                                self.errors.push(self.defined_twice(body, name, *pos));
                             } else {
                                 body.names.push((name.clone(), bound));
                                 if *var {
@@ -2180,10 +2670,7 @@ impl<'a> Checker<'a> {
                             }
                         }
                     }
-                    if let (true, Some(t)) = (last, &view.result) {
-                        self.ends_with_nothing(f, *pos, t);
-                    }
-                    continue;
+                    End::Binding(*pos)
                 }
                 Stmt::Assign {
                     name,
@@ -2191,42 +2678,21 @@ impl<'a> Checker<'a> {
                     fields,
                     value,
                 } => {
-                    let gives = self.expr(&mut body, value);
-                    if let Some(needed) = self.place(&body, name, *pos, fields) {
-                        self.expect(&body, value, &gives, &needed);
+                    let needed = self.place(body, name, *pos, fields);
+                    let want = needed.clone().map_or(Want::Any, Want::Ty);
+                    let gives = self.expr(body, value, &want);
+                    if let Some(needed) = needed {
+                        self.expect(body, value, &gives, &needed);
                     }
-                    if let (true, Some(t)) = (last, &view.result) {
-                        self.ends_with_nothing(f, *pos, t);
-                    }
-                    continue;
+                    End::Binding(*pos)
                 }
-                Stmt::Expr(value) => (self.expr(&mut body, value), value),
+                Stmt::Expr(value) => {
+                    let want = if is_last { last } else { &Want::Unused };
+                    End::Value(self.expr(body, value, want), value)
+                }
             };
-            if !last {
-                continue;
-            }
-            match (&gives, &view.result) {
-                (_, Some(_)) => self.expect(&body, value, &gives, &view.gives),
-                (Ty::Text | Ty::Struct(..) | Ty::Param(_), None) => self.errors.push(Error::new(
-                    value.pos(),
-                    format!(
-                        "`{}` returns nothing, and its body ends with {}",
-                        f.name,
-                        defs.describe(&gives, view.scope)
-                    ),
-                )),
-                _ => {}
-            }
         }
-        if let (true, Some(t)) = (f.body.is_empty(), &view.result) {
-            self.errors.push(Error::new(
-                f.end,
-                format!(
-                    "`{}` returns `{t}`, and its body is empty, which gives nothing",
-                    f.name
-                ),
-            ));
-        }
+        end
     }
 
     /// Reports a body that ends with a statement that gives nothing, the
@@ -2251,8 +2717,8 @@ impl<'a> Checker<'a> {
             self.errors.push(Error::new(
                 pos,
                 format!(
-                    "there is no name `{name}` defined before this in `{}`",
-                    body.owner().name
+                    "there is no name `{name}` defined before this{}",
+                    body.in_owner()
                 ),
             ));
             return None;
@@ -2293,12 +2759,23 @@ impl<'a> Checker<'a> {
         Some(ty)
     }
 
-    fn expr(&mut self, body: &mut Body<'a>, expr: &Expr) -> Ty {
+    /// Checks an expression against what is wanted of it, and gives its
+    /// type, which is recorded.
+    fn expr(&mut self, body: &mut Body<'a>, expr: &Expr, want: &Want) -> Ty {
+        let ty = self.expr_of(body, expr, want);
+        self.types.insert(addr(expr), ty.clone());
+        if let Expr::Call(call) = expr {
+            self.types.insert(addr(call), ty.clone());
+        }
+        ty
+    }
+
+    fn expr_of(&mut self, body: &mut Body<'a>, expr: &Expr, want: &Want) -> Ty {
         let defs = self.defs;
         match expr {
             Expr::Text { .. } => Ty::Text,
             Expr::Name { name, pos } => {
-                if let Some((_, ty)) = body.names.iter().find(|(n, _)| n == name) {
+                if let Some((_, ty)) = body.names.iter().rfind(|(n, _)| n == name) {
                     ty.clone()
                 } else {
                     let message = match &body.default {
@@ -2307,41 +2784,351 @@ impl<'a> Checker<'a> {
                         }
                         Some(_) => format!("there is no name `{name}` for a default to use"),
                         None => format!(
-                            "there is no name `{name}` defined before this in `{}`",
-                            body.owner().name
+                            "there is no name `{name}` defined before this{}",
+                            body.in_owner()
                         ),
                     };
                     self.errors.push(Error::new(*pos, message));
                     Ty::Unknown
                 }
             }
-            Expr::Call(call) => self.call(body, call),
-            Expr::Field { of, name, pos } => match self.expr(body, of) {
-                Ty::Struct(s, args) => {
-                    let def = &defs.file.structs[s];
-                    match def.fields.iter().position(|f| &f.name == name) {
-                        Some(at) => defs.fields[s][at].subst(&args),
-                        None => {
-                            self.errors.push(Error::new(
-                                *pos,
-                                format!("`{}` has no field named `{name}`", def.name),
-                            ));
-                            Ty::Unknown
+            Expr::Call(call) => self.call(body, call, want),
+            Expr::Field { of, name, pos } => {
+                if let Some(e) = defs.qualified_case(of, &body.names) {
+                    return self.case(body, Some(e), name, of.pos(), *pos, None, want);
+                }
+                match self.expr(body, of, &Want::Any) {
+                    Ty::Struct(s, args) => {
+                        let def = &defs.file.structs[s];
+                        match def.fields.iter().position(|f| &f.name == name) {
+                            Some(at) => defs.fields[s][at].subst(&args),
+                            None => {
+                                self.errors.push(Error::new(
+                                    *pos,
+                                    format!("`{}` has no field named `{name}`", def.name),
+                                ));
+                                Ty::Unknown
+                            }
                         }
                     }
+                    Ty::Unknown => Ty::Unknown,
+                    given => {
+                        self.errors.push(Error::new(
+                            *pos,
+                            format!(
+                                "the field `{name}` is read from {}, which is not a struct",
+                                defs.describe(&given, body.scope)
+                            ),
+                        ));
+                        Ty::Unknown
+                    }
                 }
-                Ty::Unknown => Ty::Unknown,
-                given => {
+            }
+            Expr::Case { name, pos, payload } => {
+                let at = Pos {
+                    line: pos.line,
+                    col: pos.col + 1,
+                };
+                self.case(body, None, name, *pos, at, payload.as_deref(), want)
+            }
+            Expr::Match(m) => self.match_expr(body, m, want),
+        }
+    }
+
+    /// Checks a case named `name`: of enum `e` if it is written in full, or
+    /// else of the enum `want` expects. `pos` is where it starts, and `at`
+    /// where its name is.
+    #[allow(clippy::too_many_arguments)]
+    fn case(
+        &mut self,
+        body: &mut Body<'a>,
+        e: Option<usize>,
+        name: &str,
+        pos: Pos,
+        at: Pos,
+        payload: Option<&Expr>,
+        want: &Want,
+    ) -> Ty {
+        let defs = self.defs;
+        let quiet = Want::Ty(Ty::Unknown);
+        let expected = match want {
+            Want::Ty(t) => Some(t),
+            Want::Any | Want::Unused => None,
+        };
+        let error = |checker: &mut Self, body: &mut Body<'a>, error: Option<Error>| {
+            checker.errors.extend(error);
+            if let Some(p) = payload {
+                checker.expr(body, p, &quiet);
+            }
+            Ty::Unknown
+        };
+        let e = match (e, expected) {
+            (Some(e), _) => e,
+            (None, Some(Ty::Enum(e, _))) => *e,
+            (None, Some(Ty::Unknown)) => return error(self, body, None),
+            (None, Some(t)) => {
+                let needed = defs.describe(t, body.scope);
+                let message = format!("`.{name}` is a case of an enum, where {needed} is needed");
+                return error(self, body, Some(Error::new(pos, message)));
+            }
+            (None, None) => {
+                let message = format!("the enum of `.{name}` is not known here");
+                let fix = "write the enum's name before the dot, or give the binding a type";
+                return error(self, body, Some(Error::new(pos, message).with_fix(fix)));
+            }
+        };
+        let def = &defs.file.enums[e];
+        let Some(k) = defs.case_of(e, name) else {
+            let message = format!("`{}` has no case named `{name}`", def.name);
+            return error(self, body, Some(Error::new(at, message)));
+        };
+        let vars = &defs.enum_scopes[e];
+        let mut sol: Vec<Option<Ty>> = match expected {
+            Some(Ty::Enum(f, args)) if *f == e => (args.iter())
+                .map(|t| (!t.unknown()).then(|| t.clone()))
+                .collect(),
+            _ => vec![None; def.generics.len()],
+        };
+        let before = self.errors.len();
+        match (&defs.cases[e][k], payload) {
+            (Some(pattern), Some(p)) => {
+                let gives = self.expr(body, p, &Want::Ty(pattern.partial(&sol)));
+                if gives.unknown() {
+                    return Ty::Unknown;
+                }
+                self.fit(body, p, &gives, pattern, &mut sol, vars);
+            }
+            (Some(pattern), None) => {
+                let holds = defs.describe_pattern(pattern, &sol, vars, body.scope);
+                let message = format!("`.{name}` holds {holds}, and none is given");
+                return error(self, body, Some(Error::new(pos, message)));
+            }
+            (None, Some(p)) => {
+                let message = format!("`.{name}` holds nothing, so it takes no value");
+                return error(self, body, Some(Error::new(p.pos(), message)));
+            }
+            (None, None) => {}
+        }
+        if self.errors.len() > before {
+            return Ty::Unknown;
+        }
+        if let Some(g) = sol.iter().position(Option::is_none) {
+            self.errors.push(Error::new(
+                pos,
+                format!(
+                    "the type `{}` of `{}` is not known here",
+                    def.generics[g].name, def.name
+                ),
+            ));
+            return Ty::Unknown;
+        }
+        if defs.cyclic_enums[e] {
+            return Ty::Unknown;
+        }
+        Ty::enumeration(e, sol.into_iter().map(|t| t.expect("solved")).collect())
+    }
+
+    /// Checks a `match`: the value it takes apart, each pattern against
+    /// the value's type, each block, and that the patterns cover every
+    /// value once with none that is never reached. Used as an expression,
+    /// its blocks give the same type, which it gives.
+    fn match_expr(&mut self, body: &mut Body<'a>, m: &Match, want: &Want) -> Ty {
+        let defs = self.defs;
+        let of = self.expr(body, &m.of, &Want::Any);
+        let names = body.names.len();
+        let vars = body.vars.len();
+        let mut patterns: Vec<Option<Pat>> = Vec::new();
+        let mut first: Option<Ty> = None;
+        for arm in &m.arms {
+            let mut binds = Vec::new();
+            let pattern = self.pattern(body, &arm.pattern, &of, &mut binds);
+            if let Some(p) = &pattern
+                && !of.unknown()
+                && patterns.iter().all(Option::is_some)
+            {
+                let before: Vec<&Pat> = patterns.iter().flatten().collect();
+                if !useful(defs, &before, p, &of) {
                     self.errors.push(Error::new(
-                        *pos,
-                        format!(
-                            "the field `{name}` is read from {}, which is not a struct",
-                            defs.describe(&given, body.scope)
-                        ),
+                        arm.pattern.pos(),
+                        "this pattern is never reached, as the patterns before it match \
+                         everything it matches",
                     ));
-                    Ty::Unknown
                 }
-            },
+            }
+            patterns.push(pattern);
+            body.names.extend(binds);
+            let arm_want = match (want, &first) {
+                (Want::Unused, _) => Want::Unused,
+                (Want::Ty(t), _) => Want::Ty(t.clone()),
+                (Want::Any, Some(t)) => Want::Ty(t.clone()),
+                (Want::Any, None) => Want::Any,
+            };
+            let end = self.block(body, &arm.body, &arm_want);
+            if !matches!(want, Want::Unused) {
+                let gives = self.arm_gives(body, arm, end, want, &first);
+                first = first.or(Some(gives));
+            }
+            body.names.truncate(names);
+            body.vars.truncate(vars);
+        }
+        if !of.unknown() && patterns.iter().all(Option::is_some) {
+            let all: Vec<&Pat> = patterns.iter().flatten().collect();
+            if let Some(left) = missing(defs, &all, &of) {
+                self.errors.push(
+                    Error::new(m.pos, format!("this `match` does not cover `{left}`")).with_fix(
+                        format!(
+                            "add a block for `{left}`, or end with a bare name that covers the rest"
+                        ),
+                    ),
+                );
+            }
+        }
+        match want {
+            Want::Unused => Ty::Nothing,
+            Want::Ty(t) if !t.unknown() => t.clone(),
+            _ => first.unwrap_or(Ty::Nothing),
+        }
+    }
+
+    /// Checks what the block of an arm gives, where the `match` is used as
+    /// an expression, against what is wanted of it or what the first block
+    /// gives, and gives it.
+    fn arm_gives(
+        &mut self,
+        body: &Body,
+        arm: &Arm,
+        end: End,
+        want: &Want,
+        first: &Option<Ty>,
+    ) -> Ty {
+        let defs = self.defs;
+        let needed = match (want, first) {
+            (Want::Ty(t), _) => Some(t),
+            (_, Some(t)) => Some(t),
+            _ => None,
+        };
+        let describe = |t: &Ty| defs.describe(t, body.scope);
+        let (gives, at) = match &end {
+            End::Value(gives, value) => (gives.clone(), value.pos()),
+            End::Empty => (Ty::Nothing, arm.end),
+            End::Binding(pos) => (Ty::Nothing, *pos),
+        };
+        let Some(needed) = needed else {
+            return gives;
+        };
+        if agrees(needed, &gives) || *needed == Ty::Nothing {
+            return gives;
+        }
+        let what = match (&end, &gives) {
+            (End::Empty, _) => "this block is empty, which gives nothing".to_string(),
+            (End::Binding(_), _) => {
+                "this block ends with a binding or an assignment, which gives nothing".to_string()
+            }
+            (End::Value(_, Expr::Call(call)), Ty::Nothing) => {
+                format!("`{}` returns nothing", call.callee)
+            }
+            _ => format!("this gives {}", describe(&gives)),
+        };
+        let message = match want {
+            Want::Ty(t) => format!("{what}, where {} is needed", describe(t)),
+            _ => format!(
+                "{what}, and the first block gives {}, where the blocks of a `match` give the \
+                 same type",
+                describe(needed)
+            ),
+        };
+        self.errors.push(Error::new(at, message));
+        gives
+    }
+
+    /// Checks a pattern against the type of what it matches, and gives it
+    /// as checked, or `None` if it holds a mistake. Each bare name in it
+    /// goes in `binds` with the type of what it names.
+    fn pattern(
+        &mut self,
+        body: &Body,
+        pattern: &Pattern,
+        ty: &Ty,
+        binds: &mut Vec<(String, Ty)>,
+    ) -> Option<Pat> {
+        let defs = self.defs;
+        match pattern {
+            Pattern::Bind { name, pos } => {
+                if body
+                    .names
+                    .iter()
+                    .chain(binds.iter())
+                    .any(|(n, _)| n == name)
+                {
+                    // The name stands for what it matches all the same, as
+                    // not known, so that nothing it explains is reported.
+                    self.errors.push(self.defined_twice(body, name, *pos));
+                    binds.push((name.clone(), Ty::Unknown));
+                    return None;
+                }
+                binds.push((name.clone(), ty.clone()));
+                Some(Pat::Any)
+            }
+            Pattern::Case { name, pos, inner } => {
+                let quietly = |checker: &mut Self, binds: &mut Vec<(String, Ty)>| {
+                    if let Some(inner) = inner {
+                        checker.pattern(body, inner, &Ty::Unknown, binds);
+                    }
+                    None
+                };
+                let (e, args) = match ty {
+                    Ty::Enum(e, args) => (*e, args),
+                    Ty::Unknown => return quietly(self, binds),
+                    other => {
+                        self.errors.push(Error::new(
+                            *pos,
+                            format!(
+                                "`.{name}` is a case, and this matches {}, which is not an enum",
+                                defs.describe(other, body.scope)
+                            ),
+                        ));
+                        return quietly(self, binds);
+                    }
+                };
+                let Some(k) = defs.case_of(e, name) else {
+                    let at = Pos {
+                        line: pos.line,
+                        col: pos.col + 1,
+                    };
+                    self.errors.push(Error::new(
+                        at,
+                        format!("`{}` has no case named `{name}`", defs.file.enums[e].name),
+                    ));
+                    return quietly(self, binds);
+                };
+                match (&defs.cases[e][k], inner) {
+                    (Some(holds), Some(inner)) => {
+                        let inner = self.pattern(body, inner, &holds.subst(args), binds)?;
+                        Some(Pat::Case(k, Some(Box::new(inner))))
+                    }
+                    (Some(holds), None) => {
+                        self.errors.push(
+                            Error::new(
+                                *pos,
+                                format!(
+                                    "`.{name}` holds {}, and its pattern gives none for it",
+                                    defs.describe(&holds.subst(args), body.scope)
+                                ),
+                            )
+                            .with_fix(format!("write `.{name}(x)` to name what it holds")),
+                        );
+                        None
+                    }
+                    (None, Some(inner)) => {
+                        self.errors.push(Error::new(
+                            inner.pos(),
+                            format!("`.{name}` holds nothing, so its pattern takes none"),
+                        ));
+                        None
+                    }
+                    (None, None) => Some(Pat::Case(k, None)),
+                }
+            }
         }
     }
 
@@ -2349,15 +3136,51 @@ impl<'a> Checker<'a> {
     /// mistakes in them.
     fn unknown_call(&mut self, body: &mut Body<'a>, call: &Call) -> Ty {
         for arg in &call.args {
-            self.expr(body, &arg.value);
+            self.expr(body, &arg.value, &Want::Ty(Ty::Unknown));
         }
         Ty::Unknown
     }
 
-    fn call(&mut self, body: &mut Body<'a>, call: &Call) -> Ty {
+    /// Checks a case of enum `e` written in full with parentheses, as in
+    /// `Pet.cat(c)`, which gives the value the case holds by position.
+    fn qualified_case(&mut self, body: &mut Body<'a>, call: &Call, e: usize, want: &Want) -> Ty {
+        let quiet = Want::Ty(Ty::Unknown);
+        let mut ok = true;
+        for (i, arg) in call.args.iter().enumerate() {
+            if let Some((_, pos)) = &arg.name {
+                self.errors.push(Error::new(
+                    *pos,
+                    "the value a case holds is given by position",
+                ));
+                ok = false;
+            } else if i > 0 {
+                self.errors.push(Error::new(
+                    arg.value.pos(),
+                    "a case holds one value, and this is one more",
+                ));
+                ok = false;
+            }
+        }
+        if !ok {
+            for arg in &call.args {
+                self.expr(body, &arg.value, &quiet);
+            }
+            return Ty::Unknown;
+        }
+        let payload = call.args.first().map(|a| &a.value);
+        let (callee, pos, at) = (&call.callee, call.pos, call.name_pos);
+        self.case(body, Some(e), callee, pos, at, payload, want)
+    }
+
+    fn call(&mut self, body: &mut Body<'a>, call: &Call, want: &Want) -> Ty {
         let defs = self.defs;
         let name = call.callee.as_str();
         if let Some((q, at)) = &call.qualifier {
+            if let Some(&e) = defs.enum_names.get(q.as_str())
+                && !body.names.iter().any(|(n, _)| n == q)
+            {
+                return self.qualified_case(body, call, e, want);
+            }
             let Some(&k) = defs.trait_names.get(q.as_str()) else {
                 self.errors.push(if body.names.iter().any(|(n, _)| n == q) {
                     Error::unsupported(call.name_pos, "calling what a field gives")
@@ -2377,7 +3200,7 @@ impl<'a> Checker<'a> {
             return self.trait_call(body, call, k, fi);
         }
         if let Some(&s) = defs.struct_names.get(name) {
-            return self.construction(body, call, s);
+            return self.construction(body, call, s, want);
         }
         if name == "print" {
             let print = Signature::print();
@@ -2488,15 +3311,27 @@ impl<'a> Checker<'a> {
     /// Checks the construction of struct `s`, which gives each of its
     /// fields once by name, in any order, except those it leaves to their
     /// defaults.
-    fn construction(&mut self, body: &mut Body<'a>, call: &Call, s: usize) -> Ty {
+    fn construction(&mut self, body: &mut Body<'a>, call: &Call, s: usize, want: &Want) -> Ty {
         let defs = self.defs;
         let def = &defs.file.structs[s];
         let vars = &defs.struct_scopes[s];
-        let mut sol = vec![None; def.generics.len()];
+        let mut sol: Vec<Option<Ty>> = match want {
+            Want::Ty(Ty::Struct(t, args)) if *t == s => (args.iter())
+                .map(|t| (!t.unknown()).then(|| t.clone()))
+                .collect(),
+            _ => vec![None; def.generics.len()],
+        };
         let mut given = vec![false; def.fields.len()];
         let mut by_position = false;
+        let before = self.errors.len();
         for arg in &call.args {
-            let gives = self.expr(body, &arg.value);
+            let field = (arg.name.as_ref())
+                .and_then(|(name, _)| def.fields.iter().position(|f| &f.name == name));
+            let wanted = match field {
+                Some(i) => Want::Ty(defs.fields[s][i].partial(&sol)),
+                None => Want::Ty(Ty::Unknown),
+            };
+            let gives = self.expr(body, &arg.value, &wanted);
             match &arg.name {
                 None => {
                     if !by_position {
@@ -2543,6 +3378,17 @@ impl<'a> Checker<'a> {
         }
         if defs.cyclic[s] {
             return Ty::Unknown;
+        }
+        if self.errors.len() == before
+            && let Some(g) = sol.iter().position(Option::is_none)
+        {
+            self.errors.push(Error::new(
+                call.pos,
+                format!(
+                    "the type `{}` of `{}` is not known here",
+                    def.generics[g].name, def.name
+                ),
+            ));
         }
         let args = sol.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect();
         Ty::structure(s, args)
@@ -2655,7 +3501,11 @@ impl<'a> Checker<'a> {
             if !look_into {
                 continue;
             }
-            let gives = self.expr(body, &arg.value);
+            let wanted = match param {
+                Some(i) => Want::Ty(signature.params[i].1.partial(&sol)),
+                None => Want::Ty(Ty::Unknown),
+            };
+            let gives = self.expr(body, &arg.value, &wanted);
             match param {
                 Some(i) => {
                     let pattern = &signature.params[i].1;
@@ -2725,38 +3575,12 @@ impl<'a> Checker<'a> {
         path.pop();
         done.push(f);
     }
-
-    /// Reports each call that would need a copy of a function without end:
-    /// one already being walked, or one of a function being walked for
-    /// larger types, which would grow forever. `path` is the copies being
-    /// walked from `main`, and `done` those already walked.
-    fn copies(&mut self, instance: &Instance, path: &mut Vec<Instance>, done: &mut Vec<Instance>) {
-        path.push(instance.clone());
-        let (calls, cycles) = self.defs.calls_of(instance);
-        self.errors.extend(cycles.into_iter().map(default_cycle));
-        for (pos, callee) in calls {
-            let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
-            let endless = path.iter().any(|p| {
-                p.template == callee.template && (*p == callee || size(&callee) > size(p))
-            });
-            if endless {
-                self.errors.push(Error::unsupported(
-                    pos,
-                    "a function that calls itself, directly or through others,",
-                ));
-            } else if !done.contains(&callee) {
-                self.copies(&callee, path, done);
-            }
-        }
-        path.pop();
-        done.push(instance.clone());
-    }
 }
 
 /// Lowers checked functions to the form every target receives, one copy
 /// of a function for each choice of its type parameters that runs.
 struct Lowering<'a> {
-    defs: &'a Defs<'a>,
+    typed: &'a Typed<'a>,
     /// The copies, each at its place in the program, in the order they are
     /// first called.
     instances: Vec<Instance>,
@@ -2767,10 +3591,32 @@ struct Lowering<'a> {
 struct Lowered {
     /// What each name defined so far gives.
     types: Vec<(String, Ty)>,
-    /// The texts each name defined so far stands for.
+    /// The values each name defined so far stands for.
     values: Vec<Vec<Value>>,
     locals: usize,
     steps: Vec<Step>,
+}
+
+/// A pattern still to be matched, as a decision is made between the
+/// blocks of a `match`: the block it leads to, what is left of the
+/// pattern, which matches anything when it is `None`, and the names bound
+/// so far, each with its type and its values.
+#[derive(Clone)]
+struct Row<'p> {
+    arm: usize,
+    pattern: Option<&'p Pattern>,
+    binds: Vec<(String, Ty, Vec<Value>)>,
+}
+
+/// What every block of a `match` being lowered shares: its blocks, the
+/// types that stand for the type parameters, the locals its value goes to,
+/// and the names defined before it that a block assigns to, each with the
+/// locals its values go to.
+struct Arms<'p> {
+    arms: &'p [Arm],
+    env: &'p [Ty],
+    results: Vec<usize>,
+    merged: Vec<(usize, Vec<usize>)>,
 }
 
 impl<'a> Lowering<'a> {
@@ -2785,19 +3631,28 @@ impl<'a> Lowering<'a> {
         Value::Text(at)
     }
 
-    /// How many texts a value of the type is lowered to.
+    /// How many values a value of the type is lowered to: one for each
+    /// text, and for an enum one for its case and as many as its largest
+    /// case holds.
     fn width(&self, ty: &Ty) -> usize {
+        let defs = self.typed.defs;
         match ty {
             Ty::Text => 1,
-            Ty::Struct(s, args) => (self.defs.fields[*s].iter())
+            Ty::Struct(s, args) => (defs.fields[*s].iter())
                 .map(|f| self.width(&f.subst(args)))
                 .sum(),
+            Ty::Enum(e, args) => {
+                let holds = (defs.cases[*e].iter().flatten())
+                    .map(|t| self.width(&t.subst(args)))
+                    .max();
+                1 + holds.unwrap_or(0)
+            }
             Ty::Param(_) | Ty::Nothing | Ty::Unknown => 0,
         }
     }
 
-    /// Where the texts of a field, or of a field of a field for each
-    /// further name, are among the texts of a value of the type, and how
+    /// Where the values of a field, or of a field of a field for each
+    /// further name, are among the values of a value of the type, and how
     /// many there are.
     fn offset(&self, ty: &Ty, fields: &[(String, Pos)]) -> (usize, usize) {
         let mut ty = ty.clone();
@@ -2806,7 +3661,7 @@ impl<'a> Lowering<'a> {
             let Ty::Struct(s, args) = ty else {
                 unreachable!("checked")
             };
-            let defs = self.defs;
+            let defs = self.typed.defs;
             let mut found = None;
             for (field, t) in defs.file.structs[s].fields.iter().zip(&defs.fields[s]) {
                 let t = t.subst(&args);
@@ -2840,7 +3695,7 @@ impl<'a> Lowering<'a> {
     }
 
     fn function(&mut self, instance: &Instance) -> ir::Function {
-        let defs = self.defs;
+        let defs = self.typed.defs;
         let view = defs.view(instance.template);
         let mut out = Lowered {
             types: Vec::new(),
@@ -2856,16 +3711,31 @@ impl<'a> Lowering<'a> {
                 .push(locals.into_iter().map(Value::Local).collect());
         }
         let params = out.locals;
+        let mut result = self.block(&mut out, &view.f.body, &instance.args);
+        if view.gives == Ty::Nothing {
+            result.clear();
+        }
+        ir::Function {
+            params,
+            locals: out.locals,
+            steps: out.steps,
+            results: result,
+        }
+    }
+
+    /// Lowers the statements of a block, and gives the values of the last
+    /// if it is an expression.
+    fn block(&mut self, out: &mut Lowered, stmts: &[Stmt], env: &[Ty]) -> Vec<Value> {
         let mut result = Vec::new();
-        for stmt in &view.f.body {
+        for stmt in stmts {
             result = match stmt {
                 Stmt::Define { name, value, .. } => {
-                    // A name stands for the texts it is bound to, so a
-                    // binding needs no step of its own. A body runs its
+                    // A name stands for the values it is bound to, so a
+                    // binding needs no step of its own. A block runs its
                     // statements once each, in order, so an assignment
-                    // makes the name stand for the new texts from then on,
-                    // and a name bound to the old ones keeps them.
-                    let (ty, value) = self.expr(&mut out, value);
+                    // makes the name stand for the new values from then
+                    // on, and a name bound to the old ones keeps them.
+                    let (ty, value) = self.expr(out, value, env);
                     match out.types.iter().position(|(n, _)| n == name) {
                         Some(at) => out.values[at] = value,
                         None => {
@@ -2881,30 +3751,24 @@ impl<'a> Lowering<'a> {
                     value,
                     ..
                 } => {
-                    let (_, value) = self.expr(&mut out, value);
+                    let (_, value) = self.expr(out, value, env);
                     let at = out.types.iter().position(|(n, _)| n == name);
                     let at = at.expect("checked");
                     let (start, width) = self.offset(&out.types[at].1, fields);
                     out.values[at].splice(start..start + width, value);
                     Vec::new()
                 }
-                Stmt::Expr(value) => self.expr(&mut out, value).1,
+                Stmt::Expr(value) => self.expr(out, value, env).1,
             };
         }
-        if view.gives == Ty::Nothing {
-            result.clear();
-        }
-        ir::Function {
-            params,
-            locals: out.locals,
-            steps: out.steps,
-            results: result,
-        }
+        result
     }
 
-    /// The texts an expression gives, and their type.
-    fn expr(&mut self, out: &mut Lowered, expr: &Expr) -> (Ty, Vec<Value>) {
-        let defs = self.defs;
+    /// The values an expression gives, and their type, where `env` stands
+    /// for the type parameters of the definition it is written in.
+    fn expr(&mut self, out: &mut Lowered, expr: &Expr, env: &[Ty]) -> (Ty, Vec<Value>) {
+        let typed = self.typed;
+        let defs = typed.defs;
         match expr {
             Expr::Text { text, .. } => (Ty::Text, vec![self.text(text)]),
             Expr::Name { name, .. } => {
@@ -2912,13 +3776,20 @@ impl<'a> Lowering<'a> {
                 let at = at.expect("checked");
                 (out.types[at].1.clone(), out.values[at].clone())
             }
-            Expr::Call(call) => match defs.callee(call, &out.types) {
+            Expr::Call(call) => match typed.callee(call, env) {
                 Callee::Construct(s, args) => {
-                    let values = self.construction(out, call, s);
+                    let inner = args.clone();
+                    let values = self.construction(out, call, s, env, &inner);
                     (Ty::Struct(s, args), values)
                 }
+                Callee::Case(k) => {
+                    let ty = typed.type_of(expr, env);
+                    let payload = call.args.first().map(|a| &a.value);
+                    let values = self.case(out, &ty, k, payload, env);
+                    (ty, values)
+                }
                 Callee::Print => {
-                    let (_, text) = self.expr(out, &call.args[0].value);
+                    let (_, text) = self.expr(out, &call.args[0].value, env);
                     let newline = self.text(b"\n");
                     for value in [text[0], newline] {
                         out.steps.push(Step::Write {
@@ -2929,6 +3800,7 @@ impl<'a> Lowering<'a> {
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Run(instance, gives) => {
+                    let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
                     let params = defs.view(instance.template).params;
                     let function = self.place(instance);
                     // Arguments are worked out in the order they are
@@ -2936,12 +3808,12 @@ impl<'a> Lowering<'a> {
                     // parameters.
                     let mut args: Vec<Vec<Value>> = vec![Vec::new(); params.len()];
                     for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
-                        args[at] = self.expr(out, &arg.value).1;
+                        args[at] = self.expr(out, &arg.value, env).1;
                     }
                     // Then the defaults it leaves out, in the order of the
                     // parameters, as if they were written after the rest.
                     for (at, default) in defs.left_out(call) {
-                        args[at] = self.expr(out, default).1;
+                        args[at] = self.expr(out, default, &inner).1;
                     }
                     let results = self.locals(out, &gives);
                     out.steps.push(Step::Call {
@@ -2953,7 +3825,16 @@ impl<'a> Lowering<'a> {
                 }
             },
             Expr::Field { of, name, .. } => {
-                let (Ty::Struct(s, args), values) = self.expr(out, of) else {
+                if defs.qualified_case(of, &out.types).is_some() {
+                    let ty = typed.type_of(expr, env);
+                    let Ty::Enum(e, _) = ty else {
+                        unreachable!("checked")
+                    };
+                    let k = defs.case_of(e, name).expect("checked");
+                    let values = self.case(out, &ty, k, None, env);
+                    return (ty, values);
+                }
+                let (Ty::Struct(s, args), values) = self.expr(out, of, env) else {
                     unreachable!("checked")
                 };
                 let mut at = 0;
@@ -2967,24 +3848,197 @@ impl<'a> Lowering<'a> {
                 }
                 unreachable!("checked")
             }
+            Expr::Case { name, payload, .. } => {
+                let ty = typed.type_of(expr, env);
+                let Ty::Enum(e, _) = ty else {
+                    unreachable!("checked")
+                };
+                let k = defs.case_of(e, name).expect("checked");
+                let values = self.case(out, &ty, k, payload.as_deref(), env);
+                (ty, values)
+            }
+            Expr::Match(m) => {
+                let ty = typed.type_of(expr, env);
+                let values = self.match_expr(out, m, &ty, env);
+                (ty, values)
+            }
         }
+    }
+
+    /// The values of case `k` of the enum `ty`, holding the payload's
+    /// values, if it has one: the case, those values, and then as many
+    /// fillers as a larger case would take.
+    fn case(
+        &mut self,
+        out: &mut Lowered,
+        ty: &Ty,
+        k: usize,
+        payload: Option<&Expr>,
+        env: &[Ty],
+    ) -> Vec<Value> {
+        let mut values = vec![Value::Case(k)];
+        if let Some(p) = payload {
+            values.extend(self.expr(out, p, env).1);
+        }
+        values.resize(self.width(ty), Value::Case(0));
+        values
+    }
+
+    /// Lowers a `match` that gives `ty`: a decision between its blocks,
+    /// each of which ends by copying what it gives, and the names defined
+    /// before it that it assigns to, to the same locals. Gives the values
+    /// of what it gives.
+    fn match_expr(&mut self, out: &mut Lowered, m: &Match, ty: &Ty, env: &[Ty]) -> Vec<Value> {
+        let (of_ty, of) = self.expr(out, &m.of, env);
+        let results = self.locals(out, ty);
+        let mut assigned = Vec::new();
+        for arm in &m.arms {
+            for stmt in statements(&arm.body) {
+                if let Stmt::Define { name, .. } | Stmt::Assign { name, .. } = stmt
+                    && let Some(at) = out.types.iter().position(|(n, _)| n == name)
+                    && !assigned.contains(&at)
+                {
+                    assigned.push(at);
+                }
+            }
+        }
+        let merged = (assigned.into_iter())
+            .map(|at| {
+                let ty = out.types[at].1.clone();
+                (at, self.locals(out, &ty))
+            })
+            .collect();
+        let arms = Arms {
+            arms: &m.arms,
+            env,
+            results,
+            merged,
+        };
+        let rows = (m.arms.iter().enumerate())
+            .map(|(arm, a)| Row {
+                arm,
+                pattern: Some(&a.pattern),
+                binds: Vec::new(),
+            })
+            .collect();
+        let steps = self.decide(out, &arms, rows, &of, &of_ty);
+        out.steps.extend(steps);
+        for (at, locals) in &arms.merged {
+            out.values[*at] = locals.iter().map(|l| Value::Local(*l)).collect();
+        }
+        arms.results.iter().map(|l| Value::Local(*l)).collect()
+    }
+
+    /// The steps that run the block of the first of `rows` that matches the
+    /// value, whose values are `value` and whose type is `ty`.
+    fn decide(
+        &mut self,
+        out: &mut Lowered,
+        arms: &Arms,
+        rows: Vec<Row>,
+        value: &[Value],
+        ty: &Ty,
+    ) -> Vec<Step> {
+        let defs = self.typed.defs;
+        let Some(first) = rows.first() else {
+            return Vec::new();
+        };
+        match first.pattern {
+            None => return self.leaf(out, arms, first.clone()),
+            Some(Pattern::Bind { name, .. }) => {
+                let mut row = first.clone();
+                row.binds.push((name.clone(), ty.clone(), value.to_vec()));
+                return self.leaf(out, arms, row);
+            }
+            Some(Pattern::Case { .. }) => {}
+        }
+        let Ty::Enum(e, args) = ty else {
+            unreachable!("checked")
+        };
+        let mut choices = Vec::new();
+        for (k, case) in defs.file.enums[*e].cases.iter().enumerate() {
+            let holds = defs.cases[*e][k].as_ref().map(|t| t.subst(args));
+            let width = holds.as_ref().map_or(0, |t| self.width(t));
+            let inner = &value[1..1 + width];
+            let left: Vec<Row> = (rows.iter())
+                .filter_map(|r| match r.pattern {
+                    None => Some(r.clone()),
+                    Some(Pattern::Bind { name, .. }) => {
+                        let mut r = r.clone();
+                        r.binds.push((name.clone(), ty.clone(), value.to_vec()));
+                        r.pattern = None;
+                        Some(r)
+                    }
+                    Some(Pattern::Case { name, inner, .. }) if *name == case.name => Some(Row {
+                        pattern: inner.as_deref(),
+                        ..r.clone()
+                    }),
+                    Some(Pattern::Case { .. }) => None,
+                })
+                .collect();
+            let holds = holds.unwrap_or(Ty::Nothing);
+            choices.push(self.decide(out, arms, left, inner, &holds));
+        }
+        vec![Step::Match {
+            value: value[0],
+            arms: choices,
+        }]
+    }
+
+    /// The steps of the block a row leads to, with the names it binds, which
+    /// end by copying what the block gives and the names it assigns to.
+    fn leaf(&mut self, out: &mut Lowered, arms: &Arms, row: Row) -> Vec<Step> {
+        let before = std::mem::take(&mut out.steps);
+        let types = out.types.len();
+        let values = out.values.clone();
+        for (name, ty, value) in row.binds {
+            out.types.push((name, ty));
+            out.values.push(value);
+        }
+        let gives = self.block(out, &arms.arms[row.arm].body, arms.env);
+        for (local, value) in arms.results.iter().zip(gives) {
+            out.steps.push(Step::Set {
+                local: *local,
+                value,
+            });
+        }
+        for (at, locals) in &arms.merged {
+            for (local, value) in locals.iter().zip(out.values[*at].clone()) {
+                out.steps.push(Step::Set {
+                    local: *local,
+                    value,
+                });
+            }
+        }
+        out.types.truncate(types);
+        out.values = values;
+        std::mem::replace(&mut out.steps, before)
     }
 
     /// Works out the fields in the order they are written, and then the
     /// defaults of those left out in the order the struct declares them,
-    /// and gives their texts in the order the struct declares them.
-    fn construction(&mut self, out: &mut Lowered, call: &Call, s: usize) -> Vec<Value> {
-        let defs = self.defs;
+    /// and gives their values in the order the struct declares them. `inner`
+    /// stands for the struct's type parameters, which its defaults are
+    /// written among.
+    fn construction(
+        &mut self,
+        out: &mut Lowered,
+        call: &Call,
+        s: usize,
+        env: &[Ty],
+        inner: &[Ty],
+    ) -> Vec<Value> {
+        let defs = self.typed.defs;
         let def = &defs.file.structs[s];
         let mut fields: Vec<Vec<Value>> = vec![Vec::new(); def.fields.len()];
         for Arg { name, value } in &call.args {
-            let (_, value) = self.expr(out, value);
+            let (_, value) = self.expr(out, value, env);
             let (name, _) = name.as_ref().expect("checked");
             let at = def.fields.iter().position(|f| &f.name == name);
             fields[at.expect("checked")] = value;
         }
         for (at, default) in defs.left_out(call) {
-            fields[at] = self.expr(out, default).1;
+            fields[at] = self.expr(out, default, inner).1;
         }
         fields.concat()
     }
