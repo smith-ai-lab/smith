@@ -53,8 +53,8 @@ both = add(unit, unit)
   }
   ```
 - Both traits keep their laws for every type, so code written over them is right for every type. Every value equals itself, every two values of a type with `Ord` can be ordered, and `compare` gives `equal` exactly when `==` is true. A float that is not a number therefore equals itself and comes after every other float, and `is_nan` says whether a float is one.
-- Text is ordered by its bytes. `derive Ord for T` orders a struct by its fields in the order they are written, and an enum by the order of its cases and then by what a case holds.
-- `Eq` is given automatically, as [`Copy`](ownership.md) is: a struct, an enum, a tuple, or an array has it unless one of its parts lacks it, and `without Eq for T` takes it away. `Ord` is not given: an order is a choice, made with `derive Ord for T` or an `impl`.
+- Text is ordered by its bytes. The `Ord` a type is given orders a struct by its fields in the order they are written, a tuple and an array by their elements in order, and an enum by the order of its cases and then by what a case holds.
+- `Eq` and `Ord` are given automatically, as [`Copy`](ownership.md) is: a struct, an enum, a tuple, or an array has each unless one of its parts lacks it, and `without Ord for T` takes one away. A type's own `impl` replaces the one it was given.
 - `derive Add for Circle` generates an implementation field by field.
 - A trait states the defaults of its functions' parameters, and an `impl` does not repeat them.
 
