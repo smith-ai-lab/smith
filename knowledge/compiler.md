@@ -246,6 +246,7 @@ Every file of every release is also on GitLab, in the package registry of `gitla
 - The `mirror-releases` workflow runs after the `release` workflow finishes, and can be started by hand, which copies every file of every release that GitLab lacks. Pull requests and the merge queue never run it, and nothing waits on it.
 - A file already on GitLab is never uploaded again or changed. If its hash differs from GitHub's, the workflow fails and names the file. Which files to upload is decided by `.github/plan-uploads.sh` from two lists alone, so it is tested without GitLab or GitHub.
 - Both lists are read whole, however many releases and files there are, and a list that cannot be read fails the run before anything is uploaded.
+- Either list may be empty: an empty GitLab gets every file. When the run ends in success, GitLab held every file GitHub holds with the same hash, because the script reads GitLab's list again after uploading and fails, naming a file, when one is missing or differs.
 - It signs in with the secret `GITLAB_PACKAGE_TOKEN`, a deploy token that may write to the project's package registry and nothing else. Only the job that copies reads it.
 
 ## Bootstrap

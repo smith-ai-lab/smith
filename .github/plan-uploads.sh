@@ -1,14 +1,14 @@
 #!/bin/sh
 # Says which release files GitLab lacks. Reads what GitHub holds and what
 # GitLab holds, each a file of lines `<version> <file> <sha256>`, and prints
-# the lines GitHub has and GitLab lacks. A file both hold with different
+# the lines GitHub has and GitLab lacks. Either file may be empty. A file both hold with different
 # hashes is named on stderr and the exit status is 1, and nothing is printed.
 # Usage: plan-uploads.sh <github lines> <gitlab lines>
 set -eu
 
 awk '
   NF == 0 { next }
-  NR == FNR { held[$1 " " $2] = $3; next }
+  FILENAME == ARGV[1] { held[$1 " " $2] = $3; next }
   {
     key = $1 " " $2
     if (!(key in held)) { missing[++n] = $0 }

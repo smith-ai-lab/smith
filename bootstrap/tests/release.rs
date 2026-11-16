@@ -29,6 +29,18 @@ pub const ONCE: &[Test] = &[
         the_script_uploads_what_gitlab_lacks_for_every_number_of_releases_and_files,
     ),
     (
+        "an_empty_gitlab_gets_every_file_github_holds",
+        an_empty_gitlab_gets_every_file_github_holds,
+    ),
+    (
+        "the_script_copies_every_file_to_an_empty_gitlab",
+        the_script_copies_every_file_to_an_empty_gitlab,
+    ),
+    (
+        "a_run_whose_uploads_are_lost_or_changed_fails_and_names_a_file",
+        a_run_whose_uploads_are_lost_or_changed_fails_and_names_a_file,
+    ),
+    (
         "a_list_that_cannot_be_read_whole_fails_the_run_before_any_upload",
         a_list_that_cannot_be_read_whole_fails_the_run_before_any_upload,
     ),
@@ -267,9 +279,17 @@ fn holdings(g: &mut Gen) -> (Vec<String>, Vec<String>) {
             github.push(line);
         }
     }
-    // GitLab holds nothing GitHub lacks that matters to the plan, but a
-    // file of a version GitHub no longer lists must not disturb it.
-    gitlab.push("9.9.9 smith-x 00".to_string());
+    // A file of a version GitHub no longer lists must not disturb the plan,
+    // and either list may be empty.
+    if g.one_in(2) {
+        gitlab.push("9.9.9 smith-x 00".to_string());
+    }
+    if g.one_in(4) {
+        gitlab.clear();
+    }
+    if g.one_in(8) {
+        github.clear();
+    }
     (github, gitlab)
 }
 
@@ -280,8 +300,10 @@ fn plan(github: &[String], gitlab: &[String], tag: &str) -> std::process::Output
         std::thread::current().id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("github"), github.join("\n") + "\n").unwrap();
-    std::fs::write(dir.join("gitlab"), gitlab.join("\n") + "\n").unwrap();
+    for (name, lines) in [("github", github), ("gitlab", gitlab)] {
+        let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(dir.join(name), text).unwrap();
+    }
     let script = format!("{}/../.github/plan-uploads.sh", env!("CARGO_MANIFEST_DIR"));
     let output = Command::new("sh")
         .arg(script)
@@ -309,6 +331,16 @@ fn the_files_uploaded_are_those_github_has_and_gitlab_lacks() {
             .collect();
         assert_eq!(planned, expected);
     });
+}
+
+fn an_empty_gitlab_gets_every_file_github_holds() {
+    let github = vec!["0.1.0 a 11".to_string(), "0.1.0 b 22".to_string()];
+    let output = plan(&github, &[], "empty");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "0.1.0 a 11\n0.1.0 b 22\n"
+    );
 }
 
 fn a_file_gitlab_holds_with_another_hash_fails_the_run_and_is_named() {
@@ -410,8 +442,11 @@ slice() {
 case "$url" in
   */packages/generic/smith/*)
     rest=${url#*/packages/generic/smith/}
-    mkdir -p "$FAKE/gitlab/${rest%/*}"
-    cp "$upload" "$FAKE/gitlab/$rest"
+    case "${FAKE_UPLOAD:-keep}" in
+      keep) mkdir -p "$FAKE/gitlab/${rest%/*}"; cp "$upload" "$FAKE/gitlab/$rest" ;;
+      change) mkdir -p "$FAKE/gitlab/${rest%/*}"; echo changed > "$FAKE/gitlab/$rest" ;;
+      lose) ;;
+    esac
     echo "$rest" >> "$FAKE/uploads"
     ;;
   */package_files\?*)
@@ -429,12 +464,13 @@ esac
 
 /// Runs the mirror script against fakes of `gh` and `curl` that serve `world`
 /// and keep what is uploaded. Returns the folder the fakes keep their state in
-/// and the script's exit status.
+/// and its output.
 fn run_mirror(
     root: &std::path::Path,
     world: &World,
     broken_page: Option<usize>,
-) -> std::process::ExitStatus {
+    upload: &str,
+) -> std::process::Output {
     let (bin, fake) = (root.join("bin"), root.join("fake"));
     std::fs::create_dir_all(&bin).unwrap();
     for (name, text) in [("gh", FAKE_GH), ("curl", FAKE_CURL)] {
@@ -496,7 +532,8 @@ fn run_mirror(
     if let Some(page) = broken_page {
         command.env("FAKE_BROKEN_PAGE", page.to_string());
     }
-    command.output().unwrap().status
+    command.env("FAKE_UPLOAD", upload);
+    command.output().unwrap()
 }
 
 fn uploads(root: &std::path::Path) -> Vec<String> {
@@ -513,7 +550,7 @@ fn the_script_uploads_what_gitlab_lacks_for_every_number_of_releases_and_files()
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("smith-releases-{}-{id}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        assert!(run_mirror(&root, world, None).success());
+        assert!(run_mirror(&root, world, None, "keep").status.success());
         let mut expected = Vec::new();
         let mut index = 0;
         for (version, files) in &world.releases {
@@ -535,7 +572,7 @@ fn the_script_uploads_what_gitlab_lacks_for_every_number_of_releases_and_files()
             held: vec![true; world.held.len()],
         };
         let _ = std::fs::remove_file(root.join("fake/uploads"));
-        assert!(run_mirror(&root, &held, None).success());
+        assert!(run_mirror(&root, &held, None, "keep").status.success());
         assert_eq!(uploads(&root).len(), 0, "{before}");
         let _ = std::fs::remove_dir_all(&root);
     });
@@ -556,10 +593,78 @@ fn a_list_that_cannot_be_read_whole_fails_the_run_before_any_upload() {
     let world = World { releases, held };
     let root = std::env::temp_dir().join(format!("smith-releases-broken-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    assert!(!run_mirror(&root, &world, Some(2)).success());
+    assert!(!run_mirror(&root, &world, Some(2), "keep").status.success());
     assert!(uploads(&root).is_empty());
     let _ = std::fs::remove_dir_all(&root);
-    assert!(run_mirror(&root, &world, None).success());
+    assert!(run_mirror(&root, &world, None, "keep").status.success());
     assert_eq!(uploads(&root), vec!["0.4.0/smith-0".to_string()]);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Two releases with two files each, none of them on GitLab.
+fn two_releases(held: bool) -> World {
+    let releases = (0..2)
+        .map(|r| {
+            let version = format!("0.{r}.0");
+            let files = (0..2)
+                .map(|f| (format!("smith-{f}"), format!("{version} smith-{f}")))
+                .collect();
+            (version, files)
+        })
+        .collect();
+    World {
+        releases,
+        held: vec![held; 4],
+    }
+}
+
+fn the_script_copies_every_file_to_an_empty_gitlab() {
+    let root = std::env::temp_dir().join(format!("smith-releases-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let output = run_mirror(&root, &two_releases(false), None, "keep");
+    assert!(output.status.success());
+    let mut got = uploads(&root);
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "0.0.0/smith-0",
+            "0.0.0/smith-1",
+            "0.1.0/smith-0",
+            "0.1.0/smith-1"
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn a_run_whose_uploads_are_lost_or_changed_fails_and_names_a_file() {
+    for (mode, held) in [("lose", false), ("change", false), ("lose", true)] {
+        let root = std::env::temp_dir().join(format!(
+            "smith-releases-lost-{}-{mode}-{held}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let world = two_releases(held);
+        let output = run_mirror(&root, &world, None, mode);
+        // When GitLab holds everything already nothing is uploaded, so the
+        // mode changes nothing and the run succeeds.
+        if held {
+            assert!(output.status.success());
+        } else {
+            assert!(!output.status.success(), "{mode}");
+            let message = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                world
+                    .releases
+                    .iter()
+                    .flat_map(|(version, files)| files.iter().map(move |(name, _)| (version, name)))
+                    .any(|(version, name)| message.contains(name.as_str())
+                        && message.contains(version.as_str())),
+                "{message}"
+            );
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(!stdout.contains("holds every file"), "{stdout}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
