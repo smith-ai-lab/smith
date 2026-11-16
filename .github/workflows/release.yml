@@ -1,0 +1,126 @@
+name: release
+
+# Runs after a merge, never for a pull request or the merge queue, so it
+# cannot hold one up. It publishes a release when the merge changed what the
+# compiler does, and never deletes or replaces one.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: work out the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Work out the version and the notes
+        id: plan
+        run: |
+          set -eu
+          # A commit already inside a release makes no second one, so a
+          # rerun for the same merge changes nothing.
+          if [ -n "$(git tag --list 'v[0-9]*' --contains "$GITHUB_SHA")" ]; then
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last=$(git tag --list 'v[0-9]*' --merged "$GITHUB_SHA" --sort=-v:refname | head -n 1)
+          if [ -n "$last" ]; then
+            range="$last..$GITHUB_SHA"
+            previous=${last#v}
+          else
+            range="$GITHUB_SHA"
+            previous=none
+          fi
+          git log --format=%s "$range" > "$RUNNER_TEMP/subjects"
+          version=$(sh .github/next-version.sh "$previous" < "$RUNNER_TEMP/subjects")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          sed 's/^/- /' "$RUNNER_TEMP/subjects" > notes.md
+      - name: Keep the notes for the job that publishes
+        if: steps.plan.outputs.version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: linux_x64, os: ubuntu-latest }
+          - { target: macos_arm64, os: macos-latest }
+          - { target: linux_arm64, os: ubuntu-24.04-arm }
+          - { target: macos_x64, os: macos-15-intel }
+          - { target: windows_x64, os: windows-latest }
+          - { target: windows_arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build the optimized compiler
+        shell: bash
+        working-directory: bootstrap
+        env:
+          SMITH_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -eu
+          cargo build --release --locked
+          case "${{ matrix.target }}" in
+            windows_*) suffix=.exe ;;
+            *) suffix= ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "target/release/smith$suffix" "$RUNNER_TEMP/out/smith-${{ matrix.target }}$suffix"
+          "$RUNNER_TEMP/out/smith-${{ matrix.target }}$suffix" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smith-${{ matrix.target }}
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+
+  publish:
+    name: publish v${{ needs.plan.outputs.version }}
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    permissions:
+      # Only this job may write, and only to make a release.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -eu
+          mkdir files
+          cp parts/smith-*/* files/
+          (cd files && sha256sum smith-* > SHA256SUMS)
+          # Never replaced: a release that already exists is left alone.
+          if gh release view "v$VERSION" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "v$VERSION" files/* \
+            --repo "$REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes-file parts/notes/notes.md
