@@ -1,0 +1,8 @@
+# The kinds of machine that run the tests that depend on the machine, each as
+# a target and the runner that runs it. `needs-machines.sh` reads it. Every
+# target is here but the one the `linux` job of `ci.yml` runs.
+macos_arm64 macos-latest
+linux_arm64 ubuntu-24.04-arm
+macos_x64 macos-15-intel
+windows_x64 windows-latest
+windows_arm64 windows-11-arm

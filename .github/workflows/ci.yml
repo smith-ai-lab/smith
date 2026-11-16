@@ -24,7 +24,6 @@ jobs:
     outputs:
       compiler: ${{ steps.diff.outputs.compiler }}
       install: ${{ steps.diff.outputs.install }}
-      machines: ${{ steps.diff.outputs.machines }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -35,7 +34,6 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
-          echo 'machines=["macos-latest","ubuntu-24.04-arm","macos-15-intel","windows-latest","windows-11-arm"]' >> "$GITHUB_OUTPUT"
           echo "compiler=$(sh .github/changed.sh "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
           if git diff --name-only "$BASE" "$HEAD" | grep -Eq '^(install\.sh|\.github/check-install\.sh)$'; then
             echo "install=true" >> "$GITHUB_OUTPUT"
@@ -66,9 +64,42 @@ jobs:
       - name: Timings
         run: target/debug/smith build --timings tests/cases/hello.smith
 
+  # Which kinds of machine need their tests. The tests that depend on the
+  # machine run only executables, so a kind of machine has nothing new to find
+  # when every executable they would run for its target has the bytes it had
+  # on the commit the change is based on, where they passed. This job builds
+  # the compiler of that commit and of this one, on a machine that is never
+  # scarce, and compares what each would run, as `needs-machines.sh` says.
+  decide:
+    name: which machines need a test
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      machines: ${{ steps.decide.outputs.machines }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+      - id: decide
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -eu
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+          sh .github/fingerprint.sh "$PWD" > head.fingerprint &
+          sh .github/fingerprint.sh "$RUNNER_TEMP/base" > base.fingerprint &
+          wait
+          echo "== the base"; cat base.fingerprint
+          echo "== this change"; cat head.fingerprint
+          machines=$(sh .github/needs-machines.sh base.fingerprint head.fingerprint |
+            jq -Rsc 'split("\n") | map(select(. != ""))')
+          echo "the machines that need a test: $machines"
+          echo "machines=$machines" >> "$GITHUB_OUTPUT"
+
   # The tests whose result depends on the machine, on each other kind of machine
-  # a target needs: macos_arm64, linux_arm64, macos_x64, windows_x64, and
-  # windows_arm64. linux_x64 is the job above.
+  # a target needs, when `decide` names it. linux_x64 is the job above.
   #
   # GitHub ends a job that waits about fifteen minutes for a machine as
   # `cancelled`, without a step run, and nothing here sets that limit. So a job
@@ -77,12 +108,12 @@ jobs:
   # first `machine` run only for the kinds whose job never started.
   machine:
     name: test on ${{ matrix.os }}
-    needs: changes
-    if: needs.changes.outputs.compiler == 'true'
+    needs: [changes, decide]
+    if: ${{ needs.decide.result == 'success' && needs.decide.outputs.machines != '[]' }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.changes.outputs.machines) }}
+        os: ${{ fromJSON(needs.decide.outputs.machines) }}
     uses: ./.github/workflows/machine-test.yml
     with:
       os: ${{ matrix.os }}
@@ -197,7 +228,7 @@ jobs:
 
   ci:
     name: ci
-    needs: [changes, linux, machine, machine2, machine3, install, commits, status]
+    needs: [changes, linux, decide, machine, machine2, machine3, install, commits, status]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -212,14 +243,15 @@ jobs:
             if sh .github/ci-result.sh "job=$result"; then echo "-> passes"; else echo "-> fails"; fi
           done
       # A machine job that never started and then started again counts by how
-      # the newest one ended, not by the first, and every kind of machine must
-      # show a newest job that succeeded.
+      # the newest one ended, not by the first, and every kind of machine that
+      # `decide` named must show a newest job that succeeded. A kind it did not
+      # name has no job, and counts as skipped on purpose.
       - name: Judge the machine jobs
         id: machine
-        if: ${{ needs.changes.outputs.compiler == 'true' }}
+        if: ${{ needs.decide.result == 'success' && needs.decide.outputs.machines != '[]' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          MACHINES: ${{ needs.changes.outputs.machines }}
+          MACHINES: ${{ needs.decide.outputs.machines }}
         run: |
           set -eu
           wanted=$(echo "$MACHINES" | jq -r '.[]')
@@ -232,6 +264,7 @@ jobs:
           sh .github/ci-result.sh
           "changes=${{ needs.changes.result }}"
           "linux=${{ needs.linux.result }}"
+          "decide=${{ needs.decide.result }}"
           "machine=${{ steps.machine.outputs.result || needs.machine.result }}"
           "install=${{ needs.install.result }}"
           "commits=${{ needs.commits.result }}"

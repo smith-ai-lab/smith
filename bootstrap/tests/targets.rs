@@ -6,8 +6,11 @@
 //! they run on. Continuous integration runs them on each kind of machine a
 //! target needs, and every other test once.
 
+use std::cell::RefCell;
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
+use smith::diag::Error;
 use smith::eval::{self, Outcome};
 use smith::target::Target;
 use smith::{compile, lower};
@@ -15,7 +18,7 @@ use smith::{compile, lower};
 use crate::Test;
 use crate::choices;
 use crate::enums;
-use crate::generate;
+use crate::generate::{self, Gen};
 use crate::lambdas;
 use crate::programs;
 use crate::reprs;
@@ -95,12 +98,15 @@ pub const MACHINE: &[Test] = &[
 
 const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
 
-/// The targets the compiler can build for, in the order of the enum.
+/// The targets the compiler can build for, in the order of the enum. In a
+/// fingerprint of one target, that one alone.
 pub fn buildable() -> Vec<Target> {
     let program = lower(HELLO.as_bytes()).unwrap();
+    let only = FINGERPRINT.with_borrow(|f| f.as_ref().map(|f| f.only));
     Target::ALL
         .iter()
         .copied()
+        .filter(|t| only.is_none_or(|only| only == *t))
         .filter(|t| t.emit(&program).is_some())
         .collect()
 }
@@ -110,12 +116,123 @@ pub fn any() -> Target {
     buildable()[0]
 }
 
-/// The targets the compiler can build for that this machine can run.
+/// The targets the compiler can build for that this machine can run. A
+/// fingerprint is made by no machine in particular, so for it every target
+/// is run.
 pub fn runnable() -> Vec<Target> {
     buildable()
         .into_iter()
-        .filter(|t| Target::host() == Some(*t))
+        .filter(|t| fingerprinting() || Target::host() == Some(*t))
         .collect()
+}
+
+/// How the compiler builds an executable.
+pub type Build = fn(&[u8], Target) -> Result<Vec<u8>, Vec<Error>>;
+
+/// What a fingerprint of one target is made of: how it builds, and what the
+/// tests that depend on the machine would run for it.
+struct Fingerprint {
+    only: Target,
+    build: Build,
+    entries: Vec<String>,
+}
+
+thread_local! {
+    static FINGERPRINT: RefCell<Option<Fingerprint>> = const { RefCell::new(None) };
+}
+
+/// Whether the tests that depend on the machine are being read for what they
+/// would run, as `fingerprint` does, instead of run.
+pub fn fingerprinting() -> bool {
+    FINGERPRINT.with_borrow(|f| f.is_some())
+}
+
+/// The executable for `target` that the tests that depend on the machine
+/// run. Every such test gets its executables here, so a fingerprint sees
+/// each one.
+pub fn build(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
+    match FINGERPRINT.with_borrow(|f| f.as_ref().map(|f| f.build)) {
+        Some(build) => build(source, target),
+        None => compile(source, target),
+    }
+}
+
+/// Notes what a test would run for `target`, when a fingerprint is being
+/// made. The parts are an executable and whatever it is checked against.
+pub fn record(target: Target, parts: &[&[u8]]) {
+    FINGERPRINT.with_borrow_mut(|f| {
+        if let Some(f) = f.as_mut().filter(|f| f.only == target) {
+            let mut bytes = Vec::new();
+            for part in parts {
+                bytes.extend_from_slice(&(part.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(part);
+            }
+            f.entries.push(sha256::hex(&bytes));
+        }
+    });
+}
+
+/// Notes the program `source` for every target the compiler builds for.
+pub fn record_for_every_target(source: &[u8]) {
+    for target in buildable() {
+        let bytes = build(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+        record(target, &[&bytes]);
+    }
+}
+
+/// Builds `source` for `target` and checks that its executable does what
+/// `said` says, or, for a fingerprint, notes both.
+pub fn runs_as(source: &[u8], target: Target, said: &Outcome) {
+    let bytes = build(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+    if fingerprinting() {
+        record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
+    } else {
+        assert_eq!(run(&bytes), *said, "{}", target.name());
+    }
+}
+
+/// The tests whose result depends on the kind of machine they run on.
+pub fn machine() -> Vec<Test> {
+    [MACHINE, crate::cli::MACHINE].concat()
+}
+
+/// For each target the compiler builds for, a hash of every executable the
+/// tests that depend on the machine would run for it, with what each is
+/// checked against, built as `build` builds. Two compilers that give the
+/// same hash for a target give those tests nothing new to find on any
+/// machine that runs it. Nothing is run, so the result is the same on
+/// every machine. Each target is read on its own thread, as the tests see
+/// no other target, so no target's hash depends on another's.
+pub fn fingerprint(build: Build) -> Vec<(Target, String)> {
+    let targets = buildable();
+    std::thread::scope(|scope| {
+        let threads: Vec<_> = targets
+            .iter()
+            .map(|&target| scope.spawn(move || (target, fingerprint_of(target, build))))
+            .collect();
+        threads
+            .into_iter()
+            .map(|t| t.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
+}
+
+/// The hash of everything the tests that depend on the machine would run
+/// for one target.
+fn fingerprint_of(target: Target, build: Build) -> String {
+    FINGERPRINT.with_borrow_mut(|f| {
+        *f = Some(Fingerprint {
+            only: target,
+            build,
+            entries: Vec::new(),
+        })
+    });
+    for (_, test) in machine() {
+        test();
+    }
+    let mut entries = FINGERPRINT.with_borrow_mut(|f| f.take().unwrap().entries);
+    entries.sort();
+    sha256::hex(entries.join("\n").as_bytes())
 }
 
 /// Each target this machine does not run, with why.
@@ -224,81 +341,47 @@ fn every_target_builds_identical_bytes_twice() {
     });
 }
 
-fn every_executable_does_what_the_evaluator_says() {
+/// Checks, for `cases` generated programs, that each executable does what
+/// the evaluator says its program does.
+fn every_executable_agrees<T: Debug>(
+    seed: u64,
+    cases: u64,
+    generate: impl Fn(&mut Gen) -> T,
+    source: impl Fn(&T) -> &[u8],
+) {
     let targets = runnable();
-    generate::check(3, 150, programs::program, |case| {
-        let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
+    generate::check(seed, cases, generate, |case| {
+        let source = source(case);
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         let said = eval::run(&program);
         for &target in &targets {
-            let bytes = compile(&case.source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
+            runs_as(source, target, &said);
         }
     });
+}
+
+fn every_executable_does_what_the_evaluator_says() {
+    every_executable_agrees(3, 150, programs::program, |case| &case.source);
 }
 
 fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(18, 60, traits::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(18, 60, traits::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(25, 60, enums::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(25, 60, enums::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_tuples_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(28, 60, tuples::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(28, 60, tuples::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(32, 60, lambdas::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(32, 60, lambdas::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(43, 60, tries::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(43, 60, tries::program, |case| case.source.as_bytes());
 }
 
 fn a_struct_bound_to_two_names_is_two_equal_structs() {
@@ -308,49 +391,21 @@ fn a_struct_bound_to_two_names_is_two_equal_structs() {
         let copy = eval::run(&lower(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
         assert_eq!(said, copy);
         for &target in &targets {
-            let bytes = compile(shared.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), copy, "{}", target.name());
+            runs_as(shared.as_bytes(), target, &copy);
         }
     });
 }
 
 fn every_executable_of_a_program_with_text_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(37, 60, text::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(37, 60, text::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(64, 60, reprs::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(64, 60, reprs::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
-    let targets = runnable();
-    generate::check(68, 60, choices::program, |case| {
-        let source = case.source.as_bytes();
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = eval::run(&program);
-        for &target in &targets {
-            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
-            assert_eq!(run(&bytes), said, "{}", target.name());
-        }
-    });
+    every_executable_agrees(68, 60, choices::program, |case| case.source.as_bytes());
 }
 
 /// The most memory, in KiB, a program run under a limit may map.
@@ -376,7 +431,9 @@ fn limited(path: &Path) -> Option<std::process::Command> {
 /// program builds is larger than the limit lets it map, and everything
 /// before it fits, so the program prints what comes before and no more.
 fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more() {
-    if limited(Path::new("")).is_none() {
+    // Whether a machine can limit memory is for the machine to say, so a
+    // fingerprint, which no machine makes, counts the programs for every one.
+    if !fingerprinting() && limited(Path::new("")).is_none() {
         return;
     }
     let targets = runnable();
@@ -385,7 +442,11 @@ fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothi
     generate::check(38, 20, generate, |(case, before)| {
         let source = case.source.as_bytes();
         for &target in &targets {
-            let executable = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            let executable = build(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            if fingerprinting() {
+                record(target, &[&executable, before]);
+                continue;
+            }
             let ran = run_with(&executable, |path| limited(path).expect("a limit"));
             // A status of its own, not the end a signal gives.
             assert!(ran.status > 0, "{}: {}", target.name(), ran.status);
@@ -406,8 +467,7 @@ fn a_long_literal_is_printed_whole() {
     let said = eval::run(&program);
     assert_eq!(said.stdout, format!("{text}\n").into_bytes());
     for target in runnable() {
-        let bytes = compile(source.as_bytes(), target).unwrap();
-        assert_eq!(run(&bytes), said, "{}", target.name());
+        runs_as(source.as_bytes(), target, &said);
     }
 }
 
@@ -441,7 +501,8 @@ fn hashes() -> String {
     let mut text = String::new();
     for target in buildable() {
         for source in case_files() {
-            if let Ok(bytes) = compile(&std::fs::read(&source).unwrap(), target) {
+            if let Ok(bytes) = build(&std::fs::read(&source).unwrap(), target) {
+                record(target, &[&bytes]);
                 let file = source.file_name().unwrap().to_str().unwrap();
                 let hash = sha256::hex(&bytes);
                 text.push_str(&format!("{} {file} {hash}\n", target.name()));
@@ -458,6 +519,16 @@ fn every_target_builds_the_cases_to_their_kept_hashes() {
         return;
     }
     let kept = std::fs::read_to_string(hashes_file()).unwrap_or_default();
+    if fingerprinting() {
+        for line in kept.lines() {
+            let target = Target::ALL.iter().find(|t| line.starts_with(t.name()));
+            record(
+                *target.expect("a kept hash names a target"),
+                &[line.as_bytes()],
+            );
+        }
+        return;
+    }
     let missing: Vec<&str> = built.lines().filter(|l| !kept.contains(l)).collect();
     let stale: Vec<&str> = kept.lines().filter(|l| !built.contains(l)).collect();
     assert!(

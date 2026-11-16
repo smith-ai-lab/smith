@@ -140,6 +140,12 @@ fn the_cases_run_as_their_out_files_say() {
     }
     for target in targets::runnable() {
         for source in cases("out") {
+            if targets::fingerprinting() {
+                let built = targets::build(&std::fs::read(&source).unwrap(), target);
+                let expected = std::fs::read(source.with_extension("out")).unwrap();
+                targets::record(target, &[&built.unwrap(), &expected]);
+                continue;
+            }
             let name = source.file_stem().unwrap().to_str().unwrap();
             let file = format!("{name}.smith");
             let dir = folder(name);
@@ -205,6 +211,9 @@ fn main_smith_is_the_entry_and_takes_the_folder_name() {
 }
 
 fn without_a_flag_the_target_is_this_machine() {
+    if targets::fingerprinting() {
+        return targets::record_for_every_target(HELLO.as_bytes());
+    }
     let dir = folder("host");
     std::fs::write(dir.join("hello.smith"), HELLO).unwrap();
     let built = smith(&dir, &["build", "hello.smith"]);
@@ -346,6 +355,9 @@ fn a_failed_build_lists_the_stages_that_ran_after_its_errors() {
 }
 
 fn run_prints_the_timings_before_the_program_runs() {
+    if targets::fingerprinting() {
+        return targets::record_for_every_target(HELLO.as_bytes());
+    }
     if !Target::host().is_some_and(|host| targets::runnable().contains(&host)) {
         return;
     }
