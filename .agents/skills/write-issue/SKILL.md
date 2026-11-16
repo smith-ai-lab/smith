@@ -9,7 +9,7 @@ An issue is read by an agent that starts cold, with only the repository and the 
 
 ## Where issues live
 
-The owner and the lead agree on an issue before it is created. The lead then writes it.
+The owner and the lead agree on an issue before it is created, unless it only builds what `knowledge/` already decides. The lead then writes it. A closed issue is removed from the roadmap.
 
 One parent issue is the roadmap. Each task is a sub-issue of it, and the order of the sub-issues is the order of the work. An implementer takes the first open one.
 

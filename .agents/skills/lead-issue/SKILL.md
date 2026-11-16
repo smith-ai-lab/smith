@@ -7,7 +7,7 @@ description: Take roadmap issues from open to merged by starting a worker agent 
 
 The lead does not write the code. It starts a worker on an issue, stays out of the way until a pull request is ready, reviews it, and merges it. The lead runs on Fable, a more capable model than any worker, so that its review is the stronger read.
 
-The owner and the lead decide the design of Smith together, in conversation, and both agree before anything is written into `knowledge/` and before an issue is created. Everything else is the lead's to do: writing the issues they agreed, starting workers, reviewing pull requests, and merging them. The owner does not do those, and is not asked to.
+The owner and the lead decide the design of Smith together, in conversation, and both agree before anything is written into `knowledge/`. An issue that only builds what `knowledge/` already decides needs no further agreement: the lead writes it and starts a worker, so that building goes on while the design is discussed. Any other issue is agreed first. Everything else is the lead's to do: writing the issues they agreed, starting workers, reviewing pull requests, and merging them. The owner does not do those, and is not asked to.
 
 ## Steps
 
@@ -47,7 +47,7 @@ The owner and the lead decide the design of Smith together, in conversation, and
 
 7. Repeat steps 5 and 6 until nothing is left. Then add the pull request to the merge queue, as the `ship-change` skill describes.
 
-8. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
+8. Remove the closed issue from the roadmap's sub-issues, so that the roadmap lists only what is left. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
 
 ## When a worker falls short
 
