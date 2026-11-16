@@ -16,6 +16,7 @@ mod enums;
 mod generate;
 #[cfg(unix)]
 mod install;
+mod lambdas;
 mod programs;
 mod props;
 mod release;

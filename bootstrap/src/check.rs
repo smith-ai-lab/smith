@@ -28,11 +28,13 @@
 //! is written, so it is lowered as if it were written there, and no copy of
 //! a function knows which of its arguments were left out.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::diag::{Error, Pos};
 use crate::ir::{self, Step, Stream, Value};
-use crate::parser::{Arg, Arm, Call, Expr, File, Function, Generic, Match, Pattern, Stmt, Type};
+use crate::parser::{
+    Arg, Arm, Call, Expr, File, Function, Generic, Lambda, Match, Pattern, Stmt, Type,
+};
 
 /// The effects the standard library declares, other than `console`.
 const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
@@ -82,6 +84,9 @@ enum Ty {
     Enum(usize, Vec<Ty>),
     /// A tuple of two values or more, with the type of each.
     Tuple(Vec<Ty>),
+    /// A function: the types of its parameters, followed by the type it
+    /// gives.
+    Fn(Vec<Ty>),
     /// A type parameter of the function, the implementation, the struct,
     /// or the trait the type is written in, by its place among them.
     Param(usize),
@@ -124,13 +129,29 @@ impl Ty {
         }
     }
 
-    /// The types in its brackets, for a struct or an enum, and the types of
-    /// its elements, for a tuple.
+    /// The function with parameters and a result of these types, the
+    /// result last, or unknown if one of them is.
+    fn func(items: Vec<Ty>) -> Ty {
+        if items.contains(&Ty::Unknown) {
+            Ty::Unknown
+        } else {
+            Ty::Fn(items)
+        }
+    }
+
+    /// The types in its brackets, for a struct or an enum, the types of its
+    /// elements, for a tuple, and those of its parameters and its result,
+    /// for a function.
     fn args(&self) -> &[Ty] {
         match self {
-            Ty::Struct(_, args) | Ty::Enum(_, args) | Ty::Tuple(args) => args,
+            Ty::Struct(_, args) | Ty::Enum(_, args) | Ty::Tuple(args) | Ty::Fn(args) => args,
             _ => &[],
         }
+    }
+
+    /// Whether it is a function, or holds one.
+    fn holds_fn(&self) -> bool {
+        matches!(self, Ty::Fn(_)) || self.args().iter().any(Ty::holds_fn)
     }
 
     /// The same kind of type, with these types in its brackets.
@@ -139,6 +160,7 @@ impl Ty {
             Ty::Struct(s, _) => Ty::structure(*s, args),
             Ty::Enum(e, _) => Ty::enumeration(*e, args),
             Ty::Tuple(_) => Ty::tuple(args),
+            Ty::Fn(_) => Ty::func(args),
             t => t.clone(),
         }
     }
@@ -169,6 +191,7 @@ impl Ty {
             Ty::Struct(s, of) => Ty::Struct(*s, of.iter().map(|t| t.partial(args)).collect()),
             Ty::Enum(e, of) => Ty::Enum(*e, of.iter().map(|t| t.partial(args)).collect()),
             Ty::Tuple(of) => Ty::Tuple(of.iter().map(|t| t.partial(args)).collect()),
+            Ty::Fn(of) => Ty::Fn(of.iter().map(|t| t.partial(args)).collect()),
             t => t.clone(),
         }
     }
@@ -199,7 +222,7 @@ fn agrees(a: &Ty, b: &Ty) -> bool {
         (Ty::Struct(s, x), Ty::Struct(t, y)) | (Ty::Enum(s, x), Ty::Enum(t, y)) => {
             s == t && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
-        (Ty::Tuple(x), Ty::Tuple(y)) => {
+        (Ty::Tuple(x), Ty::Tuple(y)) | (Ty::Fn(x), Ty::Fn(y)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
         (a, b) => a == b,
@@ -222,7 +245,7 @@ fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
         (Ty::Struct(s, a), Ty::Struct(t, b)) | (Ty::Enum(s, a), Ty::Enum(t, b)) => {
             s == t && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
-        (Ty::Tuple(a), Ty::Tuple(b)) => {
+        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::Fn(a), Ty::Fn(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
         (a, b) => a == b,
@@ -262,7 +285,7 @@ fn overlap(a: &Ty, b: &Ty, sol: &mut Vec<Option<Ty>>) -> bool {
         (Ty::Struct(s, x), Ty::Struct(t, y)) | (Ty::Enum(s, x), Ty::Enum(t, y)) => {
             s == t && x.iter().zip(&y).all(|(a, b)| overlap(a, b, sol))
         }
-        (Ty::Tuple(x), Ty::Tuple(y)) => {
+        (Ty::Tuple(x), Ty::Tuple(y)) | (Ty::Fn(x), Ty::Fn(y)) => {
             x.len() == y.len() && x.iter().zip(&y).all(|(a, b)| overlap(a, b, sol))
         }
         (Ty::Unknown, _) | (_, Ty::Unknown) => true,
@@ -387,7 +410,11 @@ impl<'a> Defs<'a> {
         let name = t.name.as_str();
         if name.is_empty() {
             let items = t.args.iter().map(|a| self.resolve(a, scope, errors));
-            return Ty::tuple(items.collect());
+            return if t.function {
+                Ty::func(items.collect())
+            } else {
+                Ty::tuple(items.collect())
+            };
         }
         let no_args = |what: &str, errors: &mut Vec<Error>| {
             if !t.args.is_empty() {
@@ -580,6 +607,11 @@ impl<'a> Defs<'a> {
                 let items: Vec<String> = items.iter().map(|t| self.text(t, scope)).collect();
                 format!("({})", items.join(", "))
             }
+            Ty::Fn(items) => {
+                let items: Vec<String> = items.iter().map(|t| self.text(t, scope)).collect();
+                let (gives, params) = items.split_last().expect("a result");
+                format!("({}) -> {gives}", params.join(", "))
+            }
             Ty::Param(p) => scope.names[*p].clone(),
             Ty::Nothing => "()".to_string(),
             Ty::Unknown => "nothing".to_string(),
@@ -615,6 +647,13 @@ impl<'a> Defs<'a> {
                         .map(|a| text(defs, a, sol, vars, scope))
                         .collect();
                     format!("({})", items.join(", "))
+                }
+                Ty::Fn(items) => {
+                    let items: Vec<String> = (items.iter())
+                        .map(|a| text(defs, a, sol, vars, scope))
+                        .collect();
+                    let (gives, params) = items.split_last().expect("a result");
+                    format!("({}) -> {gives}", params.join(", "))
                 }
                 Ty::Struct(_, args) | Ty::Enum(_, args) if !args.is_empty() => {
                     let args: Vec<String> = args
@@ -756,7 +795,10 @@ fn names(list: &[&str]) -> String {
 /// How a type is written in the source.
 fn written_type(t: &Type) -> String {
     let args: Vec<String> = t.args.iter().map(written_type).collect();
-    if t.name.is_empty() {
+    if t.function {
+        let (gives, params) = args.split_last().expect("a result");
+        format!("({}) -> {gives}", params.join(", "))
+    } else if t.name.is_empty() {
         format!("({})", args.join(", "))
     } else if args.is_empty() {
         t.name.clone()
@@ -820,15 +862,20 @@ fn written_expr(e: &Expr) -> String {
         Expr::Name { name, .. } => name.clone(),
         Expr::Call(call) => {
             let args: Vec<String> = (call.args.iter())
+                .filter(|a| !a.after)
                 .map(|a| match &a.name {
                     Some((name, _)) => format!("{name}: {}", written_expr(&a.value)),
                     None => written_expr(&a.value),
                 })
                 .collect();
-            match &call.qualifier {
+            let mut text = match &call.qualifier {
                 Some((q, _)) => format!("{q}.{}({})", call.callee, args.join(", ")),
                 None => format!("{}({})", call.callee, args.join(", ")),
+            };
+            for a in call.args.iter().filter(|a| a.after) {
+                text.push_str(&format!(" {}", written_expr(&a.value)));
             }
+            text
         }
         Expr::Field { of, name, .. } => format!("{}.{name}", written_expr(of)),
         Expr::Case { name, payload, .. } => match payload {
@@ -839,6 +886,11 @@ fn written_expr(e: &Expr) -> String {
         Expr::Tuple { items, .. } => {
             let items: Vec<String> = items.iter().map(written_expr).collect();
             format!("({})", items.join(", "))
+        }
+        Expr::Lambda(l) if l.params.is_empty() => "{ ... }".to_string(),
+        Expr::Lambda(l) => {
+            let params: Vec<&str> = l.params.iter().map(|(p, _)| p.as_str()).collect();
+            format!("fn({}) {{ ... }}", params.join(", "))
         }
     }
 }
@@ -994,13 +1046,19 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 found.push(Item::Trait(k));
             }
         };
-        // A case written in full names its enum.
+        // A case written in full names its enum, and a function may be
+        // passed as a value by its name.
         let called = |values: Vec<&Expr>, found: &mut Vec<Item>| {
             for e in exprs(values.iter().copied()) {
                 if let Expr::Field { of, .. } = e
                     && let Expr::Name { name, .. } = &**of
                 {
                     type_name(name, found);
+                }
+                if let Expr::Name { name, .. } = e
+                    && let Some(&f) = function_names.get(name.as_str())
+                {
+                    found.push(Item::Fn(f));
                 }
             }
             for call in calls(values) {
@@ -1185,6 +1243,8 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         defs: &defs,
         errors,
         types: HashMap::new(),
+        value_calls: HashSet::new(),
+        fn_values: HashMap::new(),
     };
     checker.main(&file.functions[main]);
     for &item in &reached {
@@ -1222,6 +1282,8 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     let typed = Typed {
         defs: &defs,
         types: checker.types,
+        value_calls: checker.value_calls,
+        fn_values: checker.fn_values,
     };
     let mut errors = Vec::new();
     typed.copies(&start, &mut Vec::new(), &mut Vec::new(), &mut errors);
@@ -1508,34 +1570,41 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 walk(item, out);
             }
         }
+        Expr::Lambda(l) => {
+            for value in values(&l.body) {
+                walk(value, out);
+            }
+        }
         Expr::Text { .. } | Expr::Name { .. } => {}
     }
 }
 
-/// Every statement of a body, and those of the blocks of each `match` in
-/// them, each before those inside it.
+/// Every statement of a body, and those of the blocks of each `match` and
+/// each lambda in them, each before those inside it.
 fn statements(body: &[Stmt]) -> Vec<&Stmt> {
-    /// Each `match` in the expression that is not inside another's block.
-    fn matches<'a>(e: &'a Expr, out: &mut Vec<&'a Match>) {
+    /// The blocks of each `match` and each lambda in the expression that is
+    /// not inside another's block.
+    fn blocks<'a>(e: &'a Expr, out: &mut Vec<&'a [Stmt]>) {
         match e {
             Expr::Call(call) => {
                 for arg in &call.args {
-                    matches(&arg.value, out);
+                    blocks(&arg.value, out);
                 }
             }
-            Expr::Field { of, .. } => matches(of, out),
+            Expr::Field { of, .. } => blocks(of, out),
             Expr::Case {
                 payload: Some(p), ..
-            } => matches(p, out),
+            } => blocks(p, out),
             Expr::Match(m) => {
-                matches(&m.of, out);
-                out.push(m);
+                blocks(&m.of, out);
+                out.extend(m.arms.iter().map(|arm| arm.body.as_slice()));
             }
             Expr::Tuple { items, .. } => {
                 for item in items {
-                    matches(item, out);
+                    blocks(item, out);
                 }
             }
+            Expr::Lambda(l) => out.push(&l.body),
             Expr::Case { .. } | Expr::Text { .. } | Expr::Name { .. } => {}
         }
     }
@@ -1543,11 +1612,9 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
     for (stmt, value) in body.iter().zip(values(body)) {
         out.push(stmt);
         let mut found = Vec::new();
-        matches(value, &mut found);
-        for m in found {
-            for arm in &m.arms {
-                out.extend(statements(&arm.body));
-            }
+        blocks(value, &mut found);
+        for block in found {
+            out.extend(statements(block));
         }
     }
     out
@@ -1640,6 +1707,9 @@ enum Callee {
     Case(usize),
     /// A copy of a function to run, and what it gives.
     Run(Instance, Ty),
+    /// The function a name holds, which a parameter or a lambda's parameter
+    /// was given.
+    Value,
 }
 
 /// For each argument of a checked call, the place of its parameter.
@@ -1648,6 +1718,7 @@ fn params_of(params: &[(String, Ty)], args: &[Arg]) -> Vec<usize> {
     (args.iter())
         .map(|arg| match &arg.name {
             Some((name, _)) => params.iter().position(|(p, _)| p == name).expect("checked"),
+            None if arg.after => params.len() - 1,
             None => {
                 next += 1;
                 next - 1
@@ -1699,6 +1770,11 @@ impl<'a> Defs<'a> {
         let mut next = 0;
         for arg in &call.args {
             match &arg.name {
+                None if arg.after && by_position => {
+                    if let Some(g) = given.last_mut() {
+                        *g = true;
+                    }
+                }
                 Some((n, _)) => {
                     if let Some(i) = slots.iter().position(|(s, _)| s == n) {
                         given[i] = true;
@@ -1790,6 +1866,11 @@ fn addr<T>(node: &T) -> usize {
 struct Typed<'a> {
     defs: &'a Defs<'a>,
     types: HashMap<usize, Ty>,
+    /// The calls of a name that holds a function, by their addresses.
+    value_calls: HashSet<usize>,
+    /// The names of functions passed as values, by their addresses, with
+    /// the function each names.
+    fn_values: HashMap<usize, usize>,
 }
 
 impl<'a> Typed<'a> {
@@ -1813,6 +1894,9 @@ impl<'a> Typed<'a> {
                 .map(|t| t.unwrap_or(Ty::Unknown))
                 .collect::<Vec<Ty>>()
         };
+        if self.value_calls.contains(&addr(call)) {
+            return Callee::Value;
+        }
         let (k, fi) = match &call.qualifier {
             None => {
                 let name = call.callee.as_str();
@@ -1870,7 +1954,7 @@ impl<'a> Typed<'a> {
                 }
             },
             Callee::Construct(_, args) => args.clone(),
-            Callee::Print | Callee::Case(_) => Vec::new(),
+            Callee::Print | Callee::Case(_) | Callee::Value => Vec::new(),
         }
     }
 
@@ -1889,7 +1973,7 @@ impl<'a> Typed<'a> {
         cycles: &mut Vec<Pos>,
     ) {
         let left_out = self.defs.left_out(call);
-        if left_out.is_empty() {
+        if left_out.is_empty() || self.value_calls.contains(&addr(call)) {
             return;
         }
         let inner_env = self.env_of(&self.callee(call, env));
@@ -1915,7 +1999,15 @@ impl<'a> Typed<'a> {
         let view = self.defs.view(instance.template);
         let mut out = Vec::new();
         let mut cycles = Vec::new();
-        for call in calls(values(&view.f.body)) {
+        for e in exprs(values(&view.f.body)) {
+            if let Some(&f) = self.fn_values.get(&addr(e)) {
+                let template = Template::Free(f);
+                let args = Vec::new();
+                out.push((e.pos(), Instance { template, args }));
+            }
+            let Expr::Call(call) = e else {
+                continue;
+            };
             let mut all = vec![(call, instance.args.clone())];
             self.filled(call, &instance.args, &mut Vec::new(), &mut all, &mut cycles);
             for (call, env) in all {
@@ -1975,6 +2067,11 @@ struct Checker<'a> {
     errors: Vec<Error>,
     /// The type of each expression checked, by its address.
     types: HashMap<usize, Ty>,
+    /// The calls of a name that holds a function, by their addresses.
+    value_calls: HashSet<usize>,
+    /// The names of functions passed as values, by their addresses, with
+    /// the function each names.
+    fn_values: HashMap<usize, usize>,
 }
 
 /// What is expected of an expression's value.
@@ -2229,9 +2326,45 @@ impl<'a> Checker<'a> {
     }
 
     /// Checks that a type written in the source is one there is, among the
-    /// type parameters of `scope`.
-    fn ty(&mut self, t: &Type, scope: &Scope) {
+    /// type parameters of `scope`, and holds no function type, and gives
+    /// the type, which is unknown if it holds a mistake.
+    fn ty(&mut self, t: &Type, scope: &Scope) -> Ty {
+        let ty = self.defs.resolve(t, scope, &mut self.errors);
+        if self.no_function(t) { ty } else { Ty::Unknown }
+    }
+
+    /// Reports the first function type in a type, which only a parameter's
+    /// type may be.
+    fn no_function(&mut self, t: &Type) -> bool {
+        if t.function {
+            self.errors.push(Error::unsupported(
+                t.pos,
+                "a function type other than a parameter's type",
+            ));
+            return false;
+        }
+        t.args.iter().all(|a| self.no_function(a))
+    }
+
+    /// Checks the type of a parameter, which may be a function type whose
+    /// own parameters' types may be function types in turn.
+    fn param_ty(&mut self, t: &Type, scope: &Scope) {
         self.defs.resolve(t, scope, &mut self.errors);
+        self.passed(t);
+    }
+
+    fn passed(&mut self, t: &Type) {
+        match t.args.split_last() {
+            Some((gives, params)) if t.function => {
+                for p in params {
+                    self.passed(p);
+                }
+                self.no_function(gives);
+            }
+            _ => {
+                self.no_function(t);
+            }
+        }
     }
 
     /// Checks a list of type parameters: each named once, with a name no
@@ -2369,8 +2502,13 @@ impl<'a> Checker<'a> {
     fn defaults(&mut self, f: &'a Function, sig: &'a Signature) {
         let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
         let mut first = None;
-        for (p, (_, ty)) in f.params.iter().zip(&sig.params) {
+        for (i, (p, (_, ty))) in f.params.iter().zip(&sig.params).enumerate() {
+            // A final parameter that takes a function may come after those
+            // with defaults, as a lambda after a call is for it.
+            let last_fn = i + 1 == f.params.len() && p.ty.function;
             match (&p.default, first) {
+                (None, Some(_)) if last_fn => {}
+                (Some(_), _) if p.ty.function => {}
                 (Some(value), _) => {
                     first = first.or(Some(p.name.as_str()));
                     self.default(value, ty, &sig.scope, names.clone());
@@ -2431,7 +2569,15 @@ impl<'a> Checker<'a> {
                     format!("`{}` is already defined in `{}`", p.name, f.name),
                 ));
             }
-            self.ty(&p.ty, scope);
+            self.param_ty(&p.ty, scope);
+            if let Some(value) = &p.default
+                && p.ty.function
+            {
+                self.errors.push(Error::unsupported(
+                    value.pos(),
+                    "a default for a parameter that takes a function",
+                ));
+            }
         }
         if let Some(t) = &f.result {
             self.ty(t, scope);
@@ -2808,11 +2954,57 @@ impl<'a> Checker<'a> {
     /// Checks the statements of a block in order, the last against `last`,
     /// and gives how it ends.
     fn block<'e>(&mut self, body: &mut Body<'a>, stmts: &'e [Stmt], last: &Want) -> End<'e> {
-        let defs = self.defs;
         let mut end = End::Empty;
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i + 1 == stmts.len();
             end = match stmt {
+                Stmt::Define {
+                    name, pos, value, ..
+                } if matches!(value, Expr::Lambda(_)) => {
+                    self.errors.push(Error::new(
+                        value.pos(),
+                        "a lambda cannot be bound to a name, as it is only passed to a call",
+                    ));
+                    if !body.names.iter().any(|(n, _)| n == name) {
+                        body.names.push((name.clone(), Ty::Unknown));
+                    }
+                    End::Binding(*pos)
+                }
+                Stmt::Assign { pos, value, .. } if matches!(value, Expr::Lambda(_)) => {
+                    self.errors.push(Error::new(
+                        value.pos(),
+                        "a lambda cannot be bound to a name, as it is only passed to a call",
+                    ));
+                    End::Binding(*pos)
+                }
+                Stmt::Destructure { pattern, value, .. } if matches!(value, Expr::Lambda(_)) => {
+                    self.errors.push(Error::new(
+                        value.pos(),
+                        "a lambda cannot be bound to a name, as it is only passed to a call",
+                    ));
+                    let mut binds = Vec::new();
+                    self.pattern(
+                        body,
+                        pattern,
+                        &Ty::Unknown,
+                        &mut binds,
+                        Some(&mut Vec::new()),
+                    );
+                    body.define(binds);
+                    End::Binding(pattern.pos())
+                }
+                Stmt::Expr(value @ Expr::Lambda(l)) => {
+                    let message = if is_last && matches!(last, Want::Ty(_)) {
+                        "a lambda cannot be returned, as it is only passed to a call"
+                    } else if l.params.is_empty() {
+                        "a block that stands alone is not an expression"
+                    } else {
+                        "a lambda that stands alone is not an expression, as it is only passed to \
+                         a call"
+                    };
+                    self.errors.push(Error::new(l.pos, message));
+                    End::Value(Ty::Unknown, value)
+                }
                 Stmt::Define {
                     name,
                     pos,
@@ -2835,14 +3027,14 @@ impl<'a> Checker<'a> {
                         _ => {
                             let bound = match ty {
                                 Some(t) => {
-                                    self.ty(t, body.scope);
-                                    let needed = defs.quietly(t, body.scope);
+                                    let needed = self.ty(t, body.scope);
                                     let gives = self.expr(body, value, &Want::Ty(needed.clone()));
                                     self.expect(body, value, &gives, &needed);
                                     needed
                                 }
                                 None => self.expr(body, value, &Want::Any),
                             };
+                            let bound = self.not_stored(value, bound);
                             if defined.is_some() {
                                 self.errors.push(self.defined_twice(body, name, *pos));
                             } else {
@@ -2872,14 +3064,14 @@ impl<'a> Checker<'a> {
                 Stmt::Destructure { pattern, ty, value } => {
                     let gives = match ty {
                         Some(t) => {
-                            self.ty(t, body.scope);
-                            let needed = defs.quietly(t, body.scope);
+                            let needed = self.ty(t, body.scope);
                             let gives = self.expr(body, value, &Want::Ty(needed.clone()));
                             self.expect(body, value, &gives, &needed);
                             needed
                         }
                         None => self.expr(body, value, &Want::Any),
                     };
+                    let gives = self.not_stored(value, gives);
                     let mut binds = Vec::new();
                     let mut assigned = Vec::new();
                     self.pattern(body, pattern, &gives, &mut binds, Some(&mut assigned));
@@ -2893,6 +3085,19 @@ impl<'a> Checker<'a> {
             };
         }
         end
+    }
+
+    /// Reports a value of type `ty` that holds a function, which a binding
+    /// cannot store yet, and gives the type the binding then has.
+    fn not_stored(&mut self, value: &Expr, ty: Ty) -> Ty {
+        if ty.holds_fn() {
+            self.errors.push(Error::unsupported(
+                value.pos(),
+                "a function stored in a binding",
+            ));
+            return Ty::Unknown;
+        }
+        ty
     }
 
     /// Reports a body that ends with a statement that gives nothing, the
@@ -2977,6 +3182,10 @@ impl<'a> Checker<'a> {
             Expr::Name { name, pos } => {
                 if let Some((_, ty)) = body.names.iter().rfind(|(n, _)| n == name) {
                     ty.clone()
+                } else if let (Some(&f), None) =
+                    (defs.function_names.get(name.as_str()), &body.default)
+                {
+                    self.function_value(expr, f, *pos)
                 } else {
                     let message = match &body.default {
                         Some(params) if params.contains(&name.as_str()) => {
@@ -3032,6 +3241,27 @@ impl<'a> Checker<'a> {
                 self.case(body, None, name, *pos, at, payload.as_deref(), want)
             }
             Expr::Match(m) => self.match_expr(body, m, want),
+            Expr::Lambda(l) => match want {
+                Want::Ty(Ty::Fn(items)) => self.lambda(body, l, items),
+                Want::Ty(Ty::Unknown) => {
+                    let unknown = vec![Ty::Unknown; l.params.len() + 1];
+                    self.lambda(body, l, &unknown);
+                    Ty::Unknown
+                }
+                Want::Ty(t) => {
+                    let needed = defs.describe(t, body.scope);
+                    self.errors.push(Error::new(
+                        l.pos,
+                        format!("this is a lambda, where {needed} is needed"),
+                    ));
+                    Ty::Unknown
+                }
+                Want::Any | Want::Unused => {
+                    self.errors
+                        .push(Error::new(l.pos, "a lambda is only passed to a call"));
+                    Ty::Unknown
+                }
+            },
             Expr::Tuple { items, .. } => {
                 // What is wanted of each element, where it is known.
                 let wants: Vec<Want> = match want {
@@ -3050,6 +3280,201 @@ impl<'a> Checker<'a> {
                 Ty::tuple(items)
             }
         }
+    }
+
+    /// Checks a lambda passed where a function is needed whose parameters
+    /// and result, the result last, are of the types `wanted`, which may be
+    /// partly known, and gives its type. Its body is checked where it is
+    /// written, against the effects of the function it is written in, and
+    /// it may assign that function's `var`s.
+    fn lambda(&mut self, body: &mut Body<'a>, l: &Lambda, wanted: &[Ty]) -> Ty {
+        let defs = self.defs;
+        let (result, params) = wanted.split_last().expect("a result");
+        if l.params.len() != params.len() {
+            let needed = Ty::Fn(wanted.to_vec());
+            self.errors.push(Error::new(
+                l.pos,
+                format!(
+                    "this lambda takes {}, where {} is needed, which takes {}",
+                    count(l.params.len(), "parameter"),
+                    defs.describe(&needed, body.scope),
+                    params.len()
+                ),
+            ));
+            return Ty::Unknown;
+        }
+        let outer = body.names.len();
+        let vars = body.vars.len();
+        let mut types = Vec::new();
+        for (i, ((name, pos), ty)) in l.params.iter().zip(params).enumerate() {
+            let twice = l.params[..i].iter().any(|(n, _)| n == name)
+                || body.names.iter().any(|(n, _)| n == name);
+            if twice {
+                self.errors.push(self.defined_twice(body, name, *pos));
+            }
+            types.push(ty.clone());
+            body.names.push((name.clone(), ty.clone()));
+        }
+        let want = match result {
+            Ty::Nothing => Want::Unused,
+            t if t.unknown() => Want::Any,
+            t => Want::Ty(t.clone()),
+        };
+        let end = self.block(body, &l.body, &want);
+        let gives = match (end, result) {
+            (End::Value(gives, value), Ty::Nothing) => {
+                if !matches!(gives, Ty::Nothing | Ty::Unknown) {
+                    self.expect(body, value, &gives, result);
+                }
+                Ty::Nothing
+            }
+            (_, Ty::Nothing) => Ty::Nothing,
+            (End::Value(gives, value), result) if !result.unknown() => {
+                self.expect(body, value, &gives, result);
+                result.clone()
+            }
+            (End::Value(gives, _), _) => gives,
+            (End::Empty, result) if !result.unknown() => {
+                let needed = defs.describe(result, body.scope);
+                self.errors.push(Error::new(
+                    l.end,
+                    format!(
+                        "this lambda's body is empty, which gives nothing, where {needed} is needed"
+                    ),
+                ));
+                Ty::Unknown
+            }
+            (End::Binding(pos), result) if !result.unknown() => {
+                let needed = defs.describe(result, body.scope);
+                self.errors.push(Error::new(
+                    pos,
+                    format!(
+                        "this lambda ends with a binding or an assignment, which gives nothing, \
+                         where {needed} is needed"
+                    ),
+                ));
+                Ty::Unknown
+            }
+            (End::Empty | End::Binding(_), _) => Ty::Nothing,
+        };
+        body.names.truncate(outer);
+        body.vars.truncate(vars);
+        types.push(gives);
+        Ty::func(types)
+    }
+
+    /// Checks the name of function `f`, at `pos`, passed as a value, and
+    /// gives its type. A function type states no effect, so the function
+    /// carries none.
+    fn function_value(&mut self, expr: &Expr, f: usize, pos: Pos) -> Ty {
+        let defs = self.defs;
+        let sig = &defs.signatures[f];
+        let name = &defs.file.functions[f].name;
+        let error = if !sig.scope.names.is_empty() {
+            Error::unsupported(pos, "passing a function with type parameters as a value")
+        } else if sig.params.iter().any(|(_, t)| t.holds_fn()) {
+            Error::unsupported(pos, "passing a function that takes a function as a value")
+        } else if let Some(effect) = sig.effects.first() {
+            Error::new(
+                pos,
+                format!(
+                    "`{name}` carries the `{effect}` effect, and a function passed as a value \
+                     carries none"
+                ),
+            )
+        } else {
+            self.fn_values.insert(addr(expr), f);
+            let mut items: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+            items.push(sig.gives.clone());
+            return Ty::func(items);
+        };
+        self.errors.push(error);
+        Ty::Unknown
+    }
+
+    /// Checks a call of a name that holds a function whose parameters and
+    /// result, the result last, are of the types `items`. Its arguments are
+    /// given by position, and it carries no effect.
+    fn value_call(&mut self, body: &mut Body<'a>, call: &Call, items: &[Ty]) -> Ty {
+        self.value_calls.insert(addr(call));
+        let (gives, params) = items.split_last().expect("a result");
+        let name = &call.callee;
+        let mut given = vec![false; params.len()];
+        let mut next = 0;
+        for arg in &call.args {
+            let at = if arg.after {
+                params.len().checked_sub(1)
+            } else {
+                next += 1;
+                Some(next - 1).filter(|i| *i < params.len())
+            };
+            let error = if let Some((_, pos)) = &arg.name {
+                Some(Error::new(
+                    *pos,
+                    format!(
+                        "the arguments of `{name}` are given by position, as it is a function a name holds"
+                    ),
+                ))
+            } else {
+                match at {
+                    Some(i) if given[i] => Some(Error::new(
+                        arg.value.pos(),
+                        format!("the argument for the last parameter of `{name}` is given twice"),
+                    )),
+                    Some(i) if arg.after && !matches!(params[i], Ty::Fn(_) | Ty::Unknown) => {
+                        Some(Error::new(
+                            arg.value.pos(),
+                            format!(
+                                "a lambda after a call is for its last parameter, and that of \
+                                 `{name}` takes no function"
+                            ),
+                        ))
+                    }
+                    Some(_) => None,
+                    None => Some(Error::new(
+                        arg.value.pos(),
+                        format!(
+                            "`{name}` takes {}, and this is one more",
+                            count(params.len(), "argument")
+                        ),
+                    )),
+                }
+            };
+            if let Some(error) = error {
+                self.errors.push(error);
+                self.expr(body, &arg.value, &Want::Ty(Ty::Unknown));
+                continue;
+            }
+            let i = at.expect("a parameter");
+            given[i] = true;
+            let value = self.expr(body, &arg.value, &Want::Ty(params[i].clone()));
+            self.expect(body, &arg.value, &value, &params[i]);
+        }
+        let missing = given.iter().filter(|g| !**g).count();
+        if missing > 0 {
+            self.errors.push(Error::new(
+                call.end,
+                format!(
+                    "`{name}` takes {}, and this call gives {}",
+                    count(params.len(), "argument"),
+                    params.len() - missing
+                ),
+            ));
+        }
+        gives.clone()
+    }
+
+    /// Reports a type given for a type parameter that holds a function,
+    /// and gives whether there is one.
+    fn function_for_parameter(&mut self, sol: &[Option<Ty>], pos: Pos) -> bool {
+        if sol.iter().flatten().any(Ty::holds_fn) {
+            self.errors.push(Error::unsupported(
+                pos,
+                "a function given for a type parameter",
+            ));
+            return true;
+        }
+        false
     }
 
     /// Checks a case named `name`: of enum `e` if it is written in full, or
@@ -3126,7 +3551,7 @@ impl<'a> Checker<'a> {
             }
             (None, None) => {}
         }
-        if self.errors.len() > before {
+        if self.errors.len() > before || self.function_for_parameter(&sol, pos) {
             return Ty::Unknown;
         }
         if let Some(g) = sol.iter().position(Option::is_none) {
@@ -3493,6 +3918,10 @@ impl<'a> Checker<'a> {
             };
             return self.trait_call(body, call, k, fi);
         }
+        if let Some((_, Ty::Fn(items))) = body.names.iter().rfind(|(n, _)| n == name) {
+            let items = items.clone();
+            return self.value_call(body, call, &items);
+        }
         if let Some(&s) = defs.struct_names.get(name) {
             return self.construction(body, call, s, want);
         }
@@ -3510,6 +3939,9 @@ impl<'a> Checker<'a> {
                 return self.unknown_call(body, call);
             }
             let sol = self.arguments(body, call, sig, false);
+            if self.function_for_parameter(&sol, call.pos) {
+                return Ty::Unknown;
+            }
             for (g, bound) in sig.scope.bounds.iter().enumerate() {
                 if let (Bound::Trait(k), Some(t)) = (bound, &sol[g])
                     && let Found::No = defs.meets(*k, t, body.scope, &mut Vec::new())
@@ -3561,6 +3993,9 @@ impl<'a> Checker<'a> {
             return self.unknown_call(body, call);
         }
         let sol = self.arguments(body, call, sig, false);
+        if self.function_for_parameter(&sol, call.pos) {
+            return Ty::Unknown;
+        }
         let outs = &defs.outs[k];
         if (sol.iter().zip(outs)).any(|(t, out)| !out && t.is_none()) {
             return Ty::Unknown;
@@ -3619,6 +4054,19 @@ impl<'a> Checker<'a> {
         let mut by_position = false;
         let before = self.errors.len();
         for arg in &call.args {
+            if let Expr::Lambda(l) = &arg.value {
+                self.errors.push(Error::new(
+                    l.pos,
+                    "a lambda cannot be stored in a field, as it is only passed to a call",
+                ));
+                let field = (arg.name.as_ref())
+                    .and_then(|(name, _)| def.fields.iter().position(|f| &f.name == name));
+                if let Some(i) = field {
+                    given[i] = true;
+                }
+                by_position |= arg.name.is_none() && !arg.after;
+                continue;
+            }
             let field = (arg.name.as_ref())
                 .and_then(|(name, _)| def.fields.iter().position(|f| &f.name == name));
             let wanted = match field {
@@ -3671,6 +4119,9 @@ impl<'a> Checker<'a> {
             ));
         }
         if defs.cyclic[s] {
+            return Ty::Unknown;
+        }
+        if self.errors.len() == before && self.function_for_parameter(&sol, call.pos) {
             return Ty::Unknown;
         }
         if self.errors.len() == before
@@ -3731,69 +4182,113 @@ impl<'a> Checker<'a> {
             let mut look_into = true;
             // The parameter the argument is for, if it is for one.
             let mut param = None;
-            match &arg.name {
-                None if named => self.errors.push(
-                    Error::new(
-                        arg.value.pos(),
-                        "an argument by position comes after a named one",
-                    )
-                    .with_fix("name it, or move it before the named arguments"),
-                ),
-                None if next < given.len() => {
-                    given[next] = true;
-                    param = Some(next);
-                    next += 1;
-                }
-                None if is_print => {
-                    look_into = false;
-                    if !too_many {
-                        self.errors.push(Error::unsupported(
-                            arg.value.pos(),
-                            "the `end` and `to` arguments of `print`",
-                        ));
+            let callee = &call.callee;
+            if arg.after {
+                // A lambda after a call is for its last parameter.
+                let last = signature.params.len().checked_sub(1);
+                let error = match last {
+                    None => Some(format!(
+                        "`{callee}` takes no arguments, so no lambda goes after the call"
+                    )),
+                    Some(i) if !matches!(signature.params[i].1, Ty::Fn(_) | Ty::Unknown) => {
+                        // The parameter is not then reported missing.
+                        given[i] = true;
+                        Some(format!(
+                            "a lambda after a call is for its last parameter, and `{}`, the last \
+                             parameter of `{callee}`, takes no function",
+                            signature.params[i].0
+                        ))
                     }
-                    too_many = true;
-                }
-                None => {
-                    if !too_many {
-                        self.errors.push(Error::new(
-                            arg.value.pos(),
-                            format!(
-                                "`{}` takes {} arguments, and this is one more",
-                                call.callee,
-                                given.len()
-                            ),
-                        ));
+                    Some(i) if given[i] => Some(format!(
+                        "the `{}` argument is given twice",
+                        signature.params[i].0
+                    )),
+                    Some(i) => {
+                        given[i] = true;
+                        param = Some(i);
+                        None
                     }
-                    too_many = true;
+                };
+                if let Some(message) = error {
+                    self.errors.push(Error::new(arg.value.pos(), message));
+                    continue;
                 }
-                Some((name, pos)) => {
-                    named = true;
-                    match signature.params.iter().position(|(p, _)| p == name) {
-                        Some(i) if given[i] => self.errors.push(Error::new(
-                            *pos,
-                            format!("the `{name}` argument is given twice"),
-                        )),
-                        Some(i) => {
-                            given[i] = true;
-                            param = Some(i);
-                        }
-                        None if is_print && (name == "end" || name == "to") => {
-                            look_into = false;
+            } else {
+                match &arg.name {
+                    None if named => self.errors.push(
+                        Error::new(
+                            arg.value.pos(),
+                            "an argument by position comes after a named one",
+                        )
+                        .with_fix("name it, or move it before the named arguments"),
+                    ),
+                    None if next < given.len() => {
+                        given[next] = true;
+                        param = Some(next);
+                        next += 1;
+                    }
+                    None if is_print => {
+                        look_into = false;
+                        if !too_many {
                             self.errors.push(Error::unsupported(
-                                *pos,
+                                arg.value.pos(),
                                 "the `end` and `to` arguments of `print`",
                             ));
                         }
-                        None => self.errors.push(Error::new(
-                            *pos,
-                            format!("`{}` has no parameter named `{name}`", call.callee),
-                        )),
+                        too_many = true;
+                    }
+                    None => {
+                        if !too_many {
+                            self.errors.push(Error::new(
+                                arg.value.pos(),
+                                format!(
+                                    "`{}` takes {} arguments, and this is one more",
+                                    call.callee,
+                                    given.len()
+                                ),
+                            ));
+                        }
+                        too_many = true;
+                    }
+                    Some((name, pos)) => {
+                        named = true;
+                        match signature.params.iter().position(|(p, _)| p == name) {
+                            Some(i) if given[i] => self.errors.push(Error::new(
+                                *pos,
+                                format!("the `{name}` argument is given twice"),
+                            )),
+                            Some(i) => {
+                                given[i] = true;
+                                param = Some(i);
+                            }
+                            None if is_print && (name == "end" || name == "to") => {
+                                look_into = false;
+                                self.errors.push(Error::unsupported(
+                                    *pos,
+                                    "the `end` and `to` arguments of `print`",
+                                ));
+                            }
+                            None => self.errors.push(Error::new(
+                                *pos,
+                                format!("`{}` has no parameter named `{name}`", call.callee),
+                            )),
+                        }
                     }
                 }
             }
             if !look_into {
                 continue;
+            }
+            if let (Some(i), Expr::Lambda(l)) = (param, &arg.value) {
+                let pattern = &signature.params[i].1;
+                if !matches!(pattern, Ty::Fn(_) | Ty::Unknown) {
+                    let needed = self.defs.describe_pattern(pattern, &sol, vars, body.scope);
+                    self.errors.push(Error::new(
+                        l.pos,
+                        format!("this is a lambda, where {needed} is needed"),
+                    ));
+                    continue;
+                }
             }
             let wanted = match param {
                 Some(i) => Want::Ty(signature.params[i].1.partial(&sol)),
@@ -3845,21 +4340,33 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         let mut all = Vec::new();
         let mut cycles = Vec::new();
-        for call in calls(values(&defs.file.functions[f].body)) {
+        // The functions passed as values, which may be called.
+        let mut passed = Vec::new();
+        for e in exprs(values(&defs.file.functions[f].body)) {
+            if let Some(&g) = self.fn_values.get(&addr(e)) {
+                passed.push((e.pos(), g));
+            }
+            let Expr::Call(call) = e else {
+                continue;
+            };
+            if self.value_calls.contains(&addr(call)) {
+                continue;
+            }
             all.push(call);
             defs.defaults_called(call, &mut Vec::new(), &mut all, &mut cycles);
         }
         self.errors.extend(cycles.into_iter().map(default_cycle));
-        for call in all {
-            if call.qualifier.is_some() {
-                continue;
-            }
-            let Some(&callee) = self.defs.function_names.get(call.callee.as_str()) else {
-                continue;
-            };
+        let called = (all.into_iter())
+            .filter(|call| call.qualifier.is_none())
+            .filter_map(|call| {
+                let callee = self.defs.function_names.get(call.callee.as_str())?;
+                Some((call.pos, *callee))
+            });
+        let reached: Vec<(Pos, usize)> = called.chain(passed).collect();
+        for (pos, callee) in reached {
             if path.contains(&callee) {
                 self.errors.push(Error::unsupported(
-                    call.pos,
+                    pos,
                     "a function that calls itself, directly or through others,",
                 ));
             } else if !done.contains(&callee) {
@@ -3873,6 +4380,13 @@ impl<'a> Checker<'a> {
 
 /// Lowers checked functions to the form every target receives, one copy
 /// of a function for each choice of its type parameters that runs.
+///
+/// A function that takes a function is not lowered on its own. Each call
+/// of it is lowered in place, with its parameters standing for the
+/// arguments, and a call of a parameter that holds a lambda lowers the
+/// lambda's body in place, where the names of the function it is written
+/// in are as they are at that moment. So the form every target receives
+/// holds no lambda and no value of a function type.
 struct Lowering<'a> {
     typed: &'a Typed<'a>,
     /// The copies, each at its place in the program, in the order they are
@@ -3882,13 +4396,61 @@ struct Lowering<'a> {
 }
 
 /// A function being lowered.
-struct Lowered {
-    /// What each name defined so far gives.
-    types: Vec<(String, Ty)>,
-    /// The values each name defined so far stands for.
-    values: Vec<Vec<Value>>,
+struct Lowered<'a> {
+    /// The names defined so far in the function, which is the first frame,
+    /// and in each function lowered in place inside it, one frame each.
+    frames: Vec<Vec<Local<'a>>>,
+    /// The frame of the code being lowered.
+    at: usize,
     locals: usize,
     steps: Vec<Step>,
+}
+
+/// A name being lowered: what it gives, the values it stands for, whether
+/// it is a `var`, and the function it holds, if it holds one.
+#[derive(Clone)]
+struct Local<'a> {
+    name: String,
+    ty: Ty,
+    values: Vec<Value>,
+    var: bool,
+    func: Option<Func<'a>>,
+}
+
+/// The function a name holds.
+#[derive(Clone)]
+enum Func<'a> {
+    /// A lambda, the frame it is written in, and the types that stand for
+    /// the type parameters of the definition it is written in.
+    Lambda(&'a Lambda, usize, Vec<Ty>),
+    /// A copy of a function with a name.
+    Named(Instance),
+}
+
+impl<'a> Lowered<'a> {
+    fn names(&self) -> &Vec<Local<'a>> {
+        &self.frames[self.at]
+    }
+
+    fn names_mut(&mut self) -> &mut Vec<Local<'a>> {
+        &mut self.frames[self.at]
+    }
+
+    /// The place of a name among those of the frame being lowered.
+    fn find(&self, name: &str) -> Option<usize> {
+        self.names().iter().rposition(|l| l.name == name)
+    }
+
+    /// Defines a name that stands for values.
+    fn define(&mut self, name: &str, ty: Ty, values: Vec<Value>, var: bool) {
+        self.names_mut().push(Local {
+            name: name.to_string(),
+            ty,
+            values,
+            var,
+            func: None,
+        });
+    }
 }
 
 /// Patterns still to be matched, one for each value, where `None` matches
@@ -3911,11 +4473,12 @@ struct Row<'p> {
 /// types that stand for the type parameters, the locals its value goes to,
 /// and the names defined before it that a block assigns to, each with the
 /// locals its values go to.
-struct Arms<'p> {
-    arms: &'p [Arm],
+struct Arms<'a, 'p> {
+    arms: &'a [Arm],
     env: &'p [Ty],
     results: Vec<usize>,
-    merged: Vec<(usize, Vec<usize>)>,
+    /// Each name by its frame and its place there, with its locals.
+    merged: Vec<((usize, usize), Vec<usize>)>,
 }
 
 impl<'a> Lowering<'a> {
@@ -3931,8 +4494,9 @@ impl<'a> Lowering<'a> {
     }
 
     /// How many values a value of the type is lowered to: one for each
-    /// text, those of each element for a tuple, and for an enum one for its
-    /// case and as many as its largest case holds.
+    /// text, those of each element for a tuple, for an enum one for its case
+    /// and as many as its largest case holds, and none for a function,
+    /// whose calls are lowered in place.
     fn width(&self, ty: &Ty) -> usize {
         let defs = self.typed.defs;
         match ty {
@@ -3947,7 +4511,7 @@ impl<'a> Lowering<'a> {
                 1 + holds.unwrap_or(0)
             }
             Ty::Tuple(items) => items.iter().map(|t| self.width(t)).sum(),
-            Ty::Param(_) | Ty::Nothing | Ty::Unknown => 0,
+            Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown => 0,
         }
     }
 
@@ -3969,12 +4533,9 @@ impl<'a> Lowering<'a> {
     /// and any other as a new name.
     fn bind(&self, out: &mut Lowered, pattern: &Pattern, ty: &Ty, values: Vec<Value>) {
         match pattern {
-            Pattern::Bind { name, .. } => match out.types.iter().position(|(n, _)| n == name) {
-                Some(at) => out.values[at] = values,
-                None => {
-                    out.types.push((name.clone(), ty.clone()));
-                    out.values.push(values);
-                }
+            Pattern::Bind { name, var, .. } => match out.find(name) {
+                Some(at) => out.names_mut()[at].values = values,
+                None => out.define(name, ty.clone(), values, var.is_some()),
             },
             Pattern::Tuple { items, .. } => {
                 let Ty::Tuple(of) = ty else {
@@ -4014,7 +4575,7 @@ impl<'a> Lowering<'a> {
     }
 
     /// New locals for a value of the type.
-    fn locals(&self, out: &mut Lowered, ty: &Ty) -> Vec<usize> {
+    fn locals(&self, out: &mut Lowered<'a>, ty: &Ty) -> Vec<usize> {
         let width = self.width(ty);
         out.locals += width;
         (out.locals - width..out.locals).collect()
@@ -4035,17 +4596,16 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         let view = defs.view(instance.template);
         let mut out = Lowered {
-            types: Vec::new(),
-            values: Vec::new(),
+            frames: vec![Vec::new()],
+            at: 0,
             locals: 0,
             steps: Vec::new(),
         };
         for (name, ty) in &view.params {
             let ty = ty.subst(&instance.args);
             let locals = self.locals(&mut out, &ty);
-            out.types.push((name.clone(), ty));
-            out.values
-                .push(locals.into_iter().map(Value::Local).collect());
+            let values = locals.into_iter().map(Value::Local).collect();
+            out.define(name, ty, values, false);
         }
         let params = out.locals;
         let mut result = self.block(&mut out, &view.f.body, &instance.args);
@@ -4062,23 +4622,22 @@ impl<'a> Lowering<'a> {
 
     /// Lowers the statements of a block, and gives the values of the last
     /// if it is an expression.
-    fn block(&mut self, out: &mut Lowered, stmts: &[Stmt], env: &[Ty]) -> Vec<Value> {
+    fn block(&mut self, out: &mut Lowered<'a>, stmts: &'a [Stmt], env: &[Ty]) -> Vec<Value> {
         let mut result = Vec::new();
         for stmt in stmts {
             result = match stmt {
-                Stmt::Define { name, value, .. } => {
+                Stmt::Define {
+                    name, var, value, ..
+                } => {
                     // A name stands for the values it is bound to, so a
                     // binding needs no step of its own. A block runs its
                     // statements once each, in order, so an assignment
                     // makes the name stand for the new values from then
                     // on, and a name bound to the old ones keeps them.
                     let (ty, value) = self.expr(out, value, env);
-                    match out.types.iter().position(|(n, _)| n == name) {
-                        Some(at) => out.values[at] = value,
-                        None => {
-                            out.types.push((name.clone(), ty));
-                            out.values.push(value);
-                        }
+                    match out.find(name) {
+                        Some(at) => out.names_mut()[at].values = value,
+                        None => out.define(name, ty, value, *var),
                     }
                     Vec::new()
                 }
@@ -4089,10 +4648,11 @@ impl<'a> Lowering<'a> {
                     ..
                 } => {
                     let (_, value) = self.expr(out, value, env);
-                    let at = out.types.iter().position(|(n, _)| n == name);
-                    let at = at.expect("checked");
-                    let (start, width) = self.offset(&out.types[at].1, fields);
-                    out.values[at].splice(start..start + width, value);
+                    let at = out.find(name).expect("checked");
+                    let (start, width) = self.offset(&out.names()[at].ty, fields);
+                    out.names_mut()[at]
+                        .values
+                        .splice(start..start + width, value);
                     Vec::new()
                 }
                 Stmt::Destructure { pattern, value, .. } => {
@@ -4108,16 +4668,16 @@ impl<'a> Lowering<'a> {
 
     /// The values an expression gives, and their type, where `env` stands
     /// for the type parameters of the definition it is written in.
-    fn expr(&mut self, out: &mut Lowered, expr: &Expr, env: &[Ty]) -> (Ty, Vec<Value>) {
+    fn expr(&mut self, out: &mut Lowered<'a>, expr: &'a Expr, env: &[Ty]) -> (Ty, Vec<Value>) {
         let typed = self.typed;
         let defs = typed.defs;
         match expr {
             Expr::Text { text, .. } => (Ty::Text, vec![self.text(text)]),
-            Expr::Name { name, .. } => {
-                let at = out.types.iter().rposition(|(n, _)| n == name);
-                let at = at.expect("checked");
-                (out.types[at].1.clone(), out.values[at].clone())
-            }
+            Expr::Name { name, .. } => match out.find(name) {
+                Some(at) => (out.names()[at].ty.clone(), out.names()[at].values.clone()),
+                // A function passed as a value is lowered to no values.
+                None => (typed.type_of(expr, env), Vec::new()),
+            },
             Expr::Call(call) => match typed.callee(call, env) {
                 Callee::Construct(s, args) => {
                     let inner = args.clone();
@@ -4140,6 +4700,13 @@ impl<'a> Lowering<'a> {
                         });
                     }
                     (Ty::Nothing, Vec::new())
+                }
+                Callee::Value => self.call_value(out, call, env),
+                Callee::Run(instance, gives)
+                    if (defs.view(instance.template).params.iter())
+                        .any(|(_, t)| t.subst(&instance.args).holds_fn()) =>
+                {
+                    self.in_place(out, call, instance, gives, env)
                 }
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
@@ -4167,7 +4734,10 @@ impl<'a> Lowering<'a> {
                 }
             },
             Expr::Field { of, name, .. } => {
-                if defs.qualified_case(of, &out.types).is_some() {
+                let names: Vec<(String, Ty)> = (out.names().iter())
+                    .map(|l| (l.name.clone(), l.ty.clone()))
+                    .collect();
+                if defs.qualified_case(of, &names).is_some() {
                     let ty = typed.type_of(expr, env);
                     let Ty::Enum(e, _) = ty else {
                         unreachable!("checked")
@@ -4214,7 +4784,140 @@ impl<'a> Lowering<'a> {
                 }
                 (Ty::tuple(types), values)
             }
+            Expr::Lambda(_) => unreachable!("checked"),
         }
+    }
+
+    /// Lowers a call of a function that takes a function, in place: its
+    /// body, with its parameters standing for the arguments, in a frame of
+    /// its own.
+    fn in_place(
+        &mut self,
+        out: &mut Lowered<'a>,
+        call: &'a Call,
+        instance: Instance,
+        gives: Ty,
+        env: &[Ty],
+    ) -> (Ty, Vec<Value>) {
+        let typed = self.typed;
+        let defs = typed.defs;
+        let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
+        let view = defs.view(instance.template);
+        let params: Vec<(String, Ty)> = (view.params.iter())
+            .map(|(n, t)| (n.clone(), t.subst(&instance.args)))
+            .collect();
+        // Arguments are worked out in the order they are written, and then
+        // the defaults the call leaves out, as for any call.
+        let mut args: Vec<Option<Local<'a>>> = vec![None; params.len()];
+        for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
+            args[at] = Some(self.argument(out, &arg.value, &params[at], env));
+        }
+        for (at, default) in defs.left_out(call) {
+            args[at] = Some(self.argument(out, default, &params[at], &inner));
+        }
+        let frame = args.into_iter().map(|a| a.expect("given")).collect();
+        out.frames.push(frame);
+        let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
+        let mut result = self.block(out, &view.f.body, &instance.args);
+        out.frames.pop();
+        out.at = caller;
+        if gives == Ty::Nothing {
+            result.clear();
+        }
+        (gives, result)
+    }
+
+    /// An argument for a parameter, as the name the parameter is then.
+    fn argument(
+        &mut self,
+        out: &mut Lowered<'a>,
+        value: &'a Expr,
+        (name, ty): &(String, Ty),
+        env: &[Ty],
+    ) -> Local<'a> {
+        let (values, func) = if let Ty::Fn(_) = ty {
+            let func = match value {
+                Expr::Lambda(l) => Func::Lambda(l, out.at, env.to_vec()),
+                Expr::Name { name, .. } => match out.find(name) {
+                    Some(at) => out.names()[at].func.clone().expect("a function"),
+                    None => Func::Named(Instance {
+                        template: Template::Free(self.typed.fn_values[&addr(value)]),
+                        args: Vec::new(),
+                    }),
+                },
+                _ => unreachable!("checked"),
+            };
+            (Vec::new(), Some(func))
+        } else {
+            (self.expr(out, value, env).1, None)
+        };
+        Local {
+            name: name.clone(),
+            ty: ty.clone(),
+            values,
+            var: false,
+            func,
+        }
+    }
+
+    /// Lowers a call of a name that holds a function. A lambda's body is
+    /// lowered in place, in the frame it is written in, with its parameters
+    /// standing for the arguments.
+    fn call_value(
+        &mut self,
+        out: &mut Lowered<'a>,
+        call: &'a Call,
+        env: &[Ty],
+    ) -> (Ty, Vec<Value>) {
+        let at = out.find(&call.callee).expect("checked");
+        let local = &out.names()[at];
+        let func = local.func.clone().expect("a function");
+        let Ty::Fn(items) = local.ty.clone() else {
+            unreachable!("checked")
+        };
+        let (gives, params) = items.split_last().expect("a result");
+        let mut args: Vec<Option<Local<'a>>> = vec![None; params.len()];
+        let mut next = 0;
+        for arg in &call.args {
+            let at = if arg.after {
+                params.len() - 1
+            } else {
+                next += 1;
+                next - 1
+            };
+            let param = (String::new(), params[at].clone());
+            args[at] = Some(self.argument(out, &arg.value, &param, env));
+        }
+        let args = args.into_iter().map(|a| a.expect("given"));
+        let mut result = match func {
+            Func::Named(instance) => {
+                let function = self.place(instance);
+                let args = args.flat_map(|a| a.values).collect();
+                let results = self.locals(out, gives);
+                out.steps.push(Step::Call {
+                    function,
+                    args,
+                    results: results.clone(),
+                });
+                results.into_iter().map(Value::Local).collect()
+            }
+            Func::Lambda(lambda, frame, lambda_env) => {
+                let caller = std::mem::replace(&mut out.at, frame);
+                let before = out.names().len();
+                for ((name, _), mut arg) in lambda.params.iter().zip(args) {
+                    arg.name = name.clone();
+                    out.names_mut().push(arg);
+                }
+                let result = self.block(out, &lambda.body, &lambda_env);
+                out.names_mut().truncate(before);
+                out.at = caller;
+                result
+            }
+        };
+        if *gives == Ty::Nothing {
+            result.clear();
+        }
+        (gives.clone(), result)
     }
 
     /// The values of case `k` of the enum `ty`, holding the payload's
@@ -4222,10 +4925,10 @@ impl<'a> Lowering<'a> {
     /// fillers as a larger case would take.
     fn case(
         &mut self,
-        out: &mut Lowered,
+        out: &mut Lowered<'a>,
         ty: &Ty,
         k: usize,
-        payload: Option<&Expr>,
+        payload: Option<&'a Expr>,
         env: &[Ty],
     ) -> Vec<Value> {
         let mut values = vec![Value::Case(k)];
@@ -4240,7 +4943,16 @@ impl<'a> Lowering<'a> {
     /// each of which ends by copying what it gives, and the names defined
     /// before it that it assigns to, to the same locals. Gives the values
     /// of what it gives.
-    fn match_expr(&mut self, out: &mut Lowered, m: &Match, ty: &Ty, env: &[Ty]) -> Vec<Value> {
+    ///
+    /// While a function is lowered in place, a block may run a lambda that
+    /// assigns a `var` of any frame, so every `var` is copied then.
+    fn match_expr(
+        &mut self,
+        out: &mut Lowered<'a>,
+        m: &'a Match,
+        ty: &Ty,
+        env: &[Ty],
+    ) -> Vec<Value> {
         let (of_ty, of) = self.expr(out, &m.of, env);
         let results = self.locals(out, ty);
         let mut assigned = Vec::new();
@@ -4254,18 +4966,27 @@ impl<'a> Lowering<'a> {
                     Stmt::Expr(_) => Vec::new(),
                 };
                 for name in names {
-                    if let Some(at) = out.types.iter().position(|(n, _)| n == name)
-                        && !assigned.contains(&at)
+                    if let Some(at) = out.names().iter().position(|l| l.name == name)
+                        && !assigned.contains(&(out.at, at))
                     {
-                        assigned.push(at);
+                        assigned.push((out.at, at));
+                    }
+                }
+            }
+        }
+        if out.frames.len() > 1 {
+            for (f, frame) in out.frames.iter().enumerate() {
+                for (at, local) in frame.iter().enumerate() {
+                    if local.var && !assigned.contains(&(f, at)) {
+                        assigned.push((f, at));
                     }
                 }
             }
         }
         let merged = (assigned.into_iter())
-            .map(|at| {
-                let ty = out.types[at].1.clone();
-                (at, self.locals(out, &ty))
+            .map(|(f, at)| {
+                let ty = out.frames[f][at].ty.clone();
+                ((f, at), self.locals(out, &ty))
             })
             .collect();
         let arms = Arms {
@@ -4283,8 +5004,8 @@ impl<'a> Lowering<'a> {
             .collect();
         let steps = self.decide(out, &arms, rows, &[(of_ty, of)]);
         out.steps.extend(steps);
-        for (at, locals) in &arms.merged {
-            out.values[*at] = locals.iter().map(|l| Value::Local(*l)).collect();
+        for ((f, at), locals) in &arms.merged {
+            out.frames[*f][*at].values = locals.iter().map(|l| Value::Local(*l)).collect();
         }
         arms.results.iter().map(|l| Value::Local(*l)).collect()
     }
@@ -4294,8 +5015,8 @@ impl<'a> Lowering<'a> {
     /// row match in order.
     fn decide(
         &mut self,
-        out: &mut Lowered,
-        arms: &Arms,
+        out: &mut Lowered<'a>,
+        arms: &Arms<'a, '_>,
         rows: Vec<Row>,
         columns: &[(Ty, Vec<Value>)],
     ) -> Vec<Step> {
@@ -4387,13 +5108,11 @@ impl<'a> Lowering<'a> {
 
     /// The steps of the block a row leads to, with the names it binds, which
     /// end by copying what the block gives and the names it assigns to.
-    fn leaf(&mut self, out: &mut Lowered, arms: &Arms, row: Row) -> Vec<Step> {
+    fn leaf(&mut self, out: &mut Lowered<'a>, arms: &Arms<'a, '_>, row: Row) -> Vec<Step> {
         let before = std::mem::take(&mut out.steps);
-        let types = out.types.len();
-        let values = out.values.clone();
+        let frames = out.frames.clone();
         for (name, ty, value) in row.binds {
-            out.types.push((name, ty));
-            out.values.push(value);
+            out.define(&name, ty, value, false);
         }
         let gives = self.block(out, &arms.arms[row.arm].body, arms.env);
         for (local, value) in arms.results.iter().zip(gives) {
@@ -4402,16 +5121,15 @@ impl<'a> Lowering<'a> {
                 value,
             });
         }
-        for (at, locals) in &arms.merged {
-            for (local, value) in locals.iter().zip(out.values[*at].clone()) {
+        for ((f, at), locals) in &arms.merged {
+            for (local, value) in locals.iter().zip(out.frames[*f][*at].values.clone()) {
                 out.steps.push(Step::Set {
                     local: *local,
                     value,
                 });
             }
         }
-        out.types.truncate(types);
-        out.values = values;
+        out.frames = frames;
         std::mem::replace(&mut out.steps, before)
     }
 
@@ -4422,8 +5140,8 @@ impl<'a> Lowering<'a> {
     /// written among.
     fn construction(
         &mut self,
-        out: &mut Lowered,
-        call: &Call,
+        out: &mut Lowered<'a>,
+        call: &'a Call,
         s: usize,
         env: &[Ty],
         inner: &[Ty],
@@ -4431,7 +5149,7 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         let def = &defs.file.structs[s];
         let mut fields: Vec<Vec<Value>> = vec![Vec::new(); def.fields.len()];
-        for Arg { name, value } in &call.args {
+        for Arg { name, value, .. } in &call.args {
             let (_, value) = self.expr(out, value, env);
             let (name, _) = name.as_ref().expect("checked");
             let at = def.fields.iter().position(|f| &f.name == name);

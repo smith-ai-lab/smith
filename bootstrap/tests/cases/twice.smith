@@ -1,0 +1,8 @@
+fn twice(body: () -> ()) {
+  body()
+  body()
+}
+
+fn main() ! console {
+  twice { print("hi") }
+}

@@ -15,6 +15,7 @@ use smith::{compile, lower};
 use crate::Test;
 use crate::enums;
 use crate::generate;
+use crate::lambdas;
 use crate::programs;
 use crate::sha256;
 use crate::traits;
@@ -49,6 +50,10 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_of_a_program_with_tuples_does_what_the_evaluator_says",
         every_executable_of_a_program_with_tuples_does_what_the_evaluator_says,
+    ),
+    (
+        "every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says",
+        every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says,
     ),
     (
         "a_struct_bound_to_two_names_is_two_equal_structs",
@@ -209,6 +214,19 @@ fn every_executable_of_a_program_with_enums_does_what_the_evaluator_says() {
 fn every_executable_of_a_program_with_tuples_does_what_the_evaluator_says() {
     let targets = runnable();
     generate::check(28, 60, tuples::program, |case| {
+        let source = case.source.as_bytes();
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let said = eval::run(&program);
+        for &target in &targets {
+            let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert_eq!(run(&bytes), said, "{}", target.name());
+        }
+    });
+}
+
+fn every_executable_of_a_program_with_lambdas_does_what_the_evaluator_says() {
+    let targets = runnable();
+    generate::check(32, 60, lambdas::program, |case| {
         let source = case.source.as_bytes();
         let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         let said = eval::run(&program);
