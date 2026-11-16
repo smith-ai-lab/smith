@@ -31,7 +31,14 @@ fn test_tokens(text: str) -> Result[(), Failed] {
 
 - A test that takes nothing is a single example and runs once.
 - A test that takes a `Key` is a property. It runs many times, building its inputs with ordinary random functions. Under `smith test` the key is backed by a recorded sequence of choices, so a failure is shrunk by replaying the test with smaller choices, and every shrunk input is one the test's own code built.
-- Typed parameters are shorthand: each is drawn from a split key with its type's default random function.
+- Typed parameters are shorthand: each is drawn from a split key with `random`, the one function of the `Random` trait.
+
+  ```
+  trait Random[T] {
+    fn random(key: take Key) -> T
+  }
+  ```
+- Every number type, `bool`, and `str` has `Random`. A struct, an enum, or a tuple is given it automatically, as [`Copy`](ownership.md) is, unless one of its parts lacks it, so a type a program defines can be a test's parameter with nothing more written. `without Random for T` takes it away, and a type's own `impl` replaces the one it was given, which is how a test gets values of a particular shape.
 - The checker tries to prove a property first and runs it only when it cannot.
 
 ```
