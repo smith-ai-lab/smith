@@ -118,8 +118,9 @@ The first two targets are built together. A target is one case of an enum, and a
 - **Linux on x86-64,** named `linux_x64`. A static ELF executable that talks to the kernel directly.
 - **macOS on arm64,** named `macos_arm64`. A Mach-O executable that reaches the kernel through the system library, which it links dynamically, and that carries the ad hoc code signature Apple silicon requires.
 - **Linux on arm64,** named `linux_arm64`. A static ELF executable that talks to the kernel directly.
+- **macOS on x86-64,** named `macos_x64`. A Mach-O executable like that of `macos_arm64`, for an Intel Mac.
 
-Targets share what they have in common: the arm64 instructions are written once for both arm64 targets, and the ELF writer once for both Linux targets.
+Targets share what they have in common: the arm64 instructions are written once for both arm64 targets, the x86-64 instructions once for both x86-64 targets, the ELF writer once for both Linux targets, and the Mach-O writer once for both macOS targets.
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
 
