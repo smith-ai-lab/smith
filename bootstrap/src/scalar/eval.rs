@@ -2,7 +2,14 @@
 //! program does.
 
 use super::{Binary, Bits, Compare, Constant, End, Jump, Op, Program, System, Type, Value};
-use crate::eval::Outcome;
+
+/// What a program did: what it wrote to standard output, and the status it
+/// ended with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    pub stdout: Vec<u8>,
+    pub status: i32,
+}
 
 /// Where the program's texts start, so that no text is at the address that
 /// holds nothing.

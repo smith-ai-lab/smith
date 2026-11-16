@@ -166,7 +166,7 @@ fn update(source: &Path, built: &Output) {
     let err = source.with_extension("err");
     let (write, remove, bytes) = if built.status.success() {
         let program = smith::lower(&std::fs::read(source).unwrap()).unwrap();
-        (out, err, smith::eval::run(&program).stdout)
+        (out, err, smith::scalar::run(&program).stdout)
     } else {
         (err, out, built.stderr.clone())
     };

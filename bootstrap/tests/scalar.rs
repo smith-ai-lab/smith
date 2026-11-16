@@ -1,12 +1,12 @@
 //! The scalar form: every program gives a form that is well formed and does
-//! what the form every target receives does, a form that is damaged is
+//! what the generators say it prints, a form that is damaged is
 //! refused, and what a program needs at run time is written in the form.
 
 use std::sync::OnceLock;
 
+use smith::lower;
 use smith::scalar::runtime::{self, Runtime};
 use smith::scalar::{self, Bits, Builder, Constant, End, Op, Type, Value, Why};
-use smith::{eval, ir, lower, lower_scalar};
 
 use crate::Test;
 use crate::choices;
@@ -27,8 +27,8 @@ pub const ONCE: &[Test] = &[
         every_lowered_program_is_well_formed,
     ),
     (
-        "the_scalar_form_prints_what_the_form_every_target_receives_prints",
-        the_scalar_form_prints_what_the_form_every_target_receives_prints,
+        "the_scalar_form_prints_what_the_generators_say",
+        the_scalar_form_prints_what_the_generators_say,
     ),
     (
         "a_texts_bytes_are_read_and_written_as_8_bit_values",
@@ -137,11 +137,11 @@ fn replace_one(op: &mut Op, types: &[Type], ty: Type, v: Value) -> bool {
     }
 }
 
-/// A generated program, in the form every target receives, and in the
-/// scalar form.
+/// A generated program in the scalar form, and what the generator says it
+/// prints, when it says.
 struct Lowered {
-    program: ir::Program,
     scalar: scalar::Program,
+    stdout: Option<Vec<u8>>,
 }
 
 /// How many programs each generator contributes.
@@ -151,32 +151,46 @@ const CASES: u64 = 40;
 fn lowered() -> &'static [Lowered] {
     static LOWERED: OnceLock<Vec<Lowered>> = OnceLock::new();
     LOWERED.get_or_init(|| {
-        let mut sources: Vec<Vec<u8>> = Vec::new();
+        let mut sources: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
         for case in 0..CASES {
-            sources.push(sample(3, case, programs::program).source);
+            let c = sample(3, case, programs::program);
+            sources.push((c.source, Some(c.stdout)));
             let (shared, copied) = sample(13, case, programs::shared_and_copied);
-            sources.push(shared.into_bytes());
-            sources.push(copied.into_bytes());
-            sources.push(sample(16, case, traits::boxes).0.into_bytes());
-            sources.push(sample(18, case, traits::program).source.into_bytes());
-            sources.push(sample(25, case, enums::program).source.into_bytes());
-            sources.push(sample(28, case, tuples::program).source.into_bytes());
-            sources.push(sample(32, case, lambdas::program).source.into_bytes());
-            sources.push(sample(37, case, text::program).source.into_bytes());
-            sources.push(sample(43, case, tries::program).source.into_bytes());
-            sources.push(sample(64, case, reprs::program).source.into_bytes());
-            sources.push(sample(68, case, choices::program).source.into_bytes());
-            sources.push(sample(74, case, numbers::program).source.into_bytes());
-            sources.push(sample(75, case, numbers::quiet).source.into_bytes());
+            sources.push((shared.into_bytes(), None));
+            sources.push((copied.into_bytes(), None));
+            let (boxes, stdout) = sample(16, case, traits::boxes);
+            sources.push((boxes.into_bytes(), Some(stdout)));
+            let c = sample(18, case, traits::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(25, case, enums::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(28, case, tuples::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(32, case, lambdas::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(37, case, text::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(43, case, tries::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(64, case, reprs::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(68, case, choices::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(74, case, numbers::program);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
+            let c = sample(75, case, numbers::quiet);
+            sources.push((c.source.into_bytes(), Some(c.stdout)));
         }
-        sources.into_iter().map(|s| lowered_from(&s)).collect()
+        sources
+            .into_iter()
+            .map(|(source, stdout)| lowered_from(&source, stdout))
+            .collect()
     })
 }
 
-fn lowered_from(source: &[u8]) -> Lowered {
-    let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-    let scalar = lower_scalar(source).unwrap_or_else(|e| panic!("{e:?}"));
-    Lowered { program, scalar }
+fn lowered_from(source: &[u8], stdout: Option<Vec<u8>>) -> Lowered {
+    let scalar = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
+    Lowered { scalar, stdout }
 }
 
 /// Every generated program, in the scalar form.
@@ -187,22 +201,25 @@ fn taken() -> Vec<(&'static Lowered, &'static scalar::Program)> {
 fn every_lowered_program_is_well_formed() {
     for (l, s) in taken() {
         if let Err(malformed) = scalar::check(s) {
-            panic!("{malformed:?} in the form of {:?}", l.program);
+            panic!("{malformed:?} in {:?}", l.scalar);
         }
     }
 }
 
-fn the_scalar_form_prints_what_the_form_every_target_receives_prints() {
+fn the_scalar_form_prints_what_the_generators_say() {
     for (l, s) in taken() {
-        assert_eq!(scalar::run(s), eval::run(&l.program), "{:?}", l.program);
+        if let Some(stdout) = &l.stdout {
+            let ran = scalar::run(s);
+            assert_eq!(ran.stdout, *stdout, "{s:?}");
+            assert_eq!(ran.status, 0, "{s:?}");
+        }
     }
 }
 
 /// Lowers a program, and gives the types of the parameters of the second
 /// function it holds, which is the first that `main` calls.
 fn parameters_of_the_first_call(source: &str) -> Vec<Type> {
-    let l = lowered_from(source.as_bytes());
-    let s = l.scalar;
+    let s = lowered_from(source.as_bytes(), None).scalar;
     assert_eq!(scalar::check(&s), Ok(()));
     let f = &s.functions[1];
     f.blocks[0].params.iter().map(|v| f.types[v.0]).collect()
@@ -267,20 +284,19 @@ fn a_number_is_one_scalar_of_the_size_of_its_type() {
 fn a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it_should() {
     let held = (0..CASES).map(|case| sample(75, case, numbers::quiet));
     for case in held {
-        let l = lowered_from(case.source.as_bytes());
-        let s = l.scalar;
+        let s = lowered_from(case.source.as_bytes(), None).scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{}", case.source);
         let ran = scalar::run(&s);
         assert_eq!(ran.stdout, case.stdout, "{}", case.source);
-        assert_eq!(ran, eval::run(&l.program), "{}", case.source);
+        assert_eq!(ran.status, 0, "{}", case.source);
     }
 }
 
 fn a_program_that_prints_a_number_is_lowered_and_prints_it() {
     let source = "fn main() ! console, alloc { x: i32 = -12\n print(\"{x}\") }\n";
-    let l = lowered_from(source.as_bytes());
-    assert_eq!(scalar::check(&l.scalar), Ok(()));
-    assert_eq!(scalar::run(&l.scalar).stdout, b"-12\n");
+    let s = lowered_from(source.as_bytes(), None).scalar;
+    assert_eq!(scalar::check(&s), Ok(()));
+    assert_eq!(scalar::run(&s).stdout, b"-12\n");
 }
 
 /// The operations a function of the generated programs for a type does,
@@ -336,8 +352,7 @@ fn every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives() {
             source += &format!("  r{i} = op{i}(1, 2)\n");
         }
         source += "}\n";
-        let l = lowered_from(source.as_bytes());
-        let s = l.scalar;
+        let s = lowered_from(source.as_bytes(), None).scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{source}");
         // `main` calls each in order, so they are the functions after it.
         let values: Vec<i128> = sample(76, int.bits as u64, |g| {
@@ -863,14 +878,12 @@ fn places_of(held: &[Vec<Type>]) -> Vec<Type> {
 
 fn an_enum_has_the_places_its_cases_share_by_type() {
     generate::check(80, 150, layouts, |case| {
-        let l = lowered_from(case.source.as_bytes());
-        let s = l.scalar;
+        let s = lowered_from(case.source.as_bytes(), None).scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{}", case.source);
         // The parameter of the first function `main` calls.
         let f = &s.functions[1];
         let params: Vec<Type> = f.blocks[0].params.iter().map(|v| f.types[v.0]).collect();
         assert_eq!(params, scalars_of(&case.defs, &case.ty), "{}", case.source);
-        assert_eq!(scalar::run(&s), eval::run(&l.program), "{}", case.source);
     });
 }
 
@@ -962,17 +975,19 @@ fn a_program_ends_with_a_failing_status_when_the_system_refuses_memory() {
         .collect();
     for (l, s) in taken() {
         let all = scalar::run(s);
-        assert_eq!(all, eval::run(&l.program), "{:?}", l.program);
+        if let Some(stdout) = &l.stdout {
+            assert_eq!(all.stdout, *stdout, "{:?}", l.scalar);
+        }
         for &limit in &limits {
             let ran = scalar::run_with_limit(s, limit);
             if ran.status == 0 {
-                assert_eq!(ran, all, "with a limit of {limit}: {:?}", l.program);
+                assert_eq!(ran, all, "with a limit of {limit}: {:?}", l.scalar);
             } else {
                 refused += 1;
                 assert!(
                     all.stdout.starts_with(&ran.stdout),
                     "with a limit of {limit}: {:?}",
-                    l.program
+                    l.scalar
                 );
             }
         }

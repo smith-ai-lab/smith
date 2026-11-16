@@ -26,7 +26,7 @@ use crate::generate::Gen;
 use crate::programs::{Expected, PIECES, pos_after};
 
 /// A program whose functions take functions: its source, what it prints,
-/// how many functions the form every target receives holds, and the
+/// how many functions the scalar form holds, and the
 /// mistake placed in it, if any.
 pub struct LambdaCase {
     pub source: String,

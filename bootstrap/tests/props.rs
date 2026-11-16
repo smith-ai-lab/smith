@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use smith::diag::{self, Error, Pos};
-use smith::eval::{self, Outcome};
+use smith::scalar::{self, Outcome};
 use smith::{compile, lower};
 
 use crate::Test;
@@ -32,8 +32,8 @@ pub const TESTS: &[Test] = &[
         the_evaluator_says_what_the_generator_built_the_program_to_print,
     ),
     (
-        "the_form_every_target_receives_holds_each_function_main_reaches",
-        the_form_every_target_receives_holds_each_function_main_reaches,
+        "the_scalar_form_holds_each_function_main_reaches",
+        the_scalar_form_holds_each_function_main_reaches,
     ),
     (
         "the_evaluator_says_what_the_generator_built_a_program_with_traits_to_print",
@@ -80,8 +80,8 @@ pub const TESTS: &[Test] = &[
         the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print,
     ),
     (
-        "the_form_every_target_receives_holds_no_function_that_takes_a_function",
-        the_form_every_target_receives_holds_no_function_that_takes_a_function,
+        "the_scalar_form_holds_no_function_that_takes_a_function",
+        the_scalar_form_holds_no_function_that_takes_a_function,
     ),
     (
         "an_expression_in_parentheses_is_the_expression",
@@ -228,11 +228,11 @@ fn the_evaluator_says_what_the_generator_built_the_program_to_print() {
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
-fn the_form_every_target_receives_holds_each_function_main_reaches() {
+fn the_scalar_form_holds_each_function_main_reaches() {
     generate::check(11, 300, programs::program, |case| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(program.functions.len(), case.reached);
@@ -271,7 +271,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_traits_to_print() 
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
         assert_eq!(program.functions.len(), case.copies, "one for each copy");
     });
 }
@@ -286,7 +286,7 @@ fn a_program_with_type_parameters_builds_to_the_bytes_of_it_written_out() {
     let targets = targets::buildable();
     let choose = |g: &mut Gen| program_and_target(g, targets.len());
     generate::check(15, 60, choose, |(case, target)| {
-        // Every target receives the same form of the program, so the two
+        // The program is lowered to one form for every target, so the two
         // build to the same bytes for every target when that form is the
         // same.
         let built = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
@@ -329,7 +329,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_enums_to_print() {
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
@@ -368,7 +368,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_tuples_to_print() 
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
@@ -386,16 +386,16 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_lambdas_to_print()
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
-/// The form every target receives holds a function for each function with
+/// The scalar form holds a function for each function with
 /// a name that runs, and none for a function that takes a function, which
 /// is lowered in place with the lambdas it is given. Such a function would
 /// need a value of a function type, as a function with type parameters
 /// would need a type parameter.
-fn the_form_every_target_receives_holds_no_function_that_takes_a_function() {
+fn the_scalar_form_holds_no_function_that_takes_a_function() {
     generate::check(30, 300, lambdas::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(program.functions.len(), case.copies);
@@ -425,7 +425,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_pr
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
@@ -465,7 +465,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_text_to_print() {
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
@@ -483,7 +483,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
@@ -494,7 +494,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_choices_to_print()
             stdout: case.stdout.clone(),
             status: 0,
         };
-        assert_eq!(eval::run(&program), expected);
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 
@@ -510,7 +510,7 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_numbers_to_print()
     generate::check(70, 300, numbers::program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(
-            eval::run(&program),
+            scalar::run(&program),
             Outcome {
                 stdout: case.stdout.clone(),
                 status: 0
@@ -571,7 +571,7 @@ fn a_program_that_holds_no_number_builds_to_the_same_bytes_whatever_numbers_it_d
 
 fn stdout_of(source: &str) -> Vec<u8> {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in\n{source}"));
-    eval::run(&program).stdout
+    scalar::run(&program).stdout
 }
 
 fn a_value_and_the_text_its_repr_gives_build_equal_values() {
@@ -652,7 +652,7 @@ fn what_a_program_does_not_print_is_given_nothing() {
 fn an_implementation_with_type_parameters_applies_to_each_type_that_fits() {
     generate::check(16, 200, traits::boxes, |(source, stdout)| {
         let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
-        assert_eq!(eval::run(&program).stdout, *stdout);
+        assert_eq!(scalar::run(&program).stdout, *stdout);
     });
 }
 
@@ -785,8 +785,10 @@ const BEFORE_THE_SEAM: &[(&str, &str)] = &[
     ("lexer.rs", include_str!("../src/lexer.rs")),
     ("parser.rs", include_str!("../src/parser.rs")),
     ("check.rs", include_str!("../src/check.rs")),
-    ("ir.rs", include_str!("../src/ir.rs")),
-    ("eval.rs", include_str!("../src/eval.rs")),
+    (
+        "check/to_scalar.rs",
+        include_str!("../src/check/to_scalar.rs"),
+    ),
 ];
 
 fn nothing_before_the_target_seam_names_a_system_or_machine() {

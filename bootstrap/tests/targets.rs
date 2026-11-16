@@ -11,10 +11,9 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use smith::diag::Error;
-use smith::eval::Outcome;
-use smith::scalar::{self, Bits, Builder, Constant, Op, Type, Value};
+use smith::scalar::{self, Bits, Builder, Constant, Op, Outcome, Type, Value};
 use smith::target::{Frame, Target};
-use smith::{compile, lower, lower_scalar};
+use smith::{compile, lower};
 
 use crate::Test;
 use crate::choices;
@@ -116,21 +115,14 @@ pub const MACHINE: &[Test] = &[
 
 const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
 
-/// The targets the compiler can build for, in the order of the enum. In a
+/// The targets the compiler builds for, in the order of the enum. In a
 /// fingerprint of one target, that one alone.
 pub fn buildable() -> Vec<Target> {
-    let program = lower(HELLO.as_bytes()).unwrap();
-    let scalar = lower_scalar(HELLO.as_bytes()).unwrap();
     let only = FINGERPRINT.with_borrow(|f| f.as_ref().map(|f| f.only));
     Target::ALL
         .iter()
         .copied()
         .filter(|t| only.is_none_or(|only| only == *t))
-        .filter(|t| {
-            t.emit(&program)
-                .or_else(|| t.emit_scalar(&scalar))
-                .is_some()
-        })
         .collect()
 }
 
@@ -203,13 +195,10 @@ pub fn record_for_every_target(source: &[u8]) {
     }
 }
 
-/// Builds a program in the scalar form for `target`, which is built from it,
-/// and checks that its executable does what `said` says, or, for a
+/// Builds a program in the scalar form for `target`, and checks that its executable does what `said` says, or, for a
 /// fingerprint, notes both.
 fn scalar_runs_as(program: &scalar::Program, target: Target, said: &Outcome) {
-    let bytes = target
-        .emit_scalar(program)
-        .expect("built from the scalar form");
+    let bytes = target.emit(program);
     if fingerprinting() {
         record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
     } else {
@@ -396,7 +385,7 @@ fn every_executable_agrees<T: Debug>(
     let targets = runnable();
     generate::check(seed, cases, generate, |case| {
         let source = source(case);
-        let program = lower_scalar(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
         let said = scalar::run(&program);
         for &target in &targets {
             runs_as(source, target, &said);
@@ -431,10 +420,8 @@ fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says(
 fn a_struct_bound_to_two_names_is_two_equal_structs() {
     let targets = runnable();
     generate::check(13, 100, programs::shared_and_copied, |(shared, copied)| {
-        let said =
-            scalar::run(&lower_scalar(shared.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
-        let copy =
-            scalar::run(&lower_scalar(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        let said = scalar::run(&lower(shared.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        let copy = scalar::run(&lower(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
         assert_eq!(said, copy);
         for &target in &targets {
             runs_as(shared.as_bytes(), target, &copy);
@@ -458,7 +445,7 @@ fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
     every_executable_agrees(68, 60, choices::program, |case| case.source.as_bytes());
 }
 
-/// What a form of the target holds in the frame of a function, worked out
+/// What the frame of a function holds, worked out
 /// from the types of its values alone: every value but the function's
 /// parameters, in the order of their numbers, at the next multiple of its
 /// size, and, for the calls it makes, room for the most any one takes, where
@@ -498,11 +485,9 @@ fn frame_of(program: &scalar::Program, f: &scalar::Function) -> Frame {
 
 fn every_value_is_held_at_the_size_of_its_type() {
     generate::check(81, 40, numbers::program, |case| {
-        let program = lower_scalar(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         for target in Target::ALL {
-            let Some(frames) = target.frames(&program) else {
-                continue;
-            };
+            let frames = target.frames(&program);
             assert_eq!(frames.len(), program.functions.len());
             for (f, frame) in program.functions.iter().zip(&frames) {
                 assert_eq!(*frame, frame_of(&program, f), "{}", target.name());
@@ -589,16 +574,8 @@ fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> s
     program
 }
 
-/// The targets that are built from the scalar form and that this machine can
-/// run.
-fn runnable_from_scalar() -> Vec<Target> {
-    let mut targets = runnable();
-    targets.retain(|t| t.from_scalar());
-    targets
-}
-
 fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
-    let targets = runnable_from_scalar();
+    let targets = runnable();
     let generate = |g: &mut Gen| {
         let count = 2 + g.below(5);
         let types: Vec<Type> = (0..count).map(|_| *g.pick(&TYPES)).collect();
@@ -629,7 +606,7 @@ fn a_jump_that_swaps_two_values_swaps_them() {
     let said = scalar::run(&program);
     let swapped: Vec<u8> = [2u64, 1].iter().flat_map(|n| n.to_le_bytes()).collect();
     assert_eq!(said.stdout, swapped);
-    for target in runnable_from_scalar() {
+    for target in runnable() {
         scalar_runs_as(&program, target, &said);
     }
 }
@@ -689,7 +666,7 @@ fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothi
 fn a_long_literal_is_printed_whole() {
     let text = "abcdefghij".repeat(100_000);
     let source = format!("fn main() ! console {{ print(\"{text}\") }}\n");
-    let program = lower_scalar(source.as_bytes()).unwrap();
+    let program = lower(source.as_bytes()).unwrap();
     let said = scalar::run(&program);
     assert_eq!(said.stdout, format!("{text}\n").into_bytes());
     for target in runnable() {
