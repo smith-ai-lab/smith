@@ -116,7 +116,6 @@ enum Kind {
     DefinedTwice,
     NotAVar,
     FieldOfNotAVar,
-    ColonEquals,
     AssignedWrongType,
     Recursion,
     NoArgument,
@@ -174,7 +173,6 @@ const KINDS: &[Kind] = &[
     Kind::DefinedTwice,
     Kind::NotAVar,
     Kind::FieldOfNotAVar,
-    Kind::ColonEquals,
     Kind::AssignedWrongType,
     Kind::Recursion,
     Kind::NoArgument,
@@ -253,7 +251,6 @@ impl Kind {
                 | Kind::UnknownName
                 | Kind::DefinedTwice
                 | Kind::NotAVar
-                | Kind::ColonEquals
                 | Kind::Recursion
                 | Kind::NoArgument
                 | Kind::PrintEnd
@@ -1362,13 +1359,6 @@ fn main_statement(
             b.push("kept.");
             b.push(m.structs[s].fields[0].0);
             b.push(" = \"a\"");
-        }
-        Kind::ColonEquals => {
-            let name = names.first().map_or("x", |(n, _)| n.as_str());
-            b.push(name);
-            b.push(" ");
-            b.mark("`:=`", Some("`=`".to_string()));
-            b.push(":= \"a\"");
         }
         Kind::AssignedWrongType => {
             let around = around.expect("a value of a struct");

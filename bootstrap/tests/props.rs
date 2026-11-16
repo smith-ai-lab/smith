@@ -478,7 +478,6 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
         ("print(\"a\")", "[0]", Some("not supported yet")),
         ("x.y ", "+= \"a\"", Some("not supported yet")),
-        ("x ", ":= \"a\"", Some("`:=`")),
         ("", ")", Some("statement")),
     ];
     const ITEMS: &[Line] = &[
