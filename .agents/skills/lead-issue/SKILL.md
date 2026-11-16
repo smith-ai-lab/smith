@@ -5,7 +5,7 @@ description: Take roadmap issues from open to merged by starting a worker agent 
 
 # Lead an issue
 
-The lead does not write the code. It starts a worker on an issue, stays out of the way until a pull request is ready, reviews it, and merges it. The lead runs on Fable, a more capable model than any worker, so that its review is the stronger read.
+The lead does not write the code. It starts a worker on an issue, stays out of the way until a pull request is ready, reviews it, and merges it. The lead runs on a more capable model than any worker, so that its review is the stronger read.
 
 The owner and the lead decide the design of Smith together, in conversation, and both agree before anything is written into `knowledge/`. An issue that only builds what `knowledge/` already decides needs no further agreement: the lead writes it and starts a worker, so that building goes on while the design is discussed. Any other issue is agreed first. Everything else is the lead's to do: writing the issues they agreed, starting workers, reviewing pull requests, and merging them. The owner does not do those, and is not asked to.
 
@@ -20,9 +20,9 @@ A lead's session ends and another begins, so nothing the work depends on lives o
 
 ## Steps
 
-1. Take the first open sub-issue of the roadmap whose "After" issues are all closed. Read it, and read its `model:` label.
+1. Take the first open sub-issue of the roadmap whose "After" issues are all closed. Read it, and see whether it is labelled `trivial`.
 
-2. Start one worker for it: a cloud agent on this repository, on the newest model in the family the label names, at the default effort. Give it this brief and nothing more, with your own session's id in it.
+2. Start one worker for it: a cloud agent on this repository, on the model [the table below](#models) gives for its size, at the default effort. Give it this brief and nothing more, with your own session's id in it.
 
    ```
    Do issue #<n> in <owner>/<repo>. Follow the ship-change skill.
@@ -56,7 +56,16 @@ A lead's session ends and another begins, so nothing the work depends on lives o
 
 7. Repeat steps 5 and 6 until nothing is left. Then add the pull request to the merge queue, as the `ship-change` skill describes. Ask for the merge only when every check has passed, and do not watch it. The queue merges it.
 
-8. Start the next worker. Before that, confirm the pull request merged, and remove its closed issue from the roadmap's sub-issues, so that the roadmap lists only what is left. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
+8. Start the next worker. Before that, confirm the pull request merged, remove its closed issue from the roadmap's sub-issues, so that the roadmap lists only what is left, and archive the worker's session, so that finished sessions do not pile up. Tell the owner what merged, in a line or two, and anything the run showed that should change an issue or a skill.
+
+## Models
+
+An issue's label names the size of the task, and this table names the model for each size. It is the one place a model is named. Someone working with another provider adds a column for it and changes nothing else.
+
+| Label | Anthropic |
+| --- | --- |
+| `trivial` | The newest Haiku |
+| None | The newest Sonnet |
 
 ## When a worker falls short
 
@@ -64,8 +73,7 @@ Work through these in order, and stop at the first that applies.
 
 1. The issue was unclear or wrong. Fix the issue.
 2. The worker lacked something it needed to read. Add it to `knowledge/` or to "Read first".
-3. The worker had what it needed and tried. Raise the effort one level. On a `model:sonnet` issue do this once: beyond that, Sonnet costs about what Opus does, so move up instead.
-4. It still fails. Move the label up a model and start a new worker. If the label is already `model:opus`, split the issue into smaller ones.
+3. The issue was too large. Split it into smaller issues, and start a new worker on the first.
 
 ## Rules
 
