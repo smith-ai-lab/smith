@@ -25,16 +25,16 @@ pub enum Step {
     /// the program with a failing status.
     Write { stream: Stream, value: Value },
     /// Run a function, by its place in `Program::functions`, with these
-    /// values as its parameters, in order. The text it gives back, if it
-    /// gives any, goes to the local `result`.
+    /// values as its parameters, in order. The texts it gives back go to
+    /// the locals `results`, in order.
     Call {
         function: usize,
         args: Vec<Value>,
-        result: Option<usize>,
+        results: Vec<usize>,
     },
 }
 
-/// A function: steps run in order, and then it gives back `result`.
+/// A function: steps run in order, and then it gives back `results`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Function {
     /// How many parameters it takes.
@@ -42,8 +42,8 @@ pub struct Function {
     /// How many locals it has, its parameters included.
     pub locals: usize,
     pub steps: Vec<Step>,
-    /// The text it gives back, or `None` if it gives back nothing.
-    pub result: Option<Value>,
+    /// The texts it gives back, in order, which may be none.
+    pub results: Vec<Value>,
 }
 
 /// A program: it runs the function `main`, which takes no parameters and

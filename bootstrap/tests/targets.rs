@@ -36,6 +36,10 @@ pub const MACHINE: &[Test] = &[
         every_executable_does_what_the_evaluator_says,
     ),
     (
+        "a_struct_bound_to_two_names_is_two_equal_structs",
+        a_struct_bound_to_two_names_is_two_equal_structs,
+    ),
+    (
         "a_long_literal_is_printed_whole",
         a_long_literal_is_printed_whole,
     ),
@@ -143,6 +147,19 @@ fn every_executable_does_what_the_evaluator_says() {
         for &target in &targets {
             let bytes = compile(&case.source, target).unwrap_or_else(|e| panic!("{e:?}"));
             assert_eq!(run(&bytes), said, "{}", target.name());
+        }
+    });
+}
+
+fn a_struct_bound_to_two_names_is_two_equal_structs() {
+    let targets = runnable();
+    generate::check(13, 100, programs::shared_and_copied, |(shared, copied)| {
+        let said = eval::run(&lower(shared.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        let copy = eval::run(&lower(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        assert_eq!(said, copy);
+        for &target in &targets {
+            let bytes = compile(shared.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+            assert_eq!(run(&bytes), copy, "{}", target.name());
         }
     });
 }

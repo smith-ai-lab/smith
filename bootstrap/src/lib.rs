@@ -49,11 +49,11 @@ fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<Program, Vec<diag
     let tokens = timings
         .stage("lex", || lexer::lex(source))
         .map_err(in_order)?;
-    let function = timings
+    let file = timings
         .stage("parse", || parser::parse(&tokens))
         .map_err(in_order)?;
     timings
-        .stage("check", || check::check(function))
+        .stage("check", || check::check(file))
         .map_err(in_order)
 }
 

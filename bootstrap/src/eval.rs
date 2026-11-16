@@ -21,13 +21,8 @@ pub fn run(program: &Program) -> Outcome {
 }
 
 /// Runs a function with its parameters, each a text by its place, and
-/// gives the place of the text it gives back, if any.
-fn call(
-    program: &Program,
-    function: usize,
-    args: Vec<usize>,
-    stdout: &mut Vec<u8>,
-) -> Option<usize> {
+/// gives the places of the texts it gives back.
+fn call(program: &Program, function: usize, args: Vec<usize>, stdout: &mut Vec<u8>) -> Vec<usize> {
     let f = &program.functions[function];
     let mut locals = args;
     locals.resize(f.locals, usize::MAX);
@@ -44,15 +39,15 @@ fn call(
             Step::Call {
                 function,
                 args,
-                result,
+                results,
             } => {
                 let args = args.iter().map(|a| text(&locals, *a)).collect();
                 let given = call(program, *function, args, stdout);
-                if let (Some(r), Some(t)) = (result, given) {
+                for (r, t) in results.iter().zip(given) {
                     locals[*r] = t;
                 }
             }
         }
     }
-    f.result.map(|v| text(&locals, v))
+    f.results.iter().map(|v| text(&locals, *v)).collect()
 }

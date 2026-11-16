@@ -125,8 +125,11 @@ fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
         let mut text = String::from_utf8(case.source.clone()).unwrap();
         text.push_str("\n\n");
-        // The program may hold a function named `unused` already.
-        let with_unreached = format!("{text}{}\n", unreached.replace("unused", "spare"));
+        // The program may hold a definition named `unused` already.
+        let renamed = unreached
+            .replace("unused", "spare")
+            .replace("Unused", "Spare");
+        let with_unreached = format!("{text}{renamed}\n");
         assert_eq!(lower(with_unreached.as_bytes()), Ok(program));
         // A mistake in its syntax is still found, as it is parsed.
         let broken = format!("{text}fn broken() {{ x = ");
@@ -393,11 +396,13 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ("x = ", "1", Some("not supported yet")),
         ("", "var x = 1", Some("not supported yet")),
         ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
-        ("print(\"a\")", ".x", Some("not supported yet")),
+        ("print(\"a\")", "[0]", Some("not supported yet")),
+        ("", "x.y = \"a\"", Some("not supported yet")),
         ("", ")", Some("statement")),
     ];
     const ITEMS: &[Line] = &[
-        ("", "struct A { x: f32 }", Some("not supported yet")),
+        ("struct A { x: str ", "= \"a\" }", Some("not supported yet")),
+        ("", "struct B {\n  x: f32\n}", None),
         ("", "use std.console (input)", Some("not supported yet")),
         ("", ")", Some("definition")),
         ("", "fn f() ! console { print(\"a\") }", None),
