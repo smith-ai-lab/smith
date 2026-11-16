@@ -175,9 +175,14 @@ jobs:
           echo "the builds gave $result"
           test "$result" = success
 
+  # `build2`, `build3` and the jobs between them are skipped when nothing was
+  # lost, and a job without a condition is skipped when any job before it, at
+  # any distance, was. So this says when it runs: `built` succeeded, which it
+  # does only when the newest build of every target did.
   publish:
     name: publish v${{ needs.plan.outputs.version }}
     needs: [plan, built]
+    if: ${{ !cancelled() && needs.built.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       # Only this job may write, and only to make a release.
@@ -205,3 +210,19 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --notes-file parts/notes/notes.md
+
+  # A run that planned a version and did not publish it is a failed run. This
+  # is the only job that says so when no job before it failed.
+  verdict:
+    name: the version was published
+    needs: [plan, built, publish]
+    if: ${{ !cancelled() && needs.plan.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILT: ${{ needs.built.result }}
+          PUBLISH: ${{ needs.publish.result }}
+        run: |
+          echo "v$VERSION: the builds gave $BUILT and publish gave $PUBLISH"
+          test "$PUBLISH" = success
