@@ -1,7 +1,7 @@
 ---
 type: specification
 title: for expressions
-description: for as an unordered description of an array, reductions, element-wise operators, @, and the rules for float arithmetic.
+description: for as an unordered description of an array, reductions, the operators of linear algebra, @, and the rules for float arithmetic.
 status: planned
 ---
 
@@ -51,7 +51,9 @@ evens: [4]f32 = for i { float(i) * 2.0 }
 - Arithmetic on an index, as in `x[i + 1]`, never gives it a size. The compiler does not solve for one. The access is instead proven to be in range, as [Contracts and proofs](contracts.md) describes.
 
 - `sum`, `max`, and `mean` reduce a view to a value, and `map(f, v)` is shorthand for `for i { f(v[i]) }`.
-- Arithmetic operators on arrays are element-wise and return views, so `x + y` is `for i { x[i] + y[i] }`. The one product that is not element-wise is `@`: `a @ b` means `matmul(a, b)`, which contracts the last axis of `a` with the first axis of `b`, and it binds like `*`. The sizes are checked by the types. `@` does not treat leading axes as batches, so a batch is written as a `for`.
+- An operator on arrays means what it means in linear algebra. Two arrays of the same shape add and subtract, an array is scaled by a number with `*` and `/`, and `-x` negates. Each returns a view, so `x + y` is `for i { x[i] + y[i] }`. Two arrays have no `*`, `/`, or `^`: a product of elements is written with `for`, where the indices say which elements meet.
+- There is no broadcasting. Arrays of different shapes are combined with a `for`.
+- The product of linear algebra is `@`: `a @ b` means `matmul(a, b)`, which contracts the last axis of `a` with the first axis of `b`, and it binds like `*`. The sizes are checked by the types. `@` does not treat leading axes as batches, so a batch is written as a `for`.
 - Iterations are independent, so every `for` may run across SIMD lanes, threads, or a GPU.
 - A `for` whose block only accumulates into a `var` yields nothing. Accumulation with `+=` or `*=` is the one mutation allowed inside it, and it runs in parallel as a reduction. Giving an outer variable a new value with `=` is rejected, because the result would depend on order.
 - Float code is fast by default and repeatable: the same code, built by the same compiler, on the same computer, always gives the same bits, whatever the thread count. Different hardware or a newer compiler may change the last bits.

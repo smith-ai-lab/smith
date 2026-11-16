@@ -7,7 +7,7 @@ status: planned
 
 # Differentiation
 
-`grad` is a library [function over code](code.md). `grad(f)` runs when the program is built and returns a new function: the gradient of `f` with respect to its first parameter. The gradient has the same type as that parameter. To differentiate with respect to something else, wrap `f` in a lambda that takes it first, and to differentiate with respect to several values, put them in one struct or tuple. `derive Vector` gives a struct of float arrays element-wise arithmetic and scaling, which is what a gradient step needs.
+`grad` is a library [function over code](code.md). `grad(f)` runs when the program is built and returns a new function: the gradient of `f` with respect to its first parameter. The gradient has the same type as that parameter. To differentiate with respect to something else, wrap `f` in a lambda that takes it first, and to differentiate with respect to several values, put them in one struct or tuple. `derive Vector` gives a struct of float arrays addition, subtraction, and scaling by a number, which is what a gradient step needs.
 
 ```
 derive Vector for Linear
