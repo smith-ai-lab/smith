@@ -6,7 +6,7 @@ description: Structs with named fields and defaults, tuples, and patterns that t
 
 # Structs and tuples
 
-A struct holds named fields, one per line. Construction is a call with named fields, and `.` reads a field. A tuple groups values without names and is taken apart by a pattern, in which `var` can mark a single binding. Its elements are evaluated from left to right. The empty tuple `()` is what a function with no return type returns. A definition may also sit at the top level of a file, as `unit` does below.
+A struct holds named fields, one per line. Construction is a call with named fields, and `.` reads a field. A tuple groups values without names and is taken apart by a pattern, in which `var` can mark a single binding. A pattern may define some names and assign to others: in `(total, rest) = split(total)`, where `total` is a `var`, `total` is assigned and `rest` is defined. Its elements are evaluated from left to right. The empty tuple `()` is what a function with no return type returns. A definition may also sit at the top level of a file, as `unit` does below.
 
 ```
 struct Rect {

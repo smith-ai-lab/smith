@@ -21,6 +21,6 @@ fn grow(start: f32, rate: f32) -> f32 {
 }
 ```
 
-So `x = e` defines `x` when the function has no such name, and assigns when `x` is a `var`. A pattern may do both at once: in `(total, rest) = split(total)`, `total` is assigned and `rest` is defined.
+So `x = e` defines `x` when the function has no such name, and assigns when `x` is a `var`.
 
 Next: [Structs and tuples](structs.md)
