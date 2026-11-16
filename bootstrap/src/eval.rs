@@ -82,6 +82,10 @@ fn steps(program: &Program, steps_: &[Step], locals: &mut [Word], stdout: &mut V
                     parts.iter().map(|p| text(program, locals, *p)).collect();
                 locals[*local] = Word::Text(parts.concat().into());
             }
+            Step::Escape { local, value } => {
+                let text = text(program, locals, *value);
+                locals[*local] = Word::Text(escaped(&text).into());
+            }
             Step::Match { value, arms } => {
                 let Word::Case(c) = word(program, locals, *value) else {
                     panic!("a match on what is not a case")
@@ -90,4 +94,19 @@ fn steps(program: &Program, steps_: &[Step], locals: &mut [Word], stdout: &mut V
             }
         }
     }
+}
+
+/// The text written as a string literal, as `Step::Escape` makes it.
+fn escaped(text: &[u8]) -> Vec<u8> {
+    let mut out = vec![b'"'];
+    for &b in text {
+        match b {
+            b'"' | b'\\' | b'{' | b'}' => out.extend([b'\\', b]),
+            b'\n' => out.extend(b"\\n"),
+            b'\t' => out.extend(b"\\t"),
+            b => out.push(b),
+        }
+    }
+    out.push(b'"');
+    out
 }

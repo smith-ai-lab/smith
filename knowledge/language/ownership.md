@@ -2,7 +2,8 @@
 type: specification
 title: Ownership
 description: The Copy and Discard traits, lending and take, and values that must be used at most once or exactly once.
-status: planned
+status: partial
+built: "`without`, for `Fmt` and `Repr`"
 ---
 
 # Ownership

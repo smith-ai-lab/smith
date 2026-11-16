@@ -14,6 +14,20 @@ pub struct File {
     pub enums: Vec<Enum>,
     pub traits: Vec<Trait>,
     pub impls: Vec<Impl>,
+    pub withouts: Vec<Without>,
+}
+
+/// `without Trait for Type`, which takes away a trait the type would be
+/// given automatically.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Without {
+    pub pos: Pos,
+    /// The trait, and where its name is.
+    pub name: String,
+    pub name_pos: Pos,
+    /// The type, and where its name is.
+    pub ty: String,
+    pub ty_pos: Pos,
 }
 
 /// A type parameter, as in `[T: Named]` or `[A, out B]`.
@@ -348,6 +362,7 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
     let mut enums = Vec::new();
     let mut traits = Vec::new();
     let mut impls = Vec::new();
+    let mut withouts = Vec::new();
     loop {
         p.skip_newlines();
         let start = p.at;
@@ -386,6 +401,13 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
                     p.skip_item(start);
                 }
             },
+            Tok::Keyword("without") => match p.without() {
+                Ok(w) => withouts.push(w),
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
             _ => {
                 let error = p.item();
                 p.errors.push(error);
@@ -400,6 +422,7 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
             enums,
             traits,
             impls,
+            withouts,
         })
     } else {
         Err(p.errors)
@@ -701,13 +724,34 @@ impl Parser<'_> {
             Tok::Keyword("pub") => "`pub`",
             Tok::Keyword("effect") => "declaring an effect",
             Tok::Keyword("derive") => "`derive`",
-            Tok::Keyword("without") => "`without`",
             Tok::Keyword("foreign") => "a foreign function",
             Tok::Keyword("use") => "`use`",
             Tok::Ident(_) => "a definition other than a function",
             tok => return self.expected("a definition", tok),
         };
         Error::unsupported(pos, feature)
+    }
+
+    /// Parses `without Trait for Type` and the line break after it.
+    fn without(&mut self) -> Result<Without, Error> {
+        let pos = self.pos();
+        self.bump();
+        let (name, name_pos) = self.ident("the name of a trait")?;
+        if self.tok() != &Tok::Keyword("for") {
+            return Err(self.expected("`for` and a type", self.tok()));
+        }
+        self.bump();
+        let (ty, ty_pos) = self.ident("the name of a type")?;
+        match self.tok() {
+            Tok::Newline | Tok::Eof => Ok(Without {
+                pos,
+                name,
+                name_pos,
+                ty,
+                ty_pos,
+            }),
+            tok => Err(self.expected("a line break", tok)),
+        }
     }
 
     /// Parses a struct and the line break after it.

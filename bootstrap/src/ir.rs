@@ -44,6 +44,11 @@ pub enum Step {
     /// system refuses ends the program with a failing status. Memory is
     /// never given back while the program runs.
     Join { local: usize, parts: Vec<Value> },
+    /// Make a new text that is the text `value` written as a string
+    /// literal: in double quotes, with a backslash before each `"`, `\`,
+    /// `{`, and `}`, and each line break and tab written `\n` and `\t`.
+    /// It is put in the local, in memory asked of the system as for `Join`.
+    Escape { local: usize, value: Value },
     /// Run the steps of the arm at the place of the case `value` is, which
     /// is one of the arms.
     Match { value: Value, arms: Vec<Vec<Step>> },
@@ -70,7 +75,10 @@ impl Function {
                 .map(|s| match s {
                     Step::Call { args, results, .. } => args.len() + results.len(),
                     Step::Match { arms, .. } => arms.iter().map(|a| most(a)).max().unwrap_or(0),
-                    Step::Write { .. } | Step::Set { .. } | Step::Join { .. } => 0,
+                    Step::Write { .. }
+                    | Step::Set { .. }
+                    | Step::Join { .. }
+                    | Step::Escape { .. } => 0,
                 })
                 .max()
                 .unwrap_or(0)
@@ -82,7 +90,7 @@ impl Function {
 /// Whether any of the steps, in any arm, asks the system for memory.
 fn allocates(steps: &[Step]) -> bool {
     steps.iter().any(|s| match s {
-        Step::Join { .. } => true,
+        Step::Join { .. } | Step::Escape { .. } => true,
         Step::Match { arms, .. } => arms.iter().any(|a| allocates(a)),
         Step::Write { .. } | Step::Call { .. } | Step::Set { .. } => false,
     })

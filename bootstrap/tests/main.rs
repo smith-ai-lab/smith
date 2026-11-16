@@ -20,6 +20,7 @@ mod lambdas;
 mod programs;
 mod props;
 mod release;
+mod reprs;
 mod sha256;
 mod targets;
 mod text;
