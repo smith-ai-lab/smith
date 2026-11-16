@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Structs and tuples
-description: Structs with named fields and defaults, tuples, and patterns that take them apart.
+description: Structs with named fields and defaults, assigning to a field of a var, tuples, and patterns that take them apart.
 ---
 
 # Structs and tuples
@@ -26,6 +26,18 @@ fn perimeter(r: Rect) -> f32 {
 
 unit = Rect(w: 1.0, h: 1.0)
 ```
+
+A field of a `var` can be assigned. Nothing else can name that value, so the change is seen through that `var` alone: it now holds a copy of the struct with the field replaced.
+
+```
+fn widen(r: Rect, by: f32) -> Rect {
+  var wide = r
+  wide.w += by
+  wide
+}
+```
+
+`widen` leaves `r` as it was. Assigning to a field of a name that is not a `var`, such as `r.w`, is a compile error.
 
 A field may have a default, written as a parameter's is and under the same rules. Construction may then leave the field out.
 

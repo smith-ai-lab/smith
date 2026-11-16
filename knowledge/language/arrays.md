@@ -16,6 +16,7 @@ fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Fin[m], c: Fin[k]) -> f32 {
 }
 ```
 
+- An element of a `var` array is assigned as a field is, as in `a[0] = 1.0`, and only that `var` sees the change.
 - A literal index is checked against the size at compile time, so `a[3]` on a `[3]f32` is a compile error.
 - A size known only at run time is written `[some n]T`.
 - A range is `a..b` and excludes `b`. `x[a..b]` has size `b - a`, with `x[..k]` and `x[k..]` as short forms.
