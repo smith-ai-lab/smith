@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Arrays and sizes
-description: Arrays whose sizes are part of their types, Fin indices that need no bounds check, and ranges.
+description: Arrays whose sizes are part of their types, Fin indices that need no bounds check, indexing as the Index trait, and ranges.
 ---
 
 # Arrays and sizes
@@ -16,8 +16,13 @@ fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Fin[m], c: Fin[k]) -> f32 {
 }
 
 fn zeros(n: Nat) -> [n]f32 { for i { 0.0 } }
+
+trait Index[C, I, out T] {
+  fn at(c: C, i: I) -> T
+}
 ```
 
+- Indexing is a trait function, as an operator is: `x[i]` means `at(x, i)` from the `Index` trait below. An array implements it for `Fin` indices, and any other type may implement it, so nothing about an array's brackets is special.
 - An element of a `var` array is assigned as a field is, as in `a[0] = 1.0`, and only that `var` sees the change.
 - A literal index is checked against the size at compile time, so `a[3]` on a `[3]f32` is a compile error.
 - Arithmetic on sizes inside a type, such as `[n + w - 1]f32`, is exact and has no limit, because it is reasoned about and never computed.
