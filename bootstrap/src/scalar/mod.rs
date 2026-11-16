@@ -1,5 +1,5 @@
 //! The scalar form: the one small typed form below the kernel form that
-//! every target will receive. A function is a list of blocks. A block takes
+//! every target receives. A function is a list of blocks. A block takes
 //! parameters, runs its instructions in order, and ends by jumping to a
 //! block with arguments, by choosing between blocks, or by returning
 //! values. Every value is named once, has a type, and has a size.
@@ -17,7 +17,7 @@ pub mod runtime;
 mod wellformed;
 
 pub use build::Builder;
-pub use eval::{call, run, run_with_limit};
+pub use eval::{Outcome, call, run, run_with_limit};
 pub use wellformed::{Malformed, Why, check};
 
 /// How many bits an integer has.

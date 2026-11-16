@@ -3,12 +3,12 @@
 //! instructions are the arm64 ones the other arm64 targets use, and its
 //! file is written by the PE writer `windows_x64` uses.
 
-use super::arm64::{self, Asm, LS, System, X0, X1, X2, X3, X4, X19, X20, X21};
+use super::arm64::{self, Asm, LS, Place, System, X0, X1, X2, X3, X4, X19, X20, X21};
 use super::pe::{
     self, EXIT_PROCESS, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE, Machine,
     PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
-use crate::ir::{Program, Stream};
+use crate::scalar::{Program, Stream};
 
 const MACHINE: Machine = Machine {
     machine: 0xaa64, // arm64
@@ -67,7 +67,7 @@ impl System for Windows {
         asm.call(WRITE_FILE);
         // It gives a BOOL, which is 32 bits.
         asm.cbz_w(X0, fail);
-        asm.load32_stack(X0, WRITTEN);
+        asm.load(X0, 4, false, Place::Frame(WRITTEN));
         asm.cbz_w(X0, fail);
         // add x19, x19, x0; sub x20, x20, x0; b again
         asm.word(0x8b00_0000 | X0 << 16 | X19 << 5 | X19);

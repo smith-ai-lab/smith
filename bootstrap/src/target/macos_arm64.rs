@@ -4,7 +4,7 @@
 
 use super::arm64::{self, Asm, EQ, LE, LT, System, X0, X1, X2, X3, X4, X5, X19, X20};
 use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
-use crate::ir::{Program, Stream};
+use crate::scalar::{Program, Stream};
 
 const MACHINE: Machine = Machine {
     cpu_type: 0x0100_000c, // arm64

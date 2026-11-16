@@ -3,15 +3,12 @@
 
 mod check;
 pub mod diag;
-pub mod eval;
-pub mod ir;
 mod lexer;
 mod parser;
 pub mod scalar;
 pub mod target;
 pub mod timings;
 
-use ir::Program;
 use target::Target;
 use timings::Timings;
 
@@ -23,17 +20,10 @@ pub fn compile(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<diag::Error
     compile_timed(source, target, &mut Timings::new())
 }
 
-/// The program a source file describes, in the form every target receives.
-/// Its errors are those `compile` reports before a target is involved.
-pub fn lower(source: &[u8]) -> Result<Program, Vec<diag::Error>> {
-    lower_timed(source, &mut Timings::new())
-}
-
 /// The program a source file describes, in the scalar form. Its errors are
-/// is involved.
-pub fn lower_scalar(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {
-    let checked = checked(source, &mut Timings::new(), true)?;
-    Ok(checked.scalar.expect("asked for"))
+/// those `compile` reports before a target is involved.
+pub fn lower(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {
+    lower_timed(source, &mut Timings::new())
 }
 
 /// The warnings `smith check` reports about a source file, in the order of
@@ -48,7 +38,7 @@ pub fn check_timed(
     source: &[u8],
     timings: &mut Timings,
 ) -> Result<Vec<diag::Error>, Vec<diag::Error>> {
-    checked(source, timings, false).map(|checked| in_order(checked.warnings))
+    checked(source, timings).map(|checked| in_order(checked.warnings))
 }
 
 /// `compile`, recording how long each stage takes.
@@ -57,28 +47,15 @@ pub fn compile_timed(
     target: Target,
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
-    let checked = checked(source, timings, target.from_scalar())?;
-    let built = timings.stage("emit", || match &checked.scalar {
-        Some(scalar) => target.emit_scalar(scalar),
-        None => target.emit(&checked.program),
-    });
-    built.ok_or_else(|| {
-        vec![diag::Error::unsupported(
-            diag::Pos::START,
-            &format!("building for {}", target.name()),
-        )]
-    })
+    let program = lower_timed(source, timings)?;
+    Ok(timings.stage("emit", || target.emit(&program)))
 }
 
-fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<Program, Vec<diag::Error>> {
-    checked(source, timings, false).map(|checked| checked.program)
+fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<scalar::Program, Vec<diag::Error>> {
+    checked(source, timings).map(|checked| checked.program)
 }
 
-fn checked(
-    source: &[u8],
-    timings: &mut Timings,
-    scalar: bool,
-) -> Result<check::Checked, Vec<diag::Error>> {
+fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<diag::Error>> {
     let tokens = timings
         .stage("lex", || lexer::lex(source))
         .map_err(in_order)?;
@@ -86,7 +63,7 @@ fn checked(
         .stage("parse", || parser::parse(&tokens))
         .map_err(in_order)?;
     timings
-        .stage("check", || check::check(file, scalar))
+        .stage("check", || check::check(file))
         .map_err(in_order)
 }
 

@@ -5,7 +5,7 @@
 
 use super::arm64::{self, Asm, EQ, LE, LT, System, X0, X1, X2, X3, X4, X5, X8, X19, X20};
 use super::elf::{self, CODE_ADDRESS, Machine};
-use crate::ir::{Program, Stream};
+use crate::scalar::{Program, Stream};
 
 const SYS_WRITE: u16 = 64;
 const SYS_MMAP: u16 = 222;

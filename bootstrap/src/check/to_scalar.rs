@@ -1,6 +1,5 @@
 //! Lowers what `main` reaches to the scalar form, from the checked program,
-//! where every value's type is known. It runs at the point where the form
-//! every target receives is lowered, and takes nothing from that form.
+//! where every value's type is known.
 //!
 //! Every value is its Smith type's scalars, in order: a text is an address
 //! and a length, a struct and a tuple are their parts one after another,

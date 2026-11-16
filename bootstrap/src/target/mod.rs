@@ -3,6 +3,7 @@
 
 mod arm64;
 mod elf;
+mod frame;
 mod linux_arm64;
 mod linux_x64;
 mod macho;
@@ -13,10 +14,9 @@ mod windows_arm64;
 mod windows_x64;
 mod x86_64;
 
-use crate::ir::Program;
-use crate::scalar;
+use crate::scalar::Program;
 
-pub use x86_64::Frame;
+pub use frame::{Frame, frames};
 
 /// Declares the `Target` enum along with `Target::ALL`, its list of cases,
 /// and each case's name, so that a case cannot be added without joining
@@ -91,40 +91,20 @@ impl Target {
         }
     }
 
-    /// Whether the executables for the target are built from the scalar form
-    /// and not from the form `emit` takes.
-    pub fn from_scalar(self) -> bool {
+    /// The executable for the program.
+    pub fn emit(self, program: &Program) -> Vec<u8> {
         match self {
-            Target::LinuxX64 | Target::MacosX64 | Target::WindowsX64 => true,
-            Target::MacosArm64 | Target::LinuxArm64 | Target::WindowsArm64 => false,
+            Target::LinuxX64 => linux_x64::emit(program),
+            Target::MacosX64 => macos_x64::emit(program),
+            Target::WindowsX64 => windows_x64::emit(program),
+            Target::MacosArm64 => macos_arm64::emit(program),
+            Target::LinuxArm64 => linux_arm64::emit(program),
+            Target::WindowsArm64 => windows_arm64::emit(program),
         }
     }
 
-    /// The executable for the program, or `None` if the target is built
-    /// from the scalar form, or the compiler cannot build for it yet.
-    pub fn emit(self, program: &Program) -> Option<Vec<u8>> {
-        match self {
-            Target::MacosArm64 => Some(macos_arm64::emit(program)),
-            Target::LinuxArm64 => Some(linux_arm64::emit(program)),
-            Target::WindowsArm64 => Some(windows_arm64::emit(program)),
-            Target::LinuxX64 | Target::MacosX64 | Target::WindowsX64 => None,
-        }
-    }
-
-    /// The executable for the program in the scalar form, or `None` if the
-    /// target is not built from it yet.
-    pub fn emit_scalar(self, program: &scalar::Program) -> Option<Vec<u8>> {
-        match self {
-            Target::LinuxX64 => Some(linux_x64::emit(program)),
-            Target::MacosX64 => Some(macos_x64::emit(program)),
-            Target::WindowsX64 => Some(windows_x64::emit(program)),
-            Target::MacosArm64 | Target::LinuxArm64 | Target::WindowsArm64 => None,
-        }
-    }
-
-    /// What each function's frame holds in the executable for the program,
-    /// or `None` if the target is not built from the scalar form.
-    pub fn frames(self, program: &scalar::Program) -> Option<Vec<Frame>> {
-        self.from_scalar().then(|| x86_64::frames(program))
+    /// What each function's frame holds in the executable for the program.
+    pub fn frames(self, program: &Program) -> Vec<Frame> {
+        frames(program)
     }
 }
