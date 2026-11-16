@@ -1,0 +1,20 @@
+name: probe
+on: push
+jobs:
+  machine:
+    name: test on ${{ matrix.leg }}
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [a, b, c]
+    uses: ./.github/workflows/probe-callee.yml
+    with:
+      leg: ${{ matrix.leg }}
+  after:
+    needs: machine
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "machine result: ${{ needs.machine.result }}"
+          echo "cancelled(): ${{ cancelled() }}"
