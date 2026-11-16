@@ -1,0 +1,5 @@
+tom
+"tom"
+Cat(name: "tom")
+.cat(Cat(name: "say \"hi\"\n"))
+("a", .none)

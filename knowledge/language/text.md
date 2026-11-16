@@ -3,7 +3,7 @@ type: specification
 title: Text and printing
 description: Where a program starts, print, string literals that hold expressions formatted by the Fmt trait, and Repr, which writes a value as source.
 status: partial
-built: "`main`, `print`, string literals and their escapes, and strings that hold expressions of any type that implements `Fmt` by hand"
+built: "`main`, `print`, string literals and their escapes, strings that hold expressions of any type that implements `Fmt`, `repr` and the `Repr` of a `str`, and the `Fmt` and `Repr` every struct, enum, and tuple is given, which `without` takes away"
 ---
 
 # Text and printing

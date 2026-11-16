@@ -249,6 +249,46 @@ impl Asm {
         self.bytes(&[0x0f, 0x05]);
     }
 
+    /// `add r64, imm8`, sign-extended.
+    pub fn add_imm8(&mut self, r: Reg, value: i8) {
+        self.bytes(&[
+            Self::rex_w(RAX, r),
+            0x83,
+            Self::modrm(Reg(0), r),
+            value as u8,
+        ]);
+    }
+
+    /// `movzx rd32, byte [base + index]`, which clears the rest of `rd`.
+    /// `base` is not rbp or r13, and `index` is not rsp.
+    pub fn load_byte(&mut self, rd: Reg, base: Reg, index: Reg) {
+        assert!(base.0 & 7 != 5 && index.0 != 4);
+        let rex = (rd.0 >> 3) << 2 | (index.0 >> 3) << 1 | base.0 >> 3;
+        if rex != 0 {
+            self.bytes(&[0x40 | rex]);
+        }
+        self.bytes(&[
+            0x0f,
+            0xb6,
+            0x04 | (rd.0 & 7) << 3,
+            (index.0 & 7) << 3 | (base.0 & 7),
+        ]);
+    }
+
+    /// `mov byte [r], imm8`, for a register below r8 other than rsp and
+    /// rbp.
+    pub fn store_byte_imm(&mut self, r: Reg, value: u8) {
+        assert!(r.0 < 8 && r.0 != 4 && r.0 != 5);
+        self.bytes(&[0xc6, r.0, value]);
+    }
+
+    /// `mov byte [to], from8`: the low byte of `from`, which is one of rax,
+    /// rcx, rdx, and rbx, to a register below r8 other than rsp and rbp.
+    pub fn store_byte(&mut self, to: Reg, from: Reg) {
+        assert!(from.0 < 4 && to.0 < 8 && to.0 != 4 && to.0 != 5);
+        self.bytes(&[0x88, from.0 << 3 | to.0]);
+    }
+
     /// `rep movsb`, which copies rcx bytes from rsi to rdi, and leaves rsi
     /// and rdi just after them.
     pub fn copy_bytes(&mut self) {
@@ -480,6 +520,7 @@ impl<S: System> Frame<'_, S> {
                     }
                     asm.bind(end);
                 }
+                Step::Escape { local, value } => self.escape(asm, *local, *value),
                 Step::Match { value, arms } => {
                     // Each arm but the last is chosen by comparing the case
                     // with its place, and the last runs when none was.
@@ -499,5 +540,72 @@ impl<S: System> Frame<'_, S> {
                 }
             }
         }
+    }
+
+    /// Writes the text as a string literal into the local. The first pass
+    /// counts the bytes that take a backslash, in rsi, which starts at the
+    /// length and the two quotes, and the second writes each byte after
+    /// the one before it, from rdi. The text is at r8, its length is in r9,
+    /// and rcx counts the bytes read.
+    fn escape(&self, asm: &mut Asm, local: usize, value: Value) {
+        const ESCAPED: &[u8] = b"\"\\{}";
+        let to = self.slot(local);
+        self.load(asm, value, (R8, R9));
+        asm.mov(RSI, R9);
+        asm.add_imm8(RSI, 2);
+        asm.mov32(RCX, 0);
+        let (count, counted, more, next) = (asm.label(), asm.label(), asm.label(), asm.label());
+        asm.bind(count);
+        asm.cmp(RCX, R9);
+        asm.jcc(Z, counted);
+        asm.load_byte(RAX, R8, RCX);
+        for &b in ESCAPED.iter().chain(b"\n\t") {
+            asm.cmp_imm8(RAX, b as i8);
+            asm.jcc(Z, more);
+        }
+        asm.jmp(next);
+        asm.bind(more);
+        asm.add_imm8(RSI, 1);
+        asm.bind(next);
+        asm.add_imm8(RCX, 1);
+        asm.jmp(count);
+        asm.bind(counted);
+        asm.store_stack(to + 8, RSI);
+        S::alloc(asm, self.fail);
+        asm.store_stack(to, RAX);
+        asm.mov(RDI, RAX);
+        self.load(asm, value, (R8, R9));
+        asm.store_byte_imm(RDI, b'"');
+        asm.add_imm8(RDI, 1);
+        asm.mov32(RCX, 0);
+        let (copy, copied, backslash, plain) = (asm.label(), asm.label(), asm.label(), asm.label());
+        asm.bind(copy);
+        asm.cmp(RCX, R9);
+        asm.jcc(Z, copied);
+        asm.load_byte(RAX, R8, RCX);
+        asm.mov(RDX, RAX);
+        for (b, written) in [(b'\n', b'n'), (b'\t', b't')] {
+            let after = asm.label();
+            asm.cmp_imm8(RAX, b as i8);
+            asm.jcc(NE, after);
+            asm.mov32(RDX, written as u32);
+            asm.jmp(backslash);
+            asm.bind(after);
+        }
+        for &b in ESCAPED {
+            asm.cmp_imm8(RAX, b as i8);
+            asm.jcc(Z, backslash);
+        }
+        asm.jmp(plain);
+        asm.bind(backslash);
+        asm.store_byte_imm(RDI, b'\\');
+        asm.add_imm8(RDI, 1);
+        asm.bind(plain);
+        asm.store_byte(RDI, RDX);
+        asm.add_imm8(RDI, 1);
+        asm.add_imm8(RCX, 1);
+        asm.jmp(copy);
+        asm.bind(copied);
+        asm.store_byte_imm(RDI, b'"');
     }
 }

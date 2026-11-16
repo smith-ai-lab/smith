@@ -13,6 +13,7 @@ use crate::enums;
 use crate::generate::{self, Gen};
 use crate::lambdas;
 use crate::programs::{self, Case, PIECES, pos_after};
+use crate::reprs;
 use crate::targets;
 use crate::text;
 use crate::traits;
@@ -95,6 +96,22 @@ pub const TESTS: &[Test] = &[
     (
         "every_placed_mistake_about_text_is_one_error_at_its_place",
         every_placed_mistake_about_text_is_one_error_at_its_place,
+    ),
+    (
+        "the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print",
+        the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print,
+    ),
+    (
+        "a_value_and_the_text_its_repr_gives_build_equal_values",
+        a_value_and_the_text_its_repr_gives_build_equal_values,
+    ),
+    (
+        "every_placed_mistake_about_reprs_is_one_error_at_its_place",
+        every_placed_mistake_about_reprs_is_one_error_at_its_place,
+    ),
+    (
+        "what_a_program_does_not_print_is_given_nothing",
+        what_a_program_does_not_print_is_given_nothing,
     ),
     (
         "the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print",
@@ -430,6 +447,98 @@ fn every_placed_mistake_about_text_is_one_error_at_its_place() {
     generate::check(35, 500, text::program_with_mistake, |case| {
         let expected = case.mistake.as_ref().expect("a placed mistake");
         assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
+fn the_evaluator_says_what_the_generator_built_a_program_with_reprs_to_print() {
+    generate::check(60, 300, reprs::program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(eval::run(&program), expected);
+    });
+}
+
+/// What a program prints, by the evaluator.
+fn stdout_of(source: &str) -> Vec<u8> {
+    let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in\n{source}"));
+    eval::run(&program).stdout
+}
+
+fn a_value_and_the_text_its_repr_gives_build_equal_values() {
+    generate::check(61, 300, reprs::program_to_rewrite, |written| {
+        // The program prints the `Repr` of each value first, on a line of
+        // its own, and an equal value prints the same.
+        let printed = stdout_of(&written.with(&written.values));
+        let text = String::from_utf8(printed.clone()).expect("UTF-8");
+        let lines: Vec<&str> = text.lines().collect();
+        let mut reprs = Vec::new();
+        let mut at = 0;
+        for n in &written.lines {
+            reprs.push(lines[at].to_string());
+            at += n;
+        }
+        let rewritten = written.with(&reprs);
+        assert_eq!(
+            String::from_utf8_lossy(&stdout_of(&rewritten)),
+            text,
+            "for\n{rewritten}"
+        );
+    });
+}
+
+fn every_placed_mistake_about_reprs_is_one_error_at_its_place() {
+    generate::check(62, 500, reprs::program_with_mistake, |case| {
+        let expected = case.mistake.as_ref().expect("a placed mistake");
+        assert_mistake(case.source.as_bytes(), expected);
+    });
+}
+
+/// The structs and enums a source defines that do not implement `Fmt` or
+/// `Repr` themselves.
+fn given_to(source: &str) -> Vec<&str> {
+    (source.lines())
+        .filter_map(|l| {
+            l.strip_prefix("struct ")
+                .or_else(|| l.strip_prefix("enum "))
+        })
+        .filter_map(|l| l.split([' ', '[']).next())
+        .filter(|name| {
+            !source.contains(&format!("Fmt[{name}")) && !source.contains(&format!("Repr[{name}"))
+        })
+        .collect()
+}
+
+fn what_a_program_does_not_print_is_given_nothing() {
+    // Programs that print no struct, enum, or tuple with the `Fmt` or the
+    // `Repr` it is given build to the same bytes when nothing is given to
+    // any of their types.
+    let targets = targets::buildable();
+    let choose = |g: &mut Gen| {
+        let source = match g.below(4) {
+            0 => String::from_utf8(programs::program(g).source).expect("UTF-8"),
+            1 => traits::program(g).source,
+            2 => enums::program(g).source,
+            _ => tuples::program(g).source,
+        };
+        (source, g.below(targets.len()))
+    };
+    generate::check(63, 200, choose, |(source, target)| {
+        let mut taken = source.clone();
+        for name in given_to(source) {
+            taken.push_str(&format!(
+                "\nwithout Fmt for {name}\nwithout Repr for {name}\n"
+            ));
+        }
+        let built = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let without = lower(taken.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in\n{taken}"));
+        assert!(built == without, "differs from\n{taken}");
+        let target = targets[*target];
+        let built = compile(source.as_bytes(), target).unwrap();
+        let without = compile(taken.as_bytes(), target).unwrap();
+        assert!(built == without, "{} differs", target.name());
     });
 }
 

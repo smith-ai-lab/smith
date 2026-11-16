@@ -1,0 +1,16 @@
+struct Key {
+  secret: str
+}
+
+without Fmt for Key
+
+struct Door {
+  key: Key
+  name: str
+}
+
+fn main() ! console, alloc {
+  door = Door(key: Key(secret: "k"), name: "front")
+  print("{repr(door)}")
+  print("{door}")
+}

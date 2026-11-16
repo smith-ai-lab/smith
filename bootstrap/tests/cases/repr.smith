@@ -1,0 +1,17 @@
+struct Cat {
+  name: str
+}
+
+enum Pet {
+  cat: Cat
+  none
+}
+
+fn main() ! console, alloc {
+  tom = Cat(name: "tom")
+  print("{tom.name}")
+  print("{repr(tom.name)}")
+  print("{tom}")
+  print("{Pet.cat(Cat(name: "say \"hi\"\n"))}")
+  print("{("a", Pet.none)}")
+}

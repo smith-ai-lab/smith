@@ -238,6 +238,35 @@ impl Asm {
         self.bind(done);
     }
 
+    /// `add xd, xn, #value`, for a value below 2^12.
+    pub fn add_imm(&mut self, rd: u32, rn: u32, value: u32) {
+        assert!(value < 1 << 12);
+        self.word(0x9100_0000 | value << 10 | rn << 5 | rd);
+    }
+
+    /// `cmp wn, #value`, for a value below 2^12.
+    pub fn cmp_w_imm(&mut self, rn: u32, value: u32) {
+        assert!(value < 1 << 12);
+        self.word(0x7100_001f | value << 10 | rn << 5);
+    }
+
+    /// `mov wd, wn`.
+    pub fn mov_ww(&mut self, rd: u32, rn: u32) {
+        self.word(0x2a00_03e0 | rn << 16 | rd);
+    }
+
+    /// `ldrb wt, [xn], #1`, which loads the byte at `xn` and moves `xn`
+    /// past it.
+    pub fn load_byte_next(&mut self, rt: u32, rn: u32) {
+        self.word(0x3840_1400 | rn << 5 | rt);
+    }
+
+    /// `strb wt, [xn], #1`, which stores the low byte of `wt` at `xn` and
+    /// moves `xn` past it.
+    pub fn store_byte_next(&mut self, rt: u32, rn: u32) {
+        self.word(0x3800_1400 | rn << 5 | rt);
+    }
+
     /// `svc #0`, which makes a system call.
     pub fn svc(&mut self) {
         self.word(0xd400_0001);
@@ -507,6 +536,7 @@ impl<S: System> Frame<'_, S> {
                     }
                     asm.bind(end);
                 }
+                Step::Escape { local, value } => self.escape(asm, *local, *value),
                 Step::Match { value, arms } => {
                     // Each arm but the last is chosen by comparing the case
                     // with its place, and the last runs when none was.
@@ -527,5 +557,68 @@ impl<S: System> Frame<'_, S> {
                 }
             }
         }
+    }
+
+    /// Writes the text as a string literal into the local. The first pass
+    /// counts the bytes that take a backslash, in x1, which starts at the
+    /// length and the two quotes, and the second writes each byte after the
+    /// one before it, from x19. The text is at x20 and its length is in
+    /// x21, and x3 and x4 walk it in the first pass.
+    fn escape(&self, asm: &mut Asm, local: usize, value: Value) {
+        const ESCAPED: &[u8] = b"\"\\{}";
+        let to = self.slot(local);
+        self.load(asm, value, X20, X21);
+        asm.add_imm(X1, X21, 2);
+        asm.mov(X3, X21);
+        asm.mov(X4, X20);
+        let (count, counted, more) = (asm.label(), asm.label(), asm.label());
+        asm.bind(count);
+        asm.cbz(X3, counted);
+        asm.load_byte_next(X17, X4);
+        asm.word(0xd100_0400 | X3 << 5 | X3); // sub x3, x3, #1
+        for &b in ESCAPED.iter().chain(b"\n\t") {
+            asm.cmp_w_imm(X17, b as u32);
+            asm.cond(EQ, more);
+        }
+        asm.branch(count);
+        asm.bind(more);
+        asm.add_imm(X1, X1, 1);
+        asm.branch(count);
+        asm.bind(counted);
+        asm.store_stack(to + 8, X1);
+        S::alloc(asm, self.fail);
+        asm.store_stack(to, X0);
+        asm.mov(X19, X0);
+        self.load(asm, value, X20, X21);
+        asm.mov_w(X17, b'"' as u16);
+        asm.store_byte_next(X17, X19);
+        let (copy, copied, backslash, plain) = (asm.label(), asm.label(), asm.label(), asm.label());
+        asm.bind(copy);
+        asm.cbz(X21, copied);
+        asm.load_byte_next(X17, X20);
+        asm.word(0xd100_0400 | X21 << 5 | X21); // sub x21, x21, #1
+        asm.mov_ww(X2, X17);
+        for (b, written) in [(b'\n', b'n'), (b'\t', b't')] {
+            let after = asm.label();
+            asm.cmp_w_imm(X17, b as u32);
+            asm.cond(NE, after);
+            asm.mov_w(X2, written as u16);
+            asm.branch(backslash);
+            asm.bind(after);
+        }
+        for &b in ESCAPED {
+            asm.cmp_w_imm(X17, b as u32);
+            asm.cond(EQ, backslash);
+        }
+        asm.branch(plain);
+        asm.bind(backslash);
+        asm.mov_w(X3, b'\\' as u16);
+        asm.store_byte_next(X3, X19);
+        asm.bind(plain);
+        asm.store_byte_next(X2, X19);
+        asm.branch(copy);
+        asm.bind(copied);
+        asm.mov_w(X17, b'"' as u16);
+        asm.store_byte_next(X17, X19);
     }
 }

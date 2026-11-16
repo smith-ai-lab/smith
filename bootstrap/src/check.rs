@@ -91,6 +91,10 @@ trait Fmt[T] {
   fn fmt(value: T) -> str ! alloc
 }
 
+trait Repr[T] {
+  fn repr(value: T) -> str ! alloc
+}
+
 impl Fmt[str] {
   fn fmt(value: str) -> str ! alloc { value }
 }
@@ -119,7 +123,14 @@ impl[T, U] Try[Option[T], Option[U], T] {
 ";
 
 /// The names of the traits `PRELUDE` defines.
-const PRELUDE_TRAITS: &[&str] = &["Fmt", "Try"];
+const PRELUDE_TRAITS: &[&str] = &["Fmt", "Repr", "Try"];
+
+/// The place of the prelude's trait with the name among the file's.
+fn prelude_trait(file: &File, name: &str) -> usize {
+    (file.traits.iter())
+        .position(|t| t.name == name && of_prelude(t.pos))
+        .expect("the prelude defines it")
+}
 
 /// Whether a definition is the prelude's.
 fn of_prelude(pos: Pos) -> bool {
@@ -458,13 +469,31 @@ struct Defs<'a> {
     impls: Vec<Option<ImplInfo>>,
     /// The implementations of each trait, in the order they are written.
     impls_of: Vec<Vec<usize>>,
+    /// The prelude's `Fmt` and `Repr`, which a type is given
+    /// automatically, by their places in the file's traits.
+    fmt: usize,
+    repr: usize,
+    /// Each trait taken away from a struct or an enum by `without`.
+    withouts: Vec<(usize, Def)>,
+}
+
+/// What implements a trait for some types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum By {
+    /// The bound of a type parameter promises an implementation.
+    Bound,
+    /// An implementation written in the source, with a type for each of
+    /// its type parameters.
+    Impl(usize, Vec<Ty>),
+    /// The implementation a type is given automatically.
+    Given,
 }
 
 /// What looking for an implementation found.
 enum Found {
-    /// The types of the trait, `out` ones included, and the
-    /// implementation with its types, unless a bound promises it.
-    Yes(Vec<Ty>, Option<(usize, Vec<Ty>)>),
+    /// The types of the trait, `out` ones included, and what implements
+    /// it.
+    Yes(Vec<Ty>, By),
     No,
     /// A mistake already reported stands in the way.
     Unknown,
@@ -791,7 +820,7 @@ impl<'a> Defs<'a> {
             && given.iter().all(|t| *t == Ty::Param(*p))
             && scope.bounds[*p] == Bound::Trait(k)
         {
-            return Found::Yes(vec![Ty::Param(*p); outs.len()], None);
+            return Found::Yes(vec![Ty::Param(*p); outs.len()], By::Bound);
         }
         let key = (k, given);
         if stack.contains(&key) {
@@ -838,9 +867,139 @@ impl<'a> Defs<'a> {
                 }
             }
             let all = info.args.iter().map(|t| t.subst(&sol)).collect();
-            return Found::Yes(all, Some((i, sol)));
+            return Found::Yes(all, By::Impl(i, sol));
         }
-        Found::No
+        match self.given_parts(k, types) {
+            Some(parts) => self.given(k, types, &parts, scope, stack),
+            None => Found::No,
+        }
+    }
+
+    /// The parts of the type of trait `k` whose implementations a given one
+    /// writes it with, if the trait is one a type is given automatically
+    /// and the type is one it is given to, and nothing takes it away: the
+    /// fields of a struct, what the cases of an enum hold, and the elements
+    /// of a tuple. A `str` is given `Repr`, which has no parts.
+    fn given_parts(&self, k: usize, types: &[Ty]) -> Option<Vec<Ty>> {
+        if k != self.fmt && k != self.repr {
+            return None;
+        }
+        let taken = |d: Def| self.withouts.contains(&(k, d));
+        match &types[0] {
+            Ty::Text if k == self.repr => Some(Vec::new()),
+            Ty::Struct(s, args) if !taken(Def::Struct(*s)) => {
+                Some(self.fields[*s].iter().map(|t| t.subst(args)).collect())
+            }
+            Ty::Enum(e, args) if !taken(Def::Enum(*e)) => (self.cases[*e].iter().flatten())
+                .map(|t| Some(t.subst(args)))
+                .collect(),
+            Ty::Tuple(items) => Some(items.clone()),
+            _ => None,
+        }
+    }
+
+    /// The implementation of trait `k` given to `types`, whose parts are
+    /// `parts`: it is given when each part has it, and, for `Fmt`, which
+    /// writes what `Repr` writes, when the type has `Repr`.
+    fn given(
+        &self,
+        k: usize,
+        types: &[Ty],
+        parts: &[Ty],
+        scope: &Scope,
+        stack: &mut Vec<(usize, Vec<Ty>)>,
+    ) -> Found {
+        for part in parts {
+            match self.meets(k, part, scope, stack) {
+                Found::Yes(..) => {}
+                other => return other,
+            }
+        }
+        if k == self.fmt {
+            match self.meets(self.repr, &types[0], scope, stack) {
+                Found::Yes(..) => {}
+                other => return other,
+            }
+        }
+        Found::Yes(types.to_vec(), By::Given)
+    }
+
+    /// The copy that runs function `fi` of trait `k` for `types`, which hold
+    /// no type parameter, and the trait's types, `out` ones included.
+    fn chosen(&self, k: usize, fi: usize, types: Vec<Ty>) -> (Instance, Vec<Ty>) {
+        let Found::Yes(all, by) = self.find(k, &types, &Scope::default(), &mut Vec::new()) else {
+            unreachable!("checked")
+        };
+        let instance = match by {
+            By::Impl(i, args) => Instance {
+                template: Template::Impl(i, fi),
+                args,
+            },
+            By::Given => Instance {
+                template: Template::Given(k),
+                args: types,
+            },
+            By::Bound => unreachable!("a copy has no type parameter"),
+        };
+        (instance, all)
+    }
+
+    /// The copies a copy of a given implementation runs: for `Fmt`, the
+    /// `Repr` of its type, and for `Repr`, that of each part.
+    fn given_calls(&self, k: usize, types: &[Ty]) -> Vec<Instance> {
+        let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()]).0;
+        if k == self.fmt {
+            vec![run(self.repr, &types[0])]
+        } else {
+            let parts = self.given_parts(k, types).expect("given");
+            parts.iter().map(|p| run(k, p)).collect()
+        }
+    }
+
+    /// The trait and the part of `t` that lacks it, for a type `t` that
+    /// lacks trait `k` only because one of its parts lacks a trait. The part
+    /// is the innermost one, which lacks the trait on its own.
+    fn lacking(&self, k: usize, t: &Ty, scope: &Scope) -> Option<(usize, Ty)> {
+        fn walk(defs: &Defs, k: usize, t: &Ty, scope: &Scope) -> (usize, Ty) {
+            let types = [t.clone()];
+            let written = (defs.impls_of[k].iter())
+                .filter_map(|&i| defs.impls[i].as_ref())
+                .any(|info| {
+                    info.chosen && unify(&info.args[0], t, &mut vec![None; info.scope.names.len()])
+                });
+            let parts = if written {
+                None
+            } else {
+                defs.given_parts(k, &types)
+            };
+            let Some(parts) = parts else {
+                return (k, t.clone());
+            };
+            let lacks =
+                |k: usize, t: &Ty| matches!(defs.meets(k, t, scope, &mut Vec::new()), Found::No);
+            if let Some(part) = parts.iter().find(|p| lacks(k, p)) {
+                return walk(defs, k, part, scope);
+            }
+            if k == defs.fmt && lacks(defs.repr, t) {
+                return walk(defs, defs.repr, t, scope);
+            }
+            (k, t.clone())
+        }
+        let (lacks, part) = walk(self, k, t, scope);
+        (lacks != k || part != *t).then_some((lacks, part))
+    }
+
+    /// The end of the error that says `t` has no implementation of trait
+    /// `k`, which names the part of `t` that lacks a trait, if that is why.
+    fn because(&self, k: usize, t: &Ty, scope: &Scope) -> String {
+        match self.lacking(k, t, scope) {
+            Some((lacks, part)) => format!(
+                ", as `{}` has no `{}`",
+                self.text(&part, scope),
+                self.file.traits[lacks].name
+            ),
+            None => String::new(),
+        }
     }
 
     /// The types of trait `k` that an implementation for the types that are
@@ -1244,6 +1403,10 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
             }
             Item::Trait(k) => {
                 let t = &file.traits[k];
+                // The `Fmt` a type is given runs its `Repr`.
+                if t.name == "Fmt" && of_prelude(t.pos) {
+                    type_name("Repr", &mut found);
+                }
                 for f in &t.functions {
                     function(f, &mut found);
                 }
@@ -1307,6 +1470,9 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
             .collect(),
         impls: Vec::new(),
         impls_of: vec![Vec::new(); file.traits.len()],
+        fmt: prelude_trait(&file, "Fmt"),
+        repr: prelude_trait(&file, "Repr"),
+        withouts: Vec::new(),
     };
     let mut done = Vec::new();
     for &d in &reached_types {
@@ -1370,6 +1536,8 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         }
     }
 
+    defs.withouts = withouts(&defs, &mut errors);
+
     let mut checker = Checker {
         defs: &defs,
         errors,
@@ -1419,7 +1587,13 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         fn_values: checker.fn_values,
     };
     let mut errors = Vec::new();
-    typed.copies(&start, &mut Vec::new(), &mut Vec::new(), &mut errors);
+    typed.copies(
+        &start,
+        Pos::START,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        &mut errors,
+    );
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -1443,6 +1617,79 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         program,
         warnings: warnings(&file, &reached),
     })
+}
+
+/// The traits each `without` of the file takes away, each with the struct
+/// or the enum it takes it from. Mistakes go in `errors`.
+fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)> {
+    let mut out = Vec::new();
+    for w in &defs.file.withouts {
+        let name = w.name.as_str();
+        let k = match defs.trait_names.get(name) {
+            Some(&k) if k == defs.fmt || k == defs.repr => k,
+            Some(_) => {
+                errors.push(Error::new(
+                    w.name_pos,
+                    format!(
+                        "`{name}` is not given automatically, so `without` cannot take it away"
+                    ),
+                ));
+                continue;
+            }
+            None if TRAITS_NOT_BUILT.contains(&name) || name == "Eq" => {
+                errors.push(Error::unsupported(w.pos, &format!("`without {name}`")));
+                continue;
+            }
+            None => {
+                let message = if defs.is_type(name) {
+                    format!("`{name}` is not a trait")
+                } else {
+                    format!("there is no trait named `{name}`")
+                };
+                errors.push(Error::new(w.name_pos, message));
+                continue;
+            }
+        };
+        let ty = w.ty.as_str();
+        let d = if let Some(&s) = defs.struct_names.get(ty) {
+            Def::Struct(s)
+        } else if let Some(&e) = defs.enum_names.get(ty) {
+            Def::Enum(e)
+        } else {
+            errors.push(if TYPES_NOT_BUILT.contains(&ty) {
+                Error::unsupported(w.ty_pos, &format!("the type `{ty}`"))
+            } else if ty == TEXT {
+                Error::new(
+                    w.ty_pos,
+                    format!(
+                        "`without` takes a trait from a struct or an enum, and `{ty}` is neither"
+                    ),
+                )
+            } else if defs.trait_names.contains_key(ty) {
+                Error::new(w.ty_pos, format!("`{ty}` is a trait, which is not a type"))
+            } else {
+                Error::new(w.ty_pos, format!("there is no type named `{ty}`"))
+            });
+            continue;
+        };
+        let written = (defs.impls_of[k].iter())
+            .filter_map(|&i| defs.impls[i].as_ref())
+            .any(|info| head(&info.args[0]) == Some(d));
+        if out.contains(&(k, d)) {
+            errors.push(Error::new(
+                w.pos,
+                format!("`{name}` is already taken away from `{ty}`"),
+            ));
+        } else if written {
+            errors.push(Error::new(
+                w.pos,
+                format!("`{ty}` implements `{name}` itself, so nothing is given to take away"),
+            ));
+        } else {
+            out.push((k, d));
+        }
+    }
+    out
 }
 
 /// A warning for each definition `main` does not reach, at its name, and
@@ -1565,6 +1812,15 @@ fn overlaps(outs: &[bool], a: &ImplInfo, b: &ImplInfo) -> bool {
 enum Def {
     Struct(usize),
     Enum(usize),
+}
+
+/// The struct or the enum a type is, if it is one.
+fn head(t: &Ty) -> Option<Def> {
+    match t {
+        Ty::Struct(s, _) => Some(Def::Struct(*s)),
+        Ty::Enum(e, _) => Some(Def::Enum(*e)),
+        _ => None,
+    }
 }
 
 /// The implementations whose types name `name`, which live with that type.
@@ -1817,12 +2073,16 @@ fn types_named(f: &Function) -> Vec<&str> {
     out
 }
 
-/// A function with a body: one written on its own, or the function of an
-/// implementation that implements the trait's function at a place.
+/// A function with a body: one written on its own, the function of an
+/// implementation that implements the trait's function at a place, or the
+/// one function of an implementation a type is given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Template {
     Free(usize),
     Impl(usize, usize),
+    /// The implementation of a trait a type is given automatically, by the
+    /// trait's place. Its copy's one type is the type.
+    Given(usize),
 }
 
 /// A copy of a function, for a choice of its type parameters.
@@ -1967,9 +2227,19 @@ impl<'a> Defs<'a> {
         }
     }
 
+    /// The parameters of a function with a body, among its type
+    /// parameters, which those of a copy of it replace.
+    fn params(&self, t: Template) -> Vec<(String, Ty)> {
+        match t {
+            Template::Given(k) => self.trait_sigs[k][0].params.clone(),
+            t => self.view(t).params,
+        }
+    }
+
     fn view(&self, t: Template) -> View<'_> {
         let file = self.file;
         match t {
+            Template::Given(_) => unreachable!("a given implementation has no body"),
             Template::Free(f) => {
                 let sig = &self.signatures[f];
                 let def = &file.functions[f];
@@ -2079,13 +2349,8 @@ impl<'a> Typed<'a> {
         };
         let sig = &defs.trait_sigs[k][fi];
         let types = solve(&sig.params, sig.scope.names.len());
-        let Found::Yes(all, Some((i, args))) =
-            defs.find(k, &types, &Scope::default(), &mut Vec::new())
-        else {
-            unreachable!("checked")
-        };
-        let template = Template::Impl(i, fi);
-        Callee::Run(Instance { template, args }, sig.gives.subst(&all))
+        let (instance, all) = defs.chosen(k, fi, types);
+        Callee::Run(instance, sig.gives.subst(&all))
     }
 
     /// The types that stand for the type parameters of the defaults a call
@@ -2094,7 +2359,7 @@ impl<'a> Typed<'a> {
     fn env_of(&self, callee: &Callee) -> Vec<Ty> {
         match callee {
             Callee::Run(instance, _) => match instance.template {
-                Template::Free(_) => instance.args.clone(),
+                Template::Free(_) | Template::Given(_) => instance.args.clone(),
                 Template::Impl(i, _) => {
                     let info = self.defs.impls[i].as_ref().expect("known");
                     info.args.iter().map(|t| t.subst(&instance.args)).collect()
@@ -2142,7 +2407,13 @@ impl<'a> Typed<'a> {
     /// then from left to right, each with where it is and the copy it runs.
     /// The calls in a default a call leaves out follow that call. Each call
     /// that leaves out the default it is written in is in the second list.
-    fn calls_of(&self, instance: &Instance) -> (Vec<(Pos, Instance)>, Vec<Pos>) {
+    /// A given implementation has no body, so its calls are at `at`, where
+    /// it is run.
+    fn calls_of(&self, instance: &Instance, at: Pos) -> (Vec<(Pos, Instance)>, Vec<Pos>) {
+        if let Template::Given(k) = instance.template {
+            let calls = self.defs.given_calls(k, &instance.args);
+            return (calls.into_iter().map(|c| (at, c)).collect(), Vec::new());
+        }
         let view = self.defs.view(instance.template);
         let mut out = Vec::new();
         let mut cycles = Vec::new();
@@ -2169,29 +2440,38 @@ impl<'a> Typed<'a> {
     /// Reports each call that would need a copy of a function without end:
     /// one already being walked, or one of a function being walked for
     /// larger types, which would grow forever. `path` is the copies being
-    /// walked from `main`, and `done` those already walked.
+    /// walked from `main`, `done` those already walked, and `at` where the
+    /// copy is run.
+    ///
+    /// A given implementation runs only those of its parts, which are
+    /// smaller, and of its own type, for another trait, so a copy that would
+    /// grow forever passes through a function written in the source, where
+    /// it is reported.
     fn copies(
         &self,
         instance: &Instance,
+        at: Pos,
         path: &mut Vec<Instance>,
         done: &mut Vec<Instance>,
         errors: &mut Vec<Error>,
     ) {
         path.push(instance.clone());
-        let (calls, cycles) = self.calls_of(instance);
+        let (calls, cycles) = self.calls_of(instance, at);
         errors.extend(cycles.into_iter().map(default_cycle));
         for (pos, callee) in calls {
             let size = |i: &Instance| i.args.iter().map(Ty::size).sum::<usize>();
-            let endless = path.iter().any(|p| {
-                p.template == callee.template && (*p == callee || size(&callee) > size(p))
-            });
+            let grows = |p: &Instance| {
+                !matches!(callee.template, Template::Given(_)) && size(&callee) > size(p)
+            };
+            let endless =
+                (path.iter()).any(|p| p.template == callee.template && (*p == callee || grows(p)));
             if endless {
                 errors.push(Error::unsupported(
                     pos,
                     "a function that calls itself, directly or through others,",
                 ));
             } else if !done.contains(&callee) {
-                self.copies(&callee, path, done, errors);
+                self.copies(&callee, pos, path, done, errors);
             }
         }
         path.pop();
@@ -4132,9 +4412,10 @@ impl<'a> Checker<'a> {
                     self.errors.push(Error::new(
                         call.pos,
                         format!(
-                            "there is no implementation of `{}` for `{}`, which `{name}` needs",
+                            "there is no implementation of `{}` for `{}`, which `{name}` needs{}",
                             defs.file.traits[*k].name,
-                            defs.text(t, body.scope)
+                            defs.text(t, body.scope),
+                            defs.because(*k, t, body.scope)
                         ),
                     ));
                 }
@@ -4228,10 +4509,16 @@ impl<'a> Checker<'a> {
     /// implementation is for.
     fn no_implementation(&self, body: &Body, call: &Call, k: usize, types: &[Ty]) -> Error {
         let defs = self.defs;
+        // Only a trait of one type is given automatically, so only then
+        // is a part to blame.
+        let because = match types {
+            [t] => defs.because(k, t, body.scope),
+            _ => String::new(),
+        };
         Error::new(
             call.pos,
             format!(
-                "there is no implementation of `{}` for {}",
+                "there is no implementation of `{}` for {}{because}",
                 defs.file.traits[k].name,
                 defs.types_of(k, types, body.scope)
             ),
@@ -4884,6 +5171,9 @@ impl<'a> Lowering<'a> {
 
     fn function(&mut self, instance: &Instance) -> ir::Function {
         let defs = self.typed.defs;
+        if let Template::Given(k) = instance.template {
+            return self.given(k, &instance.args[0]);
+        }
         let view = defs.view(instance.template);
         let mut out = Lowered {
             frames: vec![Vec::new()],
@@ -4908,6 +5198,140 @@ impl<'a> Lowering<'a> {
             steps: out.steps,
             results: result,
         }
+    }
+
+    /// The function of the implementation of trait `k` given to `ty`. `Fmt`
+    /// gives what the type's `Repr` gives, and `Repr` writes the type's
+    /// value as the source that builds it, with each part written by its
+    /// own `Repr`.
+    fn given(&mut self, k: usize, ty: &Ty) -> ir::Function {
+        let defs = self.typed.defs;
+        let mut out = Lowered {
+            frames: vec![Vec::new()],
+            at: 0,
+            locals: 0,
+            steps: Vec::new(),
+        };
+        let params = self.locals(&mut out, ty);
+        let values: Vec<Value> = params.iter().map(|&l| Value::Local(l)).collect();
+        let result = if k == defs.fmt {
+            self.run(&mut out, defs.repr, ty, values)
+        } else {
+            self.repr(&mut out, ty, &values)
+        };
+        ir::Function {
+            params: params.len(),
+            locals: out.locals,
+            steps: out.steps,
+            results: vec![result],
+        }
+    }
+
+    /// Runs the function of trait `k`, which gives text, for a value of
+    /// the type, and gives the text.
+    fn run(&mut self, out: &mut Lowered<'a>, k: usize, ty: &Ty, args: Vec<Value>) -> Value {
+        let (instance, _) = self.typed.defs.chosen(k, 0, vec![ty.clone()]);
+        let function = self.place(instance);
+        let local = self.locals(out, &Ty::Text)[0];
+        out.steps.push(Step::Call {
+            function,
+            args,
+            results: vec![local],
+        });
+        Value::Local(local)
+    }
+
+    /// The text `Repr` gives for the values of a value of the type, as
+    /// the implementation it is given writes it.
+    fn repr(&mut self, out: &mut Lowered<'a>, ty: &Ty, values: &[Value]) -> Value {
+        let defs = self.typed.defs;
+        match ty {
+            Ty::Text => {
+                let local = self.locals(out, &Ty::Text)[0];
+                out.steps.push(Step::Escape {
+                    local,
+                    value: values[0],
+                });
+                Value::Local(local)
+            }
+            Ty::Struct(s, args) => {
+                let def = &defs.file.structs[*s];
+                let mut at = 0;
+                let mut items = Vec::new();
+                for (field, t) in def.fields.iter().zip(&defs.fields[*s]) {
+                    let t = t.subst(args);
+                    let width = self.width(&t);
+                    items.push((format!("{}: ", field.name), t, &values[at..at + width]));
+                    at += width;
+                }
+                self.listed(out, &format!("{}(", def.name), items)
+            }
+            Ty::Tuple(of) => {
+                let elements = self.elements(of, values);
+                let items = (of.iter().zip(&elements))
+                    .map(|(t, values)| (String::new(), t.clone(), values.as_slice()))
+                    .collect();
+                self.listed(out, "(", items)
+            }
+            Ty::Enum(e, args) => {
+                // Each block of the decision between the cases ends by
+                // copying its text to the same local.
+                let local = self.locals(out, &Ty::Text)[0];
+                let def = &defs.file.enums[*e];
+                let mut arms = Vec::new();
+                for (case, holds) in def.cases.iter().zip(&defs.cases[*e]) {
+                    let before = std::mem::take(&mut out.steps);
+                    let text = match holds {
+                        Some(t) => {
+                            let t = t.subst(args);
+                            let width = self.width(&t);
+                            let item = (String::new(), t, &values[1..1 + width]);
+                            self.listed(out, &format!(".{}(", case.name), vec![item])
+                        }
+                        None => self.text(format!(".{}", case.name).as_bytes()),
+                    };
+                    out.steps.push(Step::Set { local, value: text });
+                    arms.push(std::mem::replace(&mut out.steps, before));
+                }
+                out.steps.push(Step::Match {
+                    value: values[0],
+                    arms,
+                });
+                Value::Local(local)
+            }
+            _ => unreachable!("a type given `Repr`"),
+        }
+    }
+
+    /// The text `open`, then the label of each item and the text its value's
+    /// `Repr` gives, the items separated by commas, and then `)`.
+    fn listed(
+        &mut self,
+        out: &mut Lowered<'a>,
+        open: &str,
+        items: Vec<(String, Ty, &[Value])>,
+    ) -> Value {
+        let repr = self.typed.defs.repr;
+        let mut parts = Vec::new();
+        let mut known = open.as_bytes().to_vec();
+        for (i, (label, t, values)) in items.into_iter().enumerate() {
+            if i > 0 {
+                known.extend(b", ");
+            }
+            known.extend(label.bytes());
+            let text = self.run(out, repr, &t, values.to_vec());
+            parts.push(self.text(&std::mem::take(&mut known)));
+            parts.push(text);
+        }
+        known.push(b')');
+        let close = self.text(&known);
+        if parts.is_empty() {
+            return close;
+        }
+        parts.push(close);
+        let local = self.locals(out, &Ty::Text)[0];
+        out.steps.push(Step::Join { local, parts });
+        Value::Local(local)
     }
 
     /// Lowers the statements of a block, and gives the values of the last
@@ -5004,14 +5428,14 @@ impl<'a> Lowering<'a> {
                 }
                 Callee::Value => self.call_value(out, call, env),
                 Callee::Run(instance, gives)
-                    if (defs.view(instance.template).params.iter())
+                    if (defs.params(instance.template).iter())
                         .any(|(_, t)| t.subst(&instance.args).holds_fn()) =>
                 {
                     self.in_place(out, call, instance, gives, env)
                 }
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
-                    let params = defs.view(instance.template).params;
+                    let params = defs.params(instance.template);
                     let function = self.place(instance);
                     // Arguments are worked out in the order they are
                     // written, and then passed in the order of the

@@ -2,7 +2,8 @@
 //! place one mistake in what it builds.
 //!
 //! A program has a struct `Cat` and an enum `Pet`, each of which implements
-//! `Fmt` with strings that hold expressions, a tuple type `(str, Cat)`, and
+//! `Fmt` with strings that hold expressions, a tuple type `(str, Cat)`,
+//! whose `Fmt` is given and writes the `Repr` that `Cat` is given, and
 //! three functions it always defines: `double`, which joins a text to
 //! itself, `apply`, which puts what a function makes of a text in a string,
 //! and `show`, which puts a value of any type that implements `Fmt` in a
@@ -47,9 +48,6 @@ enum Ty {
 }
 
 const TYPES: &[Ty] = &[Ty::Str, Ty::Cat, Ty::Pet, Ty::Pair];
-
-/// The types that implement `Fmt`.
-const FORMATTED: &[Ty] = &[Ty::Str, Ty::Cat, Ty::Pet];
 
 impl Ty {
     fn written(self) -> &'static str {
@@ -214,11 +212,11 @@ fn expr(g: &mut Gen, funcs: &[Func], scope: &mut Scope, ty: Ty, depth: usize) ->
             1 => Expr::CatName(Box::new(expr(g, funcs, scope, Ty::Cat, d))),
             2 => Expr::Double(Box::new(expr(g, funcs, scope, Ty::Str, d))),
             3 => {
-                let t = *g.pick(FORMATTED);
+                let t = *g.pick(TYPES);
                 Expr::Show(Box::new(expr(g, funcs, scope, t, d)))
             }
             4 => {
-                let t = *g.pick(FORMATTED);
+                let t = *g.pick(TYPES);
                 Expr::Fmt(Box::new(expr(g, funcs, scope, t, d)))
             }
             5 => {
@@ -248,7 +246,7 @@ fn interp(g: &mut Gen, funcs: &[Func], scope: &mut Scope, depth: usize) -> Expr 
         if g.one_in(2) {
             parts.push(Part::Text(pieces(g)));
         }
-        let t = *g.pick(FORMATTED);
+        let t = *g.pick(TYPES);
         parts.push(Part::Expr(expr(g, funcs, scope, t, depth)));
     }
     if g.one_in(2) {
@@ -433,8 +431,30 @@ fn fmt(m: &Model, v: Val) -> Vec<u8> {
             eval(m, &env, &m.pet.0).text()
         }
         Val::Pet(None) => eval(m, &[], &m.pet.1).text(),
-        Val::Pair(..) => panic!("a tuple has no `Fmt`"),
+        Val::Pair(s, n) => {
+            let mut out = b"(".to_vec();
+            out.extend(repr(&s));
+            out.extend(b", Cat(name: ");
+            out.extend(repr(&n));
+            out.extend(b"))");
+            out
+        }
     }
+}
+
+/// The text `Repr` gives for a `str`: the text in quotes, with its escapes.
+fn repr(text: &[u8]) -> Vec<u8> {
+    let mut out = vec![b'"'];
+    for &b in text {
+        match b {
+            b'"' | b'\\' | b'{' | b'}' => out.extend([b'\\', b]),
+            b'\n' => out.extend(b"\\n"),
+            b'\t' => out.extend(b"\\t"),
+            b => out.push(b),
+        }
+    }
+    out.push(b'"');
+    out
 }
 
 fn call(m: &Model, k: usize, args: Vec<Val>) -> Val {
@@ -562,8 +582,8 @@ fn reached(m: &Model) -> Vec<usize> {
 /// The mistake to place, if any.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mistake {
-    /// A value of a struct with no `Fmt` in a string of `main`, before its
-    /// statement at the place, or given to `show`.
+    /// A value of a struct whose `Fmt` is taken away in a string of `main`,
+    /// before its statement at the place, or given to `show`.
     NoFmt { at: usize, shown: bool },
     /// The function, or `main` when there is none, written without
     /// `alloc`, which it needs.
@@ -714,7 +734,7 @@ fn write(m: &Model, mistake: Option<Mistake>) -> (String, Option<Expected>) {
     };
     w.push("struct Cat {\n  name: str\n}\n\nenum Pet {\n  cat: Cat\n  none\n}\n\n");
     if let Some(Mistake::NoFmt { .. }) = mistake {
-        w.push("struct Dog {\n  name: str\n}\n\n");
+        w.push("struct Dog {\n  name: str\n}\n\nwithout Fmt for Dog\n\n");
     }
     w.push("impl Fmt[Cat] {\n  fn fmt(value: Cat) -> str ! alloc { ");
     w.expr(&m.cat);
