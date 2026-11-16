@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Text and printing
-description: Where a program starts, print, and string literals that hold expressions formatted by the Fmt trait.
+description: Where a program starts, print, string literals that hold expressions formatted by the Fmt trait, and Repr, which writes a value as source.
 status: partial
 built: "`main`, `print`, string literals and their escapes, and strings that hold expressions of any type that implements `Fmt` by hand"
 ---
@@ -28,10 +28,37 @@ fn greet(name: str, age: i32) ! console, alloc {
 }
 ```
 
-- The braces hold any expression. A type joins in by implementing `Fmt`, and `derive Fmt for Rect` writes the obvious implementation.
+- The braces hold any expression of a type that has `Fmt`.
 - Nothing is special-cased. A `str` in braces goes through its own `Fmt` implementation, like a value of any other type.
 - There are no format options inside the braces. A width or a number of decimal places is an ordinary function call, as in `"{fixed(x, 2)}"`.
 - A string with an expression in it has a size known only at run time, so it carries `alloc`. A plain string literal does not.
+
+`Fmt` is text for a person. A second trait, `Repr`, writes a value as Smith source, so that what is printed can be pasted back into a program.
+
+```
+trait Repr[T] {
+  fn repr(value: T) -> str ! alloc
+}
+
+struct Cat {
+  name: str
+}
+
+fn describe(tom: Cat) ! console, alloc {
+  print("{tom.name}")
+  print("{repr(tom.name)}")
+  print("{tom}")
+}
+```
+
+`describe(Cat(name: "tom"))` prints `tom`, then `"tom"`, then `Cat(name: "tom")`.
+
+- `repr` is an ordinary function, called inside the braces like any other. The braces always use `Fmt`, and a value never prints differently because of where it is.
+- The `Repr` of a `str` is the text in quotes, with its escapes. The `Fmt` of a `str` is the text alone. For a number and a `bool` the two are the same, and a float always shows its point, as in `2.0`.
+- The `Repr` of a struct is its construction, as in `Cat(name: "tom")`, with the `Repr` of each field. A tuple is `("a", "b")`, a case is `.cat(Cat(name: "tom"))` or `.none`, and an array or list is `[1, 2, 3]`.
+- A struct with exactly one field that is not a proof, such as `Fin`, is written as that field's value.
+- Both traits are given automatically, as [`Copy`](ownership.md) is: a struct, an enum, or a tuple has each unless one of its fields lacks it. Its `Fmt` is its `Repr`. `without Fmt for Secret` takes one away.
+- A type that should read differently to a person implements `Fmt` itself, and its implementation replaces the one it was given. Its `Repr` stays.
 
 A backslash writes a character that would otherwise mean something else. These escapes are the whole set, and any other character after a backslash is a compile error.
 
