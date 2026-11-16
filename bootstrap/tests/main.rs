@@ -14,6 +14,7 @@ mod cli;
 mod generate;
 mod programs;
 mod props;
+mod release;
 mod sha256;
 mod targets;
 
@@ -32,7 +33,7 @@ const SLOWEST: usize = 5;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let once = [props::TESTS, cli::ONCE, targets::ONCE].concat();
+    let once = [props::TESTS, cli::ONCE, release::ONCE, targets::ONCE].concat();
     let machine = [targets::MACHINE, cli::MACHINE].concat();
     let groups: Vec<&[Test]> = match args.iter().find_map(|a| a.strip_prefix("--group=")) {
         None => vec![&once, &machine],

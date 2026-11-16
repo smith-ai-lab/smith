@@ -2,7 +2,8 @@ name: ci
 
 # The `ci` job is the one check the repository requires. It passes only when
 # every other job passed or was skipped on purpose, so adding a job changes no
-# rule. The `timings` workflow is the only one that runs after a merge.
+# rule. The `timings` and `release` workflows are the only ones that run after a
+# merge.
 on:
   pull_request:
   merge_group:
