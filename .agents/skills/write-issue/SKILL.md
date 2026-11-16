@@ -55,6 +55,7 @@ The first three parts are the goal, the finished result, and its limits. "Ask fi
 - Do not write steps, and do not assign an approach. Describing how is writing the code in prose.
 - Do not add lines such as "think carefully" or "be thorough". They change nothing.
 - Name what is out of scope, so the implementer does not build the next issue too.
+- Ask for nothing that exists only because of what Smith used to be. Smith has no users and no code to keep working, so when something is removed, the compiler forgets it: no special error, no hint towards the new form, no test that it is gone.
 - Keep the whole issue to one screen.
 
 ## Choosing the model
