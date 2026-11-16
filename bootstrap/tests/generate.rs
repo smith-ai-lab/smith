@@ -165,14 +165,19 @@ pub fn shrink<T>(
 }
 
 /// Choices one step smaller than the given ones: with a run of them
-/// removed, or with one of them made smaller.
+/// removed, with a run removed and the count before it made smaller by as
+/// many, or with one of them made smaller.
 fn smaller(choices: &[usize]) -> Vec<Vec<usize>> {
     let mut out = Vec::new();
     for size in [8, 4, 2, 1] {
         for start in 0..choices.len().saturating_sub(size - 1) {
             let mut shorter = choices[..start].to_vec();
             shorter.extend_from_slice(&choices[start + size..]);
-            out.push(shorter);
+            out.push(shorter.clone());
+            if start > 0 && choices[start - 1] >= size {
+                shorter[start - 1] -= size;
+                out.push(shorter);
+            }
         }
     }
     for (i, &c) in choices.iter().enumerate() {
