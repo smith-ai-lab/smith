@@ -7,7 +7,7 @@ status: planned
 
 # Functions over code
 
-A function can receive the code of an argument instead of its value. Such a function runs when the program is built, and the code it returns takes the place of the call. This is how the library provides what would otherwise be built into the compiler. `expect` is one: it takes a check as a lambda and, when a comparison fails, reports both of its sides.
+A function can receive the code of an argument instead of its value. Such a function runs when the program is built, and the code it returns takes the place of the call. This is how the library provides what would otherwise be built into the compiler. `expect` is one: it takes a check as a lambda and, when a comparison fails, reports both of its sides, each written by [`Repr`](text.md).
 
 ```
 fn test_tokens(text: str) -> Result[(), Failed] {
