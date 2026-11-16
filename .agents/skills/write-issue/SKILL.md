@@ -39,7 +39,7 @@ Ask first
 Choices the implementer must not make alone. Leave this out when there are none.
 
 After
-Issues that must be merged before this one starts, because it builds on them or changes the same code. Leave this out when there are none.
+Issues that must be merged before this one starts, because it builds on them, changes the same code, or would move the same code into a shared place. Leave this out when there are none.
 
 Read first
 The sections of knowledge/ that apply, as links.
