@@ -23,3 +23,10 @@ path = "tests/main.rs"
 harness = false
 
 [dependencies]
+
+# The tests run the compiler over hundreds of generated programs, and a build
+# with no optimization is four times slower at it than a build with the
+# first level, for little more time to build.
+[profile.dev]
+opt-level = 1
+debug = false
