@@ -1,17 +1,44 @@
 name: ci
 
+# The `ci` job is the one check the repository requires. It passes only when
+# every other job passed or was skipped on purpose, so adding a job changes no
+# rule. The `timings` workflow is the only one that runs after a merge.
 on:
   pull_request:
   merge_group:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the run for the older push.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  rust:
-    name: format, lint, test
+  # Whether the change touches a file the compiler or its tests are built from.
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    outputs:
+      compiler: ${{ steps.diff.outputs.compiler }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: echo "compiler=$(sh .github/changed.sh "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
+
+  # Linux on x86-64 builds the compiler once for the tests that run once, the
+  # tests that depend on the machine, and the timings.
+  linux:
+    name: format, lint, test on ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,18 +51,22 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --locked -- --group=once
+      - name: Test what depends on the machine
+        run: cargo test --locked -- --group=machine
       - name: Timings
         run: target/debug/smith build --timings tests/cases/hello.smith
 
-  # The tests whose result depends on the machine, on each kind of machine
-  # a target needs: linux_x64, macos_arm64, linux_arm64, macos_x64, windows_x64,
-  # and windows_arm64.
+  # The tests whose result depends on the machine, on each other kind of machine
+  # a target needs: macos_arm64, linux_arm64, macos_x64, windows_x64, and
+  # windows_arm64. linux_x64 is the job above.
   machine:
     name: test on ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm, macos-15-intel, windows-latest, windows-11-arm]
+        os: [macos-latest, ubuntu-24.04-arm, macos-15-intel, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -47,15 +78,35 @@ jobs:
 
   commits:
     name: conventional commits
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           fetch-depth: 0
       - name: Check every commit message
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: sh .github/check-commits.sh "$BASE" "$HEAD"
+
+  ci:
+    name: ci
+    needs: [changes, linux, machine, commits]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Show what the decision gives
+        run: |
+          for result in failure cancelled skipped; do
+            echo "== a job that gave $result"
+            if sh .github/ci-result.sh "job=$result"; then echo "-> passes"; else echo "-> fails"; fi
+          done
+      - name: Decide
+        run: >
+          sh .github/ci-result.sh
+          "changes=${{ needs.changes.result }}"
+          "linux=${{ needs.linux.result }}"
+          "machine=${{ needs.machine.result }}"
+          "commits=${{ needs.commits.result }}"
