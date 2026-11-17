@@ -82,11 +82,13 @@ pub fn folder(name: &str) -> PathBuf {
 }
 
 pub fn smith(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_smith"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap()
+    crate::clock::output_within(
+        Command::new(env!("CARGO_BIN_EXE_smith"))
+            .args(args)
+            .current_dir(dir),
+        true,
+    )
+    .unwrap()
 }
 
 pub fn stderr(output: &Output) -> String {
@@ -366,12 +368,14 @@ fn run_prints_the_timings_before_the_program_runs() {
     }
     let dir = folder("run_timings");
     std::fs::write(dir.join("hello.smith"), HELLO).unwrap();
-    let ran = Command::new("sh")
-        .args(["-c", "\"$0\" run --timings hello.smith 2>&1"])
-        .arg(env!("CARGO_BIN_EXE_smith"))
-        .current_dir(&dir)
-        .output()
-        .unwrap();
+    let ran = crate::clock::output_within(
+        Command::new("sh")
+            .args(["-c", "\"$0\" run --timings hello.smith 2>&1"])
+            .arg(env!("CARGO_BIN_EXE_smith"))
+            .current_dir(&dir),
+        true,
+    )
+    .unwrap();
     assert_eq!(ran.status.code(), Some(0));
     let text = String::from_utf8(ran.stdout).unwrap();
     let output = text

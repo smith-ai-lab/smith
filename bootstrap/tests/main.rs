@@ -7,7 +7,9 @@
 //!
 //! A test that computes for more than a second fails the run, and the run
 //! names it, as `LIMIT` says. A test starts no thread, as the time of a
-//! thread it starts is not the time of its own.
+//! thread it starts is not the time of its own. A test that has not ended
+//! after `clock::HANG` and a little more on the wall fails the run, and the run names it, so that a
+//! program that never ends is a failing test and not a run that never ends.
 //!
 //! `--fingerprint` runs nothing. It prints, for each target, a hash of
 //! everything the group that depends on the machine would run for it, as
@@ -51,7 +53,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A test: its name and what it runs. It fails by panicking.
 pub type Test = (&'static str, fn());
@@ -61,6 +63,11 @@ const SLOWEST: usize = 70;
 
 /// What a test may compute for, as `clock` measures it.
 const LIMIT: Duration = Duration::from_secs(1);
+
+/// What a test is given beyond `clock::HANG`, so that a program it starts that
+/// does not end is stopped, and fails the test saying so, before the run gives
+/// up on the test.
+const SLACK: Duration = Duration::from_secs(2);
 
 /// Whether a test over the limit fails the run. It does on the kind of
 /// machine that the `linux` job of `ci` uses, where every test
@@ -119,29 +126,78 @@ fn main() -> ExitCode {
     let next = AtomicUsize::new(0);
     let results = Mutex::new(Vec::new());
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let workers = workers.min(tests.len());
+    // What each worker is running, and since when.
+    let running: Vec<Mutex<Option<(&'static str, Instant)>>> =
+        (0..workers).map(|_| Mutex::new(None)).collect();
     println!("running {} tests", tests.len());
     println!(
         "seed {} (SMITH_SEED=<it> runs the same cases again)",
         generate::run_seed()
     );
+    let mut lost = 0;
     std::thread::scope(|s| {
-        for _ in 0..workers.min(tests.len()) {
+        for slot in &running {
             s.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some((name, test)) = tests.get(i) else {
                         break;
                     };
+                    *slot.lock().unwrap() = Some((name, Instant::now()));
                     let begin = clock::thread_time();
                     let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();
                     let time = clock::thread_time() - begin;
+                    // A test the run gave up on has its result already.
+                    if slot.lock().unwrap().take().is_none() {
+                        return;
+                    }
                     println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
                     results.lock().unwrap().push((*name, passed, time));
                 }
             });
         }
+        // A test that does not end cannot be stopped. When one has run for
+        // `HANG` it fails, and its worker is let go while the others go on.
+        // The run ends when every test has a result, or every worker is held
+        // by a test that does not end.
+        while results.lock().unwrap().len() < tests.len() && lost < workers {
+            std::thread::sleep(Duration::from_millis(20));
+            for slot in &running {
+                let mut slot = slot.lock().unwrap();
+                if let Some((name, since)) = *slot
+                    && since.elapsed() > clock::HANG + SLACK
+                {
+                    *slot = None;
+                    lost += 1;
+                    println!("test {name} ... FAILED");
+                    println!(
+                        "hung: {name} did not end in {}, so it was stopped without an end",
+                        milliseconds(clock::HANG + SLACK)
+                    );
+                    results
+                        .lock()
+                        .unwrap()
+                        .push((name, false, clock::HANG + SLACK));
+                }
+            }
+        }
+        if lost > 0 {
+            // The threads of the tests that did not end cannot be joined,
+            // so the report is made here and the process ends with it.
+            let ok = report(results.lock().unwrap().clone(), on_machine);
+            std::process::exit(if ok { 0 } else { 1 });
+        }
     });
-    let mut results = results.into_inner().unwrap();
+    if report(results.into_inner().unwrap(), on_machine) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Prints how the run went, and gives whether it passed.
+fn report(mut results: Vec<(&'static str, bool, Duration)>, on_machine: bool) -> bool {
     let failed: Vec<&str> = results
         .iter()
         .filter(|(_, passed, _)| !passed)
@@ -179,11 +235,7 @@ fn main() -> ExitCode {
             milliseconds(LIMIT)
         );
     }
-    if failed.is_empty() && !(ENFORCED && !slow.is_empty()) {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    failed.is_empty() && !(ENFORCED && !slow.is_empty())
 }
 
 fn milliseconds(time: Duration) -> String {

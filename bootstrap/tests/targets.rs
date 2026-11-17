@@ -299,7 +299,7 @@ fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> O
     // starts, which makes running it fail as busy.
     let mut tries = 0;
     let output = loop {
-        match command(&path).output() {
+        match crate::clock::output_within(&mut command(&path), false) {
             Err(e) if e.raw_os_error() == Some(26) && tries < 100 => {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(10));
