@@ -94,7 +94,7 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
 }
 
 /// The bits of an integer of the size, in a word.
-fn mask(bits: Bits) -> u64 {
+pub(super) fn mask(bits: Bits) -> u64 {
     match bits {
         Bits::B64 => u64::MAX,
         _ => (1u64 << bits.count()) - 1,
@@ -107,8 +107,48 @@ fn signed(n: u64, bits: Bits) -> i128 {
     (((n << up) as i64) >> up) as i128
 }
 
+/// What `op` gives for two integers of the size, as bits of that size. The
+/// evaluator and the pass that folds constants both work it out here.
+pub(super) fn binary(op: Binary, bits: Bits, x: u64, y: u64) -> u64 {
+    let size = bits.count();
+    let n = match op {
+        Binary::Add => x.wrapping_add(y),
+        Binary::Sub => x.wrapping_sub(y),
+        Binary::Mul => x.wrapping_mul(y),
+        Binary::MulHighU => ((x as u128 * y as u128) >> size) as u64,
+        Binary::MulHighS => ((signed(x, bits) * signed(y, bits)) >> size) as u64,
+        Binary::And => x & y,
+        Binary::Xor => x ^ y,
+    };
+    n & mask(bits)
+}
+
+/// 1 if the two integers of the size are as `op` asks, and 0 if not.
+pub(super) fn compare(op: Compare, bits: Bits, x: u64, y: u64) -> u64 {
+    (match op {
+        Compare::Equal => x == y,
+        Compare::LessU => x < y,
+        Compare::LessS => signed(x, bits) < signed(y, bits),
+    }) as u64
+}
+
+/// The integer of `from` bits widened to `to` bits, read as signed or not.
+pub(super) fn widen(read_signed: bool, from: Bits, to: Bits, n: u64) -> u64 {
+    let n = if read_signed {
+        signed(n, from) as u64
+    } else {
+        n
+    };
+    n & mask(to)
+}
+
+/// The low bits of the integer, as many as `to` has.
+pub(super) fn narrow(to: Bits, n: u64) -> u64 {
+    n & mask(to)
+}
+
 /// How many bits an integer type has.
-fn bits_of(ty: Type) -> Bits {
+pub(super) fn bits_of(ty: Type) -> Bits {
     match ty {
         Type::Int(bits) => bits,
         Type::Address => panic!("an address where an integer is needed"),
@@ -147,31 +187,14 @@ impl Machine<'_> {
                         let (Word::Int(x), Word::Int(y)) = (get(a), get(b)) else {
                             panic!("arithmetic on what is not an integer")
                         };
-                        let size = bits.count();
-                        let n = match op {
-                            Binary::Add => x.wrapping_add(y),
-                            Binary::Sub => x.wrapping_sub(y),
-                            Binary::Mul => x.wrapping_mul(y),
-                            Binary::MulHighU => ((x as u128 * y as u128) >> size) as u64,
-                            Binary::MulHighS => {
-                                ((signed(x, bits) * signed(y, bits)) >> size) as u64
-                            }
-                            Binary::And => x & y,
-                            Binary::Xor => x ^ y,
-                        };
-                        vec![Word::Int(n & mask(bits))]
+                        vec![Word::Int(binary(*op, bits, x, y))]
                     }
                     Op::Compare { op, a, b } => {
                         let bits = bits_of(f.types[a.0]);
                         let (Word::Int(x), Word::Int(y)) = (get(a), get(b)) else {
                             panic!("a comparison of what is not integers")
                         };
-                        let yes = match op {
-                            Compare::Equal => x == y,
-                            Compare::LessU => x < y,
-                            Compare::LessS => signed(x, bits) < signed(y, bits),
-                        };
-                        vec![Word::Int(yes as u64)]
+                        vec![Word::Int(compare(*op, bits, x, y))]
                     }
                     Op::Widen {
                         signed: read,
@@ -182,15 +205,14 @@ impl Machine<'_> {
                         let Word::Int(n) = get(value) else {
                             panic!("a widening of what is not an integer")
                         };
-                        let n = if *read { signed(n, from) as u64 } else { n };
-                        vec![Word::Int(n & mask(to))]
+                        vec![Word::Int(widen(*read, from, to, n))]
                     }
                     Op::Narrow(value) => {
                         let to = bits_of(f.types[instruction.results[0].0]);
                         let Word::Int(n) = get(value) else {
                             panic!("a narrowing of what is not an integer")
                         };
-                        vec![Word::Int(n & mask(to))]
+                        vec![Word::Int(narrow(to, n))]
                     }
                     Op::Choose {
                         on,
