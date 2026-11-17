@@ -31,6 +31,10 @@ use crate::tuples;
 
 pub const ONCE: &[Test] = &[
     (
+        "every_target_builds_identical_bytes_twice_for_the_rest",
+        every_target_builds_identical_bytes_twice_for_the_rest,
+    ),
+    (
         "every_target_builds_identical_bytes_twice",
         every_target_builds_identical_bytes_twice,
     ),
@@ -119,15 +123,9 @@ pub const MACHINE: &[Test] = &[
 
 const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
 
-/// The targets the compiler builds for, in the order of the enum. In a
-/// fingerprint of one target, that one alone.
+/// The targets the compiler builds for, in the order of the enum.
 pub fn buildable() -> Vec<Target> {
-    let only = FINGERPRINT.with_borrow(|f| f.as_ref().map(|f| f.only));
-    Target::ALL
-        .iter()
-        .copied()
-        .filter(|t| only.is_none_or(|only| only == *t))
-        .collect()
+    Target::ALL.to_vec()
 }
 
 /// A target the compiler can build for, for a test that needs one.
@@ -148,12 +146,11 @@ pub fn runnable() -> Vec<Target> {
 /// How the compiler builds an executable.
 pub type Build = fn(&[u8], Target) -> Result<Vec<u8>, Vec<Error>>;
 
-/// What a fingerprint of one target is made of: how it builds, and what the
-/// tests that depend on the machine would run for it.
+/// What a fingerprint is made of: how the compiler builds, and what the
+/// tests that depend on the machine would run for each target.
 struct Fingerprint {
-    only: Target,
     build: Build,
-    entries: Vec<String>,
+    entries: Vec<(Target, String)>,
 }
 
 thread_local! {
@@ -180,13 +177,13 @@ pub fn build(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
 /// made. The parts are an executable and whatever it is checked against.
 pub fn record(target: Target, parts: &[&[u8]]) {
     FINGERPRINT.with_borrow_mut(|f| {
-        if let Some(f) = f.as_mut().filter(|f| f.only == target) {
+        if let Some(f) = f.as_mut() {
             let mut bytes = Vec::new();
             for part in parts {
                 bytes.extend_from_slice(&(part.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(part);
             }
-            f.entries.push(sha256::hex(&bytes));
+            f.entries.push((target, sha256::hex(&bytes)));
         }
     });
 }
@@ -227,42 +224,35 @@ pub fn machine() -> Vec<Test> {
 }
 
 /// For each target the compiler builds for, a hash of every executable the
-/// tests that depend on the machine would run for it, with what each is
+/// given tests, which are all of `machine()` for a real fingerprint, would run for it, with what each is
 /// checked against, built as `build` builds. Two compilers that give the
 /// same hash for a target give those tests nothing new to find on any
 /// machine that runs it. Nothing is run, so the result is the same on
-/// every machine. Each target is read on its own thread, as the tests see
-/// no other target, so no target's hash depends on another's.
-pub fn fingerprint(build: Build) -> Vec<(Target, String)> {
-    let targets = buildable();
-    std::thread::scope(|scope| {
-        let threads: Vec<_> = targets
-            .iter()
-            .map(|&target| scope.spawn(move || (target, fingerprint_of(target, build))))
-            .collect();
-        threads
-            .into_iter()
-            .map(|t| t.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
-            .collect()
-    })
-}
-
-/// The hash of everything the tests that depend on the machine would run
-/// for one target.
-fn fingerprint_of(target: Target, build: Build) -> String {
+/// every machine. The tests run once for every target, and no target's hash
+/// depends on another's.
+pub fn fingerprint(tests: &[Test], build: Build) -> Vec<(Target, String)> {
     FINGERPRINT.with_borrow_mut(|f| {
         *f = Some(Fingerprint {
-            only: target,
             build,
             entries: Vec::new(),
         })
     });
-    for (_, test) in machine() {
+    for (_, test) in tests {
         test();
     }
-    let mut entries = FINGERPRINT.with_borrow_mut(|f| f.take().unwrap().entries);
-    entries.sort();
-    sha256::hex(entries.join("\n").as_bytes())
+    let entries = FINGERPRINT.with_borrow_mut(|f| f.take().unwrap().entries);
+    buildable()
+        .into_iter()
+        .map(|target| {
+            let mut own: Vec<&str> = entries
+                .iter()
+                .filter(|(t, _)| *t == target)
+                .map(|(_, e)| e.as_str())
+                .collect();
+            own.sort();
+            (target, sha256::hex(own.join("\n").as_bytes()))
+        })
+        .collect()
 }
 
 /// Each target this machine does not run, with why.
@@ -324,58 +314,36 @@ fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> O
     }
 }
 
-fn every_target_builds_identical_bytes_twice() {
+/// Checks that every target builds identical bytes twice, for `cases`
+/// generated programs.
+fn builds_identical_bytes_twice<T: Debug>(
+    seed: u64,
+    cases: u64,
+    generate: impl Fn(&mut Gen) -> T,
+    source: impl Fn(&T) -> &[u8],
+) {
     let targets = buildable();
     assert!(!targets.is_empty(), "the compiler builds for some target");
-    generate::check(6, 15, programs::program, |case| {
+    generate::check(seed, cases, generate, |case| {
         for &target in &targets {
-            let first = compile(&case.source, target).unwrap();
-            let second = compile(&case.source, target).unwrap();
+            let first = compile(source(case), target).unwrap();
+            let second = compile(source(case), target).unwrap();
             assert!(first == second, "{} differs", target.name());
         }
     });
-    generate::check(19, 10, traits::program, |case| {
-        for &target in &targets {
-            let first = compile(case.source.as_bytes(), target).unwrap();
-            let second = compile(case.source.as_bytes(), target).unwrap();
-            assert!(first == second, "{} differs", target.name());
-        }
-    });
-    generate::check(24, 10, enums::program, |case| {
-        for &target in &targets {
-            let first = compile(case.source.as_bytes(), target).unwrap();
-            let second = compile(case.source.as_bytes(), target).unwrap();
-            assert!(first == second, "{} differs", target.name());
-        }
-    });
-    generate::check(36, 10, text::program, |case| {
-        for &target in &targets {
-            let first = compile(case.source.as_bytes(), target).unwrap();
-            let second = compile(case.source.as_bytes(), target).unwrap();
-            assert!(first == second, "{} differs", target.name());
-        }
-    });
-    generate::check(65, 10, reprs::program, |case| {
-        for &target in &targets {
-            let first = compile(case.source.as_bytes(), target).unwrap();
-            let second = compile(case.source.as_bytes(), target).unwrap();
-            assert!(first == second, "{} differs", target.name());
-        }
-    });
-    generate::check(69, 10, choices::program, |case| {
-        for &target in &targets {
-            let first = compile(case.source.as_bytes(), target).unwrap();
-            let second = compile(case.source.as_bytes(), target).unwrap();
-            assert!(first == second, "{} differs", target.name());
-        }
-    });
-    generate::check(73, 10, numbers::program, |case| {
-        for &target in &targets {
-            let first = compile(case.source.as_bytes(), target).unwrap();
-            let second = compile(case.source.as_bytes(), target).unwrap();
-            assert!(first == second, "{} differs", target.name());
-        }
-    });
+}
+
+fn every_target_builds_identical_bytes_twice() {
+    builds_identical_bytes_twice(6, 8, programs::program, |c| &c.source);
+    builds_identical_bytes_twice(19, 5, traits::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(24, 5, enums::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(36, 5, text::program, |c| c.source.as_bytes());
+}
+
+fn every_target_builds_identical_bytes_twice_for_the_rest() {
+    builds_identical_bytes_twice(65, 5, reprs::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(69, 5, choices::program, |c| c.source.as_bytes());
+    builds_identical_bytes_twice(73, 5, numbers::program, |c| c.source.as_bytes());
 }
 
 /// The program in the scalar form that the targets are given: what the
