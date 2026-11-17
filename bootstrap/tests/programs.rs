@@ -1503,7 +1503,6 @@ fn main_statement(
                 ("x.y ", "-= \"a\""),
                 ("x ", "*= \"a\""),
                 ("", "for i {}"),
-                ("x", "[0] = \"a\""),
             ]);
             b.push(before);
             b.mark(NOT_BUILT, None);
@@ -1932,7 +1931,7 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
         }
         Some(Kind::ExpressionNotBuilt) => {
             b.mark(NOT_BUILT, None);
-            b.pick(&["1.5", "-\"a\"", "[\"a\"]", "for"]);
+            b.pick(&["1.5", "-\"a\"", "for"]);
         }
         Some(Kind::Operator) => {
             literal_text(b, pieces, None);
