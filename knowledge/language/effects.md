@@ -101,6 +101,6 @@ Six more are built in, because the compiler itself gives them their meaning. The
 | `foreign` | Calling a [foreign function](foreign.md) | Nothing |
 | `exec` | Running another program | Nothing |
 
-An effect that nothing handles is carried by every caller up to [`main`](text.md), where a program starts. The effects `main` lists are provided by the operating system.
+An effect that nothing handles is carried by every caller up to [`main`](first-program.md), where a program starts. The effects `main` lists are provided by the operating system.
 
-Next: [Text and printing](text.md)
+Next: [Strings that hold expressions](interpolation.md)

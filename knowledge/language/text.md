@@ -1,108 +1,11 @@
 ---
 type: specification
-title: Text and printing
-description: Where a program starts, print, string literals that hold expressions formatted by the Fmt trait, and Repr, which writes a value as source.
-status: partial
-built: "`main`, `print`, string literals and their escapes, strings that hold expressions of any type that implements `Fmt`, `repr` and the `Repr` of a `str`, and the `Fmt` and `Repr` every struct, enum, tuple, `bool`, `()`, and integer type is given, which `without` takes away"
+title: Text and bytes
+description: A str as bytes known to be valid UTF-8, which are used as bytes with no call, made from bytes through utf8, and cut into pieces that share its memory.
+status: planned
 ---
 
-# Text and printing
-
-A program starts at `main` and ends when `main` returns. `print` takes a `str` and writes it and a line break to standard output. It carries the `console` effect, which covers standard input, output, and error. `print` is in scope in [every file](modules.md), and the rest of the console is in [std.console](../library/console.md).
-
-```
-fn main() ! console {
-  print("hello world")
-}
-```
-
-`main` may take the arguments the program was started with: the words after the program's name, as a list.
-
-```
-fn main(args: List[str]) ! console, alloc {
-  print("started with {args.size} arguments")
-}
-```
-
-What `main` returns decides the status the program ends with. `main` may return any type that implements `Exit`, whose one function gives the status.
-
-```
-trait Exit[T] {
-  fn exit(value: T) -> u8 ! console, alloc
-}
-```
-
-- `()` gives 0, so a `main` that returns nothing ends with status 0.
-- A `Result[T, E]` gives what its `T` gives when it is `.ok`. When it is `.err(e)`, it writes `e` to standard error, as `Fmt` turns it into text, and gives 1. So `main` can use [`try`](try.md), and a failure it returns ends the program with a failing status.
-- A program that needs other statuses implements `Exit` for a type of its own.
-- Nothing else ends a program. No function stops it from inside a call, so the code after a call always runs.
-
-Every string literal may hold expressions in braces, and there is no other kind of string. Each expression is turned into text by the `Fmt` trait, and the pieces are joined into one `str`. `print` never formats anything: it only ever receives a `str`.
-
-```
-trait Fmt[T] {
-  fn fmt(value: T) -> str ! alloc
-}
-
-fn greet(name: str, age: i32) ! console, alloc {
-  print("hello {name}, you are {age}")
-}
-```
-
-- The braces hold any expression of a type that has `Fmt`.
-- Nothing is special-cased. A `str` in braces goes through its own `Fmt` implementation, like a value of any other type.
-- There are no format options inside the braces. A width or a number of decimal places is an ordinary function call, as in `"{fixed(x, 2)}"`.
-- A string with an expression in it has a size known only at run time, so it carries `alloc`. A plain string literal does not.
-
-`Fmt` is text for a person. A second trait, `Repr`, writes a value as Smith source, so that what is printed can be pasted back into a program.
-
-```
-trait Repr[T] {
-  fn repr(value: T) -> str ! alloc
-}
-
-struct Cat {
-  name: str
-}
-
-fn describe(tom: Cat) ! console, alloc {
-  print("{tom.name}")
-  print("{repr(tom.name)}")
-  print("{tom}")
-}
-```
-
-`describe(Cat(name: "tom"))` prints `tom`, then `"tom"`, then `Cat(name: "tom")`.
-
-- `repr` is an ordinary function, called inside the braces like any other. The braces always use `Fmt`, and a value never prints differently because of where it is.
-- The `Repr` of a `str` is the text in quotes, with its escapes. The `Fmt` of a `str` is the text alone. For a number and a `bool` the two are the same, and a float always shows its point, as in `2.0`.
-- The `Repr` of a struct is its construction, as in `Cat(name: "tom")`, with the `Repr` of each field. A tuple is `("a", "b")` and the empty tuple is `()`, a case is `.cat(Cat(name: "tom"))` or `.none`, and an array or list is `[1, 2, 3]`.
-- A struct with exactly one field that is not a proof, such as `Fin`, is written as that field's value.
-- Both traits are given automatically, as [`Copy`](ownership.md) is: a struct, an enum, or a tuple has each unless one of its fields lacks it. Its `Fmt` is its `Repr`. `without Fmt for Secret` takes one away.
-- A type that should read differently to a person implements `Fmt` itself, and its implementation replaces the one it was given. Its `Repr` stays.
-
-A backslash writes a character that would otherwise mean something else. These escapes are the whole set, and any other character after a backslash is a compile error.
-
-| Written | Means |
-| --- | --- |
-| `\"` | A double quote |
-| `\\` | A backslash |
-| `\{` and `\}` | A brace |
-| `\n` | A line break |
-| `\t` | A tab |
-
-```
-fn show(x: i32, y: i32) ! console, alloc {
-  print("point \{{x}, {y}\}")
-}
-```
-
-`show(3, 4)` prints `point {3, 4}`.
-
-- A brace that is not escaped always opens or closes an expression, so a `}` on its own is a compile error.
-- A string literal ends on the line it starts. A line break in the text is written `\n`.
-
-## Text and bytes
+# Text and bytes
 
 A `str` is a [`List`](../library/list.md) of bytes kept together with a proof that they are valid UTF-8, in the way [Contracts and proofs](contracts.md) describes for any struct that holds a proof. So a `str` is used wherever bytes are expected, with no call and no copy: its `size` is how many bytes it has, and `s[i]` is a byte.
 
@@ -126,6 +29,8 @@ struct Utf8Error {
 fn utf8(bytes: List[u8]) -> Result[str, Utf8Error]
 ```
 
+`utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of a list whose first byte is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`.
+
 A piece of a text is a text. `s[a..b]` is the bytes from `a` up to `b` as a `str`, which shares the memory of `s`, so nothing is copied. Text implements [`Index`](arrays.md) for a range, and its `valid` asks two things: that the range lies inside the text, and that both of its ends fall between characters and not inside one.
 
 ```
@@ -139,8 +44,17 @@ fn word(source: str, start: Nat, end: Nat) -> Option[str] {
 
 `arith` proves that a range lies inside a text. That an end falls between characters is a fact about the bytes, which a [`check`](contracts.md) supplies by looking at the byte at each end, however long the piece is.
 
-- Nothing else makes a `str` from bytes, and no bytes are replaced to make them valid.
+- Nothing else makes a `str` from bytes, and no bytes are replaced to make them valid. So `utf8` is the only way, and a list with an invalid byte gives the `.err` above, never a text with the byte changed.
 - A range of a text's bytes, as bytes, is taken from its bytes and not from the text.
-- Text is not counted or indexed in characters. A character may be several bytes, and a program that needs them reads the bytes.
+- Text is not counted or indexed in characters. A character may be several bytes, so `"é".size` is 2, and a program that needs the characters reads the bytes.
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `s.size` | How many bytes `s` has |
+| `s[i]` | The byte at `i` |
+| `utf8(bytes)` | `.ok(text)` of the same bytes, or `.err` with the place of the first byte that is not valid |
+| `s[a..b]` | The bytes from `a` up to `b` as a `str`, sharing the memory of `s` |
 
 Next: [Ownership](ownership.md)

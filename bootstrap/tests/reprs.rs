@@ -11,7 +11,7 @@
 //! type parameters may implement `Fmt` or `Repr` itself.
 //!
 //! The generator works out what the program prints from the values it
-//! built, as `knowledge/language/text.md` says each is written.
+//! built, as `knowledge/language/repr.md` says each is written.
 
 use crate::generate::Gen;
 use crate::programs::{Expected, PIECES, pos_after};
@@ -166,7 +166,7 @@ fn literal(pieces: &[usize]) -> String {
     format!("\"{inner}\"")
 }
 
-/// A text written as a string literal, as `text.md` lists its escapes.
+/// A text written as a string literal, as `interpolation.md` lists its escapes.
 fn escaped(text: &[u8]) -> Vec<u8> {
     let mut out = vec![b'"'];
     for &b in text {

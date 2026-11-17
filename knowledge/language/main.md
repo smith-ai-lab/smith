@@ -1,0 +1,79 @@
+---
+type: specification
+title: main
+description: The arguments main may take, and the Exit trait, which turns what main returns into the status a program ends with.
+status: planned
+---
+
+# `main`
+
+`main` is where a program starts, as [A first program](first-program.md) shows. It may also take the arguments the program was started with, and its return type decides the status the program ends with.
+
+## Arguments
+
+`main` may take the words after the program's name, as a list.
+
+```
+fn main(args: List[str]) ! console, alloc {
+  print("started with {args.size} arguments")
+}
+```
+
+Started with the words `one` and `two` after its name, this prints `started with 2 arguments`. The program's name is not one of them.
+
+## The status
+
+What `main` returns decides the status the program ends with. `main` may return any type that implements `Exit`, whose one function gives the status.
+
+```
+trait Exit[T] {
+  fn exit(value: T) -> u8 ! console, alloc
+}
+```
+
+- `()` gives 0, so a `main` that returns nothing ends with status 0.
+- A `Result[T, E]` gives what its `T` gives when it is `.ok`. When it is `.err(e)`, it writes `e` to standard error, as [`Fmt`](interpolation.md#fmt) turns it into text, and gives 1.
+
+```
+fn main() -> Result[(), str] ! console, alloc {
+  print("started")
+  .err("could not finish")
+}
+```
+
+This prints `started` to standard output and `could not finish` to standard error, and the program ends with status 1. Because a failure that `main` returns ends the program, `main` can use [`try`](try.md).
+
+- A program that needs other statuses implements `Exit` for a type of its own.
+
+```
+enum Outcome {
+  done
+  usage
+}
+
+impl Exit[Outcome] {
+  fn exit(value: Outcome) -> u8 ! console, alloc {
+    match value {
+      .done { 0 }
+      .usage { 2 }
+    }
+  }
+}
+
+fn main() -> Outcome ! console, alloc { .usage }
+```
+
+This program ends with status 2.
+
+- Nothing else ends a program. No function stops it from inside a call, so the code after a call always runs.
+
+## The forms
+
+| `main` returns | Status |
+| --- | --- |
+| Nothing | 0 |
+| `Result[T, E]` that is `.ok` | What `T` gives |
+| `Result[T, E]` that is `.err(e)` | 1, after `e` is written to standard error |
+| A type with its own `Exit` | What its `exit` gives |
+
+Next: [Text and bytes](text.md)

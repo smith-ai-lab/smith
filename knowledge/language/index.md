@@ -7,6 +7,7 @@ An example may show a function by its signature alone, where its body does not m
 The files are a tour. Read them in the order below: each one uses only what the files above it introduced, and ends with a link to the next.
 
 - [overview.md](overview.md): what Smith is for, the rules that hold throughout the language, and the four principles its design follows.
+- [first-program.md](first-program.md): a program that starts at `main`, prints a line, and is run with `smith run`.
 - [functions.md](functions.md): typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
 - [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function, and how a binding states its type.
 - [mutable-locals.md](mutable-locals.md): locals that change, declared with `var`, and `if` as an expression.
@@ -20,7 +21,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [with.md](with.md): `with`, which passes the rest of a block to a function as a lambda.
 - [try.md](try.md): `try`, which continues a function only when a step succeeded, and the `Try` trait that gives it its meaning.
 - [effects.md](effects.md): effects listed in a signature as permissions, how an effect is declared, how a handler is used and written, and the effects Smith provides.
-- [text.md](text.md): where a program starts, `print`, string literals that hold expressions formatted by the `Fmt` trait, and `Repr`, which writes a value as source.
+- [interpolation.md](interpolation.md): strings that hold expressions in braces, the `Fmt` trait that turns each into text, and the escapes that write a brace or a quote.
+- [repr.md](repr.md): the `Repr` trait, which writes a value as source, and the `Fmt` and `Repr` that structs, enums, and tuples are given.
+- [main.md](main.md): the arguments `main` may take, and the `Exit` trait, which turns what `main` returns into the status a program ends with.
+- [text.md](text.md): a `str` as bytes known to be valid UTF-8, `utf8`, and pieces of a text.
 - [ownership.md](ownership.md): the `Copy` and `Discard` traits, lending and `take`, and values that must be used at most once or exactly once.
 - [arrays.md](arrays.md): arrays whose sizes are part of their types, indices proven to be in range when the program is built, indexing as the `Index` trait, and ranges.
 - [for.md](for.md): `for` as an unordered description of an array, reductions, the operators of linear algebra, `@`, and the rules for float arithmetic.
