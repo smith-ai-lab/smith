@@ -39,7 +39,7 @@ A test exists to fail when something that must be true stops being true, and for
 
 ## Before you finish
 
-- Run `sh sweep/sweep.sh run` in `bootstrap/` and `sh sweep/sweep.sh report`. A test of yours that alone catches nothing is removed, or its cases are given to the property that covers them.
+- The sweep, `sh sweep/sweep.sh`, in `bootstrap/`, shows what the tests catch. Run it again when you add a test that should catch a break the results say nothing caught.
 - Every line of the issue's "Must be true" has a test.
 - No test you added names a place or a message by hand.
 - The run ends with its slowest tests, by the time they computed. If one of yours is on the list, make its input smaller.
