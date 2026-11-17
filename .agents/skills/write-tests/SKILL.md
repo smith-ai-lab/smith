@@ -25,7 +25,8 @@ A test exists to fail when something that must be true stops being true, and for
 ## How long a test may take
 
 - **One second of its own computing.** A run fails, and names the test, when a test spends more. The harness measures the processor time of the thread that ran the test, so a busy machine does not make a quick test slow, and the verdict is the same alone and beside every other test.
-- **A test that starts a program or a thread has not spent that time.** Call a function where you can, and start a program only to check what starting it does.
+- **A test that starts a program or a thread has not spent that time.** Call a function where you can, and start a program only to check what starting it does, and then through `output_within` in `tests/clock.rs`, which kills it after ten seconds on the wall and fails the test saying that the program never ends.
+- **A program that never ends fails the test that runs it.** The evaluator panics after three million blocks, and a run ends a test that has not ended after twelve seconds on the wall, naming it. A new way to run a program goes through one of these, so that no test waits for ever.
 - **Aim for under half the limit,** so that a slower machine still passes. Work that every test of a file needs is done once, in a place that `OnceLock` holds, and costs the first test that asks for it.
 - **A property runs as few cases as make it fail when what it checks is broken.** Break the code once and watch it fail with the cases you chose.
 - **The limit applies to every test.** A test starts no thread, as the time of a thread is not the time of its own.

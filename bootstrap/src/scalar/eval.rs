@@ -33,10 +33,23 @@ struct Machine<'a> {
     left: usize,
     /// How many bytes each request to the system for memory has asked for.
     requests: Vec<usize>,
+    /// How many blocks the program may still enter.
+    blocks: u64,
+    /// How many calls are open.
+    depth: usize,
 }
 
 /// The system refused to give memory, so the program ends.
 struct Refused;
+
+/// How many blocks a program may enter before it is taken to never end. A
+/// program that has not ended by then has not ended in a time any test can
+/// give it, so the evaluator stops it with a panic that says so.
+const BLOCKS: u64 = 3_000_000;
+
+/// How many calls may be open at once before the program is taken to never
+/// end, as a call that never returns takes the stack of the evaluator.
+const DEPTH: usize = 2_000;
 
 /// Runs the program, with standard output going to memory, where no write
 /// is refused, and no request for memory is either.
@@ -67,6 +80,8 @@ pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
         stdout: Vec::new(),
         left: limit,
         requests: Vec::new(),
+        blocks: BLOCKS,
+        depth: 0,
     };
     let status = match machine.call(program.main, Vec::new()) {
         Ok(_) => 0,
@@ -92,6 +107,8 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
         stdout: Vec::new(),
         left: usize::MAX,
         requests: Vec::new(),
+        blocks: BLOCKS,
+        depth: 0,
     };
     let words = args.iter().map(|n| Word::Int(*n)).collect();
     (machine
@@ -183,7 +200,15 @@ impl Machine<'_> {
         let mut values: Vec<Option<Word>> = vec![None; f.types.len()];
         let mut block = 0;
         let mut args = args;
+        self.depth += 1;
+        assert!(
+            self.depth <= DEPTH,
+            "the program never ends: its calls never return"
+        );
         loop {
+            self.blocks = self.blocks.checked_sub(1).expect(
+                "the program never ends: it entered more blocks than any test gives it time for",
+            );
             let b = &f.blocks[block];
             for (param, word) in b.params.iter().zip(args) {
                 values[param.0] = Some(word);
@@ -323,6 +348,7 @@ impl Machine<'_> {
             };
             match &b.end {
                 End::Return(returned) => {
+                    self.depth -= 1;
                     return Ok(returned.iter().map(|v| values[v.0].unwrap()).collect());
                 }
                 End::Jump(j) => (block, args) = jump(j),
