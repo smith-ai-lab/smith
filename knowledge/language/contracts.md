@@ -39,7 +39,7 @@ A statement about values, such as `n > 0`, is a type, and a value of that type i
 - When it cannot prove a goal, the compiler reports the goal. The author supplies the missing fact with a `requires`, with a `check`, or with a type that carries the proof.
 - A subtraction `a - b` on `Nat` compiles only when `arith` can show `b <= a`.
 - It uses every fact in scope: the range of each value's type, the value of a literal, the condition of an `if` or a `match` block it is inside, the range of a `loop i in a..b`, the function's `requires`, the `ensures` of a function that was called, and every proof it can see, as a value or as a field of a value.
-- A `var` has the facts its type states, and, where no loop assigns it, those of the value it was last given.
+- A `var` has the facts its type states, and, where no loop assigns it, those of the value it was last given. Inside one round of a loop that assigns it, it also has those of the value that round last gave it, stated against what it held when the round began.
 
 So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller with sizes known only at run time gets it from a `check`.
 
@@ -74,11 +74,33 @@ fn step[size: Nat](c: Cursor[size]) -> Cursor[size] {
 
 Inside the `if`, `c.at < size` gives `c.at + 1 <= size`, which is the proof the new `Cursor` needs, and it shows that `c.at + 1` fits.
 
+An open-ended loop, and a function that calls itself on something other than a part of its argument, is proven to end by `decreases`, which names one expression of an unsigned integer type. Wherever the loop goes round again, `arith` must prove that the expression is smaller than it was when that round began, and wherever the function calls itself, that the expression of the call's arguments is smaller than that of its own. An unsigned number cannot go below zero, so neither can go on forever. The expression is never computed when the program runs.
+
+```
+fn skip_spaces[size: Nat](text: [size]u8, start: Cursor[size]) -> Cursor[size] {
+  var c = start
+  loop decreases size - c.at {
+    if c.at == size { break }
+    if text[c.at] != 32 { break }
+    c = Cursor(at: c.at + 1)
+  }
+  c
+}
+
+fn first_zero[n: Nat](x: [n]u8, from: Nat) -> Option[Nat]
+  decreases n - from
+{
+  if from >= n { .none } else if x[from] == 0 { .some(from) } else { first_zero(x, from + 1) }
+}
+```
+
+In `skip_spaces`, a round that goes on has passed `c.at == size`, so `c.at < size`, and it ends with `c.at` one greater, so `size - c.at` is one less. In `first_zero`, the call is made where `from < n`, so `n - (from + 1)` is below `n - from`.
+
 There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](tasks.md) when the system runs out of what they stand for.
 
 - A proof is a value. It is passed, returned, and held in a field like any other, and a function that takes proofs and returns one proves a fact once for every place that needs it, which is how a fact `arith` does not decide is supplied. Every proof starts from `arith` or from a `check` that passed, and it is erased before code generation. `check` and `hole` are built in, because nothing written in Smith could make a proof from nothing.
 - Predicates used in contracts are ordinary functions returning `bool`, so a contract can be run on real data.
-- Every function terminates unless it carries `diverge`, which means it may not finish. Structural recursion is accepted automatically, and anything else states a decreasing measure. Callers inherit `diverge`, and it is not allowed in a contract or a GPU kernel.
+- Every function terminates unless it carries `diverge`, which means it may not finish. Callers inherit `diverge`, and it is not allowed in a contract or a GPU kernel. A `loop` over a range, an array, or an `Iterate` type ends, and so does structural recursion. Anything else ends because of a `decreases`, described below.
 - `hole(name)` stands in for code or a proof not yet written. The compiler reports the type and the goal it needs.
 
 Facts that recur belong in a type, so they are proved once and travel with the value. A struct with exactly one field that is not a proof can be used wherever that field's type is expected, because when the program runs it is that value and nothing more. So a `Fin[n]` is used as a `Nat`, and the fact that it is below `n` goes with it into `arith`. It goes one way only: making a `Fin` from a `Nat` needs the proof. `Pos` is defined the same way, as a `Nat` proven above zero, so a size declared `[n: Pos]` needs no `requires n > 0`. Tooling proposes the remaining `requires` lines, as it proposes effects.

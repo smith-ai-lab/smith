@@ -11,10 +11,10 @@ This grammar is the single source of truth for syntax. It is a first draft, and 
 ## Lexical rules
 
 - Source text is UTF-8. Spaces and tabs separate tokens, and a line break is a line feed. A carriage return is an error anywhere in a file, inside a string or a comment too. Any other character that belongs to no token, string, or comment is an error.
-- A newline ends a statement, except inside `( )` or `[ ]`, after an operator or comma, or before `requires`, `ensures`, and the `{` that opens a function's body. A block inside `( )` or `[ ]` separates its own statements by newlines as usual.
+- A newline ends a statement, except inside `( )` or `[ ]`, after an operator or comma, or before `requires`, `ensures`, `decreases`, and the `{` that opens a function's body. A block inside `( )` or `[ ]` separates its own statements by newlines as usual.
 - Commas appear only inside `( )` and `[ ]`, in a list of effects, and between the indices of a `for`.
 - An identifier, `IDENT`, is a letter or `_` followed by letters, digits, and `_`, and is not a keyword. The letters are `a` to `z` and `A` to `Z`.
-- The keywords are `and`, `as`, `break`, `derive`, `effect`, `else`, `ensures`, `enum`, `fn`, `for`, `foreign`, `if`, `impl`, `in`, `loop`, `match`, `not`, `or`, `out`, `pub`, `requires`, `struct`, `take`, `trait`, `try`, `use`, `var`, `with`, and `without`.
+- The keywords are `and`, `as`, `break`, `decreases`, `derive`, `effect`, `else`, `ensures`, `enum`, `fn`, `for`, `foreign`, `if`, `impl`, `in`, `loop`, `match`, `not`, `or`, `out`, `pub`, `requires`, `struct`, `take`, `trait`, `try`, `use`, `var`, `with`, and `without`.
 - A comment starts with `//`, stands on its own line, and attaches to the definition, field, case, or statement that follows it.
 - A whole number is written in decimal, as `1000`, in hexadecimal after `0x`, as `0xff`, or in binary after `0b`, as `0b1010`. A float has a digit on both sides of its point, as `2.5`, and may end with an exponent, as `2.5e3`, and a decimal number with an exponent alone is a float too, as `1e-5`. An `_` may stand between two digits, as in `1_000_000`. There is no octal form and no suffix that names a type.
 - A `-` written where a value may begin, directly before a number, is part of the literal, so `-128` is one literal. After a value, `-` is subtraction.
@@ -60,7 +60,7 @@ generic    = [ "out" ] IDENT [ ":" type ] [ "=" type ] ;
 params     = param { "," param } [ "," ] ;
 param      = IDENT ":" [ "take" ] type [ "=" expr ] ;
 effects    = "!" IDENT { "," IDENT } ;
-contract   = ( "requires" | "ensures" ) expr ;
+contract   = ( "requires" | "ensures" | "decreases" ) expr ;
 
 struct_def = "struct" IDENT [ generics ] "{" { [ "pub" ] IDENT ":" type [ "=" expr ] } "}" ;
 enum_def   = "enum" IDENT [ generics ] "{" { IDENT [ ":" type ] } "}" ;
@@ -100,7 +100,7 @@ case       = "." IDENT [ "(" [ args ] ")" ] ;
 if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
 for        = "for" IDENT { "," IDENT } block ;
-loop       = "loop" [ IDENT "in" expr ] block ;
+loop       = "loop" [ IDENT "in" expr | "decreases" expr ] block ;
 lambda     = [ "fn" "(" IDENT { "," IDENT } ")" ] block ;
 
 type       = statement
