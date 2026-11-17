@@ -3,7 +3,7 @@ type: specification
 title: List
 description: List, an array kept together with its size, which can grow.
 status: partial
-built: "a `List` of any type a program can make, written `List[u8]` or `List[Person]`, built from `[]` or a literal such as `[1, 2, 3]` where a list of a known type is expected, grown with `push`, in place where a `var` is given the result of pushing to itself, and read with `size` and an index that is proven in range, where `xs[i].field` reads only that field; a list may be held inside a struct, a tuple, an enum, or another list, and be a function's parameter and result, and a name that holds a list never sees another name's `push`; not `items`, slicing, summing, a pattern in brackets, or looping over the elements"
+built: "a `List` of any type a program can make, written `List[u8]` or `List[Person]`, built from `[]` or a literal such as `[1, 2, 3]` where a list of a known type is expected, grown with `push`, in place where a `var` is given the result of pushing to itself, and read with `size` and an index that is proven in range, of a `var` as of any name, where `xs[i].field` reads only that field; a list may be held inside a struct, a tuple, an enum, or another list, and be a function's parameter and result, and a name that holds a list never sees another name's `push`; not `items`, slicing, summing, a pattern in brackets, or looping over the elements"
 ---
 
 # List

@@ -25,6 +25,10 @@ pub const ONCE: &[Test] = &[
         an_index_compiles_exactly_when_arith_proves_it_below_the_size,
     ),
     (
+        "a_var_list_and_a_var_field_are_known_to_arith_until_they_are_assigned",
+        a_var_list_and_a_var_field_are_known_to_arith_until_they_are_assigned,
+    ),
+    (
         "an_index_is_never_tested_when_the_program_runs",
         an_index_is_never_tested_when_the_program_runs,
     ),
@@ -243,6 +247,52 @@ fn reach(g: &mut Gen) -> Reach {
         j,
         shape: g.below(5),
     }
+}
+
+/// A list that is a `var`, and a field of a `var`, are known to `arith` as any
+/// value is, and everything known of one is forgotten at an assignment to it
+/// or to a field of it, however the assignment is reached.
+fn a_var_list_and_a_var_field_are_known_to_arith_until_they_are_assigned() {
+    let list = |body: &str| {
+        format!(
+            "fn run(f: () -> ()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  k: u64 = 1\n  if k < xs.size {{\n{body}\n  }}\n}}\n"
+        )
+    };
+    let field = |body: &str| {
+        format!(
+            "struct Cursor {{\n  at: u64\n}}\n\nfn main() ! console, alloc {{\n  var c = Cursor(at: 1)\n  n: u64 = 5\n  if c.at < n {{\n{body}\n  }}\n}}\n"
+        )
+    };
+    let read = "    print(\"{xs[k]}\")";
+    let kept = [
+        list(read),
+        list("    if k == 7 { xs = [] } else { print(\"{xs[k]}\") }"),
+        field("    print(\"{c.at + 1}\")"),
+    ];
+    for source in &kept {
+        assert_eq!(refused(source), Vec::<String>::new(), "for {source}");
+    }
+    let lost = [
+        list(&format!("    xs = push(xs, 4)\n{read}")),
+        list(&format!(
+            "    loop i in 0..2 {{ xs = push(xs, 4) }}\n{read}"
+        )),
+        list(&format!(
+            "    loop i in 0..2 {{\n      {read}\n      xs = push(xs, 4)\n    }}"
+        )),
+        list(&format!("    if k == 7 {{ xs = push(xs, 4) }}\n{read}")),
+        list(&format!("    run({{ xs = push(xs, 4) }})\n{read}")),
+        list(&format!(
+            "    run({{\n      xs = push(xs, 4)\n      {read}\n    }})"
+        )),
+        field("    c.at = 18446744073709551615\n    print(\"{c.at + 1}\")"),
+        field("    c = Cursor(at: 18446744073709551615)\n    print(\"{c.at + 1}\")"),
+    ];
+    for source in &lost {
+        assert!(!refused(source).is_empty(), "compiles: {source}");
+    }
+    let example = "fn main() ! console, alloc {\n  var xs: List[u8] = [1, 2, 3]\n  xs = push(xs, 4)\n  loop i in 0..xs.size { if i == 3 { print(\"{xs[i]}\") } }\n}\n";
+    prints(example, vec!["4".to_string()]);
 }
 
 /// `xs[i]` compiles exactly when `arith` proves `i < xs.size` from what is in

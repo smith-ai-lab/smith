@@ -70,19 +70,44 @@ pub(super) struct Facts {
     /// when it is not known. The newest entry for a place is the one that
     /// counts.
     held: Vec<(usize, Option<Lin>)>,
+    /// The version of each `var`, by its place among the names, that the
+    /// facts about its fields are about. A version is never used twice.
+    versions: HashMap<usize, usize>,
+    epoch: usize,
+}
+
+/// How much is known at a moment, to go back to when a block ends.
+pub(super) struct Mark {
+    known: usize,
+    constants: usize,
+    held: usize,
+    versions: HashMap<usize, usize>,
 }
 
 impl Facts {
     /// How much is known now, to go back to when a block ends.
-    pub(super) fn mark(&self) -> (usize, usize, usize) {
-        (self.known.len(), self.constants.len(), self.held.len())
+    pub(super) fn mark(&self) -> Mark {
+        Mark {
+            known: self.known.len(),
+            constants: self.constants.len(),
+            held: self.held.len(),
+            versions: self.versions.clone(),
+        }
     }
 
     /// Forgets what was learned after the mark.
-    pub(super) fn reset(&mut self, mark: (usize, usize, usize)) {
-        self.known.truncate(mark.0);
-        self.constants.truncate(mark.1);
-        self.held.truncate(mark.2);
+    pub(super) fn reset(&mut self, mark: &Mark) {
+        self.known.truncate(mark.known);
+        self.constants.truncate(mark.constants);
+        self.held.truncate(mark.held);
+        self.versions.clone_from(&mark.versions);
+    }
+
+    /// The `var` at `at` may hold another value: nothing known of its
+    /// fields so far is known of what it holds now.
+    fn bump(&mut self, at: usize) {
+        self.epoch += 1;
+        self.versions.insert(at, self.epoch);
     }
 
     /// What the `var` at `at` holds, when it is tracked: the sum, or none
@@ -283,8 +308,8 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// A field read from a name that is not a `var`, written out with the
-    /// place of the name.
+    /// A field read from a name, written out with the place of the name, and
+    /// for a `var` its version.
     fn path(&self, e: &Expr) -> Option<String> {
         if self.facts.subst.is_some() {
             return None;
@@ -292,11 +317,21 @@ impl Builder<'_, '_> {
         match e {
             Expr::Name { name, .. } => {
                 let at = self.body.names.iter().rposition(|(n, _)| n == name)?;
-                (!self.body.vars.contains(name)).then(|| at.to_string())
+                Some(root(self.body, self.facts, at))
             }
             Expr::Field { of, name, .. } => Some(format!("{}.{name}", self.path(of)?)),
             _ => None,
         }
+    }
+}
+
+/// How the name at `at` starts the path of a field: its place, and for a
+/// `var` the version of what it holds.
+fn root(body: &Body, facts: &Facts, at: usize) -> String {
+    if body.vars.contains(&body.names[at].0) {
+        format!("{at}@{}", facts.versions.get(&at).copied().unwrap_or(0))
+    } else {
+        at.to_string()
     }
 }
 
@@ -514,8 +549,10 @@ impl<'a> Checker<'a> {
     /// Notes what the name defined last was given, when it is a whole number
     /// and not a `var`.
     pub(super) fn assume_binding(&mut self, body: &mut Body<'a>, value: &Expr) {
-        if let Some((name, Ty::List(_))) = body.names.last().cloned() {
-            self.assume_list(body, &name, value);
+        if let Some((_, Ty::List(_))) = body.names.last() {
+            if Self::decided(body) {
+                self.give_list(body, body.names.len() - 1, value);
+            }
             return;
         }
         let Some((name, Ty::Int(t))) = body.names.last().cloned() else {
@@ -541,24 +578,28 @@ impl<'a> Checker<'a> {
         body.facts = facts;
     }
 
-    /// Notes the size of the list the name defined last was given, when it
-    /// is not a `var` and the size is known: that of a list written out, or
-    /// of another name's list.
-    fn assume_list(&mut self, body: &mut Body<'a>, name: &str, value: &Expr) {
-        if !Self::decided(body) || body.vars.iter().any(|v| v == name) {
-            return;
-        }
-        let at = body.names.len() - 1;
+    /// Notes the size of the list the name at `at` was given, when the size
+    /// is known: that of a list written out, or of another name's list. A
+    /// `var` is given a version of its own first.
+    fn give_list(&mut self, body: &mut Body<'a>, at: usize, value: &Expr) {
         let mut facts = std::mem::take(&mut body.facts);
         let range = (0, u64::MAX as i128);
-        let id = facts.id(Key::Field(format!("{at}.size"), range.0, range.1));
         let mut builder = self.builder(body, &mut facts, false);
         let given = match value {
             Expr::List { items, .. } => Some(constant(items.len() as i128)),
             Expr::Name { .. } => builder.list_size(value),
             _ => None,
         };
-        if let (Some(given), false) = (given, builder.overflow)
+        let overflow = builder.overflow;
+        if body.vars.contains(&body.names[at].0) {
+            facts.bump(at);
+        }
+        let id = facts.id(Key::Field(
+            format!("{}.size", root(body, &facts, at)),
+            range.0,
+            range.1,
+        ));
+        if let (Some(given), false) = (given, overflow)
             && let Some(same) = self.equal(body, &mut facts, id, &given)
         {
             facts.known.push(same);
@@ -643,7 +684,7 @@ impl<'a> Checker<'a> {
                 )
                 .with_fix(format!(
                     "put `{i}` in the range of a `loop` over `0..{xs}.size`, check `{i} < {xs}.size` \
-                     with an `if`, or state it in a `requires`; a `var` is not read, so bind it to a name first"
+                     with an `if`, or state it in a `requires`"
                 )),
             );
         }
@@ -1058,7 +1099,7 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        facts.reset(mark);
+        facts.reset(&mark);
         body.facts = facts;
         body.names.pop();
     }
@@ -1111,7 +1152,7 @@ fn is_local(keys: &[Key], id: usize, outer: usize) -> bool {
     match &keys[id] {
         Key::Name(at, ..) => *at >= outer,
         Key::Field(path, ..) => path
-            .split('.')
+            .split(['.', '@'])
             .next()
             .and_then(|a| a.parse::<usize>().ok())
             .is_none_or(|a| a >= outer),
@@ -1134,8 +1175,8 @@ fn is_local(keys: &[Key], id: usize, outer: usize) -> bool {
 }
 
 impl<'a> Checker<'a> {
-    /// The `var`s of whole numbers, by their place among the names, that the
-    /// blocks assign, however deep.
+    /// The `var`s, by their place among the names, that the blocks assign,
+    /// however deep.
     pub(super) fn assigned_vars(&self, body: &Body<'a>, blocks: &[&[Stmt]]) -> Vec<usize> {
         let mut names: Vec<&str> = Vec::new();
         for block in blocks {
@@ -1153,7 +1194,6 @@ impl<'a> Checker<'a> {
             .into_iter()
             .filter(|n| body.vars.iter().any(|v| v == n))
             .filter_map(|n| body.names.iter().rposition(|(m, _)| m == n))
-            .filter(|&at| matches!(body.names[at].1, Ty::Int(_)))
             .collect();
         places.sort_unstable();
         places.dedup();
@@ -1167,6 +1207,7 @@ impl<'a> Checker<'a> {
             return;
         }
         for &at in assigned {
+            body.facts.bump(at);
             let Ty::Int(t) = &body.names[at].1 else {
                 continue;
             };
@@ -1184,15 +1225,21 @@ impl<'a> Checker<'a> {
     /// The `var`s that are tracked, among `assigned`, are no longer known.
     pub(super) fn forget(&mut self, body: &mut Body<'a>, assigned: &[usize]) {
         for &at in assigned {
+            body.facts.bump(at);
             if body.facts.holds(at).is_some() {
                 body.facts.held.push((at, None));
             }
         }
     }
 
-    /// Every `var` that is tracked is no longer known.
+    /// Every `var` is no longer known.
     pub(super) fn forget_all(&mut self, body: &mut Body<'a>) {
         let mut tracked: Vec<usize> = body.facts.held.iter().map(|(at, _)| *at).collect();
+        tracked.extend(
+            body.vars
+                .iter()
+                .filter_map(|v| body.names.iter().rposition(|(n, _)| n == v)),
+        );
         tracked.sort_unstable();
         tracked.dedup();
         self.forget(body, &tracked);
@@ -1210,20 +1257,39 @@ impl<'a> Checker<'a> {
 
     /// The `var` at `at`, tracked, is given `value`.
     pub(super) fn assign(&mut self, body: &mut Body<'a>, at: usize, value: &Expr) {
-        if !Self::decided(body) || body.facts.holds(at).is_none() {
+        if !Self::decided(body) {
             return;
         }
-        let sum = self.value_of(body, value);
-        body.facts.held.push((at, sum));
+        match body.names[at].1 {
+            Ty::Int(_) if body.facts.holds(at).is_some() => {
+                let sum = self.value_of(body, value);
+                body.facts.held.push((at, sum));
+            }
+            Ty::Int(_) => {}
+            Ty::List(_) => self.give_list(body, at, value),
+            _ => body.facts.bump(at),
+        }
+    }
+
+    /// A field of the `var` at `at` is given a value.
+    pub(super) fn assign_field(&mut self, body: &mut Body<'a>, at: usize) {
+        if Self::decided(body) {
+            body.facts.bump(at);
+        }
     }
 
     /// The `var` defined last, in a loop, is given `value`.
     pub(super) fn track_var(&mut self, body: &mut Body<'a>, value: &Expr) {
-        if !Self::decided(body) || body.loops == 0 || body.contract {
+        if !Self::decided(body) || body.contract {
             return;
         }
         let at = body.names.len() - 1;
-        if !matches!(body.names[at].1, Ty::Int(_)) {
+        match body.names[at].1 {
+            Ty::Int(_) => {}
+            Ty::List(_) => return self.give_list(body, at, value),
+            _ => return body.facts.bump(at),
+        }
+        if body.loops == 0 {
             return;
         }
         let sum = self.value_of(body, value);
@@ -1233,14 +1299,9 @@ impl<'a> Checker<'a> {
     /// What an arm of an `if` or a `match` leaves known at its end, where
     /// `mark` is how much was known before it, and `assigned` is what the
     /// arms assign.
-    pub(super) fn leave_arm(
-        &self,
-        body: &Body<'a>,
-        mark: (usize, usize, usize),
-        assigned: &[usize],
-    ) -> Path {
+    pub(super) fn leave_arm(&self, body: &Body<'a>, mark: &Mark, assigned: &[usize]) -> Path {
         Path {
-            facts: body.facts.known[mark.0..].to_vec(),
+            facts: body.facts.known[mark.known..].to_vec(),
             held: assigned
                 .iter()
                 .filter_map(|&at| body.facts.holds(at).map(|v| (at, v.clone())))
@@ -1259,7 +1320,13 @@ impl<'a> Checker<'a> {
         assigned: &[usize],
         excluded: bool,
     ) {
-        if !Self::decided(body) || paths.is_empty() {
+        if !Self::decided(body) {
+            return;
+        }
+        for &at in assigned {
+            body.facts.bump(at);
+        }
+        if paths.is_empty() {
             return;
         }
         let mut facts = std::mem::take(&mut body.facts);
