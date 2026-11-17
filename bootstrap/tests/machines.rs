@@ -13,16 +13,14 @@ use smith::diag::Error;
 use smith::target::Target;
 
 use crate::Test;
-use crate::targets::fingerprint;
-
-/// The test that makes the fingerprints, which the harness starts first so
-/// that no other test waits for it.
-pub const FIRST: &[Test] = &[(
-    "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it",
-    a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it,
-)];
+use crate::cli;
+use crate::targets;
 
 pub const ONCE: &[Test] = &[
+    (
+        "a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it",
+        a_compiler_that_differs_for_one_target_needs_exactly_the_machines_that_run_it,
+    ),
     (
         "the_machines_file_names_every_target_but_one_once",
         the_machines_file_names_every_target_but_one_once,
@@ -96,6 +94,14 @@ fn built(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<Error>> {
 fn fingerprint_of_the_compiler() -> &'static [(Target, String)] {
     static FINGERPRINT: OnceLock<Vec<(Target, String)>> = OnceLock::new();
     FINGERPRINT.get_or_init(|| fingerprint(built))
+}
+
+/// The fingerprint of a compiler that builds as `build` says. It is made of
+/// the tests of `cli`, which run only an executable of a program that
+/// prints, as it is the script and not the tests that are under test here,
+/// and the work of every test of the machine group is not needed for it.
+fn fingerprint(build: targets::Build) -> Vec<(Target, String)> {
+    targets::fingerprint(cli::MACHINE, build)
 }
 
 /// The fingerprint of a compiler as the lines a file holds.

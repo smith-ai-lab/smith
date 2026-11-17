@@ -1,4 +1,11 @@
-//! Generated input, from a fixed seed, with shrinking.
+//! Generated input, from a seed that is the same for one commit, with
+//! shrinking.
+//!
+//! Each property has its own number, and the run has a seed that the
+//! number is mixed with. The run's seed is made from the commit the tests
+//! are run on, so that the cases differ from one commit to the next and are
+//! the same for one commit. `SMITH_SEED=<number>` in the environment sets
+//! it, which is how a failure is run again: a run prints its seed first.
 //!
 //! A generator draws every decision from a `Gen` as a number below some
 //! bound, and the `Gen` records each number it gives. A failing input is
@@ -10,7 +17,8 @@
 use std::cell::Cell;
 use std::fmt::Debug;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Once;
+use std::process::Command;
+use std::sync::{Once, OnceLock};
 
 /// The source of a generator's choices.
 pub struct Gen {
@@ -23,9 +31,39 @@ pub struct Gen {
     random: Option<u64>,
 }
 
+static SEED: OnceLock<u64> = OnceLock::new();
+
+/// Fixes the seed of this run, before any generator asks for it.
+pub fn set_run_seed(seed: u64) {
+    SEED.set(seed).expect("the seed is fixed before it is read");
+}
+
+/// The seed of this run: the number in `SMITH_SEED` if there is one, else
+/// one made from the commit that is checked out, else 0.
+pub fn run_seed() -> u64 {
+    *SEED.get_or_init(|| {
+        if let Ok(given) = std::env::var("SMITH_SEED") {
+            return given.trim().parse().expect("SMITH_SEED is a number");
+        }
+        let commit = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| o.stdout)
+            .unwrap_or_default();
+        // FNV-1a over the text of the commit's hash.
+        commit.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+        })
+    })
+}
+
 impl Gen {
-    fn random(seed: u64, case: u64) -> Gen {
+    fn random(run: u64, seed: u64, case: u64) -> Gen {
         let mut state = seed
+            .wrapping_add(run.wrapping_mul(0x94d0_49bb_1331_11eb))
             .wrapping_mul(0x9e37_79b9_7f4a_7c15)
             .wrapping_add(case.wrapping_mul(0xbf58_476d_1ce4_e5b9))
             | 1;
@@ -81,7 +119,7 @@ fn xorshift(state: &mut u64) -> u64 {
 
 /// The input the generator makes for the case of the seed.
 pub fn sample<T>(seed: u64, case: u64, generate: impl Fn(&mut Gen) -> T) -> T {
-    generate(&mut Gen::random(seed, case))
+    generate(&mut Gen::random(run_seed(), seed, case))
 }
 
 /// A failing input after shrinking: the input, the choices that generate
@@ -103,8 +141,11 @@ pub fn check<T: Debug>(
 ) {
     if let Some(failure) = find_failure(seed, cases, &generate, &property) {
         panic!(
-            "the property fails for {:?}\n{}\n(the smallest of its failing inputs; its choices are {:?})",
-            failure.input, failure.message, failure.choices
+            "the property fails for {:?}\n{}\n(the smallest of its failing inputs; its choices are {:?}; run again with SMITH_SEED={})",
+            failure.input,
+            failure.message,
+            failure.choices,
+            run_seed()
         );
     }
 }
@@ -117,8 +158,21 @@ pub fn find_failure<T>(
     generate: &impl Fn(&mut Gen) -> T,
     property: &impl Fn(&T),
 ) -> Option<Failure<T>> {
+    find_failure_in_run(run_seed(), seed, cases, generate, property)
+}
+
+/// `find_failure` for the run with the seed `run`, which a test of the
+/// shrinker gives so that the failing input it starts from is the same in
+/// every run.
+pub fn find_failure_in_run<T>(
+    run: u64,
+    seed: u64,
+    cases: u64,
+    generate: &impl Fn(&mut Gen) -> T,
+    property: &impl Fn(&T),
+) -> Option<Failure<T>> {
     (0..cases).find_map(|case| {
-        let mut g = Gen::random(seed, case);
+        let mut g = Gen::random(run, seed, case);
         let input = generate(&mut g);
         failure(&input, property)?;
         Some(shrink(g.used, generate, property))

@@ -198,7 +198,7 @@ fn the_shrinker_gives_the_smallest_failing_input() {
     let prints_no_e = |case: &Case| {
         assert!(!String::from_utf8_lossy(&case.stdout).contains('é'));
     };
-    let failure = generate::find_failure(1, 1000, &programs::program, &prints_no_e)
+    let failure = generate::find_failure_in_run(0, 1, 1000, &programs::program, &prints_no_e)
         .expect("some program prints `é`");
     // The smallest such program prints `é` and nothing else, and no choice
     // can be made smaller.
