@@ -35,6 +35,17 @@ trait Index[C, I, out T] {
 - Arithmetic on sizes inside a type, such as `[n + w - 1]f32`, is exact and has no limit, because it is reasoned about and never computed.
 - A `Nat` that the program holds when it runs is 64 bits on every target. The size of an array that exists always fits. A `Nat` worked out from others, such as `n * 2`, must be shown to fit, like any other integer.
 - A size may be known only when the program runs, as the `n` of `zeros` is. An array that is kept together with its size is a [`List`](../library/list.md).
+- An array is taken apart by a pattern in brackets, with one pattern for each element. It matches a [`List`](../library/list.md) too, when the list has exactly that many elements, so a `match` on a list ends with a bare name. There is no pattern for the rest of a list.
+
+  ```
+  fn name(rgb: [3]u8) -> str {
+    match rgb {
+      [0, 0, 0] { "black" }
+      [255, 255, 255] { "white" }
+      [r, g, b] { "something else" }
+    }
+  }
+  ```
 - A range is `a..b` and excludes `b`. `x[a..b]` has size `b - a`, with `x[..k]` and `x[k..]` as short forms.
 
 Next: [`for` expressions](for.md)

@@ -34,6 +34,28 @@ fn unit_square() -> Shape { .rect(Rect(w: 1.0, h: 1.0)) }
 A case is built with a leading dot, as in `.rect(...)` or `.empty`, wherever the expected type is known. Otherwise it is written in full, as in `Shape.rect(...)`, which is allowed anywhere. Because a case names a type, the `Rect` inside a `Shape` can be passed on its own after a match.
 
 - A case's pattern may hold another pattern, for what the case holds.
+- A literal is a pattern, which matches a value equal to it: a whole number, a character, or a text. It goes wherever a pattern goes, so inside a case and inside a tuple too. The first pattern that matches is the one taken.
+
+  ```
+  fn describe(found: Option[u8]) -> str {
+    match found {
+      .some(0) { "the first one" }
+      .some(n) { "a later one" }
+      .none { "not there" }
+    }
+  }
+
+  fn two(b: u8, next: u8) -> Token {
+    match (b, next) {
+      ('=', '=') { .equal_equal }
+      ('-', '>') { .arrow }
+      ('=', other) { .assign }
+      (first, second) { single(first) }
+    }
+  }
+  ```
+
+  No list of literals covers every number or every text, so such a `match` ends with a bare name. A `match` on whole numbers is one jump, however many literals it has.
 - The patterns of a `match` cover each case once: each case is written, or a bare name after them covers the rest. A case left out is an error, and so is a pattern that the ones before it already cover.
 - A `match` whose value is used is an expression, and its blocks give the same type. Used as a statement, nothing its blocks give is read.
 

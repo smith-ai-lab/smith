@@ -83,7 +83,8 @@ assign     = place ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
 place      = IDENT { "." IDENT | "[" index { "," index } "]" } ;
 with       = "with" [ pattern "=" ] expr ;
 pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
-           | "(" pattern { "," pattern } ")" ;
+           | "(" pattern { "," pattern } ")"
+           | LITERAL | string | "[" [ pattern { "," pattern } ] "]" ;
 
 expr       = operand { BINOP operand } ;
 operand    = { "not" } unary ;
@@ -116,6 +117,7 @@ type_arg   = type | expr ;
 
 ## Parsing properties
 
+- **A string that is a pattern holds no expression.** A literal is a pattern only in a `match`.
 - **No name lookup.** Parsing never needs to know what a name refers to, so definitions parse independently and in parallel. `x = e` with a bare name is one form to the parser, and the checker decides whether it defines `x` or assigns to a `var`.
 - **One token of lookahead,** with one exception: a statement that starts like a tuple is read as an expression and converted to a pattern when `=` follows. This is still linear time.
 - **A statement in a type position is a comparison,** such as `value < n`, where `CMP` is one of the comparison operators. It is the type of its proofs.
