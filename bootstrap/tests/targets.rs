@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use smith::diag::Error;
-use smith::scalar::{self, Bits, Builder, Constant, Op, Outcome, Type};
+use smith::scalar::{self, Bits, Builder, Constant, Op, Outcome, Type, Value};
 use smith::target::Target;
 use smith::{compile, lower};
 
@@ -74,6 +74,10 @@ pub const MACHINE: &[Test] = &[
     (
         "a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once",
         a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once,
+    ),
+    (
+        "a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once",
+        a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once,
     ),
     (
         "a_jump_that_swaps_two_values_swaps_them",
@@ -449,6 +453,50 @@ const TYPES: [Type; 5] = [
     Type::Address,
 ];
 
+/// Starts values of the types, as `n`s say, from constants of the program
+/// whose texts are `swap` and `x`.
+fn starting(b: &mut Builder, types: &[Type], starts: &[u64]) -> Vec<Value> {
+    types
+        .iter()
+        .zip(starts)
+        .map(|(ty, n)| match ty {
+            Type::Int(bits) => b.int(*bits, *n),
+            Type::Address => {
+                let text = Constant::Data(*n as usize % 2);
+                b.emit(Op::Constant(text), &[Type::Address])[0]
+            }
+        })
+        .collect()
+}
+
+/// Writes the values, each as 8 bytes: an integer widened, and an address
+/// as the byte it points to.
+fn write_all(b: &mut Builder, types: &[Type], values: &[Value]) {
+    let total = b.int(Bits::B64, 8 * types.len() as u64);
+    let buffer = b.allocate(total);
+    for (i, (ty, v)) in types.iter().zip(values).enumerate() {
+        let wide = match ty {
+            Type::Int(Bits::B64) => *v,
+            Type::Int(_) => b.widen(false, *v, Bits::B64),
+            Type::Address => {
+                let byte = b.load(Type::Int(Bits::B8), *v);
+                b.widen(false, byte, Bits::B64)
+            }
+        };
+        let offset = b.int(Bits::B64, 8 * i as u64);
+        let at = b.binary(scalar::Binary::Add, buffer, offset);
+        b.store(at, wide);
+    }
+    let call = scalar::System::Write(scalar::Stream::Stdout);
+    b.emit(
+        Op::System {
+            call,
+            args: vec![buffer, total],
+        },
+        &[],
+    );
+}
+
 /// A program in the scalar form that holds values of the types, and goes
 /// round a loop `rounds` times, in which each value is given the one that
 /// was at the place `sources` says in the round before, all at once. It
@@ -457,15 +505,7 @@ fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> s
     let int = |b: &mut Builder, n: u64| b.int(Bits::B64, n);
     let mut b = Builder::new();
     let mut first = vec![int(&mut b, 0)];
-    for (ty, n) in types.iter().zip(starts) {
-        first.push(match ty {
-            Type::Int(bits) => b.int(*bits, *n),
-            Type::Address => {
-                let text = Constant::Data(*n as usize % 2);
-                b.emit(Op::Constant(text), &[Type::Address])[0]
-            }
-        });
-    }
+    first.extend(starting(&mut b, types, starts));
     let mut held = vec![Type::Int(Bits::B64)];
     held.extend(types);
     let (head, in_head) = b.block(&held);
@@ -486,29 +526,7 @@ fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> s
     carried.extend(sources.iter().map(|s| in_head[1 + s]));
     b.jump(head, carried);
     b.at(done);
-    let total = int(&mut b, 8 * types.len() as u64);
-    let buffer = b.allocate(total);
-    for (i, (ty, v)) in types.iter().zip(&in_done).enumerate() {
-        let wide = match ty {
-            Type::Int(Bits::B64) => *v,
-            Type::Int(_) => b.widen(false, *v, Bits::B64),
-            Type::Address => {
-                let byte = b.load(Type::Int(Bits::B8), *v);
-                b.widen(false, byte, Bits::B64)
-            }
-        };
-        let offset = int(&mut b, 8 * i as u64);
-        let at = b.binary(scalar::Binary::Add, buffer, offset);
-        b.store(at, wide);
-    }
-    let call = scalar::System::Write(scalar::Stream::Stdout);
-    b.emit(
-        Op::System {
-            call,
-            args: vec![buffer, total],
-        },
-        &[],
-    );
+    write_all(&mut b, types, &in_done);
     b.ret(vec![]);
     let program = scalar::Program {
         data: vec![b"swap".to_vec(), b"x".to_vec()],
@@ -554,6 +572,95 @@ fn a_jump_that_swaps_two_values_swaps_them() {
     for target in runnable() {
         scalar_runs_as(&program, target, &said);
     }
+}
+
+/// A program in the scalar form of three functions, each calling the next.
+/// `main` calls `pass` with values of the types and writes what it gives
+/// back. `pass` calls `leaf` with its own parameters in the order `order`
+/// says, and gives back what `leaf` gave, in the order `back` says, and
+/// after them its first parameter, which is alive across the call. `leaf`
+/// gives back the parameters `picks` says, so that it gives back more
+/// values than it has, or fewer, and two may be one.
+fn passing(
+    types: &[Type],
+    starts: &[u64],
+    order: &[usize],
+    picks: &[usize],
+    back: &[usize],
+) -> scalar::Program {
+    let given: Vec<Type> = picks.iter().map(|p| types[*p]).collect();
+
+    let mut leaf = Builder::new();
+    let own = leaf.params(types);
+    leaf.ret(picks.iter().map(|p| own[*p]).collect());
+    let leaf = leaf.finish(&given);
+
+    let mut pass = Builder::new();
+    let own = pass.params(types);
+    let args = order.iter().map(|o| own[*o]).collect();
+    let made = pass.call(0, args, &given);
+    let mut gives: Vec<Value> = back.iter().map(|k| made[*k]).collect();
+    gives.push(own[0]);
+    let mut shape: Vec<Type> = back.iter().map(|k| given[*k]).collect();
+    shape.push(types[0]);
+    pass.ret(gives);
+    let pass = pass.finish(&shape);
+
+    let mut main = Builder::new();
+    let first = starting(&mut main, types, starts);
+    let got = main.call(1, first, &shape);
+    write_all(&mut main, &shape, &got);
+    main.ret(vec![]);
+    let main = main.finish(&[]);
+
+    let program = scalar::Program {
+        data: vec![b"swap".to_vec(), b"x".to_vec()],
+        functions: vec![leaf, pass, main],
+        main: 2,
+    };
+    assert_eq!(scalar::check(&program), Ok(()));
+    program
+}
+
+/// A call gives each argument to the function and takes each result as if
+/// all were copied at once, with more arguments and results than there are
+/// registers for them, and with a function that passes its own parameters on
+/// in another order.
+fn a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once() {
+    let targets = runnable();
+    let generate = |g: &mut Gen| {
+        let count = 1 + g.below(40);
+        let types: Vec<Type> = (0..count).map(|_| *g.pick(&TYPES)).collect();
+        let starts: Vec<u64> = (0..count)
+            .map(|_| (g.below(1 << 20) as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        // Each argument is a parameter of the same type, and two may be the
+        // same one.
+        let order: Vec<usize> = (0..count)
+            .map(|i| {
+                let same: Vec<usize> = (0..count).filter(|j| types[*j] == types[i]).collect();
+                *g.pick(&same)
+            })
+            .collect();
+        let picks: Vec<usize> = (0..g.below(count + 8)).map(|_| g.below(count)).collect();
+        let back: Vec<usize> = (0..g.below(picks.len() + 1))
+            .map(|_| g.below(picks.len()))
+            .collect();
+        (types, starts, order, picks, back)
+    };
+    generate::check(81, 100, generate, |(types, starts, order, picks, back)| {
+        // `back` reads the results of the leaf, which there may be none of.
+        let back: Vec<usize> = if picks.is_empty() {
+            Vec::new()
+        } else {
+            back.clone()
+        };
+        let program = passing(types, starts, order, picks, &back);
+        let said = scalar::run(&program);
+        for &target in &targets {
+            scalar_runs_as(&program, target, &said);
+        }
+    });
 }
 
 /// The most memory, in KiB, a program run under a limit may map.

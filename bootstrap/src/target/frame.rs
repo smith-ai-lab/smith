@@ -33,22 +33,40 @@ pub fn lay_out(types: impl Iterator<Item = Type>) -> (Vec<u32>, u32) {
     (places, end)
 }
 
-/// The places of what a call to the function passes: its parameters, and
-/// after them what it gives back, so that writing a result never overwrites
-/// a parameter still to be read. It is in the caller's frame, just above the
+/// Where what a call to the function passes in the frame is, from the start
+/// of the area, and how many bytes the area takes. The first `passed`
+/// parameters, and the first `passed` results, go in registers, as the chip
+/// says, so the area holds the parameters after them, and then the results
+/// after those, each at its size, so that writing a result never overwrites a
+/// parameter still to be read. It is in the caller's frame, just above the
 /// bytes the system may use.
-pub fn call_area(f: &Function) -> (Vec<u32>, u32) {
-    let params = f.blocks[0].params.iter().map(|v| f.types[v.0]);
-    lay_out(params.chain(f.results.iter().copied()))
+pub struct CallArea {
+    /// The place of each parameter after the first `passed`.
+    pub params: Vec<u32>,
+    /// The place of each result after the first `passed`.
+    pub results: Vec<u32>,
+    pub size: u32,
+}
+
+pub fn call_area(f: &Function, passed: usize) -> CallArea {
+    let params = f.blocks[0].params.iter().skip(passed).map(|v| f.types[v.0]);
+    let results = f.results.iter().skip(passed).copied();
+    let count = f.blocks[0].params.len().saturating_sub(passed);
+    let (places, size) = lay_out(params.chain(results));
+    CallArea {
+        params: places[..count].to_vec(),
+        results: places[count..].to_vec(),
+        size,
+    }
 }
 
 /// The bytes a function keeps at the bottom of its frame for the calls it
 /// makes: the most any one takes, as `call_area` says, rounded up to 8.
-pub fn outgoing(program: &Program, f: &Function) -> u32 {
+pub fn outgoing(program: &Program, f: &Function, passed: usize) -> u32 {
     let mut outgoing = 0;
     for instruction in f.blocks.iter().flat_map(|b| &b.instructions) {
         if let Op::Call { function, .. } = &instruction.op {
-            outgoing = outgoing.max(call_area(&program.functions[*function]).1);
+            outgoing = outgoing.max(call_area(&program.functions[*function], passed).size);
         }
     }
     round_up(outgoing, 8)

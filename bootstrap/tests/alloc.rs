@@ -31,6 +31,10 @@ pub const ONCE: &[Test] = &[
         a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_others,
     ),
     (
+        "a_parameter_that_arrives_in_a_register_stays_there_when_it_may",
+        a_parameter_that_arrives_in_a_register_stays_there_when_it_may,
+    ),
+    (
         "allocating_twice_gives_the_same_homes",
         allocating_twice_gives_the_same_homes,
     ),
@@ -187,10 +191,21 @@ fn offers(needs: usize) -> Vec<Registers> {
         (15, 10),
     ];
     offers.extend([(needs, 0), (0, needs), (needs, needs), (needs + 2, 3)]);
-    offers
+    let mut offers: Vec<Registers> = offers
         .into_iter()
-        .map(|(changed, preserved)| Registers { changed, preserved })
-        .collect()
+        .map(|(changed, preserved)| Registers {
+            changed,
+            preserved,
+            passed: changed,
+        })
+        .collect();
+    // A chip that passes fewer in registers than a call may change.
+    offers.push(Registers {
+        changed: 5,
+        preserved: 6,
+        passed: 2,
+    });
+    offers
 }
 
 /// A function, what is alive in it, the registers offered, and what the
@@ -327,6 +342,26 @@ fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_oth
     });
 }
 
+/// A parameter that is not alive across a call, and that the allocator
+/// keeps in a register, is in the one it arrives in, so that the function
+/// copies nothing. A function that calls nothing and fits the registers
+/// keeps every parameter that arrives in one where it arrives.
+fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may() {
+    for_every_allocation(|f, facts, registers, a| {
+        for (i, p) in f.blocks[0].params.iter().enumerate().take(registers.passed) {
+            match a.homes[p.0] {
+                Home::Register(r) if !registers.is_preserved(r) => {
+                    assert_eq!(r, i, "{registers:?}\n{:?}", f.blocks[0].params)
+                }
+                _ => {}
+            }
+            if !facts.calls && most_together(facts) <= registers.count() && all_reachable(f) {
+                assert_eq!(a.homes[p.0], Home::Register(i), "{registers:?}");
+            }
+        }
+    });
+}
+
 fn allocating_twice_gives_the_same_homes() {
     for_every_allocation(|f, _, registers, a| {
         assert_eq!(*a, allocate(f, registers));
@@ -408,13 +443,16 @@ fn function(g: &mut Gen) -> Function {
         params.push(values);
         shapes.push(types);
     }
-    // What the first block makes is there for every block to read.
+    // What the first block is given and makes is there for every block to
+    // read.
+    let own: Vec<Type> = (0..g.below(20)).map(|_| *g.pick(&TYPES)).collect();
+    let given = b.params(&own);
     let wide = if g.one_in(3) {
         12 + g.below(20)
     } else {
         1 + g.below(4)
     };
-    let mut entry: Vec<(Value, Type)> = Vec::new();
+    let mut entry: Vec<(Value, Type)> = given.into_iter().zip(own).collect();
     for _ in 0..wide {
         let ty = *g.pick(&TYPES);
         entry.push((value_of(&mut b, ty, g.below(1000) as u64), ty));
