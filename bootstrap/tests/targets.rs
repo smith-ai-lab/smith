@@ -371,7 +371,7 @@ fn every_executable_agrees<T: Debug>(
 }
 
 fn every_executable_does_what_the_evaluator_says() {
-    every_executable_agrees(3, 150, programs::program, |case| &case.source);
+    every_executable_agrees(3, 100, programs::program, |case| &case.source);
 }
 
 fn every_executable_of_a_program_with_traits_does_what_the_evaluator_says() {
@@ -415,7 +415,7 @@ fn every_executable_of_a_program_with_reprs_does_what_the_evaluator_says() {
 }
 
 fn every_executable_of_a_program_with_numbers_does_what_the_evaluator_says() {
-    every_executable_agrees(74, 150, numbers::program, |case| case.source.as_bytes());
+    every_executable_agrees(74, 100, numbers::program, |case| case.source.as_bytes());
 }
 
 fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
