@@ -178,6 +178,7 @@ impl<'a> Lexer<'a> {
             }
             '/' if self.peek_second() == Some('/') => self.comment(start),
             '"' => self.string(start),
+            '\'' => self.character(start),
             'a'..='z' | 'A'..='Z' | '_' => self.word(start),
             '0'..='9' => self.number(start),
             _ => self.punctuation(start, c),
@@ -237,6 +238,76 @@ impl<'a> Lexer<'a> {
             ));
         }
         self.push(Tok::Number(text.to_string()), start);
+    }
+
+    /// Reads a character between single quotes, which is a whole number
+    /// and is kept in its source spelling, as a number is.
+    fn character(&mut self, start: Pos) {
+        self.bump();
+        let mut text = String::from("'");
+        let at = self.pos;
+        let ok = match self.peek() {
+            None | Some('\n') => {
+                self.error(Error::new(start, "a character has no closing `'`"));
+                return;
+            }
+            Some('\'') => {
+                self.bump();
+                self.error(
+                    Error::new(
+                        start,
+                        "a character is written between single quotes, and this has none",
+                    )
+                    .with_fix("write `'\\''` for a single quote"),
+                );
+                return;
+            }
+            Some('\\') => {
+                self.bump();
+                match self.peek() {
+                    Some(c @ ('\'' | '\\' | 'n' | 't')) => {
+                        self.bump();
+                        text.push('\\');
+                        text.push(c);
+                        true
+                    }
+                    other => {
+                        let after = match other {
+                            None | Some('\n') => "nothing".to_string(),
+                            Some(c) => show_char(c),
+                        };
+                        self.error(Error::new(
+                            at,
+                            format!(
+                                "unknown escape: a backslash is followed by {after}, \
+                                 not one of ' \\ n t"
+                            ),
+                        ));
+                        if matches!(other, Some(c) if c != '\n') {
+                            self.bump();
+                        }
+                        false
+                    }
+                }
+            }
+            Some(c) => {
+                self.bump();
+                text.push(c);
+                true
+            }
+        };
+        if self.peek() == Some('\'') {
+            self.bump();
+            text.push('\'');
+            if ok {
+                self.push(Tok::Number(text), start);
+            }
+        } else {
+            self.error(Error::new(
+                start,
+                "a character has no closing `'`, and holds one character only",
+            ));
+        }
     }
 
     fn punctuation(&mut self, start: Pos, c: char) {

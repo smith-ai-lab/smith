@@ -415,6 +415,15 @@ pub enum Pattern {
         pos: Pos,
         items: Vec<Pattern>,
     },
+    /// A whole number or a character, which matches a value equal to it.
+    Number {
+        text: String,
+        magnitude: u128,
+        negative: bool,
+        pos: Pos,
+    },
+    /// A text, which matches a text equal to it.
+    Text { text: Vec<u8>, pos: Pos },
 }
 
 impl Pattern {
@@ -422,7 +431,10 @@ impl Pattern {
     pub fn pos(&self) -> Pos {
         match self {
             Pattern::Bind { pos, var, .. } => var.unwrap_or(*pos),
-            Pattern::Case { pos, .. } | Pattern::Tuple { pos, .. } => *pos,
+            Pattern::Case { pos, .. }
+            | Pattern::Tuple { pos, .. }
+            | Pattern::Number { pos, .. }
+            | Pattern::Text { pos, .. } => *pos,
         }
     }
 }
@@ -622,6 +634,22 @@ fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Er
 /// The literal for the number written as `text`, which the lexer has found
 /// well formed, with a `-` before it if `negative`, starting at `pos`.
 fn number(text: String, negative: bool, pos: Pos) -> Result<Expr, Error> {
+    if let Some(inner) = text.strip_prefix('\'') {
+        let inner = &inner[..inner.len() - 1];
+        let c = match inner {
+            "\\'" => '\'',
+            "\\\\" => '\\',
+            "\\n" => '\n',
+            "\\t" => '\t',
+            _ => inner.chars().next().expect("a character the lexer found"),
+        };
+        return Ok(Expr::Number {
+            magnitude: c as u128,
+            text,
+            negative,
+            pos,
+        });
+    }
     let (digits, base) = match (text.strip_prefix("0x"), text.strip_prefix("0b")) {
         (Some(rest), _) => (rest, 16),
         (_, Some(rest)) => (rest, 2),
@@ -2442,7 +2470,51 @@ impl Parser<'_> {
                     _ => Ok(Pattern::Tuple { pos, items }),
                 }
             }
+            Tok::Number(text) => {
+                let text = text.clone();
+                self.bump();
+                self.number_pattern(text, false, pos)
+            }
+            Tok::Punct("-")
+                if matches!(self.next_tok(), Tok::Number(_))
+                    && self.tokens[self.at + 1].pos
+                        == (Pos {
+                            line: pos.line,
+                            col: pos.col + 1,
+                        }) =>
+            {
+                self.bump();
+                let Tok::Number(text) = self.tok().clone() else {
+                    unreachable!("a number")
+                };
+                self.bump();
+                self.number_pattern(text, true, pos)
+            }
+            Tok::Str(text) => {
+                let text = text.clone();
+                self.bump();
+                Ok(Pattern::Text { text, pos })
+            }
+            Tok::Interp(_) => Err(Error::new(pos, "a text in a pattern holds no expression")),
             tok => Err(self.expected("a pattern", tok)),
+        }
+    }
+
+    /// The pattern for a whole number or a character written as `text`.
+    fn number_pattern(&mut self, text: String, negative: bool, pos: Pos) -> Result<Pattern, Error> {
+        match number(text, negative, pos)? {
+            Expr::Number {
+                text,
+                magnitude,
+                negative,
+                pos,
+            } => Ok(Pattern::Number {
+                text,
+                magnitude,
+                negative,
+                pos,
+            }),
+            _ => unreachable!("a number"),
         }
     }
 
