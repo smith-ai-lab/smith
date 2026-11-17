@@ -102,4 +102,31 @@ fn show(x: i32, y: i32) ! console, alloc {
 - A brace that is not escaped always opens or closes an expression, so a `}` on its own is a compile error.
 - A string literal ends on the line it starts. A line break in the text is written `\n`.
 
+## Text and bytes
+
+A `str` is a [`List`](../library/list.md) of bytes kept together with a proof that they are valid UTF-8, in the way [Contracts and proofs](contracts.md) describes for any struct that holds a proof. So a `str` is used wherever bytes are expected, with no call and no copy: its `size` is how many bytes it has, and `s[i]` is a byte.
+
+```
+fn count_spaces(s: str) -> u64 {
+  var n: u64 = 0
+  loop i in 0..s.size {
+    if s[i] == ' ' { n = wrapping_add(n, 1) }
+  }
+  n
+}
+```
+
+Bytes become text through `utf8`, which reads them once. It gives the text, which is the same bytes and no copy of them, or the place of the first byte that is not valid.
+
+```
+struct Utf8Error {
+  at: Nat
+}
+
+fn utf8(bytes: List[u8]) -> Result[str, Utf8Error]
+```
+
+- Nothing else makes a `str` from bytes, and no bytes are replaced to make them valid.
+- Text is not counted or indexed in characters. A character may be several bytes, and a program that needs them reads the bytes.
+
 Next: [Ownership](ownership.md)
