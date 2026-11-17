@@ -45,4 +45,36 @@ impl[T, U] Try[Option[T], Option[U], T] {
 
 Any type joins by adding an `impl`. Using `try` on an `Option` inside a function that returns a `Result` does not compile, because no implementation relates the two, so the conversion is written out.
 
+A failure of one type becomes a failure of another on its way out, where the first [converts](conversion.md) to the second. So a function gathers the failures of the steps it takes into one enum, which is given a `Convert` from each of them.
+
+```
+enum PortError {
+  number: ParseError
+  range: RangeError
+}
+
+fn port(text: str) -> Result[u16, PortError] {
+  n = try parse_int(text)
+  p = try in_range(n)
+  .ok(p)
+}
+```
+
+`parse_int` fails with a `ParseError` and `in_range` with a `RangeError`, and `port` returns either as a `PortError`. Nothing about this is built in. It is one more implementation of `Try`, for two `Result`s whose failures differ:
+
+```
+impl[T, U, E, F] Try[Result[T, E], Result[U, F], T]
+  requires Convert[E, F]
+{
+  fn then(c: Result[T, E], body: (T) -> Result[U, F]) -> Result[U, F] {
+    match c {
+      .ok(x) { body(x) }
+      .err(e) { .err(convert(e)) }
+    }
+  }
+}
+```
+
+Only `try` converts. A function's own result is written out, as `.ok(p)` is.
+
 Next: [Effects](effects.md)

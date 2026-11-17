@@ -30,16 +30,27 @@ big = twice(unit)
 both = add(unit, unit)
 ```
 
+A requirement about more than one type is written with `requires`, on a line after a function's signature or an `impl`'s head. It names an implementation that must exist for the types the function or the `impl` is used with, and inside, that implementation's functions can be called. `T: Add` is the short form of `requires Add[T]`.
+
+```
+fn sum3[A, B](x: A, y: B, z: B) -> B
+  requires Add[A, B, B]
+  requires Add[B]
+{
+  x + y + z
+}
+```
+
 - A trait function is called like any other function, as in `add(unit, unit)`. It is qualified, as in `Add.add`, only when two names clash.
 - Operators are trait functions: `a + b` means `Add.add(a, b)`. The arithmetic operators are `+`, `-`, `*`, `/`, and `^` for a power.
-- A trait has at most one implementation for each choice of its types that are not `out`, and calls are specialized at compile time, so traits cost nothing at run time.
+- A trait has at most one implementation for each choice of its types that are not `out`, and calls are specialized at compile time, so traits cost nothing at run time. An `impl` with type parameters stands for every choice of them that its `requires` lines allow, and a use that two implementations fit is an error.
 
   The operands of an arithmetic operator may differ in type, so a number times an array, or a number times a struct of weights, is one more `impl` of `Mul`.
-- Comparisons are trait functions too. `a == b` means `Eq.eq(a, b)` and `a != b` means `not (a == b)`. `<`, `<=`, `>`, and `>=` come from `Ord`, whose one function says how two values stand. Both sides of a comparison have the same type, and a comparison always gives one `bool`, on arrays too: `x == y` says whether two arrays are the same, and the comparison of each pair of elements is `for i { x[i] == y[i] }`.
+- Comparisons are trait functions too. `a == b` means `Eq.eq(a, b)` and `a != b` means `not (a == b)`. `<`, `<=`, `>`, and `>=` come from `Ord`, whose one function says how two values stand. The two sides may differ in type where an implementation relates them, as two integer types are related under [Conversion](conversion.md). A comparison always gives one `bool`, on arrays too: `x == y` says whether two arrays are the same, and the comparison of each pair of elements is `for i { x[i] == y[i] }`.
 
   ```
-  trait Eq[T] {
-    fn eq(a: T, b: T) -> bool
+  trait Eq[A, B = A] {
+    fn eq(a: A, b: B) -> bool
   }
 
   enum Order {
@@ -48,8 +59,8 @@ both = add(unit, unit)
     greater
   }
 
-  trait Ord[T] {
-    fn compare(a: T, b: T) -> Order
+  trait Ord[A, B = A] {
+    fn compare(a: A, b: B) -> Order
   }
   ```
 - Both traits keep their laws for every type, so code written over them is right for every type. Every value equals itself, every two values of a type with `Ord` can be ordered, and `compare` gives `equal` exactly when `==` is true. A float that is not a number therefore equals itself and comes after every other float, and `is_nan` says whether a float is one.
