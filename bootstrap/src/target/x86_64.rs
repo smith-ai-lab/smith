@@ -394,6 +394,11 @@ impl Asm {
         self.bytes(&[Self::rex_w(rs, rd), 0x21, Self::modrm(rs, rd)]);
     }
 
+    /// `or rd, rs`.
+    fn or(&mut self, rd: Reg, rs: Reg) {
+        self.bytes(&[Self::rex_w(rs, rd), 0x09, Self::modrm(rs, rd)]);
+    }
+
     /// `xor rd, rs`.
     fn xor(&mut self, rd: Reg, rs: Reg) {
         self.bytes(&[Self::rex_w(rs, rd), 0x31, Self::modrm(rs, rd)]);
@@ -408,6 +413,13 @@ impl Asm {
     /// the operation in the ModRM reg field.
     fn group(&mut self, op: u8, r: Reg) {
         self.bytes(&[Self::rex_w(RAX, r), 0xf7, Self::modrm(Reg(op), r)]);
+    }
+
+    /// An instruction that shifts `r` by `cl`, by the number of the
+    /// operation in the ModRM reg field: 4 for `shl`, 5 for `shr`, and 7
+    /// for `sar`. The count is taken modulo 64.
+    fn shift_cl(&mut self, op: u8, r: Reg) {
+        self.bytes(&[Self::rex_w(RAX, r), 0xd3, Self::modrm(Reg(op), r)]);
     }
 
     /// `shr r, imm8`.
@@ -891,6 +903,23 @@ impl<S: System> Writer<'_, S> {
                 asm.sar_imm(RDX, bits as u8);
                 self.finish(asm, result, RDX, false);
             }
+            // The count is in cl, and the value, extended to 64 bits as the
+            // shift reads it, is in rax.
+            Binary::ShiftLeft | Binary::ShiftRightU | Binary::ShiftRightS => {
+                self.read_into(asm, RCX, b);
+                let (n, extended) = match op {
+                    Binary::ShiftLeft => (4, false),
+                    Binary::ShiftRightU => (5, true),
+                    _ => (7, false),
+                };
+                if matches!(op, Binary::ShiftRightS) {
+                    self.read_signed_into(asm, RAX, a);
+                } else {
+                    self.read_into(asm, RAX, a);
+                }
+                asm.shift_cl(n, RAX);
+                self.finish(asm, result, RAX, extended);
+            }
             _ => {
                 let b = self.read(asm, RCX, b);
                 let t = self.target(result, &[b]);
@@ -901,9 +930,19 @@ impl<S: System> Writer<'_, S> {
                     Binary::Mul => asm.imul(t, b),
                     Binary::And => asm.and(t, b),
                     Binary::Xor => asm.xor(t, b),
-                    Binary::MulHighU | Binary::MulHighS => unreachable!(),
+                    Binary::Or => asm.or(t, b),
+                    Binary::MulHighU
+                    | Binary::MulHighS
+                    | Binary::ShiftLeft
+                    | Binary::ShiftRightU
+                    | Binary::ShiftRightS => unreachable!(),
                 }
-                self.finish(asm, result, t, matches!(op, Binary::And | Binary::Xor));
+                self.finish(
+                    asm,
+                    result,
+                    t,
+                    matches!(op, Binary::And | Binary::Xor | Binary::Or),
+                );
             }
         }
     }
