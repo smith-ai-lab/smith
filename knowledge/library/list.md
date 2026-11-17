@@ -31,6 +31,18 @@ struct List[T] {
   }
   ```
 - `[]` is the empty list, and a literal such as `[1, 2, 3]` becomes a list where one is expected.
+- A pattern in brackets matches a list of exactly that many elements, as [Arrays and sizes](../language/arrays.md) says, which is how a program reads its arguments:
+
+  ```
+  fn main(args: List[str]) -> Result[(), CliError] ! console, fs, alloc {
+    match args {
+      [] { usage() }
+      ["build", path] { build(path) }
+      ["run", path] { run(path) }
+      other { unknown(other) }
+    }
+  }
+  ```
 - `push` gives a list with one more element. When the list it is given is a `var` that is assigned the result, as in `out = push(out, x)`, the list grows in place.
 
 ```
