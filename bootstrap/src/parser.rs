@@ -265,6 +265,19 @@ pub enum Expr {
         items: Vec<Expr>,
     },
     Lambda(Box<Lambda>),
+    /// A list written out, `[]` or `[a, b, c]`.
+    List {
+        /// Where the `[` is.
+        pos: Pos,
+        items: Vec<Expr>,
+    },
+    /// `of[index]`.
+    Index {
+        of: Box<Expr>,
+        index: Box<Expr>,
+        /// Where the `[` is.
+        pos: Pos,
+    },
     /// `loop i in a..b { ... }`, or an open-ended `loop { ... }`.
     Loop(Box<Loop>),
     /// `break`, which ends the nearest `loop` around it.
@@ -424,7 +437,9 @@ impl Expr {
             | Expr::Name { pos, .. }
             | Expr::Case { pos, .. }
             | Expr::Tuple { pos, .. }
+            | Expr::List { pos, .. }
             | Expr::Break { pos } => *pos,
+            Expr::Index { of, .. } => of.pos(),
             Expr::Loop(l) => l.pos,
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),
@@ -1432,10 +1447,14 @@ impl Parser<'_> {
             Expr::Case {
                 payload: Some(p), ..
             } => self.spill(p, at),
-            Expr::Tuple { items, .. } => {
+            Expr::Tuple { items, .. } | Expr::List { items, .. } => {
                 for item in items {
                     self.spill(item, at);
                 }
+            }
+            Expr::Index { of, index, .. } => {
+                self.spill(of, at);
+                self.spill(index, at);
             }
             Expr::Field { of, .. } => self.spill(of, at),
             Expr::Arith { left, right, .. } => {
@@ -1533,21 +1552,33 @@ impl Parser<'_> {
         item: fn(&mut Self) -> Result<T, Error>,
         spill: fn(&mut Self, &mut [T], usize),
     ) -> Result<Vec<T>, Error> {
+        self.list_until(")", item, spill)
+    }
+
+    /// Parses items separated by commas, from the bracket that opens them
+    /// through the `close` that ends them. There may be none.
+    fn list_until<T>(
+        &mut self,
+        close: &'static str,
+        item: fn(&mut Self) -> Result<T, Error>,
+        spill: fn(&mut Self, &mut [T], usize),
+    ) -> Result<Vec<T>, Error> {
         let no_lambda = std::mem::replace(&mut self.no_lambda, false);
-        let items = self.list_items(item, spill);
+        let items = self.list_items(close, item, spill);
         self.no_lambda = no_lambda;
         items
     }
 
     fn list_items<T>(
         &mut self,
+        close: &'static str,
         item: fn(&mut Self) -> Result<T, Error>,
         spill: fn(&mut Self, &mut [T], usize),
     ) -> Result<Vec<T>, Error> {
         self.bump();
         self.skip_newlines();
         let mut items = Vec::new();
-        if self.tok() == &Tok::Punct(")") {
+        if self.tok() == &Tok::Punct(close) {
             self.bump();
             return Ok(items);
         }
@@ -1563,9 +1594,13 @@ impl Parser<'_> {
                 Tok::Punct(",") => {
                     self.bump();
                     self.skip_newlines();
+                    // A list written out may end with a comma.
+                    if close == "]" && self.tok() == &Tok::Punct("]") {
+                        break;
+                    }
                 }
-                Tok::Punct(")") => break,
-                tok => return Err(self.expected("`,` or `)`", tok)),
+                Tok::Punct(c) if *c == close => break,
+                tok => return Err(self.expected(&format!("`,` or `{close}`"), tok)),
             }
         }
         self.bump();
@@ -1850,7 +1885,6 @@ impl Parser<'_> {
         let pos = self.pos();
         match self.tok() {
             Tok::Punct("(") => Error::unsupported(pos, "calling what this gives"),
-            Tok::Punct("[") => Error::unsupported(pos, "an index"),
             tok => Error::unsupported(pos, &format!("the operator {}", tok.describe())),
         }
     }
@@ -2278,9 +2312,12 @@ impl Parser<'_> {
                 }
             }
             Tok::Punct("{") | Tok::Keyword("fn") => Expr::Lambda(Box::new(self.lambda()?)),
+            Tok::Punct("[") => {
+                let items = self.list_until("]", Self::expr, Self::spill_exprs)?;
+                Expr::List { pos, items }
+            }
             tok if starts_expression(tok) => {
                 let feature = match tok {
-                    Tok::Punct("[") => "an array",
                     Tok::Punct("-") => "the operator `-`",
                     Tok::Keyword(word) => {
                         return Err(Error::unsupported(pos, &format!("`{word}`")));
@@ -2291,7 +2328,19 @@ impl Parser<'_> {
             }
             tok => return Err(self.expected("an expression", tok)),
         };
-        while self.tok() == &Tok::Punct(".") {
+        while matches!(self.tok(), Tok::Punct("." | "[")) {
+            if self.tok() == &Tok::Punct("[") {
+                let at = self.pos();
+                self.bump();
+                let index = self.expr()?;
+                self.expect_punct("]", "`]`")?;
+                expr = Expr::Index {
+                    of: Box::new(expr),
+                    index: Box::new(index),
+                    pos: at,
+                };
+                continue;
+            }
             self.bump();
             let (name, pos) = self.ident("a field's name")?;
             expr = match expr {

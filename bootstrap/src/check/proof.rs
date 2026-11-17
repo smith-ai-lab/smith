@@ -16,7 +16,7 @@ use super::{
     Body, Checker, Int, Numbers, Signature, Ty, addr, params_of, pattern_names, statements,
     written_expr, written_with,
 };
-use crate::diag::Error;
+use crate::diag::{Error, Pos};
 use crate::parser::{ArithOp, Call, Expr, Form, Function, Loop, Pattern, Range, Stmt};
 
 /// What a variable of `arith` stands for.
@@ -214,6 +214,16 @@ impl Builder<'_, '_> {
                 }
                 Some(self.variable(Key::Name(at, t.min(), t.max())))
             }
+            Expr::Field { of, name, .. } if name == "size" && self.facts.subst.is_some() => {
+                let Expr::Name { name: list, .. } = &**of else {
+                    return None;
+                };
+                self.facts
+                    .subst
+                    .as_ref()?
+                    .get(&format!("{list}.size"))
+                    .cloned()
+            }
             Expr::Field { .. } => match self.path(e) {
                 Some(path) => {
                     let (lo, hi) = self.range_of(e);
@@ -254,6 +264,22 @@ impl Builder<'_, '_> {
                 Some(self.variable(Key::Call(addr(call), lo, hi)))
             }
             _ => self.goal.then(|| self.fresh(e)),
+        }
+    }
+
+    /// The sum the size of the list `of` stands for.
+    fn list_size(&mut self, of: &Expr) -> Option<Lin> {
+        let range = (0, u64::MAX as i128);
+        if self.facts.subst.is_some() {
+            return None;
+        }
+        match self.path(of) {
+            Some(path) => Some(self.variable(Key::Field(format!("{path}.size"), range.0, range.1))),
+            None => self.goal.then(|| {
+                self.facts.fresh += 1;
+                let key = Key::Fresh(self.facts.fresh, range.0, range.1);
+                self.variable(key)
+            }),
         }
     }
 
@@ -488,6 +514,10 @@ impl<'a> Checker<'a> {
     /// Notes what the name defined last was given, when it is a whole number
     /// and not a `var`.
     pub(super) fn assume_binding(&mut self, body: &mut Body<'a>, value: &Expr) {
+        if let Some((name, Ty::List(_))) = body.names.last().cloned() {
+            self.assume_list(body, &name, value);
+            return;
+        }
         let Some((name, Ty::Int(t))) = body.names.last().cloned() else {
             return;
         };
@@ -507,6 +537,31 @@ impl<'a> Checker<'a> {
             if let Some(same) = self.equal(body, &mut facts, id, &given) {
                 facts.known.push(same);
             }
+        }
+        body.facts = facts;
+    }
+
+    /// Notes the size of the list the name defined last was given, when it
+    /// is not a `var` and the size is known: that of a list written out, or
+    /// of another name's list.
+    fn assume_list(&mut self, body: &mut Body<'a>, name: &str, value: &Expr) {
+        if !Self::decided(body) || body.vars.iter().any(|v| v == name) {
+            return;
+        }
+        let at = body.names.len() - 1;
+        let mut facts = std::mem::take(&mut body.facts);
+        let range = (0, u64::MAX as i128);
+        let id = facts.id(Key::Field(format!("{at}.size"), range.0, range.1));
+        let mut builder = self.builder(body, &mut facts, false);
+        let given = match value {
+            Expr::List { items, .. } => Some(constant(items.len() as i128)),
+            Expr::Name { .. } => builder.list_size(value),
+            _ => None,
+        };
+        if let (Some(given), false) = (given, builder.overflow)
+            && let Some(same) = self.equal(body, &mut facts, id, &given)
+        {
+            facts.known.push(same);
         }
         body.facts = facts;
     }
@@ -560,6 +615,38 @@ impl<'a> Checker<'a> {
         let over = builder.combine(&me, -1, given);
         let under = builder.combine(given, -1, &me);
         (!builder.overflow).then(|| Formula::And(vec![at_least_zero(over), at_least_zero(under)]))
+    }
+
+    /// Whether `arith` proves that `index` is below the size of the list
+    /// `of`, and if it does not, the goal it could not prove.
+    pub(super) fn in_range(&mut self, body: &mut Body<'a>, of: &Expr, index: &Expr, pos: Pos) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let (at, size) = (builder.lin(index), builder.list_size(of));
+        let overflow = builder.overflow;
+        let goal = match (at, size) {
+            (Some(at), Some(size)) if !overflow => self.sum(body, &mut facts, &size, &at, -1),
+            _ => None,
+        };
+        let goals: Vec<&Formula> = goal.iter().collect();
+        let used = background(&facts, goals.into_iter());
+        body.facts = facts;
+        if !goal.as_ref().is_some_and(|g| proves(&used, g)) {
+            let (i, xs) = (written_expr(index), written_expr(of));
+            self.errors.push(
+                Error::new(
+                    pos,
+                    format!("cannot prove that `{i} < {xs}.size`, which indexing `{xs}` needs"),
+                )
+                .with_fix(format!(
+                    "put `{i}` in the range of a `loop` over `0..{xs}.size`, check `{i} < {xs}.size` \
+                     with an `if`, or state it in a `requires`; a `var` is not read, so bind it to a name first"
+                )),
+            );
+        }
     }
 
     /// Whether `arith` proves that the result of the operation `e` fits `t`,
@@ -858,6 +945,14 @@ impl<'a> Checker<'a> {
         let mut texts: HashMap<String, String> = HashMap::new();
         for (arg, place) in call.args.iter().zip(params_of(&sig.params, &call.args)) {
             let (name, ty) = &sig.params[place];
+            if matches!(ty, Ty::List(_)) {
+                let mut builder = self.builder(body, &mut facts, true);
+                if let Some(size) = builder.list_size(&arg.value).filter(|_| !builder.overflow) {
+                    sums.insert(format!("{name}.size"), size);
+                }
+                texts.insert(name.clone(), written_expr(&arg.value));
+                continue;
+            }
             if !matches!(ty, Ty::Int(_)) {
                 continue;
             }

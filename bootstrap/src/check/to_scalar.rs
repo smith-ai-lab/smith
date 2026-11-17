@@ -30,6 +30,17 @@ const BYTE: form::Type = form::Type::Int(form::Bits::B8);
 const TEXT: [form::Type; 2] = [form::Type::Address, form::Type::Int(form::Bits::B64)];
 
 /// How many bits a number of the type has, in the scalar form.
+/// The size of each element of a list of the type.
+fn element_bits(list: &Ty) -> form::Bits {
+    match list {
+        Ty::List(of) => match &of[0] {
+            Ty::Int(t) => bits_of(*t),
+            _ => form::Bits::B8,
+        },
+        _ => unreachable!("checked"),
+    }
+}
+
 fn bits_of(t: Int) -> form::Bits {
     match t.bits() {
         8 => form::Bits::B8,
@@ -349,6 +360,11 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         match ty {
             Ty::Text => vec![form::Type::Address, form::Type::Int(form::Bits::B64)],
+            Ty::List(_) => vec![
+                form::Type::Address,
+                form::Type::Int(form::Bits::B64),
+                form::Type::Int(form::Bits::B64),
+            ],
             Ty::Int(t) => vec![form::Type::Int(bits_of(*t))],
             Ty::Struct(s, args) => {
                 let mut all = Vec::new();
@@ -953,13 +969,40 @@ impl<'a> Lowering<'a> {
         let mut result = Vec::new();
         for stmt in stmts {
             result = match stmt {
-                Stmt::Define { name, value, .. } => {
+                Stmt::Define {
+                    name, value, var, ..
+                } => {
                     // A name stands for the values it is bound to, so a
                     // binding needs no instruction of its own. A block runs
                     // its statements once each, in order, so an assignment
                     // makes the name stand for the new values from then
                     // on, and a name bound to the old ones keeps them.
-                    let (ty, value) = self.expr(out, value, env);
+                    let typed = self.typed;
+                    let written = value;
+                    let held = out.find(name).is_some();
+                    // A list grows in place only where a `var` is given what
+                    // `push` makes of it. A `var` given any other list but
+                    // one just made has no room of its own, so that two
+                    // names never write to the same place.
+                    let pushed = |e: &Expr| match e {
+                        Expr::Call(c) => matches!(typed.callee(c, env), Callee::Push),
+                        _ => false,
+                    };
+                    let (ty, mut value) = match written {
+                        Expr::Call(call)
+                            if held
+                                && pushed(written)
+                                && matches!(&call.args[0].value,
+                                    Expr::Name { name: first, .. } if first == name) =>
+                        {
+                            self.push(out, call, env, true)
+                        }
+                        _ => self.expr(out, written, env),
+                    };
+                    let fresh = matches!(written, Expr::List { .. }) || pushed(written);
+                    if matches!(ty, Ty::List(_)) && (held || *var) && !fresh {
+                        value[2] = value[1];
+                    }
                     match out.find(name) {
                         Some(at) => out.names_mut()[at].values = value,
                         None => out.define(name, ty, value),
@@ -1066,6 +1109,7 @@ impl<'a> Lowering<'a> {
                     }
                     (Ty::Nothing, Vec::new())
                 }
+                Callee::Push => self.push(out, call, env, false),
                 Callee::Value => self.call_value(out, call, env),
                 Callee::Intrinsic => {
                     let mut args = Vec::new();
@@ -1127,7 +1171,11 @@ impl<'a> Lowering<'a> {
                     let values = self.case(out, &ty, k, None, env);
                     return (ty, values);
                 }
-                let (Ty::Struct(s, args), values) = self.expr(out, of, env) else {
+                let (of_ty, values) = self.expr(out, of, env);
+                if matches!(of_ty, Ty::List(_)) {
+                    return (typed.type_of(expr, env), vec![values[1]]);
+                }
+                let Ty::Struct(s, args) = of_ty else {
                     unreachable!("checked")
                 };
                 let mut at = 0;
@@ -1180,6 +1228,61 @@ impl<'a> Lowering<'a> {
                 }
                 (Ty::tuple(types), values)
             }
+            Expr::List { items, .. } => {
+                let ty = typed.type_of(expr, env);
+                let bits = element_bits(&ty);
+                let width = u64::from(bits.count() / 8);
+                let values: Vec<form::Value> = items
+                    .iter()
+                    .map(|item| self.expr(out, item, env).1[0])
+                    .collect();
+                let count = out.int(form::Bits::B64, items.len() as i128);
+                if items.is_empty() {
+                    let none = out.constant(form::Constant::Null, form::Type::Address);
+                    return (ty, vec![none, count, count]);
+                }
+                let bytes = out.int(form::Bits::B64, items.len() as i128 * width as i128);
+                let start = out.emit(
+                    form::Op::System {
+                        call: form::System::Allocate,
+                        args: vec![bytes],
+                    },
+                    vec![form::Type::Address],
+                )[0];
+                for (k, value) in values.into_iter().enumerate() {
+                    let offset = out.int(form::Bits::B64, k as i128 * width as i128);
+                    let address = out.binary(form::Binary::Add, start, offset);
+                    out.emit(
+                        form::Op::Store {
+                            ty: form::Type::Int(bits),
+                            address,
+                            value,
+                        },
+                        Vec::new(),
+                    );
+                }
+                (ty, vec![start, count, count])
+            }
+            Expr::Index { of, index, .. } => {
+                let (list, values) = self.expr(out, of, env);
+                let (at, number) = self.expr(out, index, env);
+                let bits = element_bits(&list);
+                let place = match at {
+                    Ty::Int(t) if bits_of(t) == form::Bits::B64 => number[0],
+                    _ => out.widen(false, number[0]),
+                };
+                let width = out.int(form::Bits::B64, i128::from(bits.count() / 8));
+                let offset = out.binary(form::Binary::Mul, place, width);
+                let address = out.binary(form::Binary::Add, values[0], offset);
+                let element = out.emit(
+                    form::Op::Load {
+                        ty: form::Type::Int(bits),
+                        address,
+                    },
+                    vec![form::Type::Int(bits)],
+                )[0];
+                (typed.type_of(expr, env), vec![element])
+            }
             Expr::Lambda(_) => unreachable!("checked"),
             Expr::Loop(l) => {
                 self.round(out, l, env);
@@ -1203,6 +1306,24 @@ impl<'a> Lowering<'a> {
                 (Ty::Nothing, Vec::new())
             }
         }
+    }
+
+    /// Lowers `push`, which gives the list with the item after its last
+    /// element, in place when the list may grow where it is.
+    fn push(
+        &mut self,
+        out: &mut Out<'a>,
+        call: &'a Call,
+        env: &[Ty],
+        in_place: bool,
+    ) -> (Ty, Vec<form::Value>) {
+        let (ty, mut args) = self.expr(out, &call.args[0].value, env);
+        let item = self.expr(out, &call.args[1].value, env).1;
+        args.push(item[0]);
+        args.push(out.int(form::Bits::B8, i128::from(in_place)));
+        let results = self.scalars(&ty);
+        let values = self.call_runtime(out, Runtime::Push(element_bits(&ty)), args, results);
+        (ty, values)
     }
 
     /// Lowers a `loop`. Each round is the block `head`, which takes the
