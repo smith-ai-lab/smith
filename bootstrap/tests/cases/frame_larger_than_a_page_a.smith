@@ -1,0 +1,102 @@
+struct Cat {
+  name: str
+}
+
+enum Pet {
+  cat: Cat
+  none
+}
+
+fn say(text: str) ! console { print(text) }
+
+fn name_of(a0: Cat) -> str { a0.name }
+
+fn cat_of(a0: str) -> Cat { Cat(name: a0) }
+
+fn echo(a0: str) -> str { a0 }
+
+fn pet_of(a0: Cat) -> Pet { .cat(a0) }
+
+fn join(a0: str, a1: Cat) -> (str, Cat) { (a0, a1) }
+
+fn first(a0: (str, Cat)) -> str { (s, c) = a0
+  s }
+
+fn second(a0: (str, Cat)) -> Cat { (s, c) = a0
+  c }
+
+fn drop(a0: str) {  }
+
+fn twice(body: () -> ()) {
+  body()
+  body()
+}
+
+fn apply(text: str, f: (str) -> str) -> str { f(text) }
+
+fn main() ! console {
+  var note = "a"
+  say("")
+  u15 = name_of(Cat(name: note))
+  u16 = cat_of(note)
+  u17 = echo(u16.name)
+  u18 = pet_of(u16)
+  u19 = join(u16.name, Cat(name: u16.name))
+  u21 = first(match Pet.none {
+    .cat(c20) { u19 }
+    .none { (u16.name, Cat(name: u16.name)) }
+  })
+  u22 = second((u16.name, Cat(name: u16.name)))
+  u23 = drop(note)
+  r24 = h0(u16.name, f0: {
+    print(u22.name)
+    u22
+  }, f1: cat_of)
+  r26 = h1(u16, f0: fn(a25) {
+    print(h1("", f1: cat_of, f0: pet_of))
+    h0(u16.name, f1: cat_of, f0: { u16 })
+  }, f1: cat_of)
+  r33 = h2(match Pet.none {
+    .cat(c27) { u16 }
+    .none { u22 }
+  }, f0: fn(a28, a29, a30) { Pet.none }) fn(a31, a32) { (u16.name, Cat(name: u16.name)) }
+  print(note)
+}
+
+fn h0[T](p0: T, f0: () -> Cat, f1: (str) -> Cat) -> Pet ! console {
+  ()
+  v1 = f0()
+  v2 = f1(v1.name)
+  print(h1(h1(v1, f0: fn(a3) { Pet.cat(Cat(name: a3.name)) }, f1: f1), f0: fn(a4) {
+    print(match Pet.none {
+      .cat(c5) { v1.name }
+      .none { " " }
+    })
+    print(h1(Pet.none, f0: fn(a6) { Pet.cat(Cat(name: v1.name)) }, f1: f1))
+    Pet.none
+  }, f1: f1))
+  Pet.none
+}
+
+fn h1[T](p0: T, f0: (Cat) -> Pet, f1: (str) -> Cat) -> str ! console {
+  v8 = match f0(Cat(name: "")) {
+    .cat(c7) { f0(Cat(name: "")) }
+    .none { f0(Cat(name: "")) }
+  }
+  v10 = match v8 {
+    .cat(c9) { f0(f1("")) }
+    .none { f0(Cat(name: "a")) }
+  }
+  print("")
+  v12 = match v8 {
+    .cat(c11) { f1("") }
+    .none { f1("a") }
+  }
+  ""
+}
+
+fn h2(p0: Cat, f0: (str, Cat, ()) -> Pet, f1: (Pet, (str, Cat)) -> (str, Cat)) -> str ! console {
+  v13 = f0("", Cat(name: p0.name), ())
+  v14 = f1(f0(p0.name, Cat(name: p0.name), ()), f1(Pet.none, (p0.name, Cat(name: p0.name))))
+  p0.name
+}

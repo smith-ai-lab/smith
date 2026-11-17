@@ -3,7 +3,7 @@
 //! form becomes them. It reads the scalar form and nothing else.
 
 use super::alloc::{self, Home, Registers};
-use super::frame::{self, call_area, round_up, size};
+use super::frame::{self, PAGE, call_area, round_up, size};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
     Binary, Compare, Constant, End, Function, Jump, Op, Program, Stream, System as Call, Value,
@@ -157,6 +157,24 @@ impl Asm {
     pub fn reserve_stack(&mut self, bytes: u32) {
         assert!(bytes.is_multiple_of(16));
         self.add_immediate(0xd100_0000, SP, SP, bytes);
+    }
+
+    /// Makes room on the stack for a frame of more than a page, as a system
+    /// that gives a program its stack one page at a time needs: it touches
+    /// each page below the stack pointer in turn, from the nearest, through
+    /// x16, so that none is passed over, then moves the stack pointer and
+    /// touches the lowest page.
+    pub fn reserve_stack_by_page(&mut self, bytes: u32) {
+        // add x16, sp, #0
+        self.word(0x9100_03e0 | X16);
+        for _ in 0..bytes / PAGE {
+            // sub x16, x16, #1, lsl #12; ldr wzr, [x16]
+            self.word(0xd140_0400 | X16 << 5 | X16);
+            self.word(0xb940_001f | X16 << 5);
+        }
+        self.reserve_stack(bytes);
+        // ldr wzr, [sp]
+        self.word(0xb940_001f | SP << 5);
     }
 
     /// `add sp, sp, #bytes`, which gives back room on the stack.
@@ -421,6 +439,9 @@ impl Asm {
 /// into the system the scalar form has, and the only code the targets
 /// differ in.
 pub trait System {
+    /// Whether the system gives a program its stack one page at a time, so
+    /// that a frame of more than `PAGE` bytes is reserved a page at a time.
+    const STACK_BY_PAGE: bool = false;
     /// How many bytes at the bottom of every frame a call to the system may
     /// use. A multiple of 16.
     const RESERVED: u32;
@@ -551,7 +572,11 @@ fn function<S: System>(
         labels,
         system: std::marker::PhantomData,
     };
-    asm.reserve_stack(total);
+    if S::STACK_BY_PAGE && total > PAGE {
+        asm.reserve_stack_by_page(total);
+    } else {
+        asm.reserve_stack(total);
+    }
     asm.store(Place::Frame(total - 16), X30, 8);
     for (r, at) in &w.saved {
         asm.store(Place::Frame(*at), *r, 8);

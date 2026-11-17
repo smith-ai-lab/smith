@@ -42,6 +42,7 @@ struct Windows;
 
 impl System for Windows {
     const RESERVED: u32 = RESERVED;
+    const STACK_BY_PAGE: bool = true;
     /// rsi and rdi, which calls preserve.
     const TEXT: (Reg, Reg) = (RSI, RDI);
 

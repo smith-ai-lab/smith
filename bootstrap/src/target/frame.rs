@@ -15,6 +15,10 @@ pub fn size(ty: Type) -> u32 {
     }
 }
 
+/// The bytes of a page of memory, which a system that gives a program its
+/// stack one page at a time grows it by.
+pub const PAGE: u32 = 4096;
+
 pub fn round_up(n: u32, to: u32) -> u32 {
     n.div_ceil(to) * to
 }
