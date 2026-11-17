@@ -1,0 +1,12 @@
+fn digit(n: u64) -> u8
+  requires n < 10
+{
+  narrow(n)
+}
+
+fn main() ! console, alloc {
+  x: u32 = 0x12ab
+  print("{bit_and(x, 0xff)}")
+  print("{bit_and(shift_right(x, 12), 0xf)}")
+  print("{digit(7)}")
+}

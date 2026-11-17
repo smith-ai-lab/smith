@@ -1,0 +1,4 @@
+narrow_unproven.smith:2:3: cannot prove that `n <= 255`, so `narrow(n)` may not fit `u8`
+  2 |   narrow(n)
+    |   ^
+  fix: check the value first, state it in a `requires`, or use `wrapping_narrow`, `saturating_narrow`, or `checked_narrow`
