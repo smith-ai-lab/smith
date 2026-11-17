@@ -42,6 +42,8 @@ A statement about values, such as `n > 0`, is a type, and a value of that type i
 - It uses every fact in scope: the range of each value's type, the value of a literal, the condition of an `if` or a `match` block it is inside, the range of a `loop i in a..b`, the function's `requires`, the `ensures` of a function that was called, and every proof it can see, as a value or as a field of a value.
 - A `var` has the facts its type states, and, where no loop assigns it, those of the value it was last given. Inside one round of a loop that assigns it, it also has those of the value that round last gave it, stated against what it held when the round began.
 
+A function type states no contract, so a function with a `requires` is only called by its name, and using its name as a value is an error. A function with only an `ensures` can be a value, and what it gives is then not known to the caller.
+
 So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller with sizes known only at run time gets it from a `check`.
 
 A struct can hold a proof as a field, whose type is the statement it proves. `Fin[n]` from [Arrays and sizes](arrays.md) is defined that way in the standard library, as a number paired with a proof that it is below `n`. `check` is how outside data becomes one.

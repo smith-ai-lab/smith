@@ -4505,6 +4505,14 @@ impl<'a> Checker<'a> {
                      carries none"
                 ),
             )
+        } else if !defs.file.functions[f].requires.is_empty() {
+            Error::new(
+                pos,
+                format!(
+                    "`{name}` has a `requires`, which a function type does not state, so it is \
+                     only called by its name"
+                ),
+            )
         } else {
             self.fn_values.insert(addr(expr), f);
             let mut items: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
