@@ -12,6 +12,7 @@
 //! `check::to_scalar`, and what it needs at run time is in `runtime`.
 
 mod build;
+mod common;
 mod eval;
 mod fold;
 mod graph;
@@ -21,6 +22,7 @@ pub mod runtime;
 mod wellformed;
 
 pub use build::Builder;
+pub use common::common;
 pub use eval::{Outcome, call, run, run_with_limit};
 pub use fold::fold;
 pub use inline::{BOUND, inline, size};
@@ -28,13 +30,14 @@ pub use remove::remove;
 pub use wellformed::{Malformed, Why, check};
 
 /// The passes over a program in the scalar form, in the order they run:
-/// inlining, folding of constants, and the removal of what nothing uses.
+/// inlining, folding of constants, the replacing of what is worked out
+/// twice, and the removal of what nothing uses.
 pub fn passes(program: &Program) -> Program {
-    remove(&fold(&inline(program)))
+    remove(&common(&fold(&inline(program))))
 }
 
 /// How many bits an integer has.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Bits {
     B8,
     B16,
@@ -56,7 +59,7 @@ impl Bits {
 }
 
 /// What a value is, which also says its size.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     /// An integer. Whether it is signed belongs to the operation that
     /// reads it, not to the value.
@@ -67,17 +70,17 @@ pub enum Type {
 
 /// A value, by its place in `Function::types`. It is defined once: as a
 /// parameter of a block, or as a result of an instruction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Value(pub usize);
 
 /// A standard stream of the program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stream {
     Stdout,
 }
 
 /// A constant. Its type is the type of the value the instruction gives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Constant {
     /// An integer, which is the number's bits, in the value's width.
     Int(u64),
@@ -89,7 +92,7 @@ pub enum Constant {
 }
 
 /// A call into the system.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum System {
     /// Writes the bytes from an address, as many as a 64-bit integer says,
     /// to the stream. It takes the address and then the count, and gives
@@ -106,7 +109,7 @@ pub enum System {
 /// gives an integer of that size, in which the bits that do not fit are
 /// left off, so no overflow is ever reported. Whether a number is signed
 /// is in the operation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Binary {
     /// `a + b`. It is also what moves an address: `a` is an address and `b`
     /// is a 64-bit integer, the number of bytes, and it gives an address.
@@ -127,7 +130,7 @@ pub enum Binary {
 
 /// What an instruction asks of two integers of the same size. It gives an
 /// integer of 8 bits that is 1 if it is so and 0 if it is not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Compare {
     /// Whether `a` and `b` are the same.
     Equal,
@@ -138,7 +141,7 @@ pub enum Compare {
 }
 
 /// What an instruction does.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Op {
     Constant(Constant),
     Binary {
