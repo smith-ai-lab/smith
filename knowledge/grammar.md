@@ -66,7 +66,8 @@ struct_def = "struct" IDENT [ generics ] "{" { [ "pub" ] IDENT ":" type [ "=" ex
 enum_def   = "enum" IDENT [ generics ] "{" { IDENT [ ":" type ] } "}" ;
 trait_def  = "trait" IDENT generics "{" { fn_sig } "}" ;
 effect_def = "effect" IDENT "{" { fn_sig } "}" ;
-impl_def   = "impl" [ generics ] IDENT "[" type { "," type } "]" "{" { fn_def } "}" ;
+impl_def   = "impl" [ generics ] IDENT "[" type { "," type } "]" { contract }
+             "{" { fn_def } "}" ;
 derive     = "derive" IDENT "for" IDENT ;
 without    = "without" IDENT "for" IDENT ;
 use        = "use" IDENT { "." IDENT } [ "as" IDENT ]
@@ -117,6 +118,6 @@ type_arg   = type | expr ;
 - **No name lookup.** Parsing never needs to know what a name refers to, so definitions parse independently and in parallel. `x = e` with a bare name is one form to the parser, and the checker decides whether it defines `x` or assigns to a `var`.
 - **One token of lookahead,** with one exception: a statement that starts like a tuple is read as an expression and converted to a pattern when `=` follows. This is still linear time.
 - **A statement in a type position is a comparison,** such as `value < n`, where `CMP` is one of the comparison operators. It is the type of its proofs.
-- **`f[n](x)` and `a[i]` are the same postfix form.** The type checker tells a type argument from an index.
+- **`f[n](x)` and `a[i]` are the same postfix form.** The type checker tells a type argument from an index. A `requires` that names a trait, as `requires Convert[A, B]`, is that form too, and the checker tells it from a statement about values.
 - **`{` continues an expression in one way.** On the same line, directly after a call's `)`, or after what is called when a lambda is its only argument, it opens a lambda that is the call's last argument. After the condition of an `if`, the value of a `match`, the head of a `loop` or a `for`, or a contract it opens that construct's body instead, so a call there takes a lambda after it only inside parentheses. Anywhere else `{` starts a lambda. Construction is a call, so `{` never starts a literal.
 - **Files split cheaply.** Top-level items start at column zero, with a keyword or with the name being defined, and only edited definitions are re-parsed.

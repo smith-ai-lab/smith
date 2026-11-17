@@ -14,6 +14,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [enums.md](enums.md): enums that hold one of their cases, and `match` to take a value apart.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
 - [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
+- [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, and how it lets two types meet in an operator.
 - [lambdas.md](lambdas.md): a function with no name, written where it is passed to a call.
 - [function-values.md](function-values.md): a function with a name used as a value, which can be passed, stored, and returned.
 - [with.md](with.md): `with`, which passes the rest of a block to a function as a lambda.

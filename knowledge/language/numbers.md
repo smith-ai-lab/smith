@@ -21,8 +21,8 @@ Every literal form is backed by a trait, and the expected type picks which imple
 - Conversion runs at compile time, so `300` as a `u8` is a compile error.
 - A literal bound to a name takes its type from how the name is used in the rest of the function. After `x = 10`, a call `double(x)` of a function that takes a `u8` makes `x` a `u8`, and a second use that needs another type is an ordinary type error at that use. A `var` is decided the same way. A binding may also state its type, as in `limit: i32 = 100`.
 - When nothing in the function decides it, a whole number is an `i64` and a float is an `f64`.
-- A literal that is an operand takes the one type that fits: a type it can become, for which the operator has an implementation with the other operand's type. With `x: f32`, the `2` in `x * 2` is an `f32`. When more than one type fits, it is a compile error, and a binding that states its type settles it. When both operands are literals, they are decided as a literal bound to a name is.
-- Only literals are flexible. A value of one numeric type becomes another only through an explicit call such as `float(n)`.
+- A literal that is an operand takes the type of the other operand, when it can become it. With `x: f32`, the `2` in `x * 2` is an `f32`. When it cannot, it takes the one type that fits: a type it can become, for which the operator has an implementation with the other operand's type. When more than one type fits, it is a compile error, and a binding that states its type settles it. When both operands are literals, they are decided as a literal bound to a name is.
+- Only literals are flexible. A value of one numeric type becomes another only through a call: `convert`, under [Conversion](conversion.md), where nothing can be lost, and otherwise a function such as `float(n)`.
 - The numeric types are `i8` to `i64`, `u8` to `u64`, `f16`, `bf16`, `f32`, and `f64`. `bool` is an enum the prelude defines, with the cases `false` and `true`, which are written as bare names. They are its cases wherever they are written, in an expression and in a pattern alike, and no other definition may be named `true` or `false`. A `str` is bytes known to be valid UTF-8.
 
   Integers also have bitwise operations and shifts, as named functions.
@@ -47,4 +47,4 @@ fn next_checked(i: u8) -> Option[u8] { checked_add(i, 1) }
 
 Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic.
 
-Next: [Lambdas](lambdas.md)
+Next: [Conversion](conversion.md)
