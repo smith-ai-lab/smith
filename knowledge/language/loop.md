@@ -46,6 +46,7 @@ fn largest(c: Countdown) -> i32 {
 - `each` is an ordinary function, so `with v = each(x)` also works when the walk is the last thing a function does.
 - A walk over a tree passes `body` along to its recursive calls.
 - `break` is allowed in a loop over a range or an array and in an open-ended loop. It is not allowed in a loop over a user type, because the body has no way to tell `each` to stop.
+- The two ends of a range have one type. An end that is a literal takes the type of the other. When both are literals, how the loop's name is used in its block decides their type, as for a literal bound to a name in [Numbers](numbers.md), and they are `i64` when nothing decides.
 - A range `a..b` is a `Range` value, and going backward is a reversed range, `loop i in reversed(0..n)`.
 
 Next: [Contracts and proofs](contracts.md)

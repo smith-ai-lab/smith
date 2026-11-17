@@ -4920,6 +4920,29 @@ impl<'a> Checker<'a> {
     /// and gives that type, which each number of the range has.
     fn range_type(&mut self, body: &mut Body<'a>, r: &Range) -> Ty {
         let defs = self.defs;
+        // Two literals are one number, whose type the uses of the counter
+        // decide, as for a literal bound to a name.
+        if flexible(&r.from) && flexible(&r.to) {
+            match &mut body.numbers {
+                Numbers::Off => {}
+                Numbers::Finding(places) => {
+                    places.push(r.from.pos());
+                    let at = places.len() - 1;
+                    self.expr(body, &r.from, &Want::Ty(Ty::Unknown));
+                    self.expr(body, &r.to, &Want::Ty(Ty::Unknown));
+                    return Ty::Flex(at);
+                }
+                Numbers::Decided(decided) => {
+                    let (int, by) = decided[&r.from.pos()];
+                    self.deciding = by;
+                    self.expr(body, &r.from, &Want::Ty(Ty::Int(int)));
+                    self.expr(body, &r.to, &Want::Ty(Ty::Int(int)));
+                    self.deciding = None;
+                    body.decided.insert(r.name.clone(), (int, by));
+                    return Ty::Int(int);
+                }
+            }
+        }
         let (l, e) = match (flexible(&r.from), flexible(&r.to)) {
             (true, false) => {
                 let e = self.expr(body, &r.to, &Want::Any);
