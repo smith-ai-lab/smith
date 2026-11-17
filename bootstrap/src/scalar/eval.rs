@@ -132,6 +132,10 @@ pub(super) fn binary(op: Binary, bits: Bits, x: u64, y: u64) -> u64 {
         Binary::MulHighS => ((signed(x, bits) * signed(y, bits)) >> size) as u64,
         Binary::And => x & y,
         Binary::Xor => x ^ y,
+        Binary::Or => x | y,
+        Binary::ShiftLeft => x << (y & 63),
+        Binary::ShiftRightU => x >> (y & 63),
+        Binary::ShiftRightS => (signed(x, bits) as i64 >> (y & 63)) as u64,
     };
     n & mask(bits)
 }

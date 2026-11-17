@@ -110,6 +110,25 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     };
                     let ty = f.types[result.0];
                     match ty {
+                        Type::Int(_)
+                            if matches!(
+                                instruction.op,
+                                Op::Binary {
+                                    op: Binary::ShiftLeft
+                                        | Binary::ShiftRightU
+                                        | Binary::ShiftRightS,
+                                    ..
+                                }
+                            ) =>
+                        {
+                            // The amount of a shift is an integer of any size.
+                            let by = f.types.get(b.0).copied().ok_or(Why::Missing)?;
+                            if !matches!(by, Type::Int(_)) {
+                                return Err(Why::WrongType(*b));
+                            }
+                            used(a, i, ty)?;
+                            used(b, i, by)?;
+                        }
                         Type::Int(_) => {
                             used(a, i, ty)?;
                             used(b, i, ty)?;

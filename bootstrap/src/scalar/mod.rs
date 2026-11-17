@@ -132,10 +132,11 @@ pub enum System {
     Allocate,
 }
 
-/// What an instruction does with two integers of the same size. Every one
-/// gives an integer of that size, in which the bits that do not fit are
-/// left off, so no overflow is ever reported. Whether a number is signed
-/// is in the operation.
+/// What an instruction does with two integers of the same size, except a
+/// shift, whose second is an integer of any size. Every one gives an integer
+/// of the size of its first, in which the bits that do not fit are left off,
+/// so no overflow is ever reported. Whether a number is signed is in the
+/// operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Binary {
     /// `a + b`. It is also what moves an address: `a` is an address and `b`
@@ -153,6 +154,18 @@ pub enum Binary {
     And,
     /// The bits that only one of `a` and `b` has.
     Xor,
+    /// The bits that `a` or `b` has.
+    Or,
+    /// `a` with its bits moved up by `b`, the bits that leave the top
+    /// dropped. `b` is taken modulo 64, so a program that means a shift is
+    /// by fewer bits than the size of `a`.
+    ShiftLeft,
+    /// `a` with its bits moved down by `b`, and zeros filled in at the top.
+    /// `b` is taken modulo 64.
+    ShiftRightU,
+    /// `a` with its bits moved down by `b`, and the sign of `a` filled in at
+    /// the top. `b` is taken modulo 64.
+    ShiftRightS,
 }
 
 /// What an instruction asks of two integers of the same size. It gives an

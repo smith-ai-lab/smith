@@ -834,10 +834,17 @@ impl<S: System> Writer<'_, S> {
         let bits = self.width(result) * 8;
         let wide = bits == 64;
         let signed = matches!(op, Binary::MulHighS) && !wide;
-        let (a, b) = if signed {
-            (self.read_signed(asm, X16, a), self.read_signed(asm, X17, b))
+        // A shift right that keeps the sign reads the value as signed, and
+        // the count as it is.
+        let a = if signed || matches!(op, Binary::ShiftRightS) {
+            self.read_signed(asm, X16, a)
         } else {
-            (self.read(asm, X16, a), self.read(asm, X17, b))
+            self.read(asm, X16, a)
+        };
+        let b = if signed {
+            self.read_signed(asm, X17, b)
+        } else {
+            self.read(asm, X17, b)
         };
         let t = self.target(result);
         let mut extended = false;
@@ -853,6 +860,17 @@ impl<S: System> Writer<'_, S> {
                 asm.three(0xca00_0000, t, a, b);
                 extended = true;
             }
+            Binary::Or => {
+                asm.three(0xaa00_0000, t, a, b);
+                extended = true;
+            }
+            // `lslv`, `lsrv`, and `asrv`, which take the count modulo 64.
+            Binary::ShiftLeft => asm.three(0x9ac0_2000, t, a, b),
+            Binary::ShiftRightU => {
+                asm.three(0x9ac0_2400, t, a, b);
+                extended = true;
+            }
+            Binary::ShiftRightS => asm.three(0x9ac0_2800, t, a, b),
             Binary::MulHighU if wide => {
                 asm.three(0x9bc0_7c00, t, a, b);
                 extended = true;
