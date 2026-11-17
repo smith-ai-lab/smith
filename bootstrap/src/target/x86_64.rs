@@ -3,7 +3,7 @@
 //! and nothing else.
 
 use super::alloc::{self, Home, Registers};
-use super::frame::{self, call_area, round_up, size};
+use super::frame::{self, PAGE, call_area, round_up, size};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
     Binary, Compare, Constant, End, Function, Op, Program, Stream, System as Call, Value,
@@ -322,6 +322,22 @@ impl Asm {
         self.bytes(&bytes.to_le_bytes());
     }
 
+    /// Makes room on the stack for a frame of more than a page, as a system
+    /// that gives a program its stack one page at a time needs: it touches
+    /// each page below the stack pointer in turn, from the nearest, so that
+    /// none is passed over, then moves the stack pointer and touches the
+    /// lowest page.
+    pub fn reserve_stack_by_page(&mut self, bytes: u32) {
+        for page in 1..=bytes / PAGE {
+            // `test dword [rsp - page * PAGE], eax`, which changes only flags.
+            self.bytes(&[0x85, 0x84, 0x24]);
+            self.bytes(&(page * PAGE).wrapping_neg().to_le_bytes());
+        }
+        self.reserve_stack(bytes);
+        // `test dword [rsp], eax`.
+        self.bytes(&[0x85, 0x04, 0x24]);
+    }
+
     /// `add rsp, imm32`.
     pub fn release_stack(&mut self, bytes: u32) {
         self.bytes(&[0x48, 0x81, 0xc4]);
@@ -449,6 +465,9 @@ const B: u8 = 0x2;
 /// into the system the scalar form has, and the only code the targets
 /// differ in.
 pub trait System {
+    /// Whether the system gives a program its stack one page at a time, so
+    /// that a frame of more than `PAGE` bytes is reserved a page at a time.
+    const STACK_BY_PAGE: bool = false;
     /// How many bytes at the bottom of every frame a call to the system may
     /// use. A multiple of 16.
     const RESERVED: u32;
@@ -583,7 +602,11 @@ fn function<S: System>(
         labels,
         system: std::marker::PhantomData,
     };
-    asm.reserve_stack(total);
+    if S::STACK_BY_PAGE && total > PAGE {
+        asm.reserve_stack_by_page(total);
+    } else {
+        asm.reserve_stack(total);
+    }
     for (r, at) in &w.saved {
         asm.store(Place::Frame(*at), *r, 8);
     }

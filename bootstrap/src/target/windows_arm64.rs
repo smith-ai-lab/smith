@@ -44,6 +44,7 @@ struct Windows;
 
 impl System for Windows {
     const RESERVED: u32 = RESERVED;
+    const STACK_BY_PAGE: bool = true;
 
     /// Writes every byte, retrying a write that is cut short, and branches
     /// to `fail` if the system refuses it or writes nothing. A call goes

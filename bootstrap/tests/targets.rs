@@ -76,6 +76,10 @@ pub const MACHINE: &[Test] = &[
         a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once,
     ),
     (
+        "a_function_with_a_frame_of_any_size_up_to_12_pages_does_what_the_evaluator_says",
+        a_function_with_a_frame_of_any_size_up_to_12_pages_does_what_the_evaluator_says,
+    ),
+    (
         "a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once",
         a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once,
     ),
@@ -566,6 +570,39 @@ fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
             scalar_runs_as(program, target, &said);
         }
     });
+}
+
+/// A function holds as many values at once as it takes to need a frame of
+/// some pages, and writes them. A system that gives a program its stack one
+/// page at a time must have the frame reserved a page at a time, so that no
+/// page is passed over. The frame is 12 pages in the case that is always
+/// run, and any size up to that in the others. A probe that skipped a page
+/// is caught by any frame of two pages or more, and 12 keeps the test under
+/// the limit, because the allocator takes time that grows faster than the
+/// number of values the function holds.
+fn a_function_with_a_frame_of_any_size_up_to_12_pages_does_what_the_evaluator_says() {
+    const MOST: usize = 12;
+    let targets = runnable();
+    let holding = |pages: usize| {
+        // The registers hold some values, and each other value takes 8 bytes
+        // of the frame, 512 to a page.
+        let count = 512 * pages + 32;
+        let types = vec![Type::Int(Bits::B64); count];
+        let starts: Vec<u64> = (0..count)
+            .map(|i| (i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        let sources: Vec<usize> = (0..count).map(|i| (i + 1) % count).collect();
+        rotating(&types, &starts, &sources, 1)
+    };
+    let check = |pages: &usize| {
+        let program = holding(*pages);
+        let said = scalar::run(&program);
+        for &target in &targets {
+            scalar_runs_as(&program, target, &said);
+        }
+    };
+    check(&MOST);
+    generate::check(82, 2, |g: &mut Gen| 1 + g.below(MOST), check);
 }
 
 fn a_jump_that_swaps_two_values_swaps_them() {
