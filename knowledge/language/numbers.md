@@ -32,7 +32,6 @@ Every literal form is backed by a trait, and the expected type picks which imple
 - Only literals are flexible. A value of one numeric type becomes another only through a call: `convert`, under [Conversion](conversion.md), where nothing can be lost, and otherwise a function such as `float(n)`.
 - The numeric types are `i8` to `i64`, `u8` to `u64`, `f16`, `bf16`, `f32`, and `f64`. `bool` is an enum the prelude defines, with the cases `false` and `true`, which are written as bare names. They are its cases wherever they are written, in an expression and in a pattern alike, and no other definition may be named `true` or `false`. A `str` is bytes known to be valid UTF-8.
 
-  Integers also have bitwise operations and shifts, as named functions.
 
 Integer arithmetic never overflows silently. A plain `+`, `-`, or `*` compiles only when the result provably fits the type of its operands, each operation by itself, and no check is ever inserted behind the author's back. When the compiler cannot prove it, the author picks a behaviour by name. The proof machinery appears under [Contracts and proofs](contracts.md).
 
@@ -51,6 +50,27 @@ fn next_checked(i: u8) -> Option[u8] { checked_add(i, 1) }
 ```
 
 `wrapping_`, `saturating_`, and `checked_` each exist for `add`, `sub`, and `mul`, as the functions of the traits `Wrapping`, `Saturating`, and `Checked`, which every integer type implements.
+
+The bits of an integer are worked on by named functions, those of the `Bits` trait, which every integer type implements. There are no operators for them.
+
+```
+trait Bits[T] {
+  fn bit_and(a: T, b: T) -> T
+  fn bit_or(a: T, b: T) -> T
+  fn bit_xor(a: T, b: T) -> T
+  fn bit_not(a: T) -> T
+  fn shift_left(a: T, by: u8) -> T
+  fn shift_right(a: T, by: u8) -> T
+}
+
+fn low_byte(x: u32) -> u32 { bit_and(x, 0xff) }
+
+fn second_byte(x: u32) -> u32 { bit_and(shift_right(x, 8), 0xff) }
+```
+
+- A shift compiles only when `by` is proven to be below the number of bits in the type, as an index is proven below a size. Nothing tests it when the program runs.
+- `shift_left` drops the bits that leave the top. `shift_right` keeps the sign of a signed number and fills an unsigned one with zeros.
+- Small numbers are packed into a larger one with `+` and `*`, as in `reg * 8 + rm`, where `arith` proves that they do not run into each other. It compiles to the same shifts.
 
 Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic.
 
