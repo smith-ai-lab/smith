@@ -13,11 +13,13 @@
 
 mod build;
 mod eval;
+mod inline;
 pub mod runtime;
 mod wellformed;
 
 pub use build::Builder;
 pub use eval::{Outcome, call, run, run_with_limit};
+pub use inline::{BOUND, inline, size};
 pub use wellformed::{Malformed, Why, check};
 
 /// How many bits an integer has.

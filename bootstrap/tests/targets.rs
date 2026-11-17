@@ -374,8 +374,14 @@ fn every_target_builds_identical_bytes_twice() {
     });
 }
 
+/// The program in the scalar form that the targets are given: what the
+/// source lowers to, after the pass.
+fn after_the_pass(source: &[u8]) -> scalar::Program {
+    scalar::inline(&lower(source).unwrap_or_else(|e| panic!("{e:?}")))
+}
+
 /// Checks, for `cases` generated programs, that each executable does what
-/// the evaluator says its program does.
+/// the evaluator says its program does, after the pass.
 fn every_executable_agrees<T: Debug>(
     seed: u64,
     cases: u64,
@@ -385,8 +391,7 @@ fn every_executable_agrees<T: Debug>(
     let targets = runnable();
     generate::check(seed, cases, generate, |case| {
         let source = source(case);
-        let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        let said = scalar::run(&program);
+        let said = scalar::run(&after_the_pass(source));
         for &target in &targets {
             runs_as(source, target, &said);
         }
@@ -420,8 +425,8 @@ fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says(
 fn a_struct_bound_to_two_names_is_two_equal_structs() {
     let targets = runnable();
     generate::check(13, 100, programs::shared_and_copied, |(shared, copied)| {
-        let said = scalar::run(&lower(shared.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
-        let copy = scalar::run(&lower(copied.as_bytes()).unwrap_or_else(|e| panic!("{e:?}")));
+        let said = scalar::run(&after_the_pass(shared.as_bytes()));
+        let copy = scalar::run(&after_the_pass(copied.as_bytes()));
         assert_eq!(said, copy);
         for &target in &targets {
             runs_as(shared.as_bytes(), target, &copy);
@@ -718,8 +723,7 @@ fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothi
 fn a_long_literal_is_printed_whole() {
     let text = "abcdefghij".repeat(100_000);
     let source = format!("fn main() ! console {{ print(\"{text}\") }}\n");
-    let program = lower(source.as_bytes()).unwrap();
-    let said = scalar::run(&program);
+    let said = scalar::run(&after_the_pass(source.as_bytes()));
     assert_eq!(said.stdout, format!("{text}\n").into_bytes());
     for target in runnable() {
         runs_as(source.as_bytes(), target, &said);
