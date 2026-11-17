@@ -1,29 +1,35 @@
 ---
 type: specification
 title: Arrays and sizes
-description: Arrays whose sizes are part of their types, Fin indices that need no bounds check, indexing as the Index trait, and ranges.
+description: Arrays whose sizes are part of their types, indices proven to be in range when the program is built, indexing as the Index trait, and ranges.
 status: planned
 ---
 
 # Arrays and sizes
 
-An array's size is part of its type: `[3]f32` is three floats and `[m, k]f32` is an `m` by `k` matrix. A size is a `Nat`, and it may be any name that cannot change: one in brackets, which the compiler works out from the arguments, an ordinary parameter, a binding, or an earlier field of the same struct. An index into an axis of size `n` has type `Fin[n]`, a number known to be below `n`, so indexing needs no bounds check.
+An array's size is part of its type: `[3]f32` is three floats and `[m, k]f32` is an `m` by `k` matrix. A size is a `Nat`, and it may be any name that cannot change: one in brackets, which the compiler works out from the arguments, an ordinary parameter, a binding, or an earlier field of the same struct. An index is a whole number that is proven, when the program is built, to be below the size, so indexing needs no bounds check.
 
 ```
 fn first_of_three(a: [3]f32) -> f32 { a[0] }
 
-fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Fin[m], c: Fin[k]) -> f32 {
+fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Nat, c: Nat) -> f32
+  requires r < m and c < k
+{
   a[r, c]
 }
 
 fn zeros(n: Nat) -> [n]f32 { for i { 0.0 } }
 
 trait Index[C, I, out T] {
+  fn valid(c: C, i: I) -> bool
   fn at(c: C, i: I) -> T
+    requires valid(c, i)
 }
 ```
 
-- Indexing is a trait function, as an operator is: `x[i]` means `at(x, i)` from the `Index` trait below. An array implements it for `Fin` indices, and any other type may implement it, so nothing about an array's brackets is special.
+- Indexing is a trait function, as an operator is: `x[i]` means `at(x, i)` from the `Index` trait above. Any type may implement it, so nothing about an array's brackets is special.
+- `valid` says which indices a container has, and `at` requires it. For an array it is that the index is below the size. So `x[i]` is written with nothing beside it, and it compiles when [`arith`](contracts.md) proves `valid(x, i)` from what is in scope: the array's size, an `if`, the range of a `loop`, or a `requires`, as in `entry`. When it cannot, the compiler states what it needs, such as `i < n`, and the author supplies it. `valid` is used to prove and is never run for an index.
+- A type whose `at` answers for every index, as one that returns an `Option` does, has a `valid` that is `true`.
 - An element of a `var` array is assigned as a field is, as in `a[0] = 1.0`, and only that `var` sees the change.
 - A literal index is checked against the size at compile time, so `a[3]` on a `[3]f32` is a compile error.
 - Arithmetic on sizes inside a type, such as `[n + w - 1]f32`, is exact and has no limit, because it is reasoned about and never computed.

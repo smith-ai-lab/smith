@@ -15,8 +15,21 @@ struct List[T] {
 }
 ```
 
-- `items` is an array like any other, so an index into it is a `Fin[size]` that needs no check, and it can be sliced, looped over, and summed.
-- A list implements [`Index`](../language/arrays.md), so `list[i]` reads the element `list.items[i]`.
+- `items` is an array like any other, so an index proven to be below `size` needs no check, and it can be sliced, looped over, and summed.
+- A list implements [`Index`](../language/arrays.md), so `list[i]` reads the element `list.items[i]`, and it compiles where `i < list.size` is proven:
+
+  ```
+  impl[T] Index[List[T], Nat, T] {
+    fn valid(c: List[T], i: Nat) -> bool { i < c.size }
+    fn at(c: List[T], i: Nat) -> T { c.items[i] }
+  }
+
+  fn total(list: List[f32]) -> f32 {
+    var sum = 0.0
+    loop i in 0..list.size { sum = sum + list[i] }
+    sum
+  }
+  ```
 - `[]` is the empty list, and a literal such as `[1, 2, 3]` becomes a list where one is expected.
 - `push` gives a list with one more element. When the list it is given is a `var` that is assigned the result, as in `out = push(out, x)`, the list grows in place.
 
