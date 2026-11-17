@@ -36,15 +36,15 @@ mod to_scalar;
 
 use crate::diag::{Error, Pos};
 use crate::parser::{
-    Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Match, Part, Pattern,
-    Stmt, Type,
+    Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Loop, Match, Part,
+    Pattern, Range, Stmt, Type,
 };
 
 /// The effects the standard library declares, other than `console`.
 const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
 
 /// The effects the compiler builds.
-const BUILT: &[&str] = &["console", "alloc"];
+const BUILT: &[&str] = &["console", "alloc", "diverge"];
 
 /// The effects built into the compiler.
 const BUILT_IN_EFFECTS: &[&str] = &["alloc", "spawn", "gpu", "diverge", "foreign", "exec"];
@@ -1486,6 +1486,26 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
             let params: Vec<&str> = l.params.iter().map(|(p, _)| p.as_str()).collect();
             format!("fn({}) {{ ... }}", params.join(", "))
         }
+        Expr::Loop(l) => match &l.range {
+            Some(r) => format!(
+                "loop {} in {}..{} {{ ... }}",
+                r.name,
+                written_with(s, &r.from),
+                written_with(s, &r.to)
+            ),
+            None => "loop { ... }".to_string(),
+        },
+        Expr::Break { .. } => "break".to_string(),
+    }
+}
+
+/// Whether an expression is a literal, or an operation on literals only,
+/// which takes the type of what it is used with.
+fn flexible(e: &Expr) -> bool {
+    match e {
+        Expr::Number { .. } => true,
+        Expr::Arith { left, right, .. } => flexible(left) && flexible(right),
+        _ => false,
     }
 }
 
@@ -2272,6 +2292,15 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 walk(value, out);
             }
         }
+        Expr::Loop(l) => {
+            if let Some(r) = &l.range {
+                walk(&r.from, out);
+                walk(&r.to, out);
+            }
+            for value in values(&l.body) {
+                walk(value, out);
+            }
+        }
         Expr::Interp { parts, .. } => {
             for part in parts {
                 if let Part::Expr(e) = part {
@@ -2279,7 +2308,7 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 }
             }
         }
-        Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } => {}
+        Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } | Expr::Break { .. } => {}
     }
 }
 
@@ -2313,6 +2342,13 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                 }
             }
             Expr::Lambda(l) => out.push(&l.body),
+            Expr::Loop(l) => {
+                if let Some(r) = &l.range {
+                    blocks(&r.from, out);
+                    blocks(&r.to, out);
+                }
+                out.push(&l.body);
+            }
             Expr::Interp { parts, .. } => {
                 for part in parts {
                     if let Part::Expr(e) = part {
@@ -2320,7 +2356,11 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                     }
                 }
             }
-            Expr::Case { .. } | Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } => {}
+            Expr::Case { .. }
+            | Expr::Text { .. }
+            | Expr::Number { .. }
+            | Expr::Name { .. }
+            | Expr::Break { .. } => {}
         }
     }
     let mut out = Vec::new();
@@ -3060,6 +3100,12 @@ struct Body<'a> {
     /// Whether the body is a contract, which states what is so of whole
     /// numbers and never computes, so that nothing in it can overflow.
     contract: bool,
+    /// How many `loop`s the code being checked is inside, in the function or
+    /// lambda it is written in.
+    loops: usize,
+    /// How many `loop`s the lambdas around the code being checked are inside,
+    /// which a `break` cannot reach.
+    outer_loops: usize,
 }
 
 /// The whole numbers a body binds to names with no type written.
@@ -3287,6 +3333,8 @@ impl<'a> Checker<'a> {
             tails: Vec::new(),
             gives: Ty::Nothing,
             contract: false,
+            loops: 0,
+            outer_loops: 0,
         };
         let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
         self.expect(&body, value, &gives, needed);
@@ -3761,6 +3809,8 @@ impl<'a> Checker<'a> {
             tails: Vec::new(),
             gives: view.gives.clone(),
             contract: false,
+            loops: 0,
+            outer_loops: 0,
         };
         if let Template::Free(_) = template {
             for requirement in &f.requires {
@@ -4210,6 +4260,18 @@ impl<'a> Checker<'a> {
                     Ty::Unknown
                 }
             },
+            Expr::Loop(l) => self.loop_expr(body, l),
+            Expr::Break { pos } => {
+                if body.loops == 0 {
+                    let message = if body.outer_loops == 0 {
+                        "`break` is outside a `loop`, so there is nothing for it to end"
+                    } else {
+                        "`break` is inside a lambda, which cannot end a `loop` outside it"
+                    };
+                    self.errors.push(Error::new(*pos, message));
+                }
+                Ty::Nothing
+            }
             Expr::Tuple { items, .. } => {
                 // What is wanted of each element, where it is known.
                 let wants: Vec<Want> = match want {
@@ -4240,15 +4302,6 @@ impl<'a> Checker<'a> {
         (op, left, right, op_pos): (ArithOp, &Expr, &Expr, Pos),
         want: &Want,
     ) -> Ty {
-        // A literal, or an operation on literals only, takes the type of the
-        // other side, or what is wanted of the whole when both are literals.
-        fn flexible(e: &Expr) -> bool {
-            match e {
-                Expr::Number { .. } => true,
-                Expr::Arith { left, right, .. } => flexible(left) && flexible(right),
-                _ => false,
-            }
-        }
         let wanted = match want {
             Want::Ty(t @ (Ty::Int(_) | Ty::Flex(_))) => Want::Ty(t.clone()),
             _ => Want::Any,
@@ -4426,6 +4479,8 @@ impl<'a> Checker<'a> {
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
+        let loops = body.loops;
+        body.outer_loops += std::mem::take(&mut body.loops);
         let mut types = Vec::new();
         for (i, ((name, pos), ty)) in l.params.iter().zip(params).enumerate() {
             let twice = l.params[..i].iter().any(|(n, _)| n == name)
@@ -4482,6 +4537,8 @@ impl<'a> Checker<'a> {
         body.names.truncate(outer);
         body.vars.truncate(vars);
         body.facts.reset(known);
+        body.outer_loops -= loops;
+        body.loops = loops;
         types.push(gives);
         Ty::func(types)
     }
@@ -4821,6 +4878,108 @@ impl<'a> Checker<'a> {
             Want::Unused => Ty::Nothing,
             Want::Ty(t) if !t.unknown() => t.clone(),
             _ => first.unwrap_or(Ty::Nothing),
+        }
+    }
+
+    /// Checks a `loop`, which gives nothing. Over a range, its body runs once
+    /// for each whole number from the first end up to but not including the
+    /// second, and `arith` knows that in it. Open-ended, it runs until a
+    /// `break`, and its function carries `diverge`.
+    fn loop_expr(&mut self, body: &mut Body<'a>, l: &Loop) -> Ty {
+        let counter = match &l.range {
+            Some(r) => Some((r, self.range_type(body, r))),
+            None => {
+                self.needs(body, "diverge", l.pos, "an open-ended `loop`");
+                None
+            }
+        };
+        let outer = body.names.len();
+        let vars = body.vars.len();
+        let known = body.facts.mark();
+        if let Some((r, ty)) = counter {
+            if body.names.iter().any(|(n, _)| n == &r.name) {
+                self.errors.push(self.defined_twice(body, &r.name, r.pos));
+            }
+            body.names.push((r.name.clone(), ty));
+            self.assume_range(body, r);
+        }
+        body.loops += 1;
+        if let End::Value(gives, value) = self.block(body, &l.body, &Want::Unused)
+            && self.defs.is_result(&gives)
+        {
+            self.dropped(body, value, &gives);
+        }
+        body.loops -= 1;
+        body.names.truncate(outer);
+        body.vars.truncate(vars);
+        body.facts.reset(known);
+        Ty::Nothing
+    }
+
+    /// Checks the two ends of a range, which are whole numbers of one type,
+    /// and gives that type, which each number of the range has.
+    fn range_type(&mut self, body: &mut Body<'a>, r: &Range) -> Ty {
+        let defs = self.defs;
+        let (l, e) = match (flexible(&r.from), flexible(&r.to)) {
+            (true, false) => {
+                let e = self.expr(body, &r.to, &Want::Any);
+                let side = Self::side_want(&e);
+                (self.expr(body, &r.from, &side), e)
+            }
+            (false, true) => {
+                let l = self.expr(body, &r.from, &Want::Any);
+                let side = Self::side_want(&l);
+                let e = self.expr(body, &r.to, &side);
+                (l, e)
+            }
+            (_, _) => (
+                self.expr(body, &r.from, &Want::Any),
+                self.expr(body, &r.to, &Want::Any),
+            ),
+        };
+        match (&l, &e) {
+            (Ty::Unknown, _) | (_, Ty::Unknown) => Ty::Unknown,
+            (Ty::Int(a), Ty::Int(b)) if a == b => l.clone(),
+            (Ty::Int(a), Ty::Int(b)) => {
+                self.errors.push(Error::new(
+                    r.to.pos(),
+                    format!(
+                        "the two ends of a range need to be of one type, and the first is `{}` \
+                         where the second is `{}`",
+                        a.name(),
+                        b.name()
+                    ),
+                ));
+                Ty::Unknown
+            }
+            (Ty::Flex(_) | Ty::Int(_), Ty::Flex(_) | Ty::Int(_)) => {
+                use_at(r.pos);
+                if !flex_pair(&l, &e) {
+                    unreachable!("a number and a number")
+                }
+                if matches!(l, Ty::Flex(_)) && matches!(e, Ty::Flex(_)) {
+                    l.clone()
+                } else if matches!(l, Ty::Flex(_)) {
+                    e.clone()
+                } else {
+                    l.clone()
+                }
+            }
+            (a, b) => {
+                let other = if matches!(a, Ty::Int(_) | Ty::Flex(_)) {
+                    b
+                } else {
+                    a
+                };
+                let given = defs.describe(other, body.scope);
+                self.errors.push(Error::new(
+                    r.from.pos(),
+                    format!(
+                        "a `loop` runs over whole numbers, and an end of this range is {given}"
+                    ),
+                ));
+                Ty::Unknown
+            }
         }
     }
 

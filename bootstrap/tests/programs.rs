@@ -1502,8 +1502,7 @@ fn main_statement(
                 ("x ", "+= \"a\""),
                 ("x.y ", "-= \"a\""),
                 ("x ", "*= \"a\""),
-                ("", "break"),
-                ("", "loop {}"),
+                ("", "for i {}"),
                 ("x", "[0] = \"a\""),
             ]);
             b.push(before);
@@ -1672,7 +1671,7 @@ fn effects(b: &mut Builder, func: &Func, no_console: bool, main: bool) {
         let extra = match b.kind {
             Some(Kind::EffectNotBuilt) => {
                 let name =
-                    *b.g.pick(&["fs", "net", "time", "ui", "spawn", "gpu", "diverge", "exec"]);
+                    *b.g.pick(&["fs", "net", "time", "ui", "spawn", "gpu", "exec"]);
                 Some((name, NOT_BUILT.to_string()))
             }
             Some(Kind::UnknownEffect) => {
@@ -1933,7 +1932,7 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
         }
         Some(Kind::ExpressionNotBuilt) => {
             b.mark(NOT_BUILT, None);
-            b.pick(&["1.5", "-\"a\"", "[\"a\"]", "loop"]);
+            b.pick(&["1.5", "-\"a\"", "[\"a\"]", "for"]);
         }
         Some(Kind::Operator) => {
             literal_text(b, pieces, None);

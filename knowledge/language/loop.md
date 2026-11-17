@@ -2,7 +2,8 @@
 type: specification
 title: loop and iteration
 description: loop for steps that run in order, the Iterate trait, and break.
-status: planned
+status: partial
+built: "`loop i in a..b` over whole numbers of one type, which runs in order and not at all when `a >= b`, and an open-ended `loop`, each ended by `break`; not a `loop` over an array or an `Iterate` type, `reversed`, or `decreases`"
 ---
 
 # `loop` and iteration

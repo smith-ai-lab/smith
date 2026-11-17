@@ -15,7 +15,7 @@ use super::{
     Body, Checker, Int, Numbers, Signature, Ty, addr, params_of, written_expr, written_with,
 };
 use crate::diag::Error;
-use crate::parser::{ArithOp, Call, Expr, Form, Function, Pattern, Stmt};
+use crate::parser::{ArithOp, Call, Expr, Form, Function, Pattern, Range, Stmt};
 
 /// What a variable of `arith` stands for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -494,6 +494,45 @@ impl<'a> Checker<'a> {
         body.facts = facts;
     }
 
+    /// Notes that the name defined last, the number of a `loop` over the
+    /// range, is not below the first end and is below the second.
+    pub(super) fn assume_range(&mut self, body: &mut Body<'a>, r: &Range) {
+        let Some((_, Ty::Int(t))) = body.names.last().cloned() else {
+            return;
+        };
+        if !Self::decided(body) {
+            return;
+        }
+        let at = body.names.len() - 1;
+        let mut facts = std::mem::take(&mut body.facts);
+        let id = facts.id(Key::Name(at, t.min(), t.max()));
+        let me = Lin {
+            terms: BTreeMap::from([(id, 1)]),
+            constant: 0,
+        };
+        let (from, to) = {
+            let mut builder = self.builder(body, &mut facts, false);
+            let (from, to) = (builder.lin(&r.from), builder.lin(&r.to));
+            if builder.overflow {
+                (None, None)
+            } else {
+                (from, to)
+            }
+        };
+        // `i >= from`, and `i < to`, which is `to - i - 1 >= 0`.
+        if let Some(from) = from
+            && let Some(said) = self.sum(body, &mut facts, &me, &from, 0)
+        {
+            facts.known.push(said);
+        }
+        if let Some(to) = to
+            && let Some(said) = self.sum(body, &mut facts, &to, &me, -1)
+        {
+            facts.known.push(said);
+        }
+        body.facts = facts;
+    }
+
     /// That variable `id` is `given`, or none when a number grew too large.
     fn equal(&self, body: &Body<'a>, facts: &mut Facts, id: usize, given: &Lin) -> Option<Formula> {
         let me = Lin {
@@ -693,6 +732,8 @@ impl<'a> Checker<'a> {
             tails: Vec::new(),
             gives: sig.gives.clone(),
             contract: true,
+            loops: 0,
+            outer_loops: 0,
         };
         for e in &f.requires {
             self.contract(&mut body, e);
