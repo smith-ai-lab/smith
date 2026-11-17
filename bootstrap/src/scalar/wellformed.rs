@@ -246,6 +246,14 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     used(count, i, Type::Int(Bits::B64))?;
                 }
                 Op::System {
+                    call: System::Fail,
+                    args,
+                } => {
+                    if !args.is_empty() || !instruction.results.is_empty() {
+                        return Err(Why::WrongCount);
+                    }
+                }
+                Op::System {
                     call: System::Allocate,
                     args,
                 } => {

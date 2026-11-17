@@ -3,7 +3,7 @@ type: specification
 title: main
 description: The arguments main may take, and the Exit trait, which turns what main returns into the status a program ends with.
 status: partial
-built: "`main` with no parameter, or with one, `args: List[str]`, which holds the words after the program's name, as `smith run prog.smith one two` gives them, on every target; any other parameter is refused; not what `main` returns, or `Exit`"
+built: "`main` with no parameter, or with one, `args: List[str]`, which holds the words after the program's name, as `smith run prog.smith one two` gives them, on every target, and a word that is not valid UTF-8 ends the program before `main` as the page says; any other parameter is refused; not what `main` returns, or `Exit`"
 ---
 
 # `main`
@@ -21,6 +21,8 @@ fn main(args: List[str]) ! console, alloc {
 ```
 
 Started with the words `one` and `two` after its name, this prints `started with 2 arguments`. The program's name is not one of them.
+
+A `str` is always valid UTF-8, so a program that takes its words and is started with one that is not valid ends before `main` runs. It writes one line to standard error that says which word, counted from 1, is not valid, as in `argument 2 is not valid UTF-8`, and ends with status 1. No byte is replaced.
 
 ## The status
 

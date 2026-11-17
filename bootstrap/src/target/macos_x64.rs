@@ -101,5 +101,6 @@ impl System for Macos {
 fn fd(stream: Stream) -> u32 {
     match stream {
         Stream::Stdout => 1,
+        Stream::Stderr => 2,
     }
 }
