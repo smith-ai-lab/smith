@@ -30,6 +30,7 @@ mod generate;
 mod install;
 mod lambdas;
 mod lists;
+mod literals;
 mod loops;
 mod machines;
 mod numbers;
@@ -72,6 +73,7 @@ fn limited() -> Vec<Test> {
         arith::ONCE,
         contracts::ONCE,
         lists::ONCE,
+        literals::ONCE,
         loops::ONCE,
         props::TESTS,
         cli::ONCE,
@@ -114,6 +116,7 @@ fn main() -> ExitCode {
         arith::ONCE,
         contracts::ONCE,
         lists::ONCE,
+        literals::ONCE,
         loops::ONCE,
     ]
     .concat();

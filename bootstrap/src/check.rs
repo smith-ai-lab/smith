@@ -1566,6 +1566,11 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
     }
 }
 
+/// Whether `expr`, a number with `magnitude`, is a character outside ASCII.
+fn expr_is_wide_character(expr: &Expr, magnitude: u128) -> bool {
+    matches!(expr, Expr::Number { text, .. } if text.starts_with('\'')) && magnitude > 127
+}
+
 /// Whether an expression is a literal, or an operation on literals only,
 /// which takes the type of what it is used with.
 fn flexible(e: &Expr) -> bool {
@@ -2158,6 +2163,7 @@ fn pattern_names(pattern: &Pattern) -> Vec<(&str, Pos)> {
         Pattern::Bind { name, pos, .. } => vec![(name.as_str(), *pos)],
         Pattern::Case { inner, .. } => inner.as_deref().map_or(Vec::new(), pattern_names),
         Pattern::Tuple { items, .. } => items.iter().flat_map(pattern_names).collect(),
+        Pattern::Number { .. } | Pattern::Text { .. } => Vec::new(),
     }
 }
 
@@ -2995,10 +3001,15 @@ enum End<'e> {
 /// `Case` matches one case of an enum, by its place, and what it holds if a
 /// pattern for it is given, and `Tuple` matches a tuple whose elements its
 /// patterns match.
+///
+/// `Int` matches the whole number equal to it, and `Text` the text equal to
+/// it.
 enum Pat {
     Any,
     Case(usize, Option<Box<Pat>>),
     Tuple(Vec<Pat>),
+    Int(i128),
+    Text(Vec<u8>),
 }
 
 const ANY: Pat = Pat::Any;
@@ -3015,7 +3026,7 @@ fn specialize<'p>(rows: &[Vec<&'p Pat>], k: usize, holds: bool) -> Rows<'p> {
             let inner = match r[0] {
                 Pat::Any => &ANY,
                 Pat::Case(j, inner) if *j == k => inner.as_deref().unwrap_or(&ANY),
-                Pat::Case(..) | Pat::Tuple(_) => return None,
+                Pat::Case(..) | Pat::Tuple(_) | Pat::Int(_) | Pat::Text(_) => return None,
             };
             let mut row = if holds { vec![inner] } else { Vec::new() };
             row.extend(&r[1..]);
@@ -3096,6 +3107,20 @@ fn missing_rows(defs: &Defs, rows: &[Vec<&Pat>], tys: &[Ty]) -> Vec<Vec<String>>
             }
             out
         }
+        // No list of literals covers every number or every text.
+        Ty::Int(_) | Ty::Flex(_) | Ty::Text => {
+            let rows: Rows = (rows.iter())
+                .filter(|r| matches!(r[0], Pat::Any))
+                .map(|r| r[1..].to_vec())
+                .collect();
+            (missing_rows(defs, &rows, rest).into_iter())
+                .map(|left| {
+                    let mut row = vec!["_".to_string()];
+                    row.extend(left);
+                    row
+                })
+                .collect()
+        }
         _ => {
             let rows: Rows = rows.iter().map(|r| r[1..].to_vec()).collect();
             (missing_rows(defs, &rows, rest).into_iter())
@@ -3146,6 +3171,21 @@ fn useful_row(defs: &Defs, rows: &[Vec<&Pat>], row: &[&Pat], tys: &[Ty]) -> bool
                 let row = specialize(&[row.to_vec()], k, holds.is_some()).remove(0);
                 useful_row(defs, &rows, &row, &tys)
             }),
+        (_, Ty::Int(_) | Ty::Flex(_) | Ty::Text) => {
+            // A literal is matched again by the same literal and by a bare
+            // name, and a bare name only by a bare name.
+            let same = |p: &Pat| match (row[0], p) {
+                (_, Pat::Any) => true,
+                (Pat::Int(a), Pat::Int(b)) => a == b,
+                (Pat::Text(a), Pat::Text(b)) => a == b,
+                _ => false,
+            };
+            let rows: Rows = (rows.iter())
+                .filter(|r| same(r[0]))
+                .map(|r| r[1..].to_vec())
+                .collect();
+            useful_row(defs, &rows, &row[1..], rest)
+        }
         _ => {
             let rows: Rows = rows.iter().map(|r| r[1..].to_vec()).collect();
             useful_row(defs, &rows, &row[1..], rest)
@@ -4531,6 +4571,18 @@ impl<'a> Checker<'a> {
         } else {
             magnitude <= int.max() as u128
         };
+        // A character outside ASCII takes more than one byte in a text.
+        let wide = expr_is_wide_character(expr, magnitude);
+        if fits && wide && int.bits() == 8 {
+            self.errors.push(Error::new(
+                pos,
+                format!(
+                    "`{}` is not ASCII, so it takes more than one byte and is not a `{}`",
+                    written_expr(expr),
+                    int.name()
+                ),
+            ));
+        }
         if !fits {
             let because = match self.deciding {
                 Some(at) => format!(", as the use at {}:{} needs", at.line, at.col),
@@ -5059,7 +5111,12 @@ impl<'a> Checker<'a> {
         if !of.unknown() && patterns.iter().all(Option::is_some) {
             let all: Vec<&Pat> = patterns.iter().flatten().collect();
             let left = missing(defs, &all, &of);
-            if !left.is_empty() {
+            if left == ["_"] {
+                self.errors.push(
+                    Error::new(m.pos, "this `match` does not cover the rest of the values")
+                        .with_fix("end with a bare name that covers the rest"),
+                );
+            } else if !left.is_empty() {
                 let left: Vec<&str> = left.iter().map(String::as_str).collect();
                 let blocks = if left.len() == 1 { "a block" } else { "blocks" };
                 let left = names(&left);
@@ -5500,6 +5557,74 @@ impl<'a> Checker<'a> {
                     });
                 }
                 out.map(Pat::Tuple)
+            }
+            Pattern::Number {
+                text,
+                magnitude,
+                negative,
+                pos,
+            } => {
+                if assigned.is_some() {
+                    self.errors
+                        .push(Error::unsupported(*pos, "a literal in a binding's pattern"));
+                    return None;
+                }
+                let literal = Expr::Number {
+                    text: text.clone(),
+                    magnitude: *magnitude,
+                    negative: *negative,
+                    pos: *pos,
+                };
+                match ty {
+                    Ty::Unknown => None,
+                    Ty::Int(_) | Ty::Flex(_) => {
+                        let errors = self.errors.len();
+                        self.number(
+                            body,
+                            &literal,
+                            *magnitude,
+                            *negative,
+                            *pos,
+                            &Want::Ty(ty.clone()),
+                        );
+                        if self.errors.len() > errors {
+                            return None;
+                        }
+                        let value = i128::try_from(*magnitude).ok()?;
+                        Some(Pat::Int(if *negative { -value } else { value }))
+                    }
+                    other => {
+                        self.errors.push(Error::new(
+                            *pos,
+                            format!(
+                                "this is a number, and this matches {}",
+                                defs.describe(other, body.scope)
+                            ),
+                        ));
+                        None
+                    }
+                }
+            }
+            Pattern::Text { text, pos } => {
+                if assigned.is_some() {
+                    self.errors
+                        .push(Error::unsupported(*pos, "a literal in a binding's pattern"));
+                    return None;
+                }
+                match ty {
+                    Ty::Unknown => None,
+                    Ty::Text => Some(Pat::Text(text.clone())),
+                    other => {
+                        self.errors.push(Error::new(
+                            *pos,
+                            format!(
+                                "this is a text, and this matches {}",
+                                defs.describe(other, body.scope)
+                            ),
+                        ));
+                        None
+                    }
+                }
             }
             Pattern::Case { name, pos, inner } => {
                 let inner_list: Vec<&Pattern> = inner.as_deref().into_iter().collect();

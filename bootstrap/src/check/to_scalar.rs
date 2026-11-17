@@ -475,7 +475,9 @@ impl<'a> Lowering<'a> {
                     self.bind(out, item, t, values);
                 }
             }
-            Pattern::Case { .. } => unreachable!("checked"),
+            Pattern::Case { .. } | Pattern::Number { .. } | Pattern::Text { .. } => {
+                unreachable!("checked")
+            }
         }
     }
 
@@ -1760,6 +1762,82 @@ impl<'a> Lowering<'a> {
                     self.decide(out, arms, leaves, rows, &cols);
                 }
             }
+            Ty::Int(t) => {
+                // One choice between the blocks: the place of the literal
+                // that equals the value, or the number of literals when none
+                // does.
+                let literals = distinct(rows.iter().filter_map(|r| match r.patterns[c] {
+                    Some(Pattern::Number {
+                        magnitude,
+                        negative,
+                        ..
+                    }) => Some(signed(*magnitude, *negative)),
+                    _ => None,
+                }));
+                let bits = bits_of(*t);
+                let count = literals.len();
+                let place_bits = if count < 255 {
+                    form::Bits::B8
+                } else if count < 65_535 {
+                    form::Bits::B16
+                } else {
+                    form::Bits::B32
+                };
+                let mut place = out.int(place_bits, count as i128);
+                for (i, literal) in literals.iter().enumerate().rev() {
+                    let literal = out.int(bits, *literal);
+                    let same = out.compare(form::Compare::Equal, value[0], literal);
+                    let here = out.int(place_bits, i as i128);
+                    place = out.choose(same, here, place);
+                }
+                let blocks = out.switch(place, count + 1);
+                for (j, block) in blocks.iter().enumerate() {
+                    let (rows, cols) = around(Vec::new(), &|p| match p {
+                        None => Some(Vec::new()),
+                        Some(Pattern::Number {
+                            magnitude,
+                            negative,
+                            ..
+                        }) if literals.get(j) == Some(&signed(*magnitude, *negative)) => {
+                            Some(Vec::new())
+                        }
+                        Some(_) => None,
+                    });
+                    out.current = *block;
+                    self.decide(out, arms, leaves, rows, &cols);
+                }
+            }
+            Ty::Text => {
+                // The literals are tried in order, each by comparing bytes.
+                let literals = distinct(rows.iter().filter_map(|r| match r.patterns[c] {
+                    Some(Pattern::Text { text, .. }) => Some(text.clone()),
+                    _ => None,
+                }));
+                for literal in &literals {
+                    let mut args = value.clone();
+                    args.extend(self.text(out, literal));
+                    let same = self.call_runtime(
+                        out,
+                        Runtime::Equal,
+                        args,
+                        vec![form::Type::Int(form::Bits::B8)],
+                    )[0];
+                    let blocks = out.switch(same, 2);
+                    let (rows, cols) = around(Vec::new(), &|p| match p {
+                        None => Some(Vec::new()),
+                        Some(Pattern::Text { text, .. }) if text == literal => Some(Vec::new()),
+                        Some(_) => None,
+                    });
+                    out.current = blocks[1];
+                    self.decide(out, arms, leaves, rows, &cols);
+                    out.current = blocks[0];
+                }
+                let (rows, cols) = around(Vec::new(), &|p| match p {
+                    None => Some(Vec::new()),
+                    Some(_) => None,
+                });
+                self.decide(out, arms, leaves, rows, &cols);
+            }
             _ => unreachable!("checked"),
         }
     }
@@ -1828,4 +1906,21 @@ impl<'a> Lowering<'a> {
         }
         fields.concat()
     }
+}
+
+/// The value of a whole number literal.
+fn signed(magnitude: u128, negative: bool) -> i128 {
+    let magnitude = magnitude as i128;
+    if negative { -magnitude } else { magnitude }
+}
+
+/// The items, each once, in the order they first come.
+fn distinct<T: PartialEq>(items: impl Iterator<Item = T>) -> Vec<T> {
+    let mut out: Vec<T> = Vec::new();
+    for item in items {
+        if !out.contains(&item) {
+            out.push(item);
+        }
+    }
+    out
 }
