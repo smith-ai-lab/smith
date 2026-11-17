@@ -28,17 +28,18 @@ A test exists to fail when something that must be true stops being true, and for
 - **A test that starts a program or a thread has not spent that time.** Call a function where you can, and start a program only to check what starting it does.
 - **Aim for under half the limit,** so that a slower machine still passes. Work that every test of a file needs is done once, in a place that `OnceLock` holds, and costs the first test that asks for it.
 - **A property runs as few cases as make it fail when what it checks is broken.** Break the code once and watch it fail with the cases you chose.
-- **The limit applies to a file at a time,** to the files `limited` in `bootstrap/tests/main.rs` lists. A file joins when every test in it is under the limit and never leaves. The list is there only until every file is on it, and the issue that adds the last file deletes it.
+- **The limit applies to every test.** A test starts no thread, as the time of a thread is not the time of its own.
 - **A run fails on the kind of machine the `linux` job of `ci` uses,** and elsewhere prints a slow test and passes.
 
 ## Where each kind goes
 
-- **Properties** run in-process over generated input, with a fixed seed so a failure repeats, and shrink a failing input before reporting it.
+- **Properties** run in-process over generated input, from the seed of the run, which a commit fixes and which a failure prints as `SMITH_SEED`, and shrink a failing input before reporting it.
 - **Specific cases** are `.smith` files with their expected output beside them, updated by one command and reviewed as a diff. Add one when a bug is fixed, so it stays fixed.
 - **Targets** share one set of tests that runs over every target. A test written for one target belongs in that set instead.
 
 ## Before you finish
 
+- Run `sh sweep/sweep.sh run` in `bootstrap/` and `sh sweep/sweep.sh report`. A test of yours that alone catches nothing is removed, or its cases are given to the property that covers them.
 - Every line of the issue's "Must be true" has a test.
 - No test you added names a place or a message by hand.
 - The run ends with its slowest tests, by the time they computed. If one of yours is on the list, make its input smaller.

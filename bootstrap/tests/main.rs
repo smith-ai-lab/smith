@@ -6,7 +6,8 @@
 //! hold one of them.
 //!
 //! A test that computes for more than a second fails the run, and the run
-//! names it, as `LIMIT` says.
+//! names it, as `LIMIT` says. A test starts no thread, as the time of a
+//! thread it starts is not the time of its own.
 //!
 //! `--fingerprint` runs nothing. It prints, for each target, a hash of
 //! everything the group that depends on the machine would run for it, as
@@ -59,32 +60,6 @@ const SLOWEST: usize = 70;
 /// What a test may compute for, as `clock` measures it.
 const LIMIT: Duration = Duration::from_secs(1);
 
-/// The tests the limit applies to, a file at a time. A file joins when every
-/// test in it is under the limit, and never leaves. This list is a stopgap:
-/// the issue that adds the last file deletes it, and the limit then applies
-/// to every test with nothing here to keep by hand. The files that are not
-/// here are `machines.rs`, whose tests share a fingerprint that is made in
-/// `targets.rs`, and `targets.rs`, which is being rewritten.
-fn limited() -> Vec<Test> {
-    let tests = [
-        alloc::ONCE,
-        arith::ONCE,
-        contracts::ONCE,
-        loops::ONCE,
-        props::TESTS,
-        cli::ONCE,
-        cli::MACHINE,
-        check::ONCE,
-        release::ONCE,
-        scalar::ONCE,
-    ]
-    .concat();
-    // The installer is for macOS and Linux, and its tests run where a shell does.
-    #[cfg(unix)]
-    let tests = [tests, install::ONCE.to_vec()].concat();
-    tests
-}
-
 /// Whether a test over the limit fails the run. It does on the kind of
 /// machine that the `linux` job of `ci` uses, where every limited test
 /// runs, and elsewhere is only printed.
@@ -93,14 +68,16 @@ const ENFORCED: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--fingerprint") {
-        for (target, hash) in targets::fingerprint(smith::compile) {
+        // The executables are the same for every commit, so that a change
+        // that leaves them as they were needs no machine.
+        generate::set_run_seed(0);
+        for (target, hash) in targets::fingerprint(&targets::machine(), smith::compile) {
             println!("{} {hash}", target.name());
         }
         return ExitCode::SUCCESS;
     }
     let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let once = [
-        machines::FIRST,
         props::TESTS,
         cli::ONCE,
         check::ONCE,
@@ -139,6 +116,10 @@ fn main() -> ExitCode {
     let results = Mutex::new(Vec::new());
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
     println!("running {} tests", tests.len());
+    println!(
+        "seed {} (SMITH_SEED=<it> runs the same cases again)",
+        generate::run_seed()
+    );
     std::thread::scope(|s| {
         for _ in 0..workers.min(tests.len()) {
             s.spawn(|| {
@@ -182,10 +163,9 @@ fn main() -> ExitCode {
     for (name, _, time) in results.iter().take(SLOWEST) {
         println!("{:>10}  {name}", milliseconds(*time));
     }
-    let limited = limited();
     let slow: Vec<&str> = results
         .iter()
-        .filter(|(name, _, time)| *time > LIMIT && limited.iter().any(|(l, _)| l == name))
+        .filter(|(_, _, time)| *time > LIMIT)
         .map(|(name, _, _)| *name)
         .collect();
     for name in &slow {
