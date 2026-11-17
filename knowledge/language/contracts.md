@@ -3,7 +3,7 @@ type: specification
 title: Contracts and proofs
 description: requires, ensures, and check, what the arith procedure can prove, termination, and hole.
 status: partial
-built: "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, and the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`"
+built: "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, and the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`; and `requires` and `ensures` on a function, each a comparison of whole numbers joined the same way over its parameters and the result's name, which `arith` proves of the arguments at every call and of what the function returns at each place it returns, and takes as facts in the other place"
 ---
 
 # Contracts and proofs

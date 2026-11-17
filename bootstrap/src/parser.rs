@@ -107,7 +107,13 @@ pub struct Function {
     pub params: Vec<Param>,
     /// The type after `->`, if there is one.
     pub result: Option<Type>,
+    /// The name the signature gives the result, if it gives one.
+    pub result_name: Option<(String, Pos)>,
     pub effects: Effects,
+    /// What the caller owes, one expression for each `requires`.
+    pub requires: Vec<Expr>,
+    /// What the function gives, one expression for each `ensures`.
+    pub ensures: Vec<Expr>,
     pub body: Vec<Stmt>,
     /// Where the `}` that closes the body is.
     pub end: Pos,
@@ -117,8 +123,30 @@ pub struct Function {
 type Effects = Vec<(String, Pos)>;
 
 /// A function's name and where it is, its type parameters, its
-/// parameters, its result, and its effects.
-type Signature = (String, Pos, Vec<Generic>, Vec<Param>, Option<Type>, Effects);
+/// parameters, its result with the name it is given, and its effects.
+type Signature = (
+    String,
+    Pos,
+    Vec<Generic>,
+    Vec<Param>,
+    Option<Type>,
+    Option<(String, Pos)>,
+    Effects,
+);
+
+/// A function's signature and its contracts: what its `requires` lines say,
+/// then what its `ensures` lines say.
+type BodySignature = (
+    String,
+    Pos,
+    Vec<Generic>,
+    Vec<Param>,
+    Option<Type>,
+    Option<(String, Pos)>,
+    Effects,
+    Vec<Expr>,
+    Vec<Expr>,
+);
 
 /// A parameter, its type, and its default, if it has one.
 #[derive(Debug, PartialEq, Eq)]
@@ -1070,7 +1098,7 @@ impl Parser<'_> {
                 Tok::Keyword("fn") => {}
                 tok => return Err(self.expected("a function's signature or `}`", tok)),
             }
-            let (name, pos, generics, params, result, effects) = self.signature()?;
+            let (name, pos, generics, params, result, result_name, effects) = self.signature()?;
             match self.tok() {
                 Tok::Newline | Tok::Punct("}") => {}
                 Tok::Keyword("requires" | "ensures") => {
@@ -1084,7 +1112,10 @@ impl Parser<'_> {
                 generics,
                 params,
                 result,
+                result_name,
                 effects,
+                requires: Vec::new(),
+                ensures: Vec::new(),
                 body: Vec::new(),
                 end: pos,
             });
@@ -1150,15 +1181,16 @@ impl Parser<'_> {
     /// is given back, for the implementation to report. Elsewhere it is
     /// recorded, and the function is skipped.
     fn function(&mut self, from: usize, nested: bool) -> Result<Option<Function>, Error> {
-        let (name, pos, generics, params, result, effects) = match self.body_signature() {
-            Ok(signature) => signature,
-            Err(e) if nested => return Err(e),
-            Err(e) => {
-                self.errors.push(e);
-                self.skip_item(from);
-                return Ok(None);
-            }
-        };
+        let (name, pos, generics, params, result, result_name, effects, requires, ensures) =
+            match self.body_signature() {
+                Ok(signature) => signature,
+                Err(e) if nested => return Err(e),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.skip_item(from);
+                    return Ok(None);
+                }
+            };
         let mut block = Block::default();
         let mut ok = true;
         let end = loop {
@@ -1210,24 +1242,49 @@ impl Parser<'_> {
             generics,
             params,
             result,
+            result_name,
             effects,
+            requires,
+            ensures,
             body: block.finish(end),
             end,
         }))
     }
 
     /// Parses a function's signature, through the `{` that opens its body.
-    fn body_signature(&mut self) -> Result<Signature, Error> {
-        let signature = self.signature()?;
-        self.skip_newlines();
+    fn body_signature(&mut self) -> Result<BodySignature, Error> {
+        let (name, pos, generics, params, result, result_name, effects) = self.signature()?;
+        let (mut requires, mut ensures) = (Vec::new(), Vec::new());
+        loop {
+            self.skip_newlines();
+            let keyword = match self.tok() {
+                Tok::Keyword(k @ ("requires" | "ensures")) => *k,
+                _ => break,
+            };
+            self.bump();
+            let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+            let statement = self.expr();
+            self.no_lambda = no_lambda;
+            match keyword {
+                "requires" => requires.push(statement?),
+                _ => ensures.push(statement?),
+            }
+        }
         match self.tok() {
             Tok::Punct("{") => self.bump(),
-            Tok::Keyword("requires" | "ensures") => {
-                return Err(Error::unsupported(self.pos(), "a contract"));
-            }
             tok => return Err(self.expected("`{` to open the function's body", tok)),
         }
-        Ok(signature)
+        Ok((
+            name,
+            pos,
+            generics,
+            params,
+            result,
+            result_name,
+            effects,
+            requires,
+            ensures,
+        ))
     }
 
     /// Parses a function's signature, through its list of effects.
@@ -1256,10 +1313,15 @@ impl Parser<'_> {
         }
         self.bump();
         let mut result = None;
+        let mut result_name = None;
         if self.tok() == &Tok::Punct("->") {
             self.bump();
-            if matches!(self.tok(), Tok::Ident(_)) && self.next_tok() == &Tok::Punct(":") {
-                return Err(Error::unsupported(self.pos(), "a named result"));
+            if let Tok::Ident(n) = self.tok()
+                && self.next_tok() == &Tok::Punct(":")
+            {
+                result_name = Some((n.to_string(), self.pos()));
+                self.bump();
+                self.bump();
             }
             result = Some(self.ty()?);
         }
@@ -1281,7 +1343,7 @@ impl Parser<'_> {
         {
             self.bump();
         }
-        Ok((name, pos, generics, params, result, effects))
+        Ok((name, pos, generics, params, result, result_name, effects))
     }
 
     /// Parses the value of a default, which holds no `try`: it is not a

@@ -96,7 +96,6 @@ enum Kind {
     ItemAfter,
     NoName,
     GenericParameter,
-    Contract,
     ExpressionNotBuilt,
     Operator,
     StatementNotBuilt,
@@ -157,7 +156,6 @@ const KINDS: &[Kind] = &[
     Kind::ItemAfter,
     Kind::NoName,
     Kind::GenericParameter,
-    Kind::Contract,
     Kind::ExpressionNotBuilt,
     Kind::Operator,
     Kind::StatementNotBuilt,
@@ -1334,11 +1332,6 @@ fn function(b: &mut Builder, m: &Model, f: usize, site: bool, around: Option<&Ex
         b.push(m.type_name(ty));
     }
     effects(b, func, here(Kind::NoConsole), f == 0);
-    if here(Kind::Contract) {
-        b.pick(&[" ", "\n"]);
-        b.mark(NOT_BUILT, None);
-        b.push("requires true");
-    }
     b.pick(&[" ", "\n", "  ", "\n// the body\n"]);
     b.push("{");
 
