@@ -70,23 +70,43 @@ The type of `scale` is `(f32, f32) -> f32`, so `twice(8.0, scale)` is refused: "
 fn quarter_scale(x: f32) -> f32 { twice(x) fn(v) { scale(v) } }
 ```
 
-## Storing and returning a function
+## Binding, storing, and returning a function
 
-Unlike a lambda, a function with a name can be stored and returned, because it holds nothing that belongs to another function.
+Whatever gives a function can be called, and a call is written after a name, a field, or another call alike. A function with a name is a value, so it can be bound to a name and called by that name.
+
+```
+fn eight() -> f32 {
+  f = half
+  f(8.0)
+}
+```
+
+`eight()` is `4.0`.
+
+Unlike a lambda, a function with a name can also be stored and returned, because it holds nothing that belongs to another function. A function stored in a field is called by reading the field and calling what it gives. Smith has no methods, so `a.b(c)` always means that.
 
 ```
 struct Pricing {
   discount: (f32) -> f32
 }
 
-sale = Pricing(discount: half)
+fn sale_price(x: f32) -> f32 {
+  sale = Pricing(discount: half)
+  sale.discount(x)
+}
 ```
 
-A function that returns a function says so in its return type, which is a function type.
+`sale_price(8.0)` is `4.0`.
+
+A function that returns a function says so in its return type, which is a function type, and what it returns is called the same way.
 
 ```
 fn chosen() -> (f32) -> f32 { half }
+
+fn chosen_half(x: f32) -> f32 { chosen()(x) }
 ```
+
+`chosen_half(8.0)` is `4.0`. The result may also be bound first, as `f = chosen()` and then `f(x)`.
 
 ## The forms
 
@@ -95,8 +115,11 @@ fn chosen() -> (f32) -> f32 { half }
 | `half` | The function named `half`, as a value of type `(f32) -> f32` |
 | `half(1.0)` | A call, which gives what `half` gives, not a function |
 | `twice(x, half)` | A function with a name passed to a call |
+| `f = half` then `f(x)` | A function bound to a name, and called by it |
 | `discount: half` | A function with a name stored in a field |
+| `sale.discount(x)` | The function in a field, called |
 | `-> (f32) -> f32` | A return type that is a function |
+| `chosen()(x)` | The function a call returns, called |
 | `fn(v) { scale(v) }` | A lambda, the way to pass a function that has defaults |
 
 Next: [`with`](with.md)
