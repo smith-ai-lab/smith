@@ -27,4 +27,4 @@ The design follows four principles:
 - Effects are permissions. What a function may do is visible in its signature.
 - No dependencies. Everything is written in Smith, with no other language in a Smith program.
 
-Next: [Functions](functions.md)
+Next: [A first program](first-program.md)
