@@ -27,7 +27,7 @@ Every literal form is backed by a trait, and the expected type picks which imple
 
   Integers also have bitwise operations and shifts, as named functions.
 
-Integer arithmetic never overflows silently. A plain `+`, `-`, or `*` compiles only when the result provably fits, and no check is ever inserted behind the author's back. When the compiler cannot prove it, the author picks a behaviour by name. The proof machinery appears under [Contracts and proofs](contracts.md).
+Integer arithmetic never overflows silently. A plain `+`, `-`, or `*` compiles only when the result provably fits the type of its operands, each operation by itself, and no check is ever inserted behind the author's back. When the compiler cannot prove it, the author picks a behaviour by name. The proof machinery appears under [Contracts and proofs](contracts.md).
 
 ```
 // Does not compile: i may be 255.

@@ -24,7 +24,7 @@ fn clamp(x: f32, lo: f32, hi: f32) -> r: f32
 }
 ```
 
-A statement about values, such as `n > 0`, is a type, and a value of that type is a proof of the statement. A contract is a proof that travels with a call. `requires` is a proof the caller passes, and `ensures` is a proof the function gives back with its result. Neither is written out: `arith`, a small deterministic procedure for arithmetic, builds them. The compiler only checks. It never searches for a proof.
+A statement about values, such as `n > 0`, is a type, and a value of that type is a proof of the statement. A contract is a proof that travels with a call. `requires` is a proof the caller passes, and `ensures` is a proof the function gives back with its result. Most are never written out: `arith`, a small deterministic procedure for arithmetic, builds them. Where `arith` cannot, the author supplies the proof. The compiler only checks. It never searches for a proof, and nothing is ever tested at run time in a proof's place.
 
 | Keyword | Who owes the proof | About |
 | --- | --- | --- |
@@ -38,6 +38,8 @@ A statement about values, such as `n > 0`, is a type, and a value of that type i
 - It does not reason about a product of two variables, or about dividing by a variable. It treats such a term as one unknown quantity, and knows only the facts stated about that same term.
 - When it cannot prove a goal, the compiler reports the goal. The author supplies the missing fact with a `requires`, with a `check`, or with a type that carries the proof.
 - A subtraction `a - b` on `Nat` compiles only when `arith` can show `b <= a`.
+- It uses every fact in scope: the range of each value's type, the value of a literal, the condition of an `if` or a `match` block it is inside, the range of a `loop i in a..b`, the function's `requires`, the `ensures` of a function that was called, and every proof it can see, as a value or as a field of a value.
+- A `var` has the facts its type states, and, where no loop assigns it, those of the value it was last given.
 
 So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller with sizes known only at run time gets it from a `check`.
 
@@ -57,9 +59,24 @@ fn token[v: Nat](raw: Nat) -> Option[Fin[v]] {
 }
 ```
 
+A fact that must hold each time round a `loop` is stated in a type, since a `var`'s type never changes. A place in a source text that is never past its end is such a type, and when the field for the proof is left out of a construction, `arith` builds it, or the construction is an error.
+
+```
+struct Cursor[size: Nat] {
+  at: Nat
+  inside: at <= size
+}
+
+fn step[size: Nat](c: Cursor[size]) -> Cursor[size] {
+  if c.at < size { Cursor(at: c.at + 1) } else { c }
+}
+```
+
+Inside the `if`, `c.at < size` gives `c.at + 1 <= size`, which is the proof the new `Cursor` needs, and it shows that `c.at + 1` fits.
+
 There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](tasks.md) when the system runs out of what they stand for.
 
-- A proof comes from `arith` or from a `check` that passed, and it is erased before code generation. `check` and `hole` are built in, because nothing written in Smith could make a proof from nothing.
+- A proof is a value. It is passed, returned, and held in a field like any other, and a function that takes proofs and returns one proves a fact once for every place that needs it, which is how a fact `arith` does not decide is supplied. Every proof starts from `arith` or from a `check` that passed, and it is erased before code generation. `check` and `hole` are built in, because nothing written in Smith could make a proof from nothing.
 - Predicates used in contracts are ordinary functions returning `bool`, so a contract can be run on real data.
 - Every function terminates unless it carries `diverge`, which means it may not finish. Structural recursion is accepted automatically, and anything else states a decreasing measure. Callers inherit `diverge`, and it is not allowed in a contract or a GPU kernel.
 - `hole(name)` stands in for code or a proof not yet written. The compiler reports the type and the goal it needs.
