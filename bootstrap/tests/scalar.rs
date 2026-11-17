@@ -106,6 +106,22 @@ pub const ONCE: &[Test] = &[
         "a_jump_that_gives_the_wrong_parameters_is_refused",
         a_jump_that_gives_the_wrong_parameters_is_refused,
     ),
+    (
+        "inlining_gives_a_well_formed_program_that_does_what_it_did",
+        inlining_gives_a_well_formed_program_that_does_what_it_did,
+    ),
+    (
+        "inlining_leaves_no_call_the_rule_replaces_and_no_function_nothing_calls",
+        inlining_leaves_no_call_the_rule_replaces_and_no_function_nothing_calls,
+    ),
+    (
+        "inlining_gives_the_same_program_every_time_and_grows_it_by_a_bounded_amount",
+        inlining_gives_the_same_program_every_time_and_grows_it_by_a_bounded_amount,
+    ),
+    (
+        "inlining_replaces_calls_of_small_functions_and_of_functions_called_once",
+        inlining_replaces_calls_of_small_functions_and_of_functions_called_once,
+    ),
 ];
 
 /// The values an instruction reads.
@@ -1160,4 +1176,117 @@ fn two_texts_are_equal_when_they_have_the_same_bytes() {
         let expected = if a == b { b"1" } else { b"0" };
         assert_eq!((ran.status, ran.stdout), (0, expected.to_vec()));
     });
+}
+
+/// Every call in the program: the function that holds it, and the function
+/// it calls.
+fn calls_of(p: &scalar::Program) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    for (holder, f) in p.functions.iter().enumerate() {
+        for i in f.blocks.iter().flat_map(|b| &b.instructions) {
+            if let Op::Call { function, .. } = i.op {
+                found.push((holder, function));
+            }
+        }
+    }
+    found
+}
+
+fn inlining_gives_a_well_formed_program_that_does_what_it_did() {
+    let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
+    for (l, s) in taken() {
+        let after = scalar::inline(s);
+        if let Err(malformed) = scalar::check(&after) {
+            panic!("{malformed:?} in {after:?}");
+        }
+        for limit in limits {
+            let before = scalar::run_with_limit(s, limit);
+            let ran = scalar::run_with_limit(&after, limit);
+            assert_eq!(ran, before, "with a limit of {limit}: {:?}", l.scalar);
+        }
+    }
+}
+
+fn inlining_leaves_no_call_the_rule_replaces_and_no_function_nothing_calls() {
+    for (_, s) in taken() {
+        let after = scalar::inline(s);
+        let calls = calls_of(&after);
+        for &(_, callee) in &calls {
+            let sites = calls.iter().filter(|(_, c)| *c == callee).count();
+            let size = scalar::size(&after.functions[callee]);
+            assert!(
+                sites > 1 && size > scalar::BOUND,
+                "a call of a function with {sites} calls and a size of {size} is left"
+            );
+        }
+        for function in 0..after.functions.len() {
+            assert!(
+                function == after.main || calls.iter().any(|(_, c)| *c == function),
+                "function {function} is called by nothing"
+            );
+        }
+    }
+}
+
+fn inlining_gives_the_same_program_every_time_and_grows_it_by_a_bounded_amount() {
+    for (_, s) in taken() {
+        let after = scalar::inline(s);
+        assert_eq!(after, scalar::inline(s));
+        let size = |p: &scalar::Program| -> usize { p.functions.iter().map(scalar::size).sum() };
+        // Each call is replaced by at most one function's worth of the
+        // size the rule allows, so the work is a walk over the program it
+        // gives, with nothing repeated until it stops changing.
+        let calls = calls_of(s).len();
+        assert!(
+            size(&after) <= size(s) + calls * scalar::BOUND,
+            "{} from {}",
+            size(&after),
+            size(s)
+        );
+        assert_eq!(scalar::inline(&after), after);
+    }
+}
+
+/// A function of the given size that returns its parameter, and a `main`
+/// that calls it from as many places as asked.
+fn caller_of(callee_size: usize, calls: usize) -> scalar::Program {
+    let int = Type::Int(Bits::B64);
+    let mut f = Builder::new();
+    let [p] = f.params(&[int])[..] else { panic!() };
+    let mut last = p;
+    for _ in 1..callee_size {
+        last = f.binary(scalar::Binary::Add, last, p);
+    }
+    f.ret(vec![last]);
+    let callee = f.finish(&[int]);
+    let mut m = Builder::new();
+    let one = m.int(Bits::B64, 1);
+    for _ in 0..calls {
+        m.call(1, vec![one], &[int]);
+    }
+    m.ret(Vec::new());
+    scalar::Program {
+        data: Vec::new(),
+        functions: vec![m.finish(&[]), callee],
+        main: 0,
+    }
+}
+
+fn inlining_replaces_calls_of_small_functions_and_of_functions_called_once() {
+    // A function that is called once is replaced however large.
+    let big = scalar::BOUND * 10;
+    let once = scalar::inline(&caller_of(big, 1));
+    assert!(calls_of(&once).is_empty());
+    assert_eq!(once.functions.len(), 1);
+    // One that is called more often is replaced only when it is small.
+    // A function of size n holds n - 1 instructions and one end.
+    let small = scalar::inline(&caller_of(scalar::BOUND, 3));
+    assert!(calls_of(&small).is_empty());
+    assert_eq!(small.functions.len(), 1);
+    let large = scalar::inline(&caller_of(scalar::BOUND + 1, 3));
+    assert_eq!(calls_of(&large).len(), 3);
+    assert_eq!(large.functions.len(), 2);
+    for p in [once, small, large] {
+        scalar::check(&p).unwrap();
+    }
 }

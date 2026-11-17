@@ -48,6 +48,7 @@ pub fn compile_timed(
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
     let program = lower_timed(source, timings)?;
+    let program = timings.stage("inline", || scalar::inline(&program));
     Ok(timings.stage("emit", || target.emit(&program)))
 }
 
