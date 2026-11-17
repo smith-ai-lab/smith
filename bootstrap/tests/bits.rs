@@ -29,6 +29,10 @@ pub const ONCE: &[Test] = &[
         narrow_compiles_exactly_when_the_value_is_proven_to_fit,
     ),
     (
+        "what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing",
+        what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing,
+    ),
+    (
         "narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert",
         narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert,
     ),
@@ -304,6 +308,44 @@ fn narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert() {
                     to.name
                 );
             }
+        }
+    }
+}
+
+/// For every pair of types that `narrow` goes between, a fact about a value
+/// that fits is known of what `narrow` gives, so a function that needs it
+/// of the result is called, and one that needs a fact that is false of the
+/// value is refused. `wrapping_narrow` and `saturating_narrow` give a number
+/// that `arith` knows nothing of when the value is not proven to fit, so
+/// each is refused whatever is known of the value.
+fn what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing() {
+    for (from, to) in narrowings() {
+        let k = to.max().min(from.max()) / 2;
+        let mut known = bounds(from, to);
+        known.push(format!("x <= {k}"));
+        let program = |function: &str, needed: i128, requires: &str| {
+            format!(
+                "fn g(y: {to_t}) -> {to_t}\n  requires y <= {needed}\n{{\n  y\n}}\n\nfn f(x: {from_t}) -> {to_t}\n{requires}{{\n  y: {to_t} = {function}(x)\n  g(y)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
+                to_t = to.name,
+                from_t = from.name,
+            )
+        };
+        let requires = format!("  requires {}\n", known.join(" and "));
+        let name = format!("{} to {}", from.name, to.name);
+        assert!(
+            compiles(&program("narrow", k, &requires)).is_ok(),
+            "narrow from {name}"
+        );
+        assert!(
+            compiles(&program("narrow", k - 1, &requires)).is_err(),
+            "narrow from {name} when the fact is false of the value"
+        );
+        // The same fact is known of the value, and nothing of its narrowing.
+        for function in ["wrapping_narrow", "saturating_narrow"] {
+            assert!(
+                compiles(&program(function, k, &requires)).is_err(),
+                "{function} from {name}"
+            );
         }
     }
 }

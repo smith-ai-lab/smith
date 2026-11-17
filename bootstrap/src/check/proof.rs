@@ -9,7 +9,7 @@
 //! but the range of its type, except inside one round of a loop that assigns
 //! it, where the value it holds is tracked as a sum of the variables.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::arith::{Formula, Lin, proves};
 use super::{
@@ -130,6 +130,8 @@ impl Facts {
 struct Builder<'b, 'a> {
     body: &'b Body<'a>,
     types: &'b HashMap<usize, Ty>,
+    /// The calls of `narrow`, which give the number they are given.
+    narrowed: &'b HashSet<usize>,
     facts: &'b mut Facts,
     /// Whether an expression arith knows nothing of is a variable of its own,
     /// as it is when a goal is asked, and not left out, as it is for a fact.
@@ -281,6 +283,9 @@ impl Builder<'_, '_> {
                     }
                 })
             }
+            Expr::Call(call) if self.narrowed.contains(&addr(call)) => {
+                self.lin(&call.args[0].value)
+            }
             Expr::Call(call) => {
                 let (lo, hi) = match self.types.get(&addr(e)) {
                     Some(Ty::Int(t)) => (t.min(), t.max()),
@@ -350,6 +355,7 @@ impl<'a> Checker<'a> {
         Builder {
             body,
             types: &self.types,
+            narrowed: &self.narrowed,
             facts,
             goal,
             overflow: false,
