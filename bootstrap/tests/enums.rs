@@ -518,7 +518,7 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
         match g.below(4) {
             0 => m
                 .main
-                .push(Stmt::Raw("w = ".into(), "[note]".into(), NOT_BUILT.into())),
+                .push(Stmt::Raw("w = ".into(), "1.5".into(), NOT_BUILT.into())),
             1 => m.main.push(Stmt::Raw(
                 "w = ".into(),
                 "for i { note }".into(),

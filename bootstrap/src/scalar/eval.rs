@@ -31,6 +31,8 @@ struct Machine<'a> {
     stdout: Vec<u8>,
     /// How many bytes the system will still give.
     left: usize,
+    /// How many bytes each request to the system for memory has asked for.
+    requests: Vec<usize>,
 }
 
 /// The system refused to give memory, so the program ends.
@@ -46,6 +48,12 @@ pub fn run(program: &Program) -> Outcome {
 /// than `limit` bytes in all, and a request for more ends the program with
 /// status 1.
 pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
+    run_counting(program, limit).0
+}
+
+/// Runs the program as `run_with_limit` does, and also gives how many bytes
+/// each request to the system for memory asked for, in order.
+pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
     let mut memory = Vec::new();
     let mut starts = Vec::new();
     for text in &program.data {
@@ -58,15 +66,19 @@ pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
         starts,
         stdout: Vec::new(),
         left: limit,
+        requests: Vec::new(),
     };
     let status = match machine.call(program.main, Vec::new()) {
         Ok(_) => 0,
         Err(Refused) => 1,
     };
-    Outcome {
-        stdout: machine.stdout,
-        status,
-    }
+    (
+        Outcome {
+            stdout: machine.stdout,
+            status,
+        },
+        machine.requests,
+    )
 }
 
 /// Runs one function of the program on integers, and gives the integers it
@@ -79,6 +91,7 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
         starts: Vec::new(),
         stdout: Vec::new(),
         left: usize::MAX,
+        requests: Vec::new(),
     };
     let words = args.iter().map(|n| Word::Int(*n)).collect();
     (machine
@@ -260,6 +273,7 @@ impl Machine<'_> {
                         let Word::Int(count) = get(&args[0]) else {
                             panic!("a request for memory that is not a number")
                         };
+                        self.requests.push(count as usize);
                         if count > self.left as u64 {
                             return Err(Refused);
                         }

@@ -29,6 +29,7 @@ mod generate;
 #[cfg(unix)]
 mod install;
 mod lambdas;
+mod lists;
 mod loops;
 mod machines;
 mod numbers;
@@ -70,6 +71,7 @@ fn limited() -> Vec<Test> {
         alloc::ONCE,
         arith::ONCE,
         contracts::ONCE,
+        lists::ONCE,
         loops::ONCE,
         props::TESTS,
         cli::ONCE,
@@ -111,6 +113,7 @@ fn main() -> ExitCode {
         alloc::ONCE,
         arith::ONCE,
         contracts::ONCE,
+        lists::ONCE,
         loops::ONCE,
     ]
     .concat();

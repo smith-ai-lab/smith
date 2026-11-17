@@ -23,7 +23,7 @@ mod wellformed;
 
 pub use build::Builder;
 pub use common::common;
-pub use eval::{Outcome, call, run, run_with_limit};
+pub use eval::{Outcome, call, run, run_counting, run_with_limit};
 pub use fold::fold;
 pub use inline::{BOUND, inline, size};
 pub use remove::remove;

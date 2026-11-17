@@ -55,7 +55,7 @@ const TEXT: &str = "str";
 /// The types the language and its library define that the compiler does
 /// not build yet.
 const TYPES_NOT_BUILT: &[&str] = &[
-    "usize", "f16", "bf16", "f32", "f64", "Nat", "Pos", "Fin", "Ptr", "List", "Map",
+    "usize", "f16", "bf16", "f32", "f64", "Nat", "Pos", "Fin", "Ptr", "Map",
 ];
 
 /// The whole number types, which the compiler builds.
@@ -344,6 +344,9 @@ enum Ty {
     Enum(usize, Vec<Ty>),
     /// A tuple of two values or more, with the type of each.
     Tuple(Vec<Ty>),
+    /// A `List` of whole numbers or `bool`s, which holds its one element
+    /// type.
+    List(Vec<Ty>),
     /// A function: the types of its parameters, followed by the type it
     /// gives.
     Fn(Vec<Ty>),
@@ -381,6 +384,15 @@ impl Ty {
         }
     }
 
+    /// The list of this element type, or unknown if it is.
+    fn list(element: Ty) -> Ty {
+        if element.unknown() {
+            Ty::Unknown
+        } else {
+            Ty::List(vec![element])
+        }
+    }
+
     /// The tuple of these types: the empty tuple if there are none, and
     /// unknown if one of them is.
     fn tuple(items: Vec<Ty>) -> Ty {
@@ -408,7 +420,11 @@ impl Ty {
     /// for a function.
     fn args(&self) -> &[Ty] {
         match self {
-            Ty::Struct(_, args) | Ty::Enum(_, args) | Ty::Tuple(args) | Ty::Fn(args) => args,
+            Ty::Struct(_, args)
+            | Ty::Enum(_, args)
+            | Ty::Tuple(args)
+            | Ty::Fn(args)
+            | Ty::List(args) => args,
             _ => &[],
         }
     }
@@ -434,6 +450,7 @@ impl Ty {
             Ty::Enum(e, _) => Ty::enumeration(*e, args),
             Ty::Tuple(_) => Ty::tuple(args),
             Ty::Fn(_) => Ty::func(args),
+            Ty::List(_) => Ty::list(args[0].clone()),
             t => t.clone(),
         }
     }
@@ -464,6 +481,7 @@ impl Ty {
             Ty::Struct(s, of) => Ty::Struct(*s, of.iter().map(|t| t.partial(args)).collect()),
             Ty::Enum(e, of) => Ty::Enum(*e, of.iter().map(|t| t.partial(args)).collect()),
             Ty::Tuple(of) => Ty::Tuple(of.iter().map(|t| t.partial(args)).collect()),
+            Ty::List(of) => Ty::List(of.iter().map(|t| t.partial(args)).collect()),
             Ty::Fn(of) => Ty::Fn(of.iter().map(|t| t.partial(args)).collect()),
             t => t.clone(),
         }
@@ -495,7 +513,7 @@ fn agrees(a: &Ty, b: &Ty) -> bool {
         (Ty::Struct(s, x), Ty::Struct(t, y)) | (Ty::Enum(s, x), Ty::Enum(t, y)) => {
             s == t && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
-        (Ty::Tuple(x), Ty::Tuple(y)) | (Ty::Fn(x), Ty::Fn(y)) => {
+        (Ty::Tuple(x), Ty::Tuple(y)) | (Ty::Fn(x), Ty::Fn(y)) | (Ty::List(x), Ty::List(y)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
         (a, b) => a == b,
@@ -527,7 +545,7 @@ fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
         (Ty::Struct(s, a), Ty::Struct(t, b)) | (Ty::Enum(s, a), Ty::Enum(t, b)) => {
             s == t && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
-        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::Fn(a), Ty::Fn(b)) => {
+        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::Fn(a), Ty::Fn(b)) | (Ty::List(a), Ty::List(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
         (a, b) => a == b,
@@ -756,11 +774,14 @@ impl<'a> Defs<'a> {
     fn resolve(&self, t: &Type, scope: &Scope, errors: &mut Vec<Error>) -> Ty {
         let name = t.name.as_str();
         if name.is_empty() {
-            let items = t.args.iter().map(|a| self.resolve(a, scope, errors));
+            let items: Vec<Ty> = (t.args.iter())
+                .map(|a| self.resolve(a, scope, errors))
+                .collect();
+            self.no_lists(&items, t, errors);
             return if t.function {
-                Ty::func(items.collect())
+                Ty::func(items)
             } else {
-                Ty::tuple(items.collect())
+                Ty::tuple(items)
             };
         }
         let no_args = |what: &str, errors: &mut Vec<Error>| {
@@ -785,6 +806,7 @@ impl<'a> Defs<'a> {
                 .iter()
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
+            self.no_lists(&args, t, errors);
             let wanted = self.file.structs[s].generics.len();
             if args.len() != wanted {
                 errors.push(Error::new(
@@ -809,6 +831,7 @@ impl<'a> Defs<'a> {
                 .iter()
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
+            self.no_lists(&args, t, errors);
             let wanted = self.file.enums[e].generics.len();
             if args.len() != wanted {
                 errors.push(Error::new(
@@ -827,6 +850,30 @@ impl<'a> Defs<'a> {
                 Ty::enumeration(e, args)
             };
         }
+        if name == "List" {
+            if t.args.len() != 1 {
+                errors.push(Error::new(
+                    t.pos,
+                    format!(
+                        "`List` takes one type argument, and this gives {}",
+                        t.args.len()
+                    ),
+                ));
+                return Ty::Unknown;
+            }
+            return match self.resolve(&t.args[0], scope, errors) {
+                Ty::Unknown => Ty::Unknown,
+                element @ Ty::Int(_) => Ty::list(element),
+                element @ Ty::Enum(e, _) if e == self.boolean => Ty::list(element),
+                _ => {
+                    errors.push(Error::unsupported(
+                        t.pos,
+                        "a list of anything but whole numbers and `bool`",
+                    ));
+                    Ty::Unknown
+                }
+            };
+        }
         if name == TEXT || Int::named(name).is_some() {
             no_args("the type", errors);
             return match (t.args.is_empty(), Int::named(name)) {
@@ -843,6 +890,14 @@ impl<'a> Defs<'a> {
             Error::new(t.pos, format!("there is no type named `{name}`"))
         });
         Ty::Unknown
+    }
+
+    /// Reports a list among the types a type holds, which no type does yet:
+    /// a list is a name's own, so that two names never share room to grow.
+    fn no_lists(&self, items: &[Ty], t: &Type, errors: &mut Vec<Error>) {
+        if items.iter().any(|i| matches!(i, Ty::List(_))) {
+            errors.push(Error::unsupported(t.pos, "a list inside another type"));
+        }
     }
 
     /// The prelude's `bool`.
@@ -977,6 +1032,7 @@ impl<'a> Defs<'a> {
                 let items: Vec<String> = items.iter().map(|t| self.text(t, scope)).collect();
                 format!("({})", items.join(", "))
             }
+            Ty::List(items) => format!("List[{}]", self.text(&items[0], scope)),
             Ty::Fn(items) => {
                 let items: Vec<String> = items.iter().map(|t| self.text(t, scope)).collect();
                 let (gives, params) = items.split_last().expect("a result");
@@ -1033,6 +1089,7 @@ impl<'a> Defs<'a> {
                         .collect();
                     format!("{}[{}]", defs.type_name(t), args.join(", "))
                 }
+                Ty::List(args) => format!("List[{}]", text(defs, &args[0], sol, vars, scope)),
                 t => defs.text(t, scope),
             }
         }
@@ -1480,6 +1537,13 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
         Expr::Tuple { items, .. } => {
             let items: Vec<String> = items.iter().map(written_expr).collect();
             format!("({})", items.join(", "))
+        }
+        Expr::List { items, .. } => {
+            let items: Vec<String> = items.iter().map(|i| written_with(s, i)).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Expr::Index { of, index, .. } => {
+            format!("{}[{}]", written_with(s, of), written_with(s, index))
         }
         Expr::Lambda(l) if l.params.is_empty() => "{ ... }".to_string(),
         Expr::Lambda(l) => {
@@ -2285,10 +2349,14 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 }
             }
         }
-        Expr::Tuple { items, .. } => {
+        Expr::Tuple { items, .. } | Expr::List { items, .. } => {
             for item in items {
                 walk(item, out);
             }
+        }
+        Expr::Index { of, index, .. } => {
+            walk(of, out);
+            walk(index, out);
         }
         Expr::Lambda(l) => {
             for value in values(&l.body) {
@@ -2342,10 +2410,14 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                 blocks(&m.of, out);
                 out.extend(m.arms.iter().map(|arm| arm.body.as_slice()));
             }
-            Expr::Tuple { items, .. } => {
+            Expr::Tuple { items, .. } | Expr::List { items, .. } => {
                 for item in items {
                     blocks(item, out);
                 }
+            }
+            Expr::Index { of, index, .. } => {
+                blocks(of, out);
+                blocks(index, out);
             }
             Expr::Lambda(l) => out.push(&l.body),
             Expr::Loop(l) => {
@@ -2480,6 +2552,8 @@ enum Callee {
     Value,
     /// A function the compiler builds, which only the prelude calls.
     Intrinsic,
+    /// `push`, which gives a list with one more element.
+    Push,
 }
 
 /// For each argument of a checked call, the place of its parameter.
@@ -2643,6 +2717,15 @@ fn is_intrinsic(call: &Call) -> bool {
     call.qualifier.is_none() && call.callee.starts_with("__") && of_prelude(call.pos)
 }
 
+/// Whether a call is of `push`, which the compiler builds, and no function
+/// of the program takes the name of.
+fn is_push(defs: &Defs, call: &Call) -> bool {
+    call.qualifier.is_none()
+        && call.callee == "push"
+        && !defs.function_names.contains_key("push")
+        && !defs.struct_names.contains_key("push")
+}
+
 fn addr<T>(node: &T) -> usize {
     node as *const T as usize
 }
@@ -2698,6 +2781,9 @@ impl<'a> Typed<'a> {
                 if is_intrinsic(call) {
                     return Callee::Intrinsic;
                 }
+                if is_push(defs, call) {
+                    return Callee::Push;
+                }
                 if let Some(&f) = defs.function_names.get(name) {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
@@ -2738,7 +2824,9 @@ impl<'a> Typed<'a> {
                 }
             },
             Callee::Construct(_, args) => args.clone(),
-            Callee::Print | Callee::Case(_) | Callee::Value | Callee::Intrinsic => Vec::new(),
+            Callee::Print | Callee::Case(_) | Callee::Value | Callee::Intrinsic | Callee::Push => {
+                Vec::new()
+            }
         }
     }
 
@@ -4213,11 +4301,21 @@ impl<'a> Checker<'a> {
                 right,
                 op_pos,
             } => self.arith(body, expr, (*op, left, right, *op_pos), want),
+            Expr::List { pos, items } => self.list_literal(body, *pos, items, want),
+            Expr::Index { of, index, pos } => self.index(body, of, index, *pos),
             Expr::Field { of, name, pos } => {
                 if let Some(e) = defs.qualified_case(of, &body.names) {
                     return self.case(body, Some(e), name, of.pos(), *pos, None, want);
                 }
                 match self.expr(body, of, &Want::Any) {
+                    Ty::List(_) if name == "size" => Ty::Int(Int::U64),
+                    Ty::List(_) => {
+                        self.errors.push(Error::new(
+                            *pos,
+                            format!("a list has no field named `{name}`"),
+                        ));
+                        Ty::Unknown
+                    }
                     Ty::Struct(s, args) => {
                         let def = &defs.file.structs[s];
                         match def.fields.iter().position(|f| &f.name == name) {
@@ -4297,9 +4395,14 @@ impl<'a> Checker<'a> {
                     Want::Ty(Ty::Unknown) => vec![Want::Ty(Ty::Unknown); items.len()],
                     _ => vec![Want::Any; items.len()],
                 };
-                let items = (items.iter().zip(&wants))
+                let items: Vec<Ty> = (items.iter().zip(&wants))
                     .map(|(item, want)| self.expr(body, item, want))
                     .collect();
+                if items.iter().any(|t| matches!(t, Ty::List(_))) {
+                    self.errors
+                        .push(Error::unsupported(expr.pos(), "a list inside another type"));
+                    return Ty::Unknown;
+                }
                 Ty::tuple(items)
             }
         }
@@ -4445,6 +4548,136 @@ impl<'a> Checker<'a> {
             ));
         }
         Ty::Int(int)
+    }
+
+    /// Checks `push(list, item)`, which gives the list with the item after
+    /// its last element, and asks the system for memory.
+    fn push(&mut self, body: &mut Body<'a>, call: &Call, want: &Want) -> Ty {
+        let defs = self.defs;
+        self.needs(body, "alloc", call.pos, "`push`");
+        let plain = call.args.iter().all(|a| a.name.is_none() && !a.after);
+        if call.args.len() != 2 || !plain {
+            self.errors.push(Error::new(
+                call.pos,
+                "`push` takes a list and the item to add after it",
+            ));
+            return self.unknown_call(body, call);
+        }
+        let list_want = match want {
+            Want::Ty(t @ Ty::List(_)) => Want::Ty(t.clone()),
+            _ => Want::Any,
+        };
+        let list = self.expr(body, &call.args[0].value, &list_want);
+        match list {
+            Ty::List(of) => {
+                let item = self.expr(body, &call.args[1].value, &Want::Ty(of[0].clone()));
+                self.expect(body, &call.args[1].value, &item, &of[0]);
+                Ty::List(of)
+            }
+            other => {
+                self.expr(body, &call.args[1].value, &Want::Ty(Ty::Unknown));
+                if other != Ty::Unknown {
+                    let given = defs.describe(&other, body.scope);
+                    self.errors.push(Error::new(
+                        call.args[0].value.pos(),
+                        format!("`push` adds to a list, and this is {given}"),
+                    ));
+                }
+                Ty::Unknown
+            }
+        }
+    }
+
+    /// Checks a list written out, `[]` or `[a, b, c]`, where a list of
+    /// known element type is wanted.
+    fn list_literal(&mut self, body: &mut Body<'a>, pos: Pos, items: &[Expr], want: &Want) -> Ty {
+        let defs = self.defs;
+        match want {
+            Want::Ty(Ty::List(of)) => {
+                if !items.is_empty() {
+                    self.needs(body, "alloc", pos, "a list that holds elements");
+                }
+                for item in items {
+                    let given = self.expr(body, item, &Want::Ty(of[0].clone()));
+                    self.expect(body, item, &given, &of[0]);
+                }
+                Ty::List(of.clone())
+            }
+            Want::Ty(Ty::Unknown) => {
+                for item in items {
+                    self.expr(body, item, &Want::Ty(Ty::Unknown));
+                }
+                Ty::Unknown
+            }
+            Want::Ty(needed) => {
+                for item in items {
+                    self.expr(body, item, &Want::Ty(Ty::Unknown));
+                }
+                let needed = defs.describe(needed, body.scope);
+                self.errors.push(Error::new(
+                    pos,
+                    format!("this is a list, where {needed} is needed"),
+                ));
+                Ty::Unknown
+            }
+            Want::Any | Want::Unused => {
+                for item in items {
+                    self.expr(body, item, &Want::Ty(Ty::Unknown));
+                }
+                self.errors.push(
+                    Error::new(
+                        pos,
+                        "a list is written where a list of a known type is needed",
+                    )
+                    .with_fix("write its type, as in `xs: List[u8] = [1, 2, 3]`"),
+                );
+                Ty::Unknown
+            }
+        }
+    }
+
+    /// Checks `of[index]`, which reads an element of a list, and compiles
+    /// only when `arith` proves that the index is below the list's size.
+    fn index(&mut self, body: &mut Body<'a>, of: &Expr, index: &Expr, pos: Pos) -> Ty {
+        let defs = self.defs;
+        let list = self.expr(body, of, &Want::Any);
+        let wanted = match flexible(index) {
+            true => Want::Ty(Ty::Int(Int::U64)),
+            false => Want::Any,
+        };
+        let at = self.expr(body, index, &wanted);
+        match &at {
+            Ty::Int(t) if t.signed() => {
+                self.errors.push(Error::new(
+                    index.pos(),
+                    "an index is a whole number of an unsigned type",
+                ));
+            }
+            Ty::Int(_) | Ty::Unknown => {}
+            Ty::Flex(_) => self.expect(body, index, &at, &Ty::Int(Int::U64)),
+            other => {
+                let given = defs.describe(other, body.scope);
+                self.errors.push(Error::new(
+                    index.pos(),
+                    format!("an index is a whole number, and this is {given}"),
+                ));
+            }
+        }
+        match list {
+            Ty::List(element) => {
+                self.in_range(body, of, index, pos);
+                element[0].clone()
+            }
+            Ty::Unknown => Ty::Unknown,
+            other => {
+                let given = defs.describe(&other, body.scope);
+                self.errors.push(Error::new(
+                    pos,
+                    format!("an index is read from a list, and this is {given}"),
+                ));
+                Ty::Unknown
+            }
+        }
     }
 
     /// Checks a call of a function the compiler builds for the prelude: it
@@ -5407,6 +5640,9 @@ impl<'a> Checker<'a> {
         }
         if is_intrinsic(call) {
             return self.intrinsic(body, call);
+        }
+        if is_push(defs, call) {
+            return self.push(body, call, want);
         }
         if name == "print" {
             let print = Signature::print();
