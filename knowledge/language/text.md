@@ -126,7 +126,21 @@ struct Utf8Error {
 fn utf8(bytes: List[u8]) -> Result[str, Utf8Error]
 ```
 
+A piece of a text is a text. `s[a..b]` is the bytes from `a` up to `b` as a `str`, which shares the memory of `s`, so nothing is copied. Text implements [`Index`](arrays.md) for a range, and its `valid` asks two things: that the range lies inside the text, and that both of its ends fall between characters and not inside one.
+
+```
+fn word(source: str, start: Nat, end: Nat) -> Option[str] {
+  match check(valid(source, start..end)) {
+    .some(p) { .some(source[start..end]) }
+    .none { .none }
+  }
+}
+```
+
+`arith` proves that a range lies inside a text. That an end falls between characters is a fact about the bytes, which a [`check`](contracts.md) supplies by looking at the byte at each end, however long the piece is.
+
 - Nothing else makes a `str` from bytes, and no bytes are replaced to make them valid.
+- A range of a text's bytes, as bytes, is taken from its bytes and not from the text.
 - Text is not counted or indexed in characters. A character may be several bytes, and a program that needs them reads the bytes.
 
 Next: [Ownership](ownership.md)
