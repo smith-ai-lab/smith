@@ -65,7 +65,7 @@ fn taxed_twice(x: f32, rate: f32) -> f32 {
 }
 ```
 
-It may assign that function's [`var`s](mutable-locals.md) too. This counts how many times `twice` calls it, and gives `2.0`.
+It may assign that function's [`var`s](var.md) too. This counts how many times `twice` calls it, and gives `2.0`.
 
 ```
 fn calls(x: f32) -> f32 {
