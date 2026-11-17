@@ -46,7 +46,7 @@ A function type states no contract, so a function with a `requires` is only call
 
 So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller with sizes known only at run time gets it from a `check`.
 
-A struct can hold a proof as a field, whose type is the statement it proves. `Fin[n]` from [Arrays and sizes](arrays.md) is defined that way in the standard library, as a number paired with a proof that it is below `n`. `check` is how outside data becomes one.
+A struct can hold a proof as a field, whose type is the statement it proves. `Fin[n]` is defined that way in the standard library, as a number paired with a proof that it is below `n`, for an index that is kept in a field or passed on: it indexes an axis of size `n` wherever it goes, with nothing more to prove. `check` is how outside data becomes one.
 
 ```
 struct Fin[n: Nat] {
@@ -102,7 +102,7 @@ In `skip_spaces`, a round that goes on has passed `c.at == size`, so `c.at < siz
 There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](tasks.md) when the system runs out of what they stand for.
 
 - A proof is a value. It is passed, returned, and held in a field like any other, and a function that takes proofs and returns one proves a fact once for every place that needs it, which is how a fact `arith` does not decide is supplied. Every proof starts from `arith` or from a `check` that passed, and it is erased before code generation. `check` and `hole` are built in, because nothing written in Smith could make a proof from nothing.
-- Predicates used in contracts are ordinary functions returning `bool`, so a contract can be run on real data.
+- Predicates used in contracts are ordinary functions returning `bool`, so a contract can be run on real data. `arith` reads through a call of one to the comparison it returns, which is how it proves the `valid` of an [index](arrays.md).
 - Every function terminates unless it carries `diverge`, which means it may not finish. Callers inherit `diverge`, and it is not allowed in a contract or a GPU kernel. A `loop` over a range, an array, or an `Iterate` type ends, and so does structural recursion. Anything else ends because of a `decreases`, described below.
 - `hole(name)` stands in for code or a proof not yet written. The compiler reports the type and the goal it needs.
 

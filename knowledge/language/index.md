@@ -22,7 +22,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [effects.md](effects.md): effects listed in a signature as permissions, how an effect is declared, how a handler is used and written, and the effects Smith provides.
 - [text.md](text.md): where a program starts, `print`, string literals that hold expressions formatted by the `Fmt` trait, and `Repr`, which writes a value as source.
 - [ownership.md](ownership.md): the `Copy` and `Discard` traits, lending and `take`, and values that must be used at most once or exactly once.
-- [arrays.md](arrays.md): arrays whose sizes are part of their types, `Fin` indices that need no bounds check, indexing as the `Index` trait, and ranges.
+- [arrays.md](arrays.md): arrays whose sizes are part of their types, indices proven to be in range when the program is built, indexing as the `Index` trait, and ranges.
 - [for.md](for.md): `for` as an unordered description of an array, reductions, the operators of linear algebra, `@`, and the rules for float arithmetic.
 - [loop.md](loop.md): `loop` for steps that run in order, the `Iterate` trait, and `break`.
 - [contracts.md](contracts.md): `requires`, `ensures`, and `check`, what the `arith` procedure can prove, termination, and `hole`.
