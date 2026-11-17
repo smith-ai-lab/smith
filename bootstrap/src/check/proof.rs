@@ -6,16 +6,18 @@
 //! binding that is not a `var` was given. The range of each value's type and
 //! the value of each literal are added when a goal is asked. A `var` can be
 //! given another value between a fact and a use, so nothing is known of one
-//! but the range of its type.
+//! but the range of its type, except inside one round of a loop that assigns
+//! it, where the value it holds is tracked as a sum of the variables.
 
 use std::collections::{BTreeMap, HashMap};
 
 use super::arith::{Formula, Lin, proves};
 use super::{
-    Body, Checker, Int, Numbers, Signature, Ty, addr, params_of, written_expr, written_with,
+    Body, Checker, Int, Numbers, Signature, Ty, addr, params_of, pattern_names, statements,
+    written_expr, written_with,
 };
 use crate::diag::Error;
-use crate::parser::{ArithOp, Call, Expr, Form, Function, Pattern, Range, Stmt};
+use crate::parser::{ArithOp, Call, Expr, Form, Function, Loop, Pattern, Range, Stmt};
 
 /// What a variable of `arith` stands for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -63,18 +65,30 @@ pub(super) struct Facts {
     /// While a function's contract is read at a call, the sum each of its
     /// parameters, and its result, stands for there.
     subst: Option<HashMap<String, Lin>>,
+    /// The `var`s, by their place among the names, whose value is tracked
+    /// through one round of a loop, each with the sum it holds now or none
+    /// when it is not known. The newest entry for a place is the one that
+    /// counts.
+    held: Vec<(usize, Option<Lin>)>,
 }
 
 impl Facts {
     /// How much is known now, to go back to when a block ends.
-    pub(super) fn mark(&self) -> (usize, usize) {
-        (self.known.len(), self.constants.len())
+    pub(super) fn mark(&self) -> (usize, usize, usize) {
+        (self.known.len(), self.constants.len(), self.held.len())
     }
 
     /// Forgets what was learned after the mark.
-    pub(super) fn reset(&mut self, mark: (usize, usize)) {
+    pub(super) fn reset(&mut self, mark: (usize, usize, usize)) {
         self.known.truncate(mark.0);
         self.constants.truncate(mark.1);
+        self.held.truncate(mark.2);
+    }
+
+    /// What the `var` at `at` holds, when it is tracked: the sum, or none
+    /// when it is not known.
+    fn holds(&self, at: usize) -> Option<&Option<Lin>> {
+        self.held.iter().rfind(|(k, _)| *k == at).map(|(_, v)| v)
     }
 
     fn id(&mut self, key: Key) -> usize {
@@ -190,6 +204,9 @@ impl Builder<'_, '_> {
                     return None;
                 };
                 if self.body.vars.contains(name) {
+                    if let Some(Some(held)) = self.facts.holds(at) {
+                        return Some(held.clone());
+                    }
                     return self.goal.then(|| self.fresh(e));
                 }
                 if let Some((_, n)) = self.facts.constants.iter().rfind(|(k, _)| *k == at) {
@@ -968,6 +985,308 @@ fn collect(f: &Formula, out: &mut Vec<usize>) {
             for item in items {
                 collect(item, out);
             }
+        }
+    }
+}
+
+/// What one way through an `if` or a `match` leaves known.
+pub(super) struct Path {
+    facts: Vec<Formula>,
+    held: Vec<(usize, Option<Lin>)>,
+}
+
+/// Whether a block never reaches its end, because it ends with a `break`, or
+/// with an `if` with an `else`, or a `match`, each of whose blocks does.
+pub(super) fn ends_in_break(stmts: &[Stmt]) -> bool {
+    match stmts.last() {
+        Some(Stmt::Expr(Expr::Break { .. })) => true,
+        Some(Stmt::Expr(Expr::Match(m))) => match m.form {
+            Form::If { otherwise } => otherwise && m.arms.iter().all(|a| ends_in_break(&a.body)),
+            Form::Match => m.arms.iter().all(|a| ends_in_break(&a.body)),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether the variable `id` stands for a value of a name, or of a field of
+/// one, that is defined at or after the place `outer` among the names, and is
+/// gone once the block it is in ends.
+fn is_local(keys: &[Key], id: usize, outer: usize) -> bool {
+    match &keys[id] {
+        Key::Name(at, ..) => *at >= outer,
+        Key::Field(path, ..) => path
+            .split('.')
+            .next()
+            .and_then(|a| a.parse::<usize>().ok())
+            .is_none_or(|a| a >= outer),
+        Key::Product(text) => {
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find('v') {
+                rest = &rest[at + 1..];
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                if let Ok(inner) = digits.parse::<usize>()
+                    && inner != id
+                    && is_local(keys, inner, outer)
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        Key::Fresh(..) | Key::Call(..) => false,
+    }
+}
+
+impl<'a> Checker<'a> {
+    /// The `var`s of whole numbers, by their place among the names, that the
+    /// blocks assign, however deep.
+    pub(super) fn assigned_vars(&self, body: &Body<'a>, blocks: &[&[Stmt]]) -> Vec<usize> {
+        let mut names: Vec<&str> = Vec::new();
+        for block in blocks {
+            for stmt in statements(block) {
+                match stmt {
+                    Stmt::Define { name, .. } | Stmt::Assign { name, .. } => names.push(name),
+                    Stmt::Destructure { pattern, .. } => {
+                        names.extend(pattern_names(pattern).into_iter().map(|(n, _)| n));
+                    }
+                    Stmt::Expr(_) => {}
+                }
+            }
+        }
+        let mut places: Vec<usize> = names
+            .into_iter()
+            .filter(|n| body.vars.iter().any(|v| v == n))
+            .filter_map(|n| body.names.iter().rposition(|(m, _)| m == n))
+            .filter(|&at| matches!(body.names[at].1, Ty::Int(_)))
+            .collect();
+        places.sort_unstable();
+        places.dedup();
+        places
+    }
+
+    /// A round of a loop begins: each `var` the loop assigns holds what it
+    /// held when the round began, which is nothing but the range of its type.
+    pub(super) fn begin_round(&mut self, body: &mut Body<'a>, assigned: &[usize]) {
+        if !Self::decided(body) {
+            return;
+        }
+        for &at in assigned {
+            let Ty::Int(t) = &body.names[at].1 else {
+                continue;
+            };
+            body.facts.fresh += 1;
+            let key = Key::Fresh(body.facts.fresh, t.min(), t.max());
+            let id = body.facts.id(key);
+            let held = Lin {
+                terms: BTreeMap::from([(id, 1)]),
+                constant: 0,
+            };
+            body.facts.held.push((at, Some(held)));
+        }
+    }
+
+    /// The `var`s that are tracked, among `assigned`, are no longer known.
+    pub(super) fn forget(&mut self, body: &mut Body<'a>, assigned: &[usize]) {
+        for &at in assigned {
+            if body.facts.holds(at).is_some() {
+                body.facts.held.push((at, None));
+            }
+        }
+    }
+
+    /// Every `var` that is tracked is no longer known.
+    pub(super) fn forget_all(&mut self, body: &mut Body<'a>) {
+        let mut tracked: Vec<usize> = body.facts.held.iter().map(|(at, _)| *at).collect();
+        tracked.sort_unstable();
+        tracked.dedup();
+        self.forget(body, &tracked);
+    }
+
+    /// The sum `value` stands for, with every part it knows nothing of a
+    /// variable of its own, or none when a number grew too large.
+    fn value_of(&mut self, body: &mut Body<'a>, value: &Expr) -> Option<Lin> {
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let sum = builder.lin(value).filter(|_| !builder.overflow);
+        body.facts = facts;
+        sum
+    }
+
+    /// The `var` at `at`, tracked, is given `value`.
+    pub(super) fn assign(&mut self, body: &mut Body<'a>, at: usize, value: &Expr) {
+        if !Self::decided(body) || body.facts.holds(at).is_none() {
+            return;
+        }
+        let sum = self.value_of(body, value);
+        body.facts.held.push((at, sum));
+    }
+
+    /// The `var` defined last, in a loop, is given `value`.
+    pub(super) fn track_var(&mut self, body: &mut Body<'a>, value: &Expr) {
+        if !Self::decided(body) || body.loops == 0 || body.contract {
+            return;
+        }
+        let at = body.names.len() - 1;
+        if !matches!(body.names[at].1, Ty::Int(_)) {
+            return;
+        }
+        let sum = self.value_of(body, value);
+        body.facts.held.push((at, sum));
+    }
+
+    /// What an arm of an `if` or a `match` leaves known at its end, where
+    /// `mark` is how much was known before it, and `assigned` is what the
+    /// arms assign.
+    pub(super) fn leave_arm(
+        &self,
+        body: &Body<'a>,
+        mark: (usize, usize, usize),
+        assigned: &[usize],
+    ) -> Path {
+        Path {
+            facts: body.facts.known[mark.0..].to_vec(),
+            held: assigned
+                .iter()
+                .filter_map(|&at| body.facts.holds(at).map(|v| (at, v.clone())))
+                .collect(),
+        }
+    }
+
+    /// After an `if` or a `match`, whose arms that reach their end left the
+    /// `paths`, and whose names began at `outer`: what is so is what is so of
+    /// one of the paths. `excluded` is whether an arm never reaches its end.
+    pub(super) fn join(
+        &mut self,
+        body: &mut Body<'a>,
+        outer: usize,
+        paths: Vec<Path>,
+        assigned: &[usize],
+        excluded: bool,
+    ) {
+        if !Self::decided(body) || paths.is_empty() {
+            return;
+        }
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut ands: Vec<Vec<Formula>> = paths.iter().map(|p| p.facts.clone()).collect();
+        let mut changed = excluded;
+        for &at in assigned {
+            let Some(before) = facts.holds(at).cloned() else {
+                continue;
+            };
+            let Ty::Int(t) = &body.names[at].1 else {
+                continue;
+            };
+            let values: Vec<Option<Lin>> = paths
+                .iter()
+                .map(
+                    |p| match p.held.iter().find(|(k, _)| *k == at).map(|(_, v)| v) {
+                        Some(v) => v.clone(),
+                        None => before.clone(),
+                    },
+                )
+                .collect();
+            if values.iter().all(|v| *v == before) {
+                continue;
+            }
+            changed = true;
+            if values.iter().any(Option::is_none) {
+                facts.held.push((at, None));
+                continue;
+            }
+            facts.fresh += 1;
+            let id = facts.id(Key::Fresh(facts.fresh, t.min(), t.max()));
+            for (and, value) in ands.iter_mut().zip(&values) {
+                let value = value.as_ref().expect("every path gives a sum");
+                if let Some(same) = self.equal(body, &mut facts, id, value) {
+                    and.push(same);
+                }
+            }
+            facts.held.push((
+                at,
+                Some(Lin {
+                    terms: BTreeMap::from([(id, 1)]),
+                    constant: 0,
+                }),
+            ));
+        }
+        if changed {
+            for and in &mut ands {
+                and.retain(|f| {
+                    let mut ids = Vec::new();
+                    collect(f, &mut ids);
+                    !ids.iter().any(|&i| is_local(&facts.keys, i, outer))
+                });
+            }
+            if !ands.iter().any(Vec::is_empty) {
+                let mut sides: Vec<Formula> = ands.into_iter().map(Formula::And).collect();
+                facts.known.push(if sides.len() == 1 {
+                    sides.remove(0)
+                } else {
+                    Formula::Or(sides)
+                });
+            }
+        }
+        body.facts = facts;
+    }
+
+    /// The sum of the measure of a loop, now.
+    pub(super) fn measure(&mut self, body: &mut Body<'a>, e: &Expr) -> Option<Lin> {
+        if !Self::decided(body) || body.contract {
+            return None;
+        }
+        self.value_of(body, e)
+    }
+
+    /// At the end of a round of a loop that has the measure `e`, which was
+    /// `start` when the round began: `arith` must prove that `e` is smaller,
+    /// and is still a number of an unsigned type.
+    pub(super) fn decreased(&mut self, body: &mut Body<'a>, l: &Loop, e: &Expr, start: &Lin) {
+        if !Self::decided(body) || body.contract || ends_in_break(&l.body) {
+            return;
+        }
+        let end = self.value_of(body, e);
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut goals = Vec::new();
+        if let Some(end) = &end {
+            let mut builder = self.builder(body, &mut facts, true);
+            let mut less = builder.combine(start, -1, end);
+            less.constant = less.constant.saturating_sub(1);
+            if !builder.overflow {
+                goals.push((
+                    format!("`{}` is smaller than when the round began", written_expr(e)),
+                    Formula::Ge(less),
+                ));
+                goals.push((
+                    format!(
+                        "`{}` is not below zero where the round ends",
+                        written_expr(e)
+                    ),
+                    Formula::Ge(end.clone()),
+                ));
+            }
+        }
+        let used = background(&facts, goals.iter().map(|(_, g)| g));
+        body.facts = facts;
+        let mut failed = goals
+            .is_empty()
+            .then(|| format!("`{}` is smaller than when the round began", written_expr(e)));
+        for (text, goal) in &goals {
+            if failed.is_none() && !proves(&used, goal) {
+                failed = Some(text.clone());
+            }
+        }
+        if let Some(goal) = failed {
+            self.errors.push(
+                Error::new(
+                    l.end,
+                    format!("cannot prove that {goal}, so this `loop` may not end"),
+                )
+                .with_fix(
+                    "make each round that goes on make the measure smaller, or check what it \
+                     needs first with an `if`",
+                ),
+            );
         }
     }
 }

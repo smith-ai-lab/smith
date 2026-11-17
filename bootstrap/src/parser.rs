@@ -280,6 +280,8 @@ pub struct Loop {
     /// Where `loop` is.
     pub pos: Pos,
     pub range: Option<Range>,
+    /// The measure of an open-ended `loop decreases e`.
+    pub decreases: Option<Expr>,
     pub body: Vec<Stmt>,
     /// Where the `}` that closes the body is.
     pub end: Pos,
@@ -2054,10 +2056,16 @@ impl Parser<'_> {
     fn loop_expr(&mut self) -> Result<Loop, Error> {
         let pos = self.pos();
         self.bump();
+        let mut decreases = None;
         let range = match self.tok() {
             Tok::Punct("{") => None,
             Tok::Ident(name) if name == "decreases" => {
-                return Err(Error::unsupported(self.pos(), "`loop decreases`"));
+                self.bump();
+                let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+                let measure = self.expr();
+                self.no_lambda = no_lambda;
+                decreases = Some(measure?);
+                None
             }
             Tok::Ident(name) if self.next_tok() == &Tok::Keyword("in") => {
                 let name = name.clone();
@@ -2082,6 +2090,7 @@ impl Parser<'_> {
         Ok(Loop {
             pos,
             range,
+            decreases,
             body,
             end,
         })
