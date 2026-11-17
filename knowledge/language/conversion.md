@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Conversion
-description: The Convert trait, which turns a value of one type into another where nothing is lost, and how it lets two types meet in an operator.
+description: The Convert trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
 status: planned
 ---
 
@@ -66,6 +66,25 @@ impl[A, B] Add[B, A, B]
 ```
 
 So an `i32` plus an `i64` is an `i64`, and a `u32` plus an `i32` is a compile error, because neither holds every value of the other. The result must fit like any other, as [Literals and numbers](numbers.md) says. The other arithmetic operators, `Eq`, and `Ord` have the same two implementations, so an `i32` is compared with an `i64` too. They are written for every type and not for numbers alone, so `Feet` is added to `Meters` once `Meters` implements `Add`.
+
+A whole number goes to a type that does not hold all of its values with `narrow`, which follows the pattern of [integer arithmetic](numbers.md). The plain form compiles only when `arith` proves that the value fits, and costs nothing. Where that cannot be proven, the author picks what happens by name.
+
+```
+fn digit(n: u64) -> u8
+  requires n < 10
+{
+  narrow(n)
+}
+```
+
+| Function | When the value does not fit |
+| --- | --- |
+| `narrow(x)` | Does not compile |
+| `wrapping_narrow(x)` | Keeps the low bits |
+| `saturating_narrow(x)` | Gives the nearest value the type holds |
+| `checked_narrow(x)` | Gives `.none` |
+
+The type that is expected picks the result, as for `convert`. Going between a signed and an unsigned type of one size is narrowing too, since neither holds every value of the other.
 
 Nothing is converted without a call. The operators call `convert` in these implementations, [`try`](try.md) calls it on a failure, and everywhere else it is written.
 
