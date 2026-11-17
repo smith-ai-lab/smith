@@ -14,7 +14,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [enums.md](enums.md): enums that hold one of their cases, and `match` to take a value apart.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
 - [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
-- [lambdas.md](lambdas.md): lambdas written as blocks after a call, `with` to pass the rest of a block to a function, and `try` to continue only on success.
+- [lambdas.md](lambdas.md): a function with no name, written where it is passed to a call.
+- [function-values.md](function-values.md): a function with a name used as a value, which can be passed, stored, and returned.
+- [with.md](with.md): `with`, which passes the rest of a block to a function as a lambda.
+- [try.md](try.md): `try`, which continues a function only when a step succeeded, and the `Try` trait that gives it its meaning.
 - [effects.md](effects.md): effects listed in a signature as permissions, how an effect is declared, how a handler is used and written, and the effects Smith provides.
 - [text.md](text.md): where a program starts, `print`, string literals that hold expressions formatted by the `Fmt` trait, and `Repr`, which writes a value as source.
 - [ownership.md](ownership.md): the `Copy` and `Discard` traits, lending and `take`, and values that must be used at most once or exactly once.

@@ -47,4 +47,4 @@ fn next_checked(i: u8) -> Option[u8] { checked_add(i, 1) }
 
 Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic.
 
-Next: [Lambdas, `with`, and `try`](lambdas.md)
+Next: [Lambdas](lambdas.md)
