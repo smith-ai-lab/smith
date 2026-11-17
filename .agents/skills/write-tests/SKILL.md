@@ -34,7 +34,7 @@ A test exists to fail when something that must be true stops being true, and for
 
 ## Where each kind goes
 
-- **Properties** run in-process over generated input, from the seed of the run, which a commit fixes and which a failure prints as `SMITH_SEED`, and shrink a failing input before reporting it.
+- **Properties** run in-process over generated input, from the seed of the run, which a commit fixes and which a failure prints as `SMITH_SEED`, and shrink a failing input, for four seconds at most, before reporting it.
 - **Specific cases** are `.smith` files with their expected output beside them, updated by one command and reviewed as a diff. Add one when a bug is fixed, so it stays fixed.
 - **Targets** share one set of tests that runs over every target. A test written for one target belongs in that set instead.
 

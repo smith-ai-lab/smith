@@ -19,6 +19,7 @@ use std::fmt::Debug;
 use std::panic::{self, AssertUnwindSafe};
 use std::process::Command;
 use std::sync::{Once, OnceLock};
+use std::time::{Duration, Instant};
 
 /// The source of a generator's choices.
 pub struct Gen {
@@ -171,13 +172,33 @@ pub fn find_failure_in_run<T>(
     generate: &impl Fn(&mut Gen) -> T,
     property: &impl Fn(&T),
 ) -> Option<Failure<T>> {
+    find_failure_shrinking_for(SHRINKING, run, seed, cases, generate, property)
+}
+
+/// `find_failure_in_run`, except that shrinking stops when it has gone on
+/// for `time`.
+pub fn find_failure_shrinking_for<T>(
+    time: Duration,
+    run: u64,
+    seed: u64,
+    cases: u64,
+    generate: &impl Fn(&mut Gen) -> T,
+    property: &impl Fn(&T),
+) -> Option<Failure<T>> {
     (0..cases).find_map(|case| {
         let mut g = Gen::random(run, seed, case);
         let input = generate(&mut g);
         failure(&input, property)?;
-        Some(shrink(g.used, generate, property))
+        Some(shrink_for(time, g.used, generate, property))
     })
 }
+
+/// How long shrinking goes on, on the wall, before it reports the smallest
+/// failing input it has. It is a third of the time `clock::HANG` gives a test
+/// that has not ended, so that a property that fails and shrinks slowly ends
+/// with its own message, and the run does not take it for a test that never
+/// ends.
+const SHRINKING: Duration = Duration::from_secs(4);
 
 /// The smallest choices, found by shrinking the given ones, that generate
 /// an input that fails the property, and that input. The given choices
@@ -187,6 +208,18 @@ pub fn shrink<T>(
     generate: &impl Fn(&mut Gen) -> T,
     property: &impl Fn(&T),
 ) -> Failure<T> {
+    shrink_for(SHRINKING, choices, generate, property)
+}
+
+/// `shrink`, except that it stops when it has gone on for `time`, and gives
+/// the smallest failing input it has found by then.
+pub fn shrink_for<T>(
+    time: Duration,
+    choices: Vec<usize>,
+    generate: &impl Fn(&mut Gen) -> T,
+    property: &impl Fn(&T),
+) -> Failure<T> {
+    let begin = Instant::now();
     let attempt = |choices: &[usize]| {
         let mut g = Gen::replay(choices);
         let input = generate(&mut g);
@@ -203,12 +236,12 @@ pub fn shrink<T>(
     // ignores its choices.
     let mut budget = 20_000;
     let mut improved = true;
-    while improved && budget > 0 {
+    while improved && budget > 0 && begin.elapsed() < time {
         improved = false;
         let candidates = smaller(&best.choices);
         for candidate in candidates {
             budget -= 1;
-            if budget == 0 {
+            if budget == 0 || begin.elapsed() >= time {
                 break;
             }
             if let Some(found) = attempt(&candidate)

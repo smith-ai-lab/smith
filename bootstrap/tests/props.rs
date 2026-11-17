@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use smith::diag::{self, Error, Pos};
 use smith::scalar::{self, Outcome};
@@ -26,6 +27,10 @@ pub const TESTS: &[Test] = &[
     (
         "the_shrinker_gives_the_smallest_failing_input",
         the_shrinker_gives_the_smallest_failing_input,
+    ),
+    (
+        "a_failing_property_whose_shrinking_runs_out_of_time_gives_its_own_message",
+        a_failing_property_whose_shrinking_runs_out_of_time_gives_its_own_message,
     ),
     (
         "the_evaluator_says_what_the_generator_built_the_program_to_print",
@@ -218,6 +223,33 @@ fn the_shrinker_gives_the_smallest_failing_input() {
         simplest.source.len(),
         "only the literal grew: {:?}",
         failure.input
+    );
+}
+
+fn a_failing_property_whose_shrinking_runs_out_of_time_gives_its_own_message() {
+    // A property that fails for some program, and a shrinker given no time.
+    let fails = |_: &Case| panic!("the property says it fails");
+    let unshrunk =
+        generate::find_failure_shrinking_for(Duration::ZERO, 0, 1, 1, &programs::program, &fails)
+            .expect("the property fails for every program");
+    assert_eq!(unshrunk.message, "the property says it fails");
+    // Given the time, shrinking goes on to the smallest input, which is
+    // smaller than the one it was stopped at.
+    let shrunk = generate::find_failure_shrinking_for(
+        Duration::from_secs(1),
+        0,
+        1,
+        1,
+        &programs::program,
+        &fails,
+    )
+    .expect("the property fails for every program");
+    assert_eq!(shrunk.message, unshrunk.message);
+    assert!(
+        shrunk.choices.len() < unshrunk.choices.len(),
+        "stopped at {:?}, shrunk to {:?}",
+        unshrunk.choices,
+        shrunk.choices
     );
 }
 
