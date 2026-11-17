@@ -1946,7 +1946,7 @@ fn bad_literal(b: &mut Builder, pieces: &[usize]) {
             literal_text(b, pieces, None);
             b.push(" ");
             b.mark(NOT_BUILT, None);
-            b.pick(&["+ \"b\"", "- \"b\"", "* \"b\"", "..\"b\""]);
+            b.pick(&["/ \"b\"", "@ \"b\"", "^ \"b\"", "..\"b\""]);
         }
         Some(Kind::NoClosingQuote) => {
             let opening = pos_after(&b.text);

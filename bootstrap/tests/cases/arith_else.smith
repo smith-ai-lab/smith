@@ -1,0 +1,8 @@
+fn previous(i: u8) -> u8 {
+  if i == 0 { 0 } else { i - 1 }
+}
+
+fn main() ! console, alloc {
+  print("{previous(0)}")
+  print("{previous(10)}")
+}

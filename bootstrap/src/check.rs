@@ -30,11 +30,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+mod arith;
+mod proof;
 mod to_scalar;
 
 use crate::diag::{Error, Pos};
 use crate::parser::{
-    Arg, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Match, Part, Pattern, Stmt, Type,
+    Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Match, Part, Pattern,
+    Stmt, Type,
 };
 
 /// The effects the standard library declares, other than `console`.
@@ -1426,6 +1429,27 @@ fn written_expr(e: &Expr) -> String {
             text
         }
         Expr::Field { of, name, .. } => format!("{}.{name}", written_expr(of)),
+        Expr::Arith {
+            op, left, right, ..
+        } => {
+            // An operand that groups looser than the operator, and a right
+            // operand that groups as tightly, was in parentheses.
+            let binds = |op: &ArithOp| matches!(op, ArithOp::Mul) as u8;
+            let side = |e: &Expr, right: bool| match e {
+                Expr::Arith { op: inner, .. }
+                    if binds(inner) < binds(op) || (right && binds(inner) == binds(op)) =>
+                {
+                    format!("({})", written_expr(e))
+                }
+                _ => written_expr(e),
+            };
+            format!(
+                "{} {} {}",
+                side(left, false),
+                op.symbol(),
+                side(right, true)
+            )
+        }
         Expr::Case { name, payload, .. } => match payload {
             Some(p) => format!(".{name}({})", written_expr(p)),
             None => format!(".{name}"),
@@ -2213,6 +2237,10 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
             }
         }
         Expr::Field { of, .. } => walk(of, out),
+        Expr::Arith { left, right, .. } => {
+            walk(left, out);
+            walk(right, out);
+        }
         Expr::Case { payload, .. } => {
             if let Some(p) = payload {
                 walk(p, out);
@@ -2260,6 +2288,10 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                 }
             }
             Expr::Field { of, .. } => blocks(of, out),
+            Expr::Arith { left, right, .. } => {
+                blocks(left, out);
+                blocks(right, out);
+            }
             Expr::Case {
                 payload: Some(p), ..
             } => blocks(p, out),
@@ -3010,6 +3042,8 @@ struct Body<'a> {
     /// The names of numbers with no type written that the uses decided, with
     /// the type and the place of the use that decided it.
     decided: HashMap<String, (Int, Option<Pos>)>,
+    /// What `arith` knows where the body is being checked.
+    facts: proof::Facts,
 }
 
 /// The whole numbers a body binds to names with no type written.
@@ -3233,6 +3267,7 @@ impl<'a> Checker<'a> {
             vars: Vec::new(),
             numbers: Numbers::Off,
             decided: HashMap::new(),
+            facts: proof::Facts::default(),
         };
         let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
         self.expect(&body, value, &gives, needed);
@@ -3702,6 +3737,7 @@ impl<'a> Checker<'a> {
             vars: Vec::new(),
             numbers,
             decided: HashMap::new(),
+            facts: proof::Facts::default(),
         };
         let want = match view.result {
             Some(_) => Want::Ty(view.gives.clone()),
@@ -3844,6 +3880,8 @@ impl<'a> Checker<'a> {
                                 body.names.push((name.clone(), bound));
                                 if *var {
                                     body.vars.push(name.clone());
+                                } else {
+                                    self.assume_binding(body, value);
                                 }
                             }
                         }
@@ -4067,6 +4105,12 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Call(call) => self.call(body, call, want),
+            Expr::Arith {
+                op,
+                left,
+                right,
+                op_pos,
+            } => self.arith(body, expr, (*op, left, right, *op_pos), want),
             Expr::Field { of, name, pos } => {
                 if let Some(e) = defs.qualified_case(of, &body.names) {
                     return self.case(body, Some(e), name, of.pos(), *pos, None, want);
@@ -4144,6 +4188,108 @@ impl<'a> Checker<'a> {
                     .collect();
                 Ty::tuple(items)
             }
+        }
+    }
+
+    /// Checks `left + right`, `left - right`, or `left * right`, whose sides
+    /// are whole numbers of one type, which is the type it gives. It
+    /// compiles only when `arith` proves that the result fits that type.
+    fn arith(
+        &mut self,
+        body: &mut Body<'a>,
+        expr: &Expr,
+        (op, left, right, op_pos): (ArithOp, &Expr, &Expr, Pos),
+        want: &Want,
+    ) -> Ty {
+        // A literal, or an operation on literals only, takes the type of the
+        // other side, or what is wanted of the whole when both are literals.
+        fn flexible(e: &Expr) -> bool {
+            match e {
+                Expr::Number { .. } => true,
+                Expr::Arith { left, right, .. } => flexible(left) && flexible(right),
+                _ => false,
+            }
+        }
+        let wanted = match want {
+            Want::Ty(t @ (Ty::Int(_) | Ty::Flex(_))) => Want::Ty(t.clone()),
+            _ => Want::Any,
+        };
+        let (l, r) = match (flexible(left), flexible(right)) {
+            (true, false) => {
+                let r = self.expr(body, right, &Want::Any);
+                let side = Self::side_want(&r);
+                (self.expr(body, left, &side), r)
+            }
+            (false, true) => {
+                let l = self.expr(body, left, &Want::Any);
+                let side = Self::side_want(&l);
+                let r = self.expr(body, right, &side);
+                (l, r)
+            }
+            (true, true) => (
+                self.expr(body, left, &wanted),
+                self.expr(body, right, &wanted),
+            ),
+            (false, false) => (
+                self.expr(body, left, &Want::Any),
+                self.expr(body, right, &Want::Any),
+            ),
+        };
+        let symbol = op.symbol();
+        let defs = self.defs;
+        let gives = match (&l, &r) {
+            (Ty::Unknown, _) | (_, Ty::Unknown) => return Ty::Unknown,
+            (Ty::Int(a), Ty::Int(b)) if a == b => l.clone(),
+            (Ty::Int(a), Ty::Int(b)) => {
+                self.errors.push(Error::new(
+                    op_pos,
+                    format!(
+                        "`{symbol}` needs both sides to be of one type, and the left is `{}` \
+                         where the right is `{}`",
+                        a.name(),
+                        b.name()
+                    ),
+                ));
+                return Ty::Unknown;
+            }
+            (Ty::Flex(_) | Ty::Int(_), Ty::Flex(_) | Ty::Int(_)) => {
+                use_at(op_pos);
+                if !flex_pair(&l, &r) {
+                    unreachable!("a number and a number")
+                }
+                if matches!(l, Ty::Flex(_)) && matches!(r, Ty::Flex(_)) {
+                    l.clone()
+                } else if matches!(l, Ty::Flex(_)) {
+                    r.clone()
+                } else {
+                    l.clone()
+                }
+            }
+            (other, _) | (_, other) if !matches!(other, Ty::Int(_) | Ty::Flex(_)) => {
+                let given = defs.describe(other, body.scope);
+                self.errors.push(
+                    Error::new(
+                        op_pos,
+                        format!("`{symbol}` is for whole numbers, and a side of it is {given}"),
+                    )
+                    .with_fix("only whole numbers have arithmetic so far"),
+                );
+                return Ty::Unknown;
+            }
+            _ => return Ty::Unknown,
+        };
+        if let Ty::Int(t) = gives {
+            self.fits(body, expr, t);
+        }
+        gives
+    }
+
+    /// What is wanted of a literal that is an operand, when the other
+    /// operand has type `other`.
+    fn side_want(other: &Ty) -> Want {
+        match other {
+            Ty::Int(_) | Ty::Flex(_) => Want::Ty(other.clone()),
+            _ => Want::Any,
         }
     }
 
@@ -4240,6 +4386,7 @@ impl<'a> Checker<'a> {
         }
         let outer = body.names.len();
         let vars = body.vars.len();
+        let known = body.facts.mark();
         let mut types = Vec::new();
         for (i, ((name, pos), ty)) in l.params.iter().zip(params).enumerate() {
             let twice = l.params[..i].iter().any(|(n, _)| n == name)
@@ -4295,6 +4442,7 @@ impl<'a> Checker<'a> {
         };
         body.names.truncate(outer);
         body.vars.truncate(vars);
+        body.facts.reset(known);
         types.push(gives);
         Ty::func(types)
     }
@@ -4520,6 +4668,7 @@ impl<'a> Checker<'a> {
         let of = self.expr(body, &m.of, &Want::Any);
         let outer = body.names.len();
         let vars = body.vars.len();
+        let known = body.facts.mark();
         let mut patterns: Vec<Option<Pat>> = Vec::new();
         let mut first: Option<Ty> = None;
         for arm in &m.arms {
@@ -4543,6 +4692,7 @@ impl<'a> Checker<'a> {
             self.arm(body, arm, want, &mut first, "a `match`");
             body.names.truncate(outer);
             body.vars.truncate(vars);
+            body.facts.reset(known);
         }
         if !of.unknown() && patterns.iter().all(Option::is_some) {
             let all: Vec<&Pat> = patterns.iter().flatten().collect();
@@ -4598,8 +4748,10 @@ impl<'a> Checker<'a> {
         self.condition(body, &m.of);
         let outer = body.names.len();
         let vars = body.vars.len();
+        let known = body.facts.mark();
         if !otherwise {
             let arm = &m.arms[0];
+            self.assume(body, &m.of, true);
             if let End::Value(gives, value) = self.block(body, &arm.body, &Want::Unused)
                 && self.defs.is_result(&gives)
             {
@@ -4607,13 +4759,16 @@ impl<'a> Checker<'a> {
             }
             body.names.truncate(outer);
             body.vars.truncate(vars);
+            body.facts.reset(known);
             return Ty::Nothing;
         }
         let mut first = None;
-        for arm in &m.arms {
+        for (k, arm) in m.arms.iter().enumerate() {
+            self.assume(body, &m.of, k == 0);
             self.arm(body, arm, want, &mut first, "an `if`");
             body.names.truncate(outer);
             body.vars.truncate(vars);
+            body.facts.reset(known);
         }
         match want {
             Want::Unused => Ty::Nothing,
@@ -4627,11 +4782,14 @@ impl<'a> Checker<'a> {
     fn logic(&mut self, body: &mut Body<'a>, m: &Match) -> Ty {
         let truth = self.defs.bool_ty();
         self.condition(body, &m.of);
-        for arm in &m.arms {
+        let known = body.facts.mark();
+        for (k, arm) in m.arms.iter().enumerate() {
+            self.assume(body, &m.of, k == 0);
             if let End::Value(gives, value) = self.block(body, &arm.body, &Want::Ty(truth.clone()))
             {
                 self.expect(body, value, &gives, &truth);
             }
+            body.facts.reset(known);
         }
         truth
     }
