@@ -377,7 +377,7 @@ fn every_target_builds_identical_bytes_twice() {
 /// The program in the scalar form that the targets are given: what the
 /// source lowers to, after the pass.
 fn after_the_pass(source: &[u8]) -> scalar::Program {
-    scalar::inline(&lower(source).unwrap_or_else(|e| panic!("{e:?}")))
+    scalar::passes(&lower(source).unwrap_or_else(|e| panic!("{e:?}")))
 }
 
 /// Checks, for `cases` generated programs, that each executable does what

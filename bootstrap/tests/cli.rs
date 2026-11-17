@@ -166,7 +166,7 @@ fn update(source: &Path, built: &Output) {
     let err = source.with_extension("err");
     let (write, remove, bytes) = if built.status.success() {
         let program = smith::lower(&std::fs::read(source).unwrap()).unwrap();
-        let program = smith::scalar::inline(&program);
+        let program = smith::scalar::passes(&program);
         (out, err, smith::scalar::run(&program).stdout)
     } else {
         (err, out, built.stderr.clone())
@@ -289,7 +289,9 @@ pub fn timing_lines(text: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-const STAGES: [&str; 6] = ["lex", "parse", "check", "inline", "emit", "write"];
+const STAGES: [&str; 8] = [
+    "lex", "parse", "check", "inline", "fold", "remove", "emit", "write",
+];
 
 /// The cases with a file of this extension beside them.
 pub fn cases(extension: &str) -> Vec<PathBuf> {

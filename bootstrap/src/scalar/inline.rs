@@ -199,7 +199,7 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
 }
 
 /// The instruction with each value it reads given by `rename`.
-fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
+pub(super) fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
     let all = |values: &[Value]| values.iter().map(|v| rename(*v)).collect();
     match op {
         Op::Constant(c) => Op::Constant(*c),

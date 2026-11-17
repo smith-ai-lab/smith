@@ -13,14 +13,25 @@
 
 mod build;
 mod eval;
+mod fold;
+mod graph;
 mod inline;
+mod remove;
 pub mod runtime;
 mod wellformed;
 
 pub use build::Builder;
 pub use eval::{Outcome, call, run, run_with_limit};
+pub use fold::fold;
 pub use inline::{BOUND, inline, size};
+pub use remove::remove;
 pub use wellformed::{Malformed, Why, check};
+
+/// The passes over a program in the scalar form, in the order they run:
+/// inlining, folding of constants, and the removal of what nothing uses.
+pub fn passes(program: &Program) -> Program {
+    remove(&fold(&inline(program)))
+}
 
 /// How many bits an integer has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
