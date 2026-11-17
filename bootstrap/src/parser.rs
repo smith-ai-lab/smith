@@ -86,6 +86,9 @@ pub struct Impl {
     pub name: String,
     pub pos: Pos,
     pub args: Vec<Type>,
+    /// What the types it is used with must meet, one expression for each
+    /// `requires`.
+    pub requires: Vec<Expr>,
     pub functions: Vec<Function>,
 }
 
@@ -112,6 +115,9 @@ pub struct Function {
     pub effects: Effects,
     /// What the caller owes, one expression for each `requires`.
     pub requires: Vec<Expr>,
+    /// The `requires` that name a trait, as `requires Pair[A, B]`, which the
+    /// parser leaves among `requires` and the checker moves here.
+    pub needs: Vec<Expr>,
     /// What the function gives, one expression for each `ensures`.
     pub ensures: Vec<Expr>,
     pub body: Vec<Stmt>,
@@ -1190,6 +1196,7 @@ impl Parser<'_> {
                 result_name,
                 effects,
                 requires: Vec::new(),
+                needs: Vec::new(),
                 ensures: Vec::new(),
                 body: Vec::new(),
                 end: pos,
@@ -1220,6 +1227,28 @@ impl Parser<'_> {
         }
         self.bump();
         let args = self.types()?;
+        let mut requires = Vec::new();
+        loop {
+            if self.tok() == &Tok::Newline
+                && self.tokens.get(self.at + 1).map(|t| &t.tok) == Some(&Tok::Keyword("requires"))
+            {
+                self.bump();
+            }
+            if self.tok() != &Tok::Keyword("requires") {
+                break;
+            }
+            self.bump();
+            let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+            let statement = self.expr();
+            self.no_lambda = no_lambda;
+            requires.push(statement?);
+        }
+        if !requires.is_empty()
+            && self.tok() == &Tok::Newline
+            && self.tokens.get(self.at + 1).map(|t| &t.tok) == Some(&Tok::Punct("{"))
+        {
+            self.bump();
+        }
         self.expect_punct("{", "`{` to open the implementation's functions")?;
         let mut functions = Vec::new();
         let mut ok = true;
@@ -1243,6 +1272,7 @@ impl Parser<'_> {
                 name,
                 pos,
                 args,
+                requires,
                 functions,
             })),
             tok => Err(self.expected("a line break", tok)),
@@ -1320,6 +1350,7 @@ impl Parser<'_> {
             result_name,
             effects,
             requires,
+            needs: Vec::new(),
             ensures,
             body: block.finish(end),
             end,
@@ -2360,7 +2391,15 @@ impl Parser<'_> {
             if self.tok() == &Tok::Punct("[") {
                 let at = self.pos();
                 self.bump();
-                let index = self.expr()?;
+                let mut index = self.expr()?;
+                if self.tok() == &Tok::Punct(",") {
+                    let mut items = vec![index];
+                    while self.tok() == &Tok::Punct(",") {
+                        self.bump();
+                        items.push(self.expr()?);
+                    }
+                    index = Expr::Tuple { pos: at, items };
+                }
                 self.expect_punct("]", "`]`")?;
                 expr = Expr::Index {
                     of: Box::new(expr),

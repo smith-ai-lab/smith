@@ -1,0 +1,28 @@
+trait Show[T] {
+  fn show(x: T) -> str
+}
+
+struct Box[T] {
+  item: T
+}
+
+impl Show[i64] {
+  fn show(x: i64) -> str { "n" }
+}
+
+impl[T] Show[Box[T]]
+  requires Show[T]
+{
+  fn show(x: Box[T]) -> str { show(x.item) }
+}
+
+impl[T] Show[Box[T]]
+  requires Ord[T]
+{
+  fn show(x: Box[T]) -> str { "ordered" }
+}
+
+fn main() ! console {
+  b: Box[i64] = Box(item: 1)
+  print(show(b))
+}

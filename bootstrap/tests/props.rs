@@ -57,6 +57,14 @@ pub const TESTS: &[Test] = &[
         an_implementation_with_type_parameters_applies_to_each_type_that_fits,
     ),
     (
+        "a_call_of_a_function_that_requires_a_trait_of_two_types_compiles_exactly_when_an_implementation_exists",
+        a_call_of_a_function_that_requires_a_trait_of_two_types_compiles_exactly_when_an_implementation_exists,
+    ),
+    (
+        "a_bound_and_the_requires_of_the_same_trait_build_the_same_program",
+        a_bound_and_the_requires_of_the_same_trait_build_the_same_program,
+    ),
+    (
         "every_placed_mistake_about_traits_is_one_error_at_its_place",
         every_placed_mistake_about_traits_is_one_error_at_its_place,
     ),
@@ -685,6 +693,32 @@ fn an_implementation_with_type_parameters_applies_to_each_type_that_fits() {
     generate::check(16, 200, traits::boxes, |(source, stdout)| {
         let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(scalar::run(&program).stdout, *stdout);
+    });
+}
+
+fn a_call_of_a_function_that_requires_a_trait_of_two_types_compiles_exactly_when_an_implementation_exists()
+ {
+    generate::check(115, 120, traits::requires, |case| {
+        let built = lower(case.source.as_bytes());
+        match (&case.mistake, built) {
+            (None, Ok(program)) => assert_eq!(scalar::run(&program).stdout, case.stdout),
+            (None, Err(e)) => panic!("{e:?}"),
+            (Some(_), Ok(_)) => panic!("builds"),
+            (Some((at, mentions)), Err(found)) => {
+                assert_eq!(found.len(), 1, "{found:?}");
+                assert_eq!(found[0].pos, *at, "{}", found[0]);
+                for name in mentions {
+                    assert!(found[0].message.contains(name), "{}", found[0]);
+                }
+            }
+        }
+    });
+}
+
+fn a_bound_and_the_requires_of_the_same_trait_build_the_same_program() {
+    generate::check(116, 40, traits::program, |case| {
+        let written = traits::requires_for_bounds(&case.source);
+        assert_eq!(lower(written.as_bytes()), lower(case.source.as_bytes()));
     });
 }
 
