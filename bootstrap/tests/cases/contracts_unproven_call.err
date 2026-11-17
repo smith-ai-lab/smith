@@ -1,0 +1,4 @@
+contracts_unproven_call.smith:9:3: cannot prove that `x < 255`, which `next` requires of its arguments
+  9 |   next(x)
+    |   ^
+  fix: check the arguments first with an `if`, or state it in a `requires`

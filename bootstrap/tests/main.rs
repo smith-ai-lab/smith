@@ -23,6 +23,7 @@ mod check;
 mod choices;
 mod cli;
 mod clock;
+mod contracts;
 mod enums;
 mod generate;
 #[cfg(unix)]
@@ -67,6 +68,7 @@ fn limited() -> Vec<Test> {
     let tests = [
         alloc::ONCE,
         arith::ONCE,
+        contracts::ONCE,
         props::TESTS,
         cli::ONCE,
         cli::MACHINE,
@@ -106,6 +108,7 @@ fn main() -> ExitCode {
         scalar::ONCE,
         alloc::ONCE,
         arith::ONCE,
+        contracts::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.

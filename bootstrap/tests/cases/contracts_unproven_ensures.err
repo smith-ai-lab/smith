@@ -1,0 +1,4 @@
+contracts_unproven_ensures.smith:5:3: cannot prove that `r > i + 1`, which `next` ensures, where `r` is `i + 1`
+  5 |   i + 1
+    |   ^
+  fix: state what is needed in a `requires`, or check it first with an `if`

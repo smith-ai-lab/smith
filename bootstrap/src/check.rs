@@ -1368,6 +1368,11 @@ fn written(f: &Function, effects: &[&str]) -> String {
 /// How an expression is written in the source, with each text written with
 /// an escape for every character that needs one.
 fn written_expr(e: &Expr) -> String {
+    written_with(&|_| None, e)
+}
+
+/// How `e` is written, where a name that `s` gives text for is written as it.
+fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
     match e {
         Expr::Number { text, negative, .. } => {
             format!("{}{text}", if *negative { "-" } else { "" })
@@ -1393,30 +1398,33 @@ fn written_expr(e: &Expr) -> String {
             for part in parts {
                 match part {
                     Part::Text(text) => {
-                        let quoted = written_expr(&Expr::Text {
-                            text: text.clone(),
-                            pos: Pos::START,
-                        });
+                        let quoted = written_with(
+                            s,
+                            &Expr::Text {
+                                text: text.clone(),
+                                pos: Pos::START,
+                            },
+                        );
                         out.push_str(&quoted[1..quoted.len() - 1]);
                     }
                     Part::Expr(e) => {
                         let Expr::Call(call) = e else {
                             unreachable!("the call of `Fmt.fmt`")
                         };
-                        out.push_str(&format!("{{{}}}", written_expr(&call.args[0].value)));
+                        out.push_str(&format!("{{{}}}", written_with(s, &call.args[0].value)));
                     }
                 }
             }
             out.push('"');
             out
         }
-        Expr::Name { name, .. } => name.clone(),
+        Expr::Name { name, .. } => s(name).unwrap_or_else(|| name.clone()),
         Expr::Call(call) => {
             let args: Vec<String> = (call.args.iter())
                 .filter(|a| !a.after)
                 .map(|a| match &a.name {
-                    Some((name, _)) => format!("{name}: {}", written_expr(&a.value)),
-                    None => written_expr(&a.value),
+                    Some((name, _)) => format!("{name}: {}", written_with(s, &a.value)),
+                    None => written_with(s, &a.value),
                 })
                 .collect();
             let mut text = match &call.qualifier {
@@ -1424,11 +1432,11 @@ fn written_expr(e: &Expr) -> String {
                 None => format!("{}({})", call.callee, args.join(", ")),
             };
             for a in call.args.iter().filter(|a| a.after) {
-                text.push_str(&format!(" {}", written_expr(&a.value)));
+                text.push_str(&format!(" {}", written_with(s, &a.value)));
             }
             text
         }
-        Expr::Field { of, name, .. } => format!("{}.{name}", written_expr(of)),
+        Expr::Field { of, name, .. } => format!("{}.{name}", written_with(s, of)),
         Expr::Arith {
             op, left, right, ..
         } => {
@@ -1439,9 +1447,9 @@ fn written_expr(e: &Expr) -> String {
                 Expr::Arith { op: inner, .. }
                     if binds(inner) < binds(op) || (right && binds(inner) == binds(op)) =>
                 {
-                    format!("({})", written_expr(e))
+                    format!("({})", written_with(s, e))
                 }
-                _ => written_expr(e),
+                _ => written_with(s, e),
             };
             format!(
                 "{} {} {}",
@@ -1451,22 +1459,22 @@ fn written_expr(e: &Expr) -> String {
             )
         }
         Expr::Case { name, payload, .. } => match payload {
-            Some(p) => format!(".{name}({})", written_expr(p)),
+            Some(p) => format!(".{name}({})", written_with(s, p)),
             None => format!(".{name}"),
         },
         Expr::Match(m) => {
             // The side of `and` or `or` that runs only sometimes is what one
             // of the blocks gives.
             let side = |arm: usize| match m.arms[arm].body.as_slice() {
-                [Stmt::Expr(e)] => written_expr(e),
+                [Stmt::Expr(e)] => written_with(s, e),
                 _ => "...".to_string(),
             };
             match m.form {
-                Form::Match => format!("match {} {{ ... }}", written_expr(&m.of)),
-                Form::If { .. } => format!("if {} {{ ... }}", written_expr(&m.of)),
-                Form::Not => format!("not ({})", written_expr(&m.of)),
-                Form::And => format!("({}) and ({})", written_expr(&m.of), side(0)),
-                Form::Or => format!("({}) or ({})", written_expr(&m.of), side(1)),
+                Form::Match => format!("match {} {{ ... }}", written_with(s, &m.of)),
+                Form::If { .. } => format!("if {} {{ ... }}", written_with(s, &m.of)),
+                Form::Not => format!("not ({})", written_with(s, &m.of)),
+                Form::And => format!("({}) and ({})", written_with(s, &m.of), side(0)),
+                Form::Or => format!("({}) or ({})", written_with(s, &m.of), side(1)),
             }
         }
         Expr::Tuple { items, .. } => {
@@ -3044,6 +3052,14 @@ struct Body<'a> {
     decided: HashMap<String, (Int, Option<Pos>)>,
     /// What `arith` knows where the body is being checked.
     facts: proof::Facts,
+    /// The places of the expressions the body can end with, which each have
+    /// to meet what the function `ensures`.
+    tails: Vec<usize>,
+    /// The type of the result of the function.
+    gives: Ty,
+    /// Whether the body is a contract, which states what is so of whole
+    /// numbers and never computes, so that nothing in it can overflow.
+    contract: bool,
 }
 
 /// The whole numbers a body binds to names with no type written.
@@ -3268,6 +3284,9 @@ impl<'a> Checker<'a> {
             numbers: Numbers::Off,
             decided: HashMap::new(),
             facts: proof::Facts::default(),
+            tails: Vec::new(),
+            gives: Ty::Nothing,
+            contract: false,
         };
         let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
         self.expect(&body, value, &gives, needed);
@@ -3381,6 +3400,7 @@ impl<'a> Checker<'a> {
         }
         self.params(def, &defs.signatures[f].scope);
         self.defaults(def, &defs.signatures[f]);
+        self.contracts(def, &defs.signatures[f]);
         self.effects(&def.effects);
     }
 
@@ -3738,7 +3758,23 @@ impl<'a> Checker<'a> {
             numbers,
             decided: HashMap::new(),
             facts: proof::Facts::default(),
+            tails: Vec::new(),
+            gives: view.gives.clone(),
+            contract: false,
         };
+        if let Template::Free(_) = template {
+            for requirement in &f.requires {
+                self.assume(&mut body, requirement, true);
+            }
+            if !f.ensures.is_empty() {
+                proof::tails(&f.body, &mut body.tails);
+            }
+        } else if let Some(contract) = f.requires.first().or(f.ensures.first()) {
+            self.errors.push(Error::unsupported(
+                contract.pos(),
+                "a contract of an implementation",
+            ));
+        }
         let want = match view.result {
             Some(_) => Want::Ty(view.gives.clone()),
             None => Want::Unused,
@@ -4042,6 +4078,9 @@ impl<'a> Checker<'a> {
         self.types.insert(addr(expr), ty.clone());
         if let Expr::Call(call) = expr {
             self.types.insert(addr(call), ty.clone());
+        }
+        if body.tails.contains(&addr(expr)) {
+            self.ensure(body, expr);
         }
         ty
     }
@@ -5141,6 +5180,7 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
+            self.contract_call(body, call, &defs.file.functions[f], sig);
             return sig.gives.solved(&sol);
         }
         match defs.trait_fns.get(name).map(Vec::as_slice) {

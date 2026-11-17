@@ -1,0 +1,10 @@
+fn next(i: u8) -> r: u8
+  requires i < 255
+  ensures r > i
+{
+  i + 1
+}
+
+fn main() ! console, alloc {
+  print("{next(200)}")
+}

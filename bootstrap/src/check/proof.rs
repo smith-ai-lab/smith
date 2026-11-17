@@ -11,9 +11,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use super::arith::{Formula, Lin, proves};
-use super::{Body, Checker, Int, Ty, addr, written_expr};
+use super::{
+    Body, Checker, Int, Numbers, Signature, Ty, addr, params_of, written_expr, written_with,
+};
 use crate::diag::Error;
-use crate::parser::{ArithOp, Expr, Form, Pattern, Stmt};
+use crate::parser::{ArithOp, Call, Expr, Form, Function, Pattern, Stmt};
 
 /// What a variable of `arith` stands for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -26,6 +28,10 @@ pub(super) enum Key {
     /// A value nothing is known of but the range of its type: a `var`, or
     /// what a call gives. Each is its own.
     Fresh(usize, i128, i128),
+    /// What a call gave, by the place of the call, with the range of its
+    /// type. The call is one value, so every fact about it is about the same
+    /// variable.
+    Call(usize, i128, i128),
     /// A product of two values that are not constants, as it is written in
     /// the variables it multiplies. Nothing is known of it but the facts
     /// that are about the same product.
@@ -35,9 +41,10 @@ pub(super) enum Key {
 impl Key {
     fn range(&self) -> Option<(i128, i128)> {
         match self {
-            Key::Name(_, lo, hi) | Key::Field(_, lo, hi) | Key::Fresh(_, lo, hi) => {
-                Some((*lo, *hi))
-            }
+            Key::Name(_, lo, hi)
+            | Key::Field(_, lo, hi)
+            | Key::Fresh(_, lo, hi)
+            | Key::Call(_, lo, hi) => Some((*lo, *hi)),
             Key::Product(_) => None,
         }
     }
@@ -53,6 +60,9 @@ pub(super) struct Facts {
     keys: Vec<Key>,
     ids: HashMap<Key, usize>,
     fresh: usize,
+    /// While a function's contract is read at a call, the sum each of its
+    /// parameters, and its result, stands for there.
+    subst: Option<HashMap<String, Lin>>,
 }
 
 impl Facts {
@@ -171,6 +181,9 @@ impl Builder<'_, '_> {
                 });
                 Some(constant(if *negative { -n } else { n }))
             }
+            Expr::Name { name, .. } if self.facts.subst.is_some() => {
+                self.facts.subst.as_ref()?.get(name).cloned()
+            }
             Expr::Name { name, .. } => {
                 let at = self.body.names.iter().rposition(|(n, _)| n == name)?;
                 let Ty::Int(t) = &self.body.names[at].1 else {
@@ -216,6 +229,13 @@ impl Builder<'_, '_> {
                     }
                 })
             }
+            Expr::Call(call) => {
+                let (lo, hi) = match self.types.get(&addr(e)) {
+                    Some(Ty::Int(t)) => (t.min(), t.max()),
+                    _ => return self.goal.then(|| self.fresh(e)),
+                };
+                Some(self.variable(Key::Call(addr(call), lo, hi)))
+            }
             _ => self.goal.then(|| self.fresh(e)),
         }
     }
@@ -223,6 +243,9 @@ impl Builder<'_, '_> {
     /// A field read from a name that is not a `var`, written out with the
     /// place of the name.
     fn path(&self, e: &Expr) -> Option<String> {
+        if self.facts.subst.is_some() {
+            return None;
+        }
         match e {
             Expr::Name { name, .. } => {
                 let at = self.body.names.iter().rposition(|(n, _)| n == name)?;
@@ -463,27 +486,30 @@ impl<'a> Checker<'a> {
             if given.terms.is_empty() {
                 facts.constants.push((at, given.constant));
             }
-            let me = Lin {
-                terms: BTreeMap::from([(facts.id(Key::Name(at, t.min(), t.max())), 1)]),
-                constant: 0,
-            };
-            let mut builder = self.builder(body, &mut facts, false);
-            let over = builder.combine(&me, -1, &given);
-            let under = builder.combine(&given, -1, &me);
-            if !builder.overflow {
-                facts.known.push(Formula::And(vec![
-                    at_least_zero(over),
-                    at_least_zero(under),
-                ]));
+            let id = facts.id(Key::Name(at, t.min(), t.max()));
+            if let Some(same) = self.equal(body, &mut facts, id, &given) {
+                facts.known.push(same);
             }
         }
         body.facts = facts;
     }
 
+    /// That variable `id` is `given`, or none when a number grew too large.
+    fn equal(&self, body: &Body<'a>, facts: &mut Facts, id: usize, given: &Lin) -> Option<Formula> {
+        let me = Lin {
+            terms: BTreeMap::from([(id, 1)]),
+            constant: 0,
+        };
+        let mut builder = self.builder(body, facts, false);
+        let over = builder.combine(&me, -1, given);
+        let under = builder.combine(given, -1, &me);
+        (!builder.overflow).then(|| Formula::And(vec![at_least_zero(over), at_least_zero(under)]))
+    }
+
     /// Whether `arith` proves that the result of the operation `e` fits `t`,
     /// and if it does not, the goal it could not prove.
     pub(super) fn fits(&mut self, body: &mut Body<'a>, e: &Expr, t: Int) {
-        if !Self::decided(body) {
+        if !Self::decided(body) || body.contract {
             return;
         }
         let Expr::Arith { op, op_pos, .. } = e else {
@@ -517,27 +543,7 @@ impl<'a> Checker<'a> {
         } else {
             goals.push((format!("<= {}", t.max()), Formula::Or(Vec::new())));
         }
-        let mut used: Vec<Formula> = facts.known.clone();
-        let mut ids: Vec<usize> = Vec::new();
-        for f in used.iter().chain(goals.iter().map(|(_, g)| g)) {
-            collect(f, &mut ids);
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        for id in ids {
-            if let Some((lo, hi)) = facts.keys[id].range() {
-                let me = Lin {
-                    terms: BTreeMap::from([(id, 1)]),
-                    constant: 0,
-                };
-                let mut over = me.clone();
-                over.constant = -lo;
-                used.push(Formula::Ge(over));
-                let mut under = me.negated().expect("small");
-                under.constant = hi;
-                used.push(Formula::Ge(under));
-            }
-        }
+        let used = background(&facts, goals.iter().map(|(_, g)| g));
         body.facts = facts;
         for (text, goal) in goals {
             if !proves(&used, &goal) {
@@ -560,6 +566,348 @@ impl<'a> Checker<'a> {
                 return;
             }
         }
+    }
+}
+
+/// What is known, and the range of each value it or the goals are about.
+fn background<'g>(facts: &Facts, goals: impl Iterator<Item = &'g Formula>) -> Vec<Formula> {
+    let mut used: Vec<Formula> = facts.known.clone();
+    let mut ids: Vec<usize> = Vec::new();
+    for f in facts.known.iter() {
+        collect(f, &mut ids);
+    }
+    for f in goals {
+        collect(f, &mut ids);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    for id in ids {
+        if let Some((lo, hi)) = facts.keys[id].range() {
+            let me = Lin {
+                terms: BTreeMap::from([(id, 1)]),
+                constant: 0,
+            };
+            let mut over = me.clone();
+            over.constant = -lo;
+            used.push(Formula::Ge(over));
+            let mut under = me.negated().expect("small");
+            under.constant = hi;
+            used.push(Formula::Ge(under));
+        }
+    }
+    used
+}
+
+/// The places of the expressions that a block can end with: its last
+/// expression, or those the blocks of its last `if` or `match` end with.
+pub(super) fn tails(stmts: &[Stmt], out: &mut Vec<usize>) {
+    match stmts.last() {
+        Some(Stmt::Expr(Expr::Match(m))) if matches!(m.form, Form::If { .. } | Form::Match) => {
+            for arm in &m.arms {
+                tails(&arm.body, out);
+            }
+        }
+        Some(Stmt::Expr(e)) => out.push(addr(e)),
+        _ => {}
+    }
+}
+
+/// How a contract is written, where `s` gives the text for a name.
+fn written_contract(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
+    let group = |inner: &Expr| match inner {
+        Expr::Match(m) if matches!(m.form, Form::And | Form::Or) => {
+            format!("({})", written_contract(s, inner))
+        }
+        _ => written_contract(s, inner),
+    };
+    // A side that is only a name is written as the text it stands for.
+    let side = |side: &Expr| match side {
+        Expr::Name { name, .. } => s(name).unwrap_or_else(|| name.clone()),
+        _ => written_with(s, side),
+    };
+    match e {
+        Expr::Match(m) => match m.form {
+            Form::Not => match &m.of {
+                Expr::Call(c) if c.callee == "eq" && c.args.len() == 2 => {
+                    format!("{} != {}", side(&c.args[0].value), side(&c.args[1].value))
+                }
+                inner => format!("not {}", group(inner)),
+            },
+            Form::And => match m.arms[0].body.as_slice() {
+                [Stmt::Expr(r)] => format!("{} and {}", group(&m.of), group(r)),
+                _ => written_with(s, e),
+            },
+            Form::Or => match m.arms[1].body.as_slice() {
+                [Stmt::Expr(r)] => format!("{} or {}", group(&m.of), group(r)),
+                _ => written_with(s, e),
+            },
+            Form::Match => {
+                let Expr::Call(c) = &m.of else {
+                    return written_with(s, e);
+                };
+                let holds = |case: &str| {
+                    m.arms.iter().any(|a| {
+                        matches!(&a.pattern, Pattern::Case { name, .. } if name == case)
+                            && matches!(a.body.as_slice(),
+                                [Stmt::Expr(Expr::Name { name, .. })] if name == "true")
+                    })
+                };
+                let op = match (holds("less"), holds("equal"), holds("greater")) {
+                    (true, false, false) => "<",
+                    (true, true, false) => "<=",
+                    (false, false, true) => ">",
+                    _ => ">=",
+                };
+                format!("{} {op} {}", side(&c.args[0].value), side(&c.args[1].value))
+            }
+            Form::If { .. } => written_with(s, e),
+        },
+        Expr::Call(c) if c.callee == "eq" && c.args.len() == 2 => {
+            format!("{} == {}", side(&c.args[0].value), side(&c.args[1].value))
+        }
+        _ => written_with(s, e),
+    }
+}
+
+impl<'a> Checker<'a> {
+    /// Checks the contracts of a function at its signature: each is a
+    /// comparison of whole numbers, joined with `and`, `or`, and `not`,
+    /// over the parameters and, in an `ensures`, the name of the result.
+    pub(super) fn contracts(&mut self, f: &'a Function, sig: &'a Signature) {
+        if f.requires.is_empty() && f.ensures.is_empty() {
+            return;
+        }
+        let mut body = Body {
+            f: Some(f),
+            default: None,
+            scope: &sig.scope,
+            listed: Vec::new(),
+            unknown_effect: false,
+            missing: Vec::new(),
+            names: sig.params.clone(),
+            params: sig.params.len(),
+            vars: Vec::new(),
+            numbers: Numbers::Off,
+            decided: HashMap::new(),
+            facts: Facts::default(),
+            tails: Vec::new(),
+            gives: sig.gives.clone(),
+            contract: true,
+        };
+        for e in &f.requires {
+            self.contract(&mut body, e);
+        }
+        let Some((name, pos)) = &f.result_name else {
+            if let Some(e) = f.ensures.first() {
+                self.errors.push(
+                    Error::new(
+                        e.pos(),
+                        format!(
+                            "`{}` has an `ensures`, and its signature does not name its result",
+                            f.name
+                        ),
+                    )
+                    .with_fix(
+                        "write the result as `-> name: type`, and use the name in the `ensures`",
+                    ),
+                );
+            }
+            return;
+        };
+        if f.ensures.is_empty() {
+            return;
+        }
+        if body.names.iter().any(|(n, _)| n == name) {
+            self.errors.push(Error::new(
+                *pos,
+                format!("`{name}` is already a parameter of `{}`", f.name),
+            ));
+            return;
+        }
+        if !matches!(sig.gives, Ty::Int(_)) {
+            if !sig.gives.unknown() {
+                self.errors.push(Error::new(
+                    *pos,
+                    "an `ensures` is about a result that is a whole number",
+                ));
+            }
+            return;
+        }
+        body.names.push((name.clone(), sig.gives.clone()));
+        for e in &f.ensures {
+            self.contract(&mut body, e);
+        }
+    }
+
+    /// Checks one contract: it is a `bool`, and is a statement `arith`
+    /// knows.
+    fn contract(&mut self, body: &mut Body<'a>, e: &Expr) {
+        let before = self.errors.len();
+        self.condition(body, e);
+        if self.errors.len() == before && !self.stated(body, e) {
+            self.errors.push(
+                Error::new(
+                    e.pos(),
+                    "a contract is a comparison of whole numbers, joined with `and`, `or`, and `not`",
+                )
+                .with_fix("write it over the parameters, and the result in an `ensures`"),
+            );
+        }
+    }
+
+    /// Whether `e` is made only of what `arith` knows.
+    fn stated(&self, body: &Body<'a>, e: &Expr) -> bool {
+        match e {
+            Expr::Match(m) => match m.form {
+                Form::Not => self.stated(body, &m.of),
+                Form::And => {
+                    self.stated(body, &m.of)
+                        && matches!(m.arms[0].body.as_slice(), [Stmt::Expr(r)] if self.stated(body, r))
+                }
+                Form::Or => {
+                    self.stated(body, &m.of)
+                        && matches!(m.arms[1].body.as_slice(), [Stmt::Expr(r)] if self.stated(body, r))
+                }
+                Form::Match => {
+                    let mut facts = Facts::default();
+                    self.said(body, &mut facts, e, true).is_some()
+                }
+                Form::If { .. } => false,
+            },
+            Expr::Name { name, .. } => name == "true" || name == "false",
+            _ => {
+                let mut facts = Facts::default();
+                matches!(e, Expr::Call(_)) && self.said(body, &mut facts, e, true).is_some()
+            }
+        }
+    }
+
+    /// At a call of a function with contracts, whose arguments are checked:
+    /// every `requires` must be proven of the arguments, and every `ensures`
+    /// of the arguments and the result is known after.
+    pub(super) fn contract_call(
+        &mut self,
+        body: &mut Body<'a>,
+        call: &Call,
+        callee: &Function,
+        sig: &Signature,
+    ) {
+        if !Self::decided(body) || (callee.requires.is_empty() && callee.ensures.is_empty()) {
+            return;
+        }
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut sums = HashMap::new();
+        let mut texts: HashMap<String, String> = HashMap::new();
+        for (arg, place) in call.args.iter().zip(params_of(&sig.params, &call.args)) {
+            let (name, ty) = &sig.params[place];
+            if !matches!(ty, Ty::Int(_)) {
+                continue;
+            }
+            let mut builder = self.builder(body, &mut facts, true);
+            let sum = builder.lin(&arg.value).filter(|_| !builder.overflow);
+            if let Some(sum) = sum {
+                sums.insert(name.clone(), sum);
+            }
+            let text = written_expr(&arg.value);
+            texts.insert(
+                name.clone(),
+                if text.contains(' ') {
+                    format!("({text})")
+                } else {
+                    text
+                },
+            );
+        }
+        facts.subst = Some(sums);
+        for requirement in &callee.requires {
+            let said = self.said(body, &mut facts, requirement, true);
+            let proved = said
+                .as_ref()
+                .is_some_and(|g| proves(&background(&facts, std::iter::once(g)), g));
+            if !proved {
+                let goal = written_contract(&|n| texts.get(n).cloned(), requirement);
+                self.errors.push(
+                    Error::new(
+                        call.pos,
+                        format!(
+                            "cannot prove that `{goal}`, which `{}` requires of its arguments",
+                            callee.name
+                        ),
+                    )
+                    .with_fix(
+                        "check the arguments first with an `if`, or state it in a `requires`",
+                    ),
+                );
+            }
+        }
+        if let (Some((name, _)), Ty::Int(t)) = (&callee.result_name, &sig.gives) {
+            let id = facts.id(Key::Call(addr(call), t.min(), t.max()));
+            let result = Lin {
+                terms: BTreeMap::from([(id, 1)]),
+                constant: 0,
+            };
+            facts
+                .subst
+                .as_mut()
+                .expect("set above")
+                .insert(name.clone(), result);
+            for ensured in &callee.ensures {
+                if let Some(said) = self.said(body, &mut facts, ensured, true) {
+                    facts.known.push(said);
+                }
+            }
+        }
+        facts.subst = None;
+        body.facts = facts;
+    }
+
+    /// At the end of a body, where `e` is what it gives: every `ensures`
+    /// must be proven of it.
+    pub(super) fn ensure(&mut self, body: &mut Body<'a>, e: &Expr) {
+        let Some(f) = body.f else {
+            return;
+        };
+        let (Some((name, _)), Ty::Int(t)) = (&f.result_name, body.gives.clone()) else {
+            return;
+        };
+        if !Self::decided(body) {
+            return;
+        }
+        let at = body.names.len();
+        body.names.push((name.clone(), body.gives.clone()));
+        let mut facts = std::mem::take(&mut body.facts);
+        let mark = facts.mark();
+        let mut builder = self.builder(body, &mut facts, true);
+        let value = builder.lin(e).filter(|_| !builder.overflow);
+        if let Some(value) = value {
+            let id = facts.id(Key::Name(at, t.min(), t.max()));
+            if let Some(same) = self.equal(body, &mut facts, id, &value) {
+                facts.known.push(same);
+            }
+        }
+        for ensured in &f.ensures {
+            let said = self.said(body, &mut facts, ensured, true);
+            let proved = said
+                .as_ref()
+                .is_some_and(|g| proves(&background(&facts, std::iter::once(g)), g));
+            if !proved {
+                let goal = written_contract(&|_| None, ensured);
+                self.errors.push(
+                    Error::new(
+                        e.pos(),
+                        format!(
+                            "cannot prove that `{goal}`, which `{}` ensures, where `{name}` is `{}`",
+                            f.name,
+                            written_expr(e)
+                        ),
+                    )
+                    .with_fix("state what is needed in a `requires`, or check it first with an `if`"),
+                );
+            }
+        }
+        facts.reset(mark);
+        body.facts = facts;
+        body.names.pop();
     }
 }
 
