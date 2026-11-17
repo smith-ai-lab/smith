@@ -29,6 +29,10 @@ pub const ONCE: &[Test] = &[
         inside_a_loop_over_a_range_arith_knows_the_counter_is_inside_the_range,
     ),
     (
+        "two_literal_ends_of_a_range_take_the_type_the_counter_is_used_as",
+        two_literal_ends_of_a_range_take_the_type_the_counter_is_used_as,
+    ),
+    (
         "a_break_ends_the_nearest_loop_around_it_and_no_other",
         a_break_ends_the_nearest_loop_around_it_and_no_other,
     ),
@@ -325,4 +329,28 @@ fn a_loop_over_a_range_is_one_counter_and_one_comparison_each_time_round() {
         });
         assert!(loops, "no loop in {source}");
     }
+}
+
+/// A range of two literals is one number, whose type is decided by how the
+/// counter is used, as for a literal bound to a name, and is `i64` when
+/// nothing decides.
+fn two_literal_ends_of_a_range_take_the_type_the_counter_is_used_as() {
+    for ty in INTS {
+        let (t, max) = (ty.name, ty.max());
+        let source = |from: i128, by: i128| {
+            format!(
+                "fn f() -> {t} {{\n  var s: {t} = 0\n  loop i in {from}..{max} {{ s = i + {by} }}\n  s\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f()}}\")\n}}\n"
+            )
+        };
+        prints(&source(max - 3, 1), vec![max.to_string()]);
+        let too_far = source(max - 3, 2);
+        let errors = refused(&too_far);
+        assert!(
+            errors.iter().any(|e| e.contains("i + 2")),
+            "{errors:?} does not state the goal about `i + 2` for {too_far}"
+        );
+    }
+    // Nothing decides, so the numbers are `i64`.
+    let nothing = "fn main() ! console, alloc {\n  loop i in 0..3 { print(\"{i}\") }\n}\n";
+    prints(nothing, vec!["0".into(), "1".into(), "2".into()]);
 }
