@@ -28,6 +28,8 @@ The Open Knowledge Format (OKF) is an open specification from Google Cloud for p
 - [language/](language/index.md) is complete. If a feature is not described there, it is not in Smith.
 - Every file in `language/` has `status`, which says how much of the page the bootstrap compiler builds today: `built` for all of it, `planned` for none, and `partial` for some. A `partial` page also has `built`, a line naming what works. The pull request that builds a feature changes these in the same change. The body of a page describes the language and never says what is built.
 - The language folder is a tour, and it is how people and agents learn Smith. Its index lists the files in reading order, each file uses only what the files before it introduced, and each ends with a link to the next.
+- A file in `language/` teaches one concept, which its title names without an "and". Two concepts are two files, even when the second is short, and a concept built from another comes after it in the tour.
+- A file goes from the simplest to the hardest. It opens with one sentence that says what the concept is, and then the smallest complete example of it in its plainest form. Each further idea follows in order of difficulty, each with its own example, and a shorter way to write something comes after the plain way it shortens. Rules and exceptions come after the example they are about, and what few programs need comes last.
 - [library/](library/index.md) holds one file for each module of the standard library, named for the module.
 - Work to be done is not knowledge. Plans and open problems are GitHub issues.
 
