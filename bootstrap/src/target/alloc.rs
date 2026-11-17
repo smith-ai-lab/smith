@@ -22,7 +22,8 @@
 //!    this finds a register whenever there are enough. A value alive across a
 //!    call takes a register the call does not change. Any other takes one a
 //!    call may change first, so a function that calls nothing uses no
-//!    register it must save.
+//!    register it must save. A parameter of the function takes the register
+//!    its call passes it in, when it is free and the parameter may have it.
 //! 4. **The frame.** Each value that has no register has a place of its own,
 //!    at its size.
 //!
@@ -36,11 +37,14 @@ use crate::scalar::{Function, Value};
 
 /// The registers a chip offers the allocator, by number. The registers from 0
 /// below `changed` are those a call may change, and the `preserved` after them
-/// are those it does not.
+/// are those it does not. The first `passed` of those a call may change carry
+/// the arguments of a call, and then its results, in order, so a parameter of
+/// a function that arrives in a register is best left in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Registers {
     pub changed: usize,
     pub preserved: usize,
+    pub passed: usize,
 }
 
 impl Registers {
@@ -230,7 +234,13 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
             }
         }
         let block = &f.blocks[b];
-        for p in &block.params {
+        for (i, p) in block.params.iter().enumerate() {
+            // Only the function's own parameters arrive in registers.
+            let arrives = if b == 0 && i < registers.passed {
+                Some(i)
+            } else {
+                None
+            };
             colour(
                 registers,
                 &mut holder,
@@ -238,6 +248,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
                 &mut spilled,
                 &crosses,
                 *p,
+                arrives,
             );
         }
         release(&mut holder, &register, &dead[base[b]]);
@@ -252,6 +263,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
                     &mut spilled,
                     &crosses,
                     *r,
+                    None,
                 );
             }
             release(&mut holder, &register, &dead[at]);
@@ -412,8 +424,10 @@ fn spill(
     }
 }
 
-/// Gives the value the first register that no value alive holds, from those
-/// it may have, or sends it to the frame when there is none.
+/// Gives the value the register it arrives in, if it has one and may have it
+/// and no value alive holds it, and otherwise the first register that no
+/// value alive holds, from those it may have, or sends it to the frame when
+/// there is none.
 fn colour(
     registers: Registers,
     holder: &mut [usize],
@@ -421,12 +435,14 @@ fn colour(
     spilled: &mut [bool],
     crosses: &[bool],
     v: Value,
+    arrives: Option<usize>,
 ) {
     if spilled[v.0] {
         return;
     }
     let from = if crosses[v.0] { registers.changed } else { 0 };
-    match (from..registers.count()).find(|&r| holder[r] == NONE) {
+    let wanted = arrives.filter(|&r| r >= from && holder[r] == NONE);
+    match wanted.or_else(|| (from..registers.count()).find(|&r| holder[r] == NONE)) {
         Some(r) => {
             holder[r] = v.0;
             register[v.0] = r;

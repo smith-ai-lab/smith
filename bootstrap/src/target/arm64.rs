@@ -37,9 +37,13 @@ const HOMES: [u32; 25] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
 ];
 
+/// A call passes its arguments in all fifteen of the first, `x0` to `x14`,
+/// and the function gives its results in the same fifteen, each in the order
+/// it has. What does not fit goes in the caller's frame.
 const REGISTERS: Registers = Registers {
     changed: 15,
     preserved: 10,
+    passed: 15,
 };
 /// The link register, which a call puts its return address in.
 const X30: u32 = 30;
@@ -472,6 +476,17 @@ enum Loc {
     Frame(u32),
 }
 
+/// Where the values of a call go, in order: in the registers that carry them
+/// as many as there are, and then in the places in the frame.
+fn passing(frame: impl Iterator<Item = u32>) -> Vec<Loc> {
+    let mut places: Vec<Loc> = HOMES[..REGISTERS.passed]
+        .iter()
+        .map(|r| Loc::Register(*r))
+        .collect();
+    places.extend(frame.map(Loc::Frame));
+    places
+}
+
 /// A function being written, and where each value is.
 struct Writer<'a, S> {
     program: &'a Program,
@@ -483,9 +498,10 @@ struct Writer<'a, S> {
     frame: u32,
     /// Where each value is.
     at: Vec<Loc>,
-    /// Where each parameter and result of the function is, in the call
-    /// area, from the bottom of the frame.
-    passed: Vec<u32>,
+    /// Where each parameter of the function arrives, and where each result
+    /// is left.
+    arrive: Vec<Loc>,
+    leave: Vec<Loc>,
     /// The registers a call does not change that the function uses, and
     /// where it keeps what they held.
     saved: Vec<(u32, u32)>,
@@ -502,12 +518,15 @@ fn function<S: System>(
     fail: usize,
 ) {
     let allocation = alloc::allocate(f, REGISTERS);
-    let below = S::RESERVED + frame::outgoing(program, f);
+    let below = S::RESERVED + frame::outgoing(program, f, REGISTERS.passed);
     let saved_from = round_up(below + allocation.frame, 8);
     // The address the function returns to is kept above its values.
     let total = round_up(saved_from + 8 * allocation.saved.len() as u32, 16) + 16;
-    let (offsets, _) = call_area(f);
-    let passed: Vec<u32> = offsets.iter().map(|o| total + S::RESERVED + o).collect();
+    let area = call_area(f, REGISTERS.passed);
+    let in_caller =
+        |places: &[u32]| -> Vec<Loc> { passing(places.iter().map(|o| total + S::RESERVED + o)) };
+    let arrive = in_caller(&area.params);
+    let leave = in_caller(&area.results);
     let at = (allocation.homes.iter())
         .map(|home| match home {
             Home::Register(r) => Loc::Register(HOMES[*r]),
@@ -526,7 +545,8 @@ fn function<S: System>(
         fail,
         frame: total,
         at,
-        passed,
+        arrive,
+        leave,
         saved,
         labels,
         system: std::marker::PhantomData,
@@ -536,10 +556,16 @@ fn function<S: System>(
     for (r, at) in &w.saved {
         asm.store(Place::Frame(*at), *r, 8);
     }
-    // The function's own parameters are in the caller's frame.
-    for (p, from) in f.blocks[0].params.iter().zip(&w.passed) {
-        w.copy(asm, w.at[p.0], Loc::Frame(*from), w.width(*p));
-    }
+    // The function's own parameters are in registers, and in the caller's
+    // frame when there are more than registers.
+    let moves: Vec<Move<Loc>> = (f.blocks[0].params.iter().zip(&w.arrive))
+        .map(|(p, from)| Move {
+            to: w.at[p.0],
+            from: *from,
+            width: w.width(*p),
+        })
+        .collect();
+    w.run(asm, &moves);
     for (b, block) in f.blocks.iter().enumerate() {
         asm.bind(w.labels[b]);
         for instruction in &block.instructions {
@@ -733,17 +759,26 @@ impl<S: System> Writer<'_, S> {
                 asm.store(Place::At(address), value, size(*ty));
             }
             Op::Call { function, args } => {
-                let callee = &self.program.functions[*function];
-                let (offsets, _) = call_area(callee);
-                for (arg, offset) in args.iter().zip(&offsets) {
-                    let to = Loc::Frame(S::RESERVED + offset);
-                    self.copy(asm, to, self.at[arg.0], self.width(*arg));
-                }
+                let area = call_area(&self.program.functions[*function], REGISTERS.passed);
+                let at_bottom = |places: &[u32]| passing(places.iter().map(|o| S::RESERVED + o));
+                let params = at_bottom(&area.params);
+                let moves: Vec<Move<Loc>> = (args.iter().zip(&params))
+                    .map(|(arg, to)| Move {
+                        to: *to,
+                        from: self.at[arg.0],
+                        width: self.width(*arg),
+                    })
+                    .collect();
+                self.run(asm, &moves);
                 asm.call_label(self.functions[*function]);
-                for (result, offset) in results.iter().zip(&offsets[args.len()..]) {
-                    let from = Loc::Frame(S::RESERVED + offset);
-                    self.copy(asm, self.at[result.0], from, self.width(*result));
-                }
+                let moves: Vec<Move<Loc>> = (results.iter().zip(at_bottom(&area.results)))
+                    .map(|(result, from)| Move {
+                        to: self.at[result.0],
+                        from,
+                        width: self.width(*result),
+                    })
+                    .collect();
+                self.run(asm, &moves);
             }
             Op::System {
                 call: Call::Write(stream),
@@ -856,10 +891,14 @@ impl<S: System> Writer<'_, S> {
                 }
             }
             End::Return(values) => {
-                let results = &self.passed[self.passed.len() - values.len()..];
-                for (value, to) in values.iter().zip(results) {
-                    self.copy(asm, Loc::Frame(*to), self.at[value.0], self.width(*value));
-                }
+                let moves: Vec<Move<Loc>> = (values.iter().zip(&self.leave))
+                    .map(|(value, to)| Move {
+                        to: *to,
+                        from: self.at[value.0],
+                        width: self.width(*value),
+                    })
+                    .collect();
+                self.run(asm, &moves);
                 for (r, at) in &self.saved {
                     asm.load(*r, 8, false, Place::Frame(*at));
                 }
