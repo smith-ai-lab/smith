@@ -49,6 +49,10 @@ pub const ONCE: &[Test] = &[
         a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only_there,
     ),
     (
+        "the_ends_of_a_range_are_values_from_when_the_loop_starts_and_nothing_ties_them_to_an_assigned_var",
+        the_ends_of_a_range_are_values_from_when_the_loop_starts_and_nothing_ties_them_to_an_assigned_var,
+    ),
+    (
         "a_break_in_an_if_gives_arith_the_condition_that_is_false_in_the_rest_of_the_round",
         a_break_in_an_if_gives_arith_the_condition_that_is_false_in_the_rest_of_the_round,
     ),
@@ -315,6 +319,50 @@ fn a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only
             );
         }
     }
+}
+
+/// The ends of a range are values the loop holds from when it starts. Where
+/// an end reads a `var` that the loop assigns, in its block, a lambda, a
+/// nested loop, or one arm of an `if`, before the use or after it, no fact
+/// about the end is used of the `var` in the block, and the goal that fails is
+/// the one about the end.
+fn the_ends_of_a_range_are_values_from_when_the_loop_starts_and_nothing_ties_them_to_an_assigned_var()
+ {
+    let wrap = |assign: &str| {
+        [
+            ("direct", assign.to_string()),
+            ("lambda", format!("run({{ {assign} }})")),
+            ("nested", format!("loop j in 0..2 {{ {assign} }}")),
+            ("arm", format!("if i == 7 {{ {assign} }}")),
+        ]
+    };
+    let list = |before: &str, after: &str| {
+        format!(
+            "fn run(f: () -> ()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  loop i in 0..xs.size {{\n    {before}\n    print(\"{{xs[i]}}\")\n    {after}\n  }}\n}}\n"
+        )
+    };
+    let number = |before: &str, after: &str| {
+        format!(
+            "fn run(f: () -> ()) {{ f() }}\n\nfn f(n: u8) -> u8 {{\n  var m: u8 = n\n  var s: u8 = 0\n  loop i in 0..m {{\n    {before}\n    s = m - i - 1\n    {after}\n  }}\n  s\n}}\n\nfn main() ! console, alloc {{ print(\"{{f(3)}}\") }}\n"
+        )
+    };
+    for ((name, list_assign), (_, number_assign)) in wrap("xs = []").into_iter().zip(wrap("m = 0"))
+    {
+        for (source, goal) in [
+            (list("", &list_assign), "i < xs.size"),
+            (list(&list_assign, ""), "i < xs.size"),
+            (number("", &number_assign), "m - i"),
+            (number(&number_assign, ""), "m - i"),
+        ] {
+            let errors = refused(&source);
+            assert!(
+                errors.iter().any(|e| e.contains(goal)),
+                "{name}: {errors:?} does not state `{goal}` for {source}"
+            );
+        }
+    }
+    // Where the loop assigns neither, the end holds.
+    assert_eq!(refused(&list("", "")), Vec::<String>::new());
 }
 
 /// After `if left < 3 { break }`, `left - 3` compiles, in an open-ended loop

@@ -4109,6 +4109,9 @@ impl<'a> Checker<'a> {
                     if let Some(needed) = needed {
                         self.expect(body, value, &gives, &needed);
                     }
+                    if let Some(at) = body.names.iter().position(|(n, _)| n == name) {
+                        self.assign_field(body, at);
+                    }
                     End::Binding(*pos)
                 }
                 Stmt::Destructure { pattern, ty, value } => {
@@ -4815,7 +4818,7 @@ impl<'a> Checker<'a> {
         };
         body.names.truncate(outer);
         body.vars.truncate(vars);
-        body.facts.reset(known);
+        body.facts.reset(&known);
         self.forget(body, &assigned);
         body.outer_loops -= loops;
         body.loops = loops;
@@ -5080,11 +5083,11 @@ impl<'a> Checker<'a> {
             if proof::ends_in_break(&arm.body) {
                 excluded = true;
             } else {
-                paths.push(self.leave_arm(body, known, &assigned));
+                paths.push(self.leave_arm(body, &known, &assigned));
             }
             body.names.truncate(outer);
             body.vars.truncate(vars);
-            body.facts.reset(known);
+            body.facts.reset(&known);
         }
         self.join(body, outer, paths, &assigned, excluded);
         if !of.unknown() && patterns.iter().all(Option::is_some) {
@@ -5161,15 +5164,15 @@ impl<'a> Checker<'a> {
             if proof::ends_in_break(&arm.body) {
                 excluded = true;
             } else {
-                paths.push(self.leave_arm(body, known, &assigned));
+                paths.push(self.leave_arm(body, &known, &assigned));
             }
             body.names.truncate(outer);
             body.vars.truncate(vars);
-            body.facts.reset(known);
+            body.facts.reset(&known);
             // Where the condition is not so, nothing runs.
             self.assume(body, &m.of, false);
-            paths.push(self.leave_arm(body, known, &assigned));
-            body.facts.reset(known);
+            paths.push(self.leave_arm(body, &known, &assigned));
+            body.facts.reset(&known);
             self.join(body, outer, paths, &assigned, excluded);
             return Ty::Nothing;
         }
@@ -5180,11 +5183,11 @@ impl<'a> Checker<'a> {
             if proof::ends_in_break(&arm.body) {
                 excluded = true;
             } else {
-                paths.push(self.leave_arm(body, known, &assigned));
+                paths.push(self.leave_arm(body, &known, &assigned));
             }
             body.names.truncate(outer);
             body.vars.truncate(vars);
-            body.facts.reset(known);
+            body.facts.reset(&known);
         }
         self.join(body, outer, paths, &assigned, excluded);
         match want {
@@ -5227,8 +5230,8 @@ impl<'a> Checker<'a> {
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
-        self.begin_round(body, &assigned);
-        let start = measure.and_then(|e| self.measure(body, e));
+        // The ends of a range are worked out once, when the loop starts, so
+        // what they say is about the values before any round begins.
         if let Some((r, ty)) = counter {
             if body.names.iter().any(|(n, _)| n == &r.name) {
                 self.errors.push(self.defined_twice(body, &r.name, r.pos));
@@ -5236,6 +5239,8 @@ impl<'a> Checker<'a> {
             body.names.push((r.name.clone(), ty));
             self.assume_range(body, r);
         }
+        self.begin_round(body, &assigned);
+        let start = measure.and_then(|e| self.measure(body, e));
         body.loops += 1;
         if let End::Value(gives, value) = self.block(body, &l.body, &Want::Unused)
             && self.defs.is_result(&gives)
@@ -5248,7 +5253,7 @@ impl<'a> Checker<'a> {
         }
         body.names.truncate(outer);
         body.vars.truncate(vars);
-        body.facts.reset(known);
+        body.facts.reset(&known);
         self.forget(body, &assigned);
         Ty::Nothing
     }
@@ -5357,7 +5362,7 @@ impl<'a> Checker<'a> {
             {
                 self.expect(body, value, &gives, &truth);
             }
-            body.facts.reset(known);
+            body.facts.reset(&known);
         }
         self.forget(body, &assigned);
         truth
