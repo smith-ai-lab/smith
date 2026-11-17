@@ -3,7 +3,7 @@ type: specification
 title: loop and iteration
 description: loop for steps that run in order, the Iterate trait, and break.
 status: partial
-built: "`loop i in a..b` over whole numbers of one type, which runs in order and not at all when `a >= b`, and an open-ended `loop`, each ended by `break`; not a `loop` over an array or an `Iterate` type, `reversed`, or `decreases`"
+built: "`loop i in a..b` over whole numbers of one type, which runs in order and not at all when `a >= b`, and an open-ended `loop`, each ended by `break`, with or without `decreases` and a measure of an unsigned type, whose function carries `diverge` only without it; not a `loop` over an array or an `Iterate` type, or `reversed`"
 ---
 
 # `loop` and iteration

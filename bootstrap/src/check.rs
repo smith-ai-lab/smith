@@ -1493,7 +1493,10 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
                 written_with(s, &r.from),
                 written_with(s, &r.to)
             ),
-            None => "loop { ... }".to_string(),
+            None => match &l.decreases {
+                Some(e) => format!("loop decreases {} {{ ... }}", written_with(s, e)),
+                None => "loop { ... }".to_string(),
+            },
         },
         Expr::Break { .. } => "break".to_string(),
     }
@@ -2297,6 +2300,9 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 walk(&r.from, out);
                 walk(&r.to, out);
             }
+            if let Some(e) = &l.decreases {
+                walk(e, out);
+            }
             for value in values(&l.body) {
                 walk(value, out);
             }
@@ -2346,6 +2352,9 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                 if let Some(r) = &l.range {
                     blocks(&r.from, out);
                     blocks(&r.to, out);
+                }
+                if let Some(e) = &l.decreases {
+                    blocks(e, out);
                 }
                 out.push(&l.body);
             }
@@ -3939,6 +3948,7 @@ impl<'a> Checker<'a> {
                             if body.vars.contains(name) {
                                 let gives = self.expr(body, value, &Want::Ty(needed.clone()));
                                 self.expect(body, value, &gives, &needed);
+                                self.assign(body, at, value);
                             } else {
                                 self.expr(body, value, &Want::Any);
                                 self.errors.push(not_a_var(body, name, *pos, at));
@@ -3966,6 +3976,7 @@ impl<'a> Checker<'a> {
                                 body.names.push((name.clone(), bound));
                                 if *var {
                                     body.vars.push(name.clone());
+                                    self.track_var(body, value);
                                 } else {
                                     self.assume_binding(body, value);
                                 }
@@ -4003,6 +4014,8 @@ impl<'a> Checker<'a> {
                     let mut assigned = Vec::new();
                     self.pattern(body, pattern, &gives, &mut binds, Some(&mut assigned));
                     body.define(binds);
+                    let held = self.assigned_vars(body, &[std::slice::from_ref(stmt)]);
+                    self.forget(body, &held);
                     End::Binding(pattern.pos())
                 }
                 Stmt::Expr(value) => {
@@ -4479,6 +4492,8 @@ impl<'a> Checker<'a> {
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
+        let assigned = self.assigned_vars(body, &[&l.body]);
+        self.forget_all(body);
         let loops = body.loops;
         body.outer_loops += std::mem::take(&mut body.loops);
         let mut types = Vec::new();
@@ -4537,6 +4552,7 @@ impl<'a> Checker<'a> {
         body.names.truncate(outer);
         body.vars.truncate(vars);
         body.facts.reset(known);
+        self.forget(body, &assigned);
         body.outer_loops -= loops;
         body.loops = loops;
         types.push(gives);
@@ -4773,6 +4789,9 @@ impl<'a> Checker<'a> {
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
+        let blocks: Vec<&[Stmt]> = m.arms.iter().map(|a| a.body.as_slice()).collect();
+        let assigned = self.assigned_vars(body, &blocks);
+        let (mut paths, mut excluded) = (Vec::new(), false);
         let mut patterns: Vec<Option<Pat>> = Vec::new();
         let mut first: Option<Ty> = None;
         for arm in &m.arms {
@@ -4794,10 +4813,16 @@ impl<'a> Checker<'a> {
             patterns.push(pattern);
             body.define(binds);
             self.arm(body, arm, want, &mut first, "a `match`");
+            if proof::ends_in_break(&arm.body) {
+                excluded = true;
+            } else {
+                paths.push(self.leave_arm(body, known, &assigned));
+            }
             body.names.truncate(outer);
             body.vars.truncate(vars);
             body.facts.reset(known);
         }
+        self.join(body, outer, paths, &assigned, excluded);
         if !of.unknown() && patterns.iter().all(Option::is_some) {
             let all: Vec<&Pat> = patterns.iter().flatten().collect();
             let left = missing(defs, &all, &of);
@@ -4853,6 +4878,9 @@ impl<'a> Checker<'a> {
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
+        let blocks: Vec<&[Stmt]> = m.arms.iter().map(|a| a.body.as_slice()).collect();
+        let assigned = self.assigned_vars(body, &blocks);
+        let (mut paths, mut excluded) = (Vec::new(), false);
         if !otherwise {
             let arm = &m.arms[0];
             self.assume(body, &m.of, true);
@@ -4861,19 +4889,35 @@ impl<'a> Checker<'a> {
             {
                 self.dropped(body, value, &gives);
             }
+            if proof::ends_in_break(&arm.body) {
+                excluded = true;
+            } else {
+                paths.push(self.leave_arm(body, known, &assigned));
+            }
             body.names.truncate(outer);
             body.vars.truncate(vars);
             body.facts.reset(known);
+            // Where the condition is not so, nothing runs.
+            self.assume(body, &m.of, false);
+            paths.push(self.leave_arm(body, known, &assigned));
+            body.facts.reset(known);
+            self.join(body, outer, paths, &assigned, excluded);
             return Ty::Nothing;
         }
         let mut first = None;
         for (k, arm) in m.arms.iter().enumerate() {
             self.assume(body, &m.of, k == 0);
             self.arm(body, arm, want, &mut first, "an `if`");
+            if proof::ends_in_break(&arm.body) {
+                excluded = true;
+            } else {
+                paths.push(self.leave_arm(body, known, &assigned));
+            }
             body.names.truncate(outer);
             body.vars.truncate(vars);
             body.facts.reset(known);
         }
+        self.join(body, outer, paths, &assigned, excluded);
         match want {
             Want::Unused => Ty::Nothing,
             Want::Ty(t) if !t.unknown() => t.clone(),
@@ -4889,13 +4933,33 @@ impl<'a> Checker<'a> {
         let counter = match &l.range {
             Some(r) => Some((r, self.range_type(body, r))),
             None => {
-                self.needs(body, "diverge", l.pos, "an open-ended `loop`");
+                if l.decreases.is_none() {
+                    self.needs(body, "diverge", l.pos, "an open-ended `loop`");
+                }
                 None
             }
         };
+        let measure = l.decreases.as_ref();
+        if let Some(e) = measure {
+            let gives = self.expr(body, e, &Want::Any);
+            if !matches!(gives, Ty::Int(t) if !t.signed())
+                && !matches!(gives, Ty::Unknown | Ty::Flex(_))
+            {
+                let given = self.defs.describe(&gives, body.scope);
+                self.errors.push(Error::new(
+                    e.pos(),
+                    format!(
+                        "`decreases` is a whole number of an unsigned type, and this is {given}"
+                    ),
+                ));
+            }
+        }
+        let assigned = self.assigned_vars(body, &[&l.body]);
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
+        self.begin_round(body, &assigned);
+        let start = measure.and_then(|e| self.measure(body, e));
         if let Some((r, ty)) = counter {
             if body.names.iter().any(|(n, _)| n == &r.name) {
                 self.errors.push(self.defined_twice(body, &r.name, r.pos));
@@ -4910,9 +4974,13 @@ impl<'a> Checker<'a> {
             self.dropped(body, value, &gives);
         }
         body.loops -= 1;
+        if let (Some(e), Some(start)) = (measure, &start) {
+            self.decreased(body, l, e, start);
+        }
         body.names.truncate(outer);
         body.vars.truncate(vars);
         body.facts.reset(known);
+        self.forget(body, &assigned);
         Ty::Nothing
     }
 
@@ -5012,6 +5080,8 @@ impl<'a> Checker<'a> {
         let truth = self.defs.bool_ty();
         self.condition(body, &m.of);
         let known = body.facts.mark();
+        let blocks: Vec<&[Stmt]> = m.arms.iter().map(|a| a.body.as_slice()).collect();
+        let assigned = self.assigned_vars(body, &blocks);
         for (k, arm) in m.arms.iter().enumerate() {
             self.assume(body, &m.of, k == 0);
             if let End::Value(gives, value) = self.block(body, &arm.body, &Want::Ty(truth.clone()))
@@ -5020,6 +5090,7 @@ impl<'a> Checker<'a> {
             }
             body.facts.reset(known);
         }
+        self.forget(body, &assigned);
         truth
     }
 

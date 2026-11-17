@@ -45,8 +45,32 @@ pub const ONCE: &[Test] = &[
         an_open_ended_loop_makes_its_function_and_every_caller_carry_diverge,
     ),
     (
-        "a_var_assigned_in_a_loop_is_known_to_arith_only_by_the_range_of_its_type",
-        a_var_assigned_in_a_loop_is_known_to_arith_only_by_the_range_of_its_type,
+        "a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only_there",
+        a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only_there,
+    ),
+    (
+        "a_break_in_an_if_gives_arith_the_condition_that_is_false_in_the_rest_of_the_round",
+        a_break_in_an_if_gives_arith_the_condition_that_is_false_in_the_rest_of_the_round,
+    ),
+    (
+        "a_loop_that_decreases_a_measure_ends_without_diverge",
+        a_loop_that_decreases_a_measure_ends_without_diverge,
+    ),
+    (
+        "a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_smaller",
+        a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_smaller,
+    ),
+    (
+        "a_round_that_always_ends_in_break_has_no_place_to_go_round_again",
+        a_round_that_always_ends_in_break_has_no_place_to_go_round_again,
+    ),
+    (
+        "every_loop_with_decreases_that_compiles_ends",
+        every_loop_with_decreases_that_compiles_ends,
+    ),
+    (
+        "a_measure_is_never_computed_when_the_program_runs",
+        a_measure_is_never_computed_when_the_program_runs,
     ),
     (
         "a_loop_over_a_range_is_one_counter_and_one_comparison_each_time_round",
@@ -263,23 +287,235 @@ fn an_open_ended_loop_makes_its_function_and_every_caller_carry_diverge() {
     prints(pure, vec!["6".into()]);
 }
 
-fn a_var_assigned_in_a_loop_is_known_to_arith_only_by_the_range_of_its_type() {
+/// Inside one round of a loop, a `var` the loop assigns has what that round
+/// last gave it, and nothing is known of what it held in an earlier round,
+/// before the loop, or after it.
+fn a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only_there() {
     for ty in INTS {
         let t = ty.name;
+        let goal = format!("x + 1 <= {}", ty.max());
         let inside = format!(
             "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    x = 1\n    y = x + 1\n    print(\"{{y}}\")\n  }}\n}}\n"
         );
+        assert_eq!(refused(&inside), Vec::<String>::new(), "for {inside}");
         let after = format!(
             "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{ x = 1 }}\n  y = x + 1\n  print(\"{{y}}\")\n}}\n"
         );
-        for source in [inside, after] {
+        let earlier = format!(
+            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    y = x + 1\n    print(\"{{y}}\")\n    x = 1\n  }}\n}}\n"
+        );
+        let before = format!(
+            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    y = x + 1\n    print(\"{{y}}\")\n  }}\n}}\n"
+        );
+        for source in [after, earlier, before] {
             let errors = refused(&source);
-            let goal = format!("x + 1 <= {}", ty.max());
             assert!(
                 errors.iter().any(|e| e.contains(&goal)),
                 "{errors:?} does not state `{goal}` for {source}"
             );
         }
+    }
+}
+
+/// After `if left < 3 { break }`, `left - 3` compiles, in an open-ended loop
+/// with or without `decreases` and in a loop over a range, for every type.
+fn a_break_in_an_if_gives_arith_the_condition_that_is_false_in_the_rest_of_the_round() {
+    for ty in INTS {
+        let t = ty.name;
+        let round = "    if left < 3 { break }\n    left = left - 3\n";
+        let plain = format!(
+            "fn f(n: {t}) -> {t} ! diverge {{\n  var left: {t} = n\n  loop {{\n{round}  }}\n  left\n}}\n\nfn main() ! console, alloc, diverge {{\n  print(\"{{f(7)}}\")\n}}\n"
+        );
+        let ranged = format!(
+            "fn f(n: {t}) -> {t} {{\n  var left: {t} = n\n  loop i in 0..5 {{\n{round}  }}\n  left\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(7)}}\")\n}}\n"
+        );
+        let mut sources = vec![plain, ranged];
+        if !ty.signed {
+            sources.push(format!(
+                "fn f(n: {t}) -> {t} {{\n  var left: {t} = n\n  loop decreases left {{\n{round}  }}\n  left\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(7)}}\")\n}}\n"
+            ));
+        }
+        for source in sources {
+            assert_eq!(refused(&source), Vec::<String>::new(), "for {source}");
+        }
+    }
+    // Without the `if`, nothing says `left` is at least 3.
+    let bare = "fn f(n: u8) -> u8 ! diverge {\n  var left: u8 = n\n  loop {\n    left = left - 3\n  }\n  left\n}\n\nfn main() ! console, alloc, diverge {\n  print(\"{f(7)}\")\n}\n";
+    assert!(refused(bare).iter().any(|e| e.contains("left - 3")));
+}
+
+fn count_program(with: &str) -> String {
+    format!(
+        "fn count() -> u64{effects} {{\n  var left: u64 = 10\n  var times: u64 = 0\n  loop{with} {{\n    if left < 3 {{ break }}\n    left = left - 3\n    times = wrapping_add(times, 1)\n  }}\n  times\n}}\n\nfn main() ! console, alloc{more} {{\n  print(\"{{count()}}\")\n}}\n",
+        effects = if with.is_empty() { " ! diverge" } else { "" },
+        more = if with.is_empty() { ", diverge" } else { "" },
+    )
+}
+
+/// The loop that counts how many threes fit in ten.
+fn a_loop_that_decreases_a_measure_ends_without_diverge() {
+    prints(&count_program(" decreases left"), vec!["3".into()]);
+    // Without `decreases`, the function needs `diverge`.
+    let without = count_program("")
+        .replace(" ! diverge", "")
+        .replace(", diverge", "");
+    assert!(
+        refused(&without).iter().any(|e| e.contains("`diverge`")),
+        "for {without}"
+    );
+    prints(&count_program(""), vec!["3".into()]);
+    // A round that takes nothing off the measure is refused, and the error
+    // states what could not be proven of it.
+    let stuck = count_program(" decreases left").replace("left - 3", "left - 0");
+    let errors = refused(&stuck);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("`left` is smaller than when the round began")),
+        "{errors:?} for {stuck}"
+    );
+}
+
+/// What a round of a loop with a measure does to a counter that starts at
+/// `left`: `if left < g { break }`, then `left = left - k`, written in one of
+/// two ways.
+#[derive(Debug)]
+struct Round {
+    ty: Int,
+    guard: i128,
+    step: i128,
+    /// Whether the round is an `if` with an `else` that breaks.
+    with_else: bool,
+}
+
+fn round(g: &mut Gen) -> Round {
+    Round {
+        ty: *g.pick(INTS),
+        guard: g.below(4) as i128,
+        step: g.below(4) as i128,
+        with_else: g.one_in(2),
+    }
+}
+
+/// For every `loop decreases e`, the program compiles exactly when `e` is of
+/// an unsigned type and each place the loop goes round again has `e` smaller
+/// than the round began with.
+fn a_loop_with_decreases_compiles_exactly_when_the_measure_is_unsigned_and_gets_smaller() {
+    generate::check(53, 160, round, |r| {
+        let (t, guard, step) = (r.ty.name, r.guard, r.step);
+        let rest = if r.with_else {
+            format!(
+                "    if left >= {guard} {{\n      left = left - {step}\n    }} else {{\n      break\n    }}\n"
+            )
+        } else {
+            format!("    if left < {guard} {{ break }}\n    left = left - {step}\n")
+        };
+        let source = format!(
+            "fn f(n: {t}) -> {t} {{\n  var left: {t} = n\n  loop decreases left {{\n{rest}  }}\n  left\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(5)}}\")\n}}\n"
+        );
+        let errors = refused(&source);
+        let fits = step <= guard;
+        let smaller = step >= 1;
+        assert_eq!(
+            errors.is_empty(),
+            !r.ty.signed && fits && smaller,
+            "{errors:?} for {source}"
+        );
+        let named = if r.ty.signed {
+            "`decreases`".to_string()
+        } else if !fits {
+            format!("left - {step}")
+        } else {
+            "`left` is smaller than when the round began".to_string()
+        };
+        if !errors.is_empty() {
+            assert!(
+                errors.iter().any(|e| e.contains(&named)),
+                "{errors:?} does not mention {named} for {source}"
+            );
+        }
+    });
+}
+
+/// A round that always ends in `break` has no place where the loop goes
+/// round again, so it needs no smaller measure.
+fn a_round_that_always_ends_in_break_has_no_place_to_go_round_again() {
+    for ty in INTS.iter().filter(|t| !t.signed) {
+        let t = ty.name;
+        for round in [
+            "left = wrapping_add(left, 1)\n    break",
+            "if left == 0 { break } else { break }",
+        ] {
+            let source = format!(
+                "fn f(n: {t}) -> {t} {{\n  var left: {t} = n\n  loop decreases left {{\n    {round}\n  }}\n  left\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(5)}}\")\n}}\n"
+            );
+            assert_eq!(refused(&source), Vec::<String>::new(), "for {source}");
+        }
+    }
+}
+
+/// A counter of an unsigned type that starts at `start`, and has `step`
+/// taken off each round while it is at least `step`.
+#[derive(Debug)]
+struct Countdown {
+    ty: Int,
+    start: i128,
+    step: i128,
+}
+
+fn countdown(g: &mut Gen) -> Countdown {
+    let ty = *g.pick(
+        &INTS
+            .iter()
+            .copied()
+            .filter(|t| !t.signed)
+            .collect::<Vec<_>>(),
+    );
+    let max = ty.max();
+    let (start, step) = match g.below(3) {
+        // At the limit, in a few steps.
+        0 => (max, max / (1 + g.below(6) as i128)),
+        // A few steps, with something left over.
+        1 => {
+            let step = 1 + g.below(3) as i128;
+            (
+                g.below(7) as i128 * step + g.below(step as usize) as i128,
+                step,
+            )
+        }
+        // Not enough for one step, or nothing.
+        _ => (g.below(3) as i128, max),
+    };
+    Countdown { ty, start, step }
+}
+
+/// For every program with a `loop decreases` that the compiler accepts, run
+/// from the limits of its type, the loop ends, after as many rounds as the
+/// steps that fit.
+fn every_loop_with_decreases_that_compiles_ends() {
+    generate::check(59, 120, countdown, |c| {
+        let (t, start, step) = (c.ty.name, c.start, c.step);
+        let source = format!(
+            "fn rounds(n: {t}) -> u64 {{\n  var left: {t} = n\n  var times: u64 = 0\n  loop decreases left {{\n    if left < {step} {{ break }}\n    left = left - {step}\n    times = wrapping_add(times, 1)\n  }}\n  times\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{rounds({start})}}\")\n}}\n"
+        );
+        prints(&source, vec![(start / step).to_string()]);
+    });
+}
+
+/// The measure is never computed: the program is that of the same loop
+/// without `decreases`.
+fn a_measure_is_never_computed_when_the_program_runs() {
+    for ty in INTS.iter().filter(|t| !t.signed) {
+        let t = ty.name;
+        let program = |head: &str, effects: &str| {
+            format!(
+                "fn f(n: {t}) -> {t}{effects} {{\n  var left: {t} = n\n  loop{head} {{\n    if left < 3 {{ break }}\n    left = left - 3\n  }}\n  left\n}}\n\nfn main() ! console, alloc{effects2} {{\n  print(\"{{f(10)}}\")\n}}\n",
+                effects2 = if effects.is_empty() { "" } else { ", diverge" },
+            )
+        };
+        let with = lower(program(" decreases left", "").as_bytes()).expect("compiles");
+        let without = lower(program("", " ! diverge").as_bytes()).expect("compiles");
+        assert_eq!(with, without, "for {t}");
     }
 }
 
