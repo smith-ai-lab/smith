@@ -51,19 +51,19 @@ fn transfer(db: Db) -> Result[(), DbError] ! net {
 
 `debit` borrows `t` and `commit` takes it. Leaving out `commit(t)`, or calling it twice, does not compile.
 
-A value with neither trait must be taken exactly once on every path. That is how a resource wrapper is checked. `open` below is written for `with`: it lends the handle to the rest of the caller's block and closes it afterwards. Leaving out `os_close`, or putting a step that can fail between opening and closing, does not compile. The body's own effects, here `alloc` from `read`, are allowed because `first_bytes` declares them.
+A value with neither trait must be taken exactly once on every path. That is how a resource wrapper is checked. `open` below is written for `with`: it lends the handle to the rest of the caller's block and closes it afterwards. Leaving out `close_file`, or putting a step that can fail between opening and closing, does not compile. The body's own effects, here `alloc` from `read`, are allowed because `first_bytes` declares them.
 
 ```
-fn open[T](path: str, body: (File) -> Result[T, IoError]) -> Result[T, IoError] ! fs {
-  handle = try os_open(path)
+fn open[T](path: str, body: (File) -> Result[T, FsError]) -> Result[T, FsError] ! fs {
+  handle = try open_file(path)
   r = body(handle)
-  os_close(handle)
+  close_file(handle)
   r
 }
 
-fn first_bytes(path: str) -> Result[List[u8], IoError] ! fs, alloc {
+fn first_bytes(path: str) -> Result[List[u8], FsError] ! fs, alloc {
   with f = open(path)
-  read(f, 16)
+  read(f, 0..16)
 }
 ```
 

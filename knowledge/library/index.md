@@ -4,4 +4,5 @@ The modules of the standard library, one file each, named for the module. A modu
 
 - [list.md](list.md): `List`, an array kept together with its size, which can grow.
 - [random.md](random.md): random bits from a key, distributions as ordinary structs with the `Sample` and `LogProb` traits, and how a program adds its own.
+- [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
 - [console.md](console.md): the `console` effect, for a program's standard input, output, and error.

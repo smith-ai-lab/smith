@@ -8,14 +8,14 @@ built: "`console`, `alloc`, and `diverge` in a signature, each listed once and r
 
 # Effects
 
-A function with no `!` clause is pure. Effects are listed after the return type, and a caller must have every effect its callees use. A function without an effect cannot perform it, so effects work as permissions. Below, `load` is shown by its signature alone.
+A function with no `!` clause is pure. Effects are listed after the return type, and a caller must have every effect its callees use. A function without an effect cannot perform it, so effects work as permissions. Below, `read_all` is shown by its signature alone.
 
 ```
-fn load(path: str) -> Result[List[u8], IoError] ! fs, alloc
+fn read_all(path: str) -> Result[List[u8], FsError] ! fs, alloc
 
-fn fixture_config() -> Result[Config, IoError] ! alloc {
+fn fixture_config() -> Result[Config, FsError] ! alloc {
   with memory_fs(fixtures)
-  bytes = try load("model.toml")
+  bytes = try read_all("model.toml")
   parse_config(bytes)
 }
 ```
@@ -85,7 +85,7 @@ The standard library declares five effects. Each has operations, and a program c
 | Effect | Allows |
 | --- | --- |
 | [`console`](../library/console.md) | Standard input, output, and error |
-| `fs` | Files |
+| [`fs`](../library/fs.md) | Files |
 | `net` | The network |
 | `time` | The clock |
 | `ui` | Windows and events |
