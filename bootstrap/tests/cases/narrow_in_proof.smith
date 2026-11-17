@@ -1,0 +1,19 @@
+fn sh(x: u64, by: u8) -> u64
+  requires by < 64
+{
+  shift_left(x, by)
+}
+
+fn main() ! console, alloc {
+  var n: u64 = 0
+  loop i in 0..64 {
+    j: u8 = narrow(i)
+    n = bit_or(n, sh(1, j))
+  }
+  print("{n}")
+  var m: u64 = 0
+  loop i in 0..64 {
+    m = bit_or(m, sh(1, narrow(i)))
+  }
+  print("{m}")
+}

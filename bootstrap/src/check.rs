@@ -1962,6 +1962,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         errors,
         types: HashMap::new(),
         value_calls: HashSet::new(),
+        narrowed: HashSet::new(),
         fn_values: HashMap::new(),
         no_impl: false,
         refusals: 0,
@@ -3022,6 +3023,9 @@ struct Checker<'a> {
     types: HashMap<usize, Ty>,
     /// The calls of a name that holds a function, by their addresses.
     value_calls: HashSet<usize>,
+    /// The calls of `narrow`, by their addresses, which give the number
+    /// they are given, as `arith` knows.
+    narrowed: HashSet<usize>,
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
     fn_values: HashMap<usize, usize>,
@@ -4899,6 +4903,8 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         }
         if narrowing == Narrowing::Plain {
+            // What it gives is the number it is given, which `arith` knows.
+            self.narrowed.insert(addr(call));
             let written = format!("{name}({})", written_expr(value));
             self.narrows(body, value, (from, to), (&written, call.pos));
         }
