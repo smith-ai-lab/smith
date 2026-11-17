@@ -8,9 +8,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 
 - [overview.md](overview.md): what Smith is for, the rules that hold throughout the language, and the four principles its design follows.
 - [first-program.md](first-program.md): a program that starts at `main`, prints a line, and is run with `smith run`.
-- [functions.md](functions.md): typed parameters, a return type, a block whose last expression is its value, named arguments, and defaults.
-- [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function, and how a binding states its type.
-- [mutable-locals.md](mutable-locals.md): locals that change, declared with `var`, and `if` as an expression.
+- [functions.md](functions.md): typed parameters, a return type, a block whose last expression is its value, named arguments, defaults, and comments.
+- [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function, how a binding states its type, and where a name can be used.
+- [var.md](var.md): locals that change, declared with `var`, given a new value with `=`, and accumulated into with `+=`, `-=`, `*=`, and `/=`.
+- [if.md](if.md): `if` as an expression that chooses between blocks, `else if`, and the words `not`, `and`, and `or`.
 - [structs.md](structs.md): structs with named fields and defaults, assigning to a field of a `var`, tuples, and patterns that take them apart.
 - [enums.md](enums.md): enums that hold one of their cases, and `match` to take a value apart.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.

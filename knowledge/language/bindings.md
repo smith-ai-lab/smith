@@ -1,14 +1,14 @@
 ---
 type: specification
 title: Bindings
-description: How x = e defines an immutable name, once per function, and how a binding states its type.
+description: How x = e defines an immutable name, once per function, how a binding states its type, and where a name can be used.
 status: partial
 built: "`x = e` and `x: str = e`, defined once per function"
 ---
 
 # Bindings
 
-`x = e` defines a new immutable name. A name is defined once per function, so there is no shadowing.
+A binding gives a name to a value. `x = e` defines the name `x` as the value of `e`, and `x` has that value from then on.
 
 ```
 fn hypot(a: f32, b: f32) -> f32 {
@@ -18,6 +18,115 @@ fn hypot(a: f32, b: f32) -> f32 {
 }
 ```
 
-A binding may state its type, written as a parameter's is: `half: f32 = 0.5`. Most bindings do not need to, because the type of the value is already known.
+`aa` and `bb` are used on the line below the ones that define them, and `hypot(3.0, 4.0)` is `5.0`. A binding gives no value of its own, so it is never the last line of a block.
 
-Next: [Mutable locals and `if`](mutable-locals.md)
+A name may be bound to another name, or to a call.
+
+```
+fn shout() -> str { "hey" }
+
+fn main() ! console {
+  word = shout()
+  same = word
+  print(same)
+}
+```
+
+This prints `hey`.
+
+## Stating the type
+
+A binding may state its type, written as a parameter's is, with a colon after the name.
+
+```
+fn main() ! console {
+  word: str = "typed"
+  print(word)
+}
+```
+
+This prints `typed`. Most bindings do not state their type, because the type of the value is already known, and `word = "typed"` means the same. A value of another type is refused.
+
+```
+fn main() ! console {
+  word: str = 5
+  print(word)
+}
+```
+
+This gives "this is a number, where text is needed".
+
+## A name never changes
+
+A name is defined once per function, so there is no shadowing, and it keeps its value. Binding it again, or assigning to it, is refused.
+
+```
+fn main() ! console {
+  word = "first"
+  word = "second"
+  print(word)
+}
+```
+
+This gives "`word` is not a `var`, so it cannot be assigned to", with the fix "declare it with `var`: write `var word` where it is defined". A name that does change is a [`var`](var.md).
+
+A parameter is a name too. Assigning to one gives the same message, with the fix "declare a `var` that starts as the parameter, as in `var new_name = name`".
+
+```
+fn shout(word: str) -> str {
+  word = "x"
+  word
+}
+```
+
+## Where a name can be used
+
+A name can be used only after the line that defines it.
+
+```
+fn main() ! console {
+  print(word)
+  word = "late"
+}
+```
+
+This gives "there is no name `word` defined before this in `main`".
+
+A name defined inside a block, such as the block of an [`if`](if.md), can be used only inside that block.
+
+```
+fn main() ! console {
+  if true { inner = "here" }
+  print(inner)
+}
+```
+
+This gives "there is no name `inner` defined before this in `main`".
+
+## What a body must end with
+
+A body that ends with a binding has no value, so a function that states a type is refused.
+
+```
+fn broken(x: str) -> str {
+  y = x
+}
+```
+
+This gives "`broken` returns `str`, and its body ends with a binding or an assignment, which gives nothing". Ending with the name gives the value.
+
+```
+fn mended(x: str) -> str {
+  y = x
+  y
+}
+```
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `x = e` | A name for the value of `e`, which never changes |
+| `x: T = e` | The same, with its type stated |
+
+Next: [Mutable locals](var.md)
