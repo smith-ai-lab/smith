@@ -168,6 +168,14 @@ pub(super) fn bits_of(ty: Type) -> Bits {
     }
 }
 
+/// How many bytes a value of the type takes in memory.
+fn width(ty: Type) -> usize {
+    match ty {
+        Type::Int(bits) => bits.count() as usize / 8,
+        Type::Address => 8,
+    }
+}
+
 impl Machine<'_> {
     fn call(&mut self, function: usize, args: Vec<Word>) -> Result<Vec<Word>, Refused> {
         let program = self.program;
@@ -247,19 +255,26 @@ impl Machine<'_> {
                         let Word::Address(at) = get(address) else {
                             panic!("a read through what is not an address")
                         };
-                        let size = bits_of(*ty).count() as usize / 8;
+                        let size = width(*ty);
                         let from = at - BASE;
                         let mut n = 0u64;
                         for (k, byte) in self.memory[from..from + size].iter().enumerate() {
                             n |= (*byte as u64) << (8 * k);
                         }
-                        vec![Word::Int(n)]
+                        vec![match ty {
+                            Type::Address => Word::Address(n as usize),
+                            Type::Int(_) => Word::Int(n),
+                        }]
                     }
                     Op::Store { ty, address, value } => {
-                        let (Word::Address(at), Word::Int(n)) = (get(address), get(value)) else {
-                            panic!("a write of what is not a number through an address")
+                        let Word::Address(at) = get(address) else {
+                            panic!("a write through what is not an address")
                         };
-                        let size = bits_of(*ty).count() as usize / 8;
+                        let n = match get(value) {
+                            Word::Int(n) => n,
+                            Word::Address(a) => a as u64,
+                        };
+                        let size = width(*ty);
                         let from = at - BASE;
                         for k in 0..size {
                             self.memory[from + k] = (n >> (8 * k)) as u8;

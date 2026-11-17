@@ -197,7 +197,7 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     let [result] = instruction.results[..] else {
                         return Err(Why::WrongCount);
                     };
-                    if !matches!(ty, Type::Int(_)) || f.types[result.0] != *ty {
+                    if f.types[result.0] != *ty {
                         return Err(Why::WrongType(result));
                     }
                     used(address, i, Type::Address)?;
@@ -205,9 +205,6 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                 Op::Store { ty, address, value } => {
                     if !instruction.results.is_empty() {
                         return Err(Why::WrongCount);
-                    }
-                    if !matches!(ty, Type::Int(_)) {
-                        return Err(Why::WrongType(*value));
                     }
                     used(address, i, Type::Address)?;
                     used(value, i, *ty)?;

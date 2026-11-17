@@ -45,8 +45,28 @@ pub const ONCE: &[Test] = &[
         push_and_a_list_with_elements_need_the_alloc_effect,
     ),
     (
-        "a_list_of_what_is_not_whole_numbers_or_bool_is_refused",
-        a_list_of_what_is_not_whole_numbers_or_bool_is_refused,
+        "a_list_of_people_prints_each_name_and_age",
+        a_list_of_people_prints_each_name_and_age,
+    ),
+    (
+        "a_list_of_any_type_holds_what_was_put_in_in_order",
+        a_list_of_any_type_holds_what_was_put_in_in_order,
+    ),
+    (
+        "a_list_held_inside_another_value_is_unchanged_by_a_push_to_any_other_name",
+        a_list_held_inside_another_value_is_unchanged_by_a_push_to_any_other_name,
+    ),
+    (
+        "a_push_to_a_list_held_inside_another_value_copies",
+        a_push_to_a_list_held_inside_another_value_copies,
+    ),
+    (
+        "an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest",
+        an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest,
+    ),
+    (
+        "reading_a_field_of_an_element_reads_only_the_scalars_of_that_field",
+        reading_a_field_of_an_element_reads_only_the_scalars_of_that_field,
     ),
 ];
 
@@ -524,11 +544,604 @@ fn push_and_a_list_with_elements_need_the_alloc_effect() {
     assert_eq!(refused(empty), Vec::<String>::new());
 }
 
-fn a_list_of_what_is_not_whole_numbers_or_bool_is_refused() {
-    let source = "fn main() ! alloc {\n  xs: List[str] = []\n}\n";
-    let errors = refused(source);
-    assert!(
-        errors.iter().any(|e| e.contains("not supported yet")),
-        "{errors:?} for {source}"
+fn a_list_of_people_prints_each_name_and_age() {
+    let source = "struct Person {\n  name: str\n  age: u8\n}\n\nfn main() ! console, alloc {\n  var people: List[Person] = []\n  people = push(people, Person(name: \"ada\", age: 36))\n  people = push(people, Person(name: \"alan\", age: 41))\n  all = people\n  loop i in 0..all.size { print(\"{all[i].name} {all[i].age}\") }\n}\n";
+    prints(source, ["ada 36", "alan 41"].map(String::from).to_vec());
+}
+
+/// A type a list can hold, as the generator builds it.
+#[derive(Clone, Debug)]
+enum Ty {
+    Int(Int),
+    Bool,
+    Str,
+    /// A struct, by its number, with the type of each field.
+    Struct(usize, Vec<Ty>),
+    /// An enum, by its number, with the type each case holds, if it holds one.
+    Enum(usize, Vec<Option<Ty>>),
+    Tuple(Vec<Ty>),
+    List(Box<Ty>),
+}
+
+/// What kinds of type the generator may build.
+#[derive(Clone, Copy)]
+struct Kinds {
+    enums: bool,
+    lists: bool,
+}
+
+const EVERY: Kinds = Kinds {
+    enums: true,
+    lists: true,
+};
+
+/// A value of a type, which says what a program that builds it prints.
+#[derive(Clone, Debug)]
+enum V {
+    N(i128),
+    B(bool),
+    S(String),
+    /// The parts of a struct or a tuple.
+    Parts(Vec<V>),
+    Case(usize, Option<Box<V>>),
+    L(Vec<V>),
+}
+
+/// A type, with `depth` more levels of types that hold types.
+fn ty(g: &mut Gen, depth: usize, kinds: Kinds, next: &mut usize) -> Ty {
+    let leaf = |g: &mut Gen| match g.below(5) {
+        0 => Ty::Bool,
+        1 => Ty::Str,
+        _ => Ty::Int(*g.pick(INTS)),
+    };
+    if depth == 0 {
+        return leaf(g);
+    }
+    match g.below(8) {
+        0..=2 => leaf(g),
+        3 | 4 => {
+            let id = *next;
+            *next += 1;
+            let fields = (0..1 + g.below(3))
+                .map(|_| ty(g, depth - 1, kinds, next))
+                .collect();
+            Ty::Struct(id, fields)
+        }
+        5 if kinds.enums => {
+            let id = *next;
+            *next += 1;
+            let mut cases = vec![None];
+            for _ in 0..1 + g.below(2) {
+                cases.push(Some(ty(g, depth - 1, kinds, next)));
+            }
+            Ty::Enum(id, cases)
+        }
+        6 => Ty::Tuple(
+            (0..2 + g.below(2))
+                .map(|_| ty(g, depth - 1, kinds, next))
+                .collect(),
+        ),
+        _ if kinds.lists => Ty::List(Box::new(ty(g, depth - 1, kinds, next))),
+        _ => leaf(g),
+    }
+}
+
+impl Ty {
+    fn name(&self) -> String {
+        match self {
+            Ty::Int(t) => t.name.to_string(),
+            Ty::Bool => "bool".to_string(),
+            Ty::Str => "str".to_string(),
+            Ty::Struct(id, _) => format!("S{id}"),
+            Ty::Enum(id, _) => format!("E{id}"),
+            Ty::Tuple(items) => {
+                let items: Vec<String> = items.iter().map(Ty::name).collect();
+                format!("({})", items.join(", "))
+            }
+            Ty::List(of) => format!("List[{}]", of.name()),
+        }
+    }
+
+    /// The declarations of every struct and enum the type mentions.
+    fn declarations(&self, out: &mut Vec<(usize, String)>) {
+        match self {
+            Ty::Struct(id, fields) => {
+                for f in fields {
+                    f.declarations(out);
+                }
+                let body: Vec<String> = (fields.iter().enumerate())
+                    .map(|(k, f)| format!("  f{k}: {}\n", f.name()))
+                    .collect();
+                out.push((*id, format!("struct S{id} {{\n{}}}\n", body.concat())));
+            }
+            Ty::Enum(id, cases) => {
+                for c in cases.iter().flatten() {
+                    c.declarations(out);
+                }
+                let body: Vec<String> = (cases.iter().enumerate())
+                    .map(|(k, c)| match c {
+                        Some(t) => format!("  c{k}: {}\n", t.name()),
+                        None => format!("  c{k}\n"),
+                    })
+                    .collect();
+                out.push((*id, format!("enum E{id} {{\n{}}}\n", body.concat())));
+            }
+            Ty::Tuple(items) => items.iter().for_each(|t| t.declarations(out)),
+            Ty::List(of) => of.declarations(out),
+            _ => {}
+        }
+    }
+
+    /// The source of the struct and enum types, each once.
+    fn source(types: &[&Ty]) -> String {
+        let mut all = Vec::new();
+        for t in types {
+            t.declarations(&mut all);
+        }
+        let mut seen = Vec::new();
+        let mut text = String::new();
+        for (id, declaration) in all {
+            if !seen.contains(&id) {
+                seen.push(id);
+                text += &declaration;
+                text += "\n";
+            }
+        }
+        text
+    }
+
+    /// The size in bytes of each scalar a value of the type is held as in
+    /// memory, in order. Not for an enum.
+    fn scalars(&self) -> Vec<usize> {
+        match self {
+            Ty::Int(t) => vec![t.bits as usize / 8],
+            Ty::Bool => vec![1],
+            Ty::Str => vec![8, 8],
+            Ty::List(_) => vec![8, 8, 8],
+            Ty::Struct(_, parts) | Ty::Tuple(parts) => parts.iter().flat_map(Ty::scalars).collect(),
+            Ty::Enum(..) => unreachable!("not asked of an enum"),
+        }
+    }
+
+    /// How many bytes an element of the type takes in a list.
+    fn stride(&self) -> usize {
+        let scalars = self.scalars();
+        let mut end: usize = 0;
+        for s in &scalars {
+            end = end.next_multiple_of(*s) + s;
+        }
+        end.next_multiple_of(scalars.iter().copied().max().unwrap_or(1))
+    }
+
+    fn value(&self, g: &mut Gen) -> V {
+        match self {
+            Ty::Int(t) => V::N(value(g, *t)),
+            Ty::Bool => V::B(g.one_in(2)),
+            Ty::Str => V::S((*g.pick(&["", "ada", "alan", "x y", "grace hopper"])).to_string()),
+            Ty::Struct(_, parts) | Ty::Tuple(parts) => {
+                V::Parts(parts.iter().map(|t| t.value(g)).collect())
+            }
+            Ty::Enum(_, cases) => {
+                let k = g.below(cases.len());
+                V::Case(k, cases[k].as_ref().map(|t| Box::new(t.value(g))))
+            }
+            Ty::List(of) => V::L((0..g.below(4)).map(|_| of.value(g)).collect()),
+        }
+    }
+
+    /// The value written as source.
+    fn written(&self, v: &V) -> String {
+        match (self, v) {
+            (_, V::N(n)) => n.to_string(),
+            (_, V::B(b)) => b.to_string(),
+            (_, V::S(s)) => format!("\"{s}\""),
+            (Ty::Struct(id, parts), V::Parts(vs)) => {
+                let args: Vec<String> = (parts.iter().zip(vs).enumerate())
+                    .map(|(k, (t, v))| format!("f{k}: {}", t.written(v)))
+                    .collect();
+                format!("S{id}({})", args.join(", "))
+            }
+            (Ty::Tuple(parts), V::Parts(vs)) => {
+                let items: Vec<String> = parts.iter().zip(vs).map(|(t, v)| t.written(v)).collect();
+                format!("({})", items.join(", "))
+            }
+            (Ty::Enum(id, cases), V::Case(k, payload)) => match (&cases[*k], payload) {
+                (Some(t), Some(p)) => format!("E{id}.c{k}({})", t.written(p)),
+                _ => format!("E{id}.c{k}"),
+            },
+            (Ty::List(of), V::L(items)) => {
+                let items: Vec<String> = items.iter().map(|v| of.written(v)).collect();
+                format!("[{}]", items.join(", "))
+            }
+            _ => unreachable!("a value of its type"),
+        }
+    }
+
+    /// What `dump` prints for the value, a line for each part.
+    fn lines(&self, v: &V) -> Vec<String> {
+        match (self, v) {
+            (_, V::N(n)) => vec![n.to_string()],
+            (_, V::B(b)) => vec![b.to_string()],
+            (_, V::S(s)) => vec![s.clone()],
+            (Ty::Struct(_, parts) | Ty::Tuple(parts), V::Parts(vs)) => {
+                parts.iter().zip(vs).flat_map(|(t, v)| t.lines(v)).collect()
+            }
+            (Ty::Enum(_, cases), V::Case(k, payload)) => {
+                let mut lines = vec![format!("c{k}")];
+                if let (Some(t), Some(p)) = (&cases[*k], payload) {
+                    lines.extend(t.lines(p));
+                }
+                lines
+            }
+            (Ty::List(of), V::L(items)) => {
+                let mut lines = vec![items.len().to_string()];
+                lines.extend(items.iter().flat_map(|v| of.lines(v)));
+                lines
+            }
+            _ => unreachable!("a value of its type"),
+        }
+    }
+
+    /// Statements that print the value `e`, a name or a field or an element
+    /// of one, a line for each part, in a function that may print. `n` makes
+    /// the names they bind.
+    fn dump(&self, e: &str, n: &mut usize) -> String {
+        match self {
+            Ty::Int(_) => format!("print(\"{{{e}}}\")\n"),
+            Ty::Bool => format!("if {e} {{ print(\"true\") }} else {{ print(\"false\") }}\n"),
+            Ty::Str => format!("print({e})\n"),
+            Ty::Struct(_, parts) => (parts.iter().enumerate())
+                .map(|(k, t)| t.dump(&format!("{e}.f{k}"), n))
+                .collect(),
+            Ty::Tuple(parts) => {
+                *n += 1;
+                let names: Vec<String> = (0..parts.len()).map(|k| format!("t{n}_{k}")).collect();
+                let body: String = (parts.iter().zip(&names))
+                    .map(|(t, name)| t.dump(name, n))
+                    .collect();
+                format!(
+                    "match {e} {{\n  ({}) {{\n{body}  }}\n}}\n",
+                    names.join(", ")
+                )
+            }
+            Ty::Enum(_, cases) => {
+                *n += 1;
+                let id = *n;
+                let arms: String = (cases.iter().enumerate())
+                    .map(|(k, c)| match c {
+                        Some(t) => {
+                            let body = t.dump(&format!("p{id}"), n);
+                            format!(".c{k}(p{id}) {{\nprint(\"c{k}\")\n{body}}}\n")
+                        }
+                        None => format!(".c{k} {{ print(\"c{k}\") }}\n"),
+                    })
+                    .collect();
+                format!("match {e} {{\n{arms}}}\n")
+            }
+            Ty::List(of) => {
+                *n += 1;
+                let id = *n;
+                let body = of.dump(&format!("d{id}[i{id}]"), n);
+                format!(
+                    "d{id} = {e}\nprint(\"{{d{id}.size}}\")\nloop i{id} in 0..d{id}.size {{\n{body}}}\n"
+                )
+            }
+        }
+    }
+}
+
+/// A program that builds a list of a type from a literal and a run of
+/// pushes, passes it on one way, and prints it.
+#[derive(Debug)]
+struct Held {
+    ty: Ty,
+    start: Vec<V>,
+    pushes: Vec<V>,
+    var: bool,
+    /// How the list is passed on before it is printed: not at all, through
+    /// a function, a struct, a tuple, or an enum.
+    through: usize,
+}
+
+fn held(g: &mut Gen) -> Held {
+    let ty = ty(g, 3, EVERY, &mut 0);
+    let start = (0..g.below(3)).map(|_| ty.value(g)).collect();
+    let pushes = (0..g.below(6)).map(|_| ty.value(g)).collect();
+    Held {
+        ty,
+        start,
+        pushes,
+        var: g.one_in(2),
+        through: g.below(5),
+    }
+}
+
+fn items(ty: &Ty, vs: &[V]) -> String {
+    let items: Vec<String> = vs.iter().map(|v| ty.written(v)).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// For every type built from whole numbers, `bool`, text, structs, enums,
+/// tuples, and lists, to the depth the generator reaches, a list of the type
+/// built from a literal and a run of pushes, to a `var` or one name after
+/// another, and passed through a function, a struct, a tuple, or an enum,
+/// holds what was put in, in order.
+fn a_list_of_any_type_holds_what_was_put_in_in_order() {
+    generate::check(83, 150, held, |h| {
+        let t = h.ty.name();
+        let mut body = String::new();
+        let last = if h.var {
+            body += &format!("var xs: List[{t}] = {}\n", items(&h.ty, &h.start));
+            for v in &h.pushes {
+                body += &format!("xs = push(xs, {})\n", h.ty.written(v));
+            }
+            "xs".to_string()
+        } else {
+            body += &format!("l0: List[{t}] = {}\n", items(&h.ty, &h.start));
+            for (k, v) in h.pushes.iter().enumerate() {
+                body += &format!("l{} = push(l{k}, {})\n", k + 1, h.ty.written(v));
+            }
+            format!("l{}", h.pushes.len())
+        };
+        let pass = match h.through {
+            0 => format!("ys = {last}\n"),
+            1 => format!("ys = through({last})\n"),
+            2 => format!("h = Held(items: {last})\nys = h.items\n"),
+            3 => format!("ys = untuple(({last}, 1))\n"),
+            _ => format!("ys = unbox(Boxed.full({last}))\n"),
+        };
+        body += &pass;
+        let list = Ty::List(Box::new(h.ty.clone()));
+        body += &list.dump("ys", &mut 0);
+        let source = format!(
+            "{}struct Held {{\n  items: List[{t}]\n}}\n\nenum Boxed {{\n  empty\n  full: List[{t}]\n}}\n\nfn through(xs: List[{t}]) -> List[{t}] {{ xs }}\n\nfn untuple(t: (List[{t}], u8)) -> List[{t}] {{\n  match t {{\n    (xs, k) {{ xs }}\n  }}\n}}\n\nfn unbox(b: Boxed) -> List[{t}] {{\n  match b {{\n    .empty {{ [] }}\n    .full(xs) {{ xs }}\n  }}\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n",
+            Ty::source(&[&h.ty]),
+        );
+        let all: Vec<V> = h.start.iter().chain(&h.pushes).cloned().collect();
+        prints(&source, list.lines(&V::L(all)));
+    });
+}
+
+/// The holders of a list of bytes: each is built from a list and gives it
+/// back.
+const HOLDERS: &[(&str, &str, &str)] = &[
+    ("Wrap(xs: {})", "{}.xs", "Wrap"),
+    ("({}, 7)", "first({})", "(List[u8], u8)"),
+    (".some({})", "inner({})", "Option[List[u8]]"),
+    ("[{}]", "head({})", "List[List[u8]]"),
+];
+
+const HOLDER_ITEMS: &str = "struct Wrap {\n  xs: List[u8]\n}\n\nfn first(t: (List[u8], u8)) -> List[u8] {\n  match t {\n    (xs, k) { xs }\n  }\n}\n\nfn inner(o: Option[List[u8]]) -> List[u8] {\n  match o {\n    .some(xs) { xs }\n    .none { [] }\n  }\n}\n\nfn head(ls: List[List[u8]]) -> List[u8] {\n  if 0 < ls.size { ls[0] } else { [] }\n}\n\nfn grow(xs: List[u8]) -> List[u8] ! alloc {\n  var grown = xs\n  grown = push(grown, 9)\n  grown\n}\n\n";
+
+fn fill(pattern: &str, with: &str) -> String {
+    pattern.replace("{}", with)
+}
+
+/// A program that holds lists of bytes in structs, tuples, enums, and lists
+/// and pushes to others, whose model says what each holds at the end.
+#[derive(Debug)]
+struct Shared {
+    source: String,
+    lines: Vec<String>,
+}
+
+fn shared(g: &mut Gen) -> Shared {
+    let mut vars: Vec<Vec<u8>> = Vec::new();
+    let mut holders: Vec<(usize, Vec<u8>)> = Vec::new();
+    let mut body = String::new();
+    let byte = |g: &mut Gen| g.below(256) as u8;
+    for _ in 0..1 + g.below(14) {
+        let step = if vars.is_empty() { 0 } else { g.below(12) };
+        let j = if vars.is_empty() {
+            0
+        } else {
+            g.below(vars.len())
+        };
+        let h = if holders.is_empty() {
+            0
+        } else {
+            g.below(holders.len())
+        };
+        match step {
+            0 => {
+                let new: Vec<u8> = (0..g.below(4)).map(|_| byte(g)).collect();
+                let shown: Vec<String> = new.iter().map(u8::to_string).collect();
+                body += &format!("var a{}: List[u8] = [{}]\n", vars.len(), shown.join(", "));
+                vars.push(new);
+            }
+            1..=3 => {
+                let v = byte(g);
+                body += &format!("a{j} = push(a{j}, {v})\n");
+                vars[j].push(v);
+            }
+            4 | 5 => {
+                let kind = g.below(HOLDERS.len());
+                body += &format!(
+                    "h{}: {} = {}\n",
+                    holders.len(),
+                    [
+                        "Wrap",
+                        "(List[u8], u8)",
+                        "Option[List[u8]]",
+                        "List[List[u8]]"
+                    ][kind],
+                    fill(HOLDERS[kind].0, &format!("a{j}"))
+                );
+                holders.push((kind, vars[j].clone()));
+            }
+            6 | 7 if !holders.is_empty() => {
+                let (kind, held) = holders[h].clone();
+                body += &format!(
+                    "var a{} = {}\n",
+                    vars.len(),
+                    fill(HOLDERS[kind].1, &format!("h{h}"))
+                );
+                vars.push(held);
+            }
+            8 if !holders.is_empty() => {
+                let (kind, held) = holders[h].clone();
+                body += &format!("a{j} = {}\n", fill(HOLDERS[kind].1, &format!("h{h}")));
+                vars[j] = held;
+            }
+            9 => {
+                body += &format!("a{j} = grow(a{j})\n");
+                vars[j].push(9);
+            }
+            10 => {
+                let v = byte(g);
+                body += &format!("loop i in 0..3 {{ a{j} = push(a{j}, {v}) }}\n");
+                vars[j].extend([v; 3]);
+            }
+            _ => {
+                let new = vars[j].clone();
+                body += &format!("var a{} = a{j}\n", vars.len());
+                vars.push(new);
+            }
+        }
+    }
+    let dump = Elem::Int(INTS[1]);
+    let mut lines = Vec::new();
+    for (k, (kind, held)) in holders.iter().enumerate() {
+        body += &format!("g{k} = {}\n", fill(HOLDERS[*kind].1, &format!("h{k}")));
+        body += &dump.dump(&format!("g{k}"));
+        lines.extend(shown(
+            &held
+                .iter()
+                .map(|b| Val::N(i128::from(*b)))
+                .collect::<Vec<_>>(),
+        ));
+    }
+    for (k, items) in vars.iter().enumerate() {
+        body += &format!("f{k} = a{k}\n");
+        body += &dump.dump(&format!("f{k}"));
+        lines.extend(shown(
+            &items
+                .iter()
+                .map(|b| Val::N(i128::from(*b)))
+                .collect::<Vec<_>>(),
+        ));
+    }
+    let source = format!("{HOLDER_ITEMS}fn main() ! console, alloc {{\n{body}}}\n");
+    Shared { source, lines }
+}
+
+/// A list is a value however deep it lies: a name given a value that holds a
+/// list still holds the same elements after any other name is pushed to,
+/// whether the list lies in a struct, a tuple, an enum, or a list, and
+/// whether it was put there or taken out, in every order of binding and
+/// pushing.
+fn a_list_held_inside_another_value_is_unchanged_by_a_push_to_any_other_name() {
+    generate::check(89, 300, shared, |s| prints(&s.source, s.lines.clone()));
+}
+
+/// How many times a program asks the system for memory.
+fn requests(source: &str) -> usize {
+    let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
+    let (outcome, requests) = scalar::run_counting(&program, usize::MAX);
+    assert_eq!(outcome.status, 0, "for {source}");
+    requests.len()
+}
+
+/// A list inside another value has no room beyond its size, so a `push` to
+/// it copies, however much room the list it was made from had.
+fn a_push_to_a_list_held_inside_another_value_copies() {
+    for (kind, (build, take, ty)) in HOLDERS.iter().enumerate() {
+        for n in 1..=9 {
+            let program = |push: &str| {
+                format!(
+                    "{HOLDER_ITEMS}fn main() ! alloc {{\n  var a: List[u8] = []\n  loop i in 0..{n} {{ a = push(a, 1) }}\n  h: {ty} = {}\n  var b = {}\n{push}}}\n",
+                    fill(build, "a"),
+                    fill(take, "h"),
+                )
+            };
+            let (without, with) = (
+                requests(&program("")),
+                requests(&program("  b = push(b, 2)\n")),
+            );
+            // The list `a` has room for more, and `b` is a name of its own
+            // that was given what the holder holds.
+            assert_eq!(with, without + 1, "holder {kind}, {n} elements");
+        }
+    }
+}
+
+/// An element of a list is held as its scalars one after another, each at a
+/// multiple of its size, and takes a whole number of its largest scalar, so
+/// that a list of `n` of them has room for between `n` and `2n` elements of
+/// the size the types give.
+fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest() {
+    let mixed = "struct M {\n  a: u8\n  b: u32\n  c: u8\n}\n\nfn main() ! alloc {\n  var xs: List[M] = []\n  loop i in 0..3 { xs = push(xs, M(a: 1, b: 2, c: 3)) }\n}\n";
+    let program = lower(mixed.as_bytes()).expect("compiles");
+    let (_, asked) = scalar::run_counting(&program, usize::MAX);
+    // `a` at 0, `b` at 4, `c` at 8, which ends at 9, and 12 is a whole number
+    // of 4, so the last list has room for 4 elements of 12 bytes.
+    assert_eq!(asked.last(), Some(&48), "{asked:?}");
+    let kinds = Kinds {
+        enums: false,
+        lists: false,
+    };
+    generate::check(
+        97,
+        100,
+        |g| {
+            let t = ty(g, 3, kinds, &mut 0);
+            let v = t.value(g);
+            (t, v, 1 + g.below(40))
+        },
+        |(t, v, n)| {
+            let source = format!(
+                "{}fn main() ! alloc {{\n  var xs: List[{}] = []\n  loop i in 0..{n} {{ xs = push(xs, {}) }}\n}}\n",
+                Ty::source(&[t]),
+                t.name(),
+                t.written(v),
+            );
+            let program = lower(source.as_bytes()).expect("compiles");
+            let (_, asked) = scalar::run_counting(&program, usize::MAX);
+            let room = *asked.last().expect("memory was asked for");
+            let stride = t.stride();
+            assert_eq!(room % stride, 0, "{room} bytes for {source}");
+            assert!(room >= n * stride, "{room} bytes for {source}");
+            assert!(room <= 2 * n * stride, "{room} bytes for {source}");
+        },
+    );
+}
+
+/// `xs[i].field` reads the scalars of the field and no others: a function
+/// that reads it has as many loads as the field has scalars.
+fn reading_a_field_of_an_element_reads_only_the_scalars_of_that_field() {
+    let kinds = Kinds {
+        enums: false,
+        lists: true,
+    };
+    generate::check(
+        101,
+        100,
+        |g| {
+            let mut next = 100;
+            let fields: Vec<Ty> = (0..2 + g.below(3))
+                .map(|_| ty(g, 2, kinds, &mut next))
+                .collect();
+            let at = g.below(fields.len());
+            let value = Ty::Struct(0, fields.clone()).value(g);
+            (fields, at, value)
+        },
+        |(fields, at, value)| {
+            let element = Ty::Struct(0, fields.clone());
+            let field = &fields[*at];
+            let source = format!(
+                "{}fn get(xs: List[S0], i: u64) -> {} requires i < xs.size {{ xs[i].f{at} }}\n\nfn main() ! alloc {{\n  xs: List[S0] = [{}]\n  x = get(xs, 0)\n}}\n",
+                Ty::source(&[&element]),
+                field.name(),
+                element.written(value),
+            );
+            let program = lower(source.as_bytes()).expect("compiles");
+            let loads: usize = (program.functions.iter().enumerate())
+                .filter(|(k, _)| *k != program.main)
+                .flat_map(|(_, f)| &f.blocks)
+                .flat_map(|b| &b.instructions)
+                .filter(|i| matches!(i.op, Op::Load { .. }))
+                .count();
+            assert_eq!(loads, field.scalars().len(), "for {source}");
+        },
     );
 }

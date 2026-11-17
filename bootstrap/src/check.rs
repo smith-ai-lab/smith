@@ -344,8 +344,7 @@ enum Ty {
     Enum(usize, Vec<Ty>),
     /// A tuple of two values or more, with the type of each.
     Tuple(Vec<Ty>),
-    /// A `List` of whole numbers or `bool`s, which holds its one element
-    /// type.
+    /// A `List`, which holds its one element type.
     List(Vec<Ty>),
     /// A function: the types of its parameters, followed by the type it
     /// gives.
@@ -777,7 +776,6 @@ impl<'a> Defs<'a> {
             let items: Vec<Ty> = (t.args.iter())
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
-            self.no_lists(&items, t, errors);
             return if t.function {
                 Ty::func(items)
             } else {
@@ -806,7 +804,6 @@ impl<'a> Defs<'a> {
                 .iter()
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
-            self.no_lists(&args, t, errors);
             let wanted = self.file.structs[s].generics.len();
             if args.len() != wanted {
                 errors.push(Error::new(
@@ -831,7 +828,6 @@ impl<'a> Defs<'a> {
                 .iter()
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
-            self.no_lists(&args, t, errors);
             let wanted = self.file.enums[e].generics.len();
             if args.len() != wanted {
                 errors.push(Error::new(
@@ -863,15 +859,11 @@ impl<'a> Defs<'a> {
             }
             return match self.resolve(&t.args[0], scope, errors) {
                 Ty::Unknown => Ty::Unknown,
-                element @ Ty::Int(_) => Ty::list(element),
-                element @ Ty::Enum(e, _) if e == self.boolean => Ty::list(element),
-                _ => {
-                    errors.push(Error::unsupported(
-                        t.pos,
-                        "a list of anything but whole numbers and `bool`",
-                    ));
+                Ty::Fn(_) | Ty::Nothing => {
+                    errors.push(Error::unsupported(t.pos, "a list of functions or of `()`"));
                     Ty::Unknown
                 }
+                element => Ty::list(element),
             };
         }
         if name == TEXT || Int::named(name).is_some() {
@@ -890,14 +882,6 @@ impl<'a> Defs<'a> {
             Error::new(t.pos, format!("there is no type named `{name}`"))
         });
         Ty::Unknown
-    }
-
-    /// Reports a list among the types a type holds, which no type does yet:
-    /// a list is a name's own, so that two names never share room to grow.
-    fn no_lists(&self, items: &[Ty], t: &Type, errors: &mut Vec<Error>) {
-        if items.iter().any(|i| matches!(i, Ty::List(_))) {
-            errors.push(Error::unsupported(t.pos, "a list inside another type"));
-        }
     }
 
     /// The prelude's `bool`.
@@ -4438,11 +4422,6 @@ impl<'a> Checker<'a> {
                 let items: Vec<Ty> = (items.iter().zip(&wants))
                     .map(|(item, want)| self.expr(body, item, want))
                     .collect();
-                if items.iter().any(|t| matches!(t, Ty::List(_))) {
-                    self.errors
-                        .push(Error::unsupported(expr.pos(), "a list inside another type"));
-                    return Ty::Unknown;
-                }
                 Ty::tuple(items)
             }
         }
