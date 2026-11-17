@@ -61,7 +61,7 @@ const SLOWEST: usize = 70;
 const LIMIT: Duration = Duration::from_secs(1);
 
 /// Whether a test over the limit fails the run. It does on the kind of
-/// machine that the `linux` job of `ci` uses, where every limited test
+/// machine that the `linux` job of `ci` uses, where every test
 /// runs, and elsewhere is only printed.
 const ENFORCED: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
 
