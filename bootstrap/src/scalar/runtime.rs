@@ -13,7 +13,7 @@ const BYTE: Type = Type::Int(Bits::B8);
 const TEXT: [Type; 2] = [ADDRESS, LENGTH];
 
 /// A function of the runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Runtime {
     /// Takes an address to write to, an address to read from, and a count,
     /// and copies that many bytes. It gives nothing.
@@ -35,14 +35,15 @@ pub enum Runtime {
     /// Takes an integer of the size, and gives a new text that is its digits
     /// in decimal, read as a signed number or as an unsigned one.
     Decimal { bits: Bits, signed: bool },
-    /// Takes a list of elements of the size, as the address of its elements,
-    /// its size, and how many elements the memory at that address has room
-    /// for, then the element to add, and a byte that is not 0 when the list
+    /// Takes a list whose elements are the scalars of the types, as the
+    /// address of its elements, its size, and how many elements the memory at
+    /// that address has room for, then the scalars of the element to add, and
+    /// a byte that is not 0 when the list
     /// may grow where it is. It gives the list with the element after the
     /// last. The element is written in place when the list may grow there
     /// and there is room, and otherwise the elements are copied into memory
     /// with room for twice as many, or for one when there are none.
-    Push(Bits),
+    Push(Vec<Type>),
 }
 
 /// The function of the runtime, where `place` gives the place in the
@@ -55,7 +56,7 @@ pub fn build(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function
         Runtime::Equal => equal(),
         Runtime::Digits => digits(),
         Runtime::Decimal { bits, signed } => decimal(bits, signed, place(Runtime::Digits)),
-        Runtime::Push(bits) => push(bits, place(Runtime::Copy)),
+        Runtime::Push(scalars) => push(&scalars, place(Runtime::Copy)),
     }
 }
 
@@ -368,11 +369,16 @@ fn decimal(bits: Bits, signed: bool, digits: usize) -> Function {
 /// What a list is: the address of its elements, its size, and its room.
 const LIST: [Type; 3] = [ADDRESS, LENGTH, LENGTH];
 
-fn push(bits: Bits, copy: usize) -> Function {
+fn push(scalars: &[Type], copy: usize) -> Function {
+    let (places, stride) = super::element(scalars);
     let mut f = Builder::new();
-    let p = f.params(&[ADDRESS, LENGTH, LENGTH, Type::Int(bits), BYTE]);
-    let (address, size, room, item, in_place) = (p[0], p[1], p[2], p[3], p[4]);
-    let width = int(&mut f, u64::from(bits.count() / 8));
+    let mut types = vec![ADDRESS, LENGTH, LENGTH];
+    types.extend_from_slice(scalars);
+    types.push(BYTE);
+    let p = f.params(&types);
+    let (address, size, room, in_place) = (p[0], p[1], p[2], p[p.len() - 1]);
+    let item = &p[3..p.len() - 1];
+    let width = int(&mut f, stride);
     let one = int(&mut f, 1);
     let left = f.compare(Compare::LessU, size, room);
     let here = f.binary(Binary::And, left, in_place);
@@ -382,21 +388,30 @@ fn push(bits: Bits, copy: usize) -> Function {
     f.at(kept);
     let used = f.binary(Binary::Mul, size, width);
     let at = after(&mut f, address, used);
-    f.store(at, item);
+    write(&mut f, at, item, &places);
     let bigger = f.binary(Binary::Add, size, one);
     f.ret(vec![address, bigger, room]);
     f.at(moved);
     let zero = int(&mut f, 0);
     let none = f.compare(Compare::Equal, size, zero);
     let twice = f.binary(Binary::Add, size, size);
-    let places = f.choose(none, one, twice);
-    let bytes = f.binary(Binary::Mul, places, width);
+    let places_of_room = f.choose(none, one, twice);
+    let bytes = f.binary(Binary::Mul, places_of_room, width);
     let start = f.allocate(bytes);
     let used = f.binary(Binary::Mul, size, width);
     f.call(copy, vec![start, address, used], &[]);
     let at = after(&mut f, start, used);
-    f.store(at, item);
+    write(&mut f, at, item, &places);
     let bigger = f.binary(Binary::Add, size, one);
-    f.ret(vec![start, bigger, places]);
+    f.ret(vec![start, bigger, places_of_room]);
     f.finish(&LIST)
+}
+
+/// Writes the scalars of an element, each at its place, from the address.
+fn write(f: &mut Builder, at: Value, item: &[Value], places: &[u64]) {
+    for (value, place) in item.iter().zip(places) {
+        let by = int(f, *place);
+        let to = after(f, at, by);
+        f.store(to, *value);
+    }
 }

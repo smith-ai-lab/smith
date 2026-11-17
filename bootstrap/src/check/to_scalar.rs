@@ -30,17 +30,6 @@ const BYTE: form::Type = form::Type::Int(form::Bits::B8);
 const TEXT: [form::Type; 2] = [form::Type::Address, form::Type::Int(form::Bits::B64)];
 
 /// How many bits a number of the type has, in the scalar form.
-/// The size of each element of a list of the type.
-fn element_bits(list: &Ty) -> form::Bits {
-    match list {
-        Ty::List(of) => match &of[0] {
-            Ty::Int(t) => bits_of(*t),
-            _ => form::Bits::B8,
-        },
-        _ => unreachable!("checked"),
-    }
-}
-
 fn bits_of(t: Int) -> form::Bits {
     match t.bits() {
         8 => form::Bits::B8,
@@ -386,6 +375,14 @@ impl<'a> Lowering<'a> {
                 all
             }
             Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown | Ty::Flex(_) => Vec::new(),
+        }
+    }
+
+    /// The types of the scalars of each element of a list of the type.
+    fn element(&self, list: &Ty) -> Vec<form::Type> {
+        match list {
+            Ty::List(of) => self.scalars(&of[0]),
+            _ => unreachable!("checked"),
         }
     }
 
@@ -1173,6 +1170,10 @@ impl<'a> Lowering<'a> {
                     let values = self.case(out, &ty, k, None, env);
                     return (ty, values);
                 }
+                if indexed(of) {
+                    let (ty, address, scalars) = self.element_at(out, expr, env);
+                    return (ty, self.load(out, address, &scalars));
+                }
                 let (of_ty, values) = self.expr(out, of, env);
                 if matches!(of_ty, Ty::List(_)) {
                     return (typed.type_of(expr, env), vec![values[1]]);
@@ -1232,18 +1233,18 @@ impl<'a> Lowering<'a> {
             }
             Expr::List { items, .. } => {
                 let ty = typed.type_of(expr, env);
-                let bits = element_bits(&ty);
-                let width = u64::from(bits.count() / 8);
-                let values: Vec<form::Value> = items
+                let scalars = self.element(&ty);
+                let (places, stride) = form::element(&scalars);
+                let elements: Vec<Vec<form::Value>> = items
                     .iter()
-                    .map(|item| self.expr(out, item, env).1[0])
+                    .map(|item| self.expr(out, item, env).1)
                     .collect();
                 let count = out.int(form::Bits::B64, items.len() as i128);
                 if items.is_empty() {
                     let none = out.constant(form::Constant::Null, form::Type::Address);
                     return (ty, vec![none, count, count]);
                 }
-                let bytes = out.int(form::Bits::B64, items.len() as i128 * width as i128);
+                let bytes = out.int(form::Bits::B64, items.len() as i128 * stride as i128);
                 let start = out.emit(
                     form::Op::System {
                         call: form::System::Allocate,
@@ -1251,39 +1252,25 @@ impl<'a> Lowering<'a> {
                     },
                     vec![form::Type::Address],
                 )[0];
-                for (k, value) in values.into_iter().enumerate() {
-                    let offset = out.int(form::Bits::B64, k as i128 * width as i128);
-                    let address = out.binary(form::Binary::Add, start, offset);
-                    out.emit(
-                        form::Op::Store {
-                            ty: form::Type::Int(bits),
-                            address,
-                            value,
-                        },
-                        Vec::new(),
-                    );
+                for (k, element) in elements.into_iter().enumerate() {
+                    for (value, place) in element.into_iter().zip(&places) {
+                        let offset = out.int(form::Bits::B64, (k as u64 * stride + place) as i128);
+                        let address = out.binary(form::Binary::Add, start, offset);
+                        out.emit(
+                            form::Op::Store {
+                                ty: out.types[value.0],
+                                address,
+                                value,
+                            },
+                            Vec::new(),
+                        );
+                    }
                 }
                 (ty, vec![start, count, count])
             }
-            Expr::Index { of, index, .. } => {
-                let (list, values) = self.expr(out, of, env);
-                let (at, number) = self.expr(out, index, env);
-                let bits = element_bits(&list);
-                let place = match at {
-                    Ty::Int(t) if bits_of(t) == form::Bits::B64 => number[0],
-                    _ => out.widen(false, number[0]),
-                };
-                let width = out.int(form::Bits::B64, i128::from(bits.count() / 8));
-                let offset = out.binary(form::Binary::Mul, place, width);
-                let address = out.binary(form::Binary::Add, values[0], offset);
-                let element = out.emit(
-                    form::Op::Load {
-                        ty: form::Type::Int(bits),
-                        address,
-                    },
-                    vec![form::Type::Int(bits)],
-                )[0];
-                (typed.type_of(expr, env), vec![element])
+            Expr::Index { .. } => {
+                let (ty, address, scalars) = self.element_at(out, expr, env);
+                (ty, self.load(out, address, &scalars))
             }
             Expr::Lambda(_) => unreachable!("checked"),
             Expr::Loop(l) => {
@@ -1320,12 +1307,93 @@ impl<'a> Lowering<'a> {
         in_place: bool,
     ) -> (Ty, Vec<form::Value>) {
         let (ty, mut args) = self.expr(out, &call.args[0].value, env);
-        let item = self.expr(out, &call.args[1].value, env).1;
-        args.push(item[0]);
+        args.extend(self.expr(out, &call.args[1].value, env).1);
         args.push(out.int(form::Bits::B8, i128::from(in_place)));
         let results = self.scalars(&ty);
-        let values = self.call_runtime(out, Runtime::Push(element_bits(&ty)), args, results);
+        let kind = Runtime::Push(self.element(&ty));
+        let values = self.call_runtime(out, kind, args, results);
         (ty, values)
+    }
+
+    /// Works out where the element or the part of one that `expr` reads is,
+    /// without reading it: its type, the address of its first byte, and each
+    /// of its scalars with its place from the address. `expr` is an index,
+    /// or a field, or the `size`, of a part of one.
+    fn element_at(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        env: &[Ty],
+    ) -> (Ty, form::Value, Vec<(form::Type, u64)>) {
+        let defs = self.typed.defs;
+        match expr {
+            Expr::Index { of, index, .. } => {
+                let (list, values) = self.expr(out, of, env);
+                let (at, number) = self.expr(out, index, env);
+                let scalars = self.element(&list);
+                let (places, stride) = form::element(&scalars);
+                let place = match at {
+                    Ty::Int(t) if bits_of(t) == form::Bits::B64 => number[0],
+                    _ => out.widen(false, number[0]),
+                };
+                let width = out.int(form::Bits::B64, i128::from(stride));
+                let offset = out.binary(form::Binary::Mul, place, width);
+                let address = out.binary(form::Binary::Add, values[0], offset);
+                let Ty::List(of) = list else {
+                    unreachable!("checked")
+                };
+                (
+                    of[0].clone(),
+                    address,
+                    scalars.into_iter().zip(places).collect(),
+                )
+            }
+            Expr::Field { of, name, .. } => {
+                let (ty, address, scalars) = self.element_at(out, of, env);
+                let (start, size, ty) = match ty {
+                    Ty::List(_) => (1, 1, Ty::Int(Int::U64)),
+                    Ty::Struct(s, args) => {
+                        let mut start = 0;
+                        let mut found = None;
+                        for (field, t) in defs.file.structs[s].fields.iter().zip(&defs.fields[s]) {
+                            let t = t.subst(&args);
+                            if &field.name == name {
+                                found = Some(t);
+                                break;
+                            }
+                            start += self.size(&t);
+                        }
+                        let t = found.expect("checked");
+                        (start, self.size(&t), t)
+                    }
+                    _ => unreachable!("checked"),
+                };
+                (ty, address, scalars[start..start + size].to_vec())
+            }
+            _ => unreachable!("checked"),
+        }
+    }
+
+    /// Reads the scalars at their places from the address.
+    fn load(
+        &mut self,
+        out: &mut Out<'a>,
+        address: form::Value,
+        scalars: &[(form::Type, u64)],
+    ) -> Vec<form::Value> {
+        scalars
+            .iter()
+            .map(|&(ty, place)| {
+                let at = match place {
+                    0 => address,
+                    _ => {
+                        let by = out.int(form::Bits::B64, i128::from(place));
+                        out.binary(form::Binary::Add, address, by)
+                    }
+                };
+                out.emit(form::Op::Load { ty, address: at }, vec![ty])[0]
+            })
+            .collect()
     }
 
     /// Lowers a `loop`. Each round is the block `head`, which takes the
@@ -1905,6 +1973,16 @@ impl<'a> Lowering<'a> {
             fields[at] = self.expr(out, default, inner).1;
         }
         fields.concat()
+    }
+}
+
+/// Whether the expression is an index, or a field, or the `size`, of a part of
+/// one, so that only the scalars it reads need be read.
+fn indexed(e: &Expr) -> bool {
+    match e {
+        Expr::Index { .. } => true,
+        Expr::Field { of, .. } => indexed(of),
+        _ => false,
     }
 }
 

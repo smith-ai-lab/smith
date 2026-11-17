@@ -1066,7 +1066,7 @@ fn with_runtime(
     let mut kinds = vec![kind];
     let mut functions = Vec::new();
     while functions.len() < kinds.len() {
-        let wanted = kinds[functions.len()];
+        let wanted = kinds[functions.len()].clone();
         let built = runtime::build(wanted, &mut |c| {
             1 + match kinds.iter().position(|k| *k == c) {
                 Some(at) => at,

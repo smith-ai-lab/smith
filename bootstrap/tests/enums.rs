@@ -526,7 +526,7 @@ fn model(g: &mut Gen, kind: Option<Kind>) -> Model {
             )),
             2 => m.main.push(Stmt::Raw(
                 "w: ".into(),
-                "List[str] = .none".into(),
+                "f32 = .none".into(),
                 NOT_BUILT.into(),
             )),
             _ => {

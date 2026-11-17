@@ -68,6 +68,33 @@ pub enum Type {
     Address,
 }
 
+impl Type {
+    /// How many bytes a value of the type takes in memory.
+    pub fn bytes(self) -> u64 {
+        match self {
+            Type::Int(bits) => u64::from(bits.count() / 8),
+            Type::Address => 8,
+        }
+    }
+}
+
+/// Where each scalar of an element of a list is held, and how many bytes the
+/// element takes: the scalars lie one after another, each at a multiple of
+/// its size, and the element takes a whole number of its largest scalar.
+pub fn element(scalars: &[Type]) -> (Vec<u64>, u64) {
+    let mut end: u64 = 0;
+    let places = scalars
+        .iter()
+        .map(|t| {
+            let at = end.next_multiple_of(t.bytes());
+            end = at + t.bytes();
+            at
+        })
+        .collect();
+    let largest = scalars.iter().map(|t| t.bytes()).max().unwrap_or(1);
+    (places, end.next_multiple_of(largest))
+}
+
 /// A value, by its place in `Function::types`. It is defined once: as a
 /// parameter of a block, or as a result of an instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -169,14 +196,14 @@ pub enum Op {
         then: Value,
         otherwise: Value,
     },
-    /// Gives the integer of the type that is held at the address, in as many
-    /// bytes as its size, least significant first.
+    /// Gives the integer or address of the type that is held at the address,
+    /// in as many bytes as its size, least significant first.
     Load {
         ty: Type,
         address: Value,
     },
-    /// Holds the integer of the type at the address, in as many bytes as its
-    /// size, least significant first. It gives nothing.
+    /// Holds the integer or address of the type at the address, in as many
+    /// bytes as its size, least significant first. It gives nothing.
     Store {
         ty: Type,
         address: Value,
