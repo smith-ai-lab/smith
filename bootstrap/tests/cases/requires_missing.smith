@@ -1,0 +1,19 @@
+trait Pair[A, B] {
+  fn join(a: A, b: B) -> str
+}
+
+impl Pair[i64, str] {
+  fn join(a: i64, b: str) -> str { b }
+}
+
+fn one() -> i64 { 1 }
+
+fn show_both[A, B](a: A, b: B) -> str
+  requires Pair[A, B]
+{
+  join(a, b)
+}
+
+fn main() ! console {
+  print(show_both("a", one()))
+}

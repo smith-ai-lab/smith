@@ -1,0 +1,35 @@
+trait Pair[A, B] {
+  fn join(a: A, b: B) -> str
+}
+
+trait Plus[A, B, out C] {
+  fn plus(a: A, b: B) -> C
+}
+
+impl Pair[i64, str] {
+  fn join(a: i64, b: str) -> str { b }
+}
+
+impl Plus[i64, i64, i64] {
+  fn plus(a: i64, b: i64) -> i64 { wrapping_add(a, b) }
+}
+
+fn one() -> i64 { 1 }
+
+fn show_both[A, B](a: A, b: B) -> str
+  requires Pair[A, B]
+{
+  join(a, b)
+}
+
+fn sum3[A, B](x: A, y: B, z: B) -> B
+  requires Plus[A, B, B]
+  requires Plus[B, B, B]
+{
+  plus(plus(x, y), z)
+}
+
+fn main() ! console, alloc {
+  print(show_both(one(), "pair"))
+  print("{sum3(one(), 2, 3)}")
+}

@@ -16,6 +16,8 @@
 //! it in a fixed order, and an implementation calls its own trait only for
 //! a type parameter it holds, so no copy of a function calls itself.
 
+use smith::diag::Pos;
+
 use crate::generate::Gen;
 use crate::programs::{Expected, PIECES, pos_after};
 
@@ -2006,4 +2008,137 @@ pub fn boxes(g: &mut Gen) -> (String, Vec<u8>) {
     }
     source.push_str("}\n");
     (source, stdout)
+}
+
+/// A program whose function requires an implementation of a trait of two
+/// types, which one call uses, with what it must give.
+pub struct Requires {
+    pub source: String,
+    /// Where the call is, and the names the error for it must mention, if
+    /// the call is not one an implementation allows.
+    pub mistake: Option<(Pos, Vec<String>)>,
+    pub stdout: Vec<u8>,
+}
+
+impl std::fmt::Debug for Requires {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.source)
+    }
+}
+
+/// `Pair` is implemented for some choices of two types directly. When
+/// `through_show`, it is also implemented for a type and text, wherever the
+/// type has `Show`, by an `impl` that requires it. A call of a function that
+/// requires `Pair[A, B]` uses one choice of types.
+pub fn requires(g: &mut Gen) -> Requires {
+    const TYPES: [(&str, &str); 3] = [
+        ("str", "\"s\""),
+        ("Cat", "Cat(name: \"c\")"),
+        ("i64", "one()"),
+    ];
+    let through_show = g.one_in(2);
+    let shown: Vec<bool> = TYPES.iter().map(|_| g.one_in(2)).collect();
+    let mut source = String::from(
+        "struct Cat {\n  name: str\n}\n\nfn one() -> i64 { 1 }\n\n\
+         trait Show[T] {\n  fn show(x: T) -> str\n}\n\n\
+         trait Pair[A, B] {\n  fn join(a: A, b: B) -> str\n}\n\n",
+    );
+    for (i, (name, _)) in TYPES.iter().enumerate() {
+        if shown[i] {
+            source.push_str(&format!(
+                "impl Show[{name}] {{\n  fn show(x: {name}) -> str {{ \"{name}\" }}\n}}\n\n"
+            ));
+        }
+    }
+    if through_show {
+        source.push_str(
+            "impl[T] Pair[T, str]\n  requires Show[T]\n{\n  \
+             fn join(a: T, b: str) -> str { show(a) }\n}\n\n",
+        );
+    }
+    let mut direct = Vec::new();
+    for (a, (x, _)) in TYPES.iter().enumerate() {
+        for (b, (y, _)) in TYPES.iter().enumerate() {
+            // A direct implementation never fits what the other fits.
+            let overlaps = through_show && *y == "str";
+            if !overlaps && g.one_in(3) {
+                direct.push((a, b));
+                source.push_str(&format!(
+                    "impl Pair[{x}, {y}] {{\n  fn join(a: {x}, b: {y}) -> str {{ \"{x}{y}\" }}\n}}\n\n"
+                ));
+            }
+        }
+    }
+    source.push_str(
+        "fn show_both[A, B](a: A, b: B) -> str\n  requires Pair[A, B]\n{\n  join(a, b)\n}\n\n",
+    );
+    let (a, b) = (g.below(TYPES.len()), g.below(TYPES.len()));
+    source.push_str("fn main() ! console {\n");
+    let line = source.lines().count() + 1;
+    source.push_str(&format!(
+        "  print(show_both({}, {}))\n}}\n",
+        TYPES[a].1, TYPES[b].1
+    ));
+    let shown_by = |t: usize| through_show && TYPES[b].0 == "str" && shown[t];
+    let stdout = if direct.contains(&(a, b)) {
+        Some(format!("{}{}", TYPES[a].0, TYPES[b].0))
+    } else if shown_by(a) {
+        Some(TYPES[a].0.to_string())
+    } else {
+        None
+    };
+    Requires {
+        source,
+        mistake: match stdout {
+            Some(_) => None,
+            None => Some((
+                Pos { line, col: 9 },
+                vec![
+                    "Pair".to_string(),
+                    format!("`{}`", TYPES[a].0),
+                    format!("`{}`", TYPES[b].0),
+                ],
+            )),
+        },
+        stdout: stdout.map(|s| s + "\n").unwrap_or_default().into_bytes(),
+    }
+}
+
+/// The program written with `requires Trait[T]` for each bound `T: Trait`
+/// of its functions and implementations.
+pub fn requires_for_bounds(source: &str) -> String {
+    let mut out = String::new();
+    for line in source.lines() {
+        let generic = line.starts_with("impl[")
+            || (line.starts_with("fn ") && line.split('(').next().is_some_and(|h| h.contains('[')));
+        let (Some(open), true) = (line.find('['), generic && line.ends_with(" {")) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let close = line[open..].find(']').expect("generics end") + open;
+        if !line[open..close].contains(": ") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let mut plain = Vec::new();
+        let mut needs = Vec::new();
+        for each in line[open + 1..close].split(", ") {
+            match each.split_once(": ") {
+                Some((name, bound)) => {
+                    plain.push(name.to_string());
+                    needs.push(format!("  requires {bound}[{name}]\n"));
+                }
+                None => plain.push(each.to_string()),
+            }
+        }
+        out.push_str(&line[..open]);
+        out.push_str(&format!("[{}]", plain.join(", ")));
+        out.push_str(&line[close + 1..line.len() - 2]);
+        out.push('\n');
+        out.push_str(&needs.concat());
+        out.push_str("{\n");
+    }
+    out
 }

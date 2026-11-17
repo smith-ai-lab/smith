@@ -356,6 +356,61 @@ fn with_prelude(mut file: File) -> File {
     file
 }
 
+/// Moves the `requires` lines that name a trait from the contracts of each
+/// function to what it needs. Parsing does not know what a name refers to,
+/// so a line that is `Name[...]` is one that names a trait here.
+fn split_needs(mut file: File) -> File {
+    let traits: Vec<String> = file.traits.iter().map(|t| t.name.clone()).collect();
+    let names_trait = |e: &Expr| {
+        matches!(e, Expr::Index { of, .. }
+            if matches!(&**of, Expr::Name { name, .. }
+                if traits.contains(name) || TRAITS_NOT_BUILT.contains(&name.as_str())))
+    };
+    for f in &mut file.functions {
+        let (needs, requires) = std::mem::take(&mut f.requires)
+            .into_iter()
+            .partition(|e| names_trait(e));
+        f.needs = needs;
+        f.requires = requires;
+    }
+    file
+}
+
+/// The type a type written as an expression is, where `Name[Name, ...]` is
+/// the one form of `f[n](x)` that a `requires` takes for a type.
+fn expr_type(e: &Expr) -> Option<Type> {
+    match e {
+        Expr::Name { name, pos } => Some(Type {
+            name: name.clone(),
+            pos: *pos,
+            args: Vec::new(),
+            function: false,
+        }),
+        Expr::Index { of, index, .. } => {
+            let Expr::Name { name, pos } = &**of else {
+                return None;
+            };
+            let given: Vec<&Expr> = match &**index {
+                Expr::Tuple { items, .. } => items.iter().collect(),
+                one => vec![one],
+            };
+            Some(Type {
+                name: name.clone(),
+                pos: *pos,
+                args: given.into_iter().map(expr_type).collect::<Option<_>>()?,
+                function: false,
+            })
+        }
+        Expr::Tuple { pos, items } => Some(Type {
+            name: String::new(),
+            pos: *pos,
+            args: items.iter().map(expr_type).collect::<Option<_>>()?,
+            function: false,
+        }),
+        _ => None,
+    }
+}
+
 /// What an expression gives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
@@ -673,16 +728,28 @@ enum Bound {
     None,
     /// A trait, by its place in the file's traits.
     Trait(usize),
-    /// A bound already reported as a mistake. Whatever it would allow is
-    /// allowed, so nothing it explains is reported.
+    /// A bound already reported as a mistake.
     Invalid,
 }
 
-/// The type parameters a type is written among: their names and bounds.
+/// An implementation a definition requires: a trait and its types, among
+/// the type parameters of the definition, `out` ones included.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Requirement {
+    of: usize,
+    types: Vec<Ty>,
+}
+
+/// The type parameters a type is written among: their names, and what the
+/// definition requires of them, as `T: Trait` and `requires Trait[T]` do.
 #[derive(Clone, Debug, Default)]
 struct Scope {
     names: Vec<String>,
-    bounds: Vec<Bound>,
+    requires: Vec<Requirement>,
+    /// Whether a requirement of each type parameter was reported as a
+    /// mistake. Whatever it would allow is allowed, so nothing it explains
+    /// is reported.
+    invalid: Vec<bool>,
 }
 
 /// What a caller needs to know of a function.
@@ -774,7 +841,7 @@ struct Defs<'a> {
 /// What implements a trait for some types.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum By {
-    /// The bound of a type parameter promises an implementation.
+    /// A requirement of the definition promises an implementation.
     Bound,
     /// An implementation written in the source, with a type for each of
     /// its type parameters.
@@ -789,6 +856,8 @@ enum Found {
     /// it.
     Yes(Vec<Ty>, By),
     No,
+    /// Two implementations, by their places in the file's, both fit.
+    Two(usize, usize),
     /// A mistake already reported stands in the way.
     Unknown,
 }
@@ -990,14 +1059,99 @@ impl<'a> Defs<'a> {
         self.enum_names.get(name.as_str()).copied()
     }
 
-    /// The type parameters of a definition, with nothing reported.
-    fn scope(&self, generics: &[Generic]) -> Scope {
-        Scope {
+    /// The type parameters of a definition, with the bounds and the
+    /// `requires` lines that name a trait, with nothing reported.
+    fn scope(&self, generics: &[Generic], needs: &[Expr]) -> Scope {
+        let mut scope = Scope {
             names: generics.iter().map(|g| g.name.clone()).collect(),
-            bounds: (generics.iter())
-                .map(|g| self.bound(&g.bound, &mut Vec::new()))
-                .collect(),
+            requires: Vec::new(),
+            invalid: vec![false; generics.len()],
+        };
+        for (p, g) in generics.iter().enumerate() {
+            match self.bound(&g.bound, &mut Vec::new()) {
+                Bound::None => {}
+                Bound::Trait(of) => scope.requires.push(Requirement {
+                    of,
+                    types: vec![Ty::Param(p); self.outs[of].len()],
+                }),
+                Bound::Invalid => scope.invalid[p] = true,
+            }
         }
+        let mut found = Vec::new();
+        for r in self.requirements(needs, &scope, &mut Vec::new()) {
+            match r {
+                Some(r) => found.push(r),
+                None => scope.invalid.iter_mut().for_each(|i| *i = true),
+            }
+        }
+        scope.requires.extend(found);
+        scope
+    }
+
+    /// What each `requires` line that names a trait requires, among the
+    /// type parameters of `scope`. A line that is a mistake gives `None`,
+    /// and goes in `errors`.
+    fn requirements(
+        &self,
+        needs: &[Expr],
+        scope: &Scope,
+        errors: &mut Vec<Error>,
+    ) -> Vec<Option<Requirement>> {
+        needs
+            .iter()
+            .map(|e| {
+                let Expr::Index { of, index, .. } = e else {
+                    errors.push(Error::unsupported(e.pos(), "a `requires` of this form"));
+                    return None;
+                };
+                let Expr::Name { name, pos } = &**of else {
+                    errors.push(Error::unsupported(e.pos(), "a `requires` of this form"));
+                    return None;
+                };
+                let Some(&of) = self.trait_names.get(name.as_str()) else {
+                    errors.push(if TRAITS_NOT_BUILT.contains(&name.as_str()) {
+                        Error::unsupported(*pos, &format!("the trait `{name}`"))
+                    } else if self.is_type(name) {
+                        Error::new(*pos, format!("`{name}` is not a trait"))
+                    } else {
+                        Error::new(*pos, format!("there is no trait named `{name}`"))
+                    });
+                    return None;
+                };
+                let given: Vec<&Expr> = match &**index {
+                    Expr::Tuple { items, .. } => items.iter().collect(),
+                    one => vec![one],
+                };
+                let arity = self.outs[of].len();
+                if given.len() != arity && given.len() != 1 {
+                    errors.push(Error::new(
+                        *pos,
+                        format!(
+                            "`{name}` takes {}, and this gives {}",
+                            count(arity, "type"),
+                            given.len()
+                        ),
+                    ));
+                    return None;
+                }
+                let before = errors.len();
+                let mut types = Vec::new();
+                for g in given {
+                    let Some(t) = expr_type(g) else {
+                        errors.push(Error::new(g.pos(), "this is not a type"));
+                        return None;
+                    };
+                    types.push(self.resolve(&t, scope, errors));
+                }
+                if errors.len() > before {
+                    return None;
+                }
+                if types.len() == 1 {
+                    types = vec![types[0].clone(); arity];
+                }
+                Some(Requirement { of, types })
+            })
+            .collect()
     }
 
     /// A function's signature among the type parameters of `scope`.
@@ -1135,18 +1289,18 @@ impl<'a> Defs<'a> {
             .map(|(t, _)| t.clone())
             .collect();
         let explained = |t: &Ty| {
-            *t == Ty::Unknown
-                || (0..scope.bounds.len())
-                    .any(|p| scope.bounds[p] == Bound::Invalid && t.mentions(p))
+            *t == Ty::Unknown || (0..scope.names.len()).any(|p| scope.invalid[p] && t.mentions(p))
         };
         if given.iter().any(explained) {
             return Found::Unknown;
         }
-        if let Some(Ty::Param(p)) = given.first()
-            && given.iter().all(|t| *t == Ty::Param(*p))
-            && scope.bounds[*p] == Bound::Trait(k)
-        {
-            return Found::Yes(vec![Ty::Param(*p); outs.len()], By::Bound);
+        for r in scope.requires.iter().filter(|r| r.of == k) {
+            let same = (r.types.iter().zip(types).zip(outs))
+                .filter(|(_, out)| !**out)
+                .all(|((a, b), _)| a == b);
+            if same {
+                return Found::Yes(r.types.clone(), By::Bound);
+            }
         }
         let key = (k, given);
         if stack.contains(&key) {
@@ -1165,7 +1319,8 @@ impl<'a> Defs<'a> {
         scope: &Scope,
         stack: &mut Vec<(usize, Vec<Ty>)>,
     ) -> Found {
-        for &i in &self.impls_of[k] {
+        let mut fit: Option<(usize, Vec<Ty>, Vec<Ty>)> = None;
+        'impls: for &i in &self.impls_of[k] {
             let Some(info) = &self.impls[i] else {
                 continue;
             };
@@ -1182,17 +1337,24 @@ impl<'a> Defs<'a> {
             let Some(sol) = sol.into_iter().collect::<Option<Vec<Ty>>>() else {
                 return Found::Unknown;
             };
-            for (g, bound) in info.scope.bounds.iter().enumerate() {
-                match *bound {
-                    Bound::None => {}
-                    Bound::Invalid => return Found::Unknown,
-                    Bound::Trait(k2) => match self.meets(k2, &sol[g], scope, stack) {
-                        Found::Yes(..) => {}
-                        other => return other,
-                    },
+            if info.scope.invalid.contains(&true) {
+                return Found::Unknown;
+            }
+            for r in &info.scope.requires {
+                let needed: Vec<Ty> = r.types.iter().map(|t| t.subst(&sol)).collect();
+                match self.meets_types(r.of, &needed, scope, stack) {
+                    Found::Yes(..) => {}
+                    Found::No => continue 'impls,
+                    other => return other,
                 }
             }
+            if let Some((j, ..)) = &fit {
+                return Found::Two(*j, i);
+            }
             let all = info.args.iter().map(|t| t.subst(&sol)).collect();
+            fit = Some((i, all, sol));
+        }
+        if let Some((i, all, sol)) = fit {
             return Found::Yes(all, By::Impl(i, sol));
         }
         match self.given_parts(k, types) {
@@ -1356,12 +1518,45 @@ impl<'a> Defs<'a> {
     /// Whether `t` meets the bound `T: Trait`, which asks for an
     /// implementation whose every type is `t`.
     fn meets(&self, k: usize, t: &Ty, scope: &Scope, stack: &mut Vec<(usize, Vec<Ty>)>) -> Found {
-        let types = vec![t.clone(); self.outs[k].len()];
-        match self.find(k, &types, scope, stack) {
-            Found::Yes(all, by) if all.iter().all(|u| u == t) => Found::Yes(all, by),
+        self.meets_types(k, &vec![t.clone(); self.outs[k].len()], scope, stack)
+    }
+
+    /// Whether `types` meet the requirement `requires Trait[types]`, which
+    /// asks for an implementation whose types, `out` ones included, are
+    /// these.
+    fn meets_types(
+        &self,
+        k: usize,
+        types: &[Ty],
+        scope: &Scope,
+        stack: &mut Vec<(usize, Vec<Ty>)>,
+    ) -> Found {
+        match self.find(k, types, scope, stack) {
+            Found::Yes(all, by) if all == types => Found::Yes(all, by),
             Found::Yes(..) => Found::No,
             other => other,
         }
+    }
+
+    /// The error for a use at `pos` that implementations `a` and `b` both
+    /// fit.
+    fn ambiguous(&self, pos: Pos, a: usize, b: usize) -> Error {
+        let describe = |i: usize| {
+            let info = self.impls[i].as_ref().expect("known");
+            let types: Vec<String> = (info.args.iter())
+                .map(|t| self.text(t, &info.scope))
+                .collect();
+            format!(
+                "`impl {}[{}]` at line {}",
+                self.file.traits[info.of].name,
+                types.join(", "),
+                self.file.impls[i].pos.line
+            )
+        };
+        Error::new(
+            pos,
+            format!("{} and {} both fit this use", describe(a), describe(b)),
+        )
     }
 }
 
@@ -1623,7 +1818,7 @@ pub struct Checked {
 /// error is reported, except one that a mistake already reported would
 /// explain.
 pub fn check(file: File) -> Result<Checked, Vec<Error>> {
-    let file = with_prelude(file);
+    let file = split_needs(with_prelude(file));
     let mut errors = Vec::new();
 
     // The first definition of a name holds it, and a later one is a
@@ -1839,6 +2034,9 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 for name in bounds_named(&im.generics) {
                     type_name(name, &mut found);
                 }
+                for name in needs_named(&im.requires) {
+                    type_name(name, &mut found);
+                }
                 for f in &im.functions {
                     function(f, &mut found);
                 }
@@ -1902,7 +2100,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     defs.struct_scopes = file
         .structs
         .iter()
-        .map(|s| defs.scope(&s.generics))
+        .map(|s| defs.scope(&s.generics, &[]))
         .collect();
     defs.fields = (file.structs.iter().enumerate())
         .map(|(i, s)| {
@@ -1911,7 +2109,11 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 .collect()
         })
         .collect();
-    defs.enum_scopes = file.enums.iter().map(|e| defs.scope(&e.generics)).collect();
+    defs.enum_scopes = file
+        .enums
+        .iter()
+        .map(|e| defs.scope(&e.generics, &[]))
+        .collect();
     defs.cases = (file.enums.iter().enumerate())
         .map(|(i, e)| {
             (e.cases.iter())
@@ -1920,14 +2122,11 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         })
         .collect();
     defs.signatures = (file.functions.iter())
-        .map(|f| defs.signature(f, defs.scope(&f.generics)))
+        .map(|f| defs.signature(f, defs.scope(&f.generics, &f.needs)))
         .collect();
     defs.trait_sigs = (file.traits.iter())
         .map(|t| {
-            let scope = Scope {
-                names: t.generics.iter().map(|g| g.name.clone()).collect(),
-                bounds: vec![Bound::None; t.generics.len()],
-            };
+            let scope = defs.scope(&t.generics, &[]);
             (t.functions.iter())
                 .map(|f| defs.signature(f, scope.clone()))
                 .collect()
@@ -1947,7 +2146,12 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
                 let (Some(a), Some(b)) = (&defs.impls[i], &defs.impls[j]) else {
                     return false;
                 };
-                a.chosen && overlaps(&defs.outs[k], a, b)
+                // An implementation that requires something stands for fewer
+                // types than it is written for, so a use decides.
+                a.chosen
+                    && a.scope.requires.is_empty()
+                    && b.scope.requires.is_empty()
+                    && overlaps(&defs.outs[k], a, b)
             });
             if covered && let Some(info) = &mut defs.impls[j] {
                 info.chosen = false;
@@ -2186,7 +2390,7 @@ fn impl_info(defs: &Defs, im: &crate::parser::Impl) -> Option<ImplInfo> {
     if im.args.len() != t.generics.len() {
         return None;
     }
-    let scope = defs.scope(&im.generics);
+    let scope = defs.scope(&im.generics, &im.requires);
     let args: Vec<Ty> = im.args.iter().map(|a| defs.quietly(a, &scope)).collect();
     if args.contains(&Ty::Unknown) {
         return None;
@@ -2300,6 +2504,25 @@ fn type_names(t: &Type) -> Vec<(&str, Pos)> {
     for a in &t.args {
         out.extend(type_names(a));
     }
+    out
+}
+
+/// The names the `requires` lines that name a trait use: the trait, and the
+/// types it is given.
+fn needs_named(needs: &[Expr]) -> Vec<&str> {
+    fn walk<'a>(e: &'a Expr, out: &mut Vec<&'a str>) {
+        match e {
+            Expr::Name { name, .. } => out.push(name),
+            Expr::Index { of, index, .. } => {
+                walk(of, out);
+                walk(index, out);
+            }
+            Expr::Tuple { items, .. } => items.iter().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    needs.iter().for_each(|e| walk(e, &mut out));
     out
 }
 
@@ -2520,6 +2743,7 @@ fn types_named(f: &Function) -> Vec<&str> {
         .map(|(name, _)| name)
         .collect();
     out.extend(bounds_named(&f.generics));
+    out.extend(needs_named(&f.needs));
     out
 }
 
@@ -3659,6 +3883,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        defs.requirements(&def.needs, &defs.signatures[f].scope, &mut self.errors);
         self.params(def, &defs.signatures[f].scope);
         self.defaults(def, &defs.signatures[f]);
         self.contracts(def, &defs.signatures[f]);
@@ -3724,10 +3949,11 @@ impl<'a> Checker<'a> {
         };
         let t = &defs.file.traits[k];
         self.generics(&im.generics, "this implementation", Owner::Impl);
-        let scope = defs.scope(&im.generics);
+        let scope = defs.scope(&im.generics, &im.requires);
         for a in &im.args {
             self.ty(a, &scope);
         }
+        defs.requirements(&im.requires, &scope, &mut self.errors);
         if im.args.len() != t.generics.len() {
             self.errors.push(Error::new(
                 im.pos,
@@ -5991,19 +6217,29 @@ impl<'a> Checker<'a> {
             if self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
                 return Ty::Unknown;
             }
-            for (g, bound) in sig.scope.bounds.iter().enumerate() {
-                if let (Bound::Trait(k), Some(t)) = (bound, &sol[g])
-                    && let Found::No = defs.meets(*k, t, body.scope, &mut Vec::new())
-                {
-                    self.errors.push(Error::new(
-                        call.pos,
-                        format!(
-                            "there is no implementation of `{}` for `{}`, which `{name}` needs{}",
-                            defs.file.traits[*k].name,
-                            defs.text(t, body.scope),
-                            defs.because(*k, t, body.scope)
-                        ),
-                    ));
+            for r in &sig.scope.requires {
+                let types: Vec<Ty> = r.types.iter().map(|t| t.solved(&sol)).collect();
+                if types.contains(&Ty::Unknown) {
+                    continue;
+                }
+                match defs.meets_types(r.of, &types, body.scope, &mut Vec::new()) {
+                    Found::No => {
+                        let because = match types.as_slice() {
+                            [t] => defs.because(r.of, t, body.scope),
+                            _ => String::new(),
+                        };
+                        self.errors.push(Error::new(
+                            call.pos,
+                            format!(
+                                "there is no implementation of `{}` for {}, which `{name}` \
+                                 needs{because}",
+                                defs.file.traits[r.of].name,
+                                defs.types_of(r.of, &types, body.scope)
+                            ),
+                        ));
+                    }
+                    Found::Two(a, b) => self.errors.push(defs.ambiguous(call.pos, a, b)),
+                    Found::Yes(..) | Found::Unknown => {}
                 }
             }
             self.contract_call(body, call, &defs.file.functions[f], sig);
@@ -6092,6 +6328,10 @@ impl<'a> Checker<'a> {
             Found::No => {
                 self.errors
                     .push(self.no_implementation(body, call, k, &types));
+                Ty::Unknown
+            }
+            Found::Two(a, b) => {
+                self.errors.push(defs.ambiguous(call.pos, a, b));
                 Ty::Unknown
             }
             Found::Unknown => Ty::Unknown,

@@ -3,7 +3,7 @@ type: specification
 title: Generics and traits
 description: Type parameters, traits over one or more types, impl, operators as trait functions, and derive.
 status: partial
-built: "type parameters, traits with `out` parameters, `impl`, bounds such as `T: Plus`, calls of trait functions with defaults, `==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every integer type has"
+built: "type parameters, traits with `out` parameters, `impl`, bounds such as `T: Plus`, `requires Trait[...]` on a function or an `impl`, calls of trait functions with defaults, `==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every integer type has"
 ---
 
 # Generics and traits
