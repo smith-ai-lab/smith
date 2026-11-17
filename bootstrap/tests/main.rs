@@ -29,6 +29,7 @@ mod generate;
 #[cfg(unix)]
 mod install;
 mod lambdas;
+mod loops;
 mod machines;
 mod numbers;
 mod programs;
@@ -69,6 +70,7 @@ fn limited() -> Vec<Test> {
         alloc::ONCE,
         arith::ONCE,
         contracts::ONCE,
+        loops::ONCE,
         props::TESTS,
         cli::ONCE,
         cli::MACHINE,
@@ -109,6 +111,7 @@ fn main() -> ExitCode {
         alloc::ONCE,
         arith::ONCE,
         contracts::ONCE,
+        loops::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.

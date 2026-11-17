@@ -265,6 +265,34 @@ pub enum Expr {
         items: Vec<Expr>,
     },
     Lambda(Box<Lambda>),
+    /// `loop i in a..b { ... }`, or an open-ended `loop { ... }`.
+    Loop(Box<Loop>),
+    /// `break`, which ends the nearest `loop` around it.
+    Break {
+        pos: Pos,
+    },
+}
+
+/// A `loop`: over a range of whole numbers when it has one, and otherwise
+/// open-ended, running until a `break`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Loop {
+    /// Where `loop` is.
+    pub pos: Pos,
+    pub range: Option<Range>,
+    pub body: Vec<Stmt>,
+    /// Where the `}` that closes the body is.
+    pub end: Pos,
+}
+
+/// The head of a `loop` over a range: `i in a..b`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Range {
+    /// The name each number is given, and where it is.
+    pub name: String,
+    pub pos: Pos,
+    pub from: Expr,
+    pub to: Expr,
 }
 
 /// The operators of whole number arithmetic.
@@ -393,7 +421,9 @@ impl Expr {
             | Expr::Interp { pos, .. }
             | Expr::Name { pos, .. }
             | Expr::Case { pos, .. }
-            | Expr::Tuple { pos, .. } => *pos,
+            | Expr::Tuple { pos, .. }
+            | Expr::Break { pos } => *pos,
+            Expr::Loop(l) => l.pos,
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),
             Expr::Arith { left, .. } => left.pos(),
@@ -1414,7 +1444,9 @@ impl Parser<'_> {
             | Expr::Number { .. }
             | Expr::Name { .. }
             | Expr::Case { payload: None, .. }
-            | Expr::Lambda(_) => {}
+            | Expr::Lambda(_)
+            | Expr::Loop(_)
+            | Expr::Break { .. } => {}
         }
     }
 
@@ -1694,13 +1726,13 @@ impl Parser<'_> {
 
     fn statement(&mut self) -> Result<Stmt, Error> {
         let pos = self.pos();
-        let feature = match self.tok() {
+        match self.tok() {
             Tok::Ident(name) => match self.next_tok() {
                 Tok::Punct("=" | ":") => {
                     let name = name.clone();
                     truth_named(&name, pos)?;
                     self.bump();
-                    return self.definition(name, pos, false);
+                    self.definition(name, pos, false)
                 }
                 _ => {
                     let expr = self.expr()?;
@@ -1717,20 +1749,22 @@ impl Parser<'_> {
                         });
                     }
                     self.assignment_not_built()?;
-                    return Ok(Stmt::Expr(expr));
+                    Ok(Stmt::Expr(expr))
                 }
             },
             Tok::Keyword("var") => {
                 self.bump();
                 let (name, pos) = self.defined("the name of the `var`")?;
-                return self.definition(name, pos, true);
+                self.definition(name, pos, true)
             }
-            Tok::Punct("(") => return self.tuple_statement(),
-            Tok::Keyword("break") => "`break`",
-            tok if starts_expression(tok) => return Ok(Stmt::Expr(self.expr()?)),
-            tok => return Err(self.expected("a statement", tok)),
-        };
-        Err(Error::unsupported(pos, feature))
+            Tok::Punct("(") => self.tuple_statement(),
+            Tok::Keyword("break") => {
+                self.bump();
+                Ok(Stmt::Expr(Expr::Break { pos }))
+            }
+            tok if starts_expression(tok) => Ok(Stmt::Expr(self.expr()?)),
+            tok => Err(self.expected("a statement", tok)),
+        }
     }
 
     /// Parses a statement that starts like a tuple: one that takes a value
@@ -2016,6 +2050,58 @@ impl Parser<'_> {
         })
     }
 
+    /// Parses `loop`, through the block that ends it.
+    fn loop_expr(&mut self) -> Result<Loop, Error> {
+        let pos = self.pos();
+        self.bump();
+        let range = match self.tok() {
+            Tok::Punct("{") => None,
+            Tok::Ident(name) if name == "decreases" => {
+                return Err(Error::unsupported(self.pos(), "`loop decreases`"));
+            }
+            Tok::Ident(name) if self.next_tok() == &Tok::Keyword("in") => {
+                let name = name.clone();
+                let at = self.pos();
+                self.bump();
+                self.bump();
+                let no_lambda = std::mem::replace(&mut self.no_lambda, true);
+                let range = self.range_head();
+                self.no_lambda = no_lambda;
+                let (from, to) = range?;
+                Some(Range {
+                    name,
+                    pos: at,
+                    from,
+                    to,
+                })
+            }
+            tok => return Err(self.expected("`{`, or a name and `in` and a range", tok)),
+        };
+        self.expect_punct("{", "`{` to open the body of the `loop`")?;
+        let (body, end) = self.inner_block()?;
+        Ok(Loop {
+            pos,
+            range,
+            body,
+            end,
+        })
+    }
+
+    /// Parses `a..b`, the range a `loop` runs over.
+    fn range_head(&mut self) -> Result<(Expr, Expr), Error> {
+        let from = self.sum()?;
+        if self.tok() != &Tok::Punct("..") {
+            return Err(Error::unsupported(
+                self.pos(),
+                "a `loop` over anything but a range of whole numbers",
+            ));
+        }
+        self.bump();
+        self.skip_newlines();
+        let to = self.sum()?;
+        Ok((from, to))
+    }
+
     /// Parses `if`, through the block that ends it.
     fn if_expr(&mut self) -> Result<Match, Error> {
         let pos = self.pos();
@@ -2161,6 +2247,7 @@ impl Parser<'_> {
             }
             Tok::Keyword("match") => Expr::Match(Box::new(self.match_expr()?)),
             Tok::Keyword("if") => Expr::Match(Box::new(self.if_expr()?)),
+            Tok::Keyword("loop") => Expr::Loop(Box::new(self.loop_expr()?)),
             Tok::Keyword("try") => {
                 self.bump();
                 let operand = self.operand()?;

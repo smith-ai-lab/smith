@@ -88,6 +88,16 @@ struct Out<'a> {
     blocks: Vec<form::Block>,
     /// The block being filled.
     current: usize,
+    /// The `loop`s being lowered, the innermost last.
+    loops: Vec<Round>,
+}
+
+/// A `loop` being lowered: the names its body assigns, which each round
+/// carries to the next, and the blocks that leave it, each with the values
+/// of those names there.
+struct Round {
+    carried: Vec<(usize, usize)>,
+    leaving: Vec<(usize, Vec<form::Value>)>,
 }
 
 /// A name being lowered: what it gives, the values it stands for, and the
@@ -118,6 +128,7 @@ impl<'a> Out<'a> {
             types: Vec::new(),
             blocks: Vec::new(),
             current: 0,
+            loops: Vec::new(),
         };
         out.new_block();
         out
@@ -1170,6 +1181,131 @@ impl<'a> Lowering<'a> {
                 (Ty::tuple(types), values)
             }
             Expr::Lambda(_) => unreachable!("checked"),
+            Expr::Loop(l) => {
+                self.round(out, l, env);
+                (Ty::Nothing, Vec::new())
+            }
+            Expr::Break { .. } => {
+                let round = out.loops.last().expect("checked");
+                let values = round
+                    .carried
+                    .iter()
+                    .flat_map(|&(f, at)| out.frames[f][at].values.clone())
+                    .collect();
+                let from = out.current;
+                out.loops
+                    .last_mut()
+                    .expect("checked")
+                    .leaving
+                    .push((from, values));
+                // What follows a `break` is reached by nothing.
+                out.current = out.new_block();
+                (Ty::Nothing, Vec::new())
+            }
+        }
+    }
+
+    /// Lowers a `loop`. Each round is the block `head`, which takes the
+    /// number it is on, when the `loop` runs over a range, and the values
+    /// of the names the body assigns, and goes to the next round, or leaves
+    /// when the range is used up. A `break` leaves too, and the blocks that
+    /// leave meet in one, which gives the names their values after the
+    /// `loop`.
+    fn round(&mut self, out: &mut Out<'a>, l: &'a Loop, env: &[Ty]) {
+        let assigned: Vec<&str> = statements(&l.body)
+            .into_iter()
+            .flat_map(|stmt| match stmt {
+                Stmt::Define { name, .. } | Stmt::Assign { name, .. } => vec![name.as_str()],
+                Stmt::Destructure { pattern, .. } => {
+                    pattern_names(pattern).into_iter().map(|(n, _)| n).collect()
+                }
+                Stmt::Expr(_) => Vec::new(),
+            })
+            .collect();
+        let mut carried = Vec::new();
+        for (f, frame) in out.frames.iter().enumerate() {
+            for (at, bound) in frame.iter().enumerate() {
+                if !bound.values.is_empty() && assigned.contains(&bound.name.as_str()) {
+                    carried.push((f, at));
+                }
+            }
+        }
+        let held = |out: &Out<'a>| -> Vec<form::Value> {
+            (carried.iter())
+                .flat_map(|&(f, at)| out.frames[f][at].values.clone())
+                .collect()
+        };
+        let range = match &l.range {
+            Some(r) => {
+                let Ty::Int(t) = self.typed.type_of(&r.from, env) else {
+                    unreachable!("checked")
+                };
+                let from = self.expr(out, &r.from, env).1[0];
+                let to = self.expr(out, &r.to, env).1[0];
+                Some((r, t, from, to))
+            }
+            None => None,
+        };
+        let start = held(out);
+        let mut types: Vec<form::Type> = start.iter().map(|v| out.types[v.0]).collect();
+        let counter_type = range.map(|(_, t, ..)| form::Type::Int(bits_of(t)));
+        types.splice(0..0, counter_type);
+        let head = out.new_block();
+        let params: Vec<form::Value> = types.iter().map(|t| out.fresh(*t)).collect();
+        out.blocks[head].params = params.clone();
+        let mut args = start;
+        args.splice(0..0, range.map(|(.., from, _)| from));
+        let before = out.current;
+        out.blocks[before].end = form::End::Jump(form::Jump { block: head, args });
+        out.current = head;
+        let mut at_param = usize::from(range.is_some());
+        for &(f, at) in &carried {
+            let size = out.frames[f][at].values.len();
+            out.frames[f][at].values = params[at_param..at_param + size].to_vec();
+            at_param += size;
+        }
+        let mut round = Round {
+            carried: carried.clone(),
+            leaving: Vec::new(),
+        };
+        let names = out.names().len();
+        if let Some((r, t, _, to)) = range {
+            // A number below the end is on this round, and the rest leave.
+            let signed = t.signed();
+            let below = out.compare(
+                if signed {
+                    form::Compare::LessS
+                } else {
+                    form::Compare::LessU
+                },
+                params[0],
+                to,
+            );
+            let [leave, inside] = out.switch(below, 2)[..] else {
+                unreachable!("two cases")
+            };
+            round.leaving.push((leave, held(out)));
+            out.current = inside;
+            out.define(&r.name, Ty::Int(t), vec![params[0]]);
+        }
+        out.loops.push(round);
+        self.block(out, &l.body, env);
+        let round = out.loops.pop().expect("pushed");
+        out.names_mut().truncate(names);
+        let mut args = held(out);
+        if let Some((_, t, ..)) = range {
+            let one = out.int(bits_of(t), 1);
+            args.insert(0, out.binary(form::Binary::Add, params[0], one));
+        }
+        let last = out.current;
+        out.blocks[last].end = form::End::Jump(form::Jump { block: head, args });
+        let after: Vec<form::Type> = types[usize::from(range.is_some())..].to_vec();
+        let joined = out.join(&after, round.leaving);
+        let mut at_param = 0;
+        for (f, at) in carried {
+            let size = out.frames[f][at].values.len();
+            out.frames[f][at].values = joined[at_param..at_param + size].to_vec();
+            at_param += size;
         }
     }
 
