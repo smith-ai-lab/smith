@@ -18,6 +18,13 @@ Every literal form is backed by a trait, and the expected type picks which imple
 | `[1, 2, 3]` | `FromArray[T]` | An array of three elements |
 
 - A whole number may be written in decimal, hexadecimal, or binary, with `_` between digits, as `1_000_000`, `0xff`, and `0b1010`. A float has a digit on both sides of its point and may have an exponent, as `2.5` and `1e-5`. A `-` directly before a number is part of the literal, so `-128` is an `i8`.
+- A whole number may be written as a character between single quotes, and it is the character's code: `'a'` is `97`. It is a whole number like any other, so it takes its type from its use, and `b - '0'` is arithmetic. The escapes are `\'`, `\\`, `\n`, and `\t`.
+
+  ```
+  fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }
+  ```
+
+  A character outside ASCII takes more than one byte in a `str`, so as a `u8` it is a compile error, and as a wider type it is its code point.
 - Conversion runs at compile time, so `300` as a `u8` is a compile error.
 - A literal bound to a name takes its type from how the name is used in the rest of the function. After `x = 10`, a call `double(x)` of a function that takes a `u8` makes `x` a `u8`, and a second use that needs another type is an ordinary type error at that use. A `var` is decided the same way. A binding may also state its type, as in `limit: i32 = 100`.
 - When nothing in the function decides it, a whole number is an `i64` and a float is an `f64`.
