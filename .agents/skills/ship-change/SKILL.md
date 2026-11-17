@@ -20,6 +20,8 @@ Every change reaches `main` through a pull request. Nothing is pushed to `main` 
 - Every commit follows Conventional Commits: `<type>(<scope>): <summary>`, with the summary in the imperative, starting lowercase, and with no full stop. `.github/check-commits.sh` holds the exact rule and the list of types.
 - Each commit lands on `main` as written, so every commit is meaningful on its own. A fix for a failed check is folded into the commit that caused it, not added on top.
 - The branch is rebased onto `main` when `main` moves. `main` is never merged into it.
+- GitHub starts no check on a pull request that conflicts with `main`. When no check has started a few minutes after a push, look for a conflict first, and rebase.
+- When a rebased branch cannot be pushed, because a push that replaces history is refused, push the work as a branch with a new name, open a new pull request from it, and close the old one with a line that names the new one. Do not wait.
 
 ## The pull request
 
