@@ -162,6 +162,18 @@ const ARITHMETIC: &[(&str, &str, &str)] = &[
 /// The operations of those traits.
 const OPERATIONS: &[&str] = &["add", "sub", "mul"];
 
+/// The functions of `Bits`: the name, the parameters written with `T` for
+/// the type, and the names of the parameters. A shift takes its amount as a
+/// `u8`.
+const BITS: &[(&str, &str, &str)] = &[
+    ("bit_and", "a: T, b: T", "a, b"),
+    ("bit_or", "a: T, b: T", "a, b"),
+    ("bit_xor", "a: T, b: T", "a, b"),
+    ("bit_not", "a: T", "a"),
+    ("shift_left", "a: T, by: u8", "a, by"),
+    ("shift_right", "a: T, by: u8", "a, by"),
+];
+
 /// The implementations of the prelude's traits for a whole number type,
 /// which call the functions the compiler builds. Only the prelude may call
 /// them, and their names start with two underscores.
@@ -195,6 +207,14 @@ impl Repr[{name}] {{
         }
         out.push_str("}\n");
     }
+    out.push_str(&format!("\nimpl Bits[{name}] {{\n"));
+    for (f, params, names) in BITS {
+        let params = params.replace('T', name);
+        out.push_str(&format!(
+            "  fn {f}({params}) -> {name} {{ __{f}({names}) }}\n"
+        ));
+    }
+    out.push_str("}\n");
     out
 }
 
@@ -210,6 +230,11 @@ fn integer_traits() -> String {
         }
         out.push_str("}\n\n");
     }
+    out.push_str("trait Bits[T] {\n");
+    for (f, params, _) in BITS {
+        out.push_str(&format!("  fn {f}({params}) -> T\n"));
+    }
+    out.push_str("}\n\n");
     out
 }
 
@@ -291,6 +316,7 @@ const PRELUDE_TRAITS: &[&str] = &[
     "Wrapping",
     "Saturating",
     "Checked",
+    "Bits",
 ];
 
 /// The names of the types `PRELUDE` defines.
@@ -2544,6 +2570,50 @@ enum Callee {
     Intrinsic,
     /// `push`, which gives a list with one more element.
     Push,
+    /// `narrow` or one of its three relatives, which take a whole number to
+    /// a type that does not hold all of its values.
+    Narrow(Narrowing),
+}
+
+/// What a narrowing does with a value that does not fit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Narrowing {
+    /// `narrow`, which compiles only when the value is proven to fit.
+    Plain,
+    /// `wrapping_narrow`, which keeps the low bits.
+    Wrapping,
+    /// `saturating_narrow`, which gives the nearest value the type holds.
+    Saturating,
+    /// `checked_narrow`, which gives `.none`.
+    Checked,
+}
+
+impl Narrowing {
+    fn name(self) -> &'static str {
+        match self {
+            Narrowing::Plain => "narrow",
+            Narrowing::Wrapping => "wrapping_narrow",
+            Narrowing::Saturating => "saturating_narrow",
+            Narrowing::Checked => "checked_narrow",
+        }
+    }
+}
+
+/// Which narrowing a call is of, if it is of one the compiler builds, which
+/// no function of the program takes the name of.
+fn narrowing(defs: &Defs, call: &Call) -> Option<Narrowing> {
+    let named = [
+        Narrowing::Plain,
+        Narrowing::Wrapping,
+        Narrowing::Saturating,
+        Narrowing::Checked,
+    ]
+    .into_iter()
+    .find(|n| n.name() == call.callee)?;
+    let taken = defs.function_names.contains_key(call.callee.as_str())
+        || defs.struct_names.contains_key(call.callee.as_str())
+        || defs.trait_fns.contains_key(call.callee.as_str());
+    (call.qualifier.is_none() && !taken).then_some(named)
 }
 
 /// For each argument of a checked call, the place of its parameter.
@@ -2774,6 +2844,9 @@ impl<'a> Typed<'a> {
                 if is_push(defs, call) {
                     return Callee::Push;
                 }
+                if let Some(narrowing) = narrowing(defs, call) {
+                    return Callee::Narrow(narrowing);
+                }
                 if let Some(&f) = defs.function_names.get(name) {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
@@ -2814,9 +2887,12 @@ impl<'a> Typed<'a> {
                 }
             },
             Callee::Construct(_, args) => args.clone(),
-            Callee::Print | Callee::Case(_) | Callee::Value | Callee::Intrinsic | Callee::Push => {
-                Vec::new()
-            }
+            Callee::Print
+            | Callee::Case(_)
+            | Callee::Value
+            | Callee::Intrinsic
+            | Callee::Push
+            | Callee::Narrow(_) => Vec::new(),
         }
     }
 
@@ -4735,6 +4811,129 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Checks the amount of a call of `shift_left` or `shift_right`, which
+    /// compiles only when `arith` proves that it is below the number of bits
+    /// of the type `ty` that is shifted.
+    fn shift(&mut self, body: &mut Body<'a>, call: &Call, sig: &Signature, ty: &Ty) {
+        let by = (params_of(&sig.params, &call.args).into_iter())
+            .position(|p| p == 1)
+            .map(|i| &call.args[i].value);
+        match (ty, by) {
+            (Ty::Int(t), Some(by)) => self.shifts(body, by, *t, call.pos),
+            (Ty::Unknown, _) | (_, None) => {}
+            _ => self.errors.push(Error::unsupported(
+                call.pos,
+                "a shift of a number whose type is a type parameter",
+            )),
+        }
+    }
+
+    /// Checks `narrow(x)` or one of its relatives, which take the whole
+    /// number `x` to the whole number type that is expected, one that does
+    /// not hold all the values of the type of `x`. `checked_narrow` is
+    /// expected to give an `Option` of it. `narrow` compiles only when
+    /// `arith` proves that `x` fits.
+    fn narrow(
+        &mut self,
+        body: &mut Body<'a>,
+        call: &Call,
+        narrowing: Narrowing,
+        want: &Want,
+    ) -> Ty {
+        let defs = self.defs;
+        let name = narrowing.name();
+        let plain = call.args.iter().all(|a| a.name.is_none() && !a.after);
+        if call.args.len() != 1 || !plain {
+            self.errors.push(Error::new(
+                call.pos,
+                format!("`{name}` takes the one whole number to narrow"),
+            ));
+            return self.unknown_call(body, call);
+        }
+        let value = &call.args[0].value;
+        let given = self.expr(body, value, &Want::Any);
+        let from = match given {
+            Ty::Int(from) => from,
+            Ty::Unknown | Ty::Flex(_) => return Ty::Unknown,
+            other => {
+                let given = defs.describe(&other, body.scope);
+                self.errors.push(Error::new(
+                    value.pos(),
+                    format!("`{name}` takes a whole number, and this is {given}"),
+                ));
+                return Ty::Unknown;
+            }
+        };
+        let (wanted, to) = match want {
+            Want::Ty(Ty::Unknown | Ty::Flex(_)) => return Ty::Unknown,
+            Want::Ty(Ty::Int(to)) if narrowing != Narrowing::Checked => (Ty::Int(*to), *to),
+            Want::Ty(Ty::Enum(e, of)) if *e == defs.option && narrowing == Narrowing::Checked => {
+                match of.as_slice() {
+                    [Ty::Int(to)] => (Ty::Enum(*e, of.clone()), *to),
+                    _ => return self.narrow_unexpected(body, call, name, want),
+                }
+            }
+            _ => return self.narrow_unexpected(body, call, name, want),
+        };
+        if to.min() <= from.min() && from.max() <= to.max() {
+            let error = if to == from {
+                Error::new(
+                    call.pos,
+                    format!(
+                        "this is already a `{}`, so there is nothing to narrow",
+                        from.name()
+                    ),
+                )
+            } else {
+                Error::new(
+                    call.pos,
+                    format!(
+                        "`{}` holds every value of `{}`, so there is nothing to narrow",
+                        to.name(),
+                        from.name()
+                    ),
+                )
+                .with_fix("use `convert`")
+            };
+            self.errors.push(error);
+            return Ty::Unknown;
+        }
+        if narrowing == Narrowing::Plain {
+            let written = format!("{name}({})", written_expr(value));
+            self.narrows(body, value, (from, to), (&written, call.pos));
+        }
+        wanted
+    }
+
+    /// The error for a narrowing that is not given the type it gives.
+    fn narrow_unexpected(&mut self, body: &Body, call: &Call, name: &str, want: &Want) -> Ty {
+        let message = match want {
+            Want::Ty(needed) => {
+                let needed = self.defs.describe(needed, body.scope);
+                format!(
+                    "`{name}` gives {}, and {needed} is needed",
+                    self.narrowed(name)
+                )
+            }
+            _ => format!("`{name}` gives the type that is expected here, and none is"),
+        };
+        let fix = match name {
+            "checked_narrow" => "write the type, as in `y: Option[u8] = checked_narrow(x)`",
+            _ => "write the type, as in `y: u8 = narrow(x)`",
+        };
+        self.errors
+            .push(Error::new(call.pos, message).with_fix(fix));
+        Ty::Unknown
+    }
+
+    /// What a narrowing gives, in words.
+    fn narrowed(&self, name: &str) -> &'static str {
+        match name {
+            "checked_narrow" => "an `Option` of a whole number",
+            _ => "a whole number",
+        }
+    }
+
     /// Checks a lambda passed where a function is needed whose parameters
     /// and result, the result last, are of the types `wanted`, which may be
     /// partly known, and gives its type. Its body is checked where it is
@@ -5753,6 +5952,9 @@ impl<'a> Checker<'a> {
         if is_push(defs, call) {
             return self.push(body, call, want);
         }
+        if let Some(narrowing) = narrowing(defs, call) {
+            return self.narrow(body, call, narrowing, want);
+        }
         if name == "print" {
             let print = Signature::print();
             if self.effect_in_default(body, call, &print) {
@@ -5832,6 +6034,7 @@ impl<'a> Checker<'a> {
         }
         let outer = std::mem::replace(&mut self.no_impl, false);
         let refused = self.refusals;
+        let mistakes = self.errors.len();
         let sol = self.arguments(body, call, sig, false, Some((k, want)));
         let reported = std::mem::replace(&mut self.no_impl, outer);
         if reported || self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
@@ -5860,6 +6063,11 @@ impl<'a> Checker<'a> {
                         ),
                     ));
                     return Ty::Unknown;
+                }
+                let shifts = defs.file.traits[k].name == "Bits"
+                    && defs.file.traits[k].functions[fi].name.starts_with("shift_");
+                if shifts && self.errors.len() == mistakes {
+                    self.shift(body, call, sig, &types[0]);
                 }
                 sig.gives.subst(&all)
             }

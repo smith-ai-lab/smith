@@ -1,0 +1,7 @@
+fn widen(n: u8) -> u32 {
+  narrow(n)
+}
+
+fn main() ! console, alloc {
+  print("{widen(7)}")
+}

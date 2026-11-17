@@ -753,6 +753,100 @@ impl<'a> Checker<'a> {
     }
 }
 
+impl<'a> Checker<'a> {
+    /// Whether `arith` proves that the amount `by` of a shift of a number of
+    /// type `t` is below the number of bits of `t`, and if it does not, the
+    /// goal it could not prove.
+    pub(super) fn shifts(&mut self, body: &mut Body<'a>, by: &Expr, t: Int, pos: Pos) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let value = builder.lin(by).filter(|_| !builder.overflow);
+        let goal = value.and_then(|value| {
+            let mut up = value.negated()?;
+            up.constant = up.constant.checked_add(i128::from(t.bits()) - 1)?;
+            Some(Formula::Ge(up))
+        });
+        let used = background(&facts, goal.iter());
+        body.facts = facts;
+        if !goal.as_ref().is_some_and(|g| proves(&used, g)) {
+            let by = written_expr(by);
+            let bits = t.bits();
+            self.errors.push(
+                Error::new(
+                    pos,
+                    format!(
+                        "cannot prove that `{by} < {bits}`, which a shift of a `{}` needs",
+                        t.name()
+                    ),
+                )
+                .with_fix(format!(
+                    "check `{by} < {bits}` with an `if`, or state it in a `requires`"
+                )),
+            );
+        }
+    }
+
+    /// Whether `arith` proves that `value`, a whole number of type `from`,
+    /// fits `to`, and if it does not, the goal it could not prove. `written`
+    /// is the call, as it is written.
+    pub(super) fn narrows(
+        &mut self,
+        body: &mut Body<'a>,
+        value: &Expr,
+        (from, to): (Int, Int),
+        (written, pos): (&str, Pos),
+    ) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let lin = builder.lin(value).filter(|_| !builder.overflow);
+        // The sides of the range of `to` that a value of `from` can leave.
+        let mut goals = Vec::new();
+        if from.max() > to.max() {
+            let up = lin.as_ref().and_then(|l| {
+                let mut up = l.negated()?;
+                up.constant = up.constant.checked_add(to.max())?;
+                Some(Formula::Ge(up))
+            });
+            goals.push((format!("<= {}", to.max()), up));
+        }
+        if from.min() < to.min() {
+            let down = lin.as_ref().and_then(|l| {
+                let mut down = l.clone();
+                down.constant = down.constant.checked_sub(to.min())?;
+                Some(Formula::Ge(down))
+            });
+            goals.push((format!(">= {}", to.min()), down));
+        }
+        let used = background(&facts, goals.iter().filter_map(|(_, g)| g.as_ref()));
+        body.facts = facts;
+        let value = written_expr(value);
+        for (text, goal) in goals {
+            if !goal.as_ref().is_some_and(|g| proves(&used, g)) {
+                self.errors.push(
+                    Error::new(
+                        pos,
+                        format!(
+                            "cannot prove that `{value} {text}`, so `{written}` may not fit `{}`",
+                            to.name()
+                        ),
+                    )
+                    .with_fix(
+                        "check the value first, state it in a `requires`, or use \
+                         `wrapping_narrow`, `saturating_narrow`, or `checked_narrow`",
+                    ),
+                );
+                return;
+            }
+        }
+    }
+}
+
 /// What is known, and the range of each value it or the goals are about.
 fn background<'g>(facts: &Facts, goals: impl Iterator<Item = &'g Formula>) -> Vec<Formula> {
     let mut used: Vec<Formula> = facts.known.clone();

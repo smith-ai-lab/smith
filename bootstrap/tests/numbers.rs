@@ -4,8 +4,9 @@
 //! A program binds names of whole number types to literals, each written in
 //! a form the lexical rules allow, and its `main` prints lines whose strings
 //! hold those names, their `repr`, comparisons of them, `wrapping_`,
-//! `saturating_`, and `checked_` arithmetic on them, and tuples and a struct
-//! that hold them. The generator draws a value from the least and greatest
+//! `saturating_`, and `checked_` arithmetic on them, the functions of `Bits`
+//! on them, them taken to another type with `narrow` and its relatives, and
+//! tuples and a struct that hold them. The generator draws a value from the least and greatest
 //! of its type, and from just inside them, as often as from anywhere else.
 //!
 //! The generator works out what the program prints with the arithmetic of
@@ -133,6 +134,8 @@ fn spelled(g: &mut Gen, value: i128) -> String {
 /// The pieces of one printed line: the text of the string as written, and
 /// what it prints.
 struct Line {
+    /// The statements that go before the line that prints.
+    before: String,
     written: String,
     printed: String,
 }
@@ -140,6 +143,7 @@ struct Line {
 impl Line {
     fn new() -> Line {
         Line {
+            before: String::new(),
             written: String::new(),
             printed: String::new(),
         }
@@ -213,11 +217,50 @@ pub fn arithmetic(kind: &str, op: &str, ty: Int, a: i128, b: i128) -> String {
     }
 }
 
-/// A line that prints something about the values the program binds.
-fn line(g: &mut Gen, vars: &[Var]) -> Line {
+impl Int {
+    /// Whether the type holds every value of `other`.
+    pub fn holds_all(self, other: Int) -> bool {
+        self.min() <= other.min() && other.max() <= self.max()
+    }
+}
+
+/// What a function of `Bits` gives for the values, which the arithmetic of
+/// Rust on 128 bits works out and the type then cuts. `by` is the amount of
+/// a shift.
+pub fn bits(function: &str, ty: Int, a: i128, b: i128) -> i128 {
+    ty.wrap(match function {
+        "bit_and" => a & b,
+        "bit_or" => a | b,
+        "bit_xor" => a ^ b,
+        "bit_not" => !a,
+        "shift_left" => a << b,
+        _ => a >> b,
+    })
+}
+
+/// What `narrow` and its relatives give for the value of the type `from`
+/// when it is taken to `to`, as text, or `None` for `narrow` when the value
+/// does not fit.
+pub fn narrowed(kind: &str, to: Int, a: i128) -> Option<String> {
+    let fits = (to.min()..=to.max()).contains(&a);
+    match kind {
+        "narrow" => fits.then(|| a.to_string()),
+        "wrapping_narrow" => Some(to.wrap(a).to_string()),
+        "saturating_narrow" => Some(a.clamp(to.min(), to.max()).to_string()),
+        _ => Some(if fits {
+            format!(".some({a})")
+        } else {
+            ".none".to_string()
+        }),
+    }
+}
+
+/// A line that prints something about the values the program binds, which
+/// is the `at`th, so that a name it binds is its own.
+fn line(g: &mut Gen, vars: &[Var], at: usize) -> Line {
     let mut line = Line::new();
     let first = g.pick(vars).clone();
-    match g.below(7) {
+    match g.below(10) {
         0 => {
             for (i, v) in std::iter::once(&first)
                 .chain((0..g.below(3)).map(|_| g.pick(vars)).collect::<Vec<_>>())
@@ -263,6 +306,58 @@ fn line(g: &mut Gen, vars: &[Var]) -> Line {
                 &format!("({}, {})", first.name, second.name),
                 &format!("({}, {})", first.value, second.value),
             );
+        }
+        6 => {
+            let function = *g.pick(&["bit_and", "bit_or", "bit_xor", "bit_not"]);
+            let (expr, b) = if function == "bit_not" {
+                (format!("bit_not({})", first.name), 0)
+            } else {
+                let (other, b) = operand(g, vars, first.ty);
+                (format!("{function}({}, {other})", first.name), b)
+            };
+            let given = bits(function, first.ty, first.value, b);
+            line.braced(&expr, &given.to_string());
+        }
+        7 => {
+            let function = *g.pick(&["shift_left", "shift_right"]);
+            // The amount is a literal, or a `u8` the program binds that is
+            // below the number of bits.
+            let named: Vec<&Var> = (vars.iter())
+                .filter(|v| v.ty.name == "u8" && v.value < i128::from(first.ty.bits))
+                .collect();
+            let (by, amount) = if !named.is_empty() && g.one_in(2) {
+                let v = *g.pick(&named);
+                (v.name.clone(), v.value)
+            } else {
+                let n = g.below(first.ty.bits as usize) as i128;
+                (n.to_string(), n)
+            };
+            line.braced(
+                &format!("{function}({}, {by})", first.name),
+                &bits(function, first.ty, first.value, amount).to_string(),
+            );
+        }
+        8 => {
+            // The type it is taken to is one that does not hold every value
+            // of its own. `narrow` is for a value that fits.
+            let others: Vec<Int> = (INTS.iter())
+                .filter(|t| !t.holds_all(first.ty))
+                .copied()
+                .collect();
+            let to = *g.pick(&others);
+            let mut kinds = vec!["wrapping_narrow", "saturating_narrow", "checked_narrow"];
+            if narrowed("narrow", to, first.value).is_some() {
+                kinds.push("narrow");
+            }
+            let kind = *g.pick(&kinds);
+            let given = narrowed(kind, to, first.value).expect("a value");
+            let ty = if kind == "checked_narrow" {
+                format!("Option[{}]", to.name)
+            } else {
+                to.name.to_string()
+            };
+            line.before = format!("  t{at}: {ty} = {kind}({})\n", first.name);
+            line.braced(&format!("t{at}"), &given);
         }
         _ => {
             let same: Vec<&Var> = vars.iter().filter(|v| v.ty == vars[0].ty).collect();
@@ -313,7 +408,7 @@ fn variables(g: &mut Gen) -> Vec<Var> {
 fn model(g: &mut Gen) -> Model {
     let vars = variables(g);
     let count = 1 + g.below(8);
-    let lines = (0..count).map(|_| line(g, &vars)).collect();
+    let lines = (0..count).map(|at| line(g, &vars, at)).collect();
     Model { vars, lines }
 }
 
@@ -372,6 +467,7 @@ fn write(
             });
             text.push_str(&format!("{after}\n"));
         }
+        text.push_str(&l.before);
         text.push_str(&format!("  print(\"{}\")\n", l.written));
     }
     if let Some((at, before, after, mentions, fix)) = mistake
@@ -429,7 +525,8 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
         -1 - g.below(1000) as i128
     };
     let sum = *g.pick(&["/", "@", "^"]);
-    let kind = g.below(7);
+    let kind = g.below(10);
+    let mut fix: Option<String> = None;
     let literal = value(g, ty);
     let literal = spelled(g, literal);
     let (before, after, mentions): (String, String, String) = match kind {
@@ -469,14 +566,64 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
             format!("{literal})"),
             "where text is needed".into(),
         ),
+        7 => {
+            // A value that does not fit the type it is taken to.
+            let pairs: Vec<(Int, Int)> = (INTS.iter())
+                .flat_map(|f| INTS.iter().map(move |t| (*f, *t)))
+                .filter(|(f, t)| !t.holds_all(*f))
+                .collect();
+            let (from, to) = *g.pick(&pairs);
+            let outside: Vec<i128> = [from.min(), from.max(), to.min() - 1, to.max() + 1]
+                .into_iter()
+                .filter(|v| {
+                    (from.min()..=from.max()).contains(v) && !(to.min()..=to.max()).contains(v)
+                })
+                .collect();
+            let v = *g.pick(&outside);
+            fix = Some("`requires`".to_string());
+            (
+                format!("big: {} = {v}\n  small: {} = ", from.name, to.name),
+                "narrow(big)\n  print(\"{small}\")".into(),
+                "cannot prove".into(),
+            )
+        }
+        8 => {
+            // A shift by an amount that is not below the number of bits.
+            let n = ty.bits as usize + g.below(256 - ty.bits as usize);
+            let function = *g.pick(&["shift_left", "shift_right"]);
+            fix = Some("`requires`".to_string());
+            (
+                format!("amount: u8 = {n}\n  x: {} = 1\n  print(\"{{", ty.name),
+                format!("{function}(x, amount)}}\")"),
+                format!("`amount < {}`", ty.bits),
+            )
+        }
+        9 => {
+            // A type that holds every value of the type it is taken from.
+            let pairs: Vec<(Int, Int)> = (INTS.iter())
+                .flat_map(|f| INTS.iter().map(move |t| (*f, *t)))
+                .filter(|(f, t)| t.holds_all(*f))
+                .collect();
+            let (from, to) = *g.pick(&pairs);
+            // A type is not converted to itself.
+            fix = (from != to).then(|| "convert".to_string());
+            (
+                format!("x: {} = 1\n  y: {} = ", from.name, to.name),
+                "narrow(x)\n  print(\"{y}\")".into(),
+                "nothing to narrow".into(),
+            )
+        }
         _ => (
             "x = ".into(),
             format!("{too_far}\n  id_{}(x)", ty.name),
             format!("does not fit `{}`", ty.name),
         ),
     };
-    let fix: Option<&str> = None;
-    let (source, mistake) = write(g, &m, Some((at, &before, &after, &mentions, fix)));
+    let (source, mistake) = write(
+        g,
+        &m,
+        Some((at, &before, &after, &mentions, fix.as_deref())),
+    );
     NumberCase {
         source,
         stdout: Vec::new(),

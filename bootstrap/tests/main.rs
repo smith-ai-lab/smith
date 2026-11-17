@@ -20,6 +20,7 @@
 
 mod alloc;
 mod arith;
+mod bits;
 mod check;
 mod choices;
 mod cli;
@@ -89,6 +90,7 @@ fn main() -> ExitCode {
         scalar::ONCE,
         alloc::ONCE,
         arith::ONCE,
+        bits::ONCE,
         contracts::ONCE,
         lists::ONCE,
         literals::ONCE,

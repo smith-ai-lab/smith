@@ -3,7 +3,7 @@ type: specification
 title: Literals and numbers
 description: Literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
 status: partial
-built: "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, and `wrapping_`, `saturating_`, and `checked_` `add`, `sub`, and `mul` on those types, and a plain `+`, `-`, and `*` on them, which compiles when `arith` proves that the result fits, with a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
+built: "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, and `wrapping_`, `saturating_`, and `checked_` `add`, `sub`, and `mul` on those types, and a plain `+`, `-`, and `*` on them, which compiles when `arith` proves that the result fits, with a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII, and the functions of `Bits` on every integer type, a shift compiling when `arith` proves that its amount is below the number of bits of the type"
 ---
 
 # Literals and numbers

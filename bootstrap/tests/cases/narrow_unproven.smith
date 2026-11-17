@@ -1,0 +1,7 @@
+fn digit(n: u64) -> u8 {
+  narrow(n)
+}
+
+fn main() ! console, alloc {
+  print("{digit(7)}")
+}

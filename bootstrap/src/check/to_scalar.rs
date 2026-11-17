@@ -216,6 +216,23 @@ impl<'a> Out<'a> {
         self.emit(form::Op::Widen { signed, value }, vec![ty])[0]
     }
 
+    /// The value with the size `to`, which stands for the same number when
+    /// it fits, read as signed or as unsigned, and keeps the low bits when
+    /// it does not. It is the value itself when the size is the same.
+    fn resize(&mut self, signed: bool, value: form::Value, to: form::Bits) -> form::Value {
+        let form::Type::Int(from) = self.types[value.0] else {
+            unreachable!("a whole number")
+        };
+        match to.count().cmp(&from.count()) {
+            std::cmp::Ordering::Less => self.narrow(value, to),
+            std::cmp::Ordering::Equal => value,
+            std::cmp::Ordering::Greater => {
+                let ty = form::Type::Int(to);
+                self.emit(form::Op::Widen { signed, value }, vec![ty])[0]
+            }
+        }
+    }
+
     fn narrow(&mut self, value: form::Value, to: form::Bits) -> form::Value {
         self.emit(form::Op::Narrow(value), vec![form::Type::Int(to)])[0]
     }
@@ -591,6 +608,22 @@ impl<'a> Lowering<'a> {
                 let after = out.choose(same, e, g);
                 vec![out.choose(below, l, after)]
             }
+            "__bit_and" => vec![out.binary(form::Binary::And, a, b.expect("two"))],
+            "__bit_or" => vec![out.binary(form::Binary::Or, a, b.expect("two"))],
+            "__bit_xor" => vec![out.binary(form::Binary::Xor, a, b.expect("two"))],
+            "__bit_not" => {
+                let all = out.int(bits_of(t), -1);
+                vec![out.binary(form::Binary::Xor, a, all)]
+            }
+            "__shift_left" | "__shift_right" => {
+                let by = b.expect("two");
+                let op = match (name, t.signed()) {
+                    ("__shift_left", _) => form::Binary::ShiftLeft,
+                    (_, true) => form::Binary::ShiftRightS,
+                    (_, false) => form::Binary::ShiftRightU,
+                };
+                vec![out.binary(op, a, by)]
+            }
             "__decimal" => {
                 let kind = Runtime::Decimal {
                     bits: bits_of(t),
@@ -725,6 +758,55 @@ impl<'a> Lowering<'a> {
         let some = out.int(form::Bits::B8, some as i128);
         let none = out.int(form::Bits::B8, none as i128);
         let zero = out.int(bits, 0);
+        vec![out.choose(wrong, none, some), out.choose(wrong, zero, r)]
+    }
+
+    /// The value `a`, a whole number of type `from`, taken to type `to`,
+    /// which does not hold all of its values: as `narrow` and `wrapping_narrow`
+    /// do, which keep the bits, as `saturating_narrow` does, which gives the
+    /// nearest value that fits, and as `checked_narrow` does, which gives an
+    /// `Option` that holds the value if it fits. A narrowing to a smaller type
+    /// is one instruction, and to a type of the same size none.
+    fn narrowing(
+        &mut self,
+        out: &mut Out<'a>,
+        narrowing: Narrowing,
+        (from, to): (Int, Int),
+        a: form::Value,
+    ) -> Vec<form::Value> {
+        use form::Compare::*;
+        let defs = self.typed.defs;
+        let (wide, narrow) = (bits_of(from), bits_of(to));
+        let r = out.resize(from.signed(), a, narrow);
+        if matches!(narrowing, Narrowing::Plain | Narrowing::Wrapping) {
+            return vec![r];
+        }
+        let less = if from.signed() { LessS } else { LessU };
+        let no = out.int(form::Bits::B8, 0);
+        let below = if from.min() < to.min() {
+            let least = out.int(wide, to.min());
+            out.compare(less, a, least)
+        } else {
+            no
+        };
+        let above = if from.max() > to.max() {
+            let greatest = out.int(wide, to.max());
+            out.compare(less, greatest, a)
+        } else {
+            no
+        };
+        if narrowing == Narrowing::Saturating {
+            let (least, greatest) = (out.int(narrow, to.min()), out.int(narrow, to.max()));
+            let low = out.choose(below, least, r);
+            return vec![out.choose(above, greatest, low)];
+        }
+        let one = out.int(form::Bits::B8, 1);
+        let wrong = out.choose(below, one, above);
+        let some = defs.case_of(defs.option, "some").expect("a case");
+        let none = defs.case_of(defs.option, "none").expect("a case");
+        let some = out.int(form::Bits::B8, some as i128);
+        let none = out.int(form::Bits::B8, none as i128);
+        let zero = out.int(narrow, 0);
         vec![out.choose(wrong, none, some), out.choose(wrong, zero, r)]
     }
 
@@ -1109,13 +1191,29 @@ impl<'a> Lowering<'a> {
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Push => self.push(out, call, env, false),
+                Callee::Narrow(narrowing) => {
+                    let (given, values) = self.expr(out, &call.args[0].value, env);
+                    let (Ty::Int(from), ty) = (given, typed.type_of(expr, env)) else {
+                        unreachable!("checked")
+                    };
+                    let to = match &ty {
+                        Ty::Int(to) => *to,
+                        Ty::Enum(_, of) => match of.as_slice() {
+                            [Ty::Int(to)] => *to,
+                            _ => unreachable!("checked"),
+                        },
+                        _ => unreachable!("checked"),
+                    };
+                    let values = self.narrowing(out, narrowing, (from, to), values[0]);
+                    (ty, values)
+                }
                 Callee::Value => self.call_value(out, call, env),
                 Callee::Intrinsic => {
                     let mut args = Vec::new();
                     let mut int = None;
                     for arg in &call.args {
                         let (ty, values) = self.expr(out, &arg.value, env);
-                        if let Ty::Int(t) = ty {
+                        if let (Ty::Int(t), None) = (ty, int) {
                             int = Some(t);
                         }
                         args.push(values[0]);

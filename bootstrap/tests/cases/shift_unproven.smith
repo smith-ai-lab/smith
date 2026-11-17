@@ -1,0 +1,7 @@
+fn up(x: u32, by: u8) -> u32 {
+  shift_left(x, by)
+}
+
+fn main() ! console, alloc {
+  print("{up(1, 40)}")
+}
