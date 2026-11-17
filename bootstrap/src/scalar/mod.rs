@@ -25,7 +25,8 @@ mod words;
 pub use build::Builder;
 pub use common::common;
 pub use eval::{
-    Outcome, call, run, run_counting, run_with_command_line, run_with_limit, run_with_words,
+    Outcome, call, run, run_counting, run_with_command_line, run_with_command_line_and_errors,
+    run_with_limit, run_with_words, run_with_words_and_errors,
 };
 pub use fold::fold;
 pub use inline::{BOUND, inline, size};
@@ -107,6 +108,7 @@ pub struct Value(pub usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stream {
     Stdout,
+    Stderr,
 }
 
 /// A constant. Its type is the type of the value the instruction gives.
@@ -133,6 +135,8 @@ pub enum System {
     /// address of the first. The bytes are the program's until it ends. A
     /// request the system refuses ends the program with a failing status.
     Allocate,
+    /// Ends the program with a failing status. It takes and gives nothing.
+    Fail,
 }
 
 /// What an instruction does with two integers of the same size. Every one

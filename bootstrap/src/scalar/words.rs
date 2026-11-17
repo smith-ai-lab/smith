@@ -13,7 +13,7 @@ pub(super) fn start(main: usize, arguments: usize) -> Function {
     f.finish(&[])
 }
 
-pub(super) fn arguments(words: usize, line: usize) -> Function {
+pub(super) fn arguments(words: usize, line: usize, check: usize) -> Function {
     let mut f = Builder::new();
     let p = f.params(&ARGUMENTS);
     let all_ones = int(&mut f, u64::MAX);
@@ -23,9 +23,11 @@ pub(super) fn arguments(words: usize, line: usize) -> Function {
     f.switch(on_line, vec![(from_words, vec![]), (from_line, vec![])]);
     f.at(from_words);
     let list = f.call(words, vec![p[0], p[1]], &LIST);
+    f.call(check, list.clone(), &[]);
     f.ret(list);
     f.at(from_line);
     let list = f.call(line, vec![p[2]], &LIST);
+    f.call(check, list.clone(), &[]);
     f.ret(list);
     f.finish(&LIST)
 }
@@ -426,4 +428,201 @@ pub(super) fn line(fill: usize, utf8: usize) -> Function {
         f.jump(head, vec![next, out, began, words, inside, zero, one]);
     }
     f.finish(&LIST)
+}
+
+/// Whether the unit is a continuation byte of UTF-8, which is `0x80` to
+/// `0xbf`.
+fn continues(f: &mut Builder, b: Value) -> Value {
+    let first = int(f, 0x80);
+    let count = int(f, 0x40);
+    let from = f.binary(Binary::Sub, b, first);
+    f.compare(Compare::LessU, from, count)
+}
+
+/// Whether `x` is at least `from` and at most `to`, which are numbers.
+fn between(f: &mut Builder, x: Value, from: u64, to: u64) -> Value {
+    let low = int(f, from);
+    let count = int(f, to - from + 1);
+    let offset = f.binary(Binary::Sub, x, low);
+    f.compare(Compare::LessU, offset, count)
+}
+
+/// The byte at `k` places after `i` in the bytes at `at`, as a 64-bit integer.
+fn byte_at(f: &mut Builder, at: Value, i: Value, k: u64) -> Value {
+    let by = int(f, k);
+    let place = f.binary(Binary::Add, i, by);
+    let address = after(f, at, place);
+    let b = f.load(BYTE, address);
+    f.widen(false, b, Bits::B64)
+}
+
+/// Valid UTF-8 is a sequence of characters, each of one to four bytes: a byte
+/// below `0x80`, or a lead byte and then as many continuation bytes as it
+/// says, with the second kept from the ranges that make a character that is
+/// not written longer than it must be, is not half of a pair of UTF-16, and is
+/// not above `0x10ffff`.
+pub(super) fn valid() -> Function {
+    let mut f = Builder::new();
+    let p = f.params(&[ADDRESS, LENGTH]);
+    let (at, length) = (p[0], p[1]);
+    let zero = int(&mut f, 0);
+    let (head, i) = f.block(&[LENGTH]);
+    let i = i[0];
+    f.jump(head, vec![zero]);
+    let (look, _) = f.block(&[]);
+    let (good, _) = f.block(&[]);
+    let (bad, _) = f.block(&[]);
+    f.at(head);
+    let at_end = f.compare(Compare::Equal, i, length);
+    f.switch(at_end, vec![(look, vec![]), (good, vec![])]);
+    f.at(good);
+    let yes = byte(&mut f, 1);
+    f.ret(vec![yes]);
+    f.at(bad);
+    let no = byte(&mut f, 0);
+    f.ret(vec![no]);
+
+    f.at(look);
+    let one = int(&mut f, 1);
+    let b = byte_at(&mut f, at, i, 0);
+    let (ascii, _) = f.block(&[]);
+    let (lead, _) = f.block(&[]);
+    let small = between(&mut f, b, 0, 0x7f);
+    f.switch(small, vec![(lead, vec![]), (ascii, vec![])]);
+    f.at(ascii);
+    let next = f.binary(Binary::Add, i, one);
+    f.jump(head, vec![next]);
+
+    // How many continuation bytes the lead byte asks for, and what the second
+    // may be.
+    f.at(lead);
+    let two = between(&mut f, b, 0xc2, 0xdf);
+    let three = between(&mut f, b, 0xe0, 0xef);
+    let four = between(&mut f, b, 0xf0, 0xf4);
+    let (n1, n2, n3) = (int(&mut f, 1), int(&mut f, 2), int(&mut f, 3));
+    let need = f.choose(four, n3, zero);
+    let need = f.choose(three, n2, need);
+    let need = f.choose(two, n1, need);
+    let mut low = int(&mut f, 0x80);
+    let mut high = int(&mut f, 0xbf);
+    for (lead_byte, from, to) in [
+        (0xe0, 0xa0, 0xbf),
+        (0xed, 0x80, 0x9f),
+        (0xf0, 0x90, 0xbf),
+        (0xf4, 0x80, 0x8f),
+    ] {
+        let is = is_byte(&mut f, b, lead_byte);
+        let (a, z) = (int(&mut f, from), int(&mut f, to));
+        low = f.choose(is, a, low);
+        high = f.choose(is, z, high);
+    }
+    let none = f.compare(Compare::Equal, need, zero);
+    let (room, _) = f.block(&[]);
+    f.switch(none, vec![(room, vec![]), (bad, vec![])]);
+
+    f.at(room);
+    let last = f.binary(Binary::Add, i, need);
+    let fits = f.compare(Compare::LessU, last, length);
+    let (second, _) = f.block(&[]);
+    f.switch(fits, vec![(bad, vec![]), (second, vec![])]);
+
+    f.at(second);
+    let s = byte_at(&mut f, at, i, 1);
+    let span = f.binary(Binary::Sub, high, low);
+    let count = f.binary(Binary::Add, span, one);
+    let offset = f.binary(Binary::Sub, s, low);
+    let inside = f.compare(Compare::LessU, offset, count);
+    let (third, _) = f.block(&[]);
+    f.switch(inside, vec![(bad, vec![]), (third, vec![])]);
+
+    f.at(third);
+    let past2 = f.binary(Binary::Add, i, n2);
+    let (more, _) = f.block(&[]);
+    let (fourth, _) = f.block(&[]);
+    let (last_is_third, _) = f.block(&[]);
+    let one_more = f.compare(Compare::Equal, need, one);
+    f.switch(one_more, vec![(more, vec![]), (head, vec![past2])]);
+    f.at(more);
+    let c = byte_at(&mut f, at, i, 2);
+    let ok = continues(&mut f, c);
+    f.switch(ok, vec![(bad, vec![]), (last_is_third, vec![])]);
+    f.at(last_is_third);
+    let past3 = f.binary(Binary::Add, i, n3);
+    let two_more = f.compare(Compare::Equal, need, n2);
+    f.switch(two_more, vec![(fourth, vec![]), (head, vec![past3])]);
+    f.at(fourth);
+    let c = byte_at(&mut f, at, i, 3);
+    let ok = continues(&mut f, c);
+    let n4 = int(&mut f, 4);
+    let past4 = f.binary(Binary::Add, i, n4);
+    f.switch(ok, vec![(bad, vec![]), (head, vec![past4])]);
+    f.finish(&[BYTE])
+}
+
+/// Whether the 64-bit integer is the number.
+fn is_byte(f: &mut Builder, x: Value, n: u64) -> Value {
+    let n = int(f, n);
+    f.compare(Compare::Equal, x, n)
+}
+
+/// A new text of the bytes.
+fn text_of(f: &mut Builder, bytes: &[u8]) -> [Value; 2] {
+    let length = int(f, bytes.len() as u64);
+    let at = f.allocate(length);
+    for (k, b) in bytes.iter().enumerate() {
+        let by = int(f, k as u64);
+        let place = after(f, at, by);
+        let b = byte(f, *b);
+        f.store(place, b);
+    }
+    [at, length]
+}
+
+pub(super) fn check(valid: usize, decimal: usize, join: usize) -> Function {
+    let mut f = Builder::new();
+    let p = f.params(&LIST);
+    let (list, size) = (p[0], p[1]);
+    let zero = int(&mut f, 0);
+    let one = int(&mut f, 1);
+    let (head, i) = f.block(&[LENGTH]);
+    let i = i[0];
+    f.jump(head, vec![zero]);
+    let (look, _) = f.block(&[]);
+    let (done, _) = f.block(&[]);
+    f.at(head);
+    let at_end = f.compare(Compare::Equal, i, size);
+    f.switch(at_end, vec![(look, vec![]), (done, vec![])]);
+    f.at(done);
+    f.ret(vec![]);
+
+    f.at(look);
+    let width = int(&mut f, 16);
+    let by = f.binary(Binary::Mul, i, width);
+    let element = after(&mut f, list, by);
+    let text = f.load(ADDRESS, element);
+    let eight = int(&mut f, 8);
+    let place = after(&mut f, element, eight);
+    let length = f.load(LENGTH, place);
+    let ok = f.call(valid, vec![text, length], &[BYTE])[0];
+    let (next, _) = f.block(&[]);
+    let (invalid, _) = f.block(&[]);
+    f.switch(ok, vec![(invalid, vec![]), (next, vec![])]);
+    f.at(next);
+    let after_it = f.binary(Binary::Add, i, one);
+    f.jump(head, vec![after_it]);
+
+    f.at(invalid);
+    let number = f.binary(Binary::Add, i, one);
+    let [first, first_length] = text_of(&mut f, b"argument ");
+    let digits = f.call(decimal, vec![number], &[ADDRESS, LENGTH]);
+    let [last, last_length] = text_of(&mut f, b" is not valid UTF-8\n");
+    let line = f.call(
+        join,
+        vec![first, first_length, digits[0], digits[1], last, last_length],
+        &[ADDRESS, LENGTH],
+    );
+    f.write_error(line[0], line[1]);
+    f.fail();
+    f.ret(vec![]);
+    f.finish(&[])
 }

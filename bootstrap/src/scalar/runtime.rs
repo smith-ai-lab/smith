@@ -57,7 +57,8 @@ pub enum Runtime {
     /// word the system gives is the program's name, which is not one of them.
     /// A number of all ones says the system gave a command line and no words,
     /// as Windows does. Memory is asked of the system only when there is a
-    /// word.
+    /// word. A word that is not valid UTF-8 ends the program, as `Check` says,
+    /// before the list is given.
     Arguments,
     /// Takes a number and the address of that many addresses of texts, each
     /// ending with a byte 0, and gives the list of every text after the first.
@@ -80,6 +81,13 @@ pub enum Runtime {
     /// that is half of a pair and has no other half is written as it is, in
     /// three bytes.
     Utf8,
+    /// Takes the address of bytes and how many there are, and gives a byte that
+    /// is 1 if they are valid UTF-8 and 0 if they are not.
+    Valid,
+    /// Takes a list of texts, and gives nothing when each is valid UTF-8. When
+    /// one is not, it writes one line to standard error that says which, counted
+    /// from 1, and ends the program with a failing status.
+    Check,
 }
 
 /// The function of the runtime, where `place` gives the place in the
@@ -94,12 +102,25 @@ pub fn build(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function
         Runtime::Decimal { bits, signed } => decimal(bits, signed, place(Runtime::Digits)),
         Runtime::Push(scalars) => push(&scalars, place(Runtime::Copy)),
         Runtime::Start { main } => words::start(main, place(Runtime::Arguments)),
-        Runtime::Arguments => words::arguments(place(Runtime::Words), place(Runtime::Line)),
+        Runtime::Arguments => words::arguments(
+            place(Runtime::Words),
+            place(Runtime::Line),
+            place(Runtime::Check),
+        ),
         Runtime::Words => words::words(place(Runtime::Measure)),
         Runtime::Line => words::line(place(Runtime::Fill), place(Runtime::Utf8)),
         Runtime::Measure => words::measure(),
         Runtime::Fill => words::fill(),
         Runtime::Utf8 => words::utf8(),
+        Runtime::Valid => words::valid(),
+        Runtime::Check => words::check(
+            place(Runtime::Valid),
+            place(Runtime::Decimal {
+                bits: Bits::B64,
+                signed: false,
+            }),
+            place(Runtime::Join(3)),
+        ),
     }
 }
 

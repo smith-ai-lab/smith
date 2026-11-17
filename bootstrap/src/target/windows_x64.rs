@@ -4,7 +4,7 @@
 
 use super::pe::{
     self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
-    Machine, PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
+    Machine, PAGE_READWRITE, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use super::x86_64::{self, Asm, Place, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
 use crate::scalar::{Program, Stream};
@@ -113,5 +113,6 @@ impl System for Windows {
 fn handle(stream: Stream) -> u32 {
     match stream {
         Stream::Stdout => STD_OUTPUT_HANDLE,
+        Stream::Stderr => STD_ERROR_HANDLE,
     }
 }

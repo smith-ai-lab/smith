@@ -6,7 +6,7 @@
 use super::arm64::{self, Asm, LS, Place, System, X0, X1, X2, X3, X4, X19, X20, X21};
 use super::pe::{
     self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
-    Machine, PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
+    Machine, PAGE_READWRITE, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use crate::scalar::{Program, Stream};
 
@@ -116,5 +116,6 @@ impl System for Windows {
 fn handle(stream: Stream) -> u32 {
     match stream {
         Stream::Stdout => STD_OUTPUT_HANDLE,
+        Stream::Stderr => STD_ERROR_HANDLE,
     }
 }

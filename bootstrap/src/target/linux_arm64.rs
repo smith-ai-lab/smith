@@ -98,5 +98,6 @@ impl System for Linux {
 fn fd(stream: Stream) -> u16 {
     match stream {
         Stream::Stdout => 1,
+        Stream::Stderr => 2,
     }
 }

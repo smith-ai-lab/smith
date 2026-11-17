@@ -63,8 +63,9 @@ pub fn imports(allocates: bool, takes_arguments: bool) -> &'static [&'static str
 pub const MEM_COMMIT_RESERVE: u32 = 0x1000 | 0x2000;
 pub const PAGE_READWRITE: u32 = 0x04;
 
-/// `GetStdHandle`'s name for standard output.
+/// `GetStdHandle`'s names for standard output and standard error.
 pub const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+pub const STD_ERROR_HANDLE: u32 = -12i32 as u32;
 /// The most one `WriteFile` is asked to write.
 pub const MOST_PER_WRITE: u32 = 1 << 30;
 

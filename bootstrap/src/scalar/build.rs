@@ -130,6 +130,25 @@ impl Builder {
         )[0]
     }
 
+    /// Writes the bytes from the address, as many as the 64-bit integer
+    /// says, to standard error.
+    pub fn write_error(&mut self, address: Value, count: Value) {
+        let call = System::Write(super::Stream::Stderr);
+        self.emit(
+            Op::System {
+                call,
+                args: vec![address, count],
+            },
+            &[],
+        );
+    }
+
+    /// Ends the program with a failing status.
+    pub fn fail(&mut self) {
+        let call = System::Fail;
+        self.emit(Op::System { call, args: vec![] }, &[]);
+    }
+
     /// Ends the block being filled by a jump.
     pub fn jump(&mut self, block: usize, args: Vec<Value>) {
         self.blocks[self.current].end = End::Jump(Jump { block, args });

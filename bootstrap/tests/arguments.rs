@@ -33,6 +33,10 @@ pub const ONCE: &[Test] = &[
         a_command_line_of_windows_reads_quotes_and_backslashes_as_the_c_runtime_does,
     ),
     (
+        "a_word_that_is_not_valid_utf8_ends_the_program_before_main_with_a_line_that_says_which",
+        a_word_that_is_not_valid_utf8_ends_the_program_before_main_with_a_line_that_says_which,
+    ),
+    (
         "a_command_line_of_windows_is_given_to_main_as_utf8",
         a_command_line_of_windows_is_given_to_main_as_utf8,
     ),
@@ -54,6 +58,10 @@ pub const MACHINE: &[Test] = &[
     (
         "every_executable_counts_the_words_it_is_started_with",
         every_executable_counts_the_words_it_is_started_with,
+    ),
+    (
+        "every_executable_started_with_a_word_that_is_not_valid_utf8_ends_before_main",
+        every_executable_started_with_a_word_that_is_not_valid_utf8_ends_before_main,
     ),
     (
         "run_gives_the_program_the_words_after_the_files_name",
@@ -245,6 +253,77 @@ fn a_command_line_of_windows_is_given_to_main_as_utf8() {
     );
 }
 
+/// What a program that takes its words does when the first word that is not
+/// valid UTF-8 is the one numbered `n` from 1: nothing is printed, one line
+/// says which, and the status is 1.
+fn refused(n: usize) -> (Outcome, Vec<u8>) {
+    let line = format!("argument {n} is not valid UTF-8\n").into_bytes();
+    (
+        Outcome {
+            stdout: Vec::new(),
+            status: 1,
+        },
+        line,
+    )
+}
+
+/// Bytes that make a word valid or not by where they fall: the edges of every
+/// range a character of UTF-8 is made of, and a few that are plain.
+const EDGES: &[u8] = &[
+    b'a', 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xe1, 0xec, 0xed,
+    0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xff,
+];
+
+/// A list of words made of bytes, none of them 0, which a word cannot hold.
+fn byte_words(g: &mut Gen) -> Vec<Vec<u8>> {
+    let count = g.below(4);
+    (0..count)
+        .map(|_| {
+            let length = g.below(6);
+            (0..length)
+                .map(|_| {
+                    if g.one_in(4) {
+                        1 + g.below(255) as u8
+                    } else {
+                        *g.pick(EDGES)
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The place from 1 of the first word that is not valid UTF-8, if there is one.
+fn first_invalid(words: &[Vec<u8>]) -> Option<usize> {
+    words
+        .iter()
+        .position(|w| std::str::from_utf8(w).is_err())
+        .map(|i| i + 1)
+}
+
+fn a_word_that_is_not_valid_utf8_ends_the_program_before_main_with_a_line_that_says_which() {
+    let each = program(EACH);
+    generate::check(4, 400, byte_words, |words| {
+        let said = scalar::run_with_words_and_errors(&each, words);
+        match first_invalid(words) {
+            None => assert_eq!(said, (ended(lines(words)), Vec::new())),
+            Some(n) => assert_eq!(said, refused(n)),
+        }
+    });
+    // A command line of Windows holds a half of a pair of UTF-16 with no
+    // other half as a word that is not valid, and no byte is replaced.
+    let line: Vec<u16> = "p ok ".encode_utf16().chain([0xd800]).collect();
+    assert_eq!(
+        scalar::run_with_command_line_and_errors(&each, &line),
+        refused(2)
+    );
+    let line: Vec<u16> = "p ok ".encode_utf16().chain([0xdc00, 0x41]).collect();
+    assert_eq!(
+        scalar::run_with_command_line_and_errors(&each, &line),
+        refused(2)
+    );
+}
+
 /// The errors a source gives, one to a line, as the command shows them.
 fn errors_of(source: &str) -> Vec<String> {
     match lower(source.as_bytes()) {
@@ -384,4 +463,69 @@ fn run_gives_the_program_the_words_after_the_files_name() {
     // `build` takes no words.
     let built = smith(&dir, &["build", "prog.smith", "one"]);
     assert!(!built.status.success());
+}
+
+/// A word that is not valid, as this system allows one.
+fn invalid_word() -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(vec![b'x', 0xff, 0xc0])
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        std::ffi::OsString::from_wide(&[0x78, 0xd800])
+    }
+}
+
+/// Runs the executable, started with the words, from a file of its own, and
+/// gives everything it did, standard error too.
+fn output_of(bytes: &[u8], words: &[std::ffi::OsString]) -> std::process::Output {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "smith-run-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed) + 7000
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("program");
+    std::fs::write(&path, bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // Another test's process may briefly hold the file open while it
+    // starts, which makes running it fail as busy.
+    let mut tries = 0;
+    let output = loop {
+        match std::process::Command::new(&path).args(words).output() {
+            Err(e) if e.raw_os_error() == Some(26) && tries < 100 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => break result.unwrap(),
+        }
+    };
+    std::fs::remove_dir_all(&dir).unwrap();
+    output
+}
+
+fn every_executable_started_with_a_word_that_is_not_valid_utf8_ends_before_main() {
+    let said = refused(2);
+    for target in runnable() {
+        let bytes = build(EACH.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
+        if fingerprinting() {
+            record(target, &[&bytes, &said.1]);
+            continue;
+        }
+        let words = ["fine".into(), invalid_word(), "later".into()];
+        let output = output_of(&bytes, &words);
+        let shown = format!("{}: {output:?}", target.name());
+        assert_eq!(output.status.code(), Some(1), "{shown}");
+        assert_eq!(output.stdout, said.0.stdout, "{shown}");
+        assert_eq!(output.stderr, said.1, "{shown}");
+    }
 }

@@ -871,6 +871,9 @@ impl<S: System> Writer<'_, S> {
                 S::write(asm, *stream, self.fail);
             }
             Op::System {
+                call: Call::Fail, ..
+            } => asm.jmp(self.fail),
+            Op::System {
                 call: Call::Allocate,
                 args,
             } => {
