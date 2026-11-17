@@ -2,6 +2,7 @@
 //! what the generators say it prints, a form that is damaged is
 //! refused, and what a program needs at run time is written in the form.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use smith::lower;
@@ -137,6 +138,18 @@ pub const ONCE: &[Test] = &[
     (
         "the_passes_give_the_same_program_every_time_and_never_a_larger_one",
         the_passes_give_the_same_program_every_time_and_never_a_larger_one,
+    ),
+    (
+        "sharing_leaves_no_instruction_that_does_what_an_earlier_one_does",
+        sharing_leaves_no_instruction_that_does_what_an_earlier_one_does,
+    ),
+    (
+        "sharing_never_replaces_a_read_through_an_address",
+        sharing_never_replaces_a_read_through_an_address,
+    ),
+    (
+        "what_is_worked_out_in_a_block_that_dominates_another_is_not_worked_out_again",
+        what_is_worked_out_in_a_block_that_dominates_another_is_not_worked_out_again,
     ),
     (
         "a_jump_to_the_block_that_follows_a_choice_on_a_constant_and_a_copied_value_are_gone",
@@ -1317,18 +1330,19 @@ fn inlining_replaces_calls_of_small_functions_and_of_functions_called_once() {
 
 /// The program after each pass, in order, so that each is checked on what
 /// the one before it gave.
-fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 3] {
+fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 4] {
     let inlined = scalar::inline(p);
     let folded = scalar::fold(&inlined);
-    let removed = scalar::remove(&folded);
-    [inlined, folded, removed]
+    let shared = scalar::common(&folded);
+    let removed = scalar::remove(&shared);
+    [inlined, folded, shared, removed]
 }
 
 fn the_passes_give_a_well_formed_program_that_does_what_it_did() {
     let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
     for (l, s) in taken() {
-        let [inlined, folded, removed] = after_each_pass(s);
-        for after in [&folded, &removed] {
+        let [inlined, folded, shared, removed] = after_each_pass(s);
+        for after in [&folded, &shared, &removed] {
             if let Err(malformed) = scalar::check(after) {
                 panic!("{malformed:?} in {after:?}");
             }
@@ -1501,10 +1515,12 @@ fn removal_leaves_nothing_that_nothing_uses() {
 fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
     let size = |p: &scalar::Program| -> usize { p.functions.iter().map(scalar::size).sum() };
     for (_, s) in taken() {
-        let [inlined, folded, removed] = after_each_pass(s);
+        let [inlined, folded, shared, removed] = after_each_pass(s);
         assert_eq!(folded, scalar::fold(&inlined));
-        assert_eq!(removed, scalar::remove(&folded));
-        assert!(size(&removed) <= size(&folded), "{removed:?}");
+        assert_eq!(shared, scalar::common(&folded));
+        assert_eq!(removed, scalar::remove(&shared));
+        assert!(size(&shared) <= size(&folded), "{shared:?}");
+        assert!(size(&removed) <= size(&shared), "{removed:?}");
         assert_eq!(scalar::remove(&removed), removed);
     }
 }
@@ -1637,4 +1653,175 @@ fn a_value_a_loop_carries_unchanged_is_the_value_it_started_with() {
     };
     // The loop keeps one parameter, the count.
     assert_eq!(main.blocks.iter().map(|b| b.params.len()).sum::<usize>(), 1);
+}
+
+/// The blocks a function reaches from its first, when the block `without`,
+/// if there is one, is taken out of it.
+fn reached_without(f: &scalar::Function, without: Option<usize>) -> Vec<bool> {
+    let mut seen = vec![false; f.blocks.len()];
+    let mut work = vec![0];
+    while let Some(b) = work.pop() {
+        if seen[b] || Some(b) == without {
+            continue;
+        }
+        seen[b] = true;
+        work.extend(f.blocks[b].end.successors());
+    }
+    seen
+}
+
+/// Whether every path to the block `b` passes through the block `a`.
+fn dominates(f: &scalar::Function, a: usize, b: usize) -> bool {
+    a == b || !reached_without(f, Some(a))[b]
+}
+
+/// The pairs of instructions in the program of which the second does what
+/// the first does, to the same values, and the first's value reaches it,
+/// as a message for each. Only what reads no memory, writes none, and
+/// calls nothing is looked at.
+fn worked_out_twice(p: &scalar::Program) -> Vec<String> {
+    let mut left = Vec::new();
+    for (function, f) in p.functions.iter().enumerate() {
+        let reached = reached_without(f, None);
+        let mut same: HashMap<(Op, Type), Vec<(usize, usize)>> = HashMap::new();
+        for (b, block) in f.blocks.iter().enumerate().filter(|(b, _)| reached[*b]) {
+            for (i, instruction) in block.instructions.iter().enumerate() {
+                let pure = matches!(
+                    instruction.op,
+                    Op::Constant(_)
+                        | Op::Binary { .. }
+                        | Op::Compare { .. }
+                        | Op::Widen { .. }
+                        | Op::Narrow(_)
+                        | Op::Choose { .. }
+                );
+                if pure {
+                    let ty = f.types[instruction.results[0].0];
+                    same.entry((instruction.op.clone(), ty))
+                        .or_default()
+                        .push((b, i));
+                }
+            }
+        }
+        let mut groups: Vec<_> = same.into_iter().filter(|(_, at)| at.len() > 1).collect();
+        groups.sort_by_key(|(_, at)| at[0]);
+        for (key, at) in groups {
+            for &(b, i) in &at {
+                for &(c, j) in &at {
+                    if (b, i) != (c, j) && (if b == c { i < j } else { dominates(f, b, c) }) {
+                        left.push(format!(
+                            "function {function}: {key:?} in block {b} and again in block {c}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    left
+}
+
+fn sharing_leaves_no_instruction_that_does_what_an_earlier_one_does() {
+    for (_, s) in taken() {
+        let after = scalar::passes(s);
+        assert_eq!(worked_out_twice(&after), Vec::<String>::new(), "{after:?}");
+    }
+}
+
+/// How many reads through an address the program holds.
+fn reads(p: &scalar::Program) -> usize {
+    let instructions = p.functions.iter().flat_map(|f| &f.blocks);
+    let instructions = instructions.flat_map(|b| &b.instructions);
+    instructions
+        .filter(|i| matches!(i.op, Op::Load { .. }))
+        .count()
+}
+
+fn sharing_never_replaces_a_read_through_an_address() {
+    let mut some = 0;
+    for (_, s) in taken() {
+        let folded = scalar::fold(&scalar::inline(s));
+        let shared = scalar::common(&folded);
+        assert_eq!(reads(&shared), reads(&folded));
+        some += reads(&shared);
+    }
+    assert!(some > 0, "no generated program reads through an address");
+}
+
+/// A program whose first block works out a sum and makes a constant, then
+/// chooses between two blocks that each work out the sum and make the
+/// constant again, around two reads of an address and a write, and a block
+/// they both jump to that does it once more.
+fn the_same_thing_in_blocks_that_follow() -> scalar::Program {
+    let long = Type::Int(Bits::B64);
+    let byte = Type::Int(Bits::B8);
+    let mut m = Builder::new();
+    let (left, _) = m.block(&[]);
+    let (right, _) = m.block(&[]);
+    let (join, _) = m.block(&[]);
+    let eight = m.int(Bits::B64, 8);
+    let address = m.allocate(eight);
+    let x = m.load(long, address);
+    let flag = m.load(byte, address);
+    let one = m.int(Bits::B64, 1);
+    let sum = m.binary(scalar::Binary::Add, x, one);
+    m.store(address, sum);
+    m.switch(flag, vec![(left, Vec::new()), (right, Vec::new())]);
+    for (arm, text) in [(left, 0), (right, 1)] {
+        m.at(arm);
+        let one = m.int(Bits::B64, 1);
+        let sum = m.binary(scalar::Binary::Add, x, one);
+        let first = m.load(long, address);
+        m.store(address, sum);
+        let second = m.load(long, address);
+        let both = m.binary(scalar::Binary::Add, first, second);
+        m.store(address, both);
+        let text = m.emit(Op::Constant(Constant::Data(text)), &[Type::Address])[0];
+        m.emit(
+            Op::System {
+                call: System::Write(Stream::Stdout),
+                args: vec![text, one],
+            },
+            &[],
+        );
+        m.jump(join, Vec::new());
+    }
+    m.at(join);
+    let one = m.int(Bits::B64, 1);
+    let sum = m.binary(scalar::Binary::Add, x, one);
+    m.store(address, sum);
+    m.ret(Vec::new());
+    scalar::Program {
+        data: vec![b"A".to_vec(), b"B".to_vec()],
+        functions: vec![m.finish(&[])],
+        main: 0,
+    }
+}
+
+fn what_is_worked_out_in_a_block_that_dominates_another_is_not_worked_out_again() {
+    let before = the_same_thing_in_blocks_that_follow();
+    scalar::check(&before).unwrap();
+    assert_ne!(worked_out_twice(&before), Vec::<String>::new());
+    let after = scalar::passes(&before);
+    scalar::check(&after).unwrap();
+    for limit in [0, 8, usize::MAX] {
+        assert_eq!(
+            scalar::run_with_limit(&after, limit),
+            scalar::run_with_limit(&before, limit)
+        );
+    }
+    assert_eq!(worked_out_twice(&after), Vec::<String>::new(), "{after:?}");
+    let [main] = &after.functions[..] else {
+        panic!()
+    };
+    let ops = main.blocks.iter().flat_map(|b| &b.instructions);
+    let ops: Vec<&Op> = ops.map(|i| &i.op).collect();
+    let count = |is: &dyn Fn(&Op) -> bool| ops.iter().filter(|op| is(op)).count();
+    // The constant is made once, and the sum is worked out once, however
+    // many blocks ask for it.
+    let ones = count(&|op| matches!(op, Op::Constant(Constant::Int(1))));
+    assert_eq!(ones, 1, "{after:?}");
+    let sums = count(&|op| matches!(op, Op::Binary { .. }));
+    assert_eq!(sums, 3, "{after:?}");
+    // Every read stays, as the form does not say what a write changes.
+    assert_eq!(reads(&after), reads(&before));
 }

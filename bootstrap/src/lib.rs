@@ -50,6 +50,7 @@ pub fn compile_timed(
     let program = lower_timed(source, timings)?;
     let program = timings.stage("inline", || scalar::inline(&program));
     let program = timings.stage("fold", || scalar::fold(&program));
+    let program = timings.stage("common", || scalar::common(&program));
     let program = timings.stage("remove", || scalar::remove(&program));
     Ok(timings.stage("emit", || target.emit(&program)))
 }
