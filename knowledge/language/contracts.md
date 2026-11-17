@@ -2,7 +2,8 @@
 type: specification
 title: Contracts and proofs
 description: requires, ensures, and check, what the arith procedure can prove, termination, and hole.
-status: planned
+status: partial
+built: "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, and the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`"
 ---
 
 # Contracts and proofs
