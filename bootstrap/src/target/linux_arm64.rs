@@ -83,6 +83,16 @@ impl System for Linux {
         asm.word(0xf100_001f);
         asm.cond(LT, fail);
     }
+
+    /// The kernel starts the program with the stack holding the number of
+    /// words, and then the addresses of the words, the program's name first.
+    fn arguments_on_entry(asm: &mut Asm) {
+        asm.load(X0, 8, false, Place::Frame(0));
+        asm.stack_address(X1, 8);
+        asm.mov_w(X2, 0);
+    }
+
+    fn arguments_by_call(_: &mut Asm) {}
 }
 
 fn fd(stream: Stream) -> u16 {

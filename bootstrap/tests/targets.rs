@@ -220,7 +220,7 @@ pub fn runs_as(source: &[u8], target: Target, said: &Outcome) {
 
 /// The tests whose result depends on the kind of machine they run on.
 pub fn machine() -> Vec<Test> {
-    [MACHINE, crate::cli::MACHINE].concat()
+    [MACHINE, crate::cli::MACHINE, crate::arguments::MACHINE].concat()
 }
 
 /// For each target the compiler builds for, a hash of every executable the
@@ -275,6 +275,16 @@ pub fn not_run() -> Vec<String> {
 /// Runs an executable for this machine and gives what it did.
 pub fn run(bytes: &[u8]) -> Outcome {
     run_with(bytes, |path| std::process::Command::new(path))
+}
+
+/// Runs an executable for this machine, started with the words, and gives
+/// what it did.
+pub fn run_with_words(bytes: &[u8], words: &[String]) -> Outcome {
+    run_with(bytes, |path| {
+        let mut command = std::process::Command::new(path);
+        command.args(words);
+        command
+    })
 }
 
 /// Runs an executable for this machine with the command `command` makes of
@@ -860,6 +870,7 @@ const KERNEL32_THIN_WRAPPERS: &[&str] = &[
     "ExitProcess",
     "VirtualAlloc",
     "VirtualFree",
+    "GetCommandLineW",
 ];
 
 fn u16_at(bytes: &[u8], at: usize) -> usize {
@@ -959,10 +970,13 @@ fn elf_segment_kinds(bytes: &[u8]) -> Vec<usize> {
 /// A program that asks the system for memory.
 const JOIN: &str = "fn main() ! console, alloc {\n  x = \"a\"\n  print(\"{x}{x}\")\n}\n";
 
+/// A program that takes the words it was started with.
+const WORDS: &str = "fn main(args: List[str]) ! console, alloc {\n  print(\"{args.size}\")\n}\n";
+
 fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
     const PT_DYNAMIC: usize = 2;
     const PT_INTERP: usize = 3;
-    let programs = [HELLO, JOIN];
+    let programs = [HELLO, JOIN, WORDS];
     for (target, source) in buildable()
         .into_iter()
         .flat_map(|t| programs.map(|p| (t, p)))

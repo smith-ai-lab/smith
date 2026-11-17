@@ -4,7 +4,8 @@
 //!
 //! From `KERNEL32.dll` the program uses only thin wrappers over the kernel:
 //! `GetStdHandle`, `WriteFile`, `ExitProcess`, and, in a program that asks
-//! for memory, `VirtualAlloc`. It uses no C runtime.
+//! for memory, `VirtualAlloc`, and, in a program that takes the words it was
+//! started with, `GetCommandLineW`. It uses no C runtime.
 //! Nothing from the system is needed to build: the import tables that ask
 //! the loader for the library and its symbols are written here.
 
@@ -29,17 +30,32 @@ const HEADERS_SIZE: u32 =
 const DLL: &[u8] = b"KERNEL32.dll";
 /// The symbols a program may import, in the order of their slots in the
 /// import address table. A program that never asks for memory imports only
-/// the first three.
-const IMPORTS: [&str; 4] = ["GetStdHandle", "WriteFile", "ExitProcess", "VirtualAlloc"];
+/// the first three, and one that asks for memory and takes no words imports
+/// the first four.
+const IMPORTS: [&str; 5] = [
+    "GetStdHandle",
+    "WriteFile",
+    "ExitProcess",
+    "VirtualAlloc",
+    "GetCommandLineW",
+];
 pub const GET_STD_HANDLE: usize = 0;
 pub const WRITE_FILE: usize = 1;
 pub const EXIT_PROCESS: usize = 2;
 pub const VIRTUAL_ALLOC: usize = 3;
+pub const GET_COMMAND_LINE: usize = 4;
 
-/// The symbols a program imports: `VirtualAlloc` only if it asks for
-/// memory.
-pub fn imports(allocates: bool) -> &'static [&'static str] {
-    if allocates { &IMPORTS } else { &IMPORTS[..3] }
+/// The symbols a program imports: `VirtualAlloc` only if it asks for memory,
+/// and `GetCommandLineW` only if it takes the words it was started with,
+/// which asks for memory too.
+pub fn imports(allocates: bool, takes_arguments: bool) -> &'static [&'static str] {
+    if takes_arguments {
+        &IMPORTS
+    } else if allocates {
+        &IMPORTS[..4]
+    } else {
+        &IMPORTS[..3]
+    }
 }
 
 /// `VirtualAlloc`'s request to reserve and commit pages at once, and its

@@ -4,11 +4,12 @@
 //! texts have the same bytes. A text is an address and a length, and a
 //! program holds only the functions it reaches.
 
+use super::words;
 use super::{Binary, Bits, Builder, Compare, Function, Type, Value};
 
-const ADDRESS: Type = Type::Address;
-const LENGTH: Type = Type::Int(Bits::B64);
-const BYTE: Type = Type::Int(Bits::B8);
+pub(super) const ADDRESS: Type = Type::Address;
+pub(super) const LENGTH: Type = Type::Int(Bits::B64);
+pub(super) const BYTE: Type = Type::Int(Bits::B8);
 /// What a text is.
 const TEXT: [Type; 2] = [ADDRESS, LENGTH];
 
@@ -44,6 +45,41 @@ pub enum Runtime {
     /// and there is room, and otherwise the elements are copied into memory
     /// with room for twice as many, or for one when there are none.
     Push(Vec<Type>),
+    /// Is where a program that takes the words it was started with starts. It
+    /// takes what the system gives, as `Arguments` does, and calls the
+    /// function `main` with the list of words that `Arguments` gives. It gives
+    /// nothing.
+    Start { main: usize },
+    /// Takes what the system gives a program that starts: a number, the
+    /// address of that many addresses of texts that each end with a byte 0,
+    /// and the address of a command line, and gives the list of the words the
+    /// program was started with, each a text, as a list is held. The first
+    /// word the system gives is the program's name, which is not one of them.
+    /// A number of all ones says the system gave a command line and no words,
+    /// as Windows does. Memory is asked of the system only when there is a
+    /// word.
+    Arguments,
+    /// Takes a number and the address of that many addresses of texts, each
+    /// ending with a byte 0, and gives the list of every text after the first.
+    Words,
+    /// Takes the address of a command line, which is units of 16 bits that end
+    /// with a unit 0, and gives the list of its words, each a text of UTF-8,
+    /// split as the C runtime of Windows splits a command line. The first word
+    /// is the program's name, which is not one of them.
+    Line,
+    /// Takes the address of a text that ends with a byte 0, and gives how many
+    /// bytes it has before it.
+    Measure,
+    /// Takes an address, a count, and a byte, and writes the byte that many
+    /// times from the address. It gives nothing.
+    Fill,
+    /// Takes an address, a unit of 16 bits of UTF-16 as a 64-bit integer, and
+    /// the unit that follows it, and writes the unit as UTF-8 from the address,
+    /// the two units together as one character when they are the two halves of
+    /// one. It gives how many bytes it wrote and how many units it took. A unit
+    /// that is half of a pair and has no other half is written as it is, in
+    /// three bytes.
+    Utf8,
 }
 
 /// The function of the runtime, where `place` gives the place in the
@@ -57,26 +93,33 @@ pub fn build(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function
         Runtime::Digits => digits(),
         Runtime::Decimal { bits, signed } => decimal(bits, signed, place(Runtime::Digits)),
         Runtime::Push(scalars) => push(&scalars, place(Runtime::Copy)),
+        Runtime::Start { main } => words::start(main, place(Runtime::Arguments)),
+        Runtime::Arguments => words::arguments(place(Runtime::Words), place(Runtime::Line)),
+        Runtime::Words => words::words(place(Runtime::Measure)),
+        Runtime::Line => words::line(place(Runtime::Fill), place(Runtime::Utf8)),
+        Runtime::Measure => words::measure(),
+        Runtime::Fill => words::fill(),
+        Runtime::Utf8 => words::utf8(),
     }
 }
 
-fn int(f: &mut Builder, n: u64) -> Value {
+pub(super) fn int(f: &mut Builder, n: u64) -> Value {
     f.int(Bits::B64, n)
 }
 
-fn byte(f: &mut Builder, n: u8) -> Value {
+pub(super) fn byte(f: &mut Builder, n: u8) -> Value {
     f.int(Bits::B8, n as u64)
 }
 
 /// The address `by` bytes after `address`.
-fn after(f: &mut Builder, address: Value, by: Value) -> Value {
+pub(super) fn after(f: &mut Builder, address: Value, by: Value) -> Value {
     f.binary(Binary::Add, address, by)
 }
 
 /// A loop over the places `0..count`, which runs `body` for each with the
 /// place, and the values it carries, and gives the values after the last.
 /// `body` gives the values to carry to the next place.
-fn repeat(
+pub(super) fn repeat(
     f: &mut Builder,
     count: Value,
     carried: Vec<Value>,
@@ -367,7 +410,7 @@ fn decimal(bits: Bits, signed: bool, digits: usize) -> Function {
 }
 
 /// What a list is: the address of its elements, its size, and its room.
-const LIST: [Type; 3] = [ADDRESS, LENGTH, LENGTH];
+pub(super) const LIST: [Type; 3] = [ADDRESS, LENGTH, LENGTH];
 
 fn push(scalars: &[Type], copy: usize) -> Function {
     let (places, stride) = super::element(scalars);

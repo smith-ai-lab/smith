@@ -1941,7 +1941,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         refusals: 0,
         deciding: None,
     };
-    checker.main(&file.functions[main]);
+    checker.main(main);
     for &item in &reached {
         match item {
             Item::Fn(f) => checker.signature(f),
@@ -3266,15 +3266,27 @@ impl<'a> Body<'a> {
 }
 
 impl<'a> Checker<'a> {
-    /// What only `main` must be.
-    fn main(&mut self, f: &Function) {
+    /// What only `main` must be: with no parameter, or with one, a list of
+    /// the words the program was started with.
+    fn main(&mut self, index: usize) {
+        let f = &self.defs.file.functions[index];
         if let Some(g) = f.generics.first() {
             self.errors
                 .push(Error::unsupported(g.pos, "a type parameter of `main`"));
         }
-        if let Some(p) = f.params.first() {
-            self.errors
-                .push(Error::unsupported(p.pos, "a parameter of `main`"));
+        let signature = &self.defs.signatures[index];
+        let words = Ty::list(Ty::Text);
+        for (i, p) in f.params.iter().enumerate() {
+            let right = i == 0 && signature.params[i].1 == words && p.default.is_none();
+            if !right && signature.params[i].1 != Ty::Unknown {
+                self.errors.push(
+                    Error::new(
+                        p.pos,
+                        "`main` takes no parameter, or one, the words the program was started with, as a `List[str]`",
+                    )
+                    .with_fix("write `fn main(args: List[str])`, or take the parameter away"),
+                );
+            }
         }
         if let Some(t) = &f.result {
             self.errors

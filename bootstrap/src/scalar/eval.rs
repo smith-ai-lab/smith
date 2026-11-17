@@ -11,6 +11,16 @@ pub struct Outcome {
     pub status: i32,
 }
 
+/// What the system gives a program that takes the words it was started with.
+#[derive(Clone, Copy)]
+enum Given<'a> {
+    /// The program's name and then its words, as bytes, which the system lays
+    /// out as Linux and macOS do.
+    Words(&'a [Vec<u8>]),
+    /// A command line, as the units of 16 bits that Windows gives.
+    Line(&'a [u16]),
+}
+
 /// Where the program's texts start, so that no text is at the address that
 /// holds nothing.
 const BASE: usize = 0x1000;
@@ -54,12 +64,33 @@ pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
 /// Runs the program as `run_with_limit` does, and also gives how many bytes
 /// each request to the system for memory asked for, in order.
 pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
+    start(program, limit, Given::Words(&[]))
+}
+
+/// Runs a program that takes the words it was started with, as Linux and
+/// macOS give them: its name, which is not one of them, and then the words.
+pub fn run_with_words(program: &Program, words: &[Vec<u8>]) -> Outcome {
+    start(program, usize::MAX, Given::Words(words)).0
+}
+
+/// Runs a program that takes the words it was started with, as Windows gives
+/// them: one command line, whose first word is the program's name.
+pub fn run_with_command_line(program: &Program, line: &[u16]) -> Outcome {
+    start(program, usize::MAX, Given::Line(line)).0
+}
+
+fn start(program: &Program, limit: usize, given: Given) -> (Outcome, Vec<usize>) {
     let mut memory = Vec::new();
     let mut starts = Vec::new();
     for text in &program.data {
         starts.push(BASE + memory.len());
         memory.extend_from_slice(text);
     }
+    let args = if program.takes_arguments() {
+        arguments(&mut memory, given)
+    } else {
+        Vec::new()
+    };
     let mut machine = Machine {
         program,
         memory,
@@ -68,7 +99,7 @@ pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
         left: limit,
         requests: Vec::new(),
     };
-    let status = match machine.call(program.main, Vec::new()) {
+    let status = match machine.call(program.main, args) {
         Ok(_) => 0,
         Err(Refused) => 1,
     };
@@ -79,6 +110,42 @@ pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
         },
         machine.requests,
     )
+}
+
+/// Puts what the system gives in memory after the program's texts, and gives
+/// the values `main` starts with.
+fn arguments(memory: &mut Vec<u8>, given: Given) -> Vec<Word> {
+    match given {
+        Given::Words(words) => {
+            // The program's name comes first, then the words, each ending
+            // with a byte 0, and then the addresses of them, and a last that
+            // holds nothing.
+            let mut places = Vec::new();
+            for text in std::iter::once(&b"program"[..]).chain(words.iter().map(Vec::as_slice)) {
+                places.push(BASE + memory.len());
+                memory.extend_from_slice(text);
+                memory.push(0);
+            }
+            memory.resize(memory.len().next_multiple_of(8), 0);
+            let table = BASE + memory.len();
+            for place in places.iter().chain(std::iter::once(&0)) {
+                memory.extend_from_slice(&(*place as u64).to_le_bytes());
+            }
+            vec![
+                Word::Int(places.len() as u64),
+                Word::Address(table),
+                Word::Address(0),
+            ]
+        }
+        Given::Line(line) => {
+            memory.resize(memory.len().next_multiple_of(2), 0);
+            let at = BASE + memory.len();
+            for unit in line.iter().chain(std::iter::once(&0)) {
+                memory.extend_from_slice(&unit.to_le_bytes());
+            }
+            vec![Word::Int(u64::MAX), Word::Address(0), Word::Address(at)]
+        }
+    }
 }
 
 /// Runs one function of the program on integers, and gives the integers it

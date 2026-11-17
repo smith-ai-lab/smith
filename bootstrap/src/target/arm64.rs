@@ -456,6 +456,16 @@ pub trait System {
     /// not 0, leaves its address in x0, and branches to `fail` if the system
     /// refuses. It may change what `write` may.
     fn alloc(asm: &mut Asm, fail: usize);
+    /// Gives `main` what the system gives a program that takes its words, in
+    /// x0, x1, and x2: a number, the address of an array of addresses, and
+    /// the address of a command line, as `scalar::ARGUMENTS` says. It runs
+    /// first, before the stack is touched, so a system that gives the words
+    /// on the stack reads them here, and may change only those registers.
+    fn arguments_on_entry(asm: &mut Asm);
+    /// Does what `arguments_on_entry` does for a system that gives the words
+    /// by a call. The stack is ready for a call, and x0, x1, and x2 are as
+    /// `arguments_on_entry` left them.
+    fn arguments_by_call(asm: &mut Asm);
 }
 
 /// The machine code of the program, and the data it reads, each piece
@@ -471,8 +481,15 @@ pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     let texts: Vec<usize> = program.data.iter().map(|_| asm.label()).collect();
     let functions: Vec<usize> = program.functions.iter().map(|_| asm.label()).collect();
     let fail = asm.label();
+    let takes = program.takes_arguments();
+    if takes {
+        S::arguments_on_entry(&mut asm);
+    }
     if S::RESERVED > 0 {
         asm.reserve_stack(S::RESERVED);
+    }
+    if takes {
+        S::arguments_by_call(&mut asm);
     }
     asm.call_label(functions[program.main]);
     S::exit(&mut asm, 0);
