@@ -18,6 +18,12 @@ A lead's session ends and another begins, so nothing the work depends on lives o
 - The issue titled "Open design questions" lists what the owner and the lead have not yet agreed, with the lead's recommendation where it has one. Keep it current: add a question when one appears, and remove it when its answer is in `knowledge/`.
 - The skills in `.agents/skills/` say how the work is done.
 
+Then find the work the last lead left in flight, since a worker reports to the session that started it and that session is gone.
+
+- List the open pull requests and the cloud sessions on this repository that are still working.
+- Tell each worker that is still working to send its message to your session, with your session's id.
+- A pull request whose worker has stopped is yours to review, as in step 5.
+
 ## Steps
 
 1. Take the first open sub-issue of the roadmap whose "After" issues are all closed. Read it, and see whether it is labelled `trivial`.
