@@ -18,6 +18,7 @@
 //! naming the targets this machine could not run.
 
 mod alloc;
+mod arith;
 mod check;
 mod choices;
 mod cli;
@@ -65,6 +66,7 @@ const LIMIT: Duration = Duration::from_secs(1);
 fn limited() -> Vec<Test> {
     let tests = [
         alloc::ONCE,
+        arith::ONCE,
         props::TESTS,
         cli::ONCE,
         cli::MACHINE,
@@ -103,6 +105,7 @@ fn main() -> ExitCode {
         targets::ONCE,
         scalar::ONCE,
         alloc::ONCE,
+        arith::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.

@@ -1,0 +1,8 @@
+fn next(i: u8) -> u8 {
+  if i < 255 { i + 1 } else { i }
+}
+
+fn main() ! console, alloc {
+  print("{next(254)}")
+  print("{next(255)}")
+}

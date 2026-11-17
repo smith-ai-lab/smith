@@ -408,7 +408,7 @@ pub fn program(g: &mut Gen) -> NumberCase {
 
 /// A program with one mistake: a number with nothing to give it a type, one
 /// that does not fit its type, two numbers of different types compared or
-/// passed to one function, a plain `+`, `-`, or `*`, or a number where text
+/// passed to one function, an operator that is not built, or a number where text
 /// is needed.
 pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
     let m = model(g);
@@ -428,7 +428,7 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
     } else {
         -1 - g.below(1000) as i128
     };
-    let sum = *g.pick(&["+", "-", "*"]);
+    let sum = *g.pick(&["/", "@", "^"]);
     let kind = g.below(7);
     let literal = value(g, ty);
     let literal = spelled(g, literal);

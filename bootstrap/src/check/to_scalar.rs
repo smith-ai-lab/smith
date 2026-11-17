@@ -1144,6 +1144,21 @@ impl<'a> Lowering<'a> {
                 let values = self.match_expr(out, m, &ty, env);
                 (ty, values)
             }
+            // The result was proven to fit, so the operation is the one
+            // instruction, and no result is tested.
+            Expr::Arith {
+                op, left, right, ..
+            } => {
+                let ty = typed.type_of(expr, env);
+                let a = self.expr(out, left, env).1[0];
+                let b = self.expr(out, right, env).1[0];
+                let word = match op {
+                    crate::parser::ArithOp::Add => form::Binary::Add,
+                    crate::parser::ArithOp::Sub => form::Binary::Sub,
+                    crate::parser::ArithOp::Mul => form::Binary::Mul,
+                };
+                (ty, vec![out.binary(word, a, b)])
+            }
             Expr::Tuple { items, .. } => {
                 let mut types = Vec::new();
                 let mut values = Vec::new();

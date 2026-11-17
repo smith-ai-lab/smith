@@ -222,6 +222,14 @@ pub enum Expr {
         payload: Option<Box<Expr>>,
     },
     Match(Box<Match>),
+    /// `left + right`, `left - right`, or `left * right`.
+    Arith {
+        op: ArithOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+        /// Where the operator is.
+        op_pos: Pos,
+    },
     /// A tuple, `()` or one of two values or more.
     Tuple {
         /// Where the `(` is.
@@ -229,6 +237,25 @@ pub enum Expr {
         items: Vec<Expr>,
     },
     Lambda(Box<Lambda>),
+}
+
+/// The operators of whole number arithmetic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+impl ArithOp {
+    /// The operator as it is written.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            ArithOp::Add => "+",
+            ArithOp::Sub => "-",
+            ArithOp::Mul => "*",
+        }
+    }
 }
 
 /// A part of a string literal that holds expressions.
@@ -341,6 +368,7 @@ impl Expr {
             | Expr::Tuple { pos, .. } => *pos,
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),
+            Expr::Arith { left, .. } => left.pos(),
             Expr::Match(m) => m.pos,
             Expr::Lambda(l) => l.pos,
         }
@@ -1316,6 +1344,10 @@ impl Parser<'_> {
                 }
             }
             Expr::Field { of, .. } => self.spill(of, at),
+            Expr::Arith { left, right, .. } => {
+                self.spill(left, at);
+                self.spill(right, at);
+            }
             Expr::Text { .. }
             | Expr::Number { .. }
             | Expr::Name { .. }
@@ -1789,11 +1821,61 @@ impl Parser<'_> {
         Ok(negated(pos, operand))
     }
 
+    /// Parses operands joined by `+` and `-`, which group to the left.
+    fn sum(&mut self) -> Result<Expr, Error> {
+        let mut left = self.product()?;
+        while let Tok::Punct(op @ ("+" | "-")) = self.tok() {
+            let op = if *op == "+" {
+                ArithOp::Add
+            } else {
+                ArithOp::Sub
+            };
+            left = self.arith(op, left, Self::product)?;
+        }
+        Ok(left)
+    }
+
+    /// Parses operands joined by `*`, which group to the left.
+    fn product(&mut self) -> Result<Expr, Error> {
+        let mut left = self.operand()?;
+        while self.tok() == &Tok::Punct("*") {
+            left = self.arith(ArithOp::Mul, left, Self::operand)?;
+        }
+        Ok(left)
+    }
+
+    /// Parses the right side of an arithmetic operator, from the operator,
+    /// with `side`, and gives the operation. A `try` in the right side
+    /// passes on the rest of the statement, so what is to its left runs
+    /// before it.
+    fn arith(
+        &mut self,
+        op: ArithOp,
+        mut left: Expr,
+        side: fn(&mut Self) -> Result<Expr, Error>,
+    ) -> Result<Expr, Error> {
+        let op_pos = self.pos();
+        self.bump();
+        self.skip_newlines();
+        let mark = self.hoisted.len();
+        let right = side(self)?;
+        if self.hoisted.len() > mark {
+            let mut at = mark;
+            self.spill(&mut left, &mut at);
+        }
+        Ok(Expr::Arith {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+            op_pos,
+        })
+    }
+
     /// Parses an operand, and a comparison of it with another if `==` or
     /// `!=` follows. A comparison takes no other comparison as an operand
     /// unless it is in parentheses.
     fn comparison(&mut self) -> Result<Expr, Error> {
-        let mut left = self.operand()?;
+        let mut left = self.sum()?;
         let op = match self.tok() {
             Tok::Punct(op @ ("==" | "!=" | "<" | "<=" | ">" | ">=")) => *op,
             _ => return Ok(left),
@@ -1805,7 +1887,7 @@ impl Parser<'_> {
         let right = if self.tok() == &Tok::Keyword("not") {
             self.negation()?
         } else {
-            self.operand()?
+            self.sum()?
         };
         if self.hoisted.len() > mark {
             let mut at = mark;
