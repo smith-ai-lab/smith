@@ -36,6 +36,10 @@ pub const ONCE: &[Test] = &[
         check_warns_of_dead_code_and_an_unread_binding_that_build_allows,
     ),
     (
+        "check_run_and_build_refuse_the_error_in_a_function_main_does_not_reach",
+        check_run_and_build_refuse_the_error_in_a_function_main_does_not_reach,
+    ),
+    (
         "without_a_file_check_checks_main_smith",
         without_a_file_check_checks_main_smith,
     ),
@@ -128,6 +132,34 @@ fn check_warns_of_dead_code_and_an_unread_binding_that_build_allows() {
     let built = smith(&dir, &["build", "--target", any().name(), "two.smith"]);
     assert!(built.status.success(), "{}", stderr(&built));
     assert!(built.stderr.is_empty(), "{}", stderr(&built));
+}
+
+/// An error in a function that `main` does not reach, as it is placed.
+const UNREACHED_ERROR: &str = "fn dead(x: u8) -> u8 { x ";
+
+fn check_run_and_build_refuse_the_error_in_a_function_main_does_not_reach() {
+    let source = format!("{UNREACHED_ERROR}+ 1 }}\n\nfn main() ! console {{ print(\"a\") }}\n");
+    let dir = folder("dead");
+    std::fs::write(dir.join("dead.smith"), &source).unwrap();
+    let target = any().name();
+    let commands: [&[&str]; 3] = [
+        &["check", "dead.smith"],
+        &["run", "--target", target, "dead.smith"],
+        &["build", "--target", target, "dead.smith"],
+    ];
+    let place = pos_after(UNREACHED_ERROR);
+    for args in commands {
+        let output = smith(&dir, args);
+        assert!(!output.status.success(), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let shown = stderr(&output);
+        assert!(
+            shown.starts_with(&format!("dead.smith:{}:{}: ", place.line, place.col)),
+            "{shown}"
+        );
+        assert!(shown.contains("may not fit"), "{shown}");
+        assert_eq!(files_in(&dir), ["dead.smith"], "{args:?}");
+    }
 }
 
 fn without_a_file_check_checks_main_smith() {

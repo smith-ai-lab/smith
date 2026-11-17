@@ -70,7 +70,7 @@ The compiler is lazy. It starts from the roots and does only the work they reach
 | `smith check` | `main`, every test, and a library's public items |
 
 - Checking a body needs only the signatures of what it calls. Running it needs those bodies too, all the way down.
-- Code that no root reaches is not compiled, so it can hold an error while a single test runs. That lets a new design be tried with one test before every caller is updated. The error surfaces when a command whose roots reach it is run.
+- Code that no root reaches is not compiled, so it adds nothing to an executable. It is still checked, as [Errors and warnings](#errors-and-warnings) says.
 - `grad(f)` needs the body of `f` and of everything it calls. Its type depends only on the signature of `f`, so checking stays local, and whether `f` can be differentiated is decided when the code is built.
 
 ### Errors and warnings
@@ -89,6 +89,7 @@ hello.smith:1:13: `print` needs the `console` effect, which `main` does not decl
 - The first line is `file:line:column: message`. Lines and columns count from 1, and a column counts characters.
 - The line of source is shown as written, except that a tab is shown as a space and any other control character as `�`. The mark is placed for a terminal, where a wide character takes two places. Advice is only ever on the `fix:` line, and an error with none has no such line.
 - Every error in a file is reported, each once, in the order of their places, so one round of changes can fix them all.
+- Every function in the file is checked, whether or not `main` reaches it, so an error in a function that nothing calls is reported, and does not wait for the day something calls it. A function with type parameters is checked as far as it can be without knowing its types: its signature, each name, type and effect, and each operation on a value of a type parameter, which supports none. What needs a choice of types, that the types of a call have an implementation and that a copy for larger types does not grow forever, is checked at a call, so a generic function that nothing calls is not checked for those.
 - A file is read in stages: its text, which must be UTF-8 with no carriage return, then its tokens, its syntax, and the check. Only the errors of the earliest stage that finds any are reported, because each later stage reads what the earlier ones produced.
 - An error that another error explains is not reported. A mistake in the syntax hides the rest of its statement, or of its signature, and a listed effect with no such name hides a missing effect, which it may be a misspelling of. A function that lacks an effect is told so once, at the first call that needs it, and nothing is reported about what a call of a function that does not exist gives.
 

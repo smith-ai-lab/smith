@@ -972,20 +972,35 @@ const ITEMS: &[(&str, &str)] = &[
     (")", "definition"),
 ];
 
-/// Definitions that `main` does not reach, each with a mistake that would
-/// be reported if it were checked.
-pub const UNREACHED: &[&str] = &[
-    "fn unused() { print(\"a\") }",
-    "fn unused() -> str { nope() }",
-    "fn unused() ! console { unused() }",
-    "fn unused(a: f32) {}",
-    "fn unused() ! console {\n  x = \"a\"\n  x = \"b\"\n  print(x, \"c\")\n}",
-    "fn unused() -> str {}",
-    "fn unused(n: Nope) -> str { n.x }",
-    "struct Unused {\n  a: Nope\n}",
-    "struct Unused {\n  next: Unused\n}",
-    "fn unused[T](a: Nope) -> T { a }",
-    "trait Unused[T] {\n  fn unused_of(x: T) -> Nope\n}\n\nimpl Unused[Nope] {\n  fn unused_of(x: Nope) -> str { nope() }\n}",
+/// A definition that `main` does not reach, with one mistake in it. Each is
+/// written as the text before the mistake, what the error must mention,
+/// and the rest. The name `unused` is replaced, so that no name is taken.
+pub const UNREACHED: &[(&str, &str, &str)] = &[
+    ("fn unused() { ", "console", "print(\"a\") }"),
+    ("fn unused() -> str { ", "nope", "nope() }"),
+    ("fn unused() ! console { ", "itself", "unused() }"),
+    ("fn unused(a: ", "f32", "f32) {}"),
+    ("fn unused() {\n  x = \"a\"\n  ", "var", "x = \"b\"\n}"),
+    ("fn unused() -> str {", "empty", "}"),
+    ("fn unused(n: ", "Nope", "Nope) -> str { \"\" }"),
+    ("fn unused(x: u8) -> u8 { x ", "fit", "+ 1 }"),
+    ("fn unused[T](a: T) -> T { a ", "whole numbers", "+ 1 }"),
+    ("struct Unused {\n  a: ", "Nope", "Nope\n}"),
+    ("struct Unused {\n  next: ", "itself", "Unused\n}"),
+    (
+        "trait Unused[T] {\n  fn unused_of(x: T) -> ",
+        "Nope",
+        "Nope\n}",
+    ),
+];
+
+/// A definition that `main` does not reach, with no mistake in it.
+pub const UNREACHED_VALID: &[&str] = &[
+    "fn unused() -> str { \"a\" }",
+    "fn unused[T](a: T) -> T { a }",
+    "fn unused(x: u8) -> u8 { x }",
+    "struct Unused {\n  a: str\n}",
+    "trait Unused[T] {\n  fn unused_of(x: T) -> str\n}\n\nimpl Unused[str] {\n  fn unused_of(x: str) -> str { x }\n}",
 ];
 
 /// A definition of its own, before or after the program's, that holds the
@@ -1110,11 +1125,6 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> Case {
             mentions: "`main`".to_string(),
             fix: None,
         });
-    }
-    if b.g.one_in(4) {
-        b.pick(UNREACHED);
-        b.push("\n");
-        b.pick(&["", "\n"]);
     }
     for (at, item) in items.iter().enumerate() {
         if at > 0 {

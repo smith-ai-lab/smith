@@ -1825,7 +1825,16 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         }
         i += 1;
     }
-    let reached_types: Vec<Def> = (reached.iter())
+    // Every definition of the file is checked, whether or not `main` reaches
+    // it. Only what `main` reaches is lowered.
+    let everything: Vec<Item> = (0..file.functions.len())
+        .map(Item::Fn)
+        .chain((0..file.structs.len()).map(Item::Struct))
+        .chain((0..file.enums.len()).map(Item::Enum))
+        .chain((0..file.traits.len()).map(Item::Trait))
+        .chain((0..file.impls.len()).map(Item::Impl))
+        .collect();
+    let reached_types: Vec<Def> = (everything.iter())
         .filter_map(|r| match r {
             Item::Struct(s) => Some(Def::Struct(*s)),
             Item::Enum(e) => Some(Def::Enum(*e)),
@@ -1942,7 +1951,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         deciding: None,
     };
     checker.main(&file.functions[main]);
-    for &item in &reached {
+    for &item in &everything {
         match item {
             Item::Fn(f) => checker.signature(f),
             Item::Struct(s) => checker.structure(s),
@@ -1951,7 +1960,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
             Item::Impl(i) => checker.implementation(i),
         }
     }
-    for &item in &reached {
+    for &item in &everything {
         match item {
             Item::Fn(f) => checker.body(Template::Free(f)),
             Item::Impl(i) => {
@@ -1966,7 +1975,12 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
             Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
         }
     }
-    checker.recursion(main, &mut Vec::new(), &mut Vec::new());
+    let mut walked = Vec::new();
+    for f in std::iter::once(main).chain(0..file.functions.len()) {
+        if !walked.contains(&f) {
+            checker.recursion(f, &mut Vec::new(), &mut walked);
+        }
+    }
     if !checker.errors.is_empty() {
         return Err(checker.errors);
     }

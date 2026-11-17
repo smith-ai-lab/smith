@@ -152,8 +152,12 @@ pub const TESTS: &[Test] = &[
         every_placed_mistake_about_with_and_try_is_one_error_at_its_place,
     ),
     (
-        "a_function_main_does_not_reach_is_parsed_and_not_checked",
-        a_function_main_does_not_reach_is_parsed_and_not_checked,
+        "an_error_in_a_function_main_does_not_reach_is_reported_by_check_and_build",
+        an_error_in_a_function_main_does_not_reach_is_reported_by_check_and_build,
+    ),
+    (
+        "a_function_main_does_not_reach_adds_nothing_to_an_executable",
+        a_function_main_does_not_reach_adds_nothing_to_an_executable,
     ),
     (
         "every_placed_mistake_is_one_error_at_its_place",
@@ -239,28 +243,58 @@ fn the_scalar_form_holds_each_function_main_reaches() {
     });
 }
 
-/// A generated program, and a function that `main` does not reach, which
-/// holds a mistake for the checker.
-fn program_and_unreached(g: &mut Gen) -> (Case, &'static str) {
-    (programs::program(g), *g.pick(programs::UNREACHED))
+/// A program from one of the generators, with no mistake in it.
+fn any_program(g: &mut Gen) -> String {
+    let source = match g.below(10) {
+        0 => programs::program(g).source,
+        1 => traits::program(g).source.into_bytes(),
+        2 => enums::program(g).source.into_bytes(),
+        3 => tuples::program(g).source.into_bytes(),
+        4 => lambdas::program(g).source.into_bytes(),
+        5 => text::program(g).source.into_bytes(),
+        6 => tries::program(g).source.into_bytes(),
+        7 => reprs::program(g).source.into_bytes(),
+        8 => choices::program(g).source.into_bytes(),
+        _ => numbers::program(g).source.into_bytes(),
+    };
+    String::from_utf8(source).unwrap()
 }
 
-fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
-    generate::check(12, 121, program_and_unreached, |(case, unreached)| {
-        let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
-        let mut text = String::from_utf8(case.source.clone()).unwrap();
-        text.push_str("\n\n");
-        // The program may hold a definition named `unused` already.
-        let renamed = unreached
-            .replace("unused", "spare")
-            .replace("Unused", "Spare");
-        let with_unreached = format!("{text}{renamed}\n");
-        assert_eq!(lower(with_unreached.as_bytes()), Ok(program));
-        // A mistake in its syntax is still found, as it is parsed.
-        let broken = format!("{text}fn broken() {{ x = ");
-        let at = pos_after(&broken);
-        let found = errors(&format!("{broken}1.5 }}\n"));
-        assert_eq!(found.iter().map(|e| e.pos).collect::<Vec<_>>(), [at]);
+/// A definition with `unused` renamed, as the program may use the name.
+fn renamed(definition: &str) -> String {
+    definition
+        .replace("unused", "spare")
+        .replace("Unused", "Spare")
+}
+
+fn an_error_in_a_function_main_does_not_reach_is_reported_by_check_and_build() {
+    fn generated(g: &mut Gen) -> (String, (&'static str, &'static str, &'static str)) {
+        (any_program(g), *g.pick(programs::UNREACHED))
+    }
+    generate::check(12, 121, generated, |(text, (before, mentions, rest))| {
+        let source = format!("{text}\n\n{}\n", renamed(&format!("{before}{rest}")));
+        let at = pos_after(&format!("{text}\n\n{}", renamed(before)));
+        let checked = smith::check(source.as_bytes());
+        let built = compile(source.as_bytes(), targets::any());
+        let Err(errors) = checked else {
+            panic!("check accepts it: {checked:?}");
+        };
+        assert_eq!(built.as_ref().err(), Some(&errors));
+        assert_eq!(errors.iter().map(|e| e.pos).collect::<Vec<_>>(), [at]);
+        assert!(errors[0].message.contains(mentions), "{}", errors[0]);
+    });
+}
+
+fn a_function_main_does_not_reach_adds_nothing_to_an_executable() {
+    fn generated(g: &mut Gen) -> (String, &'static str) {
+        (any_program(g), *g.pick(programs::UNREACHED_VALID))
+    }
+    generate::check(13, 40, generated, |(text, definition)| {
+        let source = format!("{text}\n\n{}\n", renamed(definition));
+        let alone = compile(text.as_bytes(), targets::any());
+        assert!(alone.is_ok(), "{alone:?}");
+        assert_eq!(compile(source.as_bytes(), targets::any()), alone);
+        assert_eq!(lower(source.as_bytes()), lower(text.as_bytes()));
     });
 }
 
