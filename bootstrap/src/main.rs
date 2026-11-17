@@ -9,7 +9,7 @@ use smith::target::Target;
 use smith::timings::Timings;
 
 const USAGE: &str = "usage: smith build [--target <target>] [--timings] [<file>.smith]
-       smith run [--target <target>] [--timings] [<file>.smith]
+       smith run [--target <target>] [--timings] [<file>.smith [<word>...]]
        smith check [--timings] [<file>.smith]
        smith --version";
 
@@ -36,6 +36,9 @@ struct Request {
     target: Target,
     entry: PathBuf,
     timings: bool,
+    /// What follows the file's name in `smith run`, which are the words the
+    /// program is started with.
+    words: Vec<String>,
 }
 
 fn command(args: &[String]) -> Result<ExitCode, String> {
@@ -48,12 +51,12 @@ fn command(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "build" => {
-            let request = request(rest)?;
+            let request = request(rest, false)?;
             build(&request)?;
             Ok(ExitCode::SUCCESS)
         }
         "run" => {
-            let request = request(rest)?;
+            let request = request(rest, true)?;
             if Target::host() != Some(request.target) {
                 return Err(format!(
                     "smith run runs only programs for this machine, and {} is not its target",
@@ -61,7 +64,7 @@ fn command(args: &[String]) -> Result<ExitCode, String> {
                 ));
             }
             let executable = build(&request)?;
-            run(&executable)
+            run(&executable, &request.words)
         }
         "check" => check(rest),
         "new" | "test" | "fmt" | "vendor" | "hole" | "find" | "deps" | "cost" => {
@@ -71,10 +74,13 @@ fn command(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
-fn request(args: &[String]) -> Result<Request, String> {
+/// What a command line asks for. When `with_words`, every word after the
+/// file's name is for the program and no flag is read among them.
+fn request(args: &[String], with_words: bool) -> Result<Request, String> {
     let mut target = None;
     let mut entry = None;
     let mut timings = false;
+    let mut words = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if arg == "--target" {
@@ -96,6 +102,9 @@ fn request(args: &[String]) -> Result<Request, String> {
             return Err(format!("only one file can be built\n{USAGE}"));
         } else {
             entry = Some(PathBuf::from(arg));
+            if with_words {
+                words = args.by_ref().cloned().collect();
+            }
         }
     }
     let target = match target {
@@ -111,6 +120,7 @@ fn request(args: &[String]) -> Result<Request, String> {
         target,
         entry: entry.unwrap_or_else(|| PathBuf::from("main.smith")),
         timings,
+        words,
     })
 }
 
@@ -215,9 +225,11 @@ fn write_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Runs a built executable and exits as it does.
-fn run(executable: &Path) -> Result<ExitCode, String> {
+/// Runs a built executable with the words it is started with, and exits as it
+/// does.
+fn run(executable: &Path, words: &[String]) -> Result<ExitCode, String> {
     let status = std::process::Command::new(executable)
+        .args(words)
         .status()
         .map_err(|e| format!("{}: {e}", executable.display()))?;
     let code = status.code().unwrap_or(1);

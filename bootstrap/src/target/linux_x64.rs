@@ -3,7 +3,7 @@
 //! the shared x86-64 instructions.
 
 use super::elf::{self, Machine};
-use super::x86_64::{self, Asm, LE, R8, R9, R10, RAX, RDI, RDX, RSI, Reg, S, System, Z};
+use super::x86_64::{self, Asm, LE, Place, R8, R9, R10, RAX, RDI, RDX, RSI, Reg, S, System, Z};
 use crate::scalar::{Program, Stream};
 
 const SYS_WRITE: u32 = 1;
@@ -69,6 +69,16 @@ impl System for Linux {
         asm.test(RAX);
         asm.jcc(S, fail);
     }
+
+    /// The kernel starts the program with the stack holding the number of
+    /// words, and then the addresses of the words, the program's name first.
+    fn arguments_on_entry(asm: &mut Asm) {
+        asm.load(RDI, 8, false, Place::Frame(0));
+        asm.stack_address(RSI, 8);
+        asm.mov32(R8, 0);
+    }
+
+    fn arguments_by_call(_: &mut Asm) {}
 }
 
 fn fd(stream: Stream) -> u32 {

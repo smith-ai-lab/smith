@@ -34,7 +34,11 @@ pub fn check(program: &Program) -> Result<(), Malformed> {
         function: program.main,
         why: Why::Missing,
     })?;
-    if !main.results.is_empty() || main.blocks.first().is_none_or(|b| !b.params.is_empty()) {
+    let takes = |b: &super::Block| {
+        b.params.is_empty()
+            || (b.params.iter().map(|p| main.types[p.0]).collect::<Vec<_>>()) == super::ARGUMENTS
+    };
+    if !main.results.is_empty() || main.blocks.first().is_none_or(|b| !takes(b)) {
         return Err(Malformed {
             function: program.main,
             why: Why::WrongCount,

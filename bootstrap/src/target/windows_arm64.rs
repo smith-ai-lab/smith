@@ -5,8 +5,8 @@
 
 use super::arm64::{self, Asm, LS, Place, System, X0, X1, X2, X3, X4, X19, X20, X21};
 use super::pe::{
-    self, EXIT_PROCESS, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE, Machine,
-    PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
+    self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
+    Machine, PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use crate::scalar::{Program, Stream};
 
@@ -34,7 +34,7 @@ const SAVED: u32 = 8;
 pub fn emit(program: &Program) -> Vec<u8> {
     let (asm, data) = arm64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    let imports = pe::imports(program.allocates());
+    let imports = pe::imports(program.allocates(), program.takes_arguments());
     pe::executable(&MACHINE, size, imports, |code, iat| {
         asm.finish(&data, code, iat)
     })
@@ -99,6 +99,17 @@ impl System for Windows {
         asm.mov_w(X3, PAGE_READWRITE as u16);
         asm.call(VIRTUAL_ALLOC);
         asm.cbz(X0, fail);
+    }
+
+    fn arguments_on_entry(_: &mut Asm) {}
+
+    /// The system gives one command line and no words, which a count of all
+    /// ones says.
+    fn arguments_by_call(asm: &mut Asm) {
+        asm.call(GET_COMMAND_LINE);
+        asm.mov(X2, X0);
+        asm.mov64(X0, u64::MAX);
+        asm.mov_w(X1, 0);
     }
 }
 

@@ -21,6 +21,7 @@
 //! naming the targets this machine could not run.
 
 mod alloc;
+mod arguments;
 mod arith;
 mod bits;
 mod check;
@@ -96,6 +97,7 @@ fn main() -> ExitCode {
         targets::ONCE,
         scalar::ONCE,
         alloc::ONCE,
+        arguments::ONCE,
         arith::ONCE,
         bits::ONCE,
         contracts::ONCE,

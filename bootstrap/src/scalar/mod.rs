@@ -20,10 +20,13 @@ mod inline;
 mod remove;
 pub mod runtime;
 mod wellformed;
+mod words;
 
 pub use build::Builder;
 pub use common::common;
-pub use eval::{Outcome, call, run, run_counting, run_with_limit};
+pub use eval::{
+    Outcome, call, run, run_counting, run_with_command_line, run_with_limit, run_with_words,
+};
 pub use fold::fold;
 pub use inline::{BOUND, inline, size};
 pub use remove::remove;
@@ -331,9 +334,10 @@ pub struct Function {
     pub blocks: Vec<Block>,
 }
 
-/// A program: it runs the function `main`, which takes no parameters and
-/// gives back nothing, and then ends with status 0. No function calls
-/// itself, directly or through others.
+/// A program: it runs the function `main`, which gives back nothing, and then
+/// ends with status 0. `main` takes no parameters, or it takes the three that
+/// `ARGUMENTS` lists, which the system gives it as `runtime::Runtime::Arguments`
+/// says. No function calls itself, directly or through others.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Program {
     /// The bytes of the program's texts, which `Constant::Data` addresses.
@@ -342,7 +346,18 @@ pub struct Program {
     pub main: usize,
 }
 
+/// The types of the parameters of a `main` that takes the words the program was
+/// started with: a number of words, the address of their addresses, and the
+/// address of a command line.
+pub const ARGUMENTS: [Type; 3] = [Type::Int(Bits::B64), Type::Address, Type::Address];
+
 impl Program {
+    /// Whether `main` takes what the system gives a program that is started
+    /// with words, which a target must then give it.
+    pub fn takes_arguments(&self) -> bool {
+        self.functions[self.main].blocks[0].params.len() == ARGUMENTS.len()
+    }
+
     /// Whether the program asks the system for memory.
     pub fn allocates(&self) -> bool {
         let instructions = self.functions.iter().flat_map(|f| &f.blocks);

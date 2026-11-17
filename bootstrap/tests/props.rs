@@ -836,7 +836,8 @@ fn only_smith_run_starts_another_program() {
     for (file, text) in sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src")) {
         if !file.ends_with("src/main.rs") {
             assert!(
-                !text.contains("Command"),
+                // `GetCommandLineW` is a function of Windows, and starts nothing.
+                !text.replace("GetCommandLineW", "").contains("Command"),
                 "{} starts a program",
                 file.display()
             );

@@ -3,8 +3,8 @@
 //! executable is written by `pe`.
 
 use super::pe::{
-    self, EXIT_PROCESS, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE, Machine,
-    PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
+    self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
+    Machine, PAGE_READWRITE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
 };
 use super::x86_64::{self, Asm, Place, R8, R9, RAX, RBX, RCX, RDI, RDX, RSI, Reg, System, Z};
 use crate::scalar::{Program, Stream};
@@ -32,7 +32,7 @@ const RBX_AT: u32 = 48;
 pub fn emit(program: &Program) -> Vec<u8> {
     let (asm, data) = x86_64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
-    let imports = pe::imports(program.allocates());
+    let imports = pe::imports(program.allocates(), program.takes_arguments());
     pe::executable(&MACHINE, size, imports, |code, iat| {
         asm.finish(&data, code, iat)
     })
@@ -96,6 +96,17 @@ impl System for Windows {
         asm.call_slot(VIRTUAL_ALLOC);
         asm.test(RAX);
         asm.jcc(Z, fail);
+    }
+
+    fn arguments_on_entry(_: &mut Asm) {}
+
+    /// The system gives one command line and no words, which a count of all
+    /// ones says.
+    fn arguments_by_call(asm: &mut Asm) {
+        asm.call_slot(GET_COMMAND_LINE);
+        asm.mov(R8, RAX);
+        asm.mov64(RDI, u64::MAX);
+        asm.mov32(RSI, 0);
     }
 }
 

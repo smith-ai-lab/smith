@@ -88,6 +88,14 @@ impl System for Macos {
         asm.test(RAX);
         asm.jcc(S, fail);
     }
+
+    /// The loader starts the program as it starts a C program's `main`, with
+    /// the number of words in rdi and the address of their addresses in rsi.
+    fn arguments_on_entry(asm: &mut Asm) {
+        asm.mov32(R8, 0);
+    }
+
+    fn arguments_by_call(_: &mut Asm) {}
 }
 
 fn fd(stream: Stream) -> u32 {

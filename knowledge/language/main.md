@@ -2,7 +2,8 @@
 type: specification
 title: main
 description: The arguments main may take, and the Exit trait, which turns what main returns into the status a program ends with.
-status: planned
+status: partial
+built: "`main` with no parameter, or with one, `args: List[str]`, which holds the words after the program's name, as `smith run prog.smith one two` gives them, on every target; any other parameter is refused; not what `main` returns, or `Exit`"
 ---
 
 # `main`

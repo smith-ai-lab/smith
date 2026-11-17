@@ -41,9 +41,16 @@ fn bits_of(t: Int) -> form::Bits {
 
 /// The program that `start` runs, in the scalar form.
 pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
+    // A `main` that takes the words it was started with is called by the
+    // runtime's `Start`, which the system's start-up code calls.
+    let takes = !typed.defs.view(start.template).params.is_empty();
+    let mut bodies = vec![Body::Copy(start)];
+    if takes {
+        bodies.push(Body::Runtime(Runtime::Start { main: 0 }));
+    }
     let mut lowering = Lowering {
         typed,
-        bodies: vec![Body::Copy(start)],
+        bodies,
         data: Vec::new(),
     };
     let mut functions = Vec::new();
@@ -57,7 +64,7 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
     form::Program {
         data: lowering.data,
         functions,
-        main: 0,
+        main: usize::from(takes),
     }
 }
 

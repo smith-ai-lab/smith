@@ -90,6 +90,14 @@ impl System for Macos {
         asm.word(0xf100_001f);
         asm.cond(LT, fail);
     }
+
+    /// The loader starts the program as it starts a C program's `main`, with
+    /// the number of words in x0 and the address of their addresses in x1.
+    fn arguments_on_entry(asm: &mut Asm) {
+        asm.mov_w(X2, 0);
+    }
+
+    fn arguments_by_call(_: &mut Asm) {}
 }
 
 fn fd(stream: Stream) -> u16 {
