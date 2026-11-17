@@ -15,7 +15,7 @@ A lead's session ends and another begins, so nothing the work depends on lives o
 
 - `knowledge/index.md` and the files it leads to say what Smith is. Each page of `knowledge/language/` says in its `status` how much of it the compiler builds.
 - The roadmap is the issue titled "Roadmap". Its open sub-issues are the work, in order.
-- The issue titled "Open design questions" lists what the owner and the lead have not yet agreed, with the lead's recommendation for each. Keep it current: add a question when one appears, and remove it when its answer is in `knowledge/`.
+- The issue titled "Open design questions" lists what the owner and the lead have not yet agreed, with the lead's recommendation where it has one. Keep it current: add a question when one appears, and remove it when its answer is in `knowledge/`.
 - The skills in `.agents/skills/` say how the work is done.
 
 ## Steps
@@ -77,7 +77,12 @@ Work through these in order, and stop at the first that applies.
 
 ## Rules
 
-- One worker runs at a time, unless the owner asks for more. Then issues run together only when neither is listed under the other's "After", and never when each would have to move the same code into a shared place.
+- One worker builds features at a time. A second may run beside it on upkeep, such as making tests faster, in files the first does not touch. Each time something merges while a second worker's pull request is open, look at that pull request: a conflict stops its checks, and its worker may be waiting in silence.
+- More than that runs together only when the owner asks, when neither issue is listed under the other's "After", and never when each would have to move the same code into a shared place.
+- A worker's work depends on what is on `main` when it starts. Confirm that a pull request it builds on has merged before starting it.
+- Before changing an issue a worker is on, read the issue's comments: the worker may have asked a question the change should answer.
+- After a merge that changes the compiler, confirm that a release was published before telling the owner it is out. A workflow that ends green has not always done its work.
+- A worker that has gone quiet may be blocked without having said so. When the owner asks for the state of things, read each open pull request and each running worker's state, and do not assume.
 - A second review round means the issue left something out. Before starting the next worker, put what it left out into `write-issue` or the next issue, so that one round is the usual number.
 - The lead owns the issues. It writes and corrects them with the `write-issue` skill. A worker is assigned an issue and never edits one.
 - `knowledge/` is changed by whoever makes the change. A worker updates it in its own pull request when its work alters what Smith is. The lead updates it when a decision is made outside a worker's pull request, such as an answer to a worker's question.
