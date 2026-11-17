@@ -8,13 +8,34 @@ built: "`main`, `print`, string literals and their escapes, strings that hold ex
 
 # Text and printing
 
-A program starts at `main`, and ends with status 0 when `main` returns. `print` takes a `str` and writes it and a line break to standard output. It carries the `console` effect, which covers standard input, output, and error. `print` is in scope in [every file](modules.md), and the rest of the console is in [std.console](../library/console.md).
+A program starts at `main` and ends when `main` returns. `print` takes a `str` and writes it and a line break to standard output. It carries the `console` effect, which covers standard input, output, and error. `print` is in scope in [every file](modules.md), and the rest of the console is in [std.console](../library/console.md).
 
 ```
 fn main() ! console {
   print("hello world")
 }
 ```
+
+`main` may take the arguments the program was started with: the words after the program's name, as a list.
+
+```
+fn main(args: List[str]) ! console, alloc {
+  print("started with {args.size} arguments")
+}
+```
+
+What `main` returns decides the status the program ends with. `main` may return any type that implements `Exit`, whose one function gives the status.
+
+```
+trait Exit[T] {
+  fn exit(value: T) -> u8 ! console, alloc
+}
+```
+
+- `()` gives 0, so a `main` that returns nothing ends with status 0.
+- A `Result[T, E]` gives what its `T` gives when it is `.ok`. When it is `.err(e)`, it writes `e` to standard error, as `Fmt` turns it into text, and gives 1. So `main` can use [`try`](try.md), and a failure it returns ends the program with a failing status.
+- A program that needs other statuses implements `Exit` for a type of its own.
+- Nothing else ends a program. No function stops it from inside a call, so the code after a call always runs.
 
 Every string literal may hold expressions in braces, and there is no other kind of string. Each expression is turned into text by the `Fmt` trait, and the pieces are joined into one `str`. `print` never formats anything: it only ever receives a `str`.
 
