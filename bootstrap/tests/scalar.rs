@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use smith::lower;
 use smith::scalar::runtime::{self, Runtime};
-use smith::scalar::{self, Bits, Builder, Constant, End, Op, Type, Value, Why};
+use smith::scalar::{self, Bits, Builder, Constant, End, Op, Stream, System, Type, Value, Why};
 
 use crate::Test;
 use crate::choices;
@@ -121,6 +121,30 @@ pub const ONCE: &[Test] = &[
     (
         "inlining_replaces_calls_of_small_functions_and_of_functions_called_once",
         inlining_replaces_calls_of_small_functions_and_of_functions_called_once,
+    ),
+    (
+        "the_passes_give_a_well_formed_program_that_does_what_it_did",
+        the_passes_give_a_well_formed_program_that_does_what_it_did,
+    ),
+    (
+        "folding_leaves_no_instruction_whose_inputs_are_all_constants",
+        folding_leaves_no_instruction_whose_inputs_are_all_constants,
+    ),
+    (
+        "removal_leaves_nothing_that_nothing_uses",
+        removal_leaves_nothing_that_nothing_uses,
+    ),
+    (
+        "the_passes_give_the_same_program_every_time_and_never_a_larger_one",
+        the_passes_give_the_same_program_every_time_and_never_a_larger_one,
+    ),
+    (
+        "a_jump_to_the_block_that_follows_a_choice_on_a_constant_and_a_copied_value_are_gone",
+        a_jump_to_the_block_that_follows_a_choice_on_a_constant_and_a_copied_value_are_gone,
+    ),
+    (
+        "a_value_a_loop_carries_unchanged_is_the_value_it_started_with",
+        a_value_a_loop_carries_unchanged_is_the_value_it_started_with,
     ),
 ];
 
@@ -1289,4 +1313,328 @@ fn inlining_replaces_calls_of_small_functions_and_of_functions_called_once() {
     for p in [once, small, large] {
         scalar::check(&p).unwrap();
     }
+}
+
+/// The program after each pass, in order, so that each is checked on what
+/// the one before it gave.
+fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 3] {
+    let inlined = scalar::inline(p);
+    let folded = scalar::fold(&inlined);
+    let removed = scalar::remove(&folded);
+    [inlined, folded, removed]
+}
+
+fn the_passes_give_a_well_formed_program_that_does_what_it_did() {
+    let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
+    for (l, s) in taken() {
+        let [inlined, folded, removed] = after_each_pass(s);
+        for after in [&folded, &removed] {
+            if let Err(malformed) = scalar::check(after) {
+                panic!("{malformed:?} in {after:?}");
+            }
+            for limit in limits {
+                let before = scalar::run_with_limit(&inlined, limit);
+                let ran = scalar::run_with_limit(after, limit);
+                assert_eq!(ran, before, "with a limit of {limit}: {:?}", l.scalar);
+            }
+        }
+        assert_eq!(removed, scalar::passes(s));
+    }
+}
+
+/// The values the function defines by a constant integer, and what each is.
+fn constants_of(f: &scalar::Function) -> Vec<Option<u64>> {
+    let mut known = vec![None; f.types.len()];
+    for i in f.blocks.iter().flat_map(|b| &b.instructions) {
+        if let Op::Constant(Constant::Int(n)) = i.op {
+            known[i.results[0].0] = Some(n);
+        }
+    }
+    known
+}
+
+/// What is left to fold in the program, as a message for each.
+fn left_to_fold(p: &scalar::Program) -> Vec<String> {
+    let mut left = Vec::new();
+    for (function, f) in p.functions.iter().enumerate() {
+        let known = constants_of(f);
+        let all = |values: &[Value]| values.iter().all(|v| known[v.0].is_some());
+        for (b, block) in f.blocks.iter().enumerate() {
+            for i in &block.instructions {
+                let folds = match &i.op {
+                    Op::Binary { a, b, .. } => {
+                        matches!(f.types[i.results[0].0], Type::Int(_)) && all(&[*a, *b])
+                    }
+                    Op::Compare { a, b, .. } => all(&[*a, *b]),
+                    Op::Widen { value, .. } | Op::Narrow(value) => all(&[*value]),
+                    Op::Choose { on, .. } => all(&[*on]),
+                    _ => false,
+                };
+                if folds {
+                    left.push(format!("function {function} block {b}: {i:?}"));
+                }
+            }
+            if let End::Switch { on, .. } = &block.end
+                && all(&[*on])
+            {
+                left.push(format!(
+                    "function {function} block {b} switches on a constant"
+                ));
+            }
+        }
+    }
+    left
+}
+
+fn folding_leaves_no_instruction_whose_inputs_are_all_constants() {
+    for (_, s) in taken() {
+        let after = scalar::passes(s);
+        assert_eq!(left_to_fold(&after), Vec::<String>::new(), "{after:?}");
+    }
+}
+
+/// What is left in the program that removal takes away, as a message for
+/// each.
+fn left_to_remove(p: &scalar::Program) -> Vec<String> {
+    let mut left = Vec::new();
+    for (function, f) in p.functions.iter().enumerate() {
+        let mut used = vec![0usize; f.types.len()];
+        let mut jumps_into = vec![0usize; f.blocks.len()];
+        let mut given: Vec<Vec<Vec<Value>>> = vec![Vec::new(); f.blocks.len()];
+        let mut reached = vec![false; f.blocks.len()];
+        let mut stack = vec![0];
+        reached[0] = true;
+        while let Some(b) = stack.pop() {
+            for to in f.blocks[b].end.successors() {
+                if !reached[to] {
+                    reached[to] = true;
+                    stack.push(to);
+                }
+            }
+        }
+        for (b, block) in f.blocks.iter().enumerate() {
+            for i in &block.instructions {
+                for v in i.op.operands() {
+                    used[v.0] += 1;
+                }
+            }
+            for v in block.end.operands() {
+                used[v.0] += 1;
+            }
+            let jumps: Vec<&scalar::Jump> = match &block.end {
+                End::Jump(j) => vec![j],
+                End::Switch { jumps, .. } => jumps.iter().collect(),
+                End::Return(_) => Vec::new(),
+            };
+            for j in jumps {
+                jumps_into[j.block] += 1;
+                given[j.block].push(j.args.clone());
+                if let End::Jump(_) = block.end
+                    && j.block != 0
+                    && j.block != b
+                    && !f.blocks[j.block].params.is_empty()
+                {
+                    // Whether it is joined is told by its count below.
+                }
+            }
+        }
+        for (b, block) in f.blocks.iter().enumerate() {
+            if !reached[b] {
+                left.push(format!(
+                    "function {function}: block {b} is reached by nothing"
+                ));
+            }
+            for i in &block.instructions {
+                let writes = matches!(i.op, Op::Store { .. } | Op::Call { .. } | Op::System { .. });
+                if !writes && i.results.iter().all(|r| used[r.0] == 0) {
+                    left.push(format!(
+                        "function {function} block {b}: {i:?} is used by nothing"
+                    ));
+                }
+            }
+            if b != 0 {
+                for (k, p) in block.params.iter().enumerate() {
+                    // A parameter is used by what reads it, not by the jump
+                    // that gives it on to itself.
+                    let own = given[b].iter().filter(|args| args[k] == *p).count();
+                    if used[p.0] == own {
+                        left.push(format!(
+                            "function {function}: block {b} takes {p:?} for nothing"
+                        ));
+                    }
+                    let mut others: Vec<Value> = (given[b].iter())
+                        .map(|args| args[k])
+                        .filter(|v| v != p)
+                        .collect();
+                    others.dedup();
+                    others.sort();
+                    others.dedup();
+                    if others.len() == 1 {
+                        left.push(format!(
+                            "function {function}: block {b} takes {p:?}, which is always {others:?}"
+                        ));
+                    }
+                }
+            }
+            if let End::Jump(j) = &block.end
+                && j.block != 0
+                && j.block != b
+                && jumps_into[j.block] == 1
+            {
+                left.push(format!(
+                    "function {function}: block {b} jumps alone to block {}",
+                    j.block
+                ));
+            }
+        }
+    }
+    left
+}
+
+fn removal_leaves_nothing_that_nothing_uses() {
+    for (_, s) in taken() {
+        let after = scalar::passes(s);
+        assert_eq!(left_to_remove(&after), Vec::<String>::new(), "{after:?}");
+    }
+}
+
+fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
+    let size = |p: &scalar::Program| -> usize { p.functions.iter().map(scalar::size).sum() };
+    for (_, s) in taken() {
+        let [inlined, folded, removed] = after_each_pass(s);
+        assert_eq!(folded, scalar::fold(&inlined));
+        assert_eq!(removed, scalar::remove(&folded));
+        assert!(size(&removed) <= size(&folded), "{removed:?}");
+        assert_eq!(scalar::remove(&removed), removed);
+    }
+}
+
+/// A program that writes `A` or `B`, by a choice on what arithmetic on
+/// constants says, through a block that only the choice reaches and a value
+/// that its parameters copy.
+fn a_choice_on_constants() -> scalar::Program {
+    let byte = Type::Int(Bits::B8);
+    let long = Type::Int(Bits::B64);
+    let mut m = Builder::new();
+    let (after, copied) = m.block(&[byte]);
+    let (taken, kept) = m.block(&[byte]);
+    let (not_taken, _) = m.block(&[]);
+    let one = m.int(Bits::B8, 1);
+    let two = m.int(Bits::B8, 2);
+    let three = m.int(Bits::B8, 3);
+    let sum = m.binary(scalar::Binary::Add, one, two);
+    let is_three = m.compare(scalar::Compare::Equal, sum, three);
+    let picked = m.choose(is_three, one, two);
+    let unused = m.binary(scalar::Binary::Mul, picked, picked);
+    let _ = unused;
+    m.switch(
+        is_three,
+        vec![(not_taken, Vec::new()), (taken, vec![picked])],
+    );
+    m.at(taken);
+    let text = m.emit(Op::Constant(Constant::Data(0)), &[Type::Address])[0];
+    let count = m.int(Bits::B64, 1);
+    m.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, count],
+        },
+        &[],
+    );
+    m.jump(after, vec![kept[0]]);
+    m.at(not_taken);
+    let text = m.emit(Op::Constant(Constant::Data(1)), &[Type::Address])[0];
+    let count = m.int(Bits::B64, 1);
+    m.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, count],
+        },
+        &[],
+    );
+    m.jump(after, vec![two]);
+    m.at(after);
+    let _ = (copied, long);
+    m.ret(Vec::new());
+    scalar::Program {
+        data: vec![b"A".to_vec(), b"B".to_vec()],
+        functions: vec![m.finish(&[])],
+        main: 0,
+    }
+}
+
+fn a_jump_to_the_block_that_follows_a_choice_on_a_constant_and_a_copied_value_are_gone() {
+    let before = a_choice_on_constants();
+    scalar::check(&before).unwrap();
+    let after = scalar::passes(&before);
+    scalar::check(&after).unwrap();
+    assert_eq!(scalar::run(&after), scalar::run(&before));
+    assert_eq!(scalar::run(&after).stdout, b"A");
+    let [main] = &after.functions[..] else {
+        panic!()
+    };
+    // The choice, its arithmetic, the block it did not take, and the jumps
+    // between the rest are one block that writes and returns.
+    assert_eq!(main.blocks.len(), 1, "{after:?}");
+    let ops: Vec<&Op> = main.blocks[0].instructions.iter().map(|i| &i.op).collect();
+    assert!(
+        ops.iter()
+            .all(|op| matches!(op, Op::Constant(_) | Op::System { .. })),
+        "{ops:?}"
+    );
+    assert_eq!(left_to_fold(&after), Vec::<String>::new());
+    assert_eq!(left_to_remove(&after), Vec::<String>::new());
+}
+
+/// A loop that counts to three and writes `A` each time, which holds a
+/// value that it gives to itself on every turn.
+fn a_loop_with_a_value_it_carries() -> scalar::Program {
+    let long = Type::Int(Bits::B64);
+    let mut m = Builder::new();
+    let (head, head_params) = m.block(&[long, long]);
+    let (body, _) = m.block(&[]);
+    let (done, _) = m.block(&[]);
+    let zero = m.int(Bits::B64, 0);
+    let one = m.int(Bits::B64, 1);
+    let three = m.int(Bits::B64, 3);
+    m.jump(head, vec![zero, one]);
+    m.at(head);
+    let (count, carried) = (head_params[0], head_params[1]);
+    let finished = m.compare(scalar::Compare::Equal, count, three);
+    m.switch(finished, vec![(body, Vec::new()), (done, Vec::new())]);
+    m.at(body);
+    let text = m.emit(Op::Constant(Constant::Data(0)), &[Type::Address])[0];
+    let doubled = m.binary(scalar::Binary::Add, carried, carried);
+    m.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, doubled],
+        },
+        &[],
+    );
+    let next = m.binary(scalar::Binary::Add, count, one);
+    m.jump(head, vec![next, carried]);
+    m.at(done);
+    m.ret(Vec::new());
+    scalar::Program {
+        data: vec![b"AA".to_vec()],
+        functions: vec![m.finish(&[])],
+        main: 0,
+    }
+}
+
+fn a_value_a_loop_carries_unchanged_is_the_value_it_started_with() {
+    let before = a_loop_with_a_value_it_carries();
+    scalar::check(&before).unwrap();
+    let after = scalar::passes(&before);
+    scalar::check(&after).unwrap();
+    assert_eq!(scalar::run(&after), scalar::run(&before));
+    assert_eq!(scalar::run(&after).stdout, b"AAAAAA");
+    assert_eq!(left_to_remove(&after), Vec::<String>::new(), "{after:?}");
+    assert_eq!(left_to_fold(&after), Vec::<String>::new(), "{after:?}");
+    let [main] = &after.functions[..] else {
+        panic!()
+    };
+    // The loop keeps one parameter, the count.
+    assert_eq!(main.blocks.iter().map(|b| b.params.len()).sum::<usize>(), 1);
 }
