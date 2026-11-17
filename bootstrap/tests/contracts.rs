@@ -36,6 +36,10 @@ pub const ONCE: &[Test] = &[
         an_ensures_on_a_function_that_does_not_name_its_result_is_an_error_that_says_so,
     ),
     (
+        "a_function_with_a_requires_is_refused_wherever_it_is_used_as_a_value",
+        a_function_with_a_requires_is_refused_wherever_it_is_used_as_a_value,
+    ),
+    (
         "contracts_add_no_instruction_to_a_program_that_compiles_without_them",
         contracts_add_no_instruction_to_a_program_that_compiles_without_them,
     ),
@@ -390,4 +394,51 @@ fn contracts_add_no_instruction_to_a_program_that_compiles_without_them() {
         };
         assert_eq!(lowered(with), lowered(without));
     });
+}
+
+/// A function type states no contract, so a function with a `requires` is
+/// only called by its name: in every way a function name is passed as a value, for
+/// every type, it is refused and the error names it, and with only an
+/// `ensures` it is accepted.
+fn a_function_with_a_requires_is_refused_wherever_it_is_used_as_a_value() {
+    for ty in INTS {
+        let t = ty.name;
+        let max = ty.max();
+        // How the function is used as a value, in `main`.
+        let uses = [
+            "apply(1, f: lift)",
+            "apply(x: 1, f: lift)",
+            "apply(1, lift)",
+        ];
+        for usage in uses {
+            for requires in [true, false] {
+                let line = if requires {
+                    format!("  requires i < {max}\n")
+                } else {
+                    String::new()
+                };
+                let source = format!(
+                    "fn lift(i: {t}) -> r: {t}\n{line}  ensures r >= i\n{{\n  if i < {max} {{ i + 1 }} else {{ i }}\n}}\n\n\
+                     fn apply(x: {t}, f: ({t}) -> {t}) -> {t} {{\n  f(x)\n}}\n\n\
+                     fn main() ! console, alloc {{\n  print(\"{{{usage}}}\")\n}}\n"
+                );
+                match check(source.as_bytes()) {
+                    Ok(_) => assert!(
+                        !requires,
+                        "accepted, though `lift` has a `requires`: {source}"
+                    ),
+                    Err(errors) => {
+                        assert!(
+                            requires,
+                            "refused, though `lift` has no `requires`: {errors:?}"
+                        );
+                        assert!(
+                            errors.iter().any(|e| e.message.contains("lift")),
+                            "{errors:?} does not name the function for {usage}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
