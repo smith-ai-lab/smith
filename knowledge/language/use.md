@@ -29,6 +29,30 @@ use db.transaction (Transaction, begin, commit)
 use model.tokenizer (decode, encode)
 ```
 
+## Nothing is imported implicitly
+
+Every name a file uses from another module is named in its `use` line. Importing an effect brings in the effect's name and nothing else: each operation a file calls is imported by its own name.
+
+```
+use app.log (log, write)
+
+fn greet() ! log {
+  write("hello")
+}
+```
+
+`log` is the effect and `write` is its operation, so both are listed. Listing only the effect is not enough: calling `write` after `use app.log (log)` is refused.
+
+```
+use app.log (log)
+
+fn greet() ! log {
+  write("hello")
+}
+```
+
+What the standard library puts in scope everywhere, such as `print` and the five effects, is unchanged, as [The prelude](prelude.md) describes.
+
 ## The formatter sorts the list
 
 The names in a list are written in the order the formatter gives them, which is sorted. `use db.transaction (begin, commit, Transaction)` is rewritten by the formatter as `use db.transaction (Transaction, begin, commit)`.
@@ -78,6 +102,7 @@ Nothing is re-exported. A name a file imports is for that file alone, and a modu
 | --- | --- |
 | `use m (a, b)` | The names `a` and `b` of the module `m` are in this file |
 | `use m (b, a)` | The same, which the formatter writes as `use m (a, b)` |
+| `use app.log (log)`, then a call of `write` | Refused: an effect's operations are imported by name too |
 | A name never imported | An error that names the module to import from |
 | A name imported, never used | A warning from `smith check` |
 | `use` below code | Not written: every `use` is at the top of the file |
