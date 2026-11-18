@@ -41,8 +41,8 @@ mod traits;
 
 use crate::diag::{Error, Pos};
 use crate::parser::{
-    Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Loop, Match, Over, Part,
-    Pattern, Range, Stmt, Type, Use,
+    Arg, ArithOp, Arm, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop, Match,
+    Over, Part, Pattern, Range, Stmt, Struct, Trait, Type, Use,
 };
 use lists_and_text::{as_read, is_push, is_utf8, text_as_bytes};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, narrowing};
@@ -147,37 +147,6 @@ const TYPES_NOT_BUILT: &[&str] = &[
     "usize", "f16", "bf16", "f32", "f64", "Nat", "Pos", "Fin", "Ptr", "Map",
 ];
 
-/// The types and traits the prelude defines that the compiler builds, with
-/// their implementations, written in Smith. They are read at line 0, which
-/// no file has, so nothing in a file can be confused with them.
-const PRELUDE_ENUMS: &str = "\
-enum Option[T] {
-  some: T
-  none
-}
-
-enum Result[T, E] {
-  ok: T
-  err: E
-}
-
-enum bool {
-  false
-  true
-}
-
-enum Order {
-  less
-  equal
-  greater
-}
-
-struct Utf8Error {
-  at: u64
-}
-
-";
-
 /// The names of the types `PRELUDE` defines.
 const PRELUDE_TYPES: &[&str] = &[
     TEXT,
@@ -201,25 +170,113 @@ fn of_prelude(pos: Pos) -> bool {
     pos.line == 0
 }
 
-/// The definitions of the prelude that are the same for every program, read at
-/// line 0. They are lexed and parsed once in a process, and not once for each
-/// program the process checks.
-fn prelude_items() -> &'static File {
-    static ITEMS: OnceLock<File> = OnceLock::new();
-    ITEMS.get_or_init(|| split_needs(prelude_file(&prelude_source())))
+include!(concat!(env!("OUT_DIR"), "/prelude.rs"));
+
+/// An `impl` of the prelude, whole, with the names its header holds, which is
+/// all of it that is read before a program reaches it.
+pub(crate) struct PreludeImpl<'a> {
+    source: &'a str,
+    /// The trait it is for.
+    name: &'a str,
+    /// The names after the trait's: the types it is for, and its generics.
+    types: &'a [&'a str],
 }
 
-/// The prelude's source without the function that starts the program.
-fn prelude_source() -> String {
-    let mut source = String::from(PRELUDE_ENUMS);
-    source.push_str(traits::PRELUDE);
-    source.push('\n');
-    source.push_str(&numbers_and_operators::integer_traits());
-    for t in Int::ALL {
-        source.push('\n');
-        source.push_str(&numbers_and_operators::integer_impls(t));
+/// What is read of the prelude's source, `std/prelude.smith`, which
+/// `build.rs` divides into its items when the compiler is built. Every program
+/// reads the types and traits, which the checker finds by name wherever syntax
+/// means them, and an `impl` is read when the program reaches its trait or a
+/// type it is for. The text is at line 0, which no file has, so nothing in a
+/// file can be confused with it.
+pub(crate) struct Prelude<'a> {
+    declarations: &'a str,
+    impls: &'a [PreludeImpl<'a>],
+    /// The items read so far in the process, when the prelude is the one the
+    /// compiler holds, so that a process that checks many programs reads each
+    /// item once.
+    parsed: Option<&'static Parsed>,
+}
+
+/// The prelude's types and traits, shared and not copied.
+struct Declared {
+    enums: Vec<Arc<Enum>>,
+    structs: Vec<Arc<Struct>>,
+    traits: Vec<Arc<Trait>>,
+}
+
+/// The items of the prelude's own, parsed once in a process.
+struct Parsed {
+    declarations: OnceLock<File>,
+    impls: [OnceLock<Arc<Impl>>; PRELUDE_IMPLS.len()],
+}
+
+static PARSED: Parsed = Parsed {
+    declarations: OnceLock::new(),
+    impls: [const { OnceLock::new() }; PRELUDE_IMPLS.len()],
+};
+
+/// The prelude the compiler holds.
+const PRELUDE: Prelude<'static> = Prelude {
+    declarations: PRELUDE_DECLARATIONS,
+    impls: PRELUDE_IMPLS,
+    parsed: Some(&PARSED),
+};
+
+impl Prelude<'_> {
+    /// The prelude's types and traits, which every program reads.
+    fn declared(&self) -> Declared {
+        let parse = || split_needs(prelude_file(self.declarations));
+        let of = |items: &File| Declared {
+            enums: items.enums.clone(),
+            structs: items.structs.clone(),
+            traits: items.traits.clone(),
+        };
+        match self.parsed {
+            Some(parsed) => of(parsed.declarations.get_or_init(parse)),
+            None => of(&parse()),
+        }
     }
-    source
+
+    /// The `impl` at the place in the prelude's source.
+    fn impl_at(&self, i: usize) -> Arc<Impl> {
+        let parse = || {
+            let mut file = prelude_file(self.impls[i].source);
+            file.impls.pop().expect("the prelude holds an impl here")
+        };
+        match self.parsed {
+            Some(parsed) => parsed.impls[i].get_or_init(parse).clone(),
+            None => parse(),
+        }
+    }
+
+    /// The `impl`s of the prelude that the items `reached` in the file call
+    /// for, which are those of a trait reached and those for a type reached,
+    /// without the ones already `loaded`.
+    fn wanted(&self, file: &File, reached: &[Item], loaded: &[usize]) -> Vec<usize> {
+        let mut traits: HashSet<&str> = HashSet::new();
+        let mut types: HashSet<&str> = HashSet::new();
+        for item in reached {
+            match *item {
+                Item::Trait(k) => {
+                    traits.insert(&file.traits[k].name);
+                }
+                Item::Struct(s) => {
+                    types.insert(&file.structs[s].name);
+                }
+                Item::Enum(e) => {
+                    types.insert(&file.enums[e].name);
+                }
+                Item::Fn(_) | Item::Impl(_) => {}
+            }
+        }
+        (self.impls.iter().enumerate())
+            .filter(|(i, im)| {
+                !loaded.contains(i)
+                    && (traits.contains(im.name) || im.types.iter().any(|t| types.contains(t)))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 /// The definitions in the source of the prelude, at line 0, which no file has.
@@ -231,16 +288,17 @@ fn prelude_file(source: &str) -> File {
     crate::parser::parse(&tokens).expect("the prelude parses")
 }
 
-/// The file with the definitions of `PRELUDE` before its own.
-fn with_prelude(mut file: File) -> File {
-    let items = prelude_items();
+/// The file with the prelude's types and traits before its own, and the
+/// `impl`s of the prelude at the places `loaded` gives.
+fn with_prelude(mut file: File, prelude: &Prelude, loaded: &[usize]) -> File {
+    let declared = prelude.declared();
     let start = prelude_file(&start_function(&file));
-    file.enums.splice(0..0, items.enums.iter().cloned());
-    file.structs.splice(0..0, items.structs.iter().cloned());
-    file.traits.splice(0..0, items.traits.iter().cloned());
-    file.impls.splice(0..0, items.impls.iter().cloned());
-    file.functions
-        .splice(0..0, items.functions.iter().cloned().chain(start.functions));
+    file.enums.splice(0..0, declared.enums);
+    file.structs.splice(0..0, declared.structs);
+    file.traits.splice(0..0, declared.traits);
+    file.impls
+        .splice(0..0, loaded.iter().map(|&i| prelude.impl_at(i)));
+    file.functions.splice(0..0, start.functions);
     file
 }
 
@@ -1187,12 +1245,41 @@ pub struct Checked {
     /// How many functions and implementations of the prelude the program
     /// reaches, which are the ones the checker checks.
     pub prelude_reached: (usize, usize),
+    /// How many `impl`s of the prelude were read for the program.
+    pub prelude_loaded: usize,
 }
 
 /// Checks the file, and lowers what `main` reaches to the scalar form. Every
 /// error is reported, except one that a mistake already reported would
 /// explain.
 pub fn check(file: File, library: &Library) -> Result<Checked, Vec<Error>> {
+    check_with(file, library, &PRELUDE)
+}
+
+/// `check`, with the text of the prelude given, which is divided now.
+pub(crate) fn check_with_source(
+    file: File,
+    library: &Library,
+    prelude: &str,
+) -> Result<Checked, Vec<Error>> {
+    let divided = crate::divide::divide(prelude);
+    let impls: Vec<PreludeImpl> = (divided.impls.iter())
+        .map(|im| PreludeImpl {
+            source: im.source,
+            name: im.name,
+            types: &im.types,
+        })
+        .collect();
+    let prelude = Prelude {
+        declarations: &divided.declarations,
+        impls: &impls,
+        parsed: None,
+    };
+    check_with(file, library, &prelude)
+}
+
+/// `check`, with the prelude given.
+fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
     let mut resolver = Resolver::new(library);
     let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
     resolver.resolve(Reader::Entry, &file.uses, &defined, &file.written);
@@ -1208,7 +1295,7 @@ pub fn check(file: File, library: &Library) -> Result<Checked, Vec<Error>> {
         placement(&module.file, &mut errors);
     }
     let file = splice(file, read, &mut errors);
-    check_file(file, errors, warnings)
+    check_file(file, errors, warnings, prelude)
         .map(|mut checked| {
             checked.warnings = localize(checked.warnings, &labels);
             checked
@@ -1244,8 +1331,32 @@ fn check_file(
     file: File,
     mut errors: Vec<Error>,
     import_warnings: Vec<Error>,
+    prelude: &Prelude,
 ) -> Result<Checked, Vec<Error>> {
-    let file = split_needs(with_prelude(file));
+    let mut loaded: Vec<usize> = Vec::new();
+    let mut file = split_needs(with_prelude(file, prelude, &loaded));
+    // The `impl`s of the prelude that what the program reaches calls for, which
+    // reach more, until no more are called for.
+    loop {
+        let names = Names::of(&file);
+        let Some(&start_at) = names
+            .functions
+            .get(START)
+            .or_else(|| names.functions.get("main"))
+        else {
+            break;
+        };
+        let wanted = prelude.wanted(&file, &reach(&file, &names, start_at, true), &loaded);
+        if wanted.is_empty() {
+            break;
+        }
+        let before = loaded.len();
+        loaded.extend(wanted);
+        loaded.sort_unstable();
+        file.impls.drain(..before);
+        file.impls
+            .splice(0..0, loaded.iter().map(|&i| prelude.impl_at(i)));
+    }
 
     // The first definition of a name holds it, and a later one is a
     // mistake. Types and functions have names of their own, and the
@@ -1355,129 +1466,14 @@ fn check_file(
     // Where the program starts: at `main`, or at the function that ends the
     // program with the status `main`'s result gives.
     let start_at = function_names.get(START).copied().unwrap_or(main);
-    // What `main` reaches, each in the order it is first reached.
-    let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
-    let mut i = 0;
-    while i < reached.len() {
-        let mut found: Vec<Item> = Vec::new();
-        let type_name = |name: &str, found: &mut Vec<Item>| {
-            if let Some(&s) = struct_names.get(name) {
-                found.push(Item::Struct(s));
-            } else if let Some(&e) = enum_names.get(name) {
-                found.push(Item::Enum(e));
-            } else if let Some(&k) = trait_names.get(name) {
-                found.push(Item::Trait(k));
-            }
-        };
-        // A case written in full names its enum, and a function may be
-        // passed as a value by its name.
-        let called = |values: Vec<&Expr>, found: &mut Vec<Item>| {
-            for e in exprs(values.iter().copied()) {
-                if let Expr::Field { of, .. } = e
-                    && let Expr::Name { name, .. } = &**of
-                {
-                    type_name(name, found);
-                }
-                if let Expr::Name { name, .. } = e
-                    && let Some(&f) = function_names.get(name.as_str())
-                {
-                    found.push(Item::Fn(f));
-                }
-            }
-            for call in calls(values) {
-                if let Some((q, _)) = &call.qualifier {
-                    type_name(q, found);
-                    continue;
-                }
-                let name = call.callee.as_str();
-                if let Some(&f) = function_names.get(name) {
-                    found.push(Item::Fn(f));
-                }
-                type_name(name, found);
-                for &(k, _) in trait_fns.get(name).into_iter().flatten() {
-                    found.push(Item::Trait(k));
-                }
-            }
-        };
-        let function = |f: &Function, found: &mut Vec<Item>| {
-            for name in types_named(f) {
-                type_name(name, found);
-            }
-            let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
-            called(values(&f.body).chain(defaults).collect(), found);
-        };
-        match reached[i] {
-            Item::Fn(f) => function(&file.functions[f], &mut found),
-            Item::Struct(s) => {
-                let s = &file.structs[s];
-                for field in &s.fields {
-                    for (name, _) in type_names(&field.ty) {
-                        type_name(name, &mut found);
-                    }
-                }
-                for name in bounds_named(&s.generics) {
-                    type_name(name, &mut found);
-                }
-                let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
-                called(defaults.collect(), &mut found);
-                found.extend(impls_for(&file, &s.name));
-            }
-            Item::Enum(e) => {
-                let e = &file.enums[e];
-                for t in e.cases.iter().filter_map(|c| c.ty.as_ref()) {
-                    for (name, _) in type_names(t) {
-                        type_name(name, &mut found);
-                    }
-                }
-                for name in bounds_named(&e.generics) {
-                    type_name(name, &mut found);
-                }
-                found.extend(impls_for(&file, &e.name));
-            }
-            Item::Trait(k) => {
-                let t = &file.traits[k];
-                // The `Fmt` a type is given runs its `Repr`.
-                if t.name == "Fmt" && of_prelude(t.pos) {
-                    type_name("Repr", &mut found);
-                }
-                for f in &t.functions {
-                    function(f, &mut found);
-                }
-                for name in bounds_named(&t.generics) {
-                    type_name(name, &mut found);
-                }
-                for (i, im) in file.impls.iter().enumerate() {
-                    if im.name == t.name {
-                        found.push(Item::Impl(i));
-                    }
-                }
-            }
-            Item::Impl(i) => {
-                let im = &file.impls[i];
-                type_name(&im.name, &mut found);
-                for t in &im.args {
-                    for (name, _) in type_names(t) {
-                        type_name(name, &mut found);
-                    }
-                }
-                for name in bounds_named(&im.generics) {
-                    type_name(name, &mut found);
-                }
-                for name in needs_named(&im.requires) {
-                    type_name(name, &mut found);
-                }
-                for f in &im.functions {
-                    function(f, &mut found);
-                }
-            }
-        }
-        for item in found {
-            if !reached.contains(&item) {
-                reached.push(item);
-            }
-        }
-        i += 1;
-    }
+    let names = Names {
+        functions: function_names,
+        structs: struct_names,
+        enums: enum_names,
+        traits: trait_names,
+        trait_fns,
+    };
+    let reached = reach(&file, &names, start_at, false);
     let reached_types: Vec<Def> = (reached.iter())
         .filter_map(|r| match r {
             Item::Struct(s) => Some(Def::Struct(*s)),
@@ -1488,11 +1484,11 @@ fn check_file(
 
     let mut defs = Defs {
         file: &file,
-        function_names,
-        struct_names,
-        enum_names,
-        trait_names,
-        trait_fns,
+        function_names: names.functions,
+        struct_names: names.structs,
+        enum_names: names.enums,
+        trait_names: names.traits,
+        trait_fns: names.trait_fns,
         cyclic: vec![false; file.structs.len()],
         cyclic_enums: vec![false; file.enums.len()],
         struct_scopes: Vec::new(),
@@ -1667,12 +1663,188 @@ fn check_file(
     Ok(Checked {
         program,
         prelude_reached,
+        prelude_loaded: loaded.len(),
         warnings: {
             let mut all = warnings(&file, &reached);
             all.extend(import_warnings);
             all
         },
     })
+}
+
+/// What a name stands for in a file: the item that first defines it.
+struct Names<'a> {
+    functions: HashMap<&'a str, usize>,
+    structs: HashMap<&'a str, usize>,
+    enums: HashMap<&'a str, usize>,
+    traits: HashMap<&'a str, usize>,
+    trait_fns: HashMap<&'a str, Vec<(usize, usize)>>,
+}
+
+impl<'a> Names<'a> {
+    /// The names of the items of the file, with no mistake reported.
+    fn of(file: &'a File) -> Names<'a> {
+        let mut names = Names {
+            functions: HashMap::new(),
+            structs: HashMap::new(),
+            enums: HashMap::new(),
+            traits: HashMap::new(),
+            trait_fns: HashMap::new(),
+        };
+        for (i, f) in file.functions.iter().enumerate() {
+            names.functions.entry(f.name.as_str()).or_insert(i);
+        }
+        for (i, s) in file.structs.iter().enumerate() {
+            names.structs.entry(s.name.as_str()).or_insert(i);
+        }
+        for (i, e) in file.enums.iter().enumerate() {
+            names.enums.entry(e.name.as_str()).or_insert(i);
+        }
+        for (k, t) in file.traits.iter().enumerate() {
+            names.traits.entry(t.name.as_str()).or_insert(k);
+            for (i, f) in t.functions.iter().enumerate() {
+                let list = names.trait_fns.entry(f.name.as_str()).or_default();
+                if !list.iter().any(|(t, _)| *t == k) {
+                    list.push((k, i));
+                }
+            }
+        }
+        names
+    }
+}
+
+/// What the function the program starts at reaches, each item in the order
+/// it is first reached. A contract is not run, so what only a `requires` or an
+/// `ensures` names is reached only when `contracts` says to look in them, as
+/// choosing the prelude's `impl`s does: `by <= 30` there needs `Ord`.
+fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<Item> {
+    let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
+    let mut i = 0;
+    while i < reached.len() {
+        let mut found: Vec<Item> = Vec::new();
+        let type_name = |name: &str, found: &mut Vec<Item>| {
+            if let Some(&s) = names.structs.get(name) {
+                found.push(Item::Struct(s));
+            } else if let Some(&e) = names.enums.get(name) {
+                found.push(Item::Enum(e));
+            } else if let Some(&k) = names.traits.get(name) {
+                found.push(Item::Trait(k));
+            }
+        };
+        // A case written in full names its enum, and a function may be
+        // passed as a value by its name.
+        let called = |values: Vec<&Expr>, found: &mut Vec<Item>| {
+            for e in exprs(values.iter().copied()) {
+                if let Expr::Field { of, .. } = e
+                    && let Expr::Name { name, .. } = &**of
+                {
+                    type_name(name, found);
+                }
+                if let Expr::Name { name, .. } = e
+                    && let Some(&f) = names.functions.get(name.as_str())
+                {
+                    found.push(Item::Fn(f));
+                }
+            }
+            for call in calls(values) {
+                if let Some((q, _)) = &call.qualifier {
+                    type_name(q, found);
+                    continue;
+                }
+                let name = call.callee.as_str();
+                if let Some(&f) = names.functions.get(name) {
+                    found.push(Item::Fn(f));
+                }
+                type_name(name, found);
+                for &(k, _) in names.trait_fns.get(name).into_iter().flatten() {
+                    found.push(Item::Trait(k));
+                }
+            }
+        };
+        let function = |f: &Function, found: &mut Vec<Item>| {
+            for name in types_named(f) {
+                type_name(name, found);
+            }
+            let defaults = f.params.iter().filter_map(|p| p.default.as_ref());
+            let contracts = f.requires.iter().chain(&f.ensures).filter(|_| contracts);
+            called(
+                values(&f.body).chain(defaults).chain(contracts).collect(),
+                found,
+            );
+        };
+        match reached[i] {
+            Item::Fn(f) => function(&file.functions[f], &mut found),
+            Item::Struct(s) => {
+                let s = &file.structs[s];
+                for field in &s.fields {
+                    for (name, _) in type_names(&field.ty) {
+                        type_name(name, &mut found);
+                    }
+                }
+                for name in bounds_named(&s.generics) {
+                    type_name(name, &mut found);
+                }
+                let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
+                called(defaults.collect(), &mut found);
+                found.extend(impls_for(file, &s.name));
+            }
+            Item::Enum(e) => {
+                let e = &file.enums[e];
+                for t in e.cases.iter().filter_map(|c| c.ty.as_ref()) {
+                    for (name, _) in type_names(t) {
+                        type_name(name, &mut found);
+                    }
+                }
+                for name in bounds_named(&e.generics) {
+                    type_name(name, &mut found);
+                }
+                found.extend(impls_for(file, &e.name));
+            }
+            Item::Trait(k) => {
+                let t = &file.traits[k];
+                // The `Fmt` a type is given runs its `Repr`.
+                if t.name == "Fmt" && of_prelude(t.pos) {
+                    type_name("Repr", &mut found);
+                }
+                for f in &t.functions {
+                    function(f, &mut found);
+                }
+                for name in bounds_named(&t.generics) {
+                    type_name(name, &mut found);
+                }
+                for (i, im) in file.impls.iter().enumerate() {
+                    if im.name == t.name {
+                        found.push(Item::Impl(i));
+                    }
+                }
+            }
+            Item::Impl(i) => {
+                let im = &file.impls[i];
+                type_name(&im.name, &mut found);
+                for t in &im.args {
+                    for (name, _) in type_names(t) {
+                        type_name(name, &mut found);
+                    }
+                }
+                for name in bounds_named(&im.generics) {
+                    type_name(name, &mut found);
+                }
+                for name in needs_named(&im.requires) {
+                    type_name(name, &mut found);
+                }
+                for f in &im.functions {
+                    function(f, &mut found);
+                }
+            }
+        }
+        for item in found {
+            if !reached.contains(&item) {
+                reached.push(item);
+            }
+        }
+        i += 1;
+    }
+    reached
 }
 
 /// The modules of a library, each with its name and its source, and the files

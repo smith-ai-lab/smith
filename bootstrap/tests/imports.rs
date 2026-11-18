@@ -104,6 +104,8 @@ fn library() -> &'static [Module] {
             .unwrap()
             .map(|e| e.unwrap().path())
             .filter(|p| p.extension().is_some_and(|e| e == "smith"))
+            // The prelude is read with every program and is not a module.
+            .filter(|p| p.file_stem().is_some_and(|s| s != "prelude"))
             .collect();
         files.sort();
         files

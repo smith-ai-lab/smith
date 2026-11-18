@@ -3,6 +3,7 @@
 
 mod check;
 pub mod diag;
+mod divide;
 mod lexer;
 mod parser;
 pub mod scalar;
@@ -43,6 +44,24 @@ pub fn lower(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {
 /// before a target is involved.
 pub fn prelude_reached(source: &[u8]) -> Result<(usize, usize), Vec<diag::Error>> {
     checked(source, &mut Timings::new()).map(|checked| checked.prelude_reached)
+}
+
+/// How many `impl`s of the prelude are read for a source file: the ones its
+/// items reach, and none that nothing reaches. The text of an `impl` is lexed
+/// and parsed when it is read.
+pub fn prelude_read(source: &[u8]) -> Result<usize, Vec<diag::Error>> {
+    checked(source, &mut Timings::new()).map(|checked| checked.prelude_loaded)
+}
+
+/// `prelude_read`, with `prelude` as the prelude's source, which is divided
+/// here as `build.rs` divides `std/prelude.smith`, so that a test can add to a
+/// copy of it.
+pub fn prelude_read_with(prelude: &str, source: &[u8]) -> Result<usize, Vec<diag::Error>> {
+    let tokens = lexer::lex(source).map_err(in_order)?;
+    let file = parser::parse(&tokens).map_err(in_order)?;
+    check::check_with_source(file, &check::Library::standard(), prelude)
+        .map(|checked| checked.prelude_loaded)
+        .map_err(in_order)
 }
 
 /// The warnings `smith check` reports about a source file, in the order of

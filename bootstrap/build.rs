@@ -13,6 +13,9 @@
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
+#[path = "src/divide.rs"]
+mod divide;
+
 /// The groups, as the constant a file declares and the function that gives
 /// every test of the group.
 const GROUPS: &[(&str, &str)] = &[("ONCE", "once"), ("MACHINE", "machine"), ("RUNS", "hang")];
@@ -20,6 +23,7 @@ const GROUPS: &[(&str, &str)] = &[("ONCE", "once"), ("MACHINE", "machine"), ("RU
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     standard_library(&root);
+    prelude(&root);
     let tests = root.join("tests");
     println!("cargo:rerun-if-changed=tests");
     println!("cargo:rerun-if-changed=build.rs");
@@ -119,6 +123,8 @@ fn standard_library(root: &Path) {
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|e| e == "smith"))
+        // The prelude is read with every program, not imported.
+        .filter(|p| p.file_stem().is_some_and(|s| s != "prelude"))
         .collect();
     files.sort();
     let mut out = String::from(
@@ -147,5 +153,35 @@ fn standard_library(root: &Path) {
     )
     .unwrap();
     let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("std_modules.rs");
+    std::fs::write(dest, out).unwrap();
+}
+
+/// Divides the prelude, which is `std/prelude.smith`, into its items, so that
+/// an `impl` is found by the trait and the types it is for and is read only
+/// when a program reaches it. The result is `prelude.rs` in the build folder:
+/// the text of the items that are not `impl`s, which every program reads, and
+/// each `impl` with its names.
+fn prelude(root: &Path) {
+    let file = root.join("..").join("std").join("prelude.smith");
+    println!("cargo:rerun-if-changed=../std/prelude.smith");
+    let source = std::fs::read_to_string(&file).unwrap();
+    let divided = divide::divide(&source);
+    let mut out = format!(
+        "/// The prelude's items that are not `impl`s.\n\
+         const PRELUDE_DECLARATIONS: &str = {:?};\n\n\
+         /// The prelude's `impl`s, in the order written.\n\
+         const PRELUDE_IMPLS: &[PreludeImpl<'static>] = &[\n",
+        divided.declarations
+    );
+    for im in &divided.impls {
+        writeln!(
+            out,
+            "    PreludeImpl {{ source: {:?}, name: {:?}, types: &{:?} }},",
+            im.source, im.name, im.types
+        )
+        .unwrap();
+    }
+    out.push_str("];\n");
+    let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("prelude.rs");
     std::fs::write(dest, out).unwrap();
 }
