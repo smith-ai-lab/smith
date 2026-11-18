@@ -6,8 +6,10 @@
 use crate::diag::{Error, Pos};
 use crate::lexer::{Piece, Tok, Token};
 
+mod lists_and_text;
 mod traits;
 
+pub use lists_and_text::Part;
 pub use traits::{Impl, Trait, Without};
 
 /// The definitions of a file, each kind in the order they are written.
@@ -301,16 +303,6 @@ impl ArithOp {
     }
 }
 
-/// A part of a string literal that holds expressions.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Part {
-    /// Text, with its escapes applied, which is never empty.
-    Text(Vec<u8>),
-    /// An expression in braces, held as the call `Fmt.fmt(e)` that turns it
-    /// into text. The call is where the expression is.
-    Expr(Expr),
-}
-
 /// A lambda: a block, with `fn` and the names of its parameters before it
 /// when it takes any.
 #[derive(Debug, PartialEq, Eq)]
@@ -570,37 +562,6 @@ fn place(expr: &Expr) -> Option<(String, Pos, Vec<Named>)> {
         },
         _ => None,
     }
-}
-
-/// The expression in braces in a string, from its tokens, which end with
-/// the `}` that closes it, as the call of `Fmt.fmt` that turns it into
-/// text.
-fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Error> {
-    let mut p = Parser {
-        tokens,
-        at: 0,
-        errors: Vec::new(),
-        no_lambda: false,
-        hoisted: Vec::new(),
-    };
-    let value = p.expr()?;
-    if p.at + 1 != tokens.len() {
-        return Err(p.expected("`}` to close the expression in the string", p.tok()));
-    }
-    hoisted.append(&mut p.hoisted);
-    let pos = value.pos();
-    Ok(Expr::Call(Call {
-        qualifier: Some(("Fmt".to_string(), pos)),
-        callee: "fmt".to_string(),
-        pos,
-        name_pos: pos,
-        args: vec![Arg {
-            name: None,
-            value,
-            after: false,
-        }],
-        end: pos,
-    }))
 }
 
 /// The literal for the number written as `text`, which the lexer has found
@@ -2090,31 +2051,7 @@ impl Parser<'_> {
             Tok::Interp(pieces) => {
                 let pieces = pieces.clone();
                 self.bump();
-                let mut parts: Vec<Part> = Vec::new();
-                for piece in &pieces {
-                    match piece {
-                        Piece::Text(text) => parts.push(Part::Text(text.clone())),
-                        Piece::Expr(tokens) => {
-                            let mark = self.hoisted.len();
-                            let e = interpolated(tokens, &mut self.hoisted)?;
-                            if self.hoisted.len() > mark {
-                                let mut at = mark;
-                                for part in &mut parts {
-                                    // The expression is held as the call that
-                                    // turns it into text, which is not what runs
-                                    // first.
-                                    if let Part::Expr(Expr::Call(fmt)) = part {
-                                        for arg in &mut fmt.args {
-                                            self.spill(&mut arg.value, &mut at);
-                                        }
-                                    }
-                                }
-                            }
-                            parts.push(Part::Expr(e));
-                        }
-                    }
-                }
-                Expr::Interp { pos, parts }
+                self.interpolation(&pieces, pos)?
             }
             Tok::Number(text) => {
                 let text = text.clone();
@@ -2198,10 +2135,7 @@ impl Parser<'_> {
                 }
             }
             Tok::Punct("{") | Tok::Keyword("fn") => Expr::Lambda(Box::new(self.lambda()?)),
-            Tok::Punct("[") => {
-                let items = self.list_until("]", Self::expr, Self::spill_exprs)?;
-                Expr::List { pos, items }
-            }
+            Tok::Punct("[") => self.list_literal(pos)?,
             tok if starts_expression(tok) => {
                 let feature = match tok {
                     Tok::Punct("-") => "the operator `-`",
@@ -2216,23 +2150,7 @@ impl Parser<'_> {
         };
         while matches!(self.tok(), Tok::Punct("." | "[")) {
             if self.tok() == &Tok::Punct("[") {
-                let at = self.pos();
-                self.bump();
-                let mut index = self.expr()?;
-                if self.tok() == &Tok::Punct(",") {
-                    let mut items = vec![index];
-                    while self.tok() == &Tok::Punct(",") {
-                        self.bump();
-                        items.push(self.expr()?);
-                    }
-                    index = Expr::Tuple { pos: at, items };
-                }
-                self.expect_punct("]", "`]`")?;
-                expr = Expr::Index {
-                    of: Box::new(expr),
-                    index: Box::new(index),
-                    pos: at,
-                };
+                expr = self.index(expr)?;
                 continue;
             }
             self.bump();
