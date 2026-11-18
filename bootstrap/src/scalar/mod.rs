@@ -135,8 +135,9 @@ pub enum System {
     /// address of the first. The bytes are the program's until it ends. A
     /// request the system refuses ends the program with a failing status.
     Allocate,
-    /// Ends the program with a failing status. It takes and gives nothing.
-    Fail,
+    /// Ends the program with the status, a byte, that it takes. It gives
+    /// nothing.
+    Exit,
 }
 
 /// What an instruction does with two integers of the same size, except a

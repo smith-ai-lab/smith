@@ -50,8 +50,8 @@ struct Machine<'a> {
     depth: usize,
 }
 
-/// The system refused to give memory, so the program ends.
-struct Refused;
+/// The program ends, with the status.
+struct Ended(u8);
 
 /// How many blocks a program may enter before it is taken to never end. A
 /// program that has not ended by then has not ended in a time any test can
@@ -137,7 +137,7 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
     };
     let status = match machine.call(program.main, args) {
         Ok(_) => 0,
-        Err(Refused) => 1,
+        Err(Ended(status)) => i32::from(status),
     };
     (
         Outcome {
@@ -288,7 +288,7 @@ fn width(ty: Type) -> usize {
 }
 
 impl Machine<'_> {
-    fn call(&mut self, function: usize, args: Vec<Word>) -> Result<Vec<Word>, Refused> {
+    fn call(&mut self, function: usize, args: Vec<Word>) -> Result<Vec<Word>, Ended> {
         let program = self.program;
         let f = &program.functions[function];
         let mut values: Vec<Option<Word>> = vec![None; f.types.len()];
@@ -409,7 +409,7 @@ impl Machine<'_> {
                         };
                         self.requests.push(count as usize);
                         if count > self.left as u64 {
-                            return Err(Refused);
+                            return Err(Ended(1));
                         }
                         self.left -= count as usize;
                         let at = BASE + self.memory.len();
@@ -417,8 +417,14 @@ impl Machine<'_> {
                         vec![Word::Address(at)]
                     }
                     Op::System {
-                        call: System::Fail, ..
-                    } => return Err(Refused),
+                        call: System::Exit,
+                        args,
+                    } => {
+                        let Word::Int(status) = get(&args[0]) else {
+                            panic!("a status that is not a number")
+                        };
+                        return Err(Ended(status as u8));
+                    }
                     Op::System {
                         call: System::Write(stream),
                         args,
