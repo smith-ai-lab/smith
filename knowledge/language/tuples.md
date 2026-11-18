@@ -69,7 +69,19 @@ fn total(pairs: List[(str, i32)]) -> i32 {
 
 `first((7, "x"))` is `7`. In `total`, each element of `pairs` is taken apart as the loop meets it. A lambda does the same: `map(pairs) fn((name, count)) { count }`.
 
-Only a pattern that always matches may stand in these places: a name, and a tuple of such patterns. A pattern that names a case or a literal may not match, so it is written in a [`match`](match.md).
+Only a pattern that always matches may stand in these places and on the left of a binding: a name, and a tuple of such patterns. A pattern that names a case, a literal, or a list may not match, so it is written in a [`match`](match.md). A binding that needs one case of a value is a `match` whose other arm leaves with a [`return`](return.md).
+
+```
+fn double(x: Option[i32]) -> i32 {
+  n = match x {
+    .some(n) { n }
+    .none { return 0 }
+  }
+  wrapping_add(n, n)
+}
+```
+
+`double(.some(4))` is `8` and `double(.none)` is `0`. Written `.some(n) = x`, the binding is refused, as `x` may be `.none`. The compiler does not build `return` yet, so `double` waits for it.
 
 A parameter written as a pattern has no name of its own, so its argument is given by position. `first(t: (7, "x"))` is refused, as `first` has no parameter named `t`. The compiler does not build a pattern in these places, so no words are quoted.
 
