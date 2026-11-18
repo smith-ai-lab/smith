@@ -45,7 +45,7 @@ In the first arm `p` is a proof that `rows * cols <= limit`, which `fill` requir
 
 ## A failure is returned
 
-There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](tasks.md) when the system runs out of what they stand for.
+There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](task-ending.md) when the system runs out of what they stand for.
 
 ```
 fn index_of(raw: Nat, size: Nat) -> Result[Fin[size], str] {
