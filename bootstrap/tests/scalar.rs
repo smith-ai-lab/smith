@@ -159,6 +159,26 @@ pub const ONCE: &[Test] = &[
         "a_value_a_loop_carries_unchanged_is_the_value_it_started_with",
         a_value_a_loop_carries_unchanged_is_the_value_it_started_with,
     ),
+    (
+        "an_instruction_that_reads_its_own_result_is_refused",
+        an_instruction_that_reads_its_own_result_is_refused,
+    ),
+    (
+        "a_widening_or_a_narrowing_to_the_size_it_has_is_refused",
+        a_widening_or_a_narrowing_to_the_size_it_has_is_refused,
+    ),
+    (
+        "a_text_or_a_block_the_program_does_not_hold_is_refused",
+        a_text_or_a_block_the_program_does_not_hold_is_refused,
+    ),
+    (
+        "a_value_a_loop_passes_through_another_block_unchanged_is_the_value_it_started_with",
+        a_value_a_loop_passes_through_another_block_unchanged_is_the_value_it_started_with,
+    ),
+    (
+        "a_function_that_jumps_back_to_its_first_block_is_given_by_the_passes_as_it_was",
+        a_function_that_jumps_back_to_its_first_block_is_given_by_the_passes_as_it_was,
+    ),
 ];
 
 /// The values an instruction reads.
@@ -534,6 +554,118 @@ fn an_instruction_on_numbers_used_at_a_wrong_size_is_refused() {
     for (how, count) in damaged {
         damaged_some(count, how);
     }
+}
+
+/// The first value of a function that an integer constant defines, with the
+/// place of its instruction.
+fn first_int_constant(f: &scalar::Function) -> Option<(usize, usize, Value)> {
+    for (b, block) in f.blocks.iter().enumerate() {
+        for (i, instruction) in block.instructions.iter().enumerate() {
+            if let (Op::Constant(Constant::Int(_)), [result]) =
+                (&instruction.op, &instruction.results[..])
+                && matches!(f.types[result.0], Type::Int(_))
+            {
+                return Some((b, i, *result));
+            }
+        }
+    }
+    None
+}
+
+fn an_instruction_that_reads_its_own_result_is_refused() {
+    let damaged = damaging(
+        |p| {
+            for f in &mut p.functions {
+                let types = f.types.clone();
+                for block in &mut f.blocks {
+                    for instruction in &mut block.instructions {
+                        let [result] = instruction.results[..] else {
+                            continue;
+                        };
+                        if replace_one(&mut instruction.op, &types, types[result.0], result) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        },
+        |why| matches!(why, Why::NotReached(_)),
+    );
+    damaged_some(damaged, "an instruction reading its own result");
+}
+
+fn a_widening_or_a_narrowing_to_the_size_it_has_is_refused() {
+    for widens in [true, false] {
+        let damaged = damaging(
+            |p| {
+                for f in &mut p.functions {
+                    let Some((b, i, value)) = first_int_constant(f) else {
+                        continue;
+                    };
+                    let ty = f.types[value.0];
+                    let result = Value(f.types.len());
+                    f.types.push(ty);
+                    let op = if widens {
+                        Op::Widen {
+                            signed: false,
+                            value,
+                        }
+                    } else {
+                        Op::Narrow(value)
+                    };
+                    let instruction = scalar::Instruction {
+                        results: vec![result],
+                        op,
+                    };
+                    f.blocks[b].instructions.insert(i + 1, instruction);
+                    return true;
+                }
+                false
+            },
+            |why| matches!(why, Why::WrongType(_)),
+        );
+        damaged_some(damaged, "a change of an integer to the size it has");
+    }
+}
+
+fn a_text_or_a_block_the_program_does_not_hold_is_refused() {
+    // The first place past the last text.
+    let text = damaging(
+        |p| {
+            let past = p.data.len();
+            for f in &mut p.functions {
+                for block in &mut f.blocks {
+                    for instruction in &mut block.instructions {
+                        if let Op::Constant(c @ Constant::Data(_)) = &mut instruction.op {
+                            *c = Constant::Data(past);
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        },
+        |why| matches!(why, Why::Missing),
+    );
+    damaged_some(text, "a text past the last");
+    // The first place past the last block.
+    let block = damaging(
+        |p| {
+            for f in &mut p.functions {
+                let past = f.blocks.len();
+                for block in &mut f.blocks {
+                    if let End::Jump(j) = &mut block.end {
+                        j.block = past;
+                        return true;
+                    }
+                }
+            }
+            false
+        },
+        |why| matches!(why, Why::Missing),
+    );
+    damaged_some(block, "a jump past the last block");
 }
 
 /// How many programs were damaged, for a test to say it damaged some.
@@ -1653,6 +1785,111 @@ fn a_value_a_loop_carries_unchanged_is_the_value_it_started_with() {
     };
     // The loop keeps one parameter, the count.
     assert_eq!(main.blocks.iter().map(|b| b.params.len()).sum::<usize>(), 1);
+}
+
+/// A loop that counts to three and writes `AA` each time, which holds a
+/// value that it gives to itself on every turn, through a block of its own.
+fn a_loop_with_a_value_it_passes_on() -> scalar::Program {
+    let long = Type::Int(Bits::B64);
+    let mut m = Builder::new();
+    let (head, head_params) = m.block(&[long, long]);
+    let (through, through_params) = m.block(&[long]);
+    let (done, _) = m.block(&[]);
+    let zero = m.int(Bits::B64, 0);
+    let one = m.int(Bits::B64, 1);
+    let three = m.int(Bits::B64, 3);
+    m.jump(head, vec![zero, one]);
+    m.at(head);
+    let (count, carried) = (head_params[0], head_params[1]);
+    let finished = m.compare(scalar::Compare::Equal, count, three);
+    m.switch(finished, vec![(through, vec![carried]), (done, Vec::new())]);
+    m.at(through);
+    let passed = through_params[0];
+    let text = m.emit(Op::Constant(Constant::Data(0)), &[Type::Address])[0];
+    let doubled = m.binary(scalar::Binary::Add, passed, passed);
+    m.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, doubled],
+        },
+        &[],
+    );
+    let next = m.binary(scalar::Binary::Add, count, one);
+    m.jump(head, vec![next, passed]);
+    m.at(done);
+    m.ret(Vec::new());
+    scalar::Program {
+        data: vec![b"AA".to_vec()],
+        functions: vec![m.finish(&[])],
+        main: 0,
+    }
+}
+
+fn a_value_a_loop_passes_through_another_block_unchanged_is_the_value_it_started_with() {
+    let before = a_loop_with_a_value_it_passes_on();
+    scalar::check(&before).unwrap();
+    let after = scalar::passes(&before);
+    scalar::check(&after).unwrap();
+    assert_eq!(scalar::run(&after), scalar::run(&before));
+    assert_eq!(scalar::run(&after).stdout, b"AAAAAA");
+    assert_eq!(left_to_remove(&after), Vec::<String>::new(), "{after:?}");
+    assert_eq!(left_to_fold(&after), Vec::<String>::new(), "{after:?}");
+    let [main] = &after.functions[..] else {
+        panic!()
+    };
+    // The loop keeps one parameter, the count.
+    assert_eq!(main.blocks.iter().map(|b| b.params.len()).sum::<usize>(), 1);
+}
+
+/// A function that writes `A` once for each of the numbers from its
+/// parameter down to 0, by a jump back to its first block, that is too large
+/// to be inlined, and a `main` that calls it with 1 and with 2.
+fn a_function_that_loops_in_its_first_block() -> scalar::Program {
+    let long = Type::Int(Bits::B64);
+    let mut f = Builder::new();
+    let [n] = f.params(&[long])[..] else { panic!() };
+    let (end, _) = f.block(&[]);
+    let zero = f.int(Bits::B64, 0);
+    let one = f.int(Bits::B64, 1);
+    let text = f.emit(Op::Constant(Constant::Data(0)), &[Type::Address])[0];
+    f.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, one],
+        },
+        &[],
+    );
+    let finished = f.compare(scalar::Compare::Equal, n, zero);
+    let next = f.binary(scalar::Binary::Sub, n, one);
+    f.switch(finished, vec![(0, vec![next]), (end, Vec::new())]);
+    f.at(end);
+    f.ret(Vec::new());
+    let looping = f.finish(&[]);
+    let mut m = Builder::new();
+    let one = m.int(Bits::B64, 1);
+    let two = m.int(Bits::B64, 2);
+    m.call(1, vec![one], &[]);
+    m.call(1, vec![two], &[]);
+    m.ret(Vec::new());
+    scalar::Program {
+        data: vec![b"A".to_vec()],
+        functions: vec![m.finish(&[]), looping],
+        main: 0,
+    }
+}
+
+fn a_function_that_jumps_back_to_its_first_block_is_given_by_the_passes_as_it_was() {
+    let before = a_function_that_loops_in_its_first_block();
+    scalar::check(&before).unwrap();
+    assert_eq!(scalar::run(&before).stdout, b"AAAAA");
+    for after in after_each_pass(&before) {
+        scalar::check(&after).unwrap();
+        assert_eq!(scalar::run(&after), scalar::run(&before), "{after:?}");
+    }
+    let after = scalar::passes(&before);
+    assert_eq!(left_to_fold(&after), Vec::<String>::new(), "{after:?}");
+    assert_eq!(left_to_remove(&after), Vec::<String>::new(), "{after:?}");
+    assert_eq!(scalar::passes(&after), after);
 }
 
 /// The blocks a function reaches from its first, when the block `without`,
