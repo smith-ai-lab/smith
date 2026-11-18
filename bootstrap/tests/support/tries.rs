@@ -575,7 +575,7 @@ enum Done {
 }
 
 impl Try[Maybe, Done, str] {
-  fn then(c: Maybe, body: (str) -> Done) -> Done {
+  fn then(c: Maybe, body: fn(str) -> Done) -> Done {
     match c {
       .yes(s) { body(s) }
       .no { .stop }
@@ -590,7 +590,7 @@ fn find(name: str, have: Option[str]) -> Result[str, str] ! alloc {
   }
 }
 
-fn via(have: Option[str], body: (Option[str]) -> Result[str, str]) -> Result[str, str] {
+fn via(have: Option[str], body: fn(Option[str]) -> Result[str, str]) -> Result[str, str] {
   body(have)
 }
 
@@ -626,21 +626,21 @@ fn join_n(t: (str, str), c: str) -> str ! alloc {
   \"{a}{b}{c}\"
 }
 
-fn app(body: () -> str) -> str { body() }
+fn app(body: fn() -> str) -> str { body() }
 
 fn join_s(t: Trio) -> str ! alloc { \"{t.first}{t.second}{t.third}\" }
 
-fn wrap(label: str, body: () -> ()) ! console, alloc {
+fn wrap(label: str, body: fn()) ! console, alloc {
   print(\"<{label}\")
   body()
   print(\"{label}>\")
 }
 
-fn each(value: str, body: (str) -> ()) {
+fn each(value: str, body: fn(str)) {
   body(value)
 }
 
-fn tagged(tag: str = \"t\", body: () -> ()) ! console, alloc {
+fn tagged(tag: str = \"t\", body: fn()) ! console, alloc {
   print(\"[{tag}]\")
   body()
 }

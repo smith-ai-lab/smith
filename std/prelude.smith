@@ -77,11 +77,11 @@ impl[T: Exit, E: Fmt] Exit[Result[T, E]] {
 }
 
 trait Try[C, R, out T] {
-  fn then(c: C, body: (T) -> R) -> R
+  fn then(c: C, body: fn(T) -> R) -> R
 }
 
 impl[T, U, E] Try[Result[T, E], Result[U, E], T] {
-  fn then(c: Result[T, E], body: (T) -> Result[U, E]) -> Result[U, E] {
+  fn then(c: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
     match c {
       .ok(x) { body(x) }
       .err(e) { .err(e) }
@@ -90,7 +90,7 @@ impl[T, U, E] Try[Result[T, E], Result[U, E], T] {
 }
 
 impl[T, U] Try[Option[T], Option[U], T] {
-  fn then(c: Option[T], body: (T) -> Option[U]) -> Option[U] {
+  fn then(c: Option[T], body: fn(T) -> Option[U]) -> Option[U] {
     match c {
       .some(x) { body(x) }
       .none { .none }
@@ -99,7 +99,7 @@ impl[T, U] Try[Option[T], Option[U], T] {
 }
 
 impl Try[Flow, Flow, ()] {
-  fn then(c: Flow, body: (()) -> Flow) -> Flow {
+  fn then(c: Flow, body: fn(()) -> Flow) -> Flow {
     match c {
       .go { body(()) }
       .stop { .stop }
@@ -108,11 +108,11 @@ impl Try[Flow, Flow, ()] {
 }
 
 trait Iterate[C, out T] {
-  fn each(c: C, body: (T) -> Flow) -> Flow
+  fn each(c: C, body: fn(T) -> Flow) -> Flow
 }
 
 impl[T] Iterate[List[T], T] {
-  fn each(c: List[T], body: (T) -> Flow) -> Flow {
+  fn each(c: List[T], body: fn(T) -> Flow) -> Flow {
     loop i in 0..c.size {
       match body(c[i]) {
         .stop { return .stop }

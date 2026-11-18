@@ -10,7 +10,7 @@ status: built
 `with f(args)` passes the rest of the enclosing block to `f` as a [lambda](lambdas.md), added as the last argument. It keeps code flat. With `unless` from [Lambdas](lambdas.md):
 
 ```
-fn unless(skip: bool, otherwise: f32, body: () -> f32) -> f32 {
+fn unless(skip: bool, otherwise: f32, body: fn() -> f32) -> f32 {
   if skip { otherwise } else { body() }
 }
 
@@ -39,7 +39,7 @@ The lines before `with` run as they are written, and the names they define may b
 A function that runs its lambda between two things of its own shows the order. `wrap` runs what it is given, then prints `after`.
 
 ```
-fn wrap(body: () -> ()) ! console {
+fn wrap(body: fn()) ! console {
   body()
   print("after")
 }
@@ -77,7 +77,7 @@ fn main() ! console {
 When the function gives its lambda a value, `with x = f(args)` names it. It means `f(args) fn(x) { ... }`, with the rest of the block inside the braces.
 
 ```
-fn lend(name: str, body: (str) -> str) -> str { body(name) }
+fn lend(name: str, body: fn(str) -> str) -> str { body(name) }
 
 fn greeting() -> str ! alloc {
   with who = lend("Ana")
@@ -95,7 +95,7 @@ enum Result[T, E] {
   err: E
 }
 
-fn then[T, U, E](r: Result[T, E], body: (T) -> Result[U, E]) -> Result[U, E] {
+fn then[T, U, E](r: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
   match r {
     .ok(x) { body(x) }
     .err(e) { .err(e) }
@@ -130,7 +130,7 @@ If `parse_int(a)` is an `.err`, `then` gives that `.err` without calling the lam
 `with` always fills a call's last parameter, so a final lambda parameter may come after parameters that have defaults, and a call can leave those out.
 
 ```
-fn repeat(times: str = "two", body: (str) -> str) -> str { body(times) }
+fn repeat(times: str = "two", body: fn(str) -> str) -> str { body(times) }
 
 fn run() -> str {
   with x = repeat()
@@ -163,7 +163,7 @@ fn run() -> str {
   ```
 
   This is refused: "`with` passes the rest of the block to a call, and this is not one".
-- The lambda that `with` makes takes a different number of parameters than the function type does. `with wrap()` where `wrap` gives its lambda a `str` is refused: "this lambda takes 0 parameters, where a `(str) -> str` is needed, which takes 1". `with x = wrap()` where `wrap` gives it nothing is refused: "this lambda takes 1 parameter, where a `() -> str` is needed, which takes 0".
+- The lambda that `with` makes takes a different number of parameters than the function type does. `with wrap()` where `wrap` gives its lambda a `str` is refused: "this lambda takes 0 parameters, where a `fn(str) -> str` is needed, which takes 1". `with x = wrap()` where `wrap` gives it nothing is refused: "this lambda takes 1 parameter, where a `fn() -> str` is needed, which takes 0".
 - A name defined under `with` is assigned.
 
   ```

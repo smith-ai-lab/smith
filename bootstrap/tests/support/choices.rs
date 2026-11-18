@@ -652,7 +652,7 @@ fn write_defs(m: &Model, out: &mut String) {
         "fn loud(text: str, given: bool) -> bool ! console {\n  print(text)\n  given\n}\n\n",
     );
     out.push_str("fn word(given: bool) -> str {\n  if given { \"yes\" } else { \"no\" }\n}\n\n");
-    out.push_str("fn twice(body: () -> ()) {\n  body()\n  body()\n}\n\n");
+    out.push_str("fn twice(body: fn()) {\n  body()\n  body()\n}\n\n");
 }
 
 fn indent(depth: usize) -> String {

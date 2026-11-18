@@ -222,7 +222,7 @@ pub struct Type {
     pub name: String,
     pub pos: Pos,
     pub args: Vec<Type>,
-    /// Whether it is a function type, written `(T) -> U`.
+    /// Whether it is a function type, written `fn(T) -> U`.
     pub function: bool,
 }
 
@@ -232,6 +232,29 @@ pub struct Type {
 pub const UNBUILT: &str = "?";
 
 impl Type {
+    /// How the type is written in the source.
+    pub fn written(&self) -> String {
+        let args: Vec<String> = self.args.iter().map(Type::written).collect();
+        if self.function {
+            let (gives, params) = args.split_last().expect("a result");
+            if self
+                .args
+                .last()
+                .is_some_and(|g| g.name.is_empty() && !g.function && g.args.is_empty())
+            {
+                format!("fn({})", params.join(", "))
+            } else {
+                format!("fn({}) -> {gives}", params.join(", "))
+            }
+        } else if self.name.is_empty() {
+            format!("({})", args.join(", "))
+        } else if args.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}[{}]", self.name, args.join(", "))
+        }
+    }
+
     /// Whether the type is one that is not built yet.
     pub fn unbuilt(&self) -> bool {
         self.name == UNBUILT
@@ -407,6 +430,10 @@ pub struct Lambda {
     /// Where it starts: at `fn`, or at the `{` when it takes no parameters.
     pub pos: Pos,
     pub params: Vec<Named>,
+    /// The type written for each parameter, if it is, and the one written for
+    /// the result.
+    pub types: Vec<Option<Type>>,
+    pub result: Option<Type>,
     pub body: Vec<Stmt>,
     /// Where the `}` that closes its body is.
     pub end: Pos,
@@ -974,7 +1001,9 @@ impl Block {
         while let Some((mut before, w)) = self.outer.pop() {
             let lambda = Expr::Lambda(Box::new(Lambda {
                 pos: w.pos,
+                types: w.params.iter().map(|_| None).collect(),
                 params: w.params,
+                result: None,
                 body: std::mem::take(&mut self.inner),
                 end,
             }));
@@ -1663,10 +1692,22 @@ impl Parser<'_> {
     /// Parses a type, and for a function type whether each of its parameters
     /// is marked `take`.
     fn ty_taking(&mut self) -> Result<(Type, Vec<bool>), Error> {
-        if self.tok() != &Tok::Punct("(") {
-            return Ok((self.ty()?, Vec::new()));
+        if self.tok() == &Tok::Keyword("fn") {
+            return self.function_type();
         }
+        Ok((self.ty()?, Vec::new()))
+    }
+
+    /// Parses a function type, from its `fn`: the types of its parameters in
+    /// parentheses, each marked `take` if the function owns it, then
+    /// `-> R` if it gives a result, and the effects it carries. It gives
+    /// whether each parameter is marked `take`.
+    fn function_type(&mut self) -> Result<(Type, Vec<bool>), Error> {
         let pos = self.pos();
+        self.bump();
+        if self.tok() != &Tok::Punct("(") {
+            return Err(self.expected("`(` and the function type's parameters", self.tok()));
+        }
         let marked = self.list(
             |p| {
                 let take = p.taking();
@@ -1675,26 +1716,17 @@ impl Parser<'_> {
             Self::no_spill,
         )?;
         let (takes, mut args): (Vec<bool>, Vec<Type>) = marked.into_iter().unzip();
-        if self.tok() != &Tok::Punct("->") {
-            if takes.contains(&true) {
-                self.unbuilt
-                    .push(Error::unsupported(pos, "`take` in a tuple type"));
-            }
-            if args.len() == 1 {
-                self.unbuilt
-                    .push(Error::unsupported(pos, "one type in parentheses"));
-                return Ok((args.remove(0), Vec::new()));
-            }
-            let tuple = Type {
+        if self.tok() == &Tok::Punct("->") {
+            self.bump();
+            args.push(self.ty()?);
+        } else {
+            args.push(Type {
                 name: String::new(),
                 pos,
-                args,
+                args: Vec::new(),
                 function: false,
-            };
-            return Ok((tuple, Vec::new()));
+            });
         }
-        self.bump();
-        args.push(self.ty()?);
         self.function_effects();
         let function = Type {
             name: String::new(),
@@ -1777,18 +1809,25 @@ impl Parser<'_> {
                 })
             }
             Tok::Punct("[") => self.array_type(pos),
+            Tok::Keyword("fn") => Ok(self.function_type()?.0),
             Tok::Punct("(") => {
                 let mut args = self.list(Self::ty, Self::no_spill)?;
                 if self.tok() == &Tok::Punct("->") {
-                    self.bump();
-                    args.push(self.ty()?);
-                    self.function_effects();
-                    return Ok(Type {
+                    let tuple = Type {
                         name: String::new(),
                         pos,
                         args,
-                        function: true,
-                    });
+                        function: false,
+                    };
+                    self.bump();
+                    let result = self.ty()?;
+                    let params = tuple.args.iter().map(Type::written).collect::<Vec<_>>();
+                    let fix = format!("fn({}) -> {}", params.join(", "), result.written());
+                    return Err(Error::new(
+                        pos,
+                        "a list of types in parentheses is a tuple, and a function type is written with `fn`",
+                    )
+                    .with_fix(&fix));
                 }
                 if args.len() == 1 {
                     self.unbuilt
@@ -2674,6 +2713,8 @@ impl Parser<'_> {
     fn lambda(&mut self) -> Result<Lambda, Error> {
         let pos = self.pos();
         let mut params = Vec::new();
+        let mut types = Vec::new();
+        let mut result = None;
         let mut binds = Vec::new();
         if self.tok() == &Tok::Keyword("fn") {
             self.bump();
@@ -2695,6 +2736,12 @@ impl Parser<'_> {
                 } else {
                     params.push(self.defined("a parameter's name")?);
                 }
+                types.push(if self.tok() == &Tok::Punct(":") {
+                    self.bump();
+                    Some(self.ty()?)
+                } else {
+                    None
+                });
                 self.skip_newlines();
                 match self.tok() {
                     Tok::Punct(",") => {
@@ -2706,6 +2753,10 @@ impl Parser<'_> {
                 }
             }
             self.bump();
+            if self.tok() == &Tok::Punct("->") {
+                self.bump();
+                result = Some(self.ty()?);
+            }
         }
         self.expect_punct("{", "`{` to open the lambda's body")?;
         let no_lambda = std::mem::replace(&mut self.no_lambda, false);
@@ -2715,6 +2766,8 @@ impl Parser<'_> {
         Ok(Lambda {
             pos,
             params,
+            types,
+            result,
             body,
             end,
         })

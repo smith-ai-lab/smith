@@ -238,7 +238,7 @@ fn program(place: Place, (s, given): (&Shape, &Shape), other: &Shape, written_ou
         }
         Place::Lambda => {
             out.push_str(&format!(
-                "fn apply(v: {mark}{ty}, f: ({mark}{ty}) -> i32) -> i32 {{ f(v) }}\n\nfn main() ! console, alloc {{\n  r = apply({}) fn({head}) {{\n{first}{}    {sum}\n  }}\n  print(\"{{r}}\")\n}}\n",
+                "fn apply(v: {mark}{ty}, f: fn({mark}{ty}) -> i32) -> i32 {{ f(v) }}\n\nfn main() ! console, alloc {{\n  r = apply({}) fn({head}) {{\n{first}{}    {sum}\n  }}\n  print(\"{{r}}\")\n}}\n",
                 given.value(),
                 lines("    ")
             ));
@@ -378,7 +378,7 @@ fn a_pattern_that_may_not_match_where_a_name_is_introduced_is_one_error_that_nam
                     "fn f({pattern}: (i32, i32)) -> i32 {{ 1 }}\n\nfn main() ! console, alloc {{\n  print(\"{{f((1, 2))}}\")\n}}\n"
                 ),
                 Place::Lambda => format!(
-                    "fn apply(v: (i32, i32), f: ((i32, i32)) -> i32) -> i32 {{ f(v) }}\n\nfn main() ! console, alloc {{\n  r = apply((1, 2)) fn({pattern}) {{ 1 }}\n  print(\"{{r}}\")\n}}\n"
+                    "fn apply(v: (i32, i32), f: fn((i32, i32)) -> i32) -> i32 {{ f(v) }}\n\nfn main() ! console, alloc {{\n  r = apply((1, 2)) fn({pattern}) {{ 1 }}\n  print(\"{{r}}\")\n}}\n"
                 ),
                 Place::Loop => format!(
                     "fn main() ! console, alloc {{\n  xs: List[(i32, i32)] = [(1, 2)]\n  loop {pattern} in xs {{ print(\"1\") }}\n}}\n"

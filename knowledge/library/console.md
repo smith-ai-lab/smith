@@ -52,7 +52,7 @@ A handler supplies both operations. This one keeps everything printed to standar
 ```
 use std.console (console, input)
 
-fn capture[T](body: () -> T ! console) -> (T, List[str]) ! console, alloc {
+fn capture[T](body: fn() -> T ! console) -> (T, List[str]) ! console, alloc {
   var out: List[str] = []
   r = console(
     print: fn(text, end, to) {

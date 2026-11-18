@@ -1,4 +1,4 @@
-fn wrap(body: () -> ()) ! console {
+fn wrap(body: fn()) ! console {
   body()
   print("after")
 }

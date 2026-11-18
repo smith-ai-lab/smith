@@ -33,6 +33,9 @@ pub struct LambdaCase {
     /// The same program with every expression in parentheses, for a valid
     /// one.
     pub parenthesized: String,
+    /// The same program with each lambda writing the types of its
+    /// parameters, the type of its result, and both, for a valid one.
+    pub typed: Vec<String>,
     pub stdout: Vec<u8>,
     pub copies: usize,
     pub mistake: Option<Expected>,
@@ -87,6 +90,9 @@ fn plain_ty(k: usize) -> FnTy {
 #[derive(Clone, Debug)]
 struct LambdaM {
     params: Vec<String>,
+    /// The type of each parameter, and of the result.
+    types: Vec<Ty>,
+    result: Ty,
     body: Vec<Stmt>,
 }
 
@@ -478,7 +484,12 @@ impl Writing<'_> {
         } else if self.g.one_in(2) {
             body.push(Stmt::Expr(self.value(&inner, &Ty::Unit, depth)));
         }
-        LambdaM { params, body }
+        LambdaM {
+            params,
+            types: f.params.clone(),
+            result: f.result.clone(),
+            body,
+        }
     }
 
     /// A statement, with what it defines added to `ctx`.
@@ -737,7 +748,7 @@ fn mistake(g: &mut Gen, kind: Kind) -> (Stmt, Option<Item>) {
                 ),
                 ("w = apply(\"a\") fn(t) { ", "() }", "gives nothing"),
                 ("twice { ", "\"a\" }", "gives text"),
-                ("w = apply(\"a\", ", "cat_of)", "gives a `(str) -> Cat`"),
+                ("w = apply(\"a\", ", "cat_of)", "gives a `fn(str) -> Cat`"),
             ]);
             (raw(before, rest, gives, None), None)
         }
@@ -961,6 +972,9 @@ struct Writer {
     text: String,
     mistake: Option<Expected>,
     parens: bool,
+    /// Whether a lambda writes the types of its parameters, and the type of
+    /// its result.
+    typed: (bool, bool),
 }
 
 fn type_text(ty: &Ty) -> &'static str {
@@ -976,7 +990,10 @@ fn type_text(ty: &Ty) -> &'static str {
 
 fn fn_text(f: &FnTy) -> String {
     let params: Vec<&str> = f.params.iter().map(type_text).collect();
-    format!("({}) -> {}", params.join(", "), type_text(&f.result))
+    match f.result {
+        Ty::Unit => format!("fn({})", params.join(", ")),
+        _ => format!("fn({}) -> {}", params.join(", "), type_text(&f.result)),
+    }
 }
 
 impl Writer {
@@ -1117,7 +1134,17 @@ impl Writer {
 
     fn lambda(&mut self, l: &LambdaM, indent: usize) {
         if !l.params.is_empty() {
-            self.push(&format!("fn({}) ", l.params.join(", ")));
+            let params: Vec<String> = (l.params.iter().zip(&l.types))
+                .map(|(name, ty)| match self.typed.0 {
+                    true => format!("{name}: {}", type_text(ty)),
+                    false => name.clone(),
+                })
+                .collect();
+            let mut head = format!("fn({})", params.join(", "));
+            if self.typed.1 && l.result != Ty::Unit {
+                head += &format!(" -> {}", type_text(&l.result));
+            }
+            self.push(&format!("{head} "));
         }
         match l.body.as_slice() {
             [] => self.push("{}"),
@@ -1183,8 +1210,8 @@ impl Writer {
             }
             self.push(&format!(" {{ {body} }}\n"));
         }
-        self.push("\nfn twice(body: () -> ()) {\n  body()\n  body()\n}\n");
-        self.push("\nfn apply(text: str, f: (str) -> str) -> str { f(text) }\n");
+        self.push("\nfn twice(body: fn()) {\n  body()\n  body()\n}\n");
+        self.push("\nfn apply(text: str, f: fn(str) -> str) -> str { f(text) }\n");
         self.push("\nfn main() ! console {\n");
         self.stmts(&m.main, 1);
         self.push("}\n");
@@ -1240,15 +1267,28 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> LambdaCase {
         text: String::new(),
         mistake: None,
         parens: false,
+        typed: (false, false),
     };
     w.program(&m);
     let mut parenthesized = Writer {
         text: String::new(),
         mistake: None,
         parens: true,
+        typed: (false, false),
     };
+    let mut typed = Vec::new();
     if kind.is_none() {
         parenthesized.program(&m);
+        for typing in [(true, false), (false, true), (true, true)] {
+            let mut w = Writer {
+                text: String::new(),
+                mistake: None,
+                parens: false,
+                typed: typing,
+            };
+            w.program(&m);
+            typed.push(w.text);
+        }
     }
     assert_eq!(
         w.mistake.is_some(),
@@ -1259,6 +1299,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> LambdaCase {
     LambdaCase {
         source: w.text,
         parenthesized: parenthesized.text,
+        typed,
         stdout,
         // `main`, `say`, and each function with a name.
         copies: 2 + PLAIN.len(),
@@ -1567,7 +1608,7 @@ pub fn loop_program(g: &mut Gen) -> LoopCase {
             ""
         };
         text.push_str(&format!(
-            "\nfn f{at}(n: u32, m: Mode, body: (u32) -> ()){diverge} {{\n"
+            "\nfn f{at}(n: u32, m: Mode, body: fn(u32)){diverge} {{\n"
         ));
         write_shape(shape, 1, &mut Vec::new(), &mut 0, &mut text);
         text.push_str("}\n");

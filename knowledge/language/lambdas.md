@@ -5,21 +5,39 @@ description: A function with no name, written where it is passed to a call.
 status: partial
 built:
   - "lambdas passed to a call, after it or by name, and function types on parameters"
+  - "a lambda that writes the types of its parameters and of its result"
 ---
 
 # Lambdas
 
 A lambda is a function with no name, written where it is passed to a call.
 
-## A function that takes a function
+## One function, written three ways
 
-A function says that it takes another function in a parameter's type. A function type is written `(T) -> U`: the types of the parameters in parentheses, then the type of the result. The parameter is called like any function.
+A lambda is a function without its name, and a function type is a function without the names of its parameters and without its block.
 
 ```
-fn twice(x: f32, f: (f32) -> f32) -> f32 { f(f(x)) }
+// a function
+fn double(v: f32) -> f32 { v * 2.0 }
+
+// a lambda: the function without its name
+fn(v: f32) -> f32 { v * 2.0 }
+
+// its type: without the parameters' names and the block
+fn(f32) -> f32
+```
+
+## A function that takes a function
+
+A function says that it takes another function in a parameter's type. A function type is written `fn(T) -> U`: the types of the parameters in parentheses, then the type of the result. The parameter is called like any function.
+
+```
+fn twice(x: f32, f: fn(f32) -> f32) -> f32 { f(f(x)) }
 ```
 
 `twice` takes a float and a function from one float to another, and calls the function two times.
+
+A function that gives nothing has no arrow, as `fn(f32)`, and one that takes nothing is `fn() -> f32`. The effects of a function type follow its result, as a function writes them, `fn(f32) -> f32 ! console`, and a parameter the function owns is `fn(take f32) -> f32`. A list of types in parentheses without `fn` is always a [tuple](tuples.md).
 
 ## Writing a lambda
 
@@ -33,8 +51,9 @@ fn quarter(x: f32) -> f32 {
 
 Here `fn(v) { v * 0.5 }` is the `f` of `twice`, so `quarter(8.0)` is `2.0`.
 
-- The types of a lambda's parameters and of its result are never written. They are those of the function type it is passed as, so `v` is an `f32`.
-- A lambda has as many parameters as that function type. `twice(x) fn(a, b) { a }` is refused: "this lambda takes 2 parameters, where a `(f32) -> f32` is needed, which takes 1".
+- The types of a lambda's parameters and of its result are those of the function type it is passed as, so `v` is an `f32`. A lambda may write them as a function does, `fn(v: f32) -> f32 { v * 0.5 }`, each one or none. A type that is written and is not the one the function type needs is refused at the type.
+- A lambda has no type parameters of its own. It uses those of the function it is written in, and when nothing decides the type of its parameters, it writes them.
+- A lambda has as many parameters as that function type. `twice(x) fn(a, b) { a }` is refused: "this lambda takes 2 parameters, where a `fn(f32) -> f32` is needed, which takes 1".
 - The value of a lambda is the last expression of its block, as for a function. Its block may have several lines.
 
 ```
@@ -49,7 +68,7 @@ fn nudge(x: f32) -> f32 {
 A lambda with several parameters names each.
 
 ```
-fn combine(a: f32, b: f32, f: (f32, f32) -> f32) -> f32 { f(a, b) }
+fn combine(a: f32, b: f32, f: fn(f32, f32) -> f32) -> f32 { f(a, b) }
 
 fn total(a: f32, b: f32) -> f32 {
   combine(a, b) fn(x, y) { x + y }
@@ -86,7 +105,7 @@ A lambda may give away a value of the function it is written in, as an argument 
 A lambda that takes no parameters is the block alone, `{ e }`, with no `fn` and no parentheses.
 
 ```
-fn unless(skip: bool, otherwise: f32, body: () -> f32) -> f32 {
+fn unless(skip: bool, otherwise: f32, body: fn() -> f32) -> f32 {
   if skip { otherwise } else { body() }
 }
 
@@ -100,7 +119,7 @@ fn fee(is_member: bool, w: f32, h: f32) -> f32 {
 When the lambda is the only argument, the call has no parentheses. So a function can read like a part of the language. `do` runs a few lines for their value.
 
 ```
-fn do[T](body: () -> T) -> T { body() }
+fn do[T](body: fn() -> T) -> T { body() }
 
 fn rect_area(left: f32, right: f32, top: f32, bottom: f32) -> f32 {
   do {
@@ -114,7 +133,7 @@ fn rect_area(left: f32, right: f32, top: f32, bottom: f32) -> f32 {
 The same holds for a lambda with parameters.
 
 ```
-fn at_five(f: (f32) -> f32) -> f32 { f(5.0) }
+fn at_five(f: fn(f32) -> f32) -> f32 { f(5.0) }
 
 fn ten() -> f32 { at_five fn(v) { v * 2.0 } }
 ```
@@ -124,7 +143,7 @@ fn ten() -> f32 { at_five fn(v) { v * 2.0 } }
 Only the last argument is written after the call. A call that takes several lambdas passes the others by name, inside the parentheses.
 
 ```
-fn pick(first: bool, a: () -> f32, b: () -> f32) -> f32 {
+fn pick(first: bool, a: fn() -> f32, b: fn() -> f32) -> f32 {
   if first { a() } else { b() }
 }
 
@@ -142,7 +161,7 @@ Braces are the body of a construct or a lambda, and nothing else. Four rules fol
 - **In the head of an `if`, a `match`, or a `loop`, `{` opens that construct's body.** So `if any { true } { ... }` is refused, since the first `{` is taken as the body of the `if`. A call that takes a lambda there is put in parentheses.
 
   ```
-  fn any(f: () -> bool) -> bool { f() }
+  fn any(f: fn() -> bool) -> bool { f() }
 
   fn sign(x: f32) -> f32 {
     if (any { x > 0.0 }) { 1.0 } else { -1.0 }
@@ -193,6 +212,8 @@ Two keywords of later pages stop at a lambda. [`try`](try.md) inside a lambda re
 | --- | --- |
 | `f(a) fn(x) { e }` | A lambda that takes `x`, as the last argument of `f` |
 | `f(a) fn(x, y) { e }` | A lambda that takes `x` and `y` |
+| `f(a) fn(x: T) -> R { e }` | A lambda that writes the type of `x` and of its result |
+| `fn(T) -> R` | The type of a function that takes a `T` and gives an `R` |
 | `f(a) { e }` | A lambda that takes nothing |
 | `f { e }` and `f fn(x) { e }` | A lambda as the only argument |
 | `f(a, g: { e }) { e2 }` | Two lambdas: `g` by name, and the last after the call |

@@ -40,7 +40,7 @@ A function that gives back what it was passed, or passes it to a lambda that kee
 
 ```
 trait Try[C, R, out T] {
-  fn then(c: take C, body: (take T) -> R) -> R
+  fn then(c: take C, body: fn(take T) -> R) -> R
 }
 ```
 
@@ -53,7 +53,7 @@ A function is a value like any other, and calling it takes it. So how often a fu
 A lambda is lent the names around it that it reads or assigns, and takes the ones it gives away. A lambda that takes a value without `Copy` has no `Copy` itself. This one gives `acc` to `append`, so it can be called once.
 
 ```
-fn finish(xs: take List[u8], f: take (take List[u8]) -> u64) -> u64 { f(xs) }
+fn finish(xs: take List[u8], f: take fn(take List[u8]) -> u64) -> u64 { f(xs) }
 
 fn collect(acc: take List[u8], xs: take List[u8]) -> u64 {
   finish(xs) fn(ys) { append(acc, ys).size }
@@ -65,7 +65,7 @@ fn collect(acc: take List[u8], xs: take List[u8]) -> u64 {
 A parameter that is not marked `take` lends the function, as it lends any value, and a lent value is only taken when it has `Copy`. So a lent function is one that can be called again, and a lambda that gives a value away is refused there.
 
 ```
-fn twice(xs: take List[u8], f: (take List[u8]) -> u64) -> u64 { f(xs) }
+fn twice(xs: take List[u8], f: fn(take List[u8]) -> u64) -> u64 { f(xs) }
 
 fn collect(acc: take List[u8], xs: take List[u8]) -> u64 {
   twice(xs) fn(ys) { append(acc, ys).size }
@@ -110,8 +110,8 @@ So a random key cannot be reused. Randomness needs no effect, because every rand
 | --- | --- |
 | `fn f(x: T)` | `x` is lent: `f` cannot keep, store, or return it |
 | `fn f(x: take T)` | `f` owns `x`, and the caller cannot use it again |
-| `(take T) -> R` | A function type whose function owns its argument |
-| `f: (T) -> R` | `f` is lent: it is called any number of times, and is a function that has `Copy` |
-| `f: take (T) -> R` | The callee owns `f`, and calling it spends it |
+| `fn(take T) -> R` | A function type whose function owns its argument |
+| `f: fn(T) -> R` | `f` is lent: it is called any number of times, and is a function that has `Copy` |
+| `f: take fn(T) -> R` | The callee owns `f`, and calling it spends it |
 
 Next: [Values used exactly once](resources.md)

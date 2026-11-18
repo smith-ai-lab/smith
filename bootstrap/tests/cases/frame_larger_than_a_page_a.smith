@@ -27,12 +27,12 @@ fn second(a0: (str, Cat)) -> Cat { (s, c) = a0
 
 fn drop(a0: str) {  }
 
-fn twice(body: () -> ()) {
+fn twice(body: fn()) {
   body()
   body()
 }
 
-fn apply(text: str, f: (str) -> str) -> str { f(text) }
+fn apply(text: str, f: fn(str) -> str) -> str { f(text) }
 
 fn main() ! console {
   var note = "a"
@@ -63,7 +63,7 @@ fn main() ! console {
   print(note)
 }
 
-fn h0[T](p0: T, f0: () -> Cat, f1: (str) -> Cat) -> Pet ! console {
+fn h0[T](p0: T, f0: fn() -> Cat, f1: fn(str) -> Cat) -> Pet ! console {
   ()
   v1 = f0()
   v2 = f1(v1.name)
@@ -78,7 +78,7 @@ fn h0[T](p0: T, f0: () -> Cat, f1: (str) -> Cat) -> Pet ! console {
   Pet.none
 }
 
-fn h1[T](p0: T, f0: (Cat) -> Pet, f1: (str) -> Cat) -> str ! console {
+fn h1[T](p0: T, f0: fn(Cat) -> Pet, f1: fn(str) -> Cat) -> str ! console {
   v8 = match f0(Cat(name: "")) {
     .cat(c7) { f0(Cat(name: "")) }
     .none { f0(Cat(name: "")) }
@@ -95,7 +95,7 @@ fn h1[T](p0: T, f0: (Cat) -> Pet, f1: (str) -> Cat) -> str ! console {
   ""
 }
 
-fn h2(p0: Cat, f0: (str, Cat, ()) -> Pet, f1: (Pet, (str, Cat)) -> (str, Cat)) -> str ! console {
+fn h2(p0: Cat, f0: fn(str, Cat, ()) -> Pet, f1: fn(Pet, (str, Cat)) -> (str, Cat)) -> str ! console {
   v13 = f0("", Cat(name: p0.name), ())
   v14 = f1(f0(p0.name, Cat(name: p0.name), ()), f1(Pet.none, (p0.name, Cat(name: p0.name))))
   p0.name

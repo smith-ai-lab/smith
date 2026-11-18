@@ -474,7 +474,7 @@ fn a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_i
 /// the calls inside it, so the `k` of `outer` is what it was before the loop.
 fn a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_call_runs_no_round()
 {
-    let source = r#"fn inner(n: u32, body: (u32) -> ()) ! diverge {
+    let source = r#"fn inner(n: u32, body: fn(u32)) ! diverge {
   var k: u32 = 0
   loop {
     if k == n { break }
@@ -483,7 +483,7 @@ fn a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_
   }
 }
 
-fn outer(n: u32, body: (u32) -> ()) ! diverge {
+fn outer(n: u32, body: fn(u32)) ! diverge {
   var k: u32 = 0
   loop {
     if k == 1 { break }

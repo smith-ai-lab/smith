@@ -525,9 +525,9 @@ const HUGE: &str = "99999999999999999999";
 fn file_with_calls_of_a_trait_with_a_lambda(g: &mut Gen) -> File {
     let mut file = File::default();
     file.push("struct Box {\n  n: u8\n}\n\nstruct Other {\n  n: u8\n}\n\n");
-    file.push("trait Mapper[C, A, out R] {\n  fn apply(c: C, a: A, f: (A) -> R) -> R\n}\n\n");
+    file.push("trait Mapper[C, A, out R] {\n  fn apply(c: C, a: A, f: fn(A) -> R) -> R\n}\n\n");
     file.push("impl Mapper[Box, u8, str] {\n");
-    file.push("  fn apply(c: Box, a: u8, f: (u8) -> str) -> str { f(a) }\n}\n\n");
+    file.push("  fn apply(c: Box, a: u8, f: fn(u8) -> str) -> str { f(a) }\n}\n\n");
     file.push("fn main() {\n  box = Box(n: 3)\n  other = Other(n: 4)\n  small: u8 = 5\n");
     for _ in 0..1 + g.below(4) {
         file.push("  ");

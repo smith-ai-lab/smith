@@ -298,7 +298,7 @@ const DOWN: &str = "struct Down {
 }
 
 impl Iterate[Down, i64] {
-  fn each(c: Down, body: (i64) -> Flow) -> Flow {
+  fn each(c: Down, body: fn(i64) -> Flow) -> Flow {
     loop i in 0..c.from {
       match body(c.from - i) {
         .stop { return .stop }
@@ -511,7 +511,7 @@ fn the_examples_of_the_page_that_are_built_give_what_it_says() {
 }
 
 impl Iterate[Countdown, i32] {
-  fn each(c: Countdown, body: (i32) -> Flow) -> Flow {
+  fn each(c: Countdown, body: fn(i32) -> Flow) -> Flow {
     loop i in 0..c.from {
       match body(c.from - i) {
         .stop { return .stop }
@@ -541,7 +541,7 @@ impl Iterate[Countdown, i32] {
 }
 
 fn a_function_may_be_named_each_and_a_loop_over_a_list_still_runs() {
-    let source = "fn each(f: (str) -> str) -> str { f(\"q\") }\n\nfn main() ! console, alloc {\n  print(each() fn(v) { v })\n  xs: List[u8] = [7, 8]\n  loop x in xs { print(\"{x}\") }\n}\n";
+    let source = "fn each(f: fn(str) -> str) -> str { f(\"q\") }\n\nfn main() ! console, alloc {\n  print(each() fn(v) { v })\n  xs: List[u8] = [7, 8]\n  loop x in xs { print(\"{x}\") }\n}\n";
     assert_eq!(evaluate(source), Outcome { stdout: b"q\n7\n8\n".to_vec(), status: 0 });
 }
 
@@ -576,7 +576,7 @@ fn try_on_a_flow_leaves_with_stop_and_goes_on_with_go() {
         24,
         |g| (g.below(5) + 1, g.below(7) as i64),
         |(length, stop)| {
-            let mut function = String::from("fn chain(body: (i64) -> Flow) -> Flow {\n");
+            let mut function = String::from("fn chain(body: fn(i64) -> Flow) -> Flow {\n");
             for n in 1..*length {
                 function.push_str(&format!("  try body({n})\n"));
             }

@@ -40,7 +40,7 @@ So the time a proof takes to check grows with its length and with what it asks t
 
 Each closes a way a proof could be had for nothing.
 
-- **A type holds itself only where it is held.** A type may contain itself as a field, a case, or an element, as [Types that contain themselves](recursive-types.md) describes. It may not contain itself as a parameter of a function it holds. `enum T { wrap: (T) -> T }` is refused: with it, a computation that never ends can be written with no recursion for the check of [termination](termination.md) to see, and a computation that never ends proves anything.
+- **A type holds itself only where it is held.** A type may contain itself as a field, a case, or an element, as [Types that contain themselves](recursive-types.md) describes. It may not contain itself as a parameter of a function it holds. `enum T { wrap: fn(T) -> T }` is refused: with it, a computation that never ends can be written with no recursion for the check of [termination](termination.md) to see, and a computation that never ends proves anything.
 - **What gives a proof carries no effect and ends.** A proof is erased, so the code that gives it is never run. A function that returns a proof and carries `diverge` would prove its statement by never returning. So anything of a proof's type carries no effect at all, and a program with a [`hole`](hole.md) left in it is checked but not built.
 - **A statement names only what cannot change.** A proof of `x < 10` says nothing once `x` is given another value. So a statement, as the type of a proof, names no `var`, as the size of an array names none. What `arith` knows of a `var` from one line to the next is its own matter, and is forgotten at each assignment.
 - **A proof is used and never looked into.** A proof is passed, held, and given where one is owed. No code picks a value by which proof it was given, as erasing the proof would then change what the program does.
@@ -63,7 +63,7 @@ No name is added to this list without the owner's agreement, and a fact a librar
 
 | Rule | Refuses |
 | --- | --- |
-| A type holds itself only where it is held | `enum T { wrap: (T) -> T }` |
+| A type holds itself only where it is held | `enum T { wrap: fn(T) -> T }` |
 | What gives a proof carries no effect and ends | A proof from a function with `diverge`, and a build with a `hole` in it |
 | A statement names only what cannot change | A proof about a `var` |
 | A proof is used and never looked into | A `match` that picks a value by a proof |

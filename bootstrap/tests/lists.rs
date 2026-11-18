@@ -287,7 +287,7 @@ fn reach(g: &mut Gen) -> Reach {
 fn a_var_list_and_a_var_field_are_known_to_arith_until_they_are_assigned() {
     let list = |body: &str| {
         format!(
-            "fn run(f: () -> ()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  k: u64 = 1\n  if k < xs.size {{\n{body}\n  }}\n}}\n"
+            "fn run(f: fn()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  k: u64 = 1\n  if k < xs.size {{\n{body}\n  }}\n}}\n"
         )
     };
     let field = |body: &str| {

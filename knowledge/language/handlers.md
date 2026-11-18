@@ -10,7 +10,7 @@ status: planned
 A handler is a function that runs a lambda with an effect handled, and it is installed with [`with`](with.md). It is declared by putting the effect on its lambda parameter, and it handles the effect by calling the effect's name, as [Declaring an effect](effect-declarations.md) describes.
 
 ```
-fn fixed_clock[T](body: () -> T ! time) -> T {
+fn fixed_clock[T](body: fn() -> T ! time) -> T {
   time(now: { 42 }, body: body)
 }
 
@@ -29,7 +29,7 @@ A function that runs under a handler does not carry the effect the handler handl
 ```
 fn read_all(path: str) -> Result[List[u8], FsError] ! fs, alloc
 
-fn memory_fs[T](files: Files, body: () -> T ! fs) -> T
+fn memory_fs[T](files: Files, body: fn() -> T ! fs) -> T
 
 fn fixture_config() -> Result[Config, FsError] ! alloc {
   with memory_fs(fixtures)
@@ -43,7 +43,7 @@ fn fixture_config() -> Result[Config, FsError] ! alloc {
 A handler is an ordinary function. This one is a clock for tests, which reads one tick later every time it is asked.
 
 ```
-fn fake_clock[T](body: () -> T ! time) -> T {
+fn fake_clock[T](body: fn() -> T ! time) -> T {
   var ticks: u64 = 0
   time(
     now: {
@@ -70,7 +70,7 @@ fn two_readings() -> (u64, u64) {
 The lambda of an operation runs under the handlers outside its own. A handler whose operation reads the clock gets the clock that was in force around its `with`.
 
 ```
-fn doubled_clock[T](body: () -> T ! time) -> T ! time {
+fn doubled_clock[T](body: fn() -> T ! time) -> T ! time {
   time(now: { now() * 2 }, body: body)
 }
 
@@ -86,7 +86,7 @@ fn doubled() -> u64 {
 A handler whose operations print must sit in a function that carries `console`, and the code running under the handler does not.
 
 ```
-fn loud_clock[T](body: () -> T ! time) -> T ! console {
+fn loud_clock[T](body: fn() -> T ! time) -> T ! console {
   time(
     now: {
       print("asked")
@@ -109,7 +109,7 @@ fn main() ! console {
 The handler in force at every call is known when the program is built, because `with` is part of the source and a lambda cannot escape. The compiler builds a copy of a function for each handler it runs under, as it does for each type a generic function is used with. `report` below is built twice.
 
 ```
-fn fixed[T](tick: u64, body: () -> T ! time) -> T {
+fn fixed[T](tick: u64, body: fn() -> T ! time) -> T {
   time(now: { tick }, body: body)
 }
 
@@ -132,10 +132,10 @@ fn at_two() -> u64 {
 
 | Written | Means |
 | --- | --- |
-| `fn h[T](body: () -> T ! e) -> T` | A handler of `e`: it runs `body` with `e` handled |
+| `fn h[T](body: fn() -> T ! e) -> T` | A handler of `e`: it runs `body` with `e` handled |
 | `e(op: { ... }, body: body)` | Inside a handler, the operation `op` is that lambda |
 | `with h()` then lines | The lines run under `h`, so they do not carry `e` |
 | `var` in a handler | The handler's state, assigned by its lambdas |
-| `fn h[T](body: () -> T ! e) -> T ! f` | A handler whose lambdas use `f`, which its caller must have |
+| `fn h[T](body: fn() -> T ! e) -> T ! f` | A handler whose lambdas use `f`, which its caller must have |
 
 Next: [The effects Smith provides](provided-effects.md)

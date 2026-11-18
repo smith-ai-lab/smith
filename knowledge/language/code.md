@@ -36,7 +36,7 @@ A call looks like any other call. `expect` is given one lambda, so it is written
 The declaration shows which parameters receive code. A parameter of type `Code[T]` receives the checked code of a `T`.
 
 ```
-fn expect(check: Code[() -> bool]) -> Code[Result[(), Failed]]
+fn expect(check: Code[fn() -> bool]) -> Code[Result[(), Failed]]
 ```
 
 ## What a function over code does and does not
@@ -51,7 +51,7 @@ fn expect(check: Code[() -> bool]) -> Code[Result[(), Failed]]
 `code` is itself a function over code. It returns the code of its lambda, and inside that lambda `run(c)` stands for the code `c`. `both` receives two checks and returns the code of one expression.
 
 ```
-fn both(first: Code[() -> bool], second: Code[() -> bool]) -> Code[bool] {
+fn both(first: Code[fn() -> bool], second: Code[fn() -> bool]) -> Code[bool] {
   code { run(first)() and run(second)() }
 }
 ```

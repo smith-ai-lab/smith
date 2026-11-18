@@ -85,7 +85,7 @@ const UNBUILT: &[Unbuilt] = &[
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(f: (i64) -> i64 @! console) -> i64 { 1 }\n",
+        declares: "fn u{i}(f: fn(i64) -> i64 @! console) -> i64 { 1 }\n",
         call: "",
         parsed: true,
     },

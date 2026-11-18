@@ -1,6 +1,6 @@
-fn apply(text: str, f: (str) -> str) -> str { f(text) }
+fn apply(text: str, f: fn(str) -> str) -> str { f(text) }
 
-fn pick(first: () -> str, second: () -> str) -> str { second() }
+fn pick(first: fn() -> str, second: fn() -> str) -> str { second() }
 
 fn main() ! console {
   var seen = "none"

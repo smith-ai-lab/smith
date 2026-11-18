@@ -34,7 +34,7 @@ fn eval(e: Expr) -> f64 ! alloc {
 
 ## Where a type may hold itself
 
-A type holds itself only where it is held: as a field, as what a case holds, or as an element of a list or an array inside it. It may not hold itself as a parameter of a function it holds, so `enum T { wrap: (T) -> T }` is refused. [What is trusted](trust.md) says why: such a type lets a computation go on for ever with no recursion to be seen.
+A type holds itself only where it is held: as a field, as what a case holds, or as an element of a list or an array inside it. It may not hold itself as a parameter of a function it holds, so `enum T { wrap: fn(T) -> T }` is refused. [What is trusted](trust.md) says why: such a type lets a computation go on for ever with no recursion to be seen.
 
 ## A tree is a value
 
