@@ -534,7 +534,7 @@ impl<'a> Lowering<'a> {
     fn function(&mut self, instance: &Instance) -> form::Function {
         let defs = self.typed.defs;
         if let Template::Given(k) = instance.template {
-            return self.given(k, &instance.args[0]);
+            return self.given(k, &instance.args);
         }
         let view = defs.view(instance.template);
         let mut out = Out::new();
@@ -989,7 +989,12 @@ impl<'a> Lowering<'a> {
                         args.push(values[0]);
                     }
                     let int = int.expect("checked");
-                    let values = self.intrinsic(out, &call.callee, int, &args);
+                    let values = match typed.type_of(expr, env) {
+                        Ty::Int(to) if call.callee == "__convert" => {
+                            self.widening(out, int, to, args[0])
+                        }
+                        _ => self.intrinsic(out, &call.callee, int, &args),
+                    };
                     (typed.type_of(expr, env), values)
                 }
                 Callee::Run(instance, gives)

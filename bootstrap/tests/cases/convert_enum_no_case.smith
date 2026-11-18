@@ -1,0 +1,10 @@
+enum Pair {
+  left: u8
+  none
+}
+
+fn main() ! console, alloc {
+  n: u16 = 4
+  p: Pair = convert(n)
+  print("{p}")
+}

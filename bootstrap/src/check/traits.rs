@@ -79,6 +79,15 @@ impl Repr[{name}] {{
         }
         out.push_str("}\n");
     }
+    // It converts to each other type that holds every value of its own.
+    for to in Int::ALL {
+        if to != t && to.min() <= t.min() && t.max() <= to.max() {
+            out.push_str(&format!(
+                "\nimpl Convert[{name}, {to}] {{\n  fn convert(a: {name}) -> {to} {{ __convert(a) }}\n}}\n",
+                to = to.name()
+            ));
+        }
+    }
     out.push_str(&format!("\nimpl Bits[{name}] {{\n"));
     for (f, params, names) in BITS {
         let params = params.replace('T', name);
@@ -122,6 +131,7 @@ pub(super) const PRELUDE_TRAITS: &[&str] = &[
     "Saturating",
     "Checked",
     "Bits",
+    "Convert",
 ];
 
 /// The place of the prelude's trait with the name among the file's.
@@ -290,7 +300,7 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
     for w in &defs.file.withouts {
         let name = w.name.as_str();
         let k = match defs.trait_names.get(name) {
-            Some(&k) if k == defs.fmt || k == defs.repr || k == defs.eq => k,
+            Some(&k) if k == defs.fmt || k == defs.repr || k == defs.eq || k == defs.convert() => k,
             Some(_) => {
                 errors.push(Error::new(
                     w.name_pos,
@@ -336,9 +346,18 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
             });
             continue;
         };
+        // A conversion is given to the enum it goes to.
+        let at = usize::from(k == defs.convert());
+        if at == 1 && !matches!(d, Def::Enum(_)) {
+            errors.push(Error::new(
+                w.ty_pos,
+                format!("`Convert` is given to an enum, and `{ty}` is not one"),
+            ));
+            continue;
+        }
         let written = (defs.impls_of[k].iter())
             .filter_map(|&i| defs.impls[i].as_ref())
-            .any(|info| head(&info.args[0]) == Some(d));
+            .any(|info| head(&info.args[at]) == Some(d));
         if out.contains(&(k, d)) {
             errors.push(Error::new(
                 w.pos,
@@ -446,6 +465,10 @@ trait Eq[T] {
 
 trait Ord[T] {
   fn compare(a: T, b: T) -> Order
+}
+
+trait Convert[A, B] {
+  fn convert(a: A) -> B
 }
 
 trait Fmt[T] {
@@ -728,6 +751,14 @@ impl<'a> Defs<'a> {
     /// of a tuple. A `str` is given `Repr` and `Eq`, and `()` each of the
     /// three, which have no parts.
     fn given_parts(&self, k: usize, types: &[Ty]) -> Option<Vec<Ty>> {
+        if k == self.convert() {
+            let Ty::Enum(e, args) = &types[1] else {
+                return None;
+            };
+            return (!self.withouts.contains(&(k, Def::Enum(*e)))
+                && self.holding(*e, args, &types[0]).len() == 1)
+                .then(Vec::new);
+        }
         if k != self.fmt && k != self.repr && k != self.eq {
             return None;
         }
@@ -744,6 +775,19 @@ impl<'a> Defs<'a> {
             Ty::Tuple(items) => Some(items.clone()),
             _ => None,
         }
+    }
+
+    /// The trait `Convert`, which the prelude defines.
+    pub(super) fn convert(&self) -> usize {
+        self.trait_names["Convert"]
+    }
+
+    /// The names of the cases of enum `e`, with the types `args`, that hold a `t`.
+    pub(super) fn holding(&self, e: usize, args: &[Ty], t: &Ty) -> Vec<&str> {
+        (self.file.enums[e].cases.iter().zip(&self.cases[e]))
+            .filter(|(_, held)| held.as_ref().is_some_and(|h| h.subst(args) == *t))
+            .map(|(case, _)| case.name.as_str())
+            .collect()
     }
 
     /// The implementation of trait `k` given to `types`, whose parts are
@@ -926,7 +970,7 @@ impl<'a> Defs<'a> {
 
 impl<'a> Checker<'a> {
     /// Checks a trait: its types, and the signature of each of its
-    /// functions, whose parameters must name each type that is not `out`.
+    /// functions, whose parameters and result must name each type that is not `out`.
     pub(super) fn declared_trait(&mut self, k: usize) {
         let defs = self.defs;
         let t = &defs.file.traits[k];
@@ -950,13 +994,14 @@ impl<'a> Checker<'a> {
             self.defaults(f, &defs.trait_sigs[k][i]);
             self.effects(&f.effects);
             for g in t.generics.iter().filter(|g| g.out.is_none()) {
-                let named =
-                    (f.params.iter()).any(|p| type_names(&p.ty).iter().any(|(n, _)| *n == g.name));
+                let named = (f.params.iter().map(|p| &p.ty))
+                    .chain(&f.result)
+                    .any(|t| type_names(t).iter().any(|(n, _)| *n == g.name));
                 if !named {
                     self.errors.push(Error::unsupported(
                         f.pos,
                         &format!(
-                            "a function of a trait whose parameters' types do not name `{}`",
+                            "a function of a trait whose parameters' and result's types do not name `{}`",
                             g.name
                         ),
                     ));
@@ -1146,12 +1191,38 @@ impl<'a> Checker<'a> {
         let outer = std::mem::replace(&mut self.no_impl, false);
         let refused = self.refusals;
         let mistakes = self.errors.len();
-        let sol = self.arguments(body, call, sig, false, Some((k, want)));
+        let mut sol = self.arguments(body, call, sig, false, Some((k, want)));
         let reported = std::mem::replace(&mut self.no_impl, outer);
         if reported || self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
             return Ty::Unknown;
         }
+        // A type that only the result names is the one that is expected.
         let outs = &defs.outs[k];
+        if let Want::Ty(needed @ (Ty::Int(_) | Ty::Enum(..) | Ty::Struct(..))) = want {
+            let mut wanted = vec![None; sol.len()];
+            unify(&sig.gives, needed, &mut wanted);
+            for ((t, w), out) in sol.iter_mut().zip(wanted).zip(outs) {
+                if t.is_none() && !out {
+                    *t = w;
+                }
+            }
+        }
+        if matches!(want, Want::Any | Want::Unused)
+            && (sol.iter().zip(outs)).any(|(t, out)| !out && t.is_none())
+            && self.errors.len() == mistakes
+        {
+            self.errors.push(
+                Error::new(
+                    call.pos,
+                    format!(
+                        "`{}` gives the type that is expected here, and none is",
+                        call.callee
+                    ),
+                )
+                .with_fix("write the type, as in `y: u32 = convert(x)`"),
+            );
+            return Ty::Unknown;
+        }
         if (sol.iter().zip(outs)).any(|(t, out)| !out && t.is_none()) {
             return Ty::Unknown;
         }
@@ -1195,6 +1266,21 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Checks `__convert(a)`, which the prelude's conversions between whole
+    /// numbers call, and which gives the type that is expected.
+    pub(super) fn convert_intrinsic(
+        &mut self,
+        body: &mut Body<'a>,
+        call: &Call,
+        want: &Want,
+    ) -> Ty {
+        self.expr(body, &call.args[0].value, &Want::Any);
+        match want {
+            Want::Ty(t) => t.clone(),
+            _ => Ty::Unknown,
+        }
+    }
+
     /// The error for a call of a function of trait `k` whose types no
     /// implementation is for.
     pub(super) fn no_implementation(
@@ -1209,6 +1295,25 @@ impl<'a> Checker<'a> {
         // is a part to blame.
         let because = match types {
             [t] => defs.because(k, t, body.scope),
+            [a, Ty::Enum(e, args)] if k == defs.convert() => {
+                let (a, to) = (defs.text(a, body.scope), defs.text(&types[1], body.scope));
+                let (a, to) = (format!("`{a}`"), format!("`{to}`"));
+                let holding = defs.holding(*e, args, &types[0]);
+                if defs.withouts.contains(&(k, Def::Enum(*e))) {
+                    format!(
+                        ", as `without Convert for {}` takes it away",
+                        defs.file.enums[*e].name
+                    )
+                } else if holding.is_empty() {
+                    format!(", as no case of {to} holds {a}")
+                } else {
+                    let cases: Vec<String> = holding.iter().map(|c| format!("`{c}`")).collect();
+                    format!(
+                        ", as the cases {} of {to} each hold {a}",
+                        cases.join(" and ")
+                    )
+                }
+            }
             _ => String::new(),
         };
         Error::new(
@@ -1219,5 +1324,27 @@ impl<'a> Checker<'a> {
                 defs.types_of(k, types, body.scope)
             ),
         )
+    }
+}
+
+impl Typed<'_> {
+    /// The types of a call of a trait's function, `types` being those its
+    /// arguments settle, with the ones that only its result names settled by
+    /// the type the call was checked to give.
+    pub(super) fn result_types(
+        &self,
+        call: &Call,
+        sig: &Signature,
+        env: &[Ty],
+        types: Vec<Ty>,
+    ) -> Vec<Ty> {
+        let Some(result) = self.types.get(&addr(call)) else {
+            return types;
+        };
+        let mut sol: Vec<Option<Ty>> = (types.into_iter())
+            .map(|t| (t != Ty::Unknown).then_some(t))
+            .collect();
+        unify(&sig.gives, &result.subst(env), &mut sol);
+        sol.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
     }
 }

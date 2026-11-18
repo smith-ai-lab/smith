@@ -1,0 +1,16 @@
+struct Feet {
+  value: i64
+}
+
+struct Meters {
+  value: i64
+}
+
+impl Convert[Feet, Meters] {
+  fn convert(a: Feet) -> Meters { Meters(value: a.value) }
+}
+
+fn main() ! console, alloc {
+  m: Meters = convert(Feet(value: 10))
+  print("{m.value}")
+}

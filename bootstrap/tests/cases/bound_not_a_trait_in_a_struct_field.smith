@@ -3,11 +3,11 @@ struct Box[T] {
 }
 
 trait Named[T] {
-  fn convert(x: T) -> T
+  fn pass_on(x: T) -> T
 }
 
 impl Named[str] {
-  fn convert(x: str) -> str {
+  fn pass_on(x: str) -> str {
     x
   }
 }
@@ -17,5 +17,5 @@ fn main() ! console {
 }
 
 fn f1[T: str](a: T, b: Box[str]) -> T ! console {
-  Box(item: convert(a)).item
+  Box(item: pass_on(a)).item
 }

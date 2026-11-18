@@ -1,0 +1,12 @@
+enum Number {
+  small: u8
+  none
+}
+
+without Convert for Number
+
+fn main() ! console, alloc {
+  n: u8 = 4
+  p: Number = convert(n)
+  print("{p}")
+}

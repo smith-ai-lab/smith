@@ -1,0 +1,5 @@
+fn same(n: u32) -> u32 { convert(n) }
+
+fn main() ! console, alloc {
+  print("{same(7)}")
+}

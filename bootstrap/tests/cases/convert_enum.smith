@@ -1,0 +1,18 @@
+struct Rect {
+  w: u8
+}
+
+enum Shape {
+  rect: Rect
+  count: u32
+  none
+}
+
+fn main() ! console, alloc {
+  r: Shape = convert(Rect(w: 1))
+  print("{r}")
+  n: u8 = 4
+  wide: u32 = convert(n)
+  c: Shape = convert(wide)
+  print("{c}")
+}
