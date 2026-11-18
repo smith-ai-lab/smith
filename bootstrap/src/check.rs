@@ -338,7 +338,7 @@ fn start_function(file: &File) -> String {
 }
 
 /// What an expression gives.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Ty {
     Text,
     /// A whole number type.
@@ -1849,8 +1849,8 @@ fn check_file(
     typed.copies(
         &start,
         Pos::START,
-        &mut Vec::new(),
-        &mut Vec::new(),
+        &mut HashMap::new(),
+        &mut HashSet::new(),
         &mut errors,
     );
     if !errors.is_empty() {
@@ -3445,7 +3445,7 @@ fn types_named(f: &Function) -> Vec<&str> {
 /// A function with a body: one written on its own, the function of an
 /// implementation that implements the trait's function at a place, or the
 /// one function of an implementation a type is given.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Template {
     Free(usize),
     Impl(usize, usize),
@@ -3455,7 +3455,7 @@ enum Template {
 }
 
 /// A copy of a function, for a choice of its type parameters.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Instance {
     template: Template,
     args: Vec<Ty>,
@@ -3912,8 +3912,8 @@ impl<'a> Typed<'a> {
     /// Reports each call that would need a copy of a function without end:
     /// one already being walked, or one of a function being walked for
     /// larger types, which would grow forever. `path` is the copies being
-    /// walked from `main`, `done` those already walked, and `at` where the
-    /// copy is run.
+    /// walked from `main`, by their templates, `done` those already walked,
+    /// and `at` where the copy is run.
     ///
     /// A given implementation runs only those of its parts, which are
     /// smaller, and of its own type, for another trait, so a copy that would
@@ -3923,11 +3923,13 @@ impl<'a> Typed<'a> {
         &self,
         instance: &Instance,
         at: Pos,
-        path: &mut Vec<Instance>,
-        done: &mut Vec<Instance>,
+        path: &mut HashMap<Template, Vec<Instance>>,
+        done: &mut HashSet<Instance>,
         errors: &mut Vec<Error>,
     ) {
-        path.push(instance.clone());
+        path.entry(instance.template)
+            .or_default()
+            .push(instance.clone());
         let (calls, cycles) = self.calls_of(instance, at);
         errors.extend(cycles.into_iter().map(default_cycle));
         for (pos, callee) in calls {
@@ -3935,8 +3937,8 @@ impl<'a> Typed<'a> {
             let grows = |p: &Instance| {
                 !matches!(callee.template, Template::Given(_)) && size(&callee) > size(p)
             };
-            let endless =
-                (path.iter()).any(|p| p.template == callee.template && (*p == callee || grows(p)));
+            let endless = (path.get(&callee.template).into_iter().flatten())
+                .any(|p| *p == callee || grows(p));
             if endless {
                 errors.push(Error::unsupported(
                     pos,
@@ -3946,8 +3948,10 @@ impl<'a> Typed<'a> {
                 self.copies(&callee, pos, path, done, errors);
             }
         }
-        path.pop();
-        done.push(instance.clone());
+        if let Some(walking) = path.get_mut(&instance.template) {
+            walking.pop();
+        }
+        done.insert(instance.clone());
     }
 }
 
