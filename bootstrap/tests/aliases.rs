@@ -386,6 +386,7 @@ fn aliases_each_mistake_is_one_error_at_its_place() {
             assert_eq!(e.module, None, "{errors:?}");
             assert_eq!(e.pos, at, "{errors:?} for\n{main}");
             assert!(e.message.contains(mentions), "{e}");
+            assert!(!e.message.contains('@'), "{e}");
         },
     );
 }

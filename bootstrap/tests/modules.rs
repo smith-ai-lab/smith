@@ -289,6 +289,7 @@ fn project_each_mistake_in_a_tree_of_modules_is_one_error_at_its_place() {
             assert_eq!(e.module.as_deref(), w.module, "{errors:?}");
             assert_eq!(e.pos, w.at, "{errors:?} for\n{}", w.main);
             assert!(e.message.contains(w.mentions), "{e}");
+            assert!(!e.message.contains('@'), "{e}");
         },
     );
 }
