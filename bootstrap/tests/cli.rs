@@ -291,8 +291,8 @@ pub fn timing_lines(text: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-const STAGES: [&str; 10] = [
-    "lex", "parse", "check", "inline", "trim", "fold", "common", "remove", "emit", "write",
+const STAGES: [&str; 11] = [
+    "lex", "parse", "check", "inline", "trim", "thread", "fold", "common", "remove", "emit", "write",
 ];
 
 /// The cases with a file of this extension beside them.
