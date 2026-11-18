@@ -932,7 +932,28 @@ fn count(n: usize, thing: &str) -> String {
 
 /// A list of names, each in backticks, joined as a sentence joins them.
 fn names(list: &[&str]) -> String {
-    let quoted: Vec<String> = list.iter().map(|n| format!("`{n}`")).collect();
+    sentence(list.iter().map(|n| format!("`{n}`")).collect())
+}
+
+/// How a parameter is spoken of in an error: by its name, in backticks, or
+/// by its place when it is written as a pattern and has no name of its own,
+/// as the parser gives it one that holds an `@`.
+fn param_words(name: &str, place: usize) -> String {
+    const ORDINALS: [&str; 10] = [
+        "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+        "tenth",
+    ];
+    if !name.contains('@') {
+        return format!("`{name}`");
+    }
+    match ORDINALS.get(place) {
+        Some(ordinal) => format!("the {ordinal} parameter"),
+        None => format!("parameter {}", place + 1),
+    }
+}
+
+/// Parts of a sentence, joined as a sentence joins them.
+fn sentence(quoted: Vec<String>) -> String {
     match quoted.as_slice() {
         [] => String::new(),
         [one] => one.clone(),
@@ -5949,6 +5970,10 @@ impl<'a> Checker<'a> {
         // place of the parameter each is for.
         let mut deferred: Vec<(usize, &Expr)> = Vec::new();
         let mut named = false;
+        // Whether an argument named a parameter there is not. The mistake is
+        // one, so a parameter written as a pattern, which no name can reach,
+        // is not also reported missing.
+        let mut unknown = false;
         let mut too_many = false;
         let mut next = 0;
         for arg in &call.args {
@@ -5968,14 +5993,14 @@ impl<'a> Checker<'a> {
                         // The parameter is not then reported missing.
                         given[i] = true;
                         Some(format!(
-                            "a lambda after a call is for its last parameter, and `{}`, the last \
+                            "a lambda after a call is for its last parameter, and {}, the last \
                              parameter of `{callee}`, takes no function",
-                            signature.params[i].0
+                            param_words(&signature.params[i].0, i)
                         ))
                     }
                     Some(i) if given[i] => Some(format!(
-                        "the `{}` argument is given twice",
-                        signature.params[i].0
+                        "the {} argument is given twice",
+                        param_words(&signature.params[i].0, i)
                     )),
                     Some(i) => {
                         given[i] = true;
@@ -6043,10 +6068,13 @@ impl<'a> Checker<'a> {
                                     "the `end` and `to` arguments of `print`",
                                 ));
                             }
-                            None => self.errors.push(Error::new(
-                                *pos,
-                                format!("`{}` has no parameter named `{name}`", call.callee),
-                            )),
+                            None => {
+                                unknown = true;
+                                self.errors.push(Error::new(
+                                    *pos,
+                                    format!("`{}` has no parameter named `{name}`", call.callee),
+                                ))
+                            }
                         }
                     }
                 }
@@ -6121,10 +6149,11 @@ impl<'a> Checker<'a> {
             let gives = self.expr(body, value, &wanted);
             self.fit(body, value, &gives, pattern, &mut sol, vars);
         }
-        let missing: Vec<&str> = (signature.params.iter())
+        let missing: Vec<String> = (signature.params.iter().enumerate())
             .zip(given.iter().zip(&signature.defaults))
             .filter(|(_, (given, default))| !**given && !**default)
-            .map(|((p, _), _)| p.as_str())
+            .filter(|((_, (p, _)), _)| !(unknown && p.contains('@')))
+            .map(|((i, (p, _)), _)| param_words(p, i))
             .collect();
         if is_print && !missing.is_empty() {
             self.errors.push(
@@ -6137,7 +6166,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{}` needs an argument for {}",
                     call.callee,
-                    names(&missing)
+                    sentence(missing)
                 ),
             ));
         }

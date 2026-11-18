@@ -5,6 +5,7 @@
 //! first line of the body, and takes what the program must do from the
 //! generator that built the tuple.
 
+use smith::diag::Pos;
 use smith::scalar::{self, Outcome};
 use smith::{check, lower};
 
@@ -39,6 +40,10 @@ pub const ONCE: &[Test] = &[
     (
         "a_name_a_pattern_introduces_is_owned_and_lent_as_any_other_name_is",
         a_name_a_pattern_introduces_is_owned_and_lent_as_any_other_name_is,
+    ),
+    (
+        "each_mistake_in_a_call_of_a_function_with_pattern_parameters_is_one_error_that_holds_no_at_sign",
+        each_mistake_in_a_call_of_a_function_with_pattern_parameters_is_one_error_that_holds_no_at_sign,
     ),
 ];
 
@@ -527,4 +532,172 @@ fn a_name_a_pattern_introduces_is_owned_and_lent_as_any_other_name_is() {
             }
         },
     );
+}
+
+/// One parameter of a function: a plain name, or a pattern.
+enum Param {
+    Plain(String),
+    Pattern(Shape),
+}
+
+impl Param {
+    fn ty(&self) -> String {
+        match self {
+            Param::Plain(_) => "i32".into(),
+            Param::Pattern(s) => s.ty(),
+        }
+    }
+
+    fn head(&self) -> String {
+        match self {
+            Param::Plain(n) => n.clone(),
+            Param::Pattern(s) => s.pattern(),
+        }
+    }
+
+    fn value(&self) -> String {
+        match self {
+            Param::Plain(_) => "1".into(),
+            Param::Pattern(s) => s.value(),
+        }
+    }
+
+    fn names(&self) -> Vec<String> {
+        match self {
+            Param::Plain(n) => vec![n.clone()],
+            Param::Pattern(s) => s.all().iter().map(|l| l.name.clone()).collect(),
+        }
+    }
+}
+
+/// The shape with each name given the prefix, and no `var`.
+fn prefixed(s: &Shape, prefix: &str) -> Shape {
+    match s {
+        Shape::Leaf(l) => Shape::Leaf(Leaf {
+            name: format!("{prefix}{}", l.name),
+            var: false,
+            ..l.clone()
+        }),
+        Shape::Tuple(items) => Shape::Tuple(items.iter().map(|i| prefixed(i, prefix)).collect()),
+    }
+}
+
+/// A mistake in a call.
+#[derive(Clone, Copy, Debug)]
+enum Mistake {
+    /// The last argument is left out.
+    Missing,
+    /// One argument more than there are parameters.
+    OneMore,
+    /// A last argument that names a parameter there is not.
+    Named,
+    /// The last argument, which is for a pattern, is given by a name.
+    NamedInstead,
+    /// One argument is text.
+    WrongType(usize),
+}
+
+#[derive(Debug)]
+struct CallCase {
+    params: Vec<Param>,
+    mistake: Mistake,
+}
+
+impl std::fmt::Debug for Param {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.head(), self.ty())
+    }
+}
+
+fn call_case(g: &mut Gen) -> CallCase {
+    let count = 1 + g.below(3);
+    let mut params = Vec::new();
+    for k in 0..count {
+        if k == 0 || g.one_in(2) {
+            params.push(Param::Pattern(prefixed(&shape(g, false), &format!("p{k}_"))));
+        } else {
+            params.push(Param::Plain(format!("p{k}")));
+        }
+    }
+    let last_is_pattern = matches!(params.last(), Some(Param::Pattern(_)));
+    let mistake = match g.below(5) {
+        0 => Mistake::Missing,
+        1 => Mistake::OneMore,
+        2 => Mistake::Named,
+        3 if last_is_pattern => Mistake::NamedInstead,
+        3 => Mistake::Named,
+        _ => Mistake::WrongType(g.below(count)),
+    };
+    CallCase { params, mistake }
+}
+
+/// Each mistake of a call of a function whose parameters are patterns is one
+/// error, at the place of the mistake, whose words and advice hold no `@`,
+/// which is in the name the compiler gives a pattern.
+fn each_mistake_in_a_call_of_a_function_with_pattern_parameters_is_one_error_that_holds_no_at_sign()
+{
+    generate::check(107, 60, call_case, |case| {
+        let names: Vec<String> = case.params.iter().flat_map(Param::names).collect();
+        let mut sum = names[0].clone();
+        for n in &names[1..] {
+            sum = format!("wrapping_add({sum}, {n})");
+        }
+        let declared: Vec<String> = case
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.head(), p.ty()))
+            .collect();
+        let head = format!(
+            "fn f({}) -> i32 {{ {sum} }}\n\nfn main() ! console, alloc {{\n",
+            declared.join(", ")
+        );
+        let line = head.matches('\n').count() + 1;
+        let mut args: Vec<String> = case.params.iter().map(Param::value).collect();
+        let (wanted, at) = match case.mistake {
+            Mistake::Missing => {
+                args.pop();
+                ("needs an argument", None)
+            }
+            Mistake::OneMore => {
+                args.push("7".into());
+                ("one more", Some(args.len() - 1))
+            }
+            Mistake::Named => {
+                args.push("t: 7".into());
+                ("has no parameter named", Some(args.len() - 1))
+            }
+            Mistake::NamedInstead => {
+                let last = args.len() - 1;
+                args[last] = format!("t: {}", args[last]);
+                ("has no parameter named", Some(last))
+            }
+            Mistake::WrongType(i) => {
+                args[i] = "\"x\"".into();
+                ("where", Some(i))
+            }
+        };
+        let call = format!("f({})", args.join(", "));
+        let source = format!("{head}  r = {call}\n  print(\"{{r}}\")\n}}\n");
+        // Where the mistake is: the start of the argument, or the `)`.
+        let column = |offset: usize| Pos {
+            line,
+            col: 1 + "  r = ".len() + offset,
+        };
+        let place = match at {
+            Some(i) => {
+                let before: usize = args[..i].iter().map(|a| a.len() + 2).sum();
+                column(2 + before)
+            }
+            None => column(call.len() - 1),
+        };
+        let errors = match check(source.as_bytes()) {
+            Ok(_) => Vec::new(),
+            Err(errors) => errors,
+        };
+        assert_eq!(errors.len(), 1, "{errors:?} for\n{source}");
+        let error = &errors[0];
+        assert!(error.message.contains(wanted), "{error:?} for\n{source}");
+        assert!(!format!("{error:?}").contains('@'), "{error:?} for\n{source}");
+        assert_eq!(error.pos, place, "{error:?} for\n{source}");
+    });
 }
