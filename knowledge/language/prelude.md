@@ -57,6 +57,23 @@ fn lines_of(path: str) -> Result[List[u8], FsError] ! fs, alloc {
 
 A name used and not imported is refused, and the error names the module to import it from, as [Importing with use](use.md#a-name-that-is-missing) says.
 
+## A name means one thing
+
+A bare name has exactly one meaning in a file. So a file cannot define, or import, a name that it already has, and the names of the prelude are names it already has.
+
+```
+struct Rect {
+  w: i64
+  h: i64
+}
+
+fn add(a: Rect, b: Rect) -> Rect { Rect(w: a.w + b.w, h: a.h + b.h) }
+```
+
+This is refused, as `add` is the function of `Add`, which `+` means. A `Rect` is given `+` by an `impl Add[Rect]`, and a function of the file's own takes another name. The same holds for a type named `Option` and for a name that a `use` already brought in.
+
+Two different functions never share a bare name. Where two traits each have a function of one name, a call is written with the trait's name, as [Traits](traits.md#when-two-traits-share-a-name) shows, and where two modules export one name, one is given another name or reached through its module, as [Importing with use](use.md#two-names-that-are-the-same) shows. A trait's function is still one function for every type that has an `impl`: `add` of two `Rect`s and `add` of two numbers are both `Add.add`.
+
 ## The forms
 
 | A name | Needs a `use`? |
@@ -66,5 +83,6 @@ A name used and not imported is refused, and the error names the module to impor
 | `push`, `narrow`, `sum`, `Map`, and every other name of `std` | Yes |
 | `console`, `fs`, `net`, `time`, `ui`, and their operations, `print` among them | Yes |
 | A name of a program's own module | Yes |
+| A definition named as a prelude name is, or as a name the file imported | Refused: a name means one thing |
 
 Next: [Importing a module](qualified-names.md)
