@@ -24,6 +24,9 @@ pub struct Error {
     pub message: String,
     /// What to write instead, when the compiler knows.
     pub fix: Option<String>,
+    /// The module of the standard library the place is in, when it is not in
+    /// the file that was compiled.
+    pub module: Option<String>,
 }
 
 impl Error {
@@ -32,12 +35,19 @@ impl Error {
             pos,
             message: message.into(),
             fix: None,
+            module: None,
         }
     }
 
     /// The same error, with advice on what to write instead.
     pub fn with_fix(mut self, fix: impl Into<String>) -> Error {
         self.fix = Some(fix.into());
+        self
+    }
+
+    /// The same error, at a place in the module of the library with the name.
+    pub fn in_module(mut self, module: impl Into<String>) -> Error {
+        self.module = Some(module.into());
         self
     }
 
@@ -49,6 +59,9 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(module) = &self.module {
+            write!(f, "{module}:")?;
+        }
         write!(f, "{}:{}: {}", self.pos.line, self.pos.col, self.message)
     }
 }
@@ -70,6 +83,13 @@ pub fn render(file: &str, source: &[u8], errors: &[Error]) -> String {
     for error in errors {
         let Pos { line, col } = error.pos;
         let message: String = error.message.chars().map(shown).collect();
+        let (file, lines) = match &error.module {
+            Some(module) => (
+                module.chars().map(shown).collect::<String>(),
+                crate::library_text(module).split('\n').collect(),
+            ),
+            None => (file.clone(), lines.clone()),
+        };
         out.push_str(&format!("{file}:{line}:{col}: {message}\n"));
         let number = line.to_string();
         let gutter = " ".repeat(number.len());
