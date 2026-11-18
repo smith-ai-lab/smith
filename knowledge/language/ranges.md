@@ -5,7 +5,8 @@ description: A range a..b runs from a up to but not including b, and x[a..b] is 
 status: partial
 built:
   - "`a..b` as the range of a `loop`, which runs in order and not at all when `a >= b`"
-  - "not a range outside a `loop`, or a slice"
+  - "`x[a..b]`, `x[..k]`, and `x[k..]` on a [`Slice`](../library/slice.md), a `Slice` that shares the memory of `x`, compiled when `arith` proves `a <= b` and `b <= x.size`, and a piece of a piece"
+  - "not a range outside a `loop` and an index, or a piece of an array, a text, or a list"
 ---
 
 # Ranges and slices
