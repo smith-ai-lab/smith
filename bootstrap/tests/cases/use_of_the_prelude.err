@@ -1,4 +1,4 @@
 use_of_the_prelude.smith:1:5: there is no module `std.prelude`
   1 | use std.prelude (Option)
     |     ^
-  fix: import from one of `std.ascii`, `std.bits`, `std.console`, `std.fmt`, `std.int`, `std.list`, `std.utf8`
+  fix: import from one of `std.ascii`, `std.bits`, `std.console`, `std.fmt`, `std.int`, `std.list`, `std.serialize`, `std.utf8`
