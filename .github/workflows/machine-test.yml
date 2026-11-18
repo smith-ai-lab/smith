@@ -21,5 +21,12 @@ jobs:
         working-directory: bootstrap
     steps:
       - uses: actions/checkout@v6
+      # What `decide` built every case to, which this machine must build to as well.
+      - uses: actions/download-artifact@v4
+        with:
+          name: case-hashes
+          path: ${{ runner.temp }}/case-hashes
       - name: Test
+        env:
+          SMITH_HASHES: ${{ runner.temp }}/case-hashes/case-hashes
         run: cargo test --locked -- --group=machine

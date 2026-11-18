@@ -25,7 +25,7 @@ A test exists to fail when something that must be true stops being true, and for
 ## How long a test may take
 
 - **One second of its own computing.** A run fails, and names the test, when a test spends more. The harness measures the processor time of the thread that ran the test, so a busy machine does not make a quick test slow, and the verdict is the same alone and beside every other test.
-- **A test that starts a program or a thread has not spent that time.** Call a function where you can, and start a program only to check what starting it does, and then through `output_within` in `tests/clock.rs`, which kills it after ten seconds on the wall and fails the test saying that the program never ends.
+- **A test that starts a program or a thread has not spent that time.** Call a function where you can, and start a program only to check what starting it does, and then through `output_within` in `tests/support/clock.rs`, which kills it after ten seconds on the wall and fails the test saying that the program never ends.
 - **A program that never ends fails the test that runs it.** The evaluator panics after three million blocks, and a run ends a test, naming it, when nothing has ended for twelve seconds on the wall, neither the test nor a program it started through `output_within`, so a test that starts many programs that each end is never taken for one that hangs. A new way to run a program goes through one of these, so that no test waits for ever.
 - **Aim for under half the limit,** so that a slower machine still passes. Work that every test of a file needs is done once, in a place that `OnceLock` holds, and costs the first test that asks for it.
 - **A property runs as few cases as make it fail when what it checks is broken.** Break the code once and watch it fail with the cases you chose.
@@ -33,6 +33,9 @@ A test exists to fail when something that must be true stops being true, and for
 - **A run fails on the kind of machine the `linux` job of `ci` uses,** and elsewhere prints a slow test and passes.
 
 ## Where each kind goes
+
+- **A file of tests** is a new `.rs` file in `bootstrap/tests/`. It declares `pub const ONCE: &[Test]`, or `MACHINE` for tests whose result depends on the kind of machine, as `knowledge/compiler.md` says under Testing, and lists its tests in it. Nothing else is edited: `build.rs` finds the file, and a file that declares no group fails the build. Code that tests share and that holds no test goes in `bootstrap/tests/support/`. Tests that fit a file that exists go in its list.
+- **A case** is a `.smith` file in `bootstrap/tests/cases` with its `.out`, or its `.err` when it is refused, beside it, written by `SMITH_UPDATE=1 cargo test cases`. No hash is kept anywhere. When the change alters the bytes of a case that exists, `ci` lists the cases and the pull request says `Changes generated code.` on a line of its own.
 
 - **Properties** run in-process over generated input, from the seed of the run, which a commit fixes and which a failure prints as `SMITH_SEED`, and shrink a failing input, for four seconds at most, before reporting it.
 - **Specific cases** are `.smith` files with their expected output beside them, updated by one command and reviewed as a diff. Add one when a bug is fixed, so it stays fixed.

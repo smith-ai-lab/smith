@@ -97,6 +97,34 @@ jobs:
             jq -Rsc 'split("\n") | map(select(. != ""))')
           echo "the machines that need a test: $machines"
           echo "machines=$machines" >> "$GITHUB_OUTPUT"
+      # Every case for every target, built by the compiler of the base and by
+      # this change's, so that the pull request says which executables it
+      # changes, and by the machine tests, which build the same cases on each
+      # kind of machine and compare the bytes with these.
+      - name: Hash every case with both compilers
+        run: |
+          set -eu
+          (cd bootstrap && cargo build --locked) &
+          (cd "$RUNNER_TEMP/base/bootstrap" && cargo build --locked) &
+          wait
+          sh .github/hash-cases.sh bootstrap/target/debug/smith bootstrap/tests/cases > case-hashes
+          sh .github/hash-cases.sh "$RUNNER_TEMP/base/bootstrap/target/debug/smith" \
+            bootstrap/tests/cases > "$RUNNER_TEMP/base-case-hashes"
+      - name: Say which cases this change builds to other bytes
+        if: github.event_name == 'pull_request'
+        env:
+          DESCRIPTION: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n' "$DESCRIPTION" > "$RUNNER_TEMP/description"
+          if sh .github/check-generated.sh "$RUNNER_TEMP/base-case-hashes" case-hashes \
+            "$RUNNER_TEMP/description" > "$RUNNER_TEMP/generated"; then status=0; else status=$?; fi
+          cat "$RUNNER_TEMP/generated"
+          cat "$RUNNER_TEMP/generated" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: case-hashes
+          path: case-hashes
 
   # The tests whose result depends on the machine, on each other kind of machine
   # a target needs, when `decide` names it. linux_x64 is the job above.

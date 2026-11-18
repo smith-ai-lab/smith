@@ -39,7 +39,7 @@ pub const ONCE: &[Test] = &[
         every_target_builds_identical_bytes_twice,
     ),
     ("no_test_names_a_target", no_test_names_a_target),
-    ("the_kept_hashes_are_sha256", the_kept_hashes_are_sha256),
+    ("the_hash_of_an_executable_is_sha256", the_hash_of_an_executable_is_sha256),
     (
         "every_executable_uses_only_thin_wrappers_over_the_kernel",
         every_executable_uses_only_thin_wrappers_over_the_kernel,
@@ -120,8 +120,8 @@ pub const MACHINE: &[Test] = &[
         a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothing_more,
     ),
     (
-        "every_target_builds_the_cases_to_their_kept_hashes",
-        every_target_builds_the_cases_to_their_kept_hashes,
+        "every_target_builds_the_cases_to_the_hashes_another_machine_made",
+        every_target_builds_the_cases_to_the_hashes_another_machine_made,
     ),
 ];
 
@@ -222,19 +222,8 @@ pub fn runs_as(source: &[u8], target: Target, said: &Outcome) {
     }
 }
 
-/// The tests whose result depends on the kind of machine they run on.
-pub fn machine() -> Vec<Test> {
-    [
-        MACHINE,
-        crate::cli::MACHINE,
-        crate::arguments::MACHINE,
-        crate::status::MACHINE,
-    ]
-    .concat()
-}
-
 /// For each target the compiler builds for, a hash of every executable the
-/// given tests, which are all of `machine()` for a real fingerprint, would run for it, with what each is
+/// given tests, which are all of `machine_tests()` for a real fingerprint, would run for it, with what each is
 /// checked against, built as `build` builds. Two compilers that give the
 /// same hash for a target give those tests nothing new to find on any
 /// machine that runs it. Nothing is run, so the result is the same on
@@ -781,64 +770,57 @@ pub fn case_files() -> Vec<PathBuf> {
     found
 }
 
-/// Where the hashes of the cases' executables are kept.
-fn hashes_file() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hashes")
-}
-
-/// Whether this run rewrites the expected output of the cases and their
-/// hashes, as `SMITH_UPDATE=1 cargo test cases` asks.
+/// Whether this run rewrites the expected output of the cases, as `SMITH_UPDATE=1 cargo test cases` asks.
 pub fn updating() -> bool {
     std::env::var_os("SMITH_UPDATE").is_some_and(|v| !v.is_empty())
 }
 
-/// One line for each target and each case that builds for it: the target,
-/// the case's file, and the SHA-256 of its executable.
-fn hashes() -> String {
-    let mut text = String::new();
-    for target in buildable() {
-        for source in case_files() {
-            if let Ok(bytes) = build(&std::fs::read(&source).unwrap(), target) {
-                record(target, &[&bytes]);
-                let file = source.file_name().unwrap().to_str().unwrap();
-                let hash = sha256::hex(&bytes);
-                text.push_str(&format!("{} {file} {hash}\n", target.name()));
-            }
-        }
-    }
-    text
-}
+/// The variable that names the file of hashes another machine of the same run
+/// made, as `.github/hash-cases.sh` prints them.
+const HASHES: &str = "SMITH_HASHES";
 
-fn every_target_builds_the_cases_to_their_kept_hashes() {
-    let built = hashes();
-    if updating() {
-        std::fs::write(hashes_file(), &built).unwrap();
+/// A target's executables have the same bytes whichever machine builds them.
+/// In `ci`, one job builds every case for every target and keeps the hash of
+/// each, one line for each as `<target> <case file> <sha256>`, and every other
+/// kind of machine builds the same cases and compares. A run that is given no
+/// file has nothing to compare with, and checks nothing.
+fn every_target_builds_the_cases_to_the_hashes_another_machine_made() {
+    let Some(path) = std::env::var_os(HASHES) else {
         return;
-    }
-    let kept = std::fs::read_to_string(hashes_file()).unwrap_or_default();
+    };
+    // No target's bytes are read here, so a fingerprint has nothing to note.
     if fingerprinting() {
-        for line in kept.lines() {
-            let target = Target::ALL.iter().find(|t| line.starts_with(t.name()));
-            record(
-                *target.expect("a kept hash names a target"),
-                &[line.as_bytes()],
-            );
-        }
         return;
     }
-    let missing: Vec<&str> = built.lines().filter(|l| !kept.contains(l)).collect();
-    let stale: Vec<&str> = kept.lines().filter(|l| !built.contains(l)).collect();
+    let made = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{HASHES}: {e}"));
+    assert!(!made.trim().is_empty(), "{HASHES} names an empty file");
+    let mut differ = Vec::new();
+    let mut compared = 0;
+    for line in made.lines() {
+        let [target, file, hash] = line.split(' ').collect::<Vec<_>>()[..] else {
+            panic!("{HASHES}: `{line}` is not `<target> <case> <hash>`");
+        };
+        let Some(target) = Target::from_name(target) else {
+            panic!("{HASHES}: `{target}` is not a target");
+        };
+        let source = std::fs::read(case_files().iter().find(|p| p.ends_with(file)).unwrap())
+            .unwrap();
+        let bytes = build(&source, target).unwrap_or_else(|e| panic!("{file}: {e:?}"));
+        compared += 1;
+        if sha256::hex(&bytes) != hash {
+            differ.push(format!("{} {file}", target.name()));
+        }
+    }
     assert!(
-        missing.is_empty() && stale.is_empty(),
-        "on {}, the executables differ from tests/hashes.\nbuilt now:\n{}\nkept:\n{}\n\
-         if the change is meant, rewrite the file with `SMITH_UPDATE=1 cargo test cases`",
+        differ.is_empty(),
+        "on {}, {} of {compared} executables differ from those the run's first job made:\n{}",
         Target::host_description(),
-        missing.join("\n"),
-        stale.join("\n"),
+        differ.len(),
+        differ.join("\n"),
     );
 }
 
-fn the_kept_hashes_are_sha256() {
+fn the_hash_of_an_executable_is_sha256() {
     // Two of the examples FIPS 180-4 gives.
     assert_eq!(
         sha256::hex(b"abc"),
@@ -853,8 +835,9 @@ fn the_kept_hashes_are_sha256() {
 /// The tests' own source files.
 fn test_files() -> Vec<(PathBuf, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
-    let mut found: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
+    let mut found: Vec<_> = [dir.clone(), dir.join("support")]
+        .iter()
+        .flat_map(|d| std::fs::read_dir(d).unwrap())
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|e| e == "rs"))
         .map(|p| {

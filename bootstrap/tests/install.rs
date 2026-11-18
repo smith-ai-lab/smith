@@ -1,6 +1,7 @@
 //! What `install.sh` does, run against a release made on disk, on a machine
 //! that `uname` is made to describe, so no test needs GitHub or the machine it
 //! names.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
