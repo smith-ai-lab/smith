@@ -31,6 +31,10 @@ pub const ONCE: &[Test] = &[
         a_function_saves_a_register_a_call_does_not_change_only_for_a_value_alive_across_a_call,
     ),
     (
+        "a_value_read_from_the_frame_is_not_read_again_in_a_block_while_it_is_in_a_register",
+        a_value_read_from_the_frame_is_not_read_again_in_a_block_while_it_is_in_a_register,
+    ),
+    (
         "an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says",
         an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says,
     ),
@@ -513,6 +517,68 @@ fn a_function_saves_a_register_a_call_does_not_change_only_for_a_value_alive_acr
             }
         }
         assert!(read > 0, "no target is an ELF file the reader knows");
+    });
+}
+
+/// A function that reads `held` numbers from memory, so that more are alive
+/// than there are registers and those whose last use is furthest off are in
+/// the frame, writes the last two of them `times` over to the places the
+/// first of them says, and then adds them all up and writes the sum.
+fn rereading(held: usize, times: usize) -> scalar::Program {
+    let int = Type::Int(Bits::B64);
+    let mut b = Builder::new();
+    let size = b.int(Bits::B64, 8 * 64);
+    let buffer = b.allocate(size);
+    let values: Vec<Value> = (0..held)
+        .map(|i| {
+            let at = b.int(Bits::B64, 8 * i as u64);
+            let place = b.binary(Binary::Add, buffer, at);
+            // The place the stores go to is an address, which is a number
+            // read from memory as well.
+            let ty = if i == held - 2 { Type::Address } else { int };
+            b.load(ty, place)
+        })
+        .collect();
+    let (place, value) = (values[held - 2], values[held - 1]);
+    for _ in 0..times {
+        b.store(place, value);
+    }
+    let zero = b.int(Bits::B64, 0);
+    let ints = values.iter().filter(|v| **v != place);
+    let total = ints.fold(zero, |s, v| b.binary(Binary::Add, s, *v));
+    b.store(place, total);
+    b.store(buffer, total);
+    b.ret(vec![]);
+    program(vec![b.finish(&[])], 0)
+}
+
+/// A value that was read from the frame is in the register it was read into
+/// until something changes the register, so reading it again in the block
+/// takes no instruction. A store of two numbers that are in the frame, which
+/// reads each into a register, takes one instruction for each store after the
+/// first. Counted in the code of x86-64.
+fn a_value_read_from_the_frame_is_not_read_again_in_a_block_while_it_is_in_a_register() {
+    let generate = |g: &mut Gen| (24 + g.below(8), 2 + g.below(10));
+    generate::check(107, 12, generate, |(held, times)| {
+        let mut read = 0;
+        for target in Target::ALL {
+            let once = target.emit(&rereading(*held, 1));
+            let many = target.emit(&rereading(*held, *times));
+            let (Some((Machine::X86_64, once)), Some((_, many))) =
+                (instruction_count(&once), instruction_count(&many))
+            else {
+                continue;
+            };
+            read += 1;
+            assert!(
+                many - once < *times,
+                "{} stores of two values in the frame take {} instructions more than one, on {}",
+                times,
+                many - once,
+                target.name()
+            );
+        }
+        assert!(read > 0, "no target is an ELF file for x86-64");
     });
 }
 

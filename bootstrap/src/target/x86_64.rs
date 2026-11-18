@@ -77,9 +77,31 @@ pub struct Asm {
     /// The tables, each a label and the labels whose distances from it are its
     /// entries, which are placed after the code, with the data.
     tables: Vec<(usize, Vec<usize>)>,
+    /// For each of rax, rcx, and rdx, which the Writer works in, how many
+    /// instructions that may have changed it were written. A value that is
+    /// held in one of them is still there while its number is the same.
+    versions: [u32; 3],
 }
 
 impl Asm {
+    /// How many instructions that may have changed the register were
+    /// written, for rax, rcx, and rdx, and 0 for any other.
+    pub fn version(&self, r: Reg) -> u32 {
+        self.versions.get(r.0 as usize).copied().unwrap_or(0)
+    }
+
+    /// Writes an instruction that changes the register `rd` and no other,
+    /// or none when it is `None`. Every instruction that is written otherwise
+    /// is taken to have changed rax, rcx, and rdx.
+    fn writing(&mut self, rd: Option<Reg>, emit: impl FnOnce(&mut Self)) {
+        let kept = self.versions;
+        emit(self);
+        self.versions = kept;
+        if let Some(r) = rd.filter(|r| r.0 < 3) {
+            self.versions[r.0 as usize] += 1;
+        }
+    }
+
     pub fn label(&mut self) -> usize {
         self.labels.push(None);
         self.labels.len() - 1
@@ -87,6 +109,8 @@ impl Asm {
 
     pub fn bind(&mut self, label: usize) {
         self.labels[label] = Some(self.code.len());
+        // Another path may come here.
+        self.versions = self.versions.map(|v| v + 1);
     }
 
     /// How many bytes of code there are so far, and of the tables that are
@@ -102,6 +126,7 @@ impl Asm {
 
     fn bytes(&mut self, bytes: &[u8]) {
         self.code.extend_from_slice(bytes);
+        self.versions = self.versions.map(|v| v + 1);
     }
 
     fn offset_to(&mut self, to: Ref) {
@@ -121,11 +146,13 @@ impl Asm {
 
     /// `mov r32, imm32`, which clears the upper half.
     pub fn mov32(&mut self, rd: Reg, value: u32) {
-        if rd.0 >= 8 {
-            self.bytes(&[0x41]);
-        }
-        self.bytes(&[0xb8 | (rd.0 & 7)]);
-        self.bytes(&value.to_le_bytes());
+        self.writing(Some(rd), |a| {
+            if rd.0 >= 8 {
+                a.bytes(&[0x41]);
+            }
+            a.bytes(&[0xb8 | (rd.0 & 7)]);
+            a.bytes(&value.to_le_bytes());
+        });
     }
 
     /// Puts the number in the register, whole, in the shortest way.
@@ -141,6 +168,13 @@ impl Asm {
     /// bytes, or 8 and the number is the same when taken as 32 bits and
     /// extended. Says whether it could.
     pub fn store_imm(&mut self, to: Place, value: u64, width: u32) -> bool {
+        let kept = self.versions;
+        let done = self.store_imm_bytes(to, value, width);
+        self.versions = kept;
+        done
+    }
+
+    fn store_imm_bytes(&mut self, to: Place, value: u64, width: u32) -> bool {
         let rex = Self::base(to) >> 3;
         match width {
             1 => {
@@ -182,80 +216,102 @@ impl Asm {
 
     /// `mov r64, imm64`.
     pub fn mov64(&mut self, rd: Reg, value: u64) {
-        self.bytes(&[Self::rex_w(RAX, rd), 0xb8 | (rd.0 & 7)]);
-        self.bytes(&value.to_le_bytes());
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(RAX, rd), 0xb8 | (rd.0 & 7)]);
+            a.bytes(&value.to_le_bytes());
+        });
     }
 
     /// `mov rd, rs`.
     pub fn mov(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rs, rd), 0x89, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rs, rd), 0x89, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `test r64, r64`.
     pub fn test(&mut self, r: Reg) {
-        self.bytes(&[Self::rex_w(r, r), 0x85, Self::modrm(r, r)]);
+        self.writing(None, |a| {
+            a.bytes(&[Self::rex_w(r, r), 0x85, Self::modrm(r, r)]);
+        });
     }
 
     /// `test r32, r32`.
     pub fn test32(&mut self, r: Reg) {
-        if r.0 >= 8 {
-            self.bytes(&[0x45]);
-        }
-        self.bytes(&[0x85, Self::modrm(r, r)]);
+        self.writing(None, |a| {
+            if r.0 >= 8 {
+                a.bytes(&[0x45]);
+            }
+            a.bytes(&[0x85, Self::modrm(r, r)]);
+        });
     }
 
     /// `mov r32, r32`, which clears the upper half.
     fn mov32_rr(&mut self, rd: Reg, rs: Reg) {
-        if rd.0 >= 8 || rs.0 >= 8 {
-            self.bytes(&[0x40 | (rs.0 >> 3) << 2 | rd.0 >> 3]);
-        }
-        self.bytes(&[0x89, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            if rd.0 >= 8 || rs.0 >= 8 {
+                a.bytes(&[0x40 | (rs.0 >> 3) << 2 | rd.0 >> 3]);
+            }
+            a.bytes(&[0x89, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `movzx r32, r8`, the low byte of `rs`.
     fn movzx8(&mut self, rd: Reg, rs: Reg) {
-        if rs.0 >= 4 || rd.0 >= 8 {
-            self.bytes(&[0x40 | (rd.0 >> 3) << 2 | rs.0 >> 3]);
-        }
-        self.bytes(&[0x0f, 0xb6, Self::modrm(rd, rs)]);
+        self.writing(Some(rd), |a| {
+            if rs.0 >= 4 || rd.0 >= 8 {
+                a.bytes(&[0x40 | (rd.0 >> 3) << 2 | rs.0 >> 3]);
+            }
+            a.bytes(&[0x0f, 0xb6, Self::modrm(rd, rs)]);
+        });
     }
 
     /// `movzx r32, r16`, the low 16 bits of `rs`.
     fn movzx16(&mut self, rd: Reg, rs: Reg) {
-        if rd.0 >= 8 || rs.0 >= 8 {
-            self.bytes(&[0x40 | (rd.0 >> 3) << 2 | rs.0 >> 3]);
-        }
-        self.bytes(&[0x0f, 0xb7, Self::modrm(rd, rs)]);
+        self.writing(Some(rd), |a| {
+            if rd.0 >= 8 || rs.0 >= 8 {
+                a.bytes(&[0x40 | (rd.0 >> 3) << 2 | rs.0 >> 3]);
+            }
+            a.bytes(&[0x0f, 0xb7, Self::modrm(rd, rs)]);
+        });
     }
 
     /// `movsx r64, r8`, `r16`, or `r32`: the low `width` bytes of `rs`,
     /// extended as a signed number.
     fn movsx(&mut self, rd: Reg, rs: Reg, width: u32) {
-        self.bytes(&[Self::rex_w(rd, rs)]);
-        match width {
-            1 => self.bytes(&[0x0f, 0xbe]),
-            2 => self.bytes(&[0x0f, 0xbf]),
-            4 => self.bytes(&[0x63]),
-            _ => unreachable!("an integer of {width} bytes"),
-        }
-        self.bytes(&[Self::modrm(rd, rs)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, rs)]);
+            match width {
+                1 => a.bytes(&[0x0f, 0xbe]),
+                2 => a.bytes(&[0x0f, 0xbf]),
+                4 => a.bytes(&[0x63]),
+                _ => unreachable!("an integer of {width} bytes"),
+            }
+            a.bytes(&[Self::modrm(rd, rs)]);
+        });
     }
 
     /// `cmp ra, rb`, which compares `ra - rb`.
     pub fn cmp(&mut self, ra: Reg, rb: Reg) {
-        self.bytes(&[Self::rex_w(rb, ra), 0x39, Self::modrm(rb, ra)]);
+        self.writing(None, |a| {
+            a.bytes(&[Self::rex_w(rb, ra), 0x39, Self::modrm(rb, ra)]);
+        });
     }
 
     /// `cmova rd, rs`: copies `rs` when the last comparison found its first
     /// operand above its second, as unsigned numbers.
     pub fn cmova(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x47, Self::modrm(rd, rs)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x47, Self::modrm(rd, rs)]);
+        });
     }
 
     /// `cmovne rd, rs`: copies `rs` when the last test found a value that is
     /// not 0.
     fn cmovne(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x45, Self::modrm(rd, rs)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x45, Self::modrm(rd, rs)]);
+        });
     }
 
     /// The ModRM, SIB, and 8-bit displacement of `[rsp + disp]`, with `reg`
@@ -266,139 +322,168 @@ impl Asm {
 
     /// `lea rd, [rsp + disp]`.
     pub fn stack_address(&mut self, rd: Reg, disp: i8) {
-        self.bytes(&[Self::rex_w(rd, RAX), 0x8d]);
-        self.stack_slot(rd.0, disp);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, RAX), 0x8d]);
+            a.stack_slot(rd.0, disp);
+        });
     }
 
     /// `mov qword [rsp + disp], imm32`, sign-extended.
     pub fn store_stack_imm32(&mut self, disp: i8, value: u32) {
-        self.bytes(&[0x48, 0xc7]);
-        self.stack_slot(0, disp);
-        self.bytes(&value.to_le_bytes());
+        self.writing(None, |a| {
+            a.bytes(&[0x48, 0xc7]);
+            a.stack_slot(0, disp);
+            a.bytes(&value.to_le_bytes());
+        });
     }
 
     /// `mov r32, dword [rsp + disp]`, which clears the upper half, for a
     /// register below r8.
     pub fn load32_stack(&mut self, rd: Reg, disp: i8) {
-        assert!(rd.0 < 8);
-        self.bytes(&[0x8b]);
-        self.stack_slot(rd.0, disp);
+        self.writing(Some(rd), |a| {
+            assert!(rd.0 < 8);
+            a.bytes(&[0x8b]);
+            a.stack_slot(rd.0, disp);
+        });
     }
 
     /// `add rd, rs`.
     pub fn add(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rs, rd), 0x01, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rs, rd), 0x01, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `sub rd, rs`.
     pub fn sub(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rs, rd), 0x29, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rs, rd), 0x29, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `op r64, imm`, sign-extended, for `add` as 0, `or` as 1, `and` as 4,
     /// `sub` as 5, `xor` as 6, and `cmp` as 7.
     fn alu_imm(&mut self, op: u8, r: Reg, value: i32) {
-        match i8::try_from(value) {
-            Ok(small) => self.bytes(&[
-                Self::rex_w(RAX, r),
-                0x83,
-                Self::modrm(Reg(op), r),
-                small as u8,
-            ]),
-            Err(_) => {
-                self.bytes(&[Self::rex_w(RAX, r), 0x81, Self::modrm(Reg(op), r)]);
-                self.bytes(&value.to_le_bytes());
-            }
-        }
+        self.writing(
+            if op == 7 { None } else { Some(r) },
+            |a| match i8::try_from(value) {
+                Ok(small) => a.bytes(&[
+                    Self::rex_w(RAX, r),
+                    0x83,
+                    Self::modrm(Reg(op), r),
+                    small as u8,
+                ]),
+                Err(_) => {
+                    a.bytes(&[Self::rex_w(RAX, r), 0x81, Self::modrm(Reg(op), r)]);
+                    a.bytes(&value.to_le_bytes());
+                }
+            },
+        );
     }
 
     /// A 64-bit instruction with one operand in memory and a register in the
     /// ModRM reg field: `cmp [place], r` is 0x39, `cmp r, [place]` 0x3b, and
     /// `imul r, [place], imm32` 0x69 with an immediate after it.
     fn with_memory(&mut self, opcode: u8, reg: Reg, place: Place) {
-        self.bytes(&[0x48 | (reg.0 >> 3) << 2 | Self::base(place) >> 3, opcode]);
-        self.place(reg, place);
+        self.writing(if opcode == 0x69 { Some(reg) } else { None }, |a| {
+            a.bytes(&[0x48 | (reg.0 >> 3) << 2 | Self::base(place) >> 3, opcode]);
+            a.place(reg, place);
+        });
     }
 
     /// `cmp qword [place], imm`, sign-extended.
     fn cmp_memory_imm(&mut self, place: Place, value: i32) {
-        match i8::try_from(value) {
+        self.writing(None, |a| match i8::try_from(value) {
             Ok(small) => {
-                self.with_memory(0x83, Reg(7), place);
-                self.bytes(&[small as u8]);
+                a.with_memory(0x83, Reg(7), place);
+                a.bytes(&[small as u8]);
             }
             Err(_) => {
-                self.with_memory(0x81, Reg(7), place);
-                self.bytes(&value.to_le_bytes());
+                a.with_memory(0x81, Reg(7), place);
+                a.bytes(&value.to_le_bytes());
             }
-        }
+        });
     }
 
     /// `imul rd, qword [place], imm32`.
     fn imul_memory_imm(&mut self, rd: Reg, place: Place, value: i32) {
-        self.with_memory(0x69, rd, place);
-        self.bytes(&value.to_le_bytes());
+        self.writing(Some(rd), |a| {
+            a.with_memory(0x69, rd, place);
+            a.bytes(&value.to_le_bytes());
+        });
     }
 
     /// `imul rd, rs, imm32`.
     fn imul_imm(&mut self, rd: Reg, rs: Reg, value: i32) {
-        self.bytes(&[Self::rex_w(rd, rs), 0x69, Self::modrm(rd, rs)]);
-        self.bytes(&value.to_le_bytes());
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, rs), 0x69, Self::modrm(rd, rs)]);
+            a.bytes(&value.to_le_bytes());
+        });
     }
 
     /// `lea rd, [ra + rb]`.
     fn lea_sum(&mut self, rd: Reg, ra: Reg, rb: Reg) {
-        // rsp cannot be an index, and rbp and r13 as a base need a
-        // displacement, so the sum is taken the other way round or with a
-        // displacement of 0.
-        let (base, index) = if rb.0 == 4 { (rb, ra) } else { (ra, rb) };
-        let rex = 0x48 | (rd.0 >> 3) << 2 | (index.0 >> 3) << 1 | base.0 >> 3;
-        if base.0 & 7 == 5 {
-            self.bytes(&[rex, 0x8d, 0x44 | (rd.0 & 7) << 3, (index.0 & 7) << 3 | 5, 0]);
-        } else {
-            self.bytes(&[
-                rex,
-                0x8d,
-                0x04 | (rd.0 & 7) << 3,
-                (index.0 & 7) << 3 | (base.0 & 7),
-            ]);
-        }
+        self.writing(Some(rd), |a| {
+            // rsp cannot be an index, and rbp and r13 as a base need a
+            // displacement, so the sum is taken the other way round or with a
+            // displacement of 0.
+            let (base, index) = if rb.0 == 4 { (rb, ra) } else { (ra, rb) };
+            let rex = 0x48 | (rd.0 >> 3) << 2 | (index.0 >> 3) << 1 | base.0 >> 3;
+            if base.0 & 7 == 5 {
+                a.bytes(&[rex, 0x8d, 0x44 | (rd.0 & 7) << 3, (index.0 & 7) << 3 | 5, 0]);
+            } else {
+                a.bytes(&[
+                    rex,
+                    0x8d,
+                    0x04 | (rd.0 & 7) << 3,
+                    (index.0 & 7) << 3 | (base.0 & 7),
+                ]);
+            }
+        });
     }
 
     /// `lea rd, [rs + disp32]`.
     fn lea_displaced(&mut self, rd: Reg, rs: Reg, disp: i32) {
-        self.bytes(&[
-            Self::rex_w(rd, rs),
-            0x8d,
-            0x80 | (rd.0 & 7) << 3 | (rs.0 & 7),
-        ]);
-        if rs.0 & 7 == 4 {
-            self.bytes(&[0x24]);
-        }
-        self.bytes(&disp.to_le_bytes());
+        self.writing(Some(rd), |a| {
+            a.bytes(&[
+                Self::rex_w(rd, rs),
+                0x8d,
+                0x80 | (rd.0 & 7) << 3 | (rs.0 & 7),
+            ]);
+            if rs.0 & 7 == 4 {
+                a.bytes(&[0x24]);
+            }
+            a.bytes(&disp.to_le_bytes());
+        });
     }
 
     /// `cmp r64, imm8`, sign-extended.
     pub fn cmp_imm8(&mut self, r: Reg, value: i8) {
-        self.bytes(&[
-            Self::rex_w(RAX, r),
-            0x83,
-            Self::modrm(Reg(7), r),
-            value as u8,
-        ]);
+        self.writing(None, |a| {
+            a.bytes(&[
+                Self::rex_w(RAX, r),
+                0x83,
+                Self::modrm(Reg(7), r),
+                value as u8,
+            ]);
+        });
     }
 
     /// `cmp r64, imm32`, sign-extended.
     fn cmp_imm32(&mut self, r: Reg, value: u32) {
-        self.bytes(&[Self::rex_w(RAX, r), 0x81, Self::modrm(Reg(7), r)]);
-        self.bytes(&value.to_le_bytes());
+        self.writing(None, |a| {
+            a.bytes(&[Self::rex_w(RAX, r), 0x81, Self::modrm(Reg(7), r)]);
+            a.bytes(&value.to_le_bytes());
+        });
     }
 
     /// `cmp dword [r], imm8`, sign-extended, for a register below r8 other
     /// than rsp and rbp.
     pub fn cmp_load32_imm8(&mut self, r: Reg, value: i8) {
-        assert!(r.0 < 8 && r.0 != 4 && r.0 != 5);
-        self.bytes(&[0x83, 7 << 3 | r.0, value as u8]);
+        self.writing(None, |a| {
+            assert!(r.0 < 8 && r.0 != 4 && r.0 != 5);
+            a.bytes(&[0x83, 7 << 3 | r.0, value as u8]);
+        });
     }
 
     /// The ModRM, and what follows it, of a place, with `reg` in the ModRM
@@ -431,35 +516,40 @@ impl Asm {
     /// Reads an integer of `width` bytes into the whole of `rd`, extended to
     /// 64 bits as its sign says when `signed` and with zeros when not.
     pub fn load(&mut self, rd: Reg, width: u32, signed: bool, from: Place) {
-        let rex =
-            (u8::from(width == 8 || signed) << 3) | ((rd.0 >> 3) << 2) | (Self::base(from) >> 3);
-        if rex != 0 {
-            self.bytes(&[0x40 | rex]);
-        }
-        match (width, signed) {
-            (1, false) => self.bytes(&[0x0f, 0xb6]),
-            (2, false) => self.bytes(&[0x0f, 0xb7]),
-            (1, true) => self.bytes(&[0x0f, 0xbe]),
-            (2, true) => self.bytes(&[0x0f, 0xbf]),
-            (4, true) => self.bytes(&[0x63]),
-            (4, false) | (8, _) => self.bytes(&[0x8b]),
-            _ => unreachable!("an integer of {width} bytes"),
-        }
-        self.place(rd, from);
+        self.writing(Some(rd), |a| {
+            let rex = (u8::from(width == 8 || signed) << 3)
+                | ((rd.0 >> 3) << 2)
+                | (Self::base(from) >> 3);
+            if rex != 0 {
+                a.bytes(&[0x40 | rex]);
+            }
+            match (width, signed) {
+                (1, false) => a.bytes(&[0x0f, 0xb6]),
+                (2, false) => a.bytes(&[0x0f, 0xb7]),
+                (1, true) => a.bytes(&[0x0f, 0xbe]),
+                (2, true) => a.bytes(&[0x0f, 0xbf]),
+                (4, true) => a.bytes(&[0x63]),
+                (4, false) | (8, _) => a.bytes(&[0x8b]),
+                _ => unreachable!("an integer of {width} bytes"),
+            }
+            a.place(rd, from);
+        });
     }
 
     /// Writes the low `width` bytes of `rs`.
     pub fn store(&mut self, to: Place, rs: Reg, width: u32) {
-        if width == 2 {
-            self.bytes(&[0x66]);
-        }
-        let rex = (u8::from(width == 8) << 3) | ((rs.0 >> 3) << 2) | (Self::base(to) >> 3);
-        // The low byte of rsi, rdi, rbp, and rsp is reached with a prefix.
-        if rex != 0 || (width == 1 && rs.0 >= 4) {
-            self.bytes(&[0x40 | rex]);
-        }
-        self.bytes(&[if width == 1 { 0x88 } else { 0x89 }]);
-        self.place(rs, to);
+        self.writing(None, |a| {
+            if width == 2 {
+                a.bytes(&[0x66]);
+            }
+            let rex = (u8::from(width == 8) << 3) | ((rs.0 >> 3) << 2) | (Self::base(to) >> 3);
+            // The low byte of rsi, rdi, rbp, and rsp is reached with a prefix.
+            if rex != 0 || (width == 1 && rs.0 >= 4) {
+                a.bytes(&[0x40 | rex]);
+            }
+            a.bytes(&[if width == 1 { 0x88 } else { 0x89 }]);
+            a.place(rs, to);
+        });
     }
 
     /// `sub rsp, imm32`.
@@ -508,20 +598,26 @@ impl Asm {
 
     /// `lea rd, [rip + label]`.
     fn address(&mut self, rd: Reg, label: usize) {
-        self.bytes(&[Self::rex_w(rd, RAX), 0x8d, (rd.0 & 7) << 3 | 5]);
-        self.offset_to(Ref::Label(label));
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, RAX), 0x8d, (rd.0 & 7) << 3 | 5]);
+            a.offset_to(Ref::Label(label));
+        });
     }
 
     /// `jmp label`.
     pub fn jmp(&mut self, label: usize) {
-        self.bytes(&[0xe9]);
-        self.offset_to(Ref::Label(label));
+        self.writing(None, |a| {
+            a.bytes(&[0xe9]);
+            a.offset_to(Ref::Label(label));
+        });
     }
 
     /// `jcc label`, for a condition code such as `Z`.
     pub fn jcc(&mut self, cond: u8, label: usize) {
-        self.bytes(&[0x0f, 0x80 | cond]);
-        self.offset_to(Ref::Label(label));
+        self.writing(None, |a| {
+            a.bytes(&[0x0f, 0x80 | cond]);
+            a.offset_to(Ref::Label(label));
+        });
     }
 
     /// Goes to the label that entry `index` of the table at `table` says, as
@@ -561,22 +657,30 @@ impl Asm {
 
     /// `and rd, rs`.
     fn and(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rs, rd), 0x21, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rs, rd), 0x21, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `or rd, rs`.
     fn or(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rs, rd), 0x09, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rs, rd), 0x09, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `xor rd, rs`.
     fn xor(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rs, rd), 0x31, Self::modrm(rs, rd)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rs, rd), 0x31, Self::modrm(rs, rd)]);
+        });
     }
 
     /// `imul rd, rs`, which keeps the low 64 bits.
     fn imul(&mut self, rd: Reg, rs: Reg) {
-        self.bytes(&[Self::rex_w(rd, rs), 0x0f, 0xaf, Self::modrm(rd, rs)]);
+        self.writing(Some(rd), |a| {
+            a.bytes(&[Self::rex_w(rd, rs), 0x0f, 0xaf, Self::modrm(rd, rs)]);
+        });
     }
 
     /// An instruction of the group that multiplies rdx:rax, by the number of
@@ -589,23 +693,31 @@ impl Asm {
     /// operation in the ModRM reg field: 4 for `shl`, 5 for `shr`, and 7
     /// for `sar`. The count is taken modulo 64.
     fn shift_cl(&mut self, op: u8, r: Reg) {
-        self.bytes(&[Self::rex_w(RAX, r), 0xd3, Self::modrm(Reg(op), r)]);
+        self.writing(Some(r), |a| {
+            a.bytes(&[Self::rex_w(RAX, r), 0xd3, Self::modrm(Reg(op), r)]);
+        });
     }
 
     /// `shr r, imm8`.
     fn shr_imm(&mut self, r: Reg, count: u8) {
-        self.bytes(&[Self::rex_w(RAX, r), 0xc1, Self::modrm(Reg(5), r), count]);
+        self.writing(Some(r), |a| {
+            a.bytes(&[Self::rex_w(RAX, r), 0xc1, Self::modrm(Reg(5), r), count]);
+        });
     }
 
     /// `sar r, imm8`.
     fn sar_imm(&mut self, r: Reg, count: u8) {
-        self.bytes(&[Self::rex_w(RAX, r), 0xc1, Self::modrm(Reg(7), r), count]);
+        self.writing(Some(r), |a| {
+            a.bytes(&[Self::rex_w(RAX, r), 0xc1, Self::modrm(Reg(7), r), count]);
+        });
     }
 
     /// `setcc al` then `movzx eax, al`: rax is 1 when the condition holds
     /// and 0 when not.
     fn truth(&mut self, cond: u8) {
-        self.bytes(&[0x0f, 0x90 | cond, 0xc0, 0x0f, 0xb6, 0xc0]);
+        self.writing(Some(RAX), |a| {
+            a.bytes(&[0x0f, 0x90 | cond, 0xc0, 0x0f, 0xb6, 0xc0]);
+        });
     }
 
     /// The code with each piece of data placed after it under its label.
@@ -782,6 +894,10 @@ struct Writer<'a, S> {
     branches_on_compare: Vec<bool>,
     /// The number each value that a constant integer gives is.
     constants: Vec<Option<u64>>,
+    /// What rax, rcx, and rdx hold of the frame: the place, the bytes of it,
+    /// and `Asm::version` of the register when it was put there. A register
+    /// is still holding it while the version is the same.
+    scratch: std::cell::RefCell<[Option<(u32, u32, u32)>; 3]>,
     system: std::marker::PhantomData<S>,
 }
 
@@ -834,6 +950,7 @@ fn function<S: System>(
         labels,
         branches_on_compare,
         constants,
+        scratch: std::cell::RefCell::new([None; 3]),
         system: std::marker::PhantomData,
     };
     if S::STACK_BY_PAGE && total > PAGE {
@@ -938,15 +1055,11 @@ impl<S: System> Writer<'_, S> {
                     asm.mov(to, from);
                 }
             }
-            (Loc::Register(to), Loc::Frame(from)) => {
-                asm.load(to, width, false, Place::Frame(from));
-            }
-            (Loc::Frame(to), Loc::Register(from)) => {
-                asm.store(Place::Frame(to), from, width);
-            }
+            (Loc::Register(to), Loc::Frame(from)) => self.load_frame(asm, to, width, from),
+            (Loc::Frame(to), Loc::Register(from)) => self.store_frame(asm, to, from, width, true),
             (Loc::Frame(to), Loc::Frame(from)) => {
-                asm.load(RAX, width, false, Place::Frame(from));
-                asm.store(Place::Frame(to), RAX, width);
+                self.load_frame(asm, RAX, width, from);
+                self.store_frame(asm, to, RAX, width, true);
             }
             (Loc::Register(to), Loc::Imm(n)) => asm.mov_imm(to, n),
             (Loc::Frame(to), Loc::Imm(n)) => self.store_imm(asm, Place::Frame(to), n, width, RAX),
@@ -954,10 +1067,47 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
+    /// Reads `width` bytes of the frame into the register, with zeros above,
+    /// unless the register is rax, rcx, or rdx and still holds them.
+    fn load_frame(&self, asm: &mut Asm, rd: Reg, width: u32, at: u32) {
+        let i = usize::from(rd.0);
+        if i < 3 && self.scratch.borrow()[i] == Some((at, width, asm.version(rd))) {
+            return;
+        }
+        asm.load(rd, width, false, Place::Frame(at));
+        if i < 3 {
+            self.scratch.borrow_mut()[i] = Some((at, width, asm.version(rd)));
+        }
+    }
+
+    /// Writes the low `width` bytes of the register to the frame. The
+    /// register holds them with zeros above when `extended`, and then it, if
+    /// it is rax, rcx, or rdx, holds what is in the place.
+    fn store_frame(&self, asm: &mut Asm, at: u32, r: Reg, width: u32, extended: bool) {
+        asm.store(Place::Frame(at), r, width);
+        let mut scratch = self.scratch.borrow_mut();
+        for held in scratch.iter_mut() {
+            if held.is_some_and(|(place, _, _)| place == at) {
+                *held = None;
+            }
+        }
+        let i = usize::from(r.0);
+        if i < 3 && (extended || width == 8) {
+            scratch[i] = Some((at, width, asm.version(r)));
+        }
+    }
+
     /// Writes the number, `width` bytes of it, to the place, in the one
     /// instruction when it holds the number, and through `tmp` when not, which
     /// is not a register the place is based on.
     fn store_imm(&self, asm: &mut Asm, to: Place, n: u64, width: u32, tmp: Reg) {
+        if let Place::Frame(at) = to {
+            for held in self.scratch.borrow_mut().iter_mut() {
+                if held.is_some_and(|(place, _, _)| place == at) {
+                    *held = None;
+                }
+            }
+        }
         if !asm.store_imm(to, n, width) {
             asm.mov_imm(tmp, n);
             asm.store(to, tmp, width);
@@ -982,7 +1132,7 @@ impl<S: System> Writer<'_, S> {
         match self.at[v.0] {
             Loc::Register(r) => r,
             Loc::Frame(at) => {
-                asm.load(tmp, self.width(v), false, Place::Frame(at));
+                self.load_frame(asm, tmp, self.width(v), at);
                 tmp
             }
             Loc::Imm(n) => {
@@ -1041,7 +1191,7 @@ impl<S: System> Writer<'_, S> {
     fn finish(&self, asm: &mut Asm, v: Value, r: Reg, extended: bool) {
         let width = self.width(v);
         match self.at[v.0] {
-            Loc::Frame(at) => asm.store(Place::Frame(at), r, width),
+            Loc::Frame(at) => self.store_frame(asm, at, r, width, extended),
             Loc::Register(h) if extended || width == 8 => {
                 if h != r {
                     asm.mov(h, r);
