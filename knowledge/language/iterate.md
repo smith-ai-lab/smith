@@ -2,7 +2,14 @@
 type: specification
 title: Iterate
 description: A type becomes loopable by implementing Iterate, whose one function each walks the value and calls a lambda on every element until the lambda says stop, and which loop v in x calls.
-status: planned
+status: partial
+built:
+  - "`Flow`, `Iterate`, and the `Try` of `Flow` in the prelude, with an `impl` of `Iterate` for a `List`, which `loop` runs over a `List` and over a `str` as its bytes with, and an `impl` of a type of a program's own, which `loop v in x` runs over as well, whose elements are of the type that `Iterate` gives for it"
+  - "`break` and `return` in a `loop` over a value: a `break` answers `.stop`, and a `return` keeps its value, answers `.stop`, and gives the function the value once `each` is over, from any `if`, `match`, or loop in the block"
+  - "`each(x) fn(v) { ... }` as a call of a function that takes a function, whose lambda gives a `Flow`"
+  - "a `loop` whose block cannot answer `.stop` builds no `Flow` and tests none, and a `loop` over a type with no implementation of `Iterate` is one error that names the type"
+  - "not `try` inside a `loop`, so the `Countdown` of the page does not compile yet, and its `each` is written with a `match` on what `body` gives and a `return .stop` until it does"
+  - "not an `each` that calls itself, as the `each` of a `Tree` does, since a function that calls itself is not built"
 ---
 
 # Iterate

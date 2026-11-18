@@ -6,7 +6,8 @@ status: partial
 built:
   - "`loop i in a..b` over whole numbers of one type, whose counter `arith` knows is in range of a `var` list's `size` as of any other, which runs in order and not at all when `a >= b`, ended by `break`"
   - "`loop v in xs` over a `List` of any type, which gives `v` each element from the first to the last, once each, over the list the loop began with, which a `var` list assigned in the block does not change, and ended by `break` or left by `return`; the scalar form of its round is one comparison and one load, with no call and no check of the index"
-  - "not a `loop` over an array, over a type of a program's own, or `reversed`"
+  - "`loop v in x` over a `str`, which gives `v` each byte of it, and over a type of a program's own that implements [`Iterate`](iterate.md)"
+  - "not a `loop` over an array or `reversed`"
 ---
 
 # `loop`

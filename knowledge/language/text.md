@@ -5,6 +5,7 @@ description: A str as bytes known to be valid UTF-8, which are used as bytes wit
 status: partial
 built:
   - "`s.size` and `s[i]` of a `str`, with `arith` proving the index as it does for a `List`"
+  - "`loop b in s` over a `str`, which gives each of its bytes, once each, in order"
   - "a `str` passed where a `List[u8]` is a parameter's type, with no call and no copy, and where a generic function lends a `List[T]`, which makes `T` a `u8`, and is refused with one error when `T` is already another type"
   - "`utf8`, which copies nothing and gives `.err` with the place where the first character that is not valid begins; `Utf8Error` holds `at` as a `u64`, as `Nat` is not built"
 ---
