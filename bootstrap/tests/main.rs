@@ -7,9 +7,16 @@
 //!
 //! A test that computes for more than a second fails the run, and the run
 //! names it, as `LIMIT` says. A test starts no thread, as the time of a
-//! thread it starts is not the time of its own. A test that has not ended
-//! after `clock::HANG` and a little more on the wall fails the run, and the run names it, so that a
-//! program that never ends is a failing test and not a run that never ends.
+//! thread it starts is not the time of its own. A test that has made no
+//! progress for `clock::hang` and a little more on the wall fails the run, and
+//! the run names it, so that a program that never ends is a failing test and
+//! not a run that never ends. Progress is the test beginning, or a program it
+//! started through `clock::output_within` beginning or ending, so a test that
+//! starts many programs, each of which ends, is never taken for one that hangs.
+//!
+//! `--hang=<ms>` sets that limit, which the tests of the limit itself make
+//! small, and `--group=hang` runs the tests they run. `--wait=<ms>` runs
+//! nothing and ends after that long, as a program for them to start.
 //!
 //! `--fingerprint` runs nothing. It prints, for each target, a hash of
 //! everything the group that depends on the machine would run for it, as
@@ -31,6 +38,7 @@ mod clock;
 mod contracts;
 mod enums;
 mod generate;
+mod hang;
 #[cfg(unix)]
 mod install;
 mod lambdas;
@@ -66,10 +74,12 @@ const SLOWEST: usize = 70;
 /// What a test may compute for, as `clock` measures it.
 const LIMIT: Duration = Duration::from_secs(1);
 
-/// What a test is given beyond `clock::HANG`, so that a program it starts that
-/// does not end is stopped, and fails the test saying so, before the run gives
-/// up on the test.
-const SLACK: Duration = Duration::from_secs(2);
+/// What a test is given beyond `clock::hang`, a fifth of it, so that a program
+/// it starts that does not end is stopped, and fails the test saying so,
+/// before the run gives up on the test.
+fn slack() -> Duration {
+    clock::hang() / 5
+}
 
 /// Whether a test over the limit fails the run. It does on the kind of
 /// machine that the `linux` job of `ci` uses, where every test
@@ -78,6 +88,13 @@ const ENFORCED: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(wait) = args.iter().find_map(|a| a.strip_prefix("--wait=")) {
+        std::thread::sleep(Duration::from_millis(wait.parse().unwrap()));
+        return ExitCode::SUCCESS;
+    }
+    if let Some(limit) = args.iter().find_map(|a| a.strip_prefix("--hang=")) {
+        clock::set_hang(Duration::from_millis(limit.parse().unwrap()));
+    }
     if args.iter().any(|a| a == "--fingerprint") {
         // The executables are the same for every commit, so that a change
         // that leaves them as they were needs no machine.
@@ -104,6 +121,7 @@ fn main() -> ExitCode {
         lists::ONCE,
         literals::ONCE,
         loops::ONCE,
+        hang::ONCE,
     ]
     .concat();
     // The installer is for macOS and Linux, and its tests run where a shell does.
@@ -114,6 +132,7 @@ fn main() -> ExitCode {
         None => vec![&once, &machine],
         Some("once") => vec![&once],
         Some("machine") => vec![&machine],
+        Some("hang") => vec![hang::RUNS],
         Some(other) => {
             eprintln!("unknown group `{other}`; the groups are once and machine");
             return ExitCode::FAILURE;
@@ -131,8 +150,8 @@ fn main() -> ExitCode {
     let results = Mutex::new(Vec::new());
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
     let workers = workers.min(tests.len());
-    // What each worker is running, and since when.
-    let running: Vec<Mutex<Option<(&'static str, Instant)>>> =
+    // What each worker is running, and when it last made progress.
+    let running: Vec<Mutex<Option<(&'static str, clock::Progress)>>> =
         (0..workers).map(|_| Mutex::new(None)).collect();
     println!("running {} tests", tests.len());
     println!(
@@ -148,7 +167,9 @@ fn main() -> ExitCode {
                     let Some((name, test)) = tests.get(i) else {
                         break;
                     };
-                    *slot.lock().unwrap() = Some((name, Instant::now()));
+                    let progress = clock::Progress::new(Mutex::new(Instant::now()));
+                    clock::watch(Some(progress.clone()));
+                    *slot.lock().unwrap() = Some((name, progress));
                     let begin = clock::thread_time();
                     let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();
                     let time = clock::thread_time() - begin;
@@ -161,28 +182,29 @@ fn main() -> ExitCode {
                 }
             });
         }
-        // A test that does not end cannot be stopped. When one has run for
-        // `HANG` it fails, and its worker is let go while the others go on.
+        // A test that does not end cannot be stopped. When one has made no
+        // progress for the limit it fails, and its worker is let go while the others go on.
         // The run ends when every test has a result, or every worker is held
         // by a test that does not end.
         while results.lock().unwrap().len() < tests.len() && lost < workers {
             std::thread::sleep(Duration::from_millis(20));
             for slot in &running {
                 let mut slot = slot.lock().unwrap();
-                if let Some((name, since)) = *slot
-                    && since.elapsed() > clock::HANG + SLACK
+                if let Some((name, progress)) = &*slot
+                    && progress.lock().unwrap().elapsed() > clock::hang() + slack()
                 {
+                    let name = *name;
                     *slot = None;
                     lost += 1;
                     println!("test {name} ... FAILED");
                     println!(
                         "hung: {name} did not end in {}, so it was stopped without an end",
-                        milliseconds(clock::HANG + SLACK)
+                        milliseconds(clock::hang() + slack())
                     );
                     results
                         .lock()
                         .unwrap()
-                        .push((name, false, clock::HANG + SLACK));
+                        .push((name, false, clock::hang() + slack()));
                 }
             }
         }

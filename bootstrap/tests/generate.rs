@@ -194,7 +194,7 @@ pub fn find_failure_shrinking_for<T>(
 }
 
 /// How long shrinking goes on, on the wall, before it reports the smallest
-/// failing input it has. It is a third of the time `clock::HANG` gives a test
+/// failing input it has. It is a third of the time `clock::hang` gives a test
 /// that has not ended, so that a property that fails and shrinks slowly ends
 /// with its own message, and the run does not take it for a test that never
 /// ends.
