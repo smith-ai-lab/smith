@@ -1,0 +1,23 @@
+pub trait Writer[W] {
+  fn boolean(w: take W, value: bool) -> W ! alloc
+  fn signed(w: take W, value: i64) -> W ! alloc
+  fn unsigned(w: take W, value: u64) -> W ! alloc
+  fn text(w: take W, value: str) -> W ! alloc
+  fn nothing(w: take W) -> W ! alloc
+  fn absent(w: take W) -> W ! alloc
+  fn present(w: take W) -> W ! alloc
+  fn sequence(w: take W, size: Nat) -> W ! alloc
+  fn end_sequence(w: take W) -> W ! alloc
+  fn tuple(w: take W, size: Nat) -> W ! alloc
+  fn end_tuple(w: take W) -> W ! alloc
+  fn structure(w: take W, name: str, fields: Nat) -> W ! alloc
+  fn field(w: take W, name: str) -> W ! alloc
+  fn end_structure(w: take W) -> W ! alloc
+  fn case(w: take W, of: str, name: str, holds: bool) -> W ! alloc
+  fn map(w: take W, size: Nat) -> W ! alloc
+  fn end_map(w: take W) -> W ! alloc
+}
+
+pub trait Serialize[T] {
+  fn write[W: Writer](value: T, to: take W) -> W ! alloc
+}

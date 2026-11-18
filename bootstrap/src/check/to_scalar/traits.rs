@@ -29,6 +29,9 @@ impl<'a> Lowering<'a> {
     /// values differ, as `ordered` says.
     pub(super) fn given(&mut self, k: usize, given: &[Ty]) -> form::Function {
         let defs = self.typed.defs;
+        if defs.serialize == Some(k) {
+            return self.serialized(&given[0], &given[1]);
+        }
         let ty = &given[0];
         let mut out = Out::new();
         let types = self.scalars(ty);
@@ -60,6 +63,203 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
         }
+    }
+
+    /// The function that writes a value of `ty` to a writer of type `w`, which
+    /// takes the value and the writer and gives the writer back. It calls the
+    /// function of the writer's `Writer` for each shape of the value, and the
+    /// part's own `Serialize` for each part, and builds nothing between.
+    fn serialized(&mut self, ty: &Ty, w: &Ty) -> form::Function {
+        let mut out = Out::new();
+        let types = self.scalars(ty);
+        let writer = self.scalars(w);
+        let value = out.params(&types);
+        let to = out.params(&writer);
+        let to = self.written(&mut out, ty, &value, to, w);
+        out.blocks[out.current].end = form::End::Return(to);
+        form::Function {
+            types: out.types,
+            results: writer,
+            blocks: out.blocks,
+        }
+    }
+
+    /// Calls the function `name` of the writer's `Writer`, which is given the
+    /// writer and then `args`, and gives the writer back.
+    fn writer_call(
+        &mut self,
+        out: &mut Out<'a>,
+        w: &Ty,
+        name: &str,
+        to: Vec<form::Value>,
+        args: Vec<Vec<form::Value>>,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let writer = defs.writer.expect("a program that writes has the module");
+        let at = crate::check::traits::trait_function(&defs.file.traits[writer], name)
+            .expect("a function of `Writer`");
+        let (instance, _) = defs.chosen(writer, at, vec![w.clone()], Vec::new());
+        let function = self.place(Body::Copy(instance));
+        let types = self.scalars(w);
+        let args = std::iter::once(to).chain(args).flatten().collect();
+        out.emit(form::Op::Call { function, args }, types)
+    }
+
+    /// A number the writer is given as a `Nat`, which is 64 bits.
+    fn count(&mut self, out: &mut Out<'a>, n: usize) -> Vec<form::Value> {
+        vec![out.int(form::Bits::B64, n as i128)]
+    }
+
+    /// The writer after the value is written to it by the `Serialize` of its
+    /// type, which is the one the type is given or writes itself.
+    fn written_part(
+        &mut self,
+        out: &mut Out<'a>,
+        ty: &Ty,
+        values: Vec<form::Value>,
+        to: Vec<form::Value>,
+        w: &Ty,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let serialize = defs
+            .serialize
+            .expect("a program that writes has the module");
+        let (instance, _) = defs.chosen(serialize, 0, vec![ty.clone()], vec![w.clone()]);
+        let function = self.place(Body::Copy(instance));
+        let types = self.scalars(w);
+        let args = values.into_iter().chain(to).collect();
+        out.emit(form::Op::Call { function, args }, types)
+    }
+
+    /// The writer after the value of the type, whose values are `values`, is
+    /// written to `to`, by the shape of the type: a number as `signed` or
+    /// `unsigned`, text as `text`, a struct as its name, each field's name
+    /// with the field, and its end, an enum as its case and what the case
+    /// holds, and a list as its size, each element, and its end.
+    fn written(
+        &mut self,
+        out: &mut Out<'a>,
+        ty: &Ty,
+        values: &[form::Value],
+        to: Vec<form::Value>,
+        w: &Ty,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        match ty {
+            Ty::Int(t) => {
+                let signed = t.signed();
+                let n = out.resize(signed, values[0], form::Bits::B64);
+                let name = if signed { "signed" } else { "unsigned" };
+                self.writer_call(out, w, name, to, vec![vec![n]])
+            }
+            Ty::Text => self.writer_call(out, w, "text", to, vec![values.to_vec()]),
+            Ty::Nothing => self.writer_call(out, w, "nothing", to, Vec::new()),
+            Ty::Tuple(of) => {
+                let size = self.count(out, of.len());
+                let mut to = self.writer_call(out, w, "tuple", to, vec![size]);
+                for (t, part) in of.iter().zip(self.elements(of, values)) {
+                    to = self.written_part(out, t, part, to, w);
+                }
+                self.writer_call(out, w, "end_tuple", to, Vec::new())
+            }
+            Ty::Struct(s, args) => {
+                let def = &defs.file.structs[*s];
+                let name = self.text(out, crate::check::written_name(&def.name).as_bytes());
+                let size = self.count(out, def.fields.len());
+                let mut to = self.writer_call(out, w, "structure", to, vec![name, size]);
+                let mut at = 0;
+                for (field, t) in def.fields.iter().zip(&defs.fields[*s]) {
+                    let t = t.subst(args);
+                    let size = self.size(&t);
+                    let name = self.text(out, field.name.as_bytes());
+                    to = self.writer_call(out, w, "field", to, vec![name]);
+                    to = self.written_part(out, &t, values[at..at + size].to_vec(), to, w);
+                    at += size;
+                }
+                self.writer_call(out, w, "end_structure", to, Vec::new())
+            }
+            Ty::List(of) => {
+                let size = vec![values[1]];
+                let to = self.writer_call(out, w, "sequence", to, vec![size]);
+                let to = self.each_written(out, &of[0], values, to, w);
+                self.writer_call(out, w, "end_sequence", to, Vec::new())
+            }
+            Ty::Enum(e, args) => {
+                if *e == defs.boolean {
+                    return self.writer_call(out, w, "boolean", to, vec![vec![values[0]]]);
+                }
+                let def = &defs.file.enums[*e];
+                let layout = self.layout(*e, args);
+                let arms = out.switch(values[0], def.cases.len());
+                let mut ends = Vec::new();
+                for (k, ((case, holds), block)) in
+                    def.cases.iter().zip(&defs.cases[*e]).zip(arms).enumerate()
+                {
+                    out.current = block;
+                    let to = to.clone();
+                    let mut to = if *e == defs.option {
+                        let name = if holds.is_some() { "present" } else { "absent" };
+                        self.writer_call(out, w, name, to, Vec::new())
+                    } else {
+                        let of = self.text(out, crate::check::written_name(&def.name).as_bytes());
+                        let name = self.text(out, case.name.as_bytes());
+                        let holds = out.int(form::Bits::B8, i128::from(holds.is_some()));
+                        self.writer_call(out, w, "case", to, vec![of, name, vec![holds]])
+                    };
+                    if let Some(t) = holds {
+                        let part = layout.cases[k].iter().map(|&p| values[1 + p]).collect();
+                        to = self.written_part(out, &t.subst(args), part, to, w);
+                    }
+                    ends.push((out.current, to));
+                }
+                out.join(&self.scalars(w), ends)
+            }
+            _ => unreachable!("a type given `Serialize`"),
+        }
+    }
+
+    /// The writer after each element of the list, whose address and size are
+    /// the first two of `values`, is written to it.
+    fn each_written(
+        &mut self,
+        out: &mut Out<'a>,
+        element: &Ty,
+        values: &[form::Value],
+        to: Vec<form::Value>,
+        w: &Ty,
+    ) -> Vec<form::Value> {
+        let scalars = self.scalars(element);
+        let (places, stride) = form::element(&scalars);
+        let places: Vec<(form::Type, u64)> = scalars.into_iter().zip(places).collect();
+        let stride = out.int(form::Bits::B64, i128::from(stride));
+        let zero = out.int(form::Bits::B64, 0);
+        let (address, size) = (values[0], values[1]);
+        let header = out.new_block();
+        let i = out.fresh(WORD);
+        let carried: Vec<form::Value> = (self.scalars(w).into_iter())
+            .map(|t| out.fresh(t))
+            .collect();
+        out.blocks[header].params = std::iter::once(i).chain(carried.iter().copied()).collect();
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: std::iter::once(zero).chain(to).collect(),
+        });
+        out.current = header;
+        let more = out.compare(form::Compare::LessU, i, size);
+        let arms = out.switch(more, 2);
+        out.current = arms[1];
+        let offset = out.binary(form::Binary::Mul, i, stride);
+        let at = out.binary(form::Binary::Add, address, offset);
+        let part = self.load(out, at, &places);
+        let next = self.written_part(out, element, part, carried.clone(), w);
+        let one = out.int(form::Bits::B64, 1);
+        let after = out.binary(form::Binary::Add, i, one);
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: std::iter::once(after).chain(next).collect(),
+        });
+        out.current = arms[0];
+        carried
     }
 
     /// The value of the enum `to` that is the case holding `value`, of type `held`.
