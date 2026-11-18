@@ -51,6 +51,14 @@ fn longer(a: List[u8], b: List[u8]) -> Nat {
 
 `Nat` is a type of its own, and not another name for `u64`. A `u64` is a word of the machine: it has the [wrapping functions](../library/int.md) and the [bit operations](bits.md), which mean nothing for a count, and a `Nat` has neither. So a hash or a mask is not used as a place in a list by accident.
 
+A count that has no bound `arith` can prove is added to with `saturating_add`, which stops at the greatest `Nat`, or with `checked_add`, which gives `.none` when the answer does not fit. Each still gives a count, where wrapping would turn the greatest count into zero. So a `Nat` has the [saturating and checked functions](../library/int.md) and not the wrapping ones.
+
+```
+fn next_line(line: Nat) -> Nat { saturating_add(line, 1) }
+```
+
+`saturating_add` and `checked_add` on a `Nat` are not built, so this is refused today, and no words are quoted.
+
 - A whole number literal is a `Nat` where one is needed, as it is any whole number type.
 - `Nat` and `u64` hold the same numbers, so each [converts](conversion.md) to the other, and the conversion is written. A `u8`, a `u16`, and a `u32` convert to a `Nat` as they do to any type that holds every value of theirs.
 - An operator between a `Nat` and a `u64` is refused, as between any two number types.
