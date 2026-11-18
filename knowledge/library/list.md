@@ -18,7 +18,7 @@ struct List[T] {
 ```
 
 - `items` is an array like any other, so an index proven to be below `size` needs no check, and it can be sliced, looped over, and summed.
-- A list implements [`Index`](../language/arrays.md), so `list[i]` reads the element `list.items[i]`, and it compiles where `i < list.size` is proven:
+- A list implements [`Index`](../language/indexing.md), so `list[i]` reads the element `list.items[i]`, and it compiles where `i < list.size` is proven:
 
   ```
   impl[T] Index[List[T], Nat, T] {
@@ -33,7 +33,7 @@ struct List[T] {
   }
   ```
 - `[]` is the empty list, and a literal such as `[1, 2, 3]` becomes a list where one is expected.
-- A pattern in brackets matches a list of exactly that many elements, as [Arrays and sizes](../language/arrays.md) says, which is how a program reads its arguments:
+- A pattern in brackets matches a list of exactly that many elements, as [Patterns in brackets](../language/array-patterns.md) says, which is how a program reads its arguments:
 
   ```
   fn main(args: List[str]) -> Result[(), CliError] ! console, fs, alloc {

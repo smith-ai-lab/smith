@@ -40,7 +40,9 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [ranges.md](ranges.md): `a..b`, which excludes `b`, and `x[a..b]`, `x[..k]`, and `x[k..]` as parts of an array.
 - [array-patterns.md](array-patterns.md): a pattern in brackets, which takes an array or a list apart with a pattern for each element.
 - [for.md](for.md): `for` as an unordered description of an array, reductions, the operators of linear algebra, `@`, and the rules for float arithmetic.
-- [loop.md](loop.md): `loop` for steps that run in order, the `Iterate` trait, and `break`.
+- [loop.md](loop.md): `loop` over a range, which runs a block once for each number in order, the type of its counter, `break`, and what `arith` knows inside it.
+- [open-loop.md](open-loop.md): `loop` with no range, which runs until `break` and carries `diverge`, and `loop decreases`, which is proven to end.
+- [iterate.md](iterate.md): the `Iterate` trait, which makes a type loopable, and how `loop v in x` calls its `each`.
 - [contracts.md](contracts.md): `requires`, `ensures`, and `check`, what the `arith` procedure can prove, termination, and `hole`.
 - [storage.md](storage.md): when an array gets a buffer, the `alloc` effect and arenas, recursion without stack overflow, and types that contain themselves.
 - [code.md](code.md): functions that receive the checked code of an argument when the program is built and return code, which is how `expect` and `grad` are library functions.

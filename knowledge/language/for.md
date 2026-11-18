@@ -96,4 +96,4 @@ fn dropout[n: Nat](x: [n]f32, rate: f32, key: take Key) -> [n]f32 {
 
 Reading `keys[i]` uses up that key. It is allowed inside a `for` when the body takes `keys[i]` at most once and `i` is the loop's own index, so every iteration touches a different key. Key `i` is computed directly from the parent key and `i`, so the array of keys never exists in memory and the loop still runs in parallel.
 
-Next: [`loop` and iteration](loop.md)
+Next: [`loop`](loop.md)
