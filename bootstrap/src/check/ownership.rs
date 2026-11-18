@@ -526,7 +526,7 @@ impl<'a> Walk<'a> {
             Some((q, _)) if defs.enum_names.contains_key(q.as_str()) => None,
             Some((q, _)) => (defs.trait_names.get(q.as_str())).and_then(|&k| {
                 let t = &defs.file.traits[k];
-                (t.functions.iter().find(|f| f.name == name)).map(|f| f.params.as_slice())
+                traits::trait_function(t, name).map(|fi| t.functions[fi].params.as_slice())
             }),
             None if self
                 .f
@@ -616,10 +616,7 @@ impl<'a> Walk<'a> {
         let name = call.callee.as_str();
         let of_trait = match &call.qualifier {
             Some((q, _)) => (defs.trait_names.get(q.as_str())).and_then(|&k| {
-                let at = defs.file.traits[k]
-                    .functions
-                    .iter()
-                    .position(|f| f.name == name);
+                let at = traits::trait_function(&defs.file.traits[k], name);
                 at.map(|fi| (k, fi))
             }),
             None if defs.function_names.contains_key(name) => None,

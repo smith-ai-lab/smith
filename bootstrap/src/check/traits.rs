@@ -379,7 +379,34 @@ pub(super) fn shifted(t: &Ty, by: usize) -> Ty {
     }
 }
 
+/// The place among a trait's functions of the one a call names with the
+/// trait. A function of a trait a module defines is written with its module
+/// after it, unless the file that is built lists it, and a call names it as
+/// the module wrote it.
+pub(super) fn trait_function(t: &Trait, name: &str) -> Option<usize> {
+    t.functions
+        .iter()
+        .position(|f| written_name(&f.name) == name)
+}
+
 impl<'a> Defs<'a> {
+    /// The other traits the file in which a call is written can name that
+    /// have a function the call could mean as well, each with the place of
+    /// that function. A call of a function of one trait is not told from
+    /// another's when the file lists the trait and not the function, so the
+    /// call is written with the trait.
+    pub(super) fn rivals(&self, k: usize, name: &str, at: Pos) -> Vec<(usize, usize)> {
+        let Some((_, scope)) = (self.file.scopes.iter()).find(|(m, _)| *m == module_of(at)) else {
+            return Vec::new();
+        };
+        let written = written_name(name);
+        (scope.iter())
+            .filter_map(|t| self.trait_names.get(t.as_str()).copied())
+            .filter(|&j| j != k)
+            .filter_map(|j| Some((j, trait_function(&self.file.traits[j], written)?)))
+            .collect()
+    }
+
     /// What a bound requires. Mistakes go in `errors`.
     pub(super) fn bound(&self, bound: &Option<Type>, errors: &mut Vec<Error>) -> Bound {
         let Some(t) = bound else {

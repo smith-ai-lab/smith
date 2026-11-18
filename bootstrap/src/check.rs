@@ -42,7 +42,7 @@ mod traits;
 use crate::diag::{Error, Pos};
 use crate::parser::{
     Arg, ArithOp, Arm, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop, Match,
-    Over, Part, Pattern, Range, Stmt, Struct, Trait, Type, Use,
+    Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
 use lists_and_text::{as_read, is_push, is_utf8, text_as_bytes};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, narrowing};
@@ -1286,12 +1286,19 @@ pub(crate) fn check_with_source(
 fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
     let mut resolver = Resolver::new(library);
     let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
-    resolver.resolve(Reader::Entry, &file.uses, &defined, &file.written);
+    resolver.resolve(
+        Reader::Entry,
+        &file.uses,
+        &defined,
+        &file.written,
+        &file.qualified,
+    );
     let Resolver {
         read,
         labels,
         mut errors,
         warnings,
+        refused,
         ..
     } = resolver;
     placement(&file, &mut errors);
@@ -1304,7 +1311,10 @@ fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checke
             checked.warnings = localize(checked.warnings, &labels);
             checked
         })
-        .map_err(|errors| localize(errors, &labels))
+        .map_err(|errors| {
+            let errors = errors.into_iter().filter(|e| !refused.contains(&e.pos));
+            localize(errors.collect(), &labels)
+        })
 }
 
 /// The errors, or else the warnings, found in reading a module and the
@@ -2023,9 +2033,27 @@ struct Module {
     effects: Vec<String>,
     /// The names the module lists from others, each with the module it takes
     /// it from, by its place among those read.
-    imports: Vec<(String, usize)>,
-    /// The names the file that is built lists from it.
+    imports: Vec<Import>,
+    /// The modules the module imports itself, each by the name it is written
+    /// as, with the module by its place among those read.
+    aliases: Vec<(String, usize)>,
+    /// The names the file that is built lists from it, as they are.
     entry_imported: Vec<String>,
+    /// The names the file that is built lists from it with `as`, each with
+    /// the name it is given.
+    entry_aliased: Vec<(String, String)>,
+    /// The number the module's places are at, as `STEP` says.
+    number: usize,
+}
+
+/// A name a module lists from another.
+struct Import {
+    /// The name in the module that lists it, which `as` may have given.
+    written: String,
+    /// The name in the module it is from.
+    name: String,
+    /// The module it is from, by its place among those read.
+    from: usize,
 }
 
 /// The tokens with each place moved to the module's lines.
@@ -2079,6 +2107,9 @@ struct Resolver<'l, 'a> {
     open: Vec<String>,
     errors: Vec<Error>,
     warnings: Vec<Error>,
+    /// Where a name written with a module is refused, which the checker
+    /// would refuse again as a call of a name that is not there.
+    refused: Vec<Pos>,
     next_std: usize,
     next_project: usize,
 }
@@ -2102,6 +2133,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
             open: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
+            refused: Vec::new(),
             next_std: 1,
             next_project: FIRST_PROJECT,
         }
@@ -2160,7 +2192,10 @@ impl<'l, 'a> Resolver<'l, 'a> {
             exports,
             effects,
             imports: Vec::new(),
+            aliases: Vec::new(),
             entry_imported: Vec::new(),
+            entry_aliased: Vec::new(),
+            number,
         });
         self.by_name.insert(name.to_string(), Some(slot));
         // The module's own `use` lines are read while it is open, so that a
@@ -2172,7 +2207,8 @@ impl<'l, 'a> Resolver<'l, 'a> {
             .map(String::from)
             .collect();
         let written = self.read[slot].file.written.clone();
-        self.resolve(Reader::Module(slot), &uses, &defined, &written);
+        let qualified = self.read[slot].file.qualified.clone();
+        self.resolve(Reader::Module(slot), &uses, &defined, &written, &qualified);
         self.open.pop();
         Some(slot)
     }
@@ -2238,18 +2274,25 @@ impl<'l, 'a> Resolver<'l, 'a> {
 
     /// Checks the `use` lines of a file: each names a module and lists names it
     /// exports, once each, none of which the file defines or the prelude holds,
-    /// and no name comes from two modules. Each module named is read, once,
-    /// and its own `use` lines are checked in turn. A name that is listed and
-    /// never written in the file is a warning.
+    /// and no name comes from two modules. A name is the one `as` gives it
+    /// when it has one, and a module imported itself is a name too, which
+    /// is its last segment unless `as` gives another. Each module named is
+    /// read, once, and its own `use` lines are checked in turn. A name that is
+    /// listed and never written in the file is a warning, as is a module
+    /// imported and never written before a name.
     fn resolve(
         &mut self,
         reader: Reader,
         uses: &[Use],
         defined: &HashSet<String>,
         written: &HashSet<String>,
+        qualified: &[Qualified],
     ) {
         let mut modules: Vec<String> = Vec::new();
         let mut taken: Vec<(String, String)> = Vec::new();
+        // The modules imported themselves: the name each is written as, the
+        // module, and its place among those read.
+        let mut named: Vec<(String, String, usize)> = Vec::new();
         for u in uses {
             let parts: Vec<&str> = u.module.iter().map(|(n, _)| n.as_str()).collect();
             let module = parts.join(".");
@@ -2270,19 +2313,51 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 continue;
             }
             modules.push(module.clone());
-            let mut listed: Vec<&str> = Vec::new();
-            for (name, pos) in &u.names {
-                let name = name.as_str();
-                let exports = &self.read[slot].exports;
-                let error = if listed.contains(&name) {
-                    Some(
-                        Error::new(*pos, format!("`{name}` is listed twice from `{module}`"))
-                            .with_fix(format!("list `{name}` once")),
-                    )
-                } else if defined.contains(name) {
+            if !u.listed {
+                let (called, pos) = u.called();
+                let error = if let Some((_, other, _)) = named.iter().find(|(n, ..)| n == called) {
                     Some(
                         Error::new(
-                            *pos,
+                            pos,
+                            format!("`{module}` and `{other}` are both `{called}`: a name means one thing"),
+                        )
+                        .with_fix(format!("write `as` after `{module}` to give it another name")),
+                    )
+                } else {
+                    self.clash(called, pos, defined, &taken, "a module")
+                };
+                match error {
+                    Some(error) => self.errors.push(error),
+                    None => {
+                        named.push((called.to_string(), module.clone(), slot));
+                        if let Reader::Module(of) = reader {
+                            self.read[of].aliases.push((called.to_string(), slot));
+                        }
+                        if !qualified.iter().any(|q| q.written.0 == called) {
+                            self.warnings.push(
+                                Error::new(pos, format!("`{module}` is imported and never used"))
+                                    .with_fix("delete the `use`"),
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+            let mut listed: Vec<&str> = Vec::new();
+            for item in &u.names {
+                let (name, pos) = (item.name.as_str(), item.pos);
+                let exports = &self.read[slot].exports;
+                let written_as = item.alias.as_ref().map_or(name, |(a, _)| a.as_str());
+                let at_name = item.alias.as_ref().map_or(pos, |(_, at)| *at);
+                let error = if listed.contains(&name) {
+                    Some(
+                        Error::new(pos, format!("`{name}` is listed twice from `{module}`"))
+                            .with_fix(format!("list `{name}` once")),
+                    )
+                } else if item.alias.is_none() && defined.contains(name) {
+                    Some(
+                        Error::new(
+                            pos,
                             format!(
                                 "`{name}` is imported, and this file defines it: a name means one thing"
                             ),
@@ -2291,24 +2366,42 @@ impl<'l, 'a> Resolver<'l, 'a> {
                             "rename the definition, or delete `{name}` from the `use`"
                         )),
                     )
-                } else if PRELUDE_LISTED.contains(&name) {
+                } else if item.alias.is_none() && PRELUDE_LISTED.contains(&name) {
                     Some(
                         Error::new(
-                            *pos,
+                            pos,
                             format!("`{name}` is in the prelude, so it needs no `use`"),
                         )
                         .with_fix(format!("delete `{name}` from the `use`")),
                     )
                 } else if !exports.iter().any(|e| e == name) {
-                    Some(self.missing(&module, slot, name, *pos))
-                } else if let Some((_, from)) = taken.iter().find(|(n, _)| n == name) {
+                    Some(self.missing(&module, slot, name, pos))
+                } else if item.alias.is_some() && self.fixed(slot, name) {
+                    Some(Error::unsupported(
+                        at_name,
+                        "`as` on a name the compiler builds",
+                    ))
+                } else if item.alias.is_some() && self.of_trait(slot, name) {
+                    Some(Error::unsupported(at_name, "`as` on a function of a trait"))
+                } else if item.alias.is_some()
+                    && let Some(error) = self.clash(written_as, at_name, defined, &taken, "a name")
+                {
+                    Some(error)
+                } else if let Some((_, from)) = taken.iter().find(|(n, _)| n == written_as) {
                     Some(
                         Error::new(
-                            *pos,
-                            format!("`{name}` is listed from `{from}` and from `{module}`: a name means one thing"),
+                            at_name,
+                            format!("`{written_as}` is listed from `{from}` and from `{module}`: a name means one thing"),
                         )
-                        .with_fix(format!("delete `{name}` from one of them")),
+                        .with_fix(format!("delete `{name}` from one of them, or give it another name with `as`")),
                     )
+                } else if let Some((_, other, _)) = named.iter().find(|(n, ..)| n == written_as) {
+                    Some(Error::new(
+                        at_name,
+                        format!(
+                            "`{written_as}` is the name of the module `{other}`: a name means one thing"
+                        ),
+                    ))
                 } else {
                     None
                 };
@@ -2317,17 +2410,26 @@ impl<'l, 'a> Resolver<'l, 'a> {
                     Some(error) => self.errors.push(error),
                     None => {
                         match reader {
-                            Reader::Entry => self.read[slot].entry_imported.push(name.to_string()),
-                            Reader::Module(of) => {
-                                self.read[of].imports.push((name.to_string(), slot))
-                            }
+                            Reader::Entry => match &item.alias {
+                                Some((alias, _)) => self.read[slot]
+                                    .entry_aliased
+                                    .push((name.to_string(), alias.clone())),
+                                None => self.read[slot].entry_imported.push(name.to_string()),
+                            },
+                            Reader::Module(of) => self.read[of].imports.push(Import {
+                                written: written_as.to_string(),
+                                name: name.to_string(),
+                                from: slot,
+                            }),
                         }
-                        taken.push((name.to_string(), module.clone()));
-                        if !written.contains(name) {
+                        taken.push((written_as.to_string(), module.clone()));
+                        if !written.contains(written_as) {
                             self.warnings.push(
                                 Error::new(
-                                    *pos,
-                                    format!("`{name}` is imported from `{module}` and never used"),
+                                    at_name,
+                                    format!(
+                                        "`{written_as}` is imported from `{module}` and never used"
+                                    ),
                                 )
                                 .with_fix(format!("delete `{name}` from the `use`")),
                             );
@@ -2336,6 +2438,74 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 }
             }
         }
+        for q in qualified {
+            let Some((_, module, slot)) = named.iter().find(|(n, ..)| *n == q.written.0) else {
+                continue;
+            };
+            let (name, pos) = (q.name.0.as_str(), q.name.1);
+            if !self.read[*slot].exports.iter().any(|e| e == name) {
+                let error = self.missing(module, *slot, name, pos);
+                self.errors.push(error);
+                self.refused.push(q.written.1);
+            } else if self.fixed(*slot, name) {
+                self.errors.push(Error::unsupported(
+                    pos,
+                    "calling a name the compiler builds through its module",
+                ));
+                self.refused.push(q.written.1);
+            }
+        }
+    }
+
+    /// The error for a name that a file gives to a module or to another
+    /// name, when the file already has the name: it defines it, the prelude
+    /// holds it, or an earlier `use` took it.
+    fn clash(
+        &self,
+        name: &str,
+        pos: Pos,
+        defined: &HashSet<String>,
+        taken: &[(String, String)],
+        what: &str,
+    ) -> Option<Error> {
+        if defined.contains(name) {
+            Some(
+                Error::new(
+                    pos,
+                    format!("`{name}` is given to {what}, and this file defines it: a name means one thing"),
+                )
+                .with_fix("write `as` to give it another name"),
+            )
+        } else if PRELUDE_LISTED.contains(&name) {
+            Some(
+                Error::new(pos, format!("`{name}` is given to {what}, and the prelude holds it: a name means one thing"))
+                    .with_fix("write `as` to give it another name"),
+            )
+        } else {
+            taken.iter().find(|(n, _)| n == name).map(|(_, from)| {
+                Error::new(
+                    pos,
+                    format!("`{name}` is given to {what}, and is already listed from `{from}`: a name means one thing"),
+                )
+                .with_fix("write `as` to give it another name")
+            })
+        }
+    }
+
+    /// Whether a name of a module is one the compiler builds, and writes as
+    /// it is: an effect, a function of a trait of the library, and a name the
+    /// module only wraps.
+    fn fixed(&self, slot: usize, name: &str) -> bool {
+        let module = &self.read[slot];
+        module.name.starts_with("std.")
+            && (module.effects.iter().any(|e| e == name)
+                || (module.file.traits.iter()).any(|t| t.functions.iter().any(|f| f.name == name))
+                || held_by_the_compiler(&module.file).contains(name))
+    }
+
+    /// Whether a name of a module is a function of one of its traits.
+    fn of_trait(&self, slot: usize, name: &str) -> bool {
+        (self.read[slot].file.traits.iter()).any(|t| t.functions.iter().any(|f| f.name == name))
     }
 
     /// The error for a name that a module does not export: one it keeps
@@ -2404,6 +2574,7 @@ fn held_by_the_compiler(module: &File) -> HashSet<&str> {
 fn renamed_tokens(
     tokens: &[crate::lexer::Token],
     rename: &HashMap<String, String>,
+    through: &HashMap<String, HashMap<String, String>>,
 ) -> Vec<crate::lexer::Token> {
     use crate::lexer::{Piece, Tok, Token};
     // The depth of parentheses inside the parameters of a function, which is 0
@@ -2411,7 +2582,13 @@ fn renamed_tokens(
     let mut params = 0usize;
     let mut signature = false;
     let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
+    // How many tokens after this one a name written through its module takes.
+    let mut skip = 0usize;
     for (i, t) in tokens.iter().enumerate() {
+        if skip > 0 {
+            skip -= 1;
+            continue;
+        }
         match &t.tok {
             Tok::Keyword("fn") => signature = true,
             Tok::Punct("(") if params > 0 => params += 1,
@@ -2438,7 +2615,25 @@ fn renamed_tokens(
                         ..
                     })
                 ) && params != 1;
+                // A module imported itself, written before a name of its own.
+                let member = match (tokens.get(i + 1), tokens.get(i + 2)) {
+                    (
+                        Some(Token {
+                            tok: Tok::Punct("."),
+                            ..
+                        }),
+                        Some(Token {
+                            tok: Tok::Ident(member),
+                            ..
+                        }),
+                    ) if !after_dot => through.get(name).and_then(|names| names.get(member)),
+                    _ => None,
+                };
                 match rename.get(name) {
+                    _ if member.is_some() => {
+                        skip = 2;
+                        Tok::Ident(member.cloned().unwrap_or_default())
+                    }
                     Some(to) if !after_dot && !labelled => Tok::Ident(to.clone()),
                     _ => t.tok.clone(),
                 }
@@ -2447,7 +2642,7 @@ fn renamed_tokens(
                 pieces
                     .iter()
                     .map(|p| match p {
-                        Piece::Expr(inner) => Piece::Expr(renamed_tokens(inner, rename)),
+                        Piece::Expr(inner) => Piece::Expr(renamed_tokens(inner, rename, through)),
                         text => text.clone(),
                     })
                     .collect(),
@@ -2489,23 +2684,86 @@ fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> File
             kept
         })
         .collect();
-    for (module, mine) in modules.iter().zip(&kept) {
+    // What each name a module defines is written as in the file: as it is,
+    // as the file that is built names it with `as`, or with the module after
+    // it.
+    let finals: Vec<HashMap<String, String>> = modules
+        .iter()
+        .zip(&kept)
+        .map(|(module, mine)| {
+            let standard = module.name.starts_with("std.");
+            defined_names(&module.file)
+                .into_iter()
+                .filter(|n| !(standard && n.starts_with("__")))
+                .map(|n| {
+                    let to = match module.entry_aliased.iter().find(|(from, _)| from == n) {
+                        Some((_, alias)) => alias.clone(),
+                        None if mine.contains(n) => n.to_string(),
+                        None => format!("{n}@{}", module.name),
+                    };
+                    (n.to_string(), to)
+                })
+                .collect()
+        })
+        .collect();
+    let written = |from: usize, name: &str| match finals[from].get(name) {
+        Some(to) => to.clone(),
+        None => name.to_string(),
+    };
+    // The traits each file can name, which a call of one of their functions
+    // written without the trait is told from by: those the file defines and
+    // those it lists.
+    let mut scopes: Vec<(usize, Vec<String>)> = Vec::new();
+    let entry_traits: Vec<String> = (file.traits.iter())
+        .map(|t| t.name.clone())
+        .chain(modules.iter().enumerate().flat_map(|(i, m)| {
+            let finals = &finals[i];
+            (m.file.traits.iter())
+                .filter(|t| {
+                    m.entry_imported.contains(&t.name)
+                        || m.entry_aliased.iter().any(|(n, _)| *n == t.name)
+                })
+                .filter_map(|t| finals.get(&t.name).cloned())
+                .collect::<Vec<_>>()
+        }))
+        .collect();
+    scopes.push((0, entry_traits));
+    for (i, module) in modules.iter().enumerate() {
+        let own = (module.file.traits.iter()).filter_map(|t| finals[i].get(&t.name).cloned());
+        let listed = module.imports.iter().filter_map(|i| {
+            let t = modules[i.from]
+                .file
+                .traits
+                .iter()
+                .find(|t| t.name == i.name)?;
+            Some(written(i.from, &t.name))
+        });
+        scopes.push((module.number, own.chain(listed).collect()));
+    }
+    for (i, module) in modules.iter().enumerate() {
         let standard = module.name.starts_with("std.");
-        let own = defined_names(&module.file)
-            .into_iter()
-            .filter(|n| !mine.contains(*n) && !(standard && n.starts_with("__")));
-        let mut rename: HashMap<String, String> = own
-            .map(|n| (n.to_string(), format!("{n}@{}", module.name)))
+        let mut rename: HashMap<String, String> = finals[i]
+            .iter()
+            .filter(|(from, to)| from != to)
+            .map(|(from, to)| (from.clone(), to.clone()))
             .collect();
-        for (name, from) in &module.imports {
-            let to = if kept[*from].contains(name) {
-                name.clone()
-            } else {
-                format!("{name}@{}", modules[*from].name)
-            };
-            rename.insert(name.clone(), to);
+        for import in &module.imports {
+            rename.insert(import.written.clone(), written(import.from, &import.name));
         }
-        let tokens = renamed_tokens(&module.tokens, &rename);
+        // A module imported itself is written before a name of its own, as
+        // `transaction.begin`, which is the name written alone.
+        let through: HashMap<String, HashMap<String, String>> = module
+            .aliases
+            .iter()
+            .map(|(alias, from)| {
+                let names = finals[*from]
+                    .keys()
+                    .map(|name| (name.clone(), written(*from, name)))
+                    .collect();
+                (alias.clone(), names)
+            })
+            .collect();
+        let tokens = renamed_tokens(&module.tokens, &rename, &through);
         let found = match crate::parser::parse_library(&tokens) {
             Ok(found) => found,
             Err(found) => {
@@ -2530,6 +2788,7 @@ fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> File
         file.impls.extend(found.impls);
         file.withouts.extend(found.withouts);
     }
+    file.scopes = scopes;
     file
 }
 
@@ -3033,8 +3292,8 @@ impl<'a> Defs<'a> {
                 let Some(&k) = self.trait_names.get(q.as_str()) else {
                     return Vec::new();
                 };
-                match file.traits[k].functions.iter().find(|f| f.name == name) {
-                    Some(f) => (params(f), true),
+                match traits::trait_function(&file.traits[k], name) {
+                    Some(fi) => (params(&file.traits[k].functions[fi]), true),
                     None => return Vec::new(),
                 }
             }
@@ -3268,10 +3527,7 @@ impl<'a> Typed<'a> {
                     return Callee::Case(defs.case_of(e, &call.callee).expect("checked"));
                 }
                 let k = defs.trait_names[q.as_str()];
-                let at = defs.file.traits[k]
-                    .functions
-                    .iter()
-                    .position(|f| f.name == call.callee);
+                let at = traits::trait_function(&defs.file.traits[k], &call.callee);
                 (k, at.expect("checked"))
             }
         };
@@ -5863,11 +6119,12 @@ impl<'a> Checker<'a> {
                     Error::unsupported(call.name_pos, "calling what a field gives")
                 } else {
                     Error::new(*at, format!("there is no trait named `{q}`"))
+                        .with_fix("to write a name after a module, import the module with `use`")
                 });
                 return self.unknown_call(body, call);
             };
             let t = &defs.file.traits[k];
-            let Some(fi) = t.functions.iter().position(|f| f.name == name) else {
+            let Some(fi) = traits::trait_function(t, name) else {
                 self.errors.push(Error::new(
                     call.name_pos,
                     format!("`{q}` has no function named `{name}`"),
@@ -5954,11 +6211,15 @@ impl<'a> Checker<'a> {
             self.contract_call(body, call, &defs.file.functions[f], sig);
             return sig.gives.solved(&sol);
         }
-        match defs.trait_fns.get(name).map(Vec::as_slice) {
-            Some([(k, fi)]) => self.trait_call(body, call, *k, *fi, want),
-            Some(of) if !of.is_empty() => {
+        let mut of = defs.trait_fns.get(name).cloned().unwrap_or_default();
+        if let [(k, _)] = of[..] {
+            of.extend(defs.rivals(k, name, call.pos));
+        }
+        match of.as_slice() {
+            [(k, fi)] => self.trait_call(body, call, *k, *fi, want),
+            of if !of.is_empty() => {
                 let traits: Vec<&str> = (of.iter())
-                    .map(|(k, _)| defs.file.traits[*k].name.as_str())
+                    .map(|(k, _)| written_name(&defs.file.traits[*k].name))
                     .collect();
                 let fixes: Vec<String> = traits.iter().map(|t| format!("`{t}.{name}`")).collect();
                 self.errors.push(
