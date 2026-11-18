@@ -39,6 +39,14 @@ pub const ONCE: &[Test] = &[
         a_nat_has_no_wrapping_function_and_no_bit_operation_and_a_u64_has_both,
     ),
     (
+        "a_nat_has_the_saturating_and_the_checked_functions_and_gives_what_a_u64_gives",
+        a_nat_has_the_saturating_and_the_checked_functions_and_gives_what_a_u64_gives,
+    ),
+    (
+        "a_nat_and_a_u64_use_one_copy_of_a_saturating_function",
+        a_nat_and_a_u64_use_one_copy_of_a_saturating_function,
+    ),
+    (
         "a_nat_is_held_by_a_field_a_tuple_a_list_an_option_and_a_function",
         a_nat_is_held_by_a_field_a_tuple_a_list_an_option_and_a_function,
     ),
@@ -245,16 +253,13 @@ fn a_nat_converted_to_a_u64_and_back_is_the_number_it_was() {
     });
 }
 
-/// The wrapping, saturating, and checked functions and the functions of
-/// `Bits` are for the types that are a word of the machine, and a `Nat` is
-/// none of them.
+/// The wrapping functions and the functions of `Bits` are for the types that
+/// are a word of the machine, and a `Nat` is not one.
 fn a_nat_has_no_wrapping_function_and_no_bit_operation_and_a_u64_has_both() {
-    const FUNCTIONS: [(&str, &str, &str); 11] = [
+    const FUNCTIONS: [(&str, &str, &str); 9] = [
         ("wrapping_add", "std.int", "x, y"),
         ("wrapping_sub", "std.int", "x, y"),
         ("wrapping_mul", "std.int", "x, y"),
-        ("saturating_add", "std.int", "x, y"),
-        ("checked_add", "std.int", "x, y"),
         ("bit_and", "std.bits", "x, y"),
         ("bit_or", "std.bits", "x, y"),
         ("bit_xor", "std.bits", "x, y"),
@@ -273,6 +278,51 @@ fn a_nat_has_no_wrapping_function_and_no_bit_operation_and_a_u64_has_both() {
             }
         }
     }
+}
+
+/// The saturating and the checked functions of a `Nat` give what they give on
+/// a `u64` of the same values, for values drawn with the edges, and the
+/// greatest `Nat` plus one stops at the greatest `Nat` and is `.none` when
+/// checked.
+fn a_nat_has_the_saturating_and_the_checked_functions_and_gives_what_a_u64_gives() {
+    const FUNCTIONS: [&str; 6] = [
+        "saturating_add",
+        "saturating_sub",
+        "saturating_mul",
+        "checked_add",
+        "checked_sub",
+        "checked_mul",
+    ];
+    generate::check(3637, 12, |g: &mut Gen| (count(g), count(g)), |(a, b)| {
+        let program = |ty: &str| {
+            let mut source = format!("fn main() ! console, alloc {{\n  a: {ty} = {a}\n  b: {ty} = {b}\n");
+            for f in FUNCTIONS {
+                source += &format!("  print(\"{{{f}(a, b)}}\")\n");
+            }
+            source + "}\n"
+        };
+        assert_eq!(stdout(&program("Nat")), stdout(&program("u64")), "for\n{}", program("Nat"));
+    });
+    let source = "fn next_line(line: Nat) -> Nat { saturating_add(line, 1) }\n\nfn main() ! console, alloc {\n  top: Nat = 18446744073709551615\n  print(\"{next_line(top)} {next_line(4)}\")\n  c: Option[Nat] = checked_add(top, 1)\n  print(\"{c == .none}\")\n}\n";
+    assert_eq!(stdout(source), "18446744073709551615 5\ntrue\n", "for\n{source}");
+}
+
+/// A program that uses a saturating function on a `Nat` and on a `u64` holds
+/// the functions it holds when it uses it on two `u64`.
+fn a_nat_and_a_u64_use_one_copy_of_a_saturating_function() {
+    generate::check(3638, 6, |g: &mut Gen| g.below(6), |which| {
+        let f = ["saturating_add", "saturating_sub", "saturating_mul", "checked_add", "checked_sub", "checked_mul"][*which];
+        let source = |a: &str| {
+            format!(
+                "fn main() ! console, alloc {{\n  xs: List[u8] = [1, 2]\n  a: {a} = 7\n  b: u64 = 3\n  print(\"{{{f}(a, a)}} {{{f}(b, b)}}\")\n}}\n"
+            )
+        };
+        let nat = source("Nat").replace("a: Nat = 7", "a: Nat = xs.size");
+        let functions = |source: &str| {
+            lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for\n{source}")).functions.len()
+        };
+        assert_eq!(functions(&nat), functions(&source("u64")), "for\n{nat}");
+    });
 }
 
 /// A `Nat` is a field of a struct, an item of a tuple and of a list, inside an
