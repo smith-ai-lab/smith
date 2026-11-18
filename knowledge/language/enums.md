@@ -110,7 +110,7 @@ fn lone(n: u8) -> Option[u8] { .some(n) }
 fn nothing() -> Option[u8] { .none }
 ```
 
-[Generics and traits](traits.md) says how a program writes its own.
+[Type parameters](type-parameters.md) says how a program writes its own.
 
 ## The forms
 

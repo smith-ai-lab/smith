@@ -16,7 +16,13 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [tuples.md](tuples.md): tuples that group values without names, patterns that take them apart and assign, and the empty tuple.
 - [enums.md](enums.md): enums that hold exactly one of their cases, each case holding a type or nothing, and how a case is built.
 - [match.md](match.md): `match`, which takes a value apart with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case.
-- [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
+- [type-parameters.md](type-parameters.md): a name for a type that a function or a type leaves open, how a call or a binding settles it, and a default for one.
+- [traits.md](traits.md): a trait as a set of functions over one or more types, an `impl` that supplies them, how a call finds the `impl`, and the defaults of a trait's parameters.
+- [bounds.md](bounds.md): what a function or an `impl` needs of its type parameters, written as a bound or as `requires`, and how an `impl` with type parameters is chosen.
+- [out-parameters.md](out-parameters.md): a trait parameter marked `out`, which the others determine, and a default for a trait parameter.
+- [operators.md](operators.md): an arithmetic operator as a call of a trait function, operands of different types, and `derive`.
+- [comparisons.md](comparisons.md): `==` and `!=` through `Eq`, `<`, `<=`, `>`, and `>=` through `Ord`, and the laws every implementation keeps.
+- [automatic-traits.md](automatic-traits.md): the `Eq` and `Ord` that a struct, an enum, a tuple, or an array is given, how each orders its values, and `without`.
 - [literals.md](literals.md): how a number, a character, a text, `true`, `false`, or an array is written, the trait that backs each, and how the type of a literal is decided.
 - [number-types.md](number-types.md): the whole number and float types, what each holds, and why a number has exactly one type.
 - [arithmetic.md](arithmetic.md): integer arithmetic that never overflows silently, a plain `+`, `-`, or `*` that compiles only when its result provably fits, and `wrapping_`, `saturating_`, and `checked_` where it cannot be proven.

@@ -41,7 +41,7 @@ fn oldest(m: Map[str, u8]) -> u8 {
 }
 ```
 
-A key needs [`Eq`](../language/traits.md), to be told from another key, and `Hash`, to be found. `Hash` is given automatically, as `Eq` is: a struct, an enum, a tuple, or a list has it unless one of its parts lacks it, `without Hash for T` takes it away, and a type's own `impl` replaces the one it was given. Two keys that are equal have the same hash.
+A key needs [`Eq`](../language/comparisons.md), to be told from another key, and `Hash`, to be found. `Hash` is given automatically, as `Eq` is: a struct, an enum, a tuple, or a list has it unless one of its parts lacks it, `without Hash for T` takes it away, and a type's own `impl` replaces the one it was given. Two keys that are equal have the same hash.
 
 ```
 trait Hash[T] {

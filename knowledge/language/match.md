@@ -228,4 +228,4 @@ A `match` on whole numbers is one jump, however many literals it has.
 | `(p, q) { e }` | A tuple whose parts `p` and `q` match |
 | `0`, `'a'`, `"a"` | A whole number, a character, or a text equal to it |
 
-Next: [Generics and traits](traits.md)
+Next: [Type parameters](type-parameters.md)
