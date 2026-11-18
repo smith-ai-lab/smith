@@ -107,12 +107,14 @@ if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
 for        = "for" IDENT { "," IDENT } block ;
 loop       = "loop" [ ( IDENT | tuple_pat ) "in" expr | "decreases" expr { "," expr } ] block ;
-lambda     = [ "fn" "(" ( IDENT | tuple_pat ) { "," ( IDENT | tuple_pat ) } ")" ] block ;
+lambda     = [ "fn" "(" lambda_arg { "," lambda_arg } ")" [ "->" type ] ] block ;
+lambda_arg = ( IDENT | tuple_pat ) [ ":" type ] ;
 
 type       = statement
            | IDENT [ "[" type_arg { "," type_arg } "]" ]
            | "[" size { "," size } "]" type
-           | "(" [ fn_arg { "," fn_arg } ] ")" [ "->" type [ effects ] ] ;
+           | "(" [ type { "," type } ] ")"
+           | "fn" "(" [ fn_arg { "," fn_arg } ] ")" [ "->" type ] [ effects ] ;
 fn_arg     = [ "take" ] type ;
 size       = expr ;
 statement  = operand CMP operand ;

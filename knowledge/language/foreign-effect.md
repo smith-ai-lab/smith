@@ -33,7 +33,7 @@ effect beep {
   fn ring() -> isize
 }
 
-fn bell[T](buf: Ptr[u8], body: () -> T ! beep) -> T ! foreign {
+fn bell[T](buf: Ptr[u8], body: fn() -> T ! beep) -> T ! foreign {
   beep(ring: { write(1, buf, 1) }, body: body)
 }
 

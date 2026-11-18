@@ -105,11 +105,11 @@ The keyword is fixed and its meaning is extensible. `then` is the one function o
 
 ```
 trait Try[C, R, out T] {
-  fn then(c: C, body: (T) -> R) -> R
+  fn then(c: C, body: fn(T) -> R) -> R
 }
 
 impl[T, U] Try[Option[T], Option[U], T] {
-  fn then(c: Option[T], body: (T) -> Option[U]) -> Option[U] {
+  fn then(c: Option[T], body: fn(T) -> Option[U]) -> Option[U] {
     match c {
       .some(x) { body(x) }
       .none { .none }
@@ -143,7 +143,7 @@ fn first(o: Option[str]) -> Result[str, str] {
 This is refused: "there is no implementation of `Try` for `Option[str]` and `Result[str, str]`". A function that returns `str` is refused the same way, "for `Option[str]` and `str`", and so is a `try` inside a [lambda](lambdas.md), which returns from the lambda and not from the function around it: its result type is the lambda's.
 
 ```
-fn each(f: (str) -> str) -> str { f("q") }
+fn each(f: fn(str) -> str) -> str { f("q") }
 
 fn go() -> Result[str, str] {
   s = each() fn(v) {
@@ -165,7 +165,7 @@ enum Maybe {
 }
 
 impl Try[Maybe, Maybe, str] {
-  fn then(c: Maybe, body: (str) -> Maybe) -> Maybe {
+  fn then(c: Maybe, body: fn(str) -> Maybe) -> Maybe {
     match c {
       .some(x) { body(x) }
       .none { .none }
@@ -204,7 +204,7 @@ fn port(text: str) -> Result[u16, PortError] {
 impl[T, U, E, F] Try[Result[T, E], Result[U, F], T]
   requires Convert[E, F]
 {
-  fn then(c: Result[T, E], body: (T) -> Result[U, F]) -> Result[U, F] {
+  fn then(c: Result[T, E], body: fn(T) -> Result[U, F]) -> Result[U, F] {
     match c {
       .ok(x) { body(x) }
       .err(e) { .err(convert(e)) }

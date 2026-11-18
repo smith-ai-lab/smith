@@ -435,7 +435,7 @@ fn a_return_in_a_loop_ends_the_loop_and_the_function() {
 fn lambda_program(lines: &[Item]) -> String {
     let calls: Vec<String> = ARGUMENTS.iter().map(|x| format!("{{caller({x})}}")).collect();
     format!(
-        "fn call(x: i64, f: (i64) -> i64) -> i64 {{\n  a = f(x)\n  b = f(wrapping_add(x, 1))\n  wrapping_add(wrapping_mul(a, 3), b)\n}}\n\n\
+        "fn call(x: i64, f: fn(i64) -> i64) -> i64 {{\n  a = f(x)\n  b = f(wrapping_add(x, 1))\n  wrapping_add(wrapping_mul(a, 3), b)\n}}\n\n\
          fn caller(x: i64) -> i64 {{\n  r = call(x) fn(v) {{\n{}  }}\n  wrapping_add(r, 7)\n}}\n\n\
          fn main() ! console, alloc {{\n  print(\"{}\")\n}}\n",
         body(lines, "v"),

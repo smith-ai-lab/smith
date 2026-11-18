@@ -1,4 +1,4 @@
-fn twice(body: () -> ()) {
+fn twice(body: fn()) {
   body()
   body()
 }

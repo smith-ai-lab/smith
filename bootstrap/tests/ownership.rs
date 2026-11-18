@@ -948,7 +948,7 @@ fn a_function_type_marks_a_parameter_take_and_its_lambda_is_held_to_it() {
         let twice = l.twice && result == "u64";
         let mut source = String::from(PRELUDE);
         source.push_str(&format!(
-            "fn apply(k: take Key, f: ({marked}Key) -> {result}) -> {result} {{\n  "
+            "fn apply(k: take Key, f: fn({marked}Key) -> {result}) -> {result} {{\n  "
         ));
         source.push_str(if twice { "n = f(k)\n  f(" } else { "f(" });
         let mut wanted: Vec<Pos> = Vec::new();
@@ -1006,7 +1006,7 @@ fn main() {
 /// What the shapes below call: a function that calls its argument twice, and
 /// functions over a type parameter, which may copy what they are given, and
 /// an implementation for a type that holds one.
-const GENERIC: &str = "fn twice(f: () -> u64) -> u64 {
+const GENERIC: &str = "fn twice(f: fn() -> u64) -> u64 {
   a = f()
   f()
 }
@@ -1079,7 +1079,7 @@ fn the_two_readings_that_would_spend_a_key_twice_are_refused_as_not_built() {
         let source = format!(
             "{KEY}fn spend(k: take Key) -> u64 {{ k.secret }}
 
-fn twice(f: () -> u64) -> u64 {{
+fn twice(f: fn() -> u64) -> u64 {{
   a = f()
   f()
 }}

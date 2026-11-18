@@ -745,7 +745,7 @@ fn write(m: &Model, mistake: Option<Mistake>) -> (String, Option<Expected>) {
     w.expr(&m.pet.1);
     w.push(" }\n    }\n  }\n}\n\n");
     w.push("fn double(s: str) -> str ! alloc { \"{s}{s}\" }\n\n");
-    w.push("fn apply(s: str, f: (str) -> str) -> str ! alloc { \"");
+    w.push("fn apply(s: str, f: fn(str) -> str) -> str ! alloc { \"");
     w.pieces(&m.apply.0);
     w.push("{f(s)}");
     w.pieces(&m.apply.1);

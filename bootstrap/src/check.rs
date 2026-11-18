@@ -957,8 +957,7 @@ impl<'a> Defs<'a> {
             Ty::List(items) => format!("List[{}]", self.text(&items[0], scope)),
             Ty::Fn(items) => {
                 let items: Vec<String> = items.iter().map(|t| self.text(t, scope)).collect();
-                let (gives, params) = items.split_last().expect("a result");
-                format!("({}) -> {gives}", params.join(", "))
+                function_text(&items)
             }
             Ty::Param(p) => scope.names[*p].clone(),
             Ty::Nothing => "()".to_string(),
@@ -1001,8 +1000,7 @@ impl<'a> Defs<'a> {
                     let items: Vec<String> = (items.iter())
                         .map(|a| text(defs, a, sol, vars, scope))
                         .collect();
-                    let (gives, params) = items.split_last().expect("a result");
-                    format!("({}) -> {gives}", params.join(", "))
+                    function_text(&items)
                 }
                 Ty::Struct(_, args) | Ty::Enum(_, args) if !args.is_empty() => {
                     let args: Vec<String> = args
@@ -1064,19 +1062,20 @@ fn sentence(quoted: Vec<String>) -> String {
     }
 }
 
+/// A function type written from the text of its parameters and its result,
+/// the result last: the result is left out when it is `()`.
+fn function_text(items: &[String]) -> String {
+    let (gives, params) = items.split_last().expect("a result");
+    if gives == "()" {
+        format!("fn({})", params.join(", "))
+    } else {
+        format!("fn({}) -> {gives}", params.join(", "))
+    }
+}
+
 /// How a type is written in the source.
 fn written_type(t: &Type) -> String {
-    let args: Vec<String> = t.args.iter().map(written_type).collect();
-    if t.function {
-        let (gives, params) = args.split_last().expect("a result");
-        format!("({}) -> {gives}", params.join(", "))
-    } else if t.name.is_empty() {
-        format!("({})", args.join(", "))
-    } else if args.is_empty() {
-        t.name.clone()
-    } else {
-        format!("{}[{}]", t.name, args.join(", "))
-    }
+    t.written()
 }
 
 /// A function's signature as it is written, with `effects` in place of
@@ -5117,6 +5116,34 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Settles the types of lambda `l` among those `wanted` of it, the
+    /// result last, which are unknown where what it is passed to leaves them
+    /// open: a type it writes takes the place of one that is open, and one
+    /// that is not the type wanted is an error at the type.
+    fn written_types(&mut self, body: &mut Body<'a>, l: &Lambda, wanted: &mut [Ty]) {
+        let defs = self.defs;
+        let written = l.types.iter().chain(std::iter::once(&l.result));
+        for (slot, t) in wanted.iter_mut().zip(written) {
+            let Some(t) = t else { continue };
+            let ty = self.ty(t, body.scope);
+            if ty == Ty::Unknown {
+                continue;
+            }
+            if agrees(slot, &ty) {
+                *slot = ty;
+            } else {
+                self.errors.push(Error::new(
+                    t.pos,
+                    format!(
+                        "this is {}, where the function type needs {}",
+                        defs.describe(&ty, body.scope),
+                        defs.describe(slot, body.scope)
+                    ),
+                ));
+            }
+        }
+    }
+
     /// Checks a lambda passed where a function is needed whose parameters
     /// and result, the result last, are of the types `wanted`, which may be
     /// partly known, and gives its type. Its body is checked where it is
@@ -5124,6 +5151,12 @@ impl<'a> Checker<'a> {
     /// it may assign that function's `var`s.
     fn lambda(&mut self, body: &mut Body<'a>, l: &Lambda, wanted: &[Ty], quiet: bool) -> Ty {
         let defs = self.defs;
+        let params = wanted.len() - 1;
+        let mut wanted = wanted.to_vec();
+        if l.params.len() == params {
+            self.written_types(body, l, &mut wanted);
+        }
+        let wanted = &wanted[..];
         let (result, params) = wanted.split_last().expect("a result");
         if l.params.len() != params.len() {
             let needed = Ty::Fn(wanted.to_vec());
@@ -6545,6 +6578,8 @@ impl<'a> Checker<'a> {
         // reached, which are checked after the other arguments, with the
         // place of the parameter each is for.
         let mut deferred: Vec<(usize, &Expr)> = Vec::new();
+        let errors_before = self.errors.len();
+        let mut lambdas: Vec<(usize, &Lambda)> = Vec::new();
         // An argument that needs the type the others say is checked after them,
         // so a call that waits would be checked after it.
         let needs_others = (call.args.iter()).any(|a| {
@@ -6717,6 +6752,9 @@ impl<'a> Checker<'a> {
                 deferred.push((i, &arg.value));
                 continue;
             }
+            if let (Some(i), Expr::Lambda(l), Want::Ty(Ty::Fn(_))) = (param, &arg.value, &wanted) {
+                lambdas.push((i, l));
+            }
             let gives = self.expr(body, &arg.value, &wanted);
             match param {
                 Some(i) => {
@@ -6758,6 +6796,26 @@ impl<'a> Checker<'a> {
             };
             let gives = self.expr(body, value, &wanted);
             self.fit(body, value, &gives, pattern, &mut sol, vars);
+        }
+        // A lambda whose parameters' types nothing decided, and which writes
+        // none of them.
+        if self.errors.len() == errors_before
+            && let Some(l) = lambdas.iter().find_map(|&(i, l)| {
+                let Ty::Fn(items) = signature.params[i].1.partial(&sol) else {
+                    return None;
+                };
+                (l.types.iter().zip(&items))
+                    .any(|(t, w)| t.is_none() && *w == Ty::Unknown)
+                    .then_some(l)
+            })
+        {
+            self.errors.push(
+                Error::new(
+                    l.pos,
+                    "nothing decides the types of this lambda's parameters, so it writes them",
+                )
+                .with_fix("write each type, as in `fn(v: T) { ... }`"),
+            );
         }
         let missing: Vec<String> = (signature.params.iter().enumerate())
             .zip(given.iter().zip(&signature.defaults))

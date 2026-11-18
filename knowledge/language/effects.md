@@ -96,7 +96,7 @@ The stored signature always states the effect list. The compiler proposes it whi
 A lambda's effects are checked where it is written: whatever its body does must be allowed by the function it sits in, and the function receiving it says nothing about them. `do` below runs a lambda and states no effect.
 
 ```
-fn do[T](body: () -> T) -> T { body() }
+fn do[T](body: fn() -> T) -> T { body() }
 
 fn main() ! console {
   do { print("hi") }
@@ -114,11 +114,11 @@ A function stored in a value states its effects in its type, after the result as
 ```
 struct Button {
   label: str
-  on_press: () -> () ! console
+  on_press: fn() ! console
 }
 ```
 
-`on_press` is a function that may use the console. A field of type `() -> ()` would be pure.
+`on_press` is a function that may use the console. A field of type `fn()` would be pure.
 
 ## The forms
 
@@ -127,7 +127,7 @@ struct Button {
 | `fn f() { ... }` | `f` is pure |
 | `fn f() ! console { ... }` | `f` may use the console |
 | `fn f() -> T ! console, alloc { ... }` | The effects follow the return type, in any order, each once |
-| `(A) -> B ! console` | A stored function that may use the console |
-| `(A) -> B` | A stored function that is pure |
+| `fn(A) -> B ! console` | A stored function that may use the console |
+| `fn(A) -> B` | A stored function that is pure |
 
 Next: [Declaring an effect](effect-declarations.md)

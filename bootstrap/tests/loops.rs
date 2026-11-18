@@ -262,7 +262,7 @@ fn a_break_ends_the_nearest_loop_around_it_and_no_other() {
 
 fn a_break_with_no_loop_to_end_is_an_error() {
     let outside = "fn stop() {\n  break\n}\n\nfn main() ! console, alloc {\n  stop()\n}\n";
-    let in_lambda = "fn twice(body: () -> ()) {\n  body()\n  body()\n}\n\nfn main() ! console, alloc {\n  loop i in 0..3 {\n    twice({ break })\n  }\n}\n";
+    let in_lambda = "fn twice(body: fn()) {\n  body()\n  body()\n}\n\nfn main() ! console, alloc {\n  loop i in 0..3 {\n    twice({ break })\n  }\n}\n";
     for source in [outside, in_lambda] {
         let errors = refused(source);
         assert!(
@@ -335,12 +335,12 @@ fn the_ends_of_a_range_are_values_from_when_the_loop_starts_and_nothing_ties_the
     };
     let list = |before: &str, after: &str| {
         format!(
-            "fn run(f: () -> ()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  loop i in 0..xs.size {{\n    {before}\n    print(\"{{xs[i]}}\")\n    {after}\n  }}\n}}\n"
+            "fn run(f: fn()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  loop i in 0..xs.size {{\n    {before}\n    print(\"{{xs[i]}}\")\n    {after}\n  }}\n}}\n"
         )
     };
     let number = |before: &str, after: &str| {
         format!(
-            "fn run(f: () -> ()) {{ f() }}\n\nfn f(n: u8) -> u8 {{\n  var m: u8 = n\n  var s: u8 = 0\n  loop i in 0..m {{\n    {before}\n    s = m - i - 1\n    {after}\n  }}\n  s\n}}\n\nfn main() ! console, alloc {{ print(\"{{f(3)}}\") }}\n"
+            "fn run(f: fn()) {{ f() }}\n\nfn f(n: u8) -> u8 {{\n  var m: u8 = n\n  var s: u8 = 0\n  loop i in 0..m {{\n    {before}\n    s = m - i - 1\n    {after}\n  }}\n  s\n}}\n\nfn main() ! console, alloc {{ print(\"{{f(3)}}\") }}\n"
         )
     };
     for ((name, list_assign), (_, number_assign)) in wrap("xs = []").into_iter().zip(wrap("m = 0"))

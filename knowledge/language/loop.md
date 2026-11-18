@@ -89,7 +89,7 @@ This prints `0 0`, `1 0`, and `2 0`.
 A `break` that is in no loop has nothing to end: "`break` is outside a `loop`, so there is nothing for it to end". A `break` inside a [lambda](lambdas.md) does not reach a loop outside the lambda, and it is refused.
 
 ```
-fn twice(body: () -> ()) { body() }
+fn twice(body: fn()) { body() }
 
 fn main() ! console, alloc {
   loop i in 0..3 {

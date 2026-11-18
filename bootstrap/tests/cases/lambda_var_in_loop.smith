@@ -1,4 +1,4 @@
-fn each3(body: () -> ()) {
+fn each3(body: fn()) {
   loop i in 0..3 { body() }
 }
 

@@ -111,7 +111,7 @@ fn room(x: u8) -> u8 {
 A function type states no contract, so a function with a `requires` is only called by its name, and using its name as a value is an error.
 
 ```
-fn apply(f: (u8, u8) -> u8) -> u8 { f(5, 3) }
+fn apply(f: fn(u8, u8) -> u8) -> u8 { f(5, 3) }
 
 fn main() ! console, alloc { print("{apply(gap)}") }
 ```
@@ -127,7 +127,7 @@ fn small(x: u8) -> r: u8
   if x < 10 { x } else { 9 }
 }
 
-fn apply(f: (u8) -> u8) -> u8 { f(5) }
+fn apply(f: fn(u8) -> u8) -> u8 { f(5) }
 ```
 
 `apply(small)` is `5`. Inside `apply`, `f(5)` is any `u8`, since `f` is a function type and states no `ensures`.

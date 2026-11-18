@@ -4,7 +4,7 @@ struct Pair {
 }
 
 impl Iterate[Pair, i32] {
-  fn each(c: Pair, body: (i32) -> Flow) -> Flow {
+  fn each(c: Pair, body: fn(i32) -> Flow) -> Flow {
     try body(c.a)
     body(c.b)
   }
@@ -15,7 +15,7 @@ struct Countdown {
 }
 
 impl Iterate[Countdown, i32] {
-  fn each(c: Countdown, body: (i32) -> Flow) -> Flow {
+  fn each(c: Countdown, body: fn(i32) -> Flow) -> Flow {
     loop i in 0..c.from {
       match body(c.from - i) {
         .stop { return .stop }

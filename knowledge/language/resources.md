@@ -79,7 +79,7 @@ fn partial(db: Db, ok: bool) -> Result[(), DbError] ! net {
 `open` below is written for [`with`](with.md): it lends the handle to the rest of the caller's block, and closes it afterwards. Leaving out `close_file`, or putting a step that can fail between opening and closing, does not compile. The body's own effects, here `alloc` from `read`, are allowed because `first_bytes` declares them.
 
 ```
-fn open[T](path: str, body: (File) -> Result[T, FsError]) -> Result[T, FsError] ! fs {
+fn open[T](path: str, body: fn(File) -> Result[T, FsError]) -> Result[T, FsError] ! fs {
   handle = try open_file(path)
   r = body(handle)
   close_file(handle)

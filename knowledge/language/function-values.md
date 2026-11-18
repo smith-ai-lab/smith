@@ -14,7 +14,7 @@ A function with a name is a value. Its name is passed wherever a function type i
 ```
 fn half(x: f32) -> f32 { x * 0.5 }
 
-fn twice(x: f32, f: (f32) -> f32) -> f32 { f(f(x)) }
+fn twice(x: f32, f: fn(f32) -> f32) -> f32 { f(f(x)) }
 
 fn quarter(x: f32) -> f32 { twice(x, half) }
 ```
@@ -23,7 +23,7 @@ fn quarter(x: f32) -> f32 { twice(x, half) }
 
 ## What a name is worth as a value
 
-A function's type is the types of its parameters and of its result, written as in [Lambdas](lambdas.md). The type of `half` is `(f32) -> f32`, and a name is accepted where that type is expected and nowhere else.
+A function's type is the types of its parameters and of its result, written as in [Lambdas](lambdas.md). The type of `half` is `fn(f32) -> f32`, and a name is accepted where that type is expected and nowhere else.
 
 ```
 fn positive(x: f32) -> bool { x > 0.0 }
@@ -31,9 +31,9 @@ fn positive(x: f32) -> bool { x > 0.0 }
 fn wrong(x: f32) -> f32 { twice(x, positive) }
 ```
 
-This is refused: "this gives a `(f32) -> bool`, where a `(f32) -> f32` is needed". A function that takes two floats is refused the same way, as `(f32, f32) -> f32`.
+This is refused: "this gives a `fn(f32) -> bool`, where a `fn(f32) -> f32` is needed". A function that takes two floats is refused the same way, as `fn(f32, f32) -> f32`.
 
-Writing the call instead of the name passes what the call gives. `twice(x, half(1.0))` is refused: "this gives a `f32`, where a `(f32) -> f32` is needed".
+Writing the call instead of the name passes what the call gives. `twice(x, half(1.0))` is refused: "this gives a `f32`, where a `fn(f32) -> f32` is needed".
 
 ## A function that needs more than it is given
 
@@ -42,7 +42,7 @@ A function value is called with the arguments of its type and no others, so the 
 ```
 fn off(x: f32, rate: f32) -> f32 { x - rate }
 
-fn price(x: f32, rate: f32, discount: (f32, f32) -> f32) -> f32 {
+fn price(x: f32, rate: f32, discount: fn(f32, f32) -> f32) -> f32 {
   discount(x, rate)
 }
 ```
@@ -65,7 +65,7 @@ A default belongs to a function's name and not to its type, so a function passed
 fn scale(x: f32, by: f32 = 2.0) -> f32 { x * by }
 ```
 
-The type of `scale` is `(f32, f32) -> f32`, so `twice(8.0, scale)` is refused: "this gives a `(f32, f32) -> f32`, where a `(f32) -> f32` is needed". A lambda gives the default, since the call inside it is an ordinary call.
+The type of `scale` is `fn(f32, f32) -> f32`, so `twice(8.0, scale)` is refused: "this gives a `fn(f32, f32) -> f32`, where a `fn(f32) -> f32` is needed". A lambda gives the default, since the call inside it is an ordinary call.
 
 ```
 fn quarter_scale(x: f32) -> f32 { twice(x) fn(v) { scale(v) } }
@@ -88,7 +88,7 @@ A function with a name can also be stored and returned, because it holds nothing
 
 ```
 struct Pricing {
-  discount: (f32) -> f32
+  discount: fn(f32) -> f32
 }
 
 fn sale_price(x: f32) -> f32 {
@@ -102,7 +102,7 @@ fn sale_price(x: f32) -> f32 {
 A function that returns a function says so in its return type, which is a function type, and what it returns is called the same way.
 
 ```
-fn chosen() -> (f32) -> f32 { half }
+fn chosen() -> fn(f32) -> f32 { half }
 
 fn chosen_half(x: f32) -> f32 { chosen()(x) }
 ```
@@ -113,13 +113,13 @@ fn chosen_half(x: f32) -> f32 { chosen()(x) }
 
 | Written | Is |
 | --- | --- |
-| `half` | The function named `half`, as a value of type `(f32) -> f32` |
+| `half` | The function named `half`, as a value of type `fn(f32) -> f32` |
 | `half(1.0)` | A call, which gives what `half` gives, not a function |
 | `twice(x, half)` | A function with a name passed to a call |
 | `f = half` then `f(x)` | A function bound to a name, and called by it |
 | `discount: half` | A function with a name stored in a field |
 | `sale.discount(x)` | The function in a field, called |
-| `-> (f32) -> f32` | A return type that is a function |
+| `-> fn(f32) -> f32` | A return type that is a function |
 | `chosen()(x)` | The function a call returns, called |
 | `fn(v) { scale(v) }` | A lambda, the way to pass a function that has defaults |
 

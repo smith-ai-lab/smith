@@ -23,7 +23,7 @@ enum Flow {
 }
 
 trait Iterate[C, out T] {
-  fn each(c: C, body: (T) -> Flow) -> Flow
+  fn each(c: C, body: fn(T) -> Flow) -> Flow
 }
 ```
 
@@ -39,7 +39,7 @@ struct Countdown {
 }
 
 impl Iterate[Countdown, i32] {
-  fn each(c: Countdown, body: (i32) -> Flow) -> Flow {
+  fn each(c: Countdown, body: fn(i32) -> Flow) -> Flow {
     loop i in 0..c.from { try body(c.from - i) }
     .go
   }
@@ -50,7 +50,7 @@ impl Iterate[Countdown, i32] {
 
 ```
 impl Try[Flow, Flow, ()] {
-  fn then(c: Flow, body: (()) -> Flow) -> Flow {
+  fn then(c: Flow, body: fn(()) -> Flow) -> Flow {
     match c {
       .go { body(()) }
       .stop { .stop }
@@ -115,7 +115,7 @@ struct Branch {
 }
 
 impl Iterate[Tree, i32] {
-  fn each(t: Tree, body: (i32) -> Flow) -> Flow {
+  fn each(t: Tree, body: fn(i32) -> Flow) -> Flow {
     match t {
       .leaf { .go }
       .node(b) {
@@ -166,7 +166,7 @@ A loop whose block has no `break` and no `return` always answers `.go`, which th
 
 | Written | Is |
 | --- | --- |
-| `impl Iterate[C, T] { fn each(c: C, body: (T) -> Flow) -> Flow { ... } }` | Makes `C` loopable, with elements of type `T` |
+| `impl Iterate[C, T] { fn each(c: C, body: fn(T) -> Flow) -> Flow { ... } }` | Makes `C` loopable, with elements of type `T` |
 | `try body(v)` in an `each` | Calls the block, and leaves `each` with `.stop` when the block said stop |
 | `loop v in x { e }` | The form that is written: the block run for each element of `x`, by a call of `each` |
 | `each(x) fn(v) { ... .go }` | A call of `each` with a lambda that gives a `Flow`, accepted because `each` is an ordinary function |
