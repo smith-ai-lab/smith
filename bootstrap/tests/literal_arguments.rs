@@ -8,6 +8,18 @@ use smith::scalar;
 use crate::Test;
 use crate::generate::{self, Gen};
 
+/// The whole number types, with their names, smallest and largest values.
+const INTS: [(&str, i128, i128); 8] = [
+    ("i8", i8::MIN as i128, i8::MAX as i128),
+    ("i16", i16::MIN as i128, i16::MAX as i128),
+    ("i32", i32::MIN as i128, i32::MAX as i128),
+    ("i64", i64::MIN as i128, i64::MAX as i128),
+    ("u8", 0, u8::MAX as i128),
+    ("u16", 0, u16::MAX as i128),
+    ("u32", 0, u32::MAX as i128),
+    ("u64", 0, u64::MAX as i128),
+];
+
 pub const ONCE: &[Test] = &[
     (
         "a_literal_for_a_type_parameter_is_an_i64_as_a_binding_of_it_is",
@@ -24,6 +36,14 @@ pub const ONCE: &[Test] = &[
     (
         "a_literal_among_any_arguments_never_panics_the_compiler",
         a_literal_among_any_arguments_never_panics_the_compiler,
+    ),
+    (
+        "a_literal_for_a_type_parameter_takes_the_type_the_place_of_the_result_needs",
+        a_literal_for_a_type_parameter_takes_the_type_the_place_of_the_result_needs,
+    ),
+    (
+        "a_literal_the_place_of_the_result_cannot_hold_is_refused_at_the_literal",
+        a_literal_the_place_of_the_result_cannot_hold_is_refused_at_the_literal,
     ),
 ];
 
@@ -279,28 +299,249 @@ fn two_literals_for_the_functions_of_a_trait_with_an_out_type_are_i64() {
 /// What is written as the argument of a parameter, which may be no number.
 const ARGUMENTS: [&str; 5] = ["7", "-3", "\"s\"", "true", "same(2)"];
 
-/// A call of a function of three type parameters and a `str`, with an
-/// argument of any of these kinds for each parameter.
+/// Where a call's result is put, with a type that may be none it gives.
+const PLACES: [&str; 8] = [
+    "{}",
+    "x: u8 = {}",
+    "x: str = {}",
+    "takes({})",
+    "x == {}",
+    "{} == x",
+    "takes(same({}))",
+    "(a, b): (u8, bool) = {}",
+];
+
+/// A call of a function of type parameters and a `str`, with an argument of
+/// any of these kinds for each parameter, put where a type is needed.
 fn anything(g: &mut Gen) -> String {
     let args: Vec<&str> = (0..4).map(|_| *g.pick(&ARGUMENTS)).collect();
     let nested = g.one_in(3);
-    let inner = format!("pair({}, {})", args[0], args[1]);
-    let call = if nested {
-        format!("pair({inner}, {})", args[2])
-    } else {
-        format!("f({}, {}, {}, {})", args[0], args[1], args[2], args[3])
+    let call = match g.below(4) {
+        _ if nested => format!("pair(pair({}, {}), {})", args[0], args[1], args[2]),
+        0 => format!("f({}, {}, {}, {})", args[0], args[1], args[2], args[3]),
+        1 => format!("both({}, {})", args[0], args[1]),
+        2 => format!("same({})", args[0]),
+        _ => format!("pair({}, {})", args[0], args[1]),
     };
-    let source = format!(
+    let place = PLACES[g.below(PLACES.len())].replace("{}", &call);
+    format!(
         "{SAME}fn pair[A, B](a: A, b: B) -> u8 {{ 1 }}\n\n\
-         fn f[A, B, C](a: A, b: B, c: C, s: str) -> u8 {{ 1 }}\n\n\
-         fn main() ! console, alloc {{ print(\"{{{call}}}\") }}\n"
-    );
-    source
+         fn both[A, B](a: A, b: B) -> (A, B) {{ (a, b) }}\n\n\
+         fn f[A, B, C](a: A, b: B, c: C, s: str) -> A {{ a }}\n\n\
+         fn takes(n: u8) -> u8 {{ n }}\n\n\
+         fn main() ! console, alloc {{\n  x: u8 = 1\n  {place}\n}}\n"
+    )
 }
 
 fn a_literal_among_any_arguments_never_panics_the_compiler() {
     generate::check(2113, 60, anything, |source| {
         // The compiler gives an error or a program, and does not stop.
         let _ = lower(source.as_bytes());
+    });
+}
+
+/// Where the result of a call is needed to be of a whole number type.
+#[derive(Clone, Copy, Debug)]
+enum Place {
+    /// A binding that states its type.
+    Binding,
+    /// An argument of a function that takes the type.
+    Argument,
+    /// The side of an operation whose other side has the type.
+    Operand,
+    /// A field of that type.
+    Field,
+    /// The value a function that gives the type returns.
+    Returned,
+}
+
+/// A generic function whose result names a type parameter, and which
+/// parameter that is.
+#[derive(Clone, Copy, Debug)]
+enum Shape {
+    Same,
+    First,
+    Second,
+}
+
+const SHAPES: &str = "fn same[A](a: A) -> A { a }\n\n\
+     fn first[A, B](a: A, b: B) -> A { a }\n\n\
+     fn second[A, B](a: A, b: B) -> B { b }\n\n";
+
+#[derive(Debug)]
+struct Placed {
+    int: usize,
+    value: i128,
+    shape: Shape,
+    place: Place,
+    /// How many calls the number is nested in.
+    depth: usize,
+    /// For an operand: the operator, and whether the call is on the left.
+    op: usize,
+    left: bool,
+}
+
+/// The operators and functions that take two values of one type.
+const OPERATORS: [&str; 12] = [
+    "==",
+    "!=",
+    "<",
+    "<=",
+    ">",
+    ">=",
+    "+",
+    "-",
+    "*",
+    "wrapping_add",
+    "wrapping_sub",
+    "wrapping_mul",
+];
+
+/// The operators whose result must be proven to fit, which may refuse a
+/// program that is no mistake of the type.
+fn proven(op: usize) -> bool {
+    (6..9).contains(&op)
+}
+
+fn placed(g: &mut Gen) -> Placed {
+    let int = g.below(INTS.len());
+    let (_, low, high) = INTS[int];
+    let value = match g.below(5) {
+        0 => low,
+        1 => high,
+        2 => 0,
+        3 => 1.clamp(low, high),
+        _ => low + (g.below(1 << 20) as i128 * (high - low) / (1 << 20)),
+    };
+    Placed {
+        int,
+        value,
+        depth: 1 + g.below(3),
+        op: g.below(OPERATORS.len()),
+        left: g.one_in(2),
+        shape: *g.pick(&[Shape::Same, Shape::First, Shape::Second]),
+        place: *g.pick(&[
+            Place::Binding,
+            Place::Argument,
+            Place::Operand,
+            Place::Field,
+            Place::Returned,
+        ]),
+    }
+}
+
+impl Placed {
+    /// The program, with the number written as the argument, or bound to a
+    /// name of the type first, and the text the number is written as.
+    fn program(&self, literal: bool, number: &str) -> String {
+        let ty = INTS[self.int].0;
+        let (arg, binds) = match literal {
+            true => (number.to_string(), String::new()),
+            false => ("v".to_string(), format!("  v: {ty} = {number}\n")),
+        };
+        let mut call = arg;
+        for _ in 0..self.depth {
+            call = match self.shape {
+                Shape::Same => format!("same({call})"),
+                Shape::First => format!("first({call}, 2)"),
+                Shape::Second => format!("second(2, {call})"),
+            };
+        }
+        let (items, main) = match self.place {
+            Place::Binding => (String::new(), format!("{binds}  r: {ty} = {call}\n  print(\"{{r}}\")\n")),
+            Place::Argument => (
+                format!("fn takes(n: {ty}) -> {ty} {{ n }}\n\n"),
+                format!("{binds}  print(\"{{takes({call})}}\")\n"),
+            ),
+            Place::Operand => {
+                let op = OPERATORS[self.op];
+                let (l, r) = match self.left {
+                    true => (call.as_str(), "k"),
+                    false => ("k", call.as_str()),
+                };
+                let used = match op.starts_with("wrapping") {
+                    true => format!("{op}({l}, {r})"),
+                    false => format!("{l} {op} {r}"),
+                };
+                (String::new(), format!("{binds}  k: {ty} = 1\n  print(\"{{{used}}}\")\n"))
+            }
+            Place::Field => (
+                format!("struct S {{ f: {ty} }}\n\n"),
+                format!("{binds}  s = S(f: {call})\n  print(\"{{s.f}}\")\n"),
+            ),
+            Place::Returned => {
+                let holder = format!("fn back() -> {ty} {{\n{binds}  {call}\n}}\n\n");
+                (holder, "  print(\"{back()}\")\n".to_string())
+            }
+        };
+        format!("{SHAPES}{items}fn main() ! console, alloc {{\n{main}}}\n")
+    }
+}
+
+fn a_literal_for_a_type_parameter_takes_the_type_the_place_of_the_result_needs() {
+    // The program of the issue.
+    let issue = "fn id[A](a: A) -> A { a }\n\nfn takes(n: u8) -> u8 { n }\n\n\
+        fn pair[A, B](a: A, b: B) -> (A, B) { (a, b) }\n\n\
+        fn main() ! console, alloc {\n  y: u8 = id(7)\n  (r, s): (u8, i32) = pair(3, 4)\n  \
+        k: u8 = 200\n  print(\"{y} {r} {s} {takes(id(7))} {wrapping_add(k, id(5))}\")\n}\n";
+    let program = lower(issue.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(scalar::run(&program).stdout, b"7 3 4 7 205\n");
+
+    generate::check(2114, 60, placed, |case| {
+        let number = case.value.to_string();
+        let mut printed = Vec::new();
+        for literal in [true, false] {
+            let source = case.program(literal, &number);
+            printed.push(match lower(source.as_bytes()) {
+                Ok(program) => Ok(scalar::run(&program).stdout),
+                Err(found) => Err(found),
+            });
+        }
+        match (&printed[0], &printed[1]) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b, "{}", case.program(true, &number)),
+            // The proof that a result fits is of the program as written, so
+            // it may refuse both, and then only for that.
+            (Err(a), Err(_)) if case.is_proven() => {
+                let source = case.program(true, &number);
+                assert!(a.iter().all(|e| e.message.contains("cannot prove")), "{a:?}\n{source}")
+            }
+            (a, b) => panic!("{a:?} {b:?}\n{}", case.program(true, &number)),
+        }
+    });
+}
+
+impl Placed {
+    fn is_proven(&self) -> bool {
+        matches!(self.place, Place::Operand) && proven(self.op)
+    }
+}
+
+/// The place of `needle`, a number that is written once, in `source`.
+fn place_of(source: &str, needle: &str) -> Pos {
+    let at = source.find(needle).unwrap();
+    let line = source[..at].matches('\n').count() + 1;
+    let col = at - source[..at].rfind('\n').map_or(0, |n| n + 1) + 1;
+    Pos { line, col }
+}
+
+fn a_literal_the_place_of_the_result_cannot_hold_is_refused_at_the_literal() {
+    generate::check(2115, 40, placed, |case| {
+        let (ty, low, high) = INTS[case.int];
+        let number = match case.value % 2 {
+            0 => (high + 1).to_string(),
+            _ => (low - 1).to_string(),
+        };
+        let source = case.program(true, &number);
+        let Err(found) = lower(source.as_bytes()) else {
+            panic!("builds\n{source}");
+        };
+        let at = place_of(&source, &number);
+        // A sum that cannot be proven to fit may be refused as well.
+        let here: Vec<_> = found.iter().filter(|e| e.pos == at).collect();
+        assert_eq!(here.len(), 1, "{found:?}\n{source}");
+        assert!(case.is_proven() || found.len() == 1, "{found:?}\n{source}");
+        for name in [ty, &low.to_string(), &high.to_string()] {
+            assert!(here[0].message.contains(name), "{}", here[0]);
+        }
     });
 }

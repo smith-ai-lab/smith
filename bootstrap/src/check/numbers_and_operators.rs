@@ -203,6 +203,18 @@ impl<'a> Checker<'a> {
                 self.expr(body, left, &wanted),
                 self.expr(body, right, &wanted),
             ),
+            // A call whose result a literal may decide takes the type of the
+            // other side, as a literal does.
+            (false, false) if matches!(right, Expr::Call(_)) && !matches!(left, Expr::Call(_)) => {
+                let l = self.expr(body, left, &Want::Any);
+                let side = Self::side_want(&l);
+                (l, self.expr(body, right, &side))
+            }
+            (false, false) if matches!(left, Expr::Call(_)) && !matches!(right, Expr::Call(_)) => {
+                let r = self.expr(body, right, &Want::Any);
+                let side = Self::side_want(&r);
+                (self.expr(body, left, &side), r)
+            }
             (false, false) => (
                 self.expr(body, left, &Want::Any),
                 self.expr(body, right, &Want::Any),
