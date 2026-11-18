@@ -71,13 +71,7 @@ This is refused: "there is no implementation of `Eq` for `Door`, as `Key` has no
 
 ## Writing your own
 
-A type's own `impl` replaces the one it was given. A `Cat` that is equal by its age alone writes it, as [Comparisons](comparisons.md) shows.
-
-```
-impl Eq[Cat] {
-  fn eq(a: Cat, b: Cat) -> bool { a.age == b.age }
-}
-```
+`Eq` is not written by a program. `==` means that two values are the same value, so the `Eq` a type is given is the only one it has, and an `impl Eq[Cat]` is refused, as [Comparisons](comparisons.md) says. A looser comparison is a function with a name of its own.
 
 ## The forms
 
@@ -86,6 +80,6 @@ impl Eq[Cat] {
 | a struct, enum, tuple, or array | Has `Eq` and `Ord` when each of its parts has |
 | `without Eq for T` | `T` has no `Eq` |
 | `without Ord for T` | `T` has no `Ord` |
-| `impl Eq[T] { ... }` | Replaces the `Eq` that `T` was given |
+| `impl Eq[T] { ... }` | Refused: `==` means the same value, and is not written by a program |
 
 Next: [Literals](literals.md)

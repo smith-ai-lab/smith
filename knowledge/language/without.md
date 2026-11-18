@@ -70,7 +70,7 @@ A `Transaction` is a value used exactly once, as [Values used exactly once](reso
 
 ## Two ways to change a trait
 
-Where a type needs another meaning for a trait it is given, it writes its own `impl`, which replaces the one it was given, as [Traits](traits.md) says. `without` is for a type that must have no such trait at all.
+Where a type needs another meaning for a trait it is given, it writes its own `impl`, which replaces the one it was given, as [Traits](traits.md) says. `Eq` is the one it cannot write, as [Comparisons](comparisons.md) says. `without` is for a type that must have no such trait at all.
 
 ## The forms
 

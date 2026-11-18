@@ -62,9 +62,9 @@ fn size_of_append(a: List[u8], b: List[u8]) -> append(a, b).size == a.size + b.s
 
 A proof is written once. The compiler checks proofs and never searches for one, so a program takes no longer to build because it is proven.
 
-## What is not settled
+## Two values that are the same
 
-When two values are the same, as against `==` being true of them, is not settled. A program's own `Eq` may call two values equal that differ, and a proof must not take one for the other.
+`a == b` is the statement that `a` and `b` are the same value. `==` means nothing looser, as a program does not write `Eq`, which [Comparisons](comparisons.md) says. So a proof of `a == b` lets one stand where the other stood, in any statement and in any code. The floats are the one exception, and no proof takes two floats for each other on the strength of `==`.
 
 ## The forms
 

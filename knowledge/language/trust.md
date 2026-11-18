@@ -40,7 +40,7 @@ These are promises that nothing checks today. Each is a debt, and the list is he
 | --- | --- | --- |
 | `arith`, which decides what it decides with no proof to show | [What arith proves](arith.md) | `arith` gives a proof that the kernel checks |
 | The compiler, from the core term to the executable | [The compiler](../compiler.md) | Not planned. A compiler written in the language it proves things in is where it would start |
-| The laws of `Eq`, `Ord`, and `Hash`: that `compare` is `equal` when `==` is true, and that equal keys hash the same | [Comparisons](comparisons.md), [Map](../library/map.md) | An `impl` gives the proof with it |
+| The laws of `Ord` and `Hash`: that `compare` is `equal` when `==` is true, and that equal keys hash the same. `Eq` has no law to trust, as a program does not write it | [Comparisons](comparisons.md), [Map](../library/map.md) | An `impl` gives the proof with it |
 | That a `backward` equals the derivative | [Differentiable](differentiable.md) | Not planned for floats |
 | The contract of a foreign function | [Foreign functions](foreign.md) | Nothing: it is where the program meets code Smith did not check, and the `foreign` effect marks it |
 
