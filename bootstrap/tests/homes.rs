@@ -43,7 +43,7 @@ fn just_enough(held: usize) -> Registers {
 fn a_value_is_let_go_after_its_last_read_in_a_block_no_jump_reaches() {
     for held in 1..6 {
         let f = reads_in_a_block_no_jump_reaches(held);
-        let a = allocate(&f, just_enough(held));
+        let a = allocate(&f, just_enough(held), &vec![false; f.types.len()]);
         assert_eq!(a.frame, 0, "{held} numbers held, and the registers for them");
         assert!(a.homes.iter().all(|h| matches!(h, Home::Register(_))));
     }

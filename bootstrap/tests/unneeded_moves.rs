@@ -4,7 +4,7 @@
 //! their code holds: a loop that hands its parameters round unchanged moves
 //! none, and wherever a move is needed, it does what the evaluator says.
 
-use smith::scalar::{self, Binary, Bits, Builder, Compare, Op, Type};
+use smith::scalar::{self, Binary, Bits, Builder, Compare, Op, Type, Value};
 use smith::target::Target;
 
 use crate::Test;
@@ -23,12 +23,25 @@ pub const ONCE: &[Test] = &[
         a_jump_that_swaps_two_values_moves_nothing_when_no_other_value_needs_their_registers,
     ),
     (
+        "an_instruction_that_can_hold_a_constant_does_and_the_constant_costs_no_instruction",
+        an_instruction_that_can_hold_a_constant_does_and_the_constant_costs_no_instruction,
+    ),
+    (
+        "an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says",
+        an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says,
+    ),
+    (
         "an_arm64_executable_that_moves_values_at_jumps_does_what_the_evaluator_says",
         an_arm64_executable_that_moves_values_at_jumps_does_what_the_evaluator_says,
     ),
 ];
 
-pub const MACHINE: &[Test] = &[(
+pub const MACHINE: &[Test] = &[
+    (
+        "every_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says",
+        every_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says,
+    ),
+    (
     "every_executable_that_moves_values_at_jumps_does_what_the_evaluator_says",
     every_executable_that_moves_values_at_jumps_does_what_the_evaluator_says,
 )];
@@ -178,6 +191,226 @@ fn a_jump_that_swaps_two_values_moves_nothing_when_no_other_value_needs_their_re
         }
     }
     assert!(read > 0, "no target is an ELF file the reader knows");
+}
+
+/// What an instruction holds in itself in place of a register.
+#[derive(Clone, Copy, Debug)]
+enum Holds {
+    /// The number added to a value.
+    Added,
+    /// The number written to memory.
+    Stored,
+}
+
+/// A program that does `holds` with each of `constants`, each a number of its
+/// own, to a value it reads from memory, or at a place of its own in memory.
+/// The numbers are small, so that an instruction of any chip may hold them.
+fn holding(holds: Holds, constants: &[u64], bits: Bits) -> scalar::Program {
+    let mut b = Builder::new();
+    let size = b.int(Bits::B64, 8 * 64);
+    let cell = b.allocate(size);
+    let mut last = b.load(Type::Int(bits), cell);
+    for (i, c) in constants.iter().enumerate() {
+        let n = b.int(bits, *c);
+        match holds {
+            Holds::Added => last = b.binary(Binary::Add, last, n),
+            Holds::Stored => {
+                let at = b.int(Bits::B64, 8 * i as u64);
+                let place = b.binary(Binary::Add, cell, at);
+                b.store(place, n);
+            }
+        }
+    }
+    b.store(cell, last);
+    b.ret(vec![]);
+    program(vec![b.finish(&[])], 0)
+}
+
+/// How many instructions the executable of an ELF file holds, as the reader
+/// knows them, and the machine they are for.
+fn instruction_count(file: &[u8]) -> Option<(Machine, usize)> {
+    let (machine, found) = machine_code::instructions(file)?;
+    Some((machine, found.len()))
+}
+
+/// A constant that an instruction can hold is held by it, so no instruction
+/// makes it and no register is given to it: adding one, and writing one, cost
+/// the instruction that does it and no more. With one instruction for the
+/// address, which holds the number it is moved by, writing takes two on
+/// x86-64, which holds the number written in the store, and three on arm64,
+/// which makes the number and then stores it.
+fn an_instruction_that_can_hold_a_constant_does_and_the_constant_costs_no_instruction() {
+    let generate = |g: &mut Gen| {
+        let holds = *g.pick(&[Holds::Added, Holds::Stored]);
+        // A sum of fewer than 64 bits is cleared above its width, which is an
+        // instruction of its own.
+        let bits = match holds {
+            Holds::Added => Bits::B64,
+            Holds::Stored => *g.pick(&[Bits::B32, Bits::B64]),
+        };
+        let constants: Vec<u64> = (0..1 + g.below(30)).map(|_| 1 + g.below(1000) as u64).collect();
+        (holds, bits, constants)
+    };
+    generate::check(103, 16, generate, |(holds, bits, constants)| {
+        let mut read = 0;
+        for target in Target::ALL {
+            let (none, some) = (
+                instruction_count(&target.emit(&holding(*holds, &[], *bits))),
+                instruction_count(&target.emit(&holding(*holds, constants, *bits))),
+            );
+            let (Some((machine, none)), Some((_, some))) = (none, some) else {
+                continue;
+            };
+            read += 1;
+            let each = match (holds, machine) {
+                (Holds::Added, _) => 1,
+                (Holds::Stored, Machine::X86_64) => 2,
+                (Holds::Stored, Machine::Arm64) => 3,
+            };
+            assert!(
+                some - none <= each * constants.len(),
+                "{holds:?} {} of {bits:?} on {}: {} instructions",
+                constants.len(),
+                target.name(),
+                some - none
+            );
+        }
+        assert!(read > 0, "no target is an ELF file the reader knows");
+    });
+}
+
+/// Numbers at the edges of every width, which an instruction holds or not as
+/// the chip says, and any.
+const EDGES: [u64; 14] = [
+    0,
+    1,
+    2,
+    0x7f,
+    0x80,
+    0xff,
+    0x7fff,
+    0x8000,
+    0xffff,
+    0x7fff_ffff,
+    0x8000_0000,
+    0xffff_ffff,
+    0x7fff_ffff_ffff_ffff,
+    u64::MAX,
+];
+
+fn number(g: &mut Gen, bits: Bits) -> u64 {
+    let n = if g.one_in(3) {
+        (g.below(1 << 30) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+    } else {
+        *g.pick(&EDGES)
+    };
+    match bits {
+        Bits::B64 => n,
+        _ => n & ((1 << bits.count()) - 1),
+    }
+}
+
+/// A program that uses constants where an instruction holds them: stores
+/// them at every width, chooses between them and between one and a value it
+/// reads, gives them to a function that gives them back in the other order,
+/// and adds them. It writes what it made, each widened to 8 bytes.
+fn using_numbers(g: &mut Gen) -> scalar::Program {
+    let int = Type::Int(Bits::B64);
+    let mut leaf = Builder::new();
+    let own = leaf.params(&[int, int]);
+    leaf.ret(vec![own[1], own[0]]);
+    let leaf = leaf.finish(&[int, int]);
+
+    let mut b = Builder::new();
+    let size = b.int(Bits::B64, 16);
+    let cell = b.allocate(size);
+    let seed = number(g, Bits::B64);
+    let seed = b.int(Bits::B64, seed);
+    b.store(cell, seed);
+    let read = b.load(int, cell);
+    let limit = number(g, Bits::B64);
+    let limit = b.int(Bits::B64, limit);
+    let on = b.compare(if g.one_in(2) { Compare::LessU } else { Compare::LessS }, read, limit);
+    // Often more values alive until the end than there are registers, so
+    // that the address the numbers are stored to is in the frame, and no
+    // register is free to hold a number that an instruction does not.
+    let mut made: Vec<Value> = Vec::new();
+    for k in 0..if g.one_in(2) { 14 } else { 0 } {
+        let k = b.int(Bits::B64, k);
+        made.push(b.binary(Binary::Add, read, k));
+    }
+    for _ in 0..1 + g.below(12) {
+        let case = g.below(5);
+        // What a call gives is of 64 bits.
+        let bits = if case == 4 { Bits::B64 } else { *g.pick(&Bits::ALL) };
+        let ty = Type::Int(bits);
+        let (n, m) = (number(g, bits), number(g, bits));
+        let value = match case {
+            0 => {
+                let (n, m) = (b.int(bits, n), b.int(bits, m));
+                b.choose(on, n, m)
+            }
+            1 => {
+                let n = b.int(bits, n);
+                let own = if bits == Bits::B64 { read } else { b.narrow(read, bits) };
+                if g.one_in(2) { b.choose(on, n, own) } else { b.choose(on, own, n) }
+            }
+            2 => {
+                let n = b.int(bits, n);
+                b.store(cell, n);
+                b.load(ty, cell)
+            }
+            3 => {
+                let n = b.int(bits, n);
+                let own = if bits == Bits::B64 { read } else { b.narrow(read, bits) };
+                b.binary(if g.one_in(2) { Binary::Add } else { Binary::Sub }, own, n)
+            }
+            _ => {
+                let (n, m) = (number(g, Bits::B64), number(g, Bits::B64));
+                let (n, m) = (b.int(Bits::B64, n), b.int(Bits::B64, m));
+                let given = b.call(0, vec![n, m], &[int, int]);
+                made.push(given[1]);
+                given[0]
+            }
+        };
+        made.push(if bits == Bits::B64 {
+            value
+        } else {
+            b.widen(false, value, Bits::B64)
+        });
+    }
+    let types = vec![int; made.len()];
+    write_all(&mut b, &types, &made);
+    // The last use of the address, so that it is the one that goes to the frame.
+    b.store(cell, read);
+    b.ret(vec![]);
+    program(vec![leaf, b.finish(&[])], 1)
+}
+
+fn an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says() {
+    generate::check(104, 40, using_numbers, |program| {
+        let said = scalar::run(program);
+        let mut ran = 0;
+        for target in Target::ALL {
+            let bytes = target.emit(program);
+            if aarch64::is_executable(&bytes) {
+                let result = aarch64::run(&bytes);
+                assert_eq!((result.stdout, result.status), (said.stdout.clone(), said.status));
+                ran += 1;
+            }
+        }
+        assert!(ran > 0, "no target is built for arm64");
+    });
+}
+
+fn every_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says() {
+    let targets = runnable();
+    generate::check(105, 40, using_numbers, |program| {
+        let said = scalar::run(program);
+        for &target in &targets {
+            scalar_runs_as(program, target, &said);
+        }
+    });
 }
 
 /// A function of `count` values that go round a loop, in which each value is

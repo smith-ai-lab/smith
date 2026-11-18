@@ -66,6 +66,9 @@ pub enum Home {
     /// A place in the frame, from the start of the bytes the function's
     /// values take, at a multiple of the value's size.
     Frame(u32),
+    /// No place at all: the value was said to need none, as the chip holds
+    /// it in each instruction that reads it.
+    Held,
 }
 
 /// The homes of the values of a function.
@@ -82,8 +85,10 @@ pub struct Allocation {
 
 const NONE: usize = usize::MAX;
 
-/// Gives each value of the function a home.
-pub fn allocate(f: &Function, registers: Registers) -> Allocation {
+/// Gives each value of the function a home, except the values `homeless` says
+/// the chip holds in the instruction that reads each, which are given none
+/// and take no register or place in the frame.
+pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Allocation {
     let blocks = f.blocks.len();
     let values = f.types.len();
     // Where each block starts, counting a place for its parameters, one for
@@ -113,12 +118,16 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
                 defined_in[r.0] = b;
             }
             for v in instruction.op.operands() {
-                uses[v.0].push((b, i + 1));
+                if !homeless[v.0] {
+                    uses[v.0].push((b, i + 1));
+                }
             }
         }
         let last = block.instructions.len() + 1;
         for v in block.end.operands() {
-            uses[v.0].push((b, last));
+            if !homeless[v.0] {
+                uses[v.0].push((b, last));
+            }
         }
         for s in block.end.successors() {
             preds[s].push(b);
@@ -147,8 +156,10 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
         };
         for jump in jumps {
             for (arg, param) in jump.args.iter().zip(&f.blocks[jump.block].params) {
-                given[param.0].push(*arg);
-                feeds[arg.0].push(*param);
+                if !homeless[arg.0] {
+                    given[param.0].push(*arg);
+                    feeds[arg.0].push(*param);
+                }
             }
         }
     }
@@ -199,13 +210,16 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
         }
         let last = block.instructions.len() + 1;
         for v in block.end.operands() {
-            if !alive[v.0] {
+            if !alive[v.0] && !homeless[v.0] {
                 alive[v.0] = true;
                 dying[base[b] + last].push(v);
             }
         }
         for (i, instruction) in block.instructions.iter().enumerate().rev() {
             for r in &instruction.results {
+                if homeless[r.0] {
+                    continue;
+                }
                 if alive[r.0] {
                     alive[r.0] = false;
                 } else {
@@ -213,7 +227,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
                 }
             }
             for v in instruction.op.operands() {
-                if !alive[v.0] {
+                if !alive[v.0] && !homeless[v.0] {
                     alive[v.0] = true;
                     dying[base[b] + i + 1].push(v);
                 }
@@ -246,6 +260,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
         },
         &mut spilled,
         &mut crosses,
+        homeless,
     );
 
     // Colouring.
@@ -296,7 +311,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
         for (i, instruction) in block.instructions.iter().enumerate() {
             let at = base[b] + i + 1;
             release(&mut holder, &register, &dying[at]);
-            for r in &instruction.results {
+            for r in instruction.results.iter().filter(|r| !homeless[r.0]) {
                 let near = near(&feeds[r.0], &register, &spilled, passed_in[r.0]);
                 colour(
                     registers,
@@ -314,12 +329,14 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
     }
 
     let frame_values: Vec<usize> = (0..values)
-        .filter(|&v| register[v] == NONE || spilled[v])
+        .filter(|&v| !homeless[v] && (register[v] == NONE || spilled[v]))
         .collect();
     let (places, frame) = lay_out(frame_values.iter().map(|&v| f.types[v]));
     let mut homes = vec![Home::Frame(0); values];
     for (v, home) in homes.iter_mut().enumerate() {
-        if register[v] != NONE && !spilled[v] {
+        if homeless[v] {
+            *home = Home::Held;
+        } else if register[v] != NONE && !spilled[v] {
             *home = Home::Register(register[v]);
         }
     }
@@ -392,6 +409,7 @@ fn spill(
     facts: &Facts,
     spilled: &mut [bool],
     crosses: &mut [bool],
+    homeless: &[bool],
 ) {
     let values = f.types.len();
     let mut held = Held {
@@ -455,7 +473,7 @@ fn spill(
                 held.remove(*v);
             }
             for r in &instruction.results {
-                if !spilled[r.0] {
+                if !spilled[r.0] && !homeless[r.0] {
                     held.add(*r);
                 }
             }

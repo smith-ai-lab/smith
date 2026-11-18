@@ -128,6 +128,58 @@ impl Asm {
         self.bytes(&value.to_le_bytes());
     }
 
+    /// Puts the number in the register, whole, in the shortest way.
+    pub fn mov_imm(&mut self, rd: Reg, value: u64) {
+        match u32::try_from(value) {
+            Ok(n) => self.mov32(rd, n),
+            Err(_) => self.mov64(rd, value),
+        }
+    }
+
+    /// Writes the low `width` bytes of the number to the place, in one
+    /// instruction, which holds it: as the 32 bits it takes when it is 4
+    /// bytes, or 8 and the number is the same when taken as 32 bits and
+    /// extended. Says whether it could.
+    pub fn store_imm(&mut self, to: Place, value: u64, width: u32) -> bool {
+        let rex = Self::base(to) >> 3;
+        match width {
+            1 => {
+                if rex != 0 {
+                    self.bytes(&[0x40 | rex]);
+                }
+                self.bytes(&[0xc6]);
+                self.place(Reg(0), to);
+                self.bytes(&[value as u8]);
+            }
+            2 => {
+                self.bytes(&[0x66]);
+                if rex != 0 {
+                    self.bytes(&[0x40 | rex]);
+                }
+                self.bytes(&[0xc7]);
+                self.place(Reg(0), to);
+                self.bytes(&(value as u16).to_le_bytes());
+            }
+            4 => {
+                if rex != 0 {
+                    self.bytes(&[0x40 | rex]);
+                }
+                self.bytes(&[0xc7]);
+                self.place(Reg(0), to);
+                self.bytes(&(value as u32).to_le_bytes());
+            }
+            _ => {
+                let Ok(n) = i32::try_from(value as i64) else {
+                    return false;
+                };
+                self.bytes(&[0x48 | rex, 0xc7]);
+                self.place(Reg(0), to);
+                self.bytes(&n.to_le_bytes());
+            }
+        }
+        true
+    }
+
     /// `mov r64, imm64`.
     pub fn mov64(&mut self, rd: Reg, value: u64) {
         self.bytes(&[Self::rex_w(RAX, rd), 0xb8 | (rd.0 & 7)]);
@@ -688,6 +740,9 @@ enum Loc {
     Register(Reg),
     /// `[rsp + disp]`.
     Frame(u32),
+    /// A number that a constant gives, which is in no place: each
+    /// instruction that reads it holds it.
+    Imm(u64),
 }
 
 /// Where the values of a call go, in order: in the registers that carry them
@@ -727,9 +782,6 @@ struct Writer<'a, S> {
     branches_on_compare: Vec<bool>,
     /// The number each value that a constant integer gives is.
     constants: Vec<Option<u64>>,
-    /// Which values that a constant gives are only ever read as the number in
-    /// an instruction that can hold it, so that nothing makes them.
-    unmade: Vec<bool>,
     system: std::marker::PhantomData<S>,
 }
 
@@ -742,7 +794,9 @@ fn function<S: System>(
     fail: usize,
 ) {
     let f = &crate::scalar::rematerialized(f);
-    let allocation = alloc::allocate(f, REGISTERS);
+    let constants = super::branch::constants(f);
+    let held = held(f, &constants);
+    let allocation = alloc::allocate(f, REGISTERS, &held);
     let below = S::RESERVED + frame::outgoing(program, f, REGISTERS.passed);
     let saved_from = round_up(below + allocation.frame, 8);
     // The call pushed the return address, so the frame takes 8 bytes more
@@ -754,10 +808,11 @@ fn function<S: System>(
     };
     let arrive = in_caller(&area.params);
     let leave = in_caller(&area.results);
-    let at = (allocation.homes.iter())
-        .map(|home| match home {
+    let at = (allocation.homes.iter().enumerate())
+        .map(|(v, home)| match home {
             Home::Register(r) => Loc::Register(HOMES[*r]),
             Home::Frame(place) => Loc::Frame(below + place),
+            Home::Held => Loc::Imm(constants[v].expect("a value held is a constant")),
         })
         .collect();
     let saved = (allocation.saved.iter().enumerate())
@@ -765,8 +820,6 @@ fn function<S: System>(
         .collect();
     let labels = f.blocks.iter().map(|_| asm.label()).collect();
     let branches_on_compare = super::branch::on_compare(f);
-    let constants = super::branch::constants(f);
-    let unmade = unmade(f, &constants);
     let w = Writer::<S> {
         program,
         f,
@@ -781,7 +834,6 @@ fn function<S: System>(
         labels,
         branches_on_compare,
         constants,
-        unmade,
         system: std::marker::PhantomData,
     };
     if S::STACK_BY_PAGE && total > PAGE {
@@ -837,23 +889,33 @@ fn immediate(f: &Function, constants: &[Option<u64>], op: &Op) -> Option<i32> {
     }
 }
 
-/// Which values that a constant gives are only read as the second operand of
-/// an instruction that holds it, so that nothing makes them.
-fn unmade(f: &Function, constants: &[Option<u64>]) -> Vec<bool> {
-    let mut made = vec![false; f.types.len()];
+/// Which values that a constant gives need no register or place in the frame,
+/// as each instruction that reads one holds it: as the second operand of an
+/// instruction that can, as the value stored or chosen, or as what a jump,
+/// a call, or a return gives, which is moved there with the number. A value
+/// that anything else reads, such as an address or the place a choice is
+/// made on, has a home as any other.
+fn held(f: &Function, constants: &[Option<u64>]) -> Vec<bool> {
+    let mut needs_a_home = vec![false; f.types.len()];
     for block in &f.blocks {
         for i in &block.instructions {
-            let held = immediate(f, constants, &i.op).is_some();
+            let embedded = immediate(f, constants, &i.op).is_some();
             for (k, v) in i.op.operands().into_iter().enumerate() {
-                made[v.0] |= !(held && k == 1);
+                needs_a_home[v.0] |= !match &i.op {
+                    Op::Binary { .. } | Op::Compare { .. } => embedded && k == 1,
+                    Op::Store { .. } => k == 1,
+                    Op::Choose { .. } => k > 0,
+                    Op::Call { .. } | Op::System { .. } => true,
+                    _ => false,
+                };
             }
         }
-        for v in block.end.operands() {
-            made[v.0] = true;
+        if let End::Switch { on, .. } = &block.end {
+            needs_a_home[on.0] = true;
         }
     }
-    (0..made.len())
-        .map(|v| constants[v].is_some() && !made[v])
+    (0..needs_a_home.len())
+        .map(|v| constants[v].is_some() && !needs_a_home[v])
         .collect()
 }
 
@@ -886,6 +948,19 @@ impl<S: System> Writer<'_, S> {
                 asm.load(RAX, width, false, Place::Frame(from));
                 asm.store(Place::Frame(to), RAX, width);
             }
+            (Loc::Register(to), Loc::Imm(n)) => asm.mov_imm(to, n),
+            (Loc::Frame(to), Loc::Imm(n)) => self.store_imm(asm, Place::Frame(to), n, width, RAX),
+            (Loc::Imm(_), _) => unreachable!("a number is not a place to copy to"),
+        }
+    }
+
+    /// Writes the number, `width` bytes of it, to the place, in the one
+    /// instruction when it holds the number, and through `tmp` when not, which
+    /// is not a register the place is based on.
+    fn store_imm(&self, asm: &mut Asm, to: Place, n: u64, width: u32, tmp: Reg) {
+        if !asm.store_imm(to, n, width) {
+            asm.mov_imm(tmp, n);
+            asm.store(to, tmp, width);
         }
     }
 
@@ -910,6 +985,10 @@ impl<S: System> Writer<'_, S> {
                 asm.load(tmp, self.width(v), false, Place::Frame(at));
                 tmp
             }
+            Loc::Imm(n) => {
+                asm.mov_imm(tmp, n);
+                tmp
+            }
         }
     }
 
@@ -929,6 +1008,10 @@ impl<S: System> Writer<'_, S> {
             }
             Loc::Register(r) => asm.movsx(rd, r, width),
             Loc::Frame(at) => asm.load(rd, width, true, Place::Frame(at)),
+            Loc::Imm(n) => {
+                let shift = 64 - 8 * width;
+                asm.mov_imm(rd, (((n << shift) as i64) >> shift) as u64);
+            }
         }
     }
 
@@ -969,12 +1052,13 @@ impl<S: System> Writer<'_, S> {
                 2 => asm.movzx16(h, r),
                 _ => asm.movzx8(h, r),
             },
+            Loc::Imm(_) => unreachable!("an instruction gives no result that is a number held"),
         }
     }
 
     fn instruction(&self, asm: &mut Asm, results: &[Value], operation: &Op) {
         match operation {
-            Op::Constant(_) if self.unmade[results[0].0] => {}
+            Op::Constant(_) if matches!(self.at[results[0].0], Loc::Imm(_)) => {}
             Op::Constant(c) => {
                 let result = results[0];
                 let t = self.target(result, &[]);
@@ -1038,8 +1122,13 @@ impl<S: System> Writer<'_, S> {
             }
             Op::Store { ty, address, value } => {
                 let address = self.read(asm, RAX, *address);
-                let value = self.read(asm, RCX, *value);
-                asm.store(Place::At(address), value, size(*ty));
+                match self.at[value.0] {
+                    Loc::Imm(n) => self.store_imm(asm, Place::At(address), n, size(*ty), RCX),
+                    _ => {
+                        let value = self.read(asm, RCX, *value);
+                        asm.store(Place::At(address), value, size(*ty));
+                    }
+                }
             }
             Op::Call { function, args } => {
                 let area = call_area(&self.program.functions[*function], REGISTERS.passed);
