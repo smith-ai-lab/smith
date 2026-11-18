@@ -2,7 +2,12 @@
 type: specification
 title: Deserialize
 description: The Deserialize trait, by which a value is built from a reader that knows a format, given automatically to a type whose parts have it, and what is done with a field that is missing.
-status: planned
+status: partial
+built:
+  - "`std.deserialize`, with `Deserialize`, `Reader`, `ReadError`, and `Problem`, which a program imports with `use` and which the prelude does not hold"
+  - "`Deserialize`, which a whole number, `bool`, `str`, `()`, and every struct, enum, tuple, list, or `Option` is given unless a part lacks it, which `without Deserialize for T` takes away, and which a type's own `impl` replaces, built part by part from a `Reader` with nothing built between"
+  - "a field left out is `.none` for an `Option`, its default when it has one, and otherwise the reader's `fail` with `missing` and the field's name; a field given twice is `twice`; a number outside its type is `range` with the type's name; a name that is no case is `case`"
+  - "not a float, `Slice`, an array, or `Map`, which wait for their shapes"
 ---
 
 # Deserialize
@@ -20,7 +25,7 @@ fn parse(text: str) -> Result[Point, JsonError] ! alloc {
 }
 ```
 
-`parse("{\"x\":3,\"y\":4}")` is `.ok(Point(x: 3, y: 4))`. `Point` has `Deserialize` without a line written for it, the type that is read is the one the place of the result needs, and `from_json` is a function of `std.json`. Nothing here is built, so no words are quoted for what the compiler says today.
+`parse("{\"x\":3,\"y\":4}")` is `.ok(Point(x: 3, y: 4))`. `Point` has `Deserialize` without a line written for it, the type that is read is the one the place of the result needs, and `from_json` is a function of `std.json`. `Deserialize`, `Reader`, `ReadError`, and `Problem` are in `std.deserialize`, which a program imports with `use std.deserialize (Deserialize, Reader, ReadError, Problem, read)`, and the prelude holds none of them. `std.json` has no `from_json` yet, so no words are quoted for it.
 
 ## The trait
 
@@ -62,7 +67,7 @@ trait Reader[R] {
 - `present` says whether a value that may be missing is there. When it is, the value is read next.
 - `sequence` opens a sequence, and `more` says before each element whether there is another. The sequence is closed when `more` gives `false`.
 - `structure` opens a struct. `field` then gives the name of the field the input holds next, written as the type writes its fields, and the type reads the value of the field of that name. It gives `.none` when the struct has ended. For a name the type has no field of, the type calls `unknown`, and the reader passes over the value or refuses it, as the format says.
-- `case` gives the name of the case the input holds. What that case holds is read next, and `end_case` closes it.
+- `case` gives the name of the case the input holds. What that case holds is read next, and `end_case` closes it, for a case that holds nothing too.
 - `fail` makes the error for what the type itself finds wrong, as a field that is missing, and the reader puts the path and the place in it.
 
 A reader gives names and is given none, so a type holds no table of its fields: it compares the name it is given with each of its own.
