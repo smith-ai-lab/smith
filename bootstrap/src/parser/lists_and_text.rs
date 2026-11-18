@@ -23,6 +23,7 @@ fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Er
         errors: Vec::new(),
         no_lambda: false,
         hoisted: Vec::new(),
+        binds: Vec::new(),
     };
     let value = p.expr()?;
     if p.at + 1 != tokens.len() {
