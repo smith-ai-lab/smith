@@ -26,6 +26,12 @@ pub fn lex_plain(source: &[u8]) -> Result<String, Vec<diag::Error>> {
     lexer::lex(source).map(|tokens| lexer::plain(&tokens))
 }
 
+/// How many tokens a source file has, or the errors of the lexer. It is what
+/// `measure/` times, so it does nothing else with the tokens.
+pub fn count_tokens(source: &[u8]) -> Result<usize, Vec<diag::Error>> {
+    lexer::lex(source).map(|tokens| tokens.len())
+}
+
 /// The program a source file describes, in the scalar form. Its errors are
 /// those `compile` reports before a target is involved.
 pub fn lower(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {

@@ -90,12 +90,12 @@ fn lex(smith: &Path, work: &Path, lexer_source: &str) {
             )
         };
         let lexing = "match lex(src) {\n      .ok(tokens) { last = tokens.size }\n      .err(errors) { last = 0 }\n    }";
-        let tokens = smith::lex_plain(&input).expect("the input lexes").lines().count();
+        let tokens = smith::count_tokens(&input).expect("the input lexes");
         let (time, reps) = smith_time(smith, work, "lexer", &tokens.to_string(), |reps| {
             (program(reps, lexing), program(reps, "last = src.size"))
         });
         let rust = per_run(|| {
-            black_box(smith::lex_plain(black_box(&input)).ok());
+            black_box(smith::count_tokens(black_box(&input)).ok());
         });
         println!(
             "check lexer size={bytes} tokens={tokens} (the Smith lexer prints the same count)"
