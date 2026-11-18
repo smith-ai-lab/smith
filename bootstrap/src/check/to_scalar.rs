@@ -1183,18 +1183,33 @@ impl<'a> Lowering<'a> {
                     let values = self.case(out, &ty, k, payload, env);
                     (ty, values)
                 }
-                Callee::Print => {
+                Callee::Print | Callee::Eprint => {
+                    let stream = match typed.callee(call, env) {
+                        Callee::Print => form::Stream::Stdout,
+                        _ => form::Stream::Stderr,
+                    };
                     let (_, text) = self.expr(out, &call.args[0].value, env);
                     let newline = self.text(out, b"\n");
                     for args in [text, newline] {
                         out.emit(
                             form::Op::System {
-                                call: form::System::Write(form::Stream::Stdout),
+                                call: form::System::Write(stream),
                                 args,
                             },
                             Vec::new(),
                         );
                     }
+                    (Ty::Nothing, Vec::new())
+                }
+                Callee::End => {
+                    let (_, status) = self.expr(out, &call.args[0].value, env);
+                    out.emit(
+                        form::Op::System {
+                            call: form::System::Exit,
+                            args: status,
+                        },
+                        Vec::new(),
+                    );
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Push => self.push(out, call, env, false),

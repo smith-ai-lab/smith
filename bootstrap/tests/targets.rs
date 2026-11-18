@@ -220,7 +220,13 @@ pub fn runs_as(source: &[u8], target: Target, said: &Outcome) {
 
 /// The tests whose result depends on the kind of machine they run on.
 pub fn machine() -> Vec<Test> {
-    [MACHINE, crate::cli::MACHINE, crate::arguments::MACHINE].concat()
+    [
+        MACHINE,
+        crate::cli::MACHINE,
+        crate::arguments::MACHINE,
+        crate::status::MACHINE,
+    ]
+    .concat()
 }
 
 /// For each target the compiler builds for, a hash of every executable the

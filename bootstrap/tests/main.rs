@@ -53,6 +53,7 @@ mod release;
 mod reprs;
 mod scalar;
 mod sha256;
+mod status;
 mod targets;
 mod text;
 mod traits;
@@ -115,6 +116,7 @@ fn main() -> ExitCode {
         scalar::ONCE,
         alloc::ONCE,
         arguments::ONCE,
+        status::ONCE,
         arith::ONCE,
         bits::ONCE,
         contracts::ONCE,
