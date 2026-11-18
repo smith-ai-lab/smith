@@ -21,9 +21,11 @@
 //!    Interference between values of a function in this form is chordal, so
 //!    this finds a register whenever there are enough. A value alive across a
 //!    call takes a register the call does not change. Any other takes one a
-//!    call may change first, so a function that calls nothing uses no
-//!    register it must save. A parameter of the function takes the register
-//!    its call passes it in, when it is free and the parameter may have it.
+//!    call may change first, and a function with no value alive across a call
+//!    is offered no other, so it uses no register it must save. A parameter
+//!    of a block, a result, and a value passed or given back take the register
+//!    of the value they are given to or from, or that a call passes them in,
+//!    when it is free and the value may have it.
 //! 4. **The frame.** Each value that has no register has a place of its own,
 //!    at its size.
 //!
@@ -245,23 +247,28 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
         }
     }
 
+    let facts = Facts {
+        base: &base,
+        live_in: &live_in,
+        dying: &dying,
+        dead: &dead,
+        last_use: &last_use,
+    };
+    // A function with no value alive across a call has no use for a register
+    // a call does not change, which it would have to save, so it is offered
+    // none.
+    let registers = if any_across_a_call(f, &facts, homeless) {
+        registers
+    } else {
+        Registers {
+            preserved: 0,
+            ..registers
+        }
+    };
     let count = registers.count();
     let mut spilled = vec![false; values];
     let mut crosses = vec![false; values];
-    spill(
-        f,
-        registers,
-        &Facts {
-            base: &base,
-            live_in: &live_in,
-            dying: &dying,
-            dead: &dead,
-            last_use: &last_use,
-        },
-        &mut spilled,
-        &mut crosses,
-        homeless,
-    );
+    spill(f, registers, &facts, &mut spilled, &mut crosses, homeless);
 
     // Colouring.
     let mut register = vec![NONE; values];
@@ -398,6 +405,47 @@ impl Held {
             self.at[v.0] = NONE;
         }
     }
+}
+
+/// Whether any value is alive across a call: alive before it and after it,
+/// and not read last by it.
+fn any_across_a_call(f: &Function, facts: &Facts, homeless: &[bool]) -> bool {
+    let values = f.types.len();
+    let mut crosses = false;
+    let mut alive = Held {
+        values: Vec::new(),
+        at: vec![NONE; values],
+    };
+    // Whether a value is read last at the place being looked at.
+    let mut last_here = vec![NONE; values];
+    for (b, block) in f.blocks.iter().enumerate() {
+        alive.clear();
+        for v in facts.live_in[b].iter().chain(&block.params) {
+            alive.add(*v);
+        }
+        for v in &facts.dead[facts.base[b]] {
+            alive.remove(*v);
+        }
+        for (i, instruction) in block.instructions.iter().enumerate() {
+            let at = facts.base[b] + i + 1;
+            if instruction.op.is_call() {
+                for v in &facts.dying[at] {
+                    last_here[v.0] = at;
+                }
+                crosses |= alive.values.iter().any(|v| last_here[v.0] != at);
+            }
+            for v in &facts.dying[at] {
+                alive.remove(*v);
+            }
+            for r in instruction.results.iter().filter(|r| !homeless[r.0]) {
+                alive.add(*r);
+            }
+            for v in &facts.dead[at] {
+                alive.remove(*v);
+            }
+        }
+    }
+    crosses
 }
 
 /// Sends values to the frame until, at every point, no more are held in

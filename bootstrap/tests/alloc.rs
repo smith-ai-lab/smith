@@ -313,7 +313,7 @@ fn a_function_that_calls_nothing_and_fits_the_registers_keeps_everything_in_them
     for_every_allocation(|f, facts, registers, a| {
         // A block that nothing reaches may read what no path leads to, so
         // what is alive there is not what any run holds.
-        if !facts.calls && most_together(facts) <= registers.count() && all_reachable(f) {
+        if !facts.calls && most_together(facts) <= registers.changed && all_reachable(f) {
             assert_eq!(a.frame, 0, "{registers:?}");
             for home in &a.homes {
                 assert!(matches!(home, Home::Register(_)), "{registers:?}");
@@ -335,10 +335,16 @@ fn a_function_saves_the_registers_a_call_does_not_change_that_it_uses_and_no_oth
         used.sort_unstable();
         used.dedup();
         assert_eq!(a.saved, used);
-        // With nothing to cross and room for everything in the registers a
-        // call may change, nothing needs saving.
-        if !facts.calls && most_together(facts) <= registers.changed {
+        // A function with no value alive across a call saves nothing, and
+        // keeps every value in a register a call may change or in the frame,
+        // however many are alive together.
+        if facts.across.iter().all(Vec::is_empty) {
             assert!(a.saved.is_empty(), "{registers:?}");
+            for home in &a.homes {
+                if let Home::Register(r) = home {
+                    assert!(!registers.is_preserved(*r), "{registers:?}");
+                }
+            }
         }
     });
 }
@@ -356,7 +362,7 @@ fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may() {
                 }
                 _ => {}
             }
-            if !facts.calls && most_together(facts) <= registers.count() && all_reachable(f) {
+            if !facts.calls && most_together(facts) <= registers.changed && all_reachable(f) {
                 assert_eq!(a.homes[p.0], Home::Register(i), "{registers:?}");
             }
         }
