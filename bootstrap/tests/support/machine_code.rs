@@ -14,6 +14,8 @@ pub enum Kind {
     SetCondition,
     Call,
     Return,
+    /// Goes to a place that a number in a register says.
+    Indirect,
     /// Goes to the place, whatever was compared.
     Jump(usize),
     /// Goes to the place when what was compared holds, and otherwise to the
@@ -161,7 +163,15 @@ fn x86_64_instruction(file: &[u8], start: usize) -> Option<Instruction> {
         0x69 | 0x81 | 0xc7 => (true, 4, Kind::Other),
         0x83 | 0xc1 => (true, 1, Kind::Other),
         0xf7 => (true, if (file[at] >> 3) & 7 < 2 { 4 } else { 0 }, Kind::Other),
-        0xff => (true, 0, if file[at] == 0x15 { Kind::Call } else { Kind::Other }),
+        0xff => (
+            true,
+            0,
+            match file[at] {
+                0x15 => Kind::Call,
+                0xe0..=0xe7 => Kind::Indirect,
+                _ => Kind::Other,
+            },
+        ),
         _ => return None,
     };
     let after_modrm = if modrm { at + modrm_len(file, at) } else { at };
@@ -196,6 +206,8 @@ fn arm64(file: &[u8], start: usize) -> Vec<Instruction> {
                 Kind::Branch((at as i64 + 4 * signed((w >> 5) & 0x7_ffff, 19)) as usize)
             } else if w == 0xd65f_03c0 {
                 Kind::Return
+            } else if w & 0xffff_fc1f == 0xd61f_0000 {
+                Kind::Indirect
             } else if w & 0xffff_0fe0 == 0x9a9f_07e0 {
                 Kind::SetCondition
             } else {
@@ -230,7 +242,7 @@ pub fn shortest_round(found: &[Instruction], number: i64) -> usize {
     let mut best = usize::MAX;
     while let Some(i) = queue.pop_front() {
         let next = match found[i].kind {
-            Kind::Return => Vec::new(),
+            Kind::Return | Kind::Indirect => Vec::new(),
             Kind::Jump(to) => vec![at[&to]],
             Kind::Branch(to) => vec![at[&to], i + 1],
             _ => vec![i + 1],

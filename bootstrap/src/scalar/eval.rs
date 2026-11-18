@@ -50,6 +50,8 @@ struct Machine<'a> {
     taken: Vec<usize>,
     /// How many blocks the program may still enter.
     blocks: u64,
+    /// How many instructions and ends of blocks have run.
+    ran: u64,
     /// How many calls are open.
     depth: usize,
 }
@@ -82,7 +84,7 @@ pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
 /// Runs the program as `run_with_limit` does, and also gives how many bytes
 /// each request to the system for memory asked for, in order.
 pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
-    let (outcome, _, requests, _) = start(program, limit, Given::Words(&[]));
+    let (outcome, _, requests, _, _) = start(program, limit, Given::Words(&[]));
     (outcome, requests)
 }
 
@@ -91,8 +93,15 @@ pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
 /// they are rounded and taken from a piece. A program that has no handler asks
 /// for none.
 pub fn run_taking(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
-    let (outcome, _, _, taken) = start(program, limit, Given::Words(&[]));
+    let (outcome, _, _, taken, _) = start(program, limit, Given::Words(&[]));
     (outcome, taken)
+}
+
+/// Runs the program as `run` does, and also gives how many instructions ran,
+/// counting the end of each block entered as one.
+pub fn run_measured(program: &Program) -> (Outcome, u64) {
+    let (outcome, _, _, _, ran) = start(program, usize::MAX, Given::Words(&[]));
+    (outcome, ran)
 }
 
 /// Runs a program that takes the words it was started with, as Linux and
@@ -104,7 +113,7 @@ pub fn run_with_words(program: &Program, words: &[Vec<u8>]) -> Outcome {
 /// Runs a program as `run_with_words` does, and also gives what it wrote to
 /// standard error.
 pub fn run_with_words_and_errors(program: &Program, words: &[Vec<u8>]) -> (Outcome, Vec<u8>) {
-    let (outcome, errors, _, _) = start(program, usize::MAX, Given::Words(words));
+    let (outcome, errors, _, _, _) = start(program, usize::MAX, Given::Words(words));
     (outcome, errors)
 }
 
@@ -117,13 +126,14 @@ pub fn run_with_command_line(program: &Program, line: &[u16]) -> Outcome {
 /// Runs a program as `run_with_command_line` does, and also gives what it
 /// wrote to standard error.
 pub fn run_with_command_line_and_errors(program: &Program, line: &[u16]) -> (Outcome, Vec<u8>) {
-    let (outcome, errors, _, _) = start(program, usize::MAX, Given::Line(line));
+    let (outcome, errors, _, _, _) = start(program, usize::MAX, Given::Line(line));
     (outcome, errors)
 }
 
-/// What a run gave: the outcome, what was written to standard error, and each
-/// request for memory.
-type Run = (Outcome, Vec<u8>, Vec<usize>, Vec<usize>);
+/// What a run gave: the outcome, what was written to standard error, each
+/// request for memory, each call of `take`, and how many instructions and
+/// block ends ran.
+type Run = (Outcome, Vec<u8>, Vec<usize>, Vec<usize>, u64);
 
 fn start(program: &Program, limit: usize, given: Given) -> Run {
     let mut memory = Vec::new();
@@ -148,6 +158,7 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
         taking: (program.functions.iter()).position(|f| *f == super::handler::take()),
         taken: Vec::new(),
         blocks: BLOCKS,
+        ran: 0,
         depth: 0,
     };
     let status = match machine.call(program.main, args) {
@@ -162,6 +173,7 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
         machine.stderr,
         machine.requests,
         machine.taken,
+        machine.ran,
     )
 }
 
@@ -216,6 +228,7 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
         taking: None,
         taken: Vec::new(),
         blocks: BLOCKS,
+        ran: 0,
         depth: 0,
     };
     let words = args.iter().map(|n| Word::Int(*n)).collect();
@@ -322,6 +335,7 @@ impl Machine<'_> {
                 "the program never ends: it entered more blocks than any test gives it time for",
             );
             let b = &f.blocks[block];
+            self.ran += b.instructions.len() as u64 + 1;
             for (param, word) in b.params.iter().zip(args) {
                 values[param.0] = Some(word);
             }

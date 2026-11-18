@@ -410,6 +410,113 @@ impl<'a> Out<'a> {
         blocks
     }
 
+    /// Ends the block being filled by choosing between blocks that are made,
+    /// the one at the place of the integer `on`.
+    fn switch_to(&mut self, on: form::Value, blocks: Vec<usize>) {
+        let jumps = blocks
+            .into_iter()
+            .map(|block| form::Jump {
+                block,
+                args: Vec::new(),
+            })
+            .collect();
+        self.blocks[self.current].end = form::End::Switch { on, jumps };
+    }
+
+    /// Ends the block being filled by going to the block of the literal that
+    /// `value`, a number of `bits` bits, equals, or to `miss` when it equals
+    /// none. `literals` are the literals with their blocks, ascending and
+    /// all different. The number of instructions that run does not depend on
+    /// how many there are when they lie close together, which is when at
+    /// most 4 places of a table are used for each, and grows with the
+    /// logarithm of how many there are when they do not, as a comparison
+    /// splits them into two sets that are chosen between in the same way.
+    fn pick(
+        &mut self,
+        value: form::Value,
+        signed: bool,
+        bits: form::Bits,
+        literals: &[(i128, usize)],
+        miss: usize,
+    ) {
+        let count = literals.len();
+        let Some(&(least, _)) = literals.first() else {
+            let jump = form::Jump {
+                block: miss,
+                args: Vec::new(),
+            };
+            self.blocks[self.current].end = form::End::Jump(jump);
+            return;
+        };
+        let span = (literals[count - 1].0 - least + 1) as u128;
+        if count <= 3 {
+            // The place of the literal that equals the value, or `count`.
+            let mut place = self.int(form::Bits::B8, count as i128);
+            for (i, (literal, _)) in literals.iter().enumerate().rev() {
+                let literal = self.int(bits, *literal);
+                let same = self.compare(form::Compare::Equal, value, literal);
+                let here = self.int(form::Bits::B8, i as i128);
+                place = self.choose(same, here, place);
+            }
+            let mut blocks: Vec<usize> = literals.iter().map(|(_, b)| *b).collect();
+            blocks.push(miss);
+            self.switch_to(place, blocks);
+        } else if span <= 4 * count as u128 {
+            // The distance from the least, which is the place when it is
+            // below the number of places, and the place after them when not.
+            let all = span == 1 << bits.count();
+            let most = if all { span - 1 } else { span };
+            let place_bits = if most < 1 << 8 {
+                form::Bits::B8
+            } else if most < 1 << 16 {
+                form::Bits::B16
+            } else {
+                form::Bits::B32
+            };
+            let least_value = self.int(bits, least);
+            let distance = self.binary(form::Binary::Sub, value, least_value);
+            let mut place = self.resize(false, distance, place_bits);
+            if !all {
+                let limit = self.int(bits, span as i128);
+                let inside = self.compare(form::Compare::LessU, distance, limit);
+                let after = self.int(place_bits, span as i128);
+                place = self.choose(inside, place, after);
+            }
+            let mut blocks = vec![miss; span as usize + usize::from(!all)];
+            for (literal, block) in literals {
+                blocks[(literal - least) as usize] = *block;
+            }
+            self.switch_to(place, blocks);
+        } else {
+            // Splits where the literals are furthest apart of the middle
+            // half of them, so that each side has at most 3 in 4.
+            let split = (count / 4).max(1)..=(count - count / 4).min(count - 1);
+            let at = split
+                .max_by_key(|&i| {
+                    // The furthest apart, and the nearest the middle of those.
+                    let nearness = count.abs_diff(2 * i);
+                    (
+                        literals[i].0 - literals[i - 1].0,
+                        std::cmp::Reverse(nearness),
+                    )
+                })
+                .expect("a split");
+            let pivot = self.int(bits, literals[at].0);
+            let less = if signed {
+                form::Compare::LessS
+            } else {
+                form::Compare::LessU
+            };
+            let below = self.compare(less, value, pivot);
+            let (low, high) = (self.new_block(), self.new_block());
+            self.switch_to(below, vec![high, low]);
+            self.current = low;
+            self.pick(value, signed, bits, &literals[..at], miss);
+            self.current = high;
+            self.pick(value, signed, bits, &literals[at..], miss);
+        }
+    }
+
     /// Makes a block where the blocks that end each of `ends`, which give it
     /// values, meet, and gives its parameters. It is then the block being
     /// filled.
@@ -1758,9 +1865,8 @@ impl<'a> Lowering<'a> {
                 }
             }
             Ty::Int(t) => {
-                // One choice between the blocks: the place of the literal
-                // that equals the value, or the number of literals when none
-                // does.
+                // One block for each literal, in the order they are written,
+                // and one for a value that equals none.
                 let literals = distinct(rows.iter().filter_map(|r| match r.patterns[c] {
                     Some(Pattern::Number {
                         magnitude,
@@ -1769,23 +1875,15 @@ impl<'a> Lowering<'a> {
                     }) => Some(signed(*magnitude, *negative)),
                     _ => None,
                 }));
-                let bits = bits_of(*t);
                 let count = literals.len();
-                let place_bits = if count < 255 {
-                    form::Bits::B8
-                } else if count < 65_535 {
-                    form::Bits::B16
-                } else {
-                    form::Bits::B32
-                };
-                let mut place = out.int(place_bits, count as i128);
-                for (i, literal) in literals.iter().enumerate().rev() {
-                    let literal = out.int(bits, *literal);
-                    let same = out.compare(form::Compare::Equal, value[0], literal);
-                    let here = out.int(place_bits, i as i128);
-                    place = out.choose(same, here, place);
-                }
-                let blocks = out.switch(place, count + 1);
+                let blocks: Vec<usize> = (0..=count).map(|_| out.new_block()).collect();
+                let mut sorted: Vec<(i128, usize)> = literals
+                    .iter()
+                    .copied()
+                    .zip(blocks.iter().copied())
+                    .collect();
+                sorted.sort();
+                out.pick(value[0], t.signed(), bits_of(*t), &sorted, blocks[count]);
                 for (j, block) in blocks.iter().enumerate() {
                     let (rows, cols) = around(Vec::new(), &|p| match p {
                         None => Some(Vec::new()),
