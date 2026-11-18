@@ -103,4 +103,5 @@ Work through these in order, and stop at the first that applies.
 - Never merge with a failing or pending check.
 - A test that failed once and passed when run again is a finding. Find its cause or write an issue for it: in the merge queue it stops every pull request behind it.
 - One session does one issue. A review round goes to the session that wrote the pull request, and a new issue gets a new session.
+- A report of how fast a program runs gives how long it took to build beside it, to the owner and in a pull request. An issue that is about speed asks for both.
 - A brief names the files of its lane and the files other workers are in, asks that the tests it adds or changes pass for `SMITH_SEED` from 1 to 100, and that each runs well inside half a second.
