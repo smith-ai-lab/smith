@@ -140,6 +140,10 @@ pub const ONCE: &[Test] = &[
         the_passes_give_the_same_program_every_time_and_never_a_larger_one,
     ),
     (
+        "the_passes_leave_no_block_that_holds_only_a_jump",
+        the_passes_leave_no_block_that_holds_only_a_jump,
+    ),
+    (
         "sharing_leaves_no_instruction_that_does_what_an_earlier_one_does",
         sharing_leaves_no_instruction_that_does_what_an_earlier_one_does,
     ),
@@ -1662,6 +1666,40 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
         assert!(size(&shared) <= size(&folded), "{shared:?}");
         assert!(size(&removed) <= size(&shared), "{removed:?}");
         assert_eq!(scalar::remove(&removed), removed);
+    }
+}
+
+/// How many jumps go to each block of the function.
+fn jumps_to(f: &scalar::Function) -> Vec<usize> {
+    let mut count = vec![0; f.blocks.len()];
+    for block in &f.blocks {
+        for to in block.end.successors() {
+            count[to] += 1;
+        }
+    }
+    count
+}
+
+/// No block holds only a jump, except the first block of a function when
+/// the block it jumps to is jumped to from elsewhere too, as a loop's is: the
+/// function must start in a block that no jump need leave, and the block
+/// that jumps to the loop cannot be joined to what it jumps to.
+fn the_passes_leave_no_block_that_holds_only_a_jump() {
+    for (_, s) in taken() {
+        let after = scalar::passes(s);
+        for f in &after.functions {
+            let count = jumps_to(f);
+            for (b, block) in f.blocks.iter().enumerate() {
+                let End::Jump(j) = &block.end else { continue };
+                if !block.instructions.is_empty() {
+                    continue;
+                }
+                assert!(
+                    b == 0 && count[j.block] > 1,
+                    "block {b} holds only a jump in {f:?}"
+                );
+            }
+        }
     }
 }
 
