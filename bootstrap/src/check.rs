@@ -6600,7 +6600,12 @@ impl<'a> Checker<'a> {
             let field = (arg.name.as_ref())
                 .and_then(|(name, _)| def.fields.iter().position(|f| &f.name == name));
             let wanted = match field {
-                Some(i) => Want::Ty(defs.fields[s][i].partial(&sol)),
+                Some(i) => match defs.fields[s][i].partial(&sol) {
+                    // A type that is not known yet is not one a mistake
+                    // already explains.
+                    Ty::Unknown if defs.fields[s][i] != Ty::Unknown => Want::Any,
+                    t => Want::Ty(t),
+                },
                 None => Want::Ty(Ty::Unknown),
             };
             let gives = self.expr(body, &arg.value, &wanted);
