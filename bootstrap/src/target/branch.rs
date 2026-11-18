@@ -1,10 +1,20 @@
 //! What every target shares about a branch on a comparison.
 
-use crate::scalar::{End, Function, Op};
+use crate::scalar::{End, Function, Instruction, Op};
 
 /// How many jumps a choice by a number must have to be made through a table
 /// of where each goes, and not by comparing the number with each place in turn.
 pub const TABLE: usize = 5;
+
+/// The value an instruction makes that says what the flags found: a
+/// comparison's, or whether the answer of an operation did not fit.
+fn flag(i: &Instruction) -> Option<crate::scalar::Value> {
+    match i.op {
+        Op::Compare { .. } => i.results.first().copied(),
+        Op::Overflows { .. } => i.results.get(1).copied(),
+        _ => None,
+    }
+}
 
 /// For each block, whether it ends with a choice between two jumps on the
 /// result of a comparison that is the last instruction of the block and that
@@ -22,10 +32,7 @@ pub fn on_compare(f: &Function) -> Vec<bool> {
         .iter()
         .map(|block| match (&block.end, block.instructions.last()) {
             (End::Switch { on, jumps }, Some(last)) => {
-                jumps.len() == 2
-                    && reads[on.0] == 1
-                    && last.results == [*on]
-                    && matches!(last.op, Op::Compare { .. })
+                jumps.len() == 2 && reads[on.0] == 1 && flag(last) == Some(*on)
             }
             _ => false,
         })
@@ -52,10 +59,8 @@ pub fn before_choice(f: &Function) -> Vec<Vec<bool>> {
                 .instructions
                 .iter()
                 .zip(next)
-                .map(|(i, next)| match (&i.op, next.map(|n| &n.op)) {
-                    (Op::Compare { .. }, Some(Op::Choose { on, .. })) => {
-                        i.results == [*on] && reads[on.0] == 1
-                    }
+                .map(|(i, next)| match next.map(|n| &n.op) {
+                    Some(Op::Choose { on, .. }) => flag(i) == Some(*on) && reads[on.0] == 1,
                     _ => false,
                 })
                 .collect()

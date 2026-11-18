@@ -154,6 +154,22 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         }
                     }
                 }
+                Op::Overflows { op, a, b, .. } => {
+                    let [result, overflowed] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    if !matches!(op, Binary::Add | Binary::Sub | Binary::Mul)
+                        || !matches!(ty, Type::Int(_))
+                    {
+                        return Err(Why::WrongType(result));
+                    }
+                    if f.types[overflowed.0] != Type::Int(Bits::B8) {
+                        return Err(Why::WrongType(overflowed));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
                 Op::Compare { a, b, .. } => {
                     let [result] = instruction.results[..] else {
                         return Err(Why::WrongCount);

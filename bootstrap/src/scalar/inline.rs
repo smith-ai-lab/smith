@@ -208,6 +208,12 @@ pub(super) fn renamed(op: &Op, rename: &impl Fn(Value) -> Value) -> Op {
             a: rename(*a),
             b: rename(*b),
         },
+        Op::Overflows { op, signed, a, b } => Op::Overflows {
+            op: *op,
+            signed: *signed,
+            a: rename(*a),
+            b: rename(*b),
+        },
         Op::Compare { op, a, b } => Op::Compare {
             op: *op,
             a: rename(*a),

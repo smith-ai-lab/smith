@@ -305,7 +305,7 @@ impl Env {
 fn each_read(op: &Op, mut f: impl FnMut(Value)) {
     match op {
         Op::Constant(_) => {}
-        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => {
+        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } | Op::Overflows { a, b, .. } => {
             f(*a);
             f(*b);
         }
@@ -377,7 +377,10 @@ fn facts(f: &Function, reached: &[bool]) -> Facts {
                     },
                     [r],
                 ) => chosen[r.0] = Some((*on, *then, *otherwise)),
-                (Op::Store { .. } | Op::Call { .. } | Op::System { .. }, _) => {
+                (
+                    Op::Store { .. } | Op::Call { .. } | Op::System { .. } | Op::Overflows { .. },
+                    _,
+                ) => {
                     through[b] = false;
                 }
                 _ => {}

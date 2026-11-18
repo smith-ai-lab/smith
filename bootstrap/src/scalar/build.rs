@@ -81,6 +81,19 @@ impl Builder {
         self.emit(Op::Binary { op, a, b }, &[ty])[0]
     }
 
+    /// The number `op` gives of `a` and `b` with the bits that do not fit left
+    /// off, and whether it did not fit.
+    pub fn overflows(&mut self, op: Binary, signed: bool, a: Value, b: Value) -> (Value, Value) {
+        let ty = self.types[a.0];
+        let [result, overflowed] = self.emit(
+            Op::Overflows { op, signed, a, b },
+            &[ty, Type::Int(Bits::B8)],
+        )[..] else {
+            unreachable!()
+        };
+        (result, overflowed)
+    }
+
     pub fn compare(&mut self, op: Compare, a: Value, b: Value) -> Value {
         self.emit(Op::Compare { op, a, b }, &[Type::Int(Bits::B8)])[0]
     }

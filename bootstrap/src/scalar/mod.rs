@@ -213,6 +213,18 @@ pub enum Op {
         a: Value,
         b: Value,
     },
+    /// The sum, difference, or product of two integers of one size, `Add`,
+    /// `Sub`, or `Mul`, read as signed or as unsigned numbers, and whether it
+    /// did not fit the size: two results, the number with the bits that do not
+    /// fit left off, which is what the `Binary` instruction gives, and an
+    /// integer of 8 bits that is 1 when the number was not what the operation
+    /// gives of the two numbers, and 0 when it was.
+    Overflows {
+        op: Binary,
+        signed: bool,
+        a: Value,
+        b: Value,
+    },
     /// Gives an integer with more bits that stands for the same number,
     /// read as signed or as unsigned.
     Widen {
@@ -268,7 +280,9 @@ impl Op {
         values.clear();
         match self {
             Op::Constant(_) => {}
-            Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => values.extend([*a, *b]),
+            Op::Binary { a, b, .. } | Op::Compare { a, b, .. } | Op::Overflows { a, b, .. } => {
+                values.extend([*a, *b])
+            }
             Op::Widen { value, .. } | Op::Narrow(value) => values.push(*value),
             Op::Choose {
                 on,

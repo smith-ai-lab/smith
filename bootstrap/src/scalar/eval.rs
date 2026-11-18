@@ -296,6 +296,34 @@ pub(super) fn binary(op: Binary, bits: Bits, x: u64, y: u64) -> u64 {
 }
 
 /// 1 if the two integers of the size are as `op` asks, and 0 if not.
+/// Whether the number `op` gives of `x` and `y`, read as signed or as unsigned
+/// numbers of `bits` bits, does not fit them. This is what the checked
+/// functions are, so every target is held to it.
+pub(super) fn overflows(op: Binary, signed: bool, bits: Bits, x: u64, y: u64) -> bool {
+    let n = bits.count();
+    let (least, greatest): (i128, i128) = if signed {
+        (-(1i128 << (n - 1)), (1i128 << (n - 1)) - 1)
+    } else {
+        (0, (1i128 << n) - 1)
+    };
+    let value = |v: u64| -> i128 {
+        if signed {
+            i128::from(widen(true, bits, Bits::B64, v) as i64)
+        } else {
+            i128::from(v & mask(bits))
+        }
+    };
+    let (a, b) = (value(x), value(y));
+    let exact = match op {
+        Binary::Add => a.checked_add(b),
+        Binary::Sub => a.checked_sub(b),
+        Binary::Mul => a.checked_mul(b),
+        _ => panic!("an operation that is not an addition, a subtraction, or a product"),
+    };
+    // A product that does not fit 127 bits does not fit 64.
+    exact.is_none_or(|e| e < least || e > greatest)
+}
+
 pub(super) fn compare(op: Compare, bits: Bits, x: u64, y: u64) -> u64 {
     (match op {
         Compare::Equal => x == y,
@@ -377,6 +405,16 @@ impl Machine<'_> {
                             panic!("arithmetic on what is not an integer")
                         };
                         vec![Word::Int(binary(*op, bits, x, y))]
+                    }
+                    Op::Overflows { op, signed, a, b } => {
+                        let bits = bits_of(f.types[a.0]);
+                        let (Word::Int(x), Word::Int(y)) = (get(a), get(b)) else {
+                            panic!("arithmetic on what is not an integer")
+                        };
+                        vec![
+                            Word::Int(binary(*op, bits, x, y)),
+                            Word::Int(u64::from(overflows(*op, *signed, bits, x, y))),
+                        ]
                     }
                     Op::Compare { op, a, b } => {
                         let bits = bits_of(f.types[a.0]);

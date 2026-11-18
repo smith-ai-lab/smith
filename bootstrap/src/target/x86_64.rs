@@ -705,6 +705,13 @@ impl Asm {
         });
     }
 
+    /// `shl r, imm8`.
+    fn shl_imm(&mut self, r: Reg, count: u8) {
+        self.writing(Some(r), |a| {
+            a.bytes(&[Self::rex_w(RAX, r), 0xc1, Self::modrm(Reg(4), r), count]);
+        });
+    }
+
     /// `sar r, imm8`.
     fn sar_imm(&mut self, r: Reg, count: u8) {
         self.writing(Some(r), |a| {
@@ -767,6 +774,8 @@ pub const L: u8 = 0xc;
 pub const S: u8 = 0x8;
 /// Below, as unsigned numbers.
 const B: u8 = 0x2;
+/// The last operation overflowed, as signed numbers.
+const O: u8 = 0x0;
 
 /// What a system gives the code of an x86-64 target: how it writes, how it
 /// ends the program, and how it asks for memory. These are the three calls
@@ -982,7 +991,7 @@ fn function<S: System>(
                 continue;
             }
             match i.checked_sub(1).filter(|j| w.before_choice[b][*j]) {
-                Some(j) => w.choice(asm, &block.instructions[j].op, instruction),
+                Some(j) => w.choice(asm, &block.instructions[j], instruction),
                 None => w.instruction(asm, &instruction.results, &instruction.op),
             }
         }
@@ -1001,6 +1010,12 @@ fn immediate(f: &Function, constants: &[Option<u64>], op: &Op) -> Option<i32> {
             b,
         } => (*a, *b, false),
         Op::Compare { op, a, b } => (*a, *b, matches!(op, Compare::LessS)),
+        // The count of a shift is a number of bits below 64.
+        Op::Binary {
+            op: Binary::ShiftLeft | Binary::ShiftRightU | Binary::ShiftRightS,
+            b,
+            ..
+        } => return constants[b.0].filter(|n| *n < 64).map(|n| n as i32),
         _ => return None,
     };
     let n = constants[b.0]?;
@@ -1215,20 +1230,35 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
-    /// A choice on a comparison that nothing else reads: compares, and takes
-    /// `then` on the condition the comparison says. Moving a value does not
-    /// change what the comparison found.
-    fn choice(&self, asm: &mut Asm, compare: &Op, choose: &crate::scalar::Instruction) {
-        let (
-            Op::Compare { op, a, b },
-            Op::Choose {
-                then, otherwise, ..
-            },
-        ) = (compare, &choose.op)
+    /// Makes the flags say what the comparison, or the operation that tells
+    /// whether its answer fitted, found, and gives the condition under which
+    /// the value it makes is 1.
+    fn flags(&self, asm: &mut Asm, i: &crate::scalar::Instruction) -> u8 {
+        match &i.op {
+            Op::Compare { op, a, b } => self.compare(asm, op, *a, *b),
+            Op::Overflows { op, signed, a, b } => {
+                self.overflow(asm, i.results[0], *op, *signed, *a, *b)
+            }
+            _ => unreachable!("only a comparison and an overflow make a flag"),
+        }
+    }
+
+    /// A choice on a comparison, or on whether an answer fitted, that nothing
+    /// else reads: compares, and takes `then` on the condition the flags say.
+    /// Moving a value does not change what the flags found.
+    fn choice(
+        &self,
+        asm: &mut Asm,
+        compare: &crate::scalar::Instruction,
+        choose: &crate::scalar::Instruction,
+    ) {
+        let Op::Choose {
+            then, otherwise, ..
+        } = &choose.op
         else {
             unreachable!()
         };
-        let cond = self.compare(asm, op, *a, *b);
+        let cond = self.flags(asm, compare);
         if let (Loc::Imm(n), Loc::Register(other)) = (self.at[then.0], self.at[otherwise.0])
             && self.at[choose.results[0].0] != Loc::Register(other)
         {
@@ -1276,6 +1306,11 @@ impl<S: System> Writer<'_, S> {
                 let cond = self.compare(asm, op, *a, *b);
                 asm.truth(cond);
                 self.finish(asm, results[0], RAX, true);
+            }
+            Op::Overflows { op, signed, a, b } => {
+                let cond = self.overflow(asm, results[0], *op, *signed, *a, *b);
+                asm.truth(cond);
+                self.finish(asm, results[1], RAX, true);
             }
             Op::Widen { signed, value } => {
                 let t = self.target(results[0], &[]);
@@ -1375,6 +1410,72 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
+    /// Works out `op` of `a` and `b`, read as signed or as unsigned numbers,
+    /// puts the result where `result` lives, and leaves the flags to say
+    /// whether it did not fit: the condition that gives is the one returned.
+    /// A number of 64 bits is worked out by the operation whose flags say it.
+    /// A narrower number is widened, worked out in 64 bits, where it cannot
+    /// overflow, and looked at: for unsigned numbers, whether any bit is left
+    /// above the size, and for signed numbers, whether the answer is what its
+    /// low bytes, extended, are.
+    fn overflow(
+        &self,
+        asm: &mut Asm,
+        result: Value,
+        op: Binary,
+        signed: bool,
+        a: Value,
+        b: Value,
+    ) -> u8 {
+        let width = self.width(result);
+        if width == 8 {
+            if op == Binary::Mul && !signed {
+                self.read_into(asm, RAX, a);
+                let b = self.read(asm, RCX, b);
+                asm.group(4, b);
+                self.finish(asm, result, RAX, true);
+                return B;
+            }
+            // An operation that gives the same either way round takes the
+            // register the result is in as its first value.
+            let swap = op != Binary::Sub
+                && matches!(self.at[b.0], Loc::Register(_))
+                && self.at[b.0] == self.at[result.0];
+            let (a, b) = if swap { (b, a) } else { (a, b) };
+            let b = self.read(asm, RCX, b);
+            let t = self.target(result, &[b]);
+            self.read_into(asm, t, a);
+            match op {
+                Binary::Add => asm.add(t, b),
+                Binary::Sub => asm.sub(t, b),
+                _ => asm.imul(t, b),
+            }
+            self.finish(asm, result, t, true);
+            return if signed || op == Binary::Mul { O } else { B };
+        }
+        if signed {
+            self.read_signed_into(asm, RAX, a);
+            self.read_signed_into(asm, RCX, b);
+        } else {
+            self.read_into(asm, RAX, a);
+            self.read_into(asm, RCX, b);
+        }
+        match op {
+            Binary::Add => asm.add(RAX, RCX),
+            Binary::Sub => asm.sub(RAX, RCX),
+            _ => asm.imul(RAX, RCX),
+        }
+        if signed {
+            asm.movsx(RDX, RAX, width);
+            asm.cmp(RDX, RAX);
+        } else {
+            asm.mov(RDX, RAX);
+            asm.shr_imm(RDX, (width * 8) as u8);
+        }
+        self.finish(asm, result, RAX, false);
+        NE
+    }
+
     fn binary(
         &self,
         asm: &mut Asm,
@@ -1409,6 +1510,24 @@ impl<S: System> Writer<'_, S> {
                 asm.imul(RDX, b);
                 asm.sar_imm(RDX, bits as u8);
                 self.finish(asm, result, RDX, false);
+            }
+            // A count that is a number written out is held by the shift.
+            Binary::ShiftLeft | Binary::ShiftRightU | Binary::ShiftRightS
+                if immediate.is_some() =>
+            {
+                let count = immediate.unwrap() as u8;
+                let t = self.target(result, &[]);
+                if matches!(op, Binary::ShiftRightS) {
+                    self.read_signed_into(asm, t, a);
+                } else {
+                    self.read_into(asm, t, a);
+                }
+                match op {
+                    Binary::ShiftLeft => asm.shl_imm(t, count),
+                    Binary::ShiftRightU => asm.shr_imm(t, count),
+                    _ => asm.sar_imm(t, count),
+                }
+                self.finish(asm, result, t, matches!(op, Binary::ShiftRightU));
             }
             // The count is in cl, and the value, extended to 64 bits as the
             // shift reads it, is in rax.
@@ -1623,11 +1742,8 @@ impl<S: System> Writer<'_, S> {
             End::Jump(jump) => self.jump(asm, jump, next),
             End::Switch { on, jumps } if self.branches_on_compare[block] => {
                 let compare = self.f.blocks[block].instructions.last().unwrap();
-                let Op::Compare { op, a, b } = &compare.op else {
-                    unreachable!()
-                };
-                debug_assert_eq!(compare.results, [*on]);
-                let cond = self.compare(asm, op, *a, *b);
+                debug_assert_eq!(compare.results.last(), Some(on));
+                let cond = self.flags(asm, compare);
                 self.branch(asm, cond, jumps, next);
             }
             End::Switch { on, jumps } if jumps.len() == 2 => {
