@@ -2400,11 +2400,20 @@ impl<'a> Defs<'a> {
                     .expect("an implementation that is known");
                 let sig = &self.trait_sigs[info.of][fi];
                 let gives = sig.gives.subst(&info.args);
+                let f = &file.impls[i].functions[info.fns[fi].expect("implemented")];
                 View {
-                    f: &file.impls[i].functions[info.fns[fi].expect("implemented")],
+                    f,
                     scope: &info.scope,
-                    params: (sig.params.iter())
-                        .map(|(n, t)| (n.clone(), t.subst(&info.args)))
+                    // The names the implementation wrote, so that a renamed
+                    // parameter is reported once, where it is renamed.
+                    params: (f.params.iter().enumerate())
+                        .map(|(j, p)| {
+                            let ty = sig
+                                .params
+                                .get(j)
+                                .map_or(Ty::Unknown, |(_, t)| t.subst(&info.args));
+                            (p.name.clone(), ty)
+                        })
                         .collect(),
                     result: (gives != Ty::Nothing).then(|| self.text(&gives, &info.scope)),
                     gives,
