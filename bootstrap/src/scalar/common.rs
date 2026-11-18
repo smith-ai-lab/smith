@@ -101,7 +101,7 @@ fn shared(f: &Function) -> Function {
 
 /// For each block, the blocks it immediately dominates, in the order the
 /// blocks are walked. A block that nothing reaches has none and is in none.
-fn dominated(f: &Function) -> Vec<Vec<usize>> {
+pub(super) fn dominated(f: &Function) -> Vec<Vec<usize>> {
     let order = graph::reverse_postorder(f);
     let n = f.blocks.len();
     let mut at = vec![usize::MAX; n];

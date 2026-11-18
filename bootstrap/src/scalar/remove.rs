@@ -15,11 +15,15 @@
 //! and instructions they leave behind taken away; and last a block that is
 //! jumped to once, by a block that ends with a jump, is joined to that block.
 //! At most `WALKS` walks are made, and the next only when the steps that skip,
-//! join, and copy changed the function in the one before. The last step of all
-//! moves a comparison that only the choice ending its block reads to the end
-//! of the block.
+//! join, and copy changed the function in the one before. Then a choice on the
+//! value that the end of its block chooses on, which only the blocks the end
+//! jumps to read, is made in them, as `sink` says, and goes. The last step of
+//! all moves a comparison that only the choice ending its block reads to the
+//! end of the block.
 
 use super::graph::{self, jumps, jumps_mut};
+use super::sink;
+
 use super::{Block, End, Function, Jump, Op, Program, Value};
 
 /// The most walks removal makes over a function. Each walk takes every step
@@ -61,6 +65,9 @@ fn removed(f: &Function) -> (Function, usize) {
         if !walk(&mut f, walks == 1) {
             break;
         }
+    }
+    if sink::choices(&mut f) {
+        drop_unused(&mut f, true);
     }
     sink_compares(&mut f);
     (f, walks)
