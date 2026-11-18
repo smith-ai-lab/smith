@@ -1,0 +1,13 @@
+struct Cat {
+  name: str
+  age: i64
+}
+
+impl Eq[Cat] {
+  fn eq(a: Cat, b: Cat) -> bool { a.age == b.age }
+}
+
+fn main() ! console {
+  tom = Cat(name: "Tom", age: 3)
+  if tom == Cat(name: "Rex", age: 3) { print("same") }
+}

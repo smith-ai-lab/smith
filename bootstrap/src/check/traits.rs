@@ -1027,6 +1027,15 @@ impl<'a> Checker<'a> {
             });
             return;
         };
+        if name == "Eq" && !of_prelude(im.pos) {
+            self.errors.push(Error::new(
+                im.pos,
+                "`==` means that two values are the same value, so `Eq` is given to a type \
+                 and is not written; a looser comparison is a function with its own name"
+                    .to_string(),
+            ));
+            return;
+        }
         let t = &defs.file.traits[k];
         self.generics(&im.generics, "this implementation", Owner::Impl);
         let scope = defs.scope(&im.generics, &im.requires);

@@ -120,9 +120,6 @@ struct Def {
     /// The fields of a struct, or the cases of an enum with what each
     /// holds.
     items: Vec<(String, Option<Ty>)>,
-    /// What its own `Eq` gives for any two values, if it implements `Eq`
-    /// itself.
-    eq: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -214,13 +211,11 @@ fn definitions(g: &mut Gen) -> Vec<Def> {
                 items.insert(at, (format!("of{p}"), Some(Ty::Param(p))));
             }
         }
-        let eq = (params == 0 && g.one_in(5)).then(|| g.one_in(2));
         defs.push(Def {
             name: name.to_string(),
             is_enum,
             params,
             items,
-            eq,
         });
     }
     defs
@@ -325,16 +320,15 @@ fn expr(defs: &[Def], v: &Val) -> String {
 }
 
 /// Whether two values of one type are equal, as the `Eq` each type is
-/// given or implements says.
-fn equal(defs: &[Def], a: &Val, b: &Val) -> bool {
-    let all = |x: &[Val], y: &[Val]| x.iter().zip(y).all(|(x, y)| equal(defs, x, y));
+/// given says.
+fn equal(a: &Val, b: &Val) -> bool {
+    let all = |x: &[Val], y: &[Val]| x.iter().zip(y).all(|(x, y)| equal(x, y));
     match (a, b) {
         (Val::Str(x), Val::Str(y)) => text_of(x) == text_of(y),
         (Val::Bool(x), Val::Bool(y)) => x == y,
         (Val::Unit, Val::Unit) | (Val::None, Val::None) => true,
-        (Val::Def(d, ..), _) if defs[*d].eq.is_some() => defs[*d].eq.unwrap(),
         (Val::Def(_, c, x), Val::Def(_, k, y)) => c == k && all(x, y),
-        (Val::Some(x), Val::Some(y)) => equal(defs, x, y),
+        (Val::Some(x), Val::Some(y)) => equal(x, y),
         (Val::Tuple(x), Val::Tuple(y)) => all(x, y),
         _ => false,
     }
@@ -523,9 +517,9 @@ fn truth(m: &Model, bools: &[bool], c: &Cond, out: &mut Vec<u8>) -> bool {
                 Right::Name(j) => &m.values[*j].1,
                 Right::Expr(v) => v,
             };
-            equal(&m.defs, &m.values[*left].1, right) != *differ
+            equal(&m.values[*left].1, right) != *differ
         }
-        Cond::Through(a, b) => equal(&m.defs, &m.values[*a].1, &m.values[*b].1),
+        Cond::Through(a, b) => equal(&m.values[*a].1, &m.values[*b].1),
         Cond::Both(a, b, differ) => {
             let a = truth(m, bools, a, out);
             let b = truth(m, bools, b, out);
@@ -652,12 +646,6 @@ fn write_defs(m: &Model, out: &mut String) {
             }
         }
         out.push_str("}\n\n");
-        if let Some(gives) = def.eq {
-            let d = &def.name;
-            out.push_str(&format!(
-                "impl Eq[{d}] {{\n  fn eq(a: {d}, b: {d}) -> bool {{ {gives} }}\n}}\n\n"
-            ));
-        }
     }
     out.push_str("fn same[T: Eq](a: T, b: T) -> bool { a == b }\n\n");
     out.push_str(
