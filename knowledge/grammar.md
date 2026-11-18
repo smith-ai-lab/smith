@@ -35,7 +35,7 @@ Operators bind more tightly further down the table.
 | `==` `!=` `<` `<=` `>` `>=` | none |
 | `..` | none |
 | `+` `-` | left |
-| `*` `/` `@` | left |
+| `*` `/` `%` `@` | left |
 | unary `-`, `try` | prefix |
 | `^` | right |
 | call, index, `.` | left |

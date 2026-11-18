@@ -102,13 +102,53 @@ This prints `255 0` and `-56 127`. `checked_mul(y, 2)` is `.none`, and `checked_
 
 A literal operand takes the type of the other, so the `1` above is a `u8`, as [Literals](literals.md) says. Two operands of different types are refused, as [Number types](number-types.md) says.
 
+## Dividing
+
+`a / b` divides, and `a % b` is what is left over. Both round toward zero, which is what a processor's instruction gives, so `7 / 2` is `3` and `7 % 2` is `1`, and `-7 / 2` is `-3` and `-7 % 2` is `-1`. What is left over has the sign of the first operand, so `(a / b) * b + a % b` is always `a`.
+
+No number is divided by zero. `a / b` and `a % b` compile only when [`arith`](arith.md) proves that `b` is not zero, and nothing is checked when the program runs.
+
+```
+fn share(total: u64, n: u64) -> u64
+  requires n > 0
+{
+  total / n
+}
+```
+
+`share(10, 4)` is `2`. Without the `requires`, `total / n` is refused, as `n` may be zero. A divisor that is a literal other than `0` needs nothing: `total / 4` compiles.
+
+A signed type has one division whose result does not fit: its lowest value divided by `-1`. So with signed operands `arith` must also prove that this is not the one, as it proves that a `+` fits.
+
+Where it cannot be proven, the behaviour is picked by name, as for `+`.
+
+```
+// A zero divisor, or a result that does not fit, gives .none.
+fn share_or_none(total: u64, n: u64) -> Option[u64] { checked_div(total, n) }
+```
+
+`share_or_none(10, 0)` is `.none`, and `share_or_none(10, 4)` is `.some(2)`. `checked_rem` is the same for `%`. `wrapping_div` and `wrapping_rem` give the low bits where the result does not fit, and still need the divisor proven not zero, as no result of dividing by zero has low bits to keep.
+
+`arith` learns from both. What is left over from dividing by `b` is below `b`, for unsigned numbers, so a digit is narrowed with nothing to check:
+
+```
+fn last_digit(n: u64) -> u8 { narrow(n % 10) }
+```
+
+`last_digit(1234)` is `4`. Dividing by a literal gives a result whose range `arith` knows, so `n / 2 + n / 2` fits wherever `n` does. Dividing by a name is one unknown quantity to it, as a product of two names is.
+
+`%` is the trait function `Rem.rem`, as `/` is `Div.div`, which [Operators](operators.md) lists.
+
 ## The forms
 
 | Written | When the result does not fit |
 | --- | --- |
 | `a + b`, `a - b`, `a * b` | Does not compile |
+| `a / b`, `a % b` | Does not compile, and neither does a divisor not proven other than zero |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Keeps the low bits |
 | `saturating_add(a, b)`, `saturating_sub(a, b)`, `saturating_mul(a, b)` | Gives the nearest value the type holds |
 | `checked_add(a, b)`, `checked_sub(a, b)`, `checked_mul(a, b)` | Gives `.none`, and `.some(r)` otherwise |
+| `checked_div(a, b)`, `checked_rem(a, b)` | Gives `.none` for a zero divisor too |
+| `wrapping_div(a, b)`, `wrapping_rem(a, b)` | Keeps the low bits, with the divisor proven not zero |
 
 Next: [Bit operations](bits.md)
