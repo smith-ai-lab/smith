@@ -3,7 +3,7 @@ type: specification
 title: What arith proves
 description: The procedure that proves a + - * fits and an index is in range, what facts it starts from, what it cannot decide, and what the compiler says when it cannot prove.
 status: partial
-built: "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`, and the range of each `loop i in a..b` over whole numbers; not the facts of a `match` block, a `var` outside a loop that was given a value, or a proof held in a value"
+built: "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`, and the range of each `loop i in a..b` over whole numbers, and, inside one round of a loop, what that round last gave each `var` of a whole number the loop assigns, stated against what it held when the round began, and what stays so after an `if` or a `match` some of whose blocks end in `break`; and the index of a `List` read as `xs[i]`, which `arith` proves below `xs.size`, and the `size` of a list as a value in a comparison, in a `requires`, an `if`, and the range of a `loop`, which a list has from the list it was given, whether bound to a name or to a `var`; and, for a `var` of a list, a struct, or a tuple, and each of its fields, what is known of it, as of any value, until it or a field of it is assigned, at which a fact about it is forgotten, in a loop, a lambda, and an arm of an `if` or a `match` as it is outside one, and a `var` the loop or lambda assigns is not known from before it; not the facts of a `match` block, a `var` of a whole number outside a loop that was given a value, or a proof held in a value"
 ---
 
 # What arith proves
@@ -111,6 +111,45 @@ fn climb(x: u8) -> u8 {
 ```
 
 `climb(100)` is `150` and `climb(250)` is `0`. The line after the `if` is reached only when `x > 200` is false, so `x + 50` fits. Without the `if`, `v = x + 50` is refused: "cannot prove that `x + 50 <= 255`, so `x + 50` may not fit `u8`".
+
+**The size of a list.** A list has the `size` of the list it was given, whether it is bound to a name or to a `var`, and `size` is a value in a comparison, as in a `requires`, an `if`, and the range of a `loop`. It is what proves an index, as [Indexing](indexing.md) says.
+
+```
+fn plus(xs: List[u8]) -> u64 {
+  if xs.size < 100 { xs.size + 100 } else { 0 }
+}
+
+fn at(xs: List[u8], i: u64) -> u8 {
+  var ys = xs
+  if i < ys.size { ys[i] } else { 0 }
+}
+```
+
+`plus([1, 2, 3])` is `103`, and `at([1, 2, 3], 1)` is `2` while `at([1, 2, 3], 5)` is `0`. In `plus`, `xs.size < 100` makes `xs.size + 100` fit, and in `at`, the `ys` that `xs` was given has the size of `xs`, so `i < ys.size` proves `ys[i]`.
+
+**A `var` of a list, a struct, or a tuple.** What is known of it, and of each of its fields, is known as of any value, until it or a field of it is assigned. Then a fact about it is forgotten.
+
+```
+struct Pair {
+  a: u8
+  b: u8
+}
+
+fn kept(q: Pair) -> u8 {
+  var p = q
+  if p.a < 100 { p.a + 100 } else { 0 }
+}
+
+fn forgotten(q: Pair) -> u8 {
+  var p = q
+  if p.a < 100 {
+    p.a = 250
+    p.a + 100
+  } else { 0 }
+}
+```
+
+`kept(Pair(a: 5, b: 1))` is `105`. `forgotten` is refused: "cannot prove that `p.a + 100 <= 255`, so `p.a + 100` may not fit `u8`", since `p.a` was assigned after `p.a < 100` was known. The same holds in a loop, a lambda, and an arm of an `if` or a `match` as outside one, and a `var` that the loop or lambda assigns is not known from before it.
 
 **A contract.** The function's own `requires`, and the `ensures` of a function that was called, are facts. [Contracts](contracts.md) says how.
 

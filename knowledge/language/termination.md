@@ -3,7 +3,7 @@ type: specification
 title: Termination
 description: Every function ends unless it carries diverge, which loops are known to end, and decreases, which proves that a function that calls itself ends.
 status: partial
-built: "a function that ends because every `loop` in it is over a range, and `diverge` on an open-ended `loop`, which its callers inherit, and `loop decreases e` on an open-ended loop; not `decreases` on a function, recursion, or a contract that is refused for `diverge`"
+built: "`loop decreases e` on an open-ended loop, where `e` is an expression of an unsigned type that `arith` proves smaller at every place the loop goes round again, and which is never computed; `diverge` on an open-ended `loop`, which its callers inherit, and a function whose every `loop` is over a range; not `decreases` on a function, or a function that calls itself"
 ---
 
 # Termination
