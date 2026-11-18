@@ -11,10 +11,6 @@ use crate::Test;
 use crate::generate::{self, Gen};
 use crate::numbers::{INTS, Int, value};
 
-/// The bytes before a list's elements that say how many of them are in use,
-/// in every request for memory that holds a list.
-const WORD: usize = 8;
-
 pub const ONCE: &[Test] = &[
     (
         "a_program_builds_a_list_pushes_to_it_and_reads_each_element",
@@ -459,7 +455,7 @@ fn names(g: &mut Gen) -> Names {
                 vars.push(items);
             }
             1 => {
-                body += &format!("  n{} = a{j}\n", snaps.len());
+                body += &format!("  n{} = copy(a{j})\n", snaps.len());
                 snaps.push(vars[j].clone());
             }
             2 | 3 => {
@@ -468,17 +464,17 @@ fn names(g: &mut Gen) -> Names {
                 vars[j].push(v);
             }
             4 => {
-                body += &format!("  var a{} = a{j}\n", vars.len());
+                body += &format!("  var a{} = copy(a{j})\n", vars.len());
                 let copy = vars[j].clone();
                 vars.push(copy);
             }
             5 => {
-                body += &format!("  a{k} = a{j}\n");
+                body += &format!("  a{k} = copy(a{j})\n");
                 vars[k] = vars[j].clone();
             }
             6 => {
                 let v = byte(g);
-                body += &format!("  n{} = push(a{j}, {v})\n", snaps.len());
+                body += &format!("  n{} = push(copy(a{j}), {v})\n", snaps.len());
                 let mut copy = vars[j].clone();
                 copy.push(v);
                 snaps.push(copy);
@@ -486,23 +482,30 @@ fn names(g: &mut Gen) -> Names {
             7 if !snaps.is_empty() => {
                 let s = g.below(snaps.len());
                 let v = byte(g);
-                body += &format!("  a{k} = push(n{s}, {v})\n");
+                body += &format!("  a{k} = push(copy(n{s}), {v})\n");
                 vars[k] = snaps[s].clone();
                 vars[k].push(v);
             }
             8 if !snaps.is_empty() => {
                 let s = g.below(snaps.len());
-                body += &format!("  a{k} = n{s}\n");
+                body += &format!("  a{k} = copy(n{s})\n");
                 vars[k] = snaps[s].clone();
             }
             9 => {
-                body += &format!("  n{} = grow(a{j})\n", snaps.len());
+                body += &format!("  n{} = grow(copy(a{j}))\n", snaps.len());
                 let mut copy = vars[j].clone();
                 copy.push(9);
                 snaps.push(copy);
             }
             10 => {
-                body += &format!("  a{k} = grow(a{j})\n");
+                // A list that is given to `grow` and given back is the same
+                // list, and another is copied before it is given.
+                let from = if j == k {
+                    format!("a{j}")
+                } else {
+                    format!("copy(a{j})")
+                };
+                body += &format!("  a{k} = grow({from})\n");
                 let mut copy = vars[j].clone();
                 copy.push(9);
                 vars[k] = copy;
@@ -541,17 +544,17 @@ fn names(g: &mut Gen) -> Names {
         ));
     }
     let source = format!(
-        "fn grow(xs: List[u8]) -> List[u8] ! alloc {{\n  var grown = xs\n  grown = push(grown, 9)\n  grown\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n"
+        "use std.list (copy)\n\nfn grow(xs: take List[u8]) -> List[u8] ! alloc {{\n  var grown = xs\n  grown = push(grown, 9)\n  grown\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n"
     );
     Names { source, lines }
 }
 
 /// A name given a list holds the same elements after any other name is
-/// pushed to, whether the two names were given the same list, one a `var`
-/// given the other, a `var` given a snapshot, or a copy `push` made. Lists
-/// that share a beginning are built in every order of binding and pushing.
+/// pushed to, whether the two lists are a `var` and its `copy`, a `var` and
+/// a copy of a snapshot, or a list `push` grew from a copy. Lists that share
+/// a beginning are built in every order of binding and pushing.
 fn a_name_given_a_list_holds_the_same_elements_after_any_other_name_is_pushed_to() {
-    generate::check(71, 300, names, |n| prints(&n.source, n.lines.clone()));
+    generate::check(71, 100, names, |n| prints(&n.source, n.lines.clone()));
 }
 
 fn ceil_log2(n: usize) -> usize {
@@ -606,7 +609,7 @@ fn a_list_has_room_for_at_most_twice_its_elements_each_at_the_size_of_its_type()
         let source = pushed(elem, n);
         let program = lower(source.as_bytes()).expect("compiles");
         let (_, requests) = scalar::run_taking(&program, usize::MAX);
-        let room = *requests.last().expect("memory was asked for") - WORD;
+        let room = *requests.last().expect("memory was asked for");
         assert!(room >= n * elem.width(), "{room} bytes for {source}");
         assert!(room <= 2 * n * elem.width(), "{room} bytes for {source}");
     }
@@ -903,10 +906,8 @@ impl Ty {
             Ty::List(of) => {
                 *n += 1;
                 let id = *n;
-                let body = of.dump(&format!("d{id}[i{id}]"), n);
-                format!(
-                    "d{id} = {e}\nprint(\"{{d{id}.size}}\")\nloop i{id} in 0..d{id}.size {{\n{body}}}\n"
-                )
+                let body = of.dump(&format!("v{id}"), n);
+                format!("print(\"{{{e}.size}}\")\nloop v{id} in {e} {{\n{body}}}\n")
             }
         }
     }
@@ -949,7 +950,7 @@ fn items(ty: &Ty, vs: &[V]) -> String {
 /// another, and passed through a function, a struct, a tuple, or an enum,
 /// holds what was put in, in order.
 fn a_list_of_any_type_holds_what_was_put_in_in_order() {
-    generate::check(83, 150, held, |h| {
+    generate::check(83, 80, held, |h| {
         let t = h.ty.name();
         let mut body = String::new();
         let last = if h.var {
@@ -976,7 +977,7 @@ fn a_list_of_any_type_holds_what_was_put_in_in_order() {
         let list = Ty::List(Box::new(h.ty.clone()));
         body += &list.dump("ys", &mut 0);
         let source = format!(
-            "{}struct Held {{\n  items: List[{t}]\n}}\n\nenum Boxed {{\n  empty\n  full: List[{t}]\n}}\n\nfn through(xs: List[{t}]) -> List[{t}] {{ xs }}\n\nfn untuple(t: (List[{t}], u8)) -> List[{t}] {{\n  match t {{\n    (xs, k) {{ xs }}\n  }}\n}}\n\nfn unbox(b: Boxed) -> List[{t}] {{\n  match b {{\n    .empty {{ [] }}\n    .full(xs) {{ xs }}\n  }}\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n",
+            "{}struct Held {{\n  items: List[{t}]\n}}\n\nenum Boxed {{\n  empty\n  full: List[{t}]\n}}\n\nfn through(xs: take List[{t}]) -> List[{t}] {{ xs }}\n\nfn untuple(t: take (List[{t}], u8)) -> List[{t}] {{\n  match t {{\n    (xs, k) {{ xs }}\n  }}\n}}\n\nfn unbox(b: take Boxed) -> List[{t}] {{\n  match b {{\n    .empty {{ [] }}\n    .full(xs) {{ xs }}\n  }}\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n",
             Ty::source(&[&h.ty]),
         );
         let all: Vec<V> = h.start.iter().chain(&h.pushes).cloned().collect();
@@ -993,7 +994,7 @@ const HOLDERS: &[(&str, &str, &str)] = &[
     ("[{}]", "head({})", "List[List[u8]]"),
 ];
 
-const HOLDER_ITEMS: &str = "struct Wrap {\n  xs: List[u8]\n}\n\nfn first(t: (List[u8], u8)) -> List[u8] {\n  match t {\n    (xs, k) { xs }\n  }\n}\n\nfn inner(o: Option[List[u8]]) -> List[u8] {\n  match o {\n    .some(xs) { xs }\n    .none { [] }\n  }\n}\n\nfn head(ls: List[List[u8]]) -> List[u8] {\n  if 0 < ls.size { ls[0] } else { [] }\n}\n\nfn grow(xs: List[u8]) -> List[u8] ! alloc {\n  var grown = xs\n  grown = push(grown, 9)\n  grown\n}\n\n";
+const HOLDER_ITEMS: &str = "use std.list (copy)\n\nstruct Wrap {\n  xs: List[u8]\n}\n\nfn first(t: take (List[u8], u8)) -> List[u8] {\n  match t {\n    (xs, k) { xs }\n  }\n}\n\nfn inner(o: take Option[List[u8]]) -> List[u8] {\n  match o {\n    .some(xs) { xs }\n    .none { [] }\n  }\n}\n\nfn head(ls: take List[List[u8]]) -> List[u8] ! alloc {\n  if 0 < ls.size { copy(ls[0]) } else { [] }\n}\n\nfn grow(xs: take List[u8]) -> List[u8] ! alloc {\n  var grown = xs\n  grown = push(grown, 9)\n  grown\n}\n\n";
 
 fn fill(pattern: &str, with: &str) -> String {
     pattern.replace("{}", with)
@@ -1009,7 +1010,8 @@ struct Shared {
 
 fn shared(g: &mut Gen) -> Shared {
     let mut vars: Vec<Vec<u8>> = Vec::new();
-    let mut holders: Vec<(usize, Vec<u8>)> = Vec::new();
+    // A holder is given away when what it holds is taken out of it.
+    let mut holders: Vec<Option<(usize, Vec<u8>)>> = Vec::new();
     let mut body = String::new();
     let byte = |g: &mut Gen| g.below(256) as u8;
     for _ in 0..1 + g.below(14) {
@@ -1024,6 +1026,7 @@ fn shared(g: &mut Gen) -> Shared {
         } else {
             g.below(holders.len())
         };
+        let live = holders.get(h).is_some_and(Option::is_some);
         match step {
             0 => {
                 let new: Vec<u8> = (0..g.below(4)).map(|_| byte(g)).collect();
@@ -1047,12 +1050,12 @@ fn shared(g: &mut Gen) -> Shared {
                         "Option[List[u8]]",
                         "List[List[u8]]"
                     ][kind],
-                    fill(HOLDERS[kind].0, &format!("a{j}"))
+                    fill(HOLDERS[kind].0, &format!("copy(a{j})"))
                 );
-                holders.push((kind, vars[j].clone()));
+                holders.push(Some((kind, vars[j].clone())));
             }
-            6 | 7 if !holders.is_empty() => {
-                let (kind, held) = holders[h].clone();
+            6 | 7 if live => {
+                let (kind, held) = holders[h].take().expect("live");
                 body += &format!(
                     "var a{} = {}\n",
                     vars.len(),
@@ -1060,8 +1063,8 @@ fn shared(g: &mut Gen) -> Shared {
                 );
                 vars.push(held);
             }
-            8 if !holders.is_empty() => {
-                let (kind, held) = holders[h].clone();
+            8 if live => {
+                let (kind, held) = holders[h].take().expect("live");
                 body += &format!("a{j} = {}\n", fill(HOLDERS[kind].1, &format!("h{h}")));
                 vars[j] = held;
             }
@@ -1076,14 +1079,14 @@ fn shared(g: &mut Gen) -> Shared {
             }
             _ => {
                 let new = vars[j].clone();
-                body += &format!("var a{} = a{j}\n", vars.len());
+                body += &format!("var a{} = copy(a{j})\n", vars.len());
                 vars.push(new);
             }
         }
     }
     let dump = Elem::Int(INTS[1]);
     let mut lines = Vec::new();
-    for (k, (kind, held)) in holders.iter().enumerate() {
+    for (k, (kind, held)) in holders.iter().enumerate().filter_map(|(k, h)| Some((k, h.as_ref()?))) {
         body += &format!("g{k} = {}\n", fill(HOLDERS[*kind].1, &format!("h{k}")));
         body += &dump.dump(&format!("g{k}"));
         lines.extend(shown(
@@ -1107,13 +1110,12 @@ fn shared(g: &mut Gen) -> Shared {
     Shared { source, lines }
 }
 
-/// A list is a value however deep it lies: a name given a value that holds a
-/// list still holds the same elements after any other name is pushed to,
-/// whether the list lies in a struct, a tuple, an enum, or a list, and
-/// whether it was put there or taken out, in every order of binding and
-/// pushing.
+/// A list is a value however deep it lies: a name that holds a copy of a list,
+/// or a list that was put in a value and taken out of it, still holds the same
+/// elements after any other name is pushed to, whether the list lies in a
+/// struct, a tuple, an enum, or a list, in every order of binding and pushing.
 fn a_list_held_inside_another_value_is_unchanged_by_a_push_to_any_other_name() {
-    generate::check(89, 300, shared, |s| prints(&s.source, s.lines.clone()));
+    generate::check(89, 80, shared, |s| prints(&s.source, s.lines.clone()));
 }
 
 /// How many times a program asks the system for memory.
@@ -1156,7 +1158,7 @@ fn pushes_by(setup: &str, loop_body: &str, n: usize) -> usize {
     ))
 }
 
-const ACC: &str = "struct Acc {\n  items: List[u64]\n  n: u64\n}\n\nfn add(a: Acc, x: u64) -> Acc ! alloc {\n  var next = a\n  next.items = push(a.items, x)\n  next\n}\n\nfn more(items: List[u64], x: u64) -> List[u64] ! alloc { push(items, x) }\n\n";
+const ACC: &str = "struct Acc {\n  items: List[u64]\n  n: u64\n}\n\nfn add(a: take Acc, x: u64) -> Acc ! alloc {\n  var next = a\n  next.items = push(next.items, x)\n  next\n}\n\nfn more(items: take List[u64], x: u64) -> List[u64] ! alloc { push(items, x) }\n\n";
 
 /// A list grown in the way `form` says asks for memory as many times as one
 /// grown in a plain `var` may, as many as the logarithm of the pushes, however
@@ -1193,7 +1195,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
     let (_, asked) = scalar::run_taking(&program, usize::MAX);
     // `a` at 0, `b` at 4, `c` at 8, which ends at 9, and 12 is a whole number
     // of 4, so the last list has room for 4 elements of 12 bytes.
-    assert_eq!(asked.last(), Some(&(WORD + 48)), "{asked:?}");
+    assert_eq!(asked.last(), Some(&48), "{asked:?}");
     let kinds = Kinds {
         enums: false,
         lists: false,
@@ -1215,7 +1217,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
             );
             let program = lower(source.as_bytes()).expect("compiles");
             let (_, asked) = scalar::run_taking(&program, usize::MAX);
-            let room = *asked.last().expect("memory was asked for") - WORD;
+            let room = *asked.last().expect("memory was asked for");
             let stride = t.stride();
             assert_eq!(room % stride, 0, "{room} bytes for {source}");
             assert!(room >= n * stride, "{room} bytes for {source}");

@@ -305,6 +305,8 @@ fn join(a: State, b: State) -> State {
 
 /// What the generator says the compiler must refuse.
 struct Model {
+    /// Whether the value has `Copy`: a type parameter has it where it asks,
+    /// and a list never has it.
     copy: bool,
     /// The statements that use the value after it was given away.
     again: BTreeSet<usize>,
@@ -510,7 +512,7 @@ fn a_value_of_a_type_parameter_is_refused_exactly_where_it_is_used_again_or_drop
         let w = write(c);
         let found = errors(&w.source);
         let mut model = Model {
-            copy: c.asks.copy,
+            copy: c.asks.copy && c.shape != Shape::List,
             again: BTreeSet::new(),
             lacking: BTreeSet::new(),
             unused: BTreeSet::new(),
@@ -544,6 +546,15 @@ fn a_value_of_a_type_parameter_is_refused_exactly_where_it_is_used_again_or_drop
             } else if e.pos == w.param {
                 assert!(
                     e.fix.as_deref().is_some_and(|f| f.contains("Discard")),
+                    "{e:?}\n{}",
+                    w.source
+                );
+            } else if w.reads.contains(&e.pos) && c.shape == Shape::List {
+                // A list is copied by `copy`, which a list of a type with
+                // `Copy` may be given to.
+                assert_eq!(
+                    e.fix.as_deref().is_some_and(|f| f.contains("copy(a)")),
+                    c.asks.copy,
                     "{e:?}\n{}",
                     w.source
                 );
