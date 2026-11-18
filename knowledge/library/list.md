@@ -4,7 +4,7 @@ title: List
 description: List, an array kept together with its size, which can grow.
 status: partial
 built:
-  - "a `List` of any type a program can make, written `List[u8]` or `List[Person]`, built from `[]` or a literal such as `[1, 2, 3]` where a list of a known type is expected, grown with `push`, in place where a `var` is given the result of pushing to itself, and read with `size` and an index that is proven in range, of a `var` as of any name, where `xs[i].field` reads only that field"
+  - "a `List` of any type a program can make, written `List[u8]` or `List[Person]`, built from `[]` or a literal such as `[1, 2, 3]` where a list of a known type is expected, grown with `push`, in place wherever the list is held, in a `var`, in a field, or as what a function takes and returns, and read with `size` and an index that is proven in range, of a `var` as of any name, where `xs[i].field` reads only that field"
   - "a list may be held inside a struct, a tuple, an enum, or another list, and be a function's parameter and result, and a name that holds a list never sees another name's `push`"
   - "not `items`, slicing, summing, a pattern in brackets, or looping over the elements"
 ---
@@ -48,7 +48,7 @@ struct List[T] {
     }
   }
   ```
-- `push` gives a list with one more element. When the list it is given is a `var` that is assigned the result, as in `out = push(out, x)`, the list grows in place.
+- `push` gives a list with one more element. When the list has room and no other list has used it, as when it is the result of an earlier `push`, the list grows in place, wherever it is held; otherwise `push` copies it, so a name that holds a list never sees another name's `push`.
 
 ```
 fn push[T](list: List[T], item: T) -> List[T] ! alloc

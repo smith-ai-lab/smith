@@ -89,17 +89,15 @@ impl<'a> Lowering<'a> {
     }
 
     /// Lowers `push`, which gives the list with the item after its last
-    /// element, in place when the list may grow where it is.
+    /// element.
     pub(super) fn push(
         &mut self,
         out: &mut Out<'a>,
         call: &'a Call,
         env: &[Ty],
-        in_place: bool,
     ) -> (Ty, Vec<form::Value>) {
         let (ty, mut args) = self.expr(out, &call.args[0].value, env);
         args.extend(self.expr(out, &call.args[1].value, env).1);
-        args.push(out.int(form::Bits::B8, i128::from(in_place)));
         let results = self.scalars(&ty);
         let kind = Runtime::Push(self.element(&ty));
         let values = self.call_runtime(out, kind, args, results);

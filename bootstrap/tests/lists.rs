@@ -11,6 +11,10 @@ use crate::Test;
 use crate::generate::{self, Gen};
 use crate::numbers::{INTS, Int, value};
 
+/// The bytes before a list's elements that say how many of them are in use,
+/// in every request for memory that holds a list.
+const WORD: usize = 8;
+
 pub const ONCE: &[Test] = &[
     (
         "a_program_builds_a_list_pushes_to_it_and_reads_each_element",
@@ -61,8 +65,20 @@ pub const ONCE: &[Test] = &[
         a_list_held_inside_another_value_is_unchanged_by_a_push_to_any_other_name,
     ),
     (
-        "a_push_to_a_list_held_inside_another_value_copies",
-        a_push_to_a_list_held_inside_another_value_copies,
+        "a_push_to_a_list_held_inside_another_value_grows_in_place_while_it_has_room",
+        a_push_to_a_list_held_inside_another_value_grows_in_place_while_it_has_room,
+    ),
+    (
+        "a_list_that_a_function_takes_in_a_struct_and_returns_grows_as_a_plain_var_does",
+        a_list_that_a_function_takes_in_a_struct_and_returns_grows_as_a_plain_var_does,
+    ),
+    (
+        "a_list_that_is_a_field_of_a_var_grows_as_a_plain_var_does",
+        a_list_that_is_a_field_of_a_var_grows_as_a_plain_var_does,
+    ),
+    (
+        "a_list_that_a_function_pushes_to_and_returns_grows_as_a_plain_var_does",
+        a_list_that_a_function_pushes_to_and_returns_grows_as_a_plain_var_does,
     ),
     (
         "an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest",
@@ -574,7 +590,7 @@ fn a_list_has_room_for_at_most_twice_its_elements_each_at_the_size_of_its_type()
         let source = pushed(elem, n);
         let program = lower(source.as_bytes()).expect("compiles");
         let (_, requests) = scalar::run_counting(&program, usize::MAX);
-        let room = *requests.last().expect("memory was asked for");
+        let room = *requests.last().expect("memory was asked for") - WORD;
         assert!(room >= n * elem.width(), "{room} bytes for {source}");
         assert!(room <= 2 * n * elem.width(), "{room} bytes for {source}");
     }
@@ -1092,11 +1108,12 @@ fn requests(source: &str) -> usize {
     requests.len()
 }
 
-/// A list inside another value has no room beyond its size, so a `push` to
-/// it copies, however much room the list it was made from had.
-fn a_push_to_a_list_held_inside_another_value_copies() {
+/// A push to a list held inside another value, or a list that a function
+/// was given and gives back, asks for memory when the list is full and not
+/// otherwise, as a push to a `var` does.
+fn a_push_to_a_list_held_inside_another_value_grows_in_place_while_it_has_room() {
     for (kind, (build, take, ty)) in HOLDERS.iter().enumerate() {
-        for n in 1..=9 {
+        for n in 1usize..=9 {
             let program = |push: &str| {
                 format!(
                     "{HOLDER_ITEMS}fn main() ! alloc {{\n  var a: List[u8] = []\n  loop i in 0..{n} {{ a = push(a, 1) }}\n  h: {ty} = {}\n  var b = {}\n{push}}}\n",
@@ -1108,11 +1125,46 @@ fn a_push_to_a_list_held_inside_another_value_copies() {
                 requests(&program("")),
                 requests(&program("  b = push(b, 2)\n")),
             );
-            // The list `a` has room for more, and `b` is a name of its own
-            // that was given what the holder holds.
-            assert_eq!(with, without + 1, "holder {kind}, {n} elements");
+            // The list has room for the next power of two.
+            let full = n.is_power_of_two();
+            assert_eq!(with, without + usize::from(full), "holder {kind}, {n} elements");
         }
     }
+}
+
+/// How many times the program asks the system for memory, when it pushes to
+/// a list `n` times in the way `loop` says, with `setup` before it.
+fn pushes_by(setup: &str, loop_body: &str, n: usize) -> usize {
+    requests(&format!(
+        "{setup}fn main() ! alloc {{\n  var a = Acc(items: [], n: 0)\n  var items: List[u64] = []\n  loop i in 0..{n} {{ {loop_body} }}\n}}\n"
+    ))
+}
+
+const ACC: &str = "struct Acc {\n  items: List[u64]\n  n: u64\n}\n\nfn add(a: Acc, x: u64) -> Acc ! alloc {\n  var next = a\n  next.items = push(a.items, x)\n  next\n}\n\nfn more(items: List[u64], x: u64) -> List[u64] ! alloc { push(items, x) }\n\n";
+
+/// A list grown in the way `form` says asks for memory as many times as one
+/// grown in a plain `var` may, as many as the logarithm of the pushes, however
+/// many pushes there are.
+fn grows_as_a_plain_var_does(form: &str) {
+    for n in [1000, 10000, 100000] {
+        let asked = pushes_by(ACC, form, n);
+        assert!(asked <= 1 + ceil_log2(n), "{asked} requests for {form}, {n} pushes");
+    }
+}
+
+/// A list that a function takes, grows, and returns grows as a plain `var` does.
+fn a_list_that_a_function_takes_in_a_struct_and_returns_grows_as_a_plain_var_does() {
+    grows_as_a_plain_var_does("a = add(a, i)");
+}
+
+/// A list that is a field of a `var` grows as a plain `var` does.
+fn a_list_that_is_a_field_of_a_var_grows_as_a_plain_var_does() {
+    grows_as_a_plain_var_does("a.items = push(a.items, i)");
+}
+
+/// A list that a function pushes to and returns grows as a plain `var` does.
+fn a_list_that_a_function_pushes_to_and_returns_grows_as_a_plain_var_does() {
+    grows_as_a_plain_var_does("items = more(items, i)");
 }
 
 /// An element of a list is held as its scalars one after another, each at a
@@ -1125,7 +1177,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
     let (_, asked) = scalar::run_counting(&program, usize::MAX);
     // `a` at 0, `b` at 4, `c` at 8, which ends at 9, and 12 is a whole number
     // of 4, so the last list has room for 4 elements of 12 bytes.
-    assert_eq!(asked.last(), Some(&48), "{asked:?}");
+    assert_eq!(asked.last(), Some(&(WORD + 48)), "{asked:?}");
     let kinds = Kinds {
         enums: false,
         lists: false,
@@ -1147,7 +1199,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
             );
             let program = lower(source.as_bytes()).expect("compiles");
             let (_, asked) = scalar::run_counting(&program, usize::MAX);
-            let room = *asked.last().expect("memory was asked for");
+            let room = *asked.last().expect("memory was asked for") - WORD;
             let stride = t.stride();
             assert_eq!(room % stride, 0, "{room} bytes for {source}");
             assert!(room >= n * stride, "{room} bytes for {source}");

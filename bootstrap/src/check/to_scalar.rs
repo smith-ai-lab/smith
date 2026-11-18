@@ -815,40 +815,13 @@ impl<'a> Lowering<'a> {
         let mut result = Vec::new();
         for stmt in stmts {
             result = match stmt {
-                Stmt::Define {
-                    name, value, var, ..
-                } => {
+                Stmt::Define { name, value, .. } => {
                     // A name stands for the values it is bound to, so a
                     // binding needs no instruction of its own. A block runs
                     // its statements once each, in order, so an assignment
                     // makes the name stand for the new values from then
                     // on, and a name bound to the old ones keeps them.
-                    let typed = self.typed;
-                    let written = value;
-                    let held = out.find(name).is_some();
-                    // A list grows in place only where a `var` is given what
-                    // `push` makes of it. A `var` given any other list but
-                    // one just made has no room of its own, so that two
-                    // names never write to the same place.
-                    let pushed = |e: &Expr| match e {
-                        Expr::Call(c) => matches!(typed.callee(c, env), Callee::Push),
-                        _ => false,
-                    };
-                    let (ty, mut value) = match written {
-                        Expr::Call(call)
-                            if held
-                                && pushed(written)
-                                && matches!(&call.args[0].value,
-                                    Expr::Name { name: first, .. } if first == name) =>
-                        {
-                            self.push(out, call, env, true)
-                        }
-                        _ => self.expr(out, written, env),
-                    };
-                    let fresh = matches!(written, Expr::List { .. }) || pushed(written);
-                    if matches!(ty, Ty::List(_)) && (held || *var) && !fresh {
-                        value[2] = value[1];
-                    }
+                    let (ty, value) = self.expr(out, value, env);
                     match out.find(name) {
                         Some(at) => out.names_mut()[at].values = value,
                         None => out.define(name, ty, value),
@@ -959,7 +932,7 @@ impl<'a> Lowering<'a> {
                     );
                     (Ty::Nothing, Vec::new())
                 }
-                Callee::Push => self.push(out, call, env, false),
+                Callee::Push => self.push(out, call, env),
                 Callee::Utf8 => self.utf8(out, expr, call, env),
                 Callee::Narrow(narrowing) => {
                     let (given, values) = self.expr(out, &call.args[0].value, env);
