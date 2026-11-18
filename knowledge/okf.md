@@ -32,7 +32,7 @@ The Open Knowledge Format (OKF) is an open specification from Google Cloud for p
 - A file goes from the simplest to the hardest. It opens with one sentence that says what the concept is, and then the smallest complete example of it in its plainest form. Each further idea follows in order of difficulty, each with its own example, and a shorter way to write something comes after the plain way it shortens. Rules and exceptions come after the example they are about, and what few programs need comes last.
 - A file in `language/` stands in for a book, because nobody will read one. It is complete when an agent that has read only the files before it can write correct code with everything the file covers, and can say why wrong code is refused. So:
   - every rule has an example, and no rule is left as a sentence alone;
-  - everything that is refused shows the code that is refused and the words of the error;
+  - everything that is refused shows the code that is refused and the words of the error, except that where the compiler does not build the refusal, the file shows the code, says that it is refused and why, and quotes no words;
   - where a thing could be written two ways, the file says which is written and what happens to the other;
   - an example of a feature the compiler builds has been run through the compiler by whoever wrote it;
   - a file with more than one form to remember ends with a table of the forms.

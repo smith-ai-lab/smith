@@ -1,99 +1,109 @@
 ---
 type: specification
-title: for expressions
-description: for as an unordered description of an array, reductions, the operators of linear algebra, @, and the rules for float arithmetic.
+title: for
+description: A for describes an array by the value at every index, and each index gets its size from an array it reads or from the type the for is written for.
 status: planned
 ---
 
-# `for` expressions
+# `for`
 
-`for i { e }` describes an array: the value `e` at every index `i`. Several indices give several axes. A `for` is a view, a rule for computing each element, so it allocates nothing by being written.
-
-```
-trait MatMul[A, B, out C] {
-  fn matmul(a: A, b: B) -> C
-}
-
-// vector @ vector
-impl[n: Nat] MatMul[[n]f32, [n]f32, f32] {
-  fn matmul(a: [n]f32, b: [n]f32) -> f32 {
-    sum(for i { a[i] * b[i] })
-  }
-}
-
-// matrix @ vector
-impl[m: Nat, n: Nat] MatMul[[m, n]f32, [n]f32, [m]f32] {
-  fn matmul(w: [m, n]f32, x: [n]f32) -> [m]f32 {
-    for r { sum(for c { w[r, c] * x[c] }) }
-  }
-}
-
-// matrix @ matrix
-impl[m: Nat, k: Nat, n: Nat] MatMul[[m, k]f32, [k, n]f32, [m, n]f32] {
-  fn matmul(a: [m, k]f32, b: [k, n]f32) -> [m, n]f32 {
-    for i, j { sum(for l { a[i, l] * b[l, j] }) }
-  }
-}
-```
-
-An index gets its size from one of two places, and both are in the source.
-
-- Where the index alone picks an element along an axis, as in `a[i]`, it has that axis's size. When it is used this way on several arrays, their sizes must be equal.
-- Where the `for` is written in a place that expects an array, such as a function's result, an argument, or a binding that states its type, its indices take their sizes from that type.
+`for i { e }` describes an array: the value `e` at every index `i`.
 
 ```
 fn ramp() -> [4]f32 { for i { float(i) } }
+```
 
+`ramp()` is `[0.0, 1.0, 2.0, 3.0]`. The index `i` counts from `0`, as [Indexing](indexing.md) says of a place, and `float(i)` is the float with the value of `i`, as [Number types](number-types.md) says.
+
+A `for` is a view, a rule for computing each element, so it allocates nothing by being written. [Array buffers](buffers.md) says when an array does get a buffer.
+
+## Reading an array
+
+The value may read an array at the index. This `for` is the array whose element `i` is twice element `i` of `a`.
+
+```
+fn doubled(a: [3]f32) -> [3]f32 { for i { a[i] * 2.0 } }
+```
+
+## Several indices
+
+Several indices give several axes. `for i, j { e }` is a matrix, and `e` is its element at row `i` and column `j`.
+
+```
+fn grid() -> [2, 3]f32 { for i, j { float(i) * 3.0 + float(j) } }
+```
+
+`grid()` has two rows of three floats, and its element at `i, j` is `3i + j`, so the first row is `0.0, 1.0, 2.0` and the second is `3.0, 4.0, 5.0`.
+
+## Where an index gets its size
+
+An index gets its size from one of two places, and both are in the source.
+
+**From the arrays it reads.** Where the index alone picks an element along an axis, as in `a[i]`, it has that axis's size.
+
+```
+fn halves(a: [3]f32) -> [3]f32 {
+  b = for i { a[i] * 0.5 }
+  b
+}
+```
+
+The `i` of `b` is `3`, because it picks along the one axis of `a`, so `b` is a `[3]f32`. When an index is used this way on several arrays, their sizes must be equal.
+
+```
+fn product[n: Nat](a: [n]f32, b: [n]f32) -> [n]f32 { for i { a[i] * b[i] } }
+```
+
+With `a: [3]f32` and `b: [4]f32` the index would have two sizes, so it is refused.
+
+```
+fn mismatch(a: [3]f32, b: [4]f32) -> [3]f32 { for i { a[i] * b[i] } }
+```
+
+The compiler does not build this refusal, so the page quotes no words. `i` would be `3` on `a` and `4` on `b`.
+
+**From the type it is written for.** Where the `for` is written in a place that expects an array, such as a function's result, an argument, or a binding that states its type, its indices take their sizes from that type. `ramp` above takes its `4` from its result. Here a binding states it.
+
+```
 evens: [4]f32 = for i { float(i) * 2.0 }
 ```
 
-- When both places give a size, the two must agree. An index with neither is a compile error that names the index.
-- Arithmetic on an index, as in `x[i + 1]`, never gives it a size. The compiler does not solve for one. The access is instead proven to be in range, as [What arith proves](arith.md) describes.
-
-- `sum`, `max`, and `mean` reduce a view to a value, and `map(f, v)` is shorthand for `for i { f(v[i]) }`.
-- An operator on arrays means what it means in linear algebra. Two arrays of the same shape add and subtract, an array is scaled by a number with `*` and `/`, and `-x` negates. Each returns a view, so `x + y` is `for i { x[i] + y[i] }`. Two arrays have no `*`, `/`, or `^`: a product of elements is written with `for`, where the indices say which elements meet.
-- There is no broadcasting. Arrays of different shapes are combined with a `for`.
-- The product of linear algebra is `@`: `a @ b` means `matmul(a, b)`, which contracts the last axis of `a` with the first axis of `b`, and it binds like `*`. The sizes are checked by the types. `@` does not treat leading axes as batches, so a batch is written as a `for`.
-- Iterations are independent, so every `for` may run across SIMD lanes, threads, or a GPU.
-- A `for` whose block only accumulates into a `var` yields nothing. Accumulation with `+=` or `*=` is the one mutation allowed inside it, and it runs in parallel as a reduction. Giving an outer variable a new value with `=` is rejected, because the result would depend on order.
-- Float code is fast by default and repeatable: the same code, built by the same compiler, on the same computer, always gives the same bits, whatever the thread count. Different hardware or a newer compiler may change the last bits.
-- An accumulation may be indexed, as in `hist[bucket[i]] += 1`. This is how a scatter is written, and it is also the gradient of an indexed read.
-- A float reduction is regrouped for speed, in a shape that depends only on the source and the target. An outermost `sum` is split into several running totals that are combined in pairs. A `sum` that produces one element of an array adds its terms in order, because the parallelism comes from the outer indices.
-- `sum_ordered(x)` adds strictly left to right, for when exactness matters more than speed.
-- A product whose only use is one add or subtract is fused with it into a single instruction with one rounding, so `a * b + c` always fuses, whether or not the product is named.
-- No other float rewrite is allowed unless it is exact.
-
-These are enough for the first piece of a neural network. A linear layer is a struct with shape-typed fields and one line of arithmetic.
+When both places give a size, the two must agree. The `i` below is `3` from `a` and `4` from the result, so it is refused, and the compiler does not build this refusal either.
 
 ```
-struct Linear[i: Nat, o: Nat] {
-  w: [o, i]f32
-  b: [o]f32
-}
+fn widen(a: [3]f32) -> [4]f32 { for i { a[i] } }
+```
 
-fn apply[i: Nat, o: Nat](l: Linear[i, o], x: [i]f32) -> [o]f32 {
-  l.w @ x + l.b
+An index that gets a size from neither is refused, and the compiler names the index. Nothing gives the `i` below a size, since no array is read at it and no type is stated.
+
+```
+fn lost() {
+  x = for i { 1.0 }
 }
 ```
 
-Passing the output of a `Linear[784, 256]` to a `Linear[128, 10]` is a compile error, because `256` and `128` do not match.
+## Arithmetic on an index
 
-Random arrays follow the key rule from [Lending and take](take.md). A random function fills a whole array from one key, and the expected type gives the shape, as it does for a literal. When each iteration needs its own key, `split_n` turns one key into an array of keys.
+Arithmetic on an index, as in `x[i + 1]`, never gives it a size. The compiler does not solve for one. The access is instead proven to be in range, as [What arith proves](arith.md) describes. So the size comes from the type.
 
 ```
-fn init_linear[i: Nat, o: Nat](key: take Key) -> Linear[i, o] {
-  (kw, kb) = split(key)
-  Linear(w: normal(kw), b: uniform(kb))
-}
-
-fn dropout[n: Nat](x: [n]f32, rate: f32, key: take Key) -> [n]f32 {
-  keys = split_n(key)
-  for i {
-    if uniform(keys[i]) < rate { 0.0 } else { x[i] }
-  }
-}
+fn shifted(x: [5]f32) -> [4]f32 { for i { x[i + 1] } }
 ```
 
-Reading `keys[i]` uses up that key. It is allowed inside a `for` when the body takes `keys[i]` at most once and `i` is the loop's own index, so every iteration touches a different key. Key `i` is computed directly from the parent key and `i`, so the array of keys never exists in memory and the loop still runs in parallel.
+`i` is `4`, from the result, and `arith` proves that `i + 1` is below `5`. Without a type stated, the `i` of `y = for i { x[i + 1] }` has no size, and it is refused as `lost` is.
 
-Next: [`loop`](loop.md)
+## No order
+
+The iterations of a `for` are independent, so every `for` may run across SIMD lanes, threads, or a GPU. The keyword states that order does not matter, where a [`loop`](loop.md) runs in order. What follows from this for a block that changes a `var` is in [Accumulation](accumulation.md).
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `for i { e }` | The array whose element at `i` is `e` |
+| `for i, j { e }` | The matrix whose element at `i, j` is `e` |
+| `a[i]` in the block | Gives `i` the size of the axis of `a` |
+| A stated type for the `for` | Gives each index the size of its axis |
+| `x[i + 1]` in the block | Gives `i` no size |
+
+Next: [Operators on arrays](element-wise.md)
