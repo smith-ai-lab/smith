@@ -4,7 +4,7 @@ title: Literals
 description: How a number, a character, a text, true, false, or an array is written in code, which trait gives each its value, and how the type of a literal is decided.
 status: partial
 built:
-  - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
+  - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, including a literal given for a type parameter, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
 ---
 
 # Literals
@@ -136,6 +136,18 @@ fn main() ! console, alloc {
 ```
 
 This prints `5000000000`, which an `i32` could not hold.
+
+A whole number given to a parameter whose type is a type parameter is decided the same way. When nothing else decides the type parameter, the number is an `i64` and so is the type parameter.
+
+```
+fn first[A, B](a: A, b: B) -> A { a }
+
+fn main() ! console, alloc {
+  print("{first(1, 2)}")
+}
+```
+
+This prints `1`, with `A` and `B` both `i64`. When the function needs a trait of the type parameter, `i64` must have it, and if it does not the error names the trait and `i64`, as for any other `i64`.
 
 ## A literal beside another value
 

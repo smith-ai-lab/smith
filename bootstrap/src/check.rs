@@ -610,6 +610,19 @@ struct Scope {
     invalid: Vec<bool>,
 }
 
+/// Whether `expr` is a whole number literal that an `i64` holds.
+fn fits_i64(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number {
+            magnitude,
+            negative,
+            ..
+        } if *negative => *magnitude <= Int::I64.min().unsigned_abs(),
+        Expr::Number { magnitude, .. } => *magnitude <= Int::I64.max() as u128,
+        _ => false,
+    }
+}
+
 /// What a caller needs to know of a function.
 struct Signature {
     /// The type parameters its types are written among.
@@ -6622,6 +6635,9 @@ impl<'a> Checker<'a> {
         for (i, value) in deferred {
             let pattern = &signature.params[i].1;
             let wanted = match pattern.partial(&sol) {
+                // A whole number that fits an `i64` is one when nothing
+                // decides, with no mistake to report, so it is given its type.
+                t if t.unknown() && fits_i64(value) => Want::Any,
                 t if t.unknown() && reported => Want::Ty(Ty::Unknown),
                 t if t.unknown() => {
                     reported = true;
