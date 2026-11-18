@@ -5,6 +5,7 @@ description: What a function or an impl needs of its type parameters, written as
 status: partial
 built:
   - "bounds such as `T: Plus`, `requires Trait[...]` on a function or an `impl`"
+  - "`T: Copy` and `T: Discard`, or `requires Copy[T]` and `requires Discard[T]`, on a function or an `impl`"
 ---
 
 # Bounds and requires
@@ -144,12 +145,29 @@ fn main() ! console {
 
 This is refused: "`impl Show[Box[T]]` at line 13 and `impl Show[Box[T]]` at line 19 both fit this use".
 
+## Copy and Discard
+
+`Copy` and `Discard` are bounds like any other, and they ask what [ownership](ownership.md) says: that a value of the type may be used again, and that it may be dropped. A type parameter has neither unless a bound or a `requires` line says so.
+
+```
+fn pair[T: Copy](x: T) -> (T, T) { (x, x) }
+
+fn first[A, B](a: take A, b: take B) -> A
+  requires Discard[B]
+{
+  a
+}
+```
+
+A call with a type that lacks one is refused at the call, which names the type and the bound.
+
 ## The forms
 
 | Written | Is |
 | --- | --- |
 | `fn f[T: Named](x: T)` | `T` must have an implementation of `Named` |
 | `requires Named[T]` | The same, as a line after the signature |
+| `fn f[T: Copy]`, `requires Discard[T]` | `T` may be used again, or dropped unused |
 | `requires Pair[A, B]` | An implementation over several types must exist |
 | `impl[T] Show[Box[T]]` | An `impl` for every `T` its `requires` lines allow |
 | `impl[T] Show[Box[T]] requires Show[T]` | The same, only for a `T` that is `Show` |

@@ -173,7 +173,15 @@ fn function(k: usize, name: &str, generics: &str, t: &str, u: &str, mistake: boo
         ),
     };
     let effects = if matches!(k, 2 | 5) { "" } else { " ! alloc" };
-    format!("fn {name}{generics}({params}) -> {gives}{effects} {{\n  {body}\n}}\n\n")
+    // Nothing is known of a type parameter but what its bounds say, so each
+    // is asked for `Copy` and `Discard`, as the body copies and drops.
+    let asks: String = (generics.trim_matches(['[', ']']).split(", "))
+        .filter(|g| !g.is_empty())
+        .map(|g| g.split(':').next().unwrap_or(g))
+        .map(|g| format!("\n  requires Copy[{g}]\n  requires Discard[{g}]"))
+        .collect();
+    let open = if asks.is_empty() { " {".to_string() } else { format!("{asks}\n{{") };
+    format!("fn {name}{generics}({params}) -> {gives}{effects}{open}\n  {body}\n}}\n\n")
 }
 
 /// A generic function over lists, the arguments of its calls, and the types

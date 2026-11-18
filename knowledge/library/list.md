@@ -53,7 +53,7 @@ struct List[T] {
 - `push` gives a list with one more element. When the list has room and no other list has used it, as when it is the result of an earlier `push`, the list grows in place, wherever it is held; otherwise `push` copies it, so a name that holds a list never sees another name's `push`.
 
 ```
-fn push[T](list: List[T], item: T) -> List[T] ! alloc
+fn push[T](list: take List[T], item: take T) -> List[T] ! alloc
 ```
 
 A list is what a program builds, and [`freeze`](slice.md) turns one that is done into a `Slice`, which is shared freely. A list is never copied unless `copy` is written: `push` takes the list it is given, and a list used after it is given away is refused, as [Ownership](../language/ownership.md#a-list-is-never-copied-unasked) says. The compiler does not build that yet, and copies such a list.

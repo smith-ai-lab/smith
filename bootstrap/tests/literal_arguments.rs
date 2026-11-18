@@ -110,12 +110,19 @@ fn call(g: &mut Gen) -> Call {
 }
 
 impl Call {
-    fn signature(&self) -> String {
-        let names = NAMES[..self.params].join(", ");
-        let params: Vec<String> = (0..self.params)
-            .map(|i| format!("{}: {}", PARAMS[i], NAMES[i]))
+    /// The signature of a function that gives back the parameter it
+    /// `chosen`, which owns each argument and drops the others.
+    fn giving_back(&self) -> String {
+        let names: Vec<String> = (0..self.params)
+            .map(|i| match i == self.chosen {
+                true => NAMES[i].to_string(),
+                false => format!("{}: Discard", NAMES[i]),
+            })
             .collect();
-        format!("[{names}]({})", params.join(", "))
+        let params: Vec<String> = (0..self.params)
+            .map(|i| format!("{}: take {}", PARAMS[i], NAMES[i]))
+            .collect();
+        format!("[{}]({})", names.join(", "), params.join(", "))
     }
 
     /// The statements that bind the names, and the arguments, with each
@@ -143,7 +150,7 @@ impl Call {
     }
 }
 
-const SAME: &str = "fn same[T](x: T) -> T { x }\n\n";
+const SAME: &str = "fn same[T](x: take T) -> T { x }\n\n";
 
 /// A call of a function that gives back one of its arguments, whose
 /// program is written with literals and with bindings of `i64`.
@@ -151,7 +158,7 @@ fn picking(case: &Call, literals: bool) -> String {
     let (binds, args) = case.arguments(literals);
     format!(
         "{SAME}fn pick{} -> {} {{ {} }}\n\nfn main() ! console, alloc {{\n{binds}  print(\"{{pick({args})}}\")\n}}\n",
-        case.signature(),
+        case.giving_back(),
         NAMES[case.chosen],
         PARAMS[case.chosen],
     )
@@ -326,8 +333,8 @@ fn anything(g: &mut Gen) -> String {
     let place = PLACES[g.below(PLACES.len())].replace("{}", &call);
     format!(
         "{SAME}fn pair[A, B](a: A, b: B) -> u8 {{ 1 }}\n\n\
-         fn both[A, B](a: A, b: B) -> (A, B) {{ (a, b) }}\n\n\
-         fn f[A, B, C](a: A, b: B, c: C, s: str) -> A {{ a }}\n\n\
+         fn both[A, B](a: take A, b: take B) -> (A, B) {{ (a, b) }}\n\n\
+         fn f[A, B: Discard, C: Discard](a: take A, b: take B, c: take C, s: str) -> A {{ a }}\n\n\
          fn takes(n: u8) -> u8 {{ n }}\n\n\
          fn main() ! console, alloc {{\n  x: u8 = 1\n  {place}\n}}\n"
     )
@@ -364,9 +371,9 @@ enum Shape {
     Second,
 }
 
-const SHAPES: &str = "fn same[A](a: A) -> A { a }\n\n\
-     fn first[A, B](a: A, b: B) -> A { a }\n\n\
-     fn second[A, B](a: A, b: B) -> B { b }\n\n";
+const SHAPES: &str = "fn same[A](a: take A) -> A { a }\n\n\
+     fn first[A, B: Discard](a: take A, b: take B) -> A { a }\n\n\
+     fn second[A: Discard, B](a: take A, b: take B) -> B { b }\n\n";
 
 #[derive(Debug)]
 struct Placed {
@@ -480,8 +487,8 @@ impl Placed {
 
 fn a_literal_for_a_type_parameter_takes_the_type_the_place_of_the_result_needs() {
     // The program of the issue.
-    let issue = "fn id[A](a: A) -> A { a }\n\nfn takes(n: u8) -> u8 { n }\n\n\
-        fn pair[A, B](a: A, b: B) -> (A, B) { (a, b) }\n\n\
+    let issue = "fn id[A](a: take A) -> A { a }\n\nfn takes(n: u8) -> u8 { n }\n\n\
+        fn pair[A, B](a: take A, b: take B) -> (A, B) { (a, b) }\n\n\
         fn main() ! console, alloc {\n  y: u8 = id(7)\n  (r, s): (u8, i32) = pair(3, 4)\n  \
         k: u8 = 200\n  print(\"{y} {r} {s} {takes(id(7))} {wrapping_add(k, id(5))}\")\n}\n";
     let program = lower(issue.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));

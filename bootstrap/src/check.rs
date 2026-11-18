@@ -619,6 +619,10 @@ struct Scope {
     /// mistake. Whatever it would allow is allowed, so nothing it explains
     /// is reported.
     invalid: Vec<bool>,
+    /// Whether a bound or a `requires` line says that each type parameter has
+    /// `Copy`, and the same for `Discard`. Nothing else is known of one.
+    copy: Vec<bool>,
+    discard: Vec<bool>,
 }
 
 /// Whether `expr` is a whole number literal that an `i64` holds.
@@ -4647,7 +4651,7 @@ impl<'a> Checker<'a> {
             ownership::check(
                 self.defs,
                 &self.types,
-                (view.f, view.scope),
+                (view.f, view.scope, &view.params),
                 &mut self.errors,
             );
         }

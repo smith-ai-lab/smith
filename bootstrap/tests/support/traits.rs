@@ -1601,7 +1601,15 @@ fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites) {
     if let (Some(f), Some(Kind::LacksFn)) = (site, b.kind) {
         b.mark(format!("`{}`", t.fns[f].name), None);
     }
-    b.push(&format!("{}[{}] {{\n", t.name, args.join(", ")));
+    b.push(&format!("{}[{}]", t.name, args.join(", ")));
+    if names.is_empty() {
+        b.push(" {\n");
+    } else {
+        for name in &names {
+            b.push(&format!("\n  requires Copy[{name}]\n  requires Discard[{name}]"));
+        }
+        b.push("\n{\n");
+    }
     let ctx_names: Vec<&str> = names.clone();
     for (func, f) in t.fns.iter().enumerate() {
         let here = site == Some(func);
@@ -1718,7 +1726,16 @@ fn function(b: &mut Builder, m: &Model, f: usize, reached: bool, sites: &Sites) 
     if def.console {
         b.push(" ! console");
     }
-    b.push(" {\n");
+    // Nothing is known of a type parameter but what its bounds say, so the
+    // body may copy, drop and return its values only when each is `Copy` and `Discard`.
+    if def.generics.is_empty() {
+        b.push(" {\n");
+    } else {
+        for name in &names {
+            b.push(&format!("\n  requires Copy[{name}]\n  requires Discard[{name}]"));
+        }
+        b.push("\n{\n");
+    }
     statements(b, m, &def.body, &names, "  ", reached);
     if f == 0 {
         main_statement(b, m, sites);
@@ -1822,8 +1839,6 @@ fn main_statement(b: &mut Builder, m: &Model, sites: &Sites) {
                 ("impl ", "Copy[Rock] {}"),
                 ("impl ", "Discard[Rock] {}"),
                 ("trait ", "Copy[T] {\n  fn copy(x: T) -> T\n}"),
-                ("fn spare[T: ", "Copy](a: T) -> str { \"a\" }"),
-                ("fn spare[T: ", "Discard](a: T) -> str { \"a\" }"),
             ]));
             if b.last.is_some_and(|(before, _)| before.starts_with("fn")) {
                 b.push("  print(spare(\"b\"))\n");
@@ -2133,7 +2148,7 @@ pub fn requires_for_bounds(source: &str) -> String {
     for line in source.lines() {
         let generic = line.starts_with("impl[")
             || (line.starts_with("fn ") && line.split('(').next().is_some_and(|h| h.contains('[')));
-        let (Some(open), true) = (line.find('['), generic && line.ends_with(" {")) else {
+        let (Some(open), true) = (line.find('['), generic) else {
             out.push_str(line);
             out.push('\n');
             continue;
@@ -2157,10 +2172,20 @@ pub fn requires_for_bounds(source: &str) -> String {
         }
         out.push_str(&line[..open]);
         out.push_str(&format!("[{}]", plain.join(", ")));
-        out.push_str(&line[close + 1..line.len() - 2]);
-        out.push('\n');
-        out.push_str(&needs.concat());
-        out.push_str("{\n");
+        match line.strip_suffix(" {") {
+            Some(head) => {
+                out.push_str(&head[close + 1..]);
+                out.push('\n');
+                out.push_str(&needs.concat());
+                out.push_str("{\n");
+            }
+            // The lines that follow, which end in the brace, are `requires`.
+            None => {
+                out.push_str(&line[close + 1..]);
+                out.push('\n');
+                out.push_str(&needs.concat());
+            }
+        }
     }
     out
 }

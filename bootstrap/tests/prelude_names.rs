@@ -138,7 +138,7 @@ fn program(kind: usize, name: &str, mistake: bool) -> String {
             format!("print(\"{{{name}(3)}}\")"),
         ),
         _ => (
-            format!("fn pass[{name}](x: {name}) -> {name} {{\n  x\n}}\n"),
+            format!("fn pass[{name}](x: take {name}) -> {name} {{\n  x\n}}\n"),
             "print(\"{pass(3)}\")".to_string(),
         ),
     };
