@@ -1,0 +1,21 @@
+struct Box[T] {
+  item: T
+}
+
+trait Named[T] {
+  fn convert(x: T) -> T
+}
+
+impl Named[str] {
+  fn convert(x: str) -> str {
+    x
+  }
+}
+
+fn main() ! console {
+  print(f1("", Box(item: "")))
+}
+
+fn f1[T: str](a: T, b: Box[str]) -> T ! console {
+  Box(item: convert(a)).item
+}

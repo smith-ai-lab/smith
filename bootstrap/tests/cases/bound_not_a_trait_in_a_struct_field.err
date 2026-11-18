@@ -1,0 +1,3 @@
+bound_not_a_trait_in_a_struct_field.smith:19:10: `str` is not a trait
+  19 | fn f1[T: str](a: T, b: Box[str]) -> T ! console {
+     |          ^

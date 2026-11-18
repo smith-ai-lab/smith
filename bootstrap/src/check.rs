@@ -5219,6 +5219,7 @@ impl<'a> Checker<'a> {
         let mut given = vec![false; def.fields.len()];
         let mut by_position = false;
         let before = self.errors.len();
+        let mut unknown = false;
         for arg in &call.args {
             if let Expr::Lambda(l) = &arg.value {
                 self.errors.push(Error::new(
@@ -5240,6 +5241,7 @@ impl<'a> Checker<'a> {
                 None => Want::Ty(Ty::Unknown),
             };
             let gives = self.expr(body, &arg.value, &wanted);
+            unknown |= gives.unknown();
             match &arg.name {
                 None => {
                     if !by_position {
@@ -5291,6 +5293,7 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         }
         if self.errors.len() == before
+            && !unknown
             && let Some(g) = sol.iter().position(Option::is_none)
         {
             self.errors.push(Error::new(
