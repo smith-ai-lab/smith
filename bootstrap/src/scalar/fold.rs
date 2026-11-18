@@ -11,7 +11,7 @@
 
 use super::eval::{binary, bits_of, compare, mask, narrow, widen};
 use super::graph::{self, jumps};
-use super::{Constant, End, Function, Instruction, Op, Program, Type, Value};
+use super::{Binary, Constant, End, Function, Instruction, Op, Program, Type, Value};
 
 /// The program with every instruction whose inputs are all constants
 /// replaced by a constant, and every choice on a constant made.
@@ -89,9 +89,30 @@ fn folded(f: &Function) -> Function {
                     known[result.0] = Some(n & mask(bits_of(ty)));
                     None
                 }
-                Op::Binary { op, a, b } if matches!(ty, Type::Int(_)) => {
+                Op::Binary { op, a, b } => {
+                    // An operation that leaves its first value as it was.
+                    let leaves = matches!(
+                        (op, known[b.0]),
+                        (
+                            Binary::Add
+                                | Binary::Sub
+                                | Binary::Or
+                                | Binary::Xor
+                                | Binary::ShiftLeft
+                                | Binary::ShiftRightU
+                                | Binary::ShiftRightS,
+                            Some(0)
+                        ) | (Binary::Mul, Some(1))
+                    );
+                    if leaves {
+                        sub[result.0] = *a;
+                        known[result.0] = known[a.0];
+                        continue;
+                    }
                     match (known[a.0], known[b.0]) {
-                        (Some(x), Some(y)) => Some(binary(*op, bits_of(ty), x, y)),
+                        (Some(x), Some(y)) if matches!(ty, Type::Int(_)) => {
+                            Some(binary(*op, bits_of(ty), x, y))
+                        }
                         _ => None,
                     }
                 }
