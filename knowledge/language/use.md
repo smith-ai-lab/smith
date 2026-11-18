@@ -8,7 +8,10 @@ built:
   - "an error at its place, with a fix where there is one, for a module that does not exist, a name the module lacks, a name listed twice, a name listed from two modules, a name the file defines or the prelude holds, a second `use` of one module, and a `use` below another item"
   - "a warning from `smith check`, at the name, for a name that is imported and never used"
   - "only the modules a `use` names are read, and the same executable is built with and without an import"
-  - "not a name used and not imported, which is still in scope as it was, so the examples of the other pages are still written without their `use` lines; nor `as`, a project's own modules, `pub` in a program, or importing a module by its name"
+  - "`use m (a, b)` for a module of a project, written `db.transaction` for the file `db/transaction.smith` below the folder the command ran in, listing the names the module writes with `pub`, which the module may itself take from others with its own `use`, each file read once and only when a `use` names it"
+  - "an error at its place for a `use` of a file that does not exist, of a name the module keeps private, of a name it does not define, and of modules that import each other in a ring no order builds, and for a `use` of the file that is built"
+  - "a file that no `use` reaches is never read by `smith build` or `smith run`, and `smith check` with no file named reads it and says what its syntax and its `use` lines say"
+  - "not a name used and not imported from the standard library, which is still in scope as it was, so the examples of the other pages are still written without their `use` lines; nor `as`, `pub` in the file that is built, or importing a module by its name"
   - "a function, struct, enum, trait, or `impl` of a module of the standard library whose source is Smith is compiled when a program reaches it, as one of the program's own file is, so the library can be written in Smith; the library's names that the compiler builds, as [the compiler's design](../compiler.md#bootstrap) says, are still supplied by it, because effect declarations are not built"
 ---
 

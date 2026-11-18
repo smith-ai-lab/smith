@@ -24,8 +24,9 @@ pub struct Error {
     pub message: String,
     /// What to write instead, when the compiler knows.
     pub fix: Option<String>,
-    /// The module of the standard library the place is in, when it is not in
-    /// the file that was compiled.
+    /// The module the place is in, when it is not in the file that was
+    /// compiled: the name of a module of the standard library, or the path of
+    /// the file of a module of a project.
     pub module: Option<String>,
 }
 
@@ -76,6 +77,19 @@ pub fn text(source: &[u8]) -> String {
 /// place, what is wrong, the line of source with a mark under the place, and
 /// a `fix:` line when it has advice. The result ends with a line break.
 pub fn render(file: &str, source: &[u8], errors: &[Error]) -> String {
+    render_with(file, source, errors, &|module| {
+        crate::library_text(module).to_string()
+    })
+}
+
+/// `render`, with the text of the module an error is in given by `module_text`,
+/// which is asked for the name or path the error holds.
+pub fn render_with(
+    file: &str,
+    source: &[u8],
+    errors: &[Error],
+    module_text: &dyn Fn(&str) -> String,
+) -> String {
     let text = text(source);
     let lines: Vec<&str> = text.split('\n').collect();
     let file: String = file.chars().map(shown).collect();
@@ -86,14 +100,20 @@ pub fn render(file: &str, source: &[u8], errors: &[Error]) -> String {
         let (file, lines) = match &error.module {
             Some(module) => (
                 module.chars().map(shown).collect::<String>(),
-                crate::library_text(module).split('\n').collect(),
+                module_text(module)
+                    .split('\n')
+                    .map(str::to_string)
+                    .collect::<Vec<String>>(),
             ),
-            None => (file.clone(), lines.clone()),
+            None => (
+                file.clone(),
+                lines.iter().map(|l| l.to_string()).collect::<Vec<String>>(),
+            ),
         };
         out.push_str(&format!("{file}:{line}:{col}: {message}\n"));
         let number = line.to_string();
         let gutter = " ".repeat(number.len());
-        let source_line = lines.get(line - 1).copied().unwrap_or("");
+        let source_line = lines.get(line - 1).map_or("", String::as_str);
         let shown_line: String = source_line.chars().map(shown).collect();
         let indent: String = source_line
             .chars()

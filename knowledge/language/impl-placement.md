@@ -2,7 +2,7 @@
 type: specification
 title: Where an impl lives
 description: An impl is not imported, it is visible everywhere, and it lives in the module that defines the trait or the type.
-status: planned
+status: built
 ---
 
 # Where an impl lives

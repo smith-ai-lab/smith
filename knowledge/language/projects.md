@@ -5,6 +5,7 @@ description: A folder as a project, its root and entry, the names of its modules
 status: partial
 built:
   - "the entry, `main.smith` or a named file, and the name of the executable"
+  - "the folder the command ran in as the root, whose files are the modules, named by their paths; not a `project.smith` above it"
 ---
 
 # Projects

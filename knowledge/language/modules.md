@@ -2,7 +2,7 @@
 type: specification
 title: Modules
 description: A file as a module, and how its path gives the module its name.
-status: planned
+status: built
 ---
 
 # Modules
