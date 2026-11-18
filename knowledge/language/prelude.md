@@ -28,7 +28,7 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 | --- | --- |
 | `i8` to `i64`, `u8` to `u64`, the float types, `bool`, `str`, `Nat` | A literal, and the size of an array |
 | `List` | A list written in brackets, as `[1, 2, 3]` |
-| `Option`, `Result`, and `Try` with its `then` | `try` |
+| `Option`, `Result`, `Flow` with its two types, and `Try` with its `split` | `try` |
 | `Order`, `Eq`, and `Ord`, with `eq` and `compare` | `==`, `!=`, `<`, `<=`, `>`, and `>=` |
 | `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Pow`, and `Neg`, with their functions | The arithmetic operators |
 | `Index`, with `valid` and `at` | `x[i]` |

@@ -1272,6 +1272,10 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
                 Form::Not => format!("not ({})", written_with(s, &m.of)),
                 Form::And => format!("({}) and ({})", written_with(s, &m.of), side(0)),
                 Form::Or => format!("({}) or ({})", written_with(s, &m.of), side(1)),
+                Form::Try => match &m.of {
+                    Expr::Call(split) => format!("try {}", written_with(s, &split.args[0].value)),
+                    of => format!("try {}", written_with(s, of)),
+                },
             }
         }
         Expr::Tuple { items, .. } => {
@@ -5528,6 +5532,7 @@ impl<'a> Checker<'a> {
                 }
                 self.fit(body, p, &gives, pattern, &mut sol, vars);
             }
+            (Some(pattern), None) if pattern.solved(&sol) == Ty::Nothing => {}
             (Some(pattern), None) => {
                 let holds = defs.describe_pattern(pattern, &sol, vars, body.scope);
                 let message = format!("`.{name}` holds {holds}, and none is given");
@@ -5565,11 +5570,17 @@ impl<'a> Checker<'a> {
     fn match_expr(&mut self, body: &mut Body<'a>, m: &Match, want: &Want) -> Ty {
         let defs = self.defs;
         match m.form {
-            Form::Match => {}
+            Form::Match | Form::Try => {}
             Form::If { otherwise } => return self.if_expr(body, m, otherwise, want),
             Form::Not | Form::And | Form::Or => return self.logic(body, m),
         }
-        let of = self.expr(body, &m.of, &Want::Any);
+        // What `try` splits is what the function it is written in gives
+        // when it leaves.
+        let split = match m.form {
+            Form::Try => Want::Ty(Ty::Enum(defs.flow, vec![Ty::Unknown, body.returns.clone()])),
+            _ => Want::Any,
+        };
+        let of = self.expr(body, &m.of, &split);
         let outer = body.names.len();
         let vars = body.vars.len();
         let known = body.facts.mark();
@@ -6244,6 +6255,9 @@ impl<'a> Checker<'a> {
                     (Some(holds), Some(inner)) => {
                         let inner = self.pattern(body, inner, &holds.subst(args), binds, None)?;
                         Some(Pat::Case(k, Some(Box::new(inner))))
+                    }
+                    (Some(holds), None) if holds.subst(args) == Ty::Nothing => {
+                        Some(Pat::Case(k, Some(Box::new(Pat::Any))))
                     }
                     (Some(holds), None) => {
                         self.errors.push(

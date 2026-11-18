@@ -471,6 +471,10 @@ pub enum Form {
     And,
     /// `a or b`, whose blocks give `true` for `.true` and `b` for `.false`.
     Or,
+    /// `try e`, which matches what `Try.split(e)` gives: the block of `.go`
+    /// gives the value it holds, and that of `.stop` returns the one it
+    /// holds.
+    Try,
 }
 
 /// A pattern of a `match` and the block that runs when it matches.
@@ -635,7 +639,6 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
         errors: Vec::new(),
         unbuilt: Vec::new(),
         no_lambda: false,
-        hoisted: Vec::new(),
         binds: Vec::new(),
         modules: Vec::new(),
         qualified: Vec::new(),
@@ -852,6 +855,51 @@ fn truth(name: &str, pos: Pos) -> Vec<Stmt> {
     })]
 }
 
+/// `try operand`, with `try` at `pos`: what `operand` splits into goes on
+/// with the value of `.go`, and leaves the function with that of `.stop`.
+fn split(pos: Pos, operand: Expr) -> Expr {
+    let go = format!("try@{}:{}", pos.line, pos.col);
+    let stop = format!("stop@{}:{}", pos.line, pos.col);
+    let name = |name: &String| Expr::Name {
+        name: name.clone(),
+        pos,
+    };
+    let case = |case: &str, held: &String, body: Expr| Arm {
+        pattern: Pattern::Case {
+            name: case.to_string(),
+            pos,
+            inner: Some(Box::new(Pattern::Bind {
+                name: held.clone(),
+                pos,
+                var: None,
+            })),
+        },
+        body: vec![Stmt::Expr(body)],
+        end: pos,
+    };
+    let leave = Expr::Return {
+        value: Some(Box::new(name(&stop))),
+        pos,
+    };
+    Expr::Match(Box::new(Match {
+        pos,
+        of: Expr::Call(Call {
+            qualifier: Some(("Try".to_string(), pos)),
+            callee: "split".to_string(),
+            pos,
+            name_pos: pos,
+            args: vec![Arg {
+                name: None,
+                value: operand,
+                after: false,
+            }],
+            end: pos,
+        }),
+        arms: vec![case("go", &go, name(&go)), case("stop", &stop, leave)],
+        form: Form::Try,
+    }))
+}
+
 /// `not operand`, with `not` at `pos`.
 fn negated(pos: Pos, operand: Expr) -> Expr {
     let at = operand.pos();
@@ -937,10 +985,6 @@ struct Parser<'a> {
     /// after the value of a `match`, rather than a lambda. Inside
     /// parentheses and braces it opens a lambda again.
     no_lambda: bool,
-    /// The operands of the `try`s read in the statement being parsed, each
-    /// with where its `try` is and the name that stands for what it holds,
-    /// in the order they run.
-    hoisted: Vec<Hoisted>,
     /// The bindings that take apart the parameters of the function whose
     /// signature was read last that are written as patterns, in order. They
     /// open its body.
@@ -950,19 +994,6 @@ struct Parser<'a> {
     modules: Vec<(String, String)>,
     /// The names written with the name of one of those before them.
     qualified: Vec<Qualified>,
-}
-
-/// The operand of a `try` and the name that stands for the value it
-/// continues with, or a part of the statement that runs before a `try`
-/// and the name it is bound to.
-struct Hoisted {
-    pos: Pos,
-    operand: Expr,
-    name: String,
-    /// Whether the operand is only bound to the name, because a `try` after
-    /// it in the statement must run after it, and not the operand of a
-    /// `try`.
-    bind: bool,
 }
 
 /// A line of a block: a statement, or a `with`.
@@ -1546,84 +1577,9 @@ impl Parser<'_> {
         Ok((name, pos, generics, params, result, result_name, effects))
     }
 
-    /// Parses the value of a default, which holds no `try`: it is not a
-    /// block to pass the rest of.
+    /// Parses the value of a default.
     fn default(&mut self) -> Result<Expr, Error> {
-        let value = self.expr()?;
-        match self.hoisted.pop() {
-            Some(h) => Err(Error::unsupported(h.pos, "`try` in a default")),
-            None => Ok(value),
-        }
-    }
-
-    fn no_spill<T>(_: &mut Self, _: &mut [T], _: usize) {}
-
-    /// A `try` was read after these expressions, which are written before it
-    /// and so run before it: what in them has an effect is bound to a name
-    /// before the `try`'s operand runs.
-    fn spill_exprs(&mut self, items: &mut [Expr], mark: usize) {
-        let mut at = mark;
-        for item in items {
-            self.spill(item, &mut at);
-        }
-    }
-
-    /// Binds what in the expression has an effect to a name, in the place
-    /// `at` of the operands that run before the statement, and leaves the
-    /// name where it was. A case, a tuple, and a field are not bound as a
-    /// whole, but what they hold is, as an expression of its own kind is
-    /// bound with no type written for it. Every kind of expression is named
-    /// here, so one added later must say what it does.
-    fn spill(&mut self, e: &mut Expr, at: &mut usize) {
-        match e {
-            Expr::Call(_) | Expr::Interp { .. } | Expr::Match(_) => {
-                let pos = e.pos();
-                let name = format!("spill@{}:{}#{}", pos.line, pos.col, *at);
-                let operand = std::mem::replace(
-                    e,
-                    Expr::Name {
-                        name: name.clone(),
-                        pos,
-                    },
-                );
-                self.hoisted.insert(
-                    *at,
-                    Hoisted {
-                        pos,
-                        operand,
-                        name,
-                        bind: true,
-                    },
-                );
-                *at += 1;
-            }
-            Expr::Case {
-                payload: Some(p), ..
-            } => self.spill(p, at),
-            Expr::Tuple { items, .. } | Expr::List { items, .. } => {
-                for item in items {
-                    self.spill(item, at);
-                }
-            }
-            Expr::Index { of, index, .. } => {
-                self.spill(of, at);
-                self.spill(index, at);
-            }
-            Expr::Field { of, .. } => self.spill(of, at),
-            Expr::Arith { left, right, .. } => {
-                self.spill(left, at);
-                self.spill(right, at);
-            }
-            Expr::Text { .. }
-            | Expr::Number { .. }
-            | Expr::Unbuilt { .. }
-            | Expr::Name { .. }
-            | Expr::Case { payload: None, .. }
-            | Expr::Lambda(_)
-            | Expr::Loop(_)
-            | Expr::Break { .. }
-            | Expr::Return { .. } => {}
-        }
+        self.expr()
     }
 
     /// Parses a tuple pattern where a name is introduced: a parameter, or
@@ -1635,7 +1591,7 @@ impl Parser<'_> {
             Tok::Keyword("var") => self.pattern(),
             Tok::Punct("(") => {
                 let pos = self.pos();
-                let items = self.list(Self::binder, Self::no_spill)?;
+                let items = self.list(Self::binder)?;
                 match items.len() {
                     0 => Err(Error::new(pos, "expected a pattern, found `()`")),
                     1 => Err(Error::unsupported(pos, "one pattern in parentheses")),
@@ -1717,13 +1673,10 @@ impl Parser<'_> {
         if self.tok() != &Tok::Punct("(") {
             return Err(self.expected("`(` and the function type's parameters", self.tok()));
         }
-        let marked = self.list(
-            |p| {
-                let take = p.taking();
-                Ok((take, p.ty()?))
-            },
-            Self::no_spill,
-        )?;
+        let marked = self.list(|p| {
+            let take = p.taking();
+            Ok((take, p.ty()?))
+        })?;
         let (takes, mut args): (Vec<bool>, Vec<Type>) = marked.into_iter().unzip();
         if self.tok() == &Tok::Punct("->") {
             self.bump();
@@ -1820,7 +1773,7 @@ impl Parser<'_> {
             Tok::Punct("[") => self.array_type(pos),
             Tok::Keyword("fn") => Ok(self.function_type()?.0),
             Tok::Punct("(") => {
-                let mut args = self.list(Self::ty, Self::no_spill)?;
+                let mut args = self.list(Self::ty)?;
                 if self.tok() == &Tok::Punct("->") {
                     let tuple = Type {
                         name: String::new(),
@@ -1856,12 +1809,8 @@ impl Parser<'_> {
 
     /// Parses the items of a tuple, separated by commas, from its `(`
     /// through its `)`. There may be none.
-    fn list<T>(
-        &mut self,
-        item: fn(&mut Self) -> Result<T, Error>,
-        spill: fn(&mut Self, &mut [T], usize),
-    ) -> Result<Vec<T>, Error> {
-        self.list_until(")", item, spill)
+    fn list<T>(&mut self, item: fn(&mut Self) -> Result<T, Error>) -> Result<Vec<T>, Error> {
+        self.list_until(")", item)
     }
 
     /// Parses items separated by commas, from the bracket that opens them
@@ -1870,10 +1819,9 @@ impl Parser<'_> {
         &mut self,
         close: &'static str,
         item: fn(&mut Self) -> Result<T, Error>,
-        spill: fn(&mut Self, &mut [T], usize),
     ) -> Result<Vec<T>, Error> {
         let no_lambda = std::mem::replace(&mut self.no_lambda, false);
-        let items = self.list_items(close, item, spill);
+        let items = self.list_items(close, item);
         self.no_lambda = no_lambda;
         items
     }
@@ -1882,7 +1830,6 @@ impl Parser<'_> {
         &mut self,
         close: &'static str,
         item: fn(&mut Self) -> Result<T, Error>,
-        spill: fn(&mut Self, &mut [T], usize),
     ) -> Result<Vec<T>, Error> {
         self.bump();
         self.skip_newlines();
@@ -1892,12 +1839,7 @@ impl Parser<'_> {
             return Ok(items);
         }
         loop {
-            let mark = self.hoisted.len();
-            let one = item(self)?;
-            if self.hoisted.len() > mark {
-                spill(self, &mut items, mark);
-            }
-            items.push(one);
+            items.push(item(self)?);
             self.skip_newlines();
             match self.tok() {
                 Tok::Punct(",") => {
@@ -1940,58 +1882,13 @@ impl Parser<'_> {
     }
 
     /// Parses a statement and the line break or `}` after it, and adds it
-    /// to the block. A `with`, and each `try` the statement holds, passes
-    /// the rest of the block to a call.
+    /// to the block. A `with` passes the rest of the block to a call.
     fn statement_into(&mut self, block: &mut Block) -> Result<(), Error> {
-        let outer = std::mem::take(&mut self.hoisted);
-        let stmt = self.statement_line();
-        let hoisted = std::mem::replace(&mut self.hoisted, outer);
-        let stmt = stmt?;
-        for h in hoisted {
-            if h.bind {
-                block.inner.push(Stmt::Define {
-                    name: h.name,
-                    pos: h.pos,
-                    ty: None,
-                    var: false,
-                    value: h.operand,
-                });
-                continue;
-            }
-            block.wrap(Wrapper {
-                call: Call {
-                    qualifier: Some(("Try".to_string(), h.pos)),
-                    callee: "then".to_string(),
-                    pos: h.pos,
-                    name_pos: h.pos,
-                    args: vec![Arg {
-                        name: None,
-                        value: h.operand,
-                        after: false,
-                    }],
-                    end: h.pos,
-                },
-                pos: h.pos,
-                params: vec![(h.name, h.pos)],
-                lead: Vec::new(),
-            });
-        }
-        match stmt {
+        match self.statement_line()? {
             Line::With(wrapper) => block.wrap(wrapper),
-            // A `try` with nothing to bind gives a value nothing reads,
-            // unless it ends the block.
-            Line::Stmt(Stmt::Expr(Expr::Name { name, .. }))
-                if name.starts_with("try@") && !self.ends_block() => {}
             Line::Stmt(stmt) => block.inner.push(stmt),
         }
         Ok(())
-    }
-
-    /// Whether the block ends after the line break at the token.
-    fn ends_block(&self) -> bool {
-        let rest = &self.tokens[self.at..];
-        let next = rest.iter().find(|t| t.tok != Tok::Newline);
-        next.is_some_and(|t| t.tok == Tok::Punct("}"))
     }
 
     fn statement_line(&mut self) -> Result<Line, Error> {
@@ -2220,7 +2117,9 @@ impl Parser<'_> {
     fn either(&mut self) -> Result<Expr, Error> {
         let mut left = self.both()?;
         while self.tok() == &Tok::Keyword("or") {
-            let right = self.right_side("or", Self::both)?;
+            self.bump();
+            self.skip_newlines();
+            let right = self.both()?;
             left = logic(Form::Or, left, right);
         }
         Ok(left)
@@ -2230,32 +2129,12 @@ impl Parser<'_> {
     fn both(&mut self) -> Result<Expr, Error> {
         let mut left = self.negation()?;
         while self.tok() == &Tok::Keyword("and") {
-            let right = self.right_side("and", Self::negation)?;
+            self.bump();
+            self.skip_newlines();
+            let right = self.negation()?;
             left = logic(Form::And, left, right);
         }
         Ok(left)
-    }
-
-    /// Parses the right side of `and` or `or`, from the operator, with
-    /// `side`. It runs only when the left side has not settled the answer,
-    /// and a `try` in it would pass on the rest of the statement before the
-    /// left side runs, so it is not built yet.
-    fn right_side(
-        &mut self,
-        word: &str,
-        side: fn(&mut Self) -> Result<Expr, Error>,
-    ) -> Result<Expr, Error> {
-        self.bump();
-        self.skip_newlines();
-        let mark = self.hoisted.len();
-        let right = side(self)?;
-        if let Some(h) = self.hoisted[mark..].iter().find(|h| !h.bind) {
-            return Err(Error::unsupported(
-                h.pos,
-                &format!("`try` on the right side of `{word}`"),
-            ));
-        }
-        Ok(right)
     }
 
     /// Parses `not` before what it covers, or a comparison.
@@ -2464,17 +2343,10 @@ impl Parser<'_> {
             Tok::Keyword("try") => {
                 self.bump();
                 let operand = self.operand()?;
-                let name = format!("try@{}:{}", pos.line, pos.col);
-                self.hoisted.push(Hoisted {
-                    pos,
-                    operand,
-                    name: name.clone(),
-                    bind: false,
-                });
-                return Ok(Expr::Name { name, pos });
+                return Ok(split(pos, operand));
             }
             Tok::Punct("(") => {
-                let mut items = self.list(Self::expr, Self::spill_exprs)?;
+                let mut items = self.list(Self::expr)?;
                 if items.len() == 1 {
                     items.pop().expect("one")
                 } else {
@@ -2609,13 +2481,20 @@ impl Parser<'_> {
                 let mut inner = None;
                 if self.tok() == &Tok::Punct("(") {
                     self.bump();
-                    inner = Some(Box::new(self.pattern()?));
+                    // `.a(())` is `.a`, as a case that holds `()` holds
+                    // nothing.
+                    if self.tok() == &Tok::Punct("(") && self.next_tok() == &Tok::Punct(")") {
+                        self.bump();
+                        self.bump();
+                    } else {
+                        inner = Some(Box::new(self.pattern()?));
+                    }
                     self.expect_punct(")", "`)`")?;
                 }
                 Ok(Pattern::Case { name, pos, inner })
             }
             Tok::Punct("(") => {
-                let items = self.list(Self::pattern, Self::no_spill)?;
+                let items = self.list(Self::pattern)?;
                 match items.len() {
                     0 => Err(Error::new(pos, "expected a pattern, found `()`")),
                     1 => Err(Error::unsupported(pos, "one pattern in parentheses")),
@@ -2899,15 +2778,7 @@ impl Parser<'_> {
             if self.tok() == &Tok::Punct(")") {
                 break;
             }
-            let mark = self.hoisted.len();
-            let one = self.arg()?;
-            if self.hoisted.len() > mark {
-                let mut at = mark;
-                for earlier in args.iter_mut() {
-                    self.spill(&mut earlier.value, &mut at);
-                }
-            }
-            args.push(one);
+            args.push(self.arg()?);
             self.skip_newlines();
             match self.tok() {
                 Tok::Punct(",") => {

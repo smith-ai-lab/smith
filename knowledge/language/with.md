@@ -87,15 +87,10 @@ fn greeting() -> str ! alloc {
 
 `greeting()` is `hello Ana`.
 
-Here `then` runs its lambda on what a `Result` holds, and only when it holds one. `Result` and `then` are the prelude's. Written out, they are:
+Here `on_ok` is a function the page defines. It runs its lambda on what a `Result` holds, and only when it holds one. `Result` is the prelude's.
 
 ```
-enum Result[T, E] {
-  ok: T
-  err: E
-}
-
-fn then[T, U, E](r: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
+fn on_ok[T, U, E](r: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
   match r {
     .ok(x) { body(x) }
     .err(e) { .err(e) }
@@ -103,12 +98,12 @@ fn then[T, U, E](r: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
 }
 ```
 
-With them, a function that takes two steps reads in a line each:
+With it, a function that takes two steps reads in a line each:
 
 ```
 fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
-  with x = then(parse_int(a))
-  with y = then(parse_int(b))
+  with x = on_ok(parse_int(a))
+  with y = on_ok(parse_int(b))
   .ok((x, y))
 }
 ```
@@ -116,14 +111,14 @@ fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
 The body of `parse_pair` means exactly this:
 
 ```
-then(parse_int(a)) fn(x) {
-  then(parse_int(b)) fn(y) {
+on_ok(parse_int(a)) fn(x) {
+  on_ok(parse_int(b)) fn(y) {
     .ok((x, y))
   }
 }
 ```
 
-If `parse_int(a)` is an `.err`, `then` gives that `.err` without calling the lambda, so `y` is never parsed.
+If `parse_int(a)` is an `.err`, `on_ok` gives that `.err` without calling the lambda, so `y` is never parsed. [`try`](try.md) is not another way to write this: it leaves the function, and the lines after it are no lambda.
 
 ## The last parameter
 

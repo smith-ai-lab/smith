@@ -596,7 +596,7 @@ impl<'a> Checker<'a> {
                         if holds { either(a, b) } else { both(a, b) }
                     }
                     Form::Match => self.said_order(body, facts, m, holds),
-                    Form::If { .. } => None,
+                    Form::If { .. } | Form::Try => None,
                 }
             }
             Expr::Call(call)
@@ -1120,7 +1120,7 @@ fn written_contract(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
                 };
                 format!("{} {op} {}", side(&c.args[0].value), side(&c.args[1].value))
             }
-            Form::If { .. } => written_with(s, e),
+            Form::If { .. } | Form::Try => written_with(s, e),
         },
         Expr::Call(c) if c.callee == "eq" && c.args.len() == 2 => {
             format!("{} == {}", side(&c.args[0].value), side(&c.args[1].value))
@@ -1237,7 +1237,7 @@ impl<'a> Checker<'a> {
                     let mut facts = Facts::default();
                     self.said(body, &mut facts, e, true).is_some()
                 }
-                Form::If { .. } => false,
+                Form::If { .. } | Form::Try => false,
             },
             Expr::Name { name, .. } => name == "true" || name == "false",
             _ => {

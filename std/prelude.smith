@@ -19,9 +19,9 @@ enum Order {
   greater
 }
 
-enum Flow {
-  go
-  stop
+enum Flow[T = (), R = ()] {
+  go: T
+  stop: R
 }
 
 struct Utf8Error {
@@ -77,32 +77,32 @@ impl[T: Exit, E: Fmt] Exit[Result[T, E]] {
 }
 
 trait Try[C, R, out T] {
-  fn then(c: C, body: fn(T) -> R) -> R
+  fn split(c: take C) -> Flow[T, R]
 }
 
 impl[T, U, E] Try[Result[T, E], Result[U, E], T] {
-  fn then(c: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
+  fn split(c: take Result[T, E]) -> Flow[T, Result[U, E]] {
     match c {
-      .ok(x) { body(x) }
-      .err(e) { .err(e) }
+      .ok(x) { .go(x) }
+      .err(e) { .stop(.err(e)) }
     }
   }
 }
 
 impl[T, U] Try[Option[T], Option[U], T] {
-  fn then(c: Option[T], body: fn(T) -> Option[U]) -> Option[U] {
+  fn split(c: take Option[T]) -> Flow[T, Option[U]] {
     match c {
-      .some(x) { body(x) }
-      .none { .none }
+      .some(x) { .go(x) }
+      .none { .stop(.none) }
     }
   }
 }
 
-impl Try[Flow, Flow, ()] {
-  fn then(c: Flow, body: fn(()) -> Flow) -> Flow {
+impl[T, U, R] Try[Flow[T, R], Flow[U, R], T] {
+  fn split(c: take Flow[T, R]) -> Flow[T, Flow[U, R]] {
     match c {
-      .go { body(()) }
-      .stop { .stop }
+      .go(x) { .go(x) }
+      .stop(r) { .stop(.stop(r)) }
     }
   }
 }

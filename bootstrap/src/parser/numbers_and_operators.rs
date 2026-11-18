@@ -128,24 +128,17 @@ impl Parser<'_> {
     }
 
     /// Parses the right side of an arithmetic operator, from the operator,
-    /// with `side`, and gives the operation. A `try` in the right side
-    /// passes on the rest of the statement, so what is to its left runs
-    /// before it.
+    /// with `side`, and gives the operation.
     pub(super) fn arith(
         &mut self,
         op: ArithOp,
-        mut left: Expr,
+        left: Expr,
         side: fn(&mut Self) -> Result<Expr, Error>,
     ) -> Result<Expr, Error> {
         let op_pos = self.pos();
         self.bump();
         self.skip_newlines();
-        let mark = self.hoisted.len();
         let right = side(self)?;
-        if self.hoisted.len() > mark {
-            let mut at = mark;
-            self.spill(&mut left, &mut at);
-        }
         Ok(Expr::Arith {
             op,
             left: Box::new(left),
@@ -158,7 +151,7 @@ impl Parser<'_> {
     /// `!=` follows. A comparison takes no other comparison as an operand
     /// unless it is in parentheses.
     pub(super) fn comparison(&mut self) -> Result<Expr, Error> {
-        let mut left = self.sum()?;
+        let left = self.sum()?;
         let op = match self.tok() {
             Tok::Punct(op @ ("==" | "!=" | "<" | "<=" | ">" | ">=")) => *op,
             _ => return Ok(left),
@@ -166,16 +159,11 @@ impl Parser<'_> {
         let op_pos = self.pos();
         self.bump();
         self.skip_newlines();
-        let mark = self.hoisted.len();
         let right = if self.tok() == &Tok::Keyword("not") {
             self.negation()?
         } else {
             self.sum()?
         };
-        if self.hoisted.len() > mark {
-            let mut at = mark;
-            self.spill(&mut left, &mut at);
-        }
         if let Tok::Punct("==" | "!=" | "<" | "<=" | ">" | ">=") = self.tok() {
             return Err(Error::new(
                 self.pos(),

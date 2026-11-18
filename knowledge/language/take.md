@@ -36,15 +36,13 @@ No part of a lent value is returned either, and there is no exception. The check
 
 ## A function that hands on what it is given
 
-A function that gives back what it was passed, or passes it to a lambda that keeps it, takes it. A function type marks a parameter `take` as a function does. `then`, which [`try`](try.md) is made of, is such a function: it gives the failure back and passes the value to its lambda.
+A function that gives back what it was passed, or passes it to a lambda that keeps it, takes it. A function type marks a parameter `take` as a function does. `lend_once` passes its key to its lambda, which keeps it, so the parameter of the lambda's type is marked.
 
 ```
-trait Try[C, R, out T] {
-  fn then(c: take C, body: fn(take T) -> R) -> R
-}
+fn lend_once(k: take Key, body: fn(take Key) -> u64) -> u64 { body(k) }
 ```
 
-A `try` gives `then` a value nothing else holds, so no call changes. And the lines after `with t = then(begin(db))` own `t`, so they may `commit` it. Until ownership is built, `Try` is written without `take`, as [try](try.md) shows it.
+A call of `lend_once` gives it a key nothing else holds, so the caller may not use it again. And the lines after `with k = lend_once(key)` own `k`, so they may give it away, as `uniform(k)` does. A function that is made of such a call, as the `split` of [`try`](try.md) is, takes what it splits.
 
 ## A function that is called once
 

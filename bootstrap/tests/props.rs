@@ -165,8 +165,12 @@ pub const ONCE: &[Test] = &[
         the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_print,
     ),
     (
-        "a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean",
-        a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean,
+        "a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means",
+        a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means,
+    ),
+    (
+        "a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match",
+        a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match,
     ),
     (
         "every_placed_mistake_about_with_and_try_is_one_error_at_its_place",
@@ -529,24 +533,35 @@ fn the_evaluator_says_what_the_generator_built_a_program_with_with_and_try_to_pr
 }
 
 /// `with x = f(args)` and the rest of the block mean `f(args) fn(x) { the
-/// rest }`, `with f(args)` means `f(args) { the rest }`, and `x = try e`
-/// means `with x = then(e)`, so the programs written each way build to the
-/// same bytes.
-fn a_program_with_with_and_try_builds_to_the_bytes_of_the_lambdas_they_mean() {
+/// rest }`, and `with f(args)` means `f(args) { the rest }`, so the programs
+/// written each way build to the same bytes.
+fn a_program_with_with_builds_to_the_bytes_of_the_lambdas_it_means() {
     let targets = targets::buildable();
     generate::check(41, 6, tries::program, |case| {
         let source = case.source.as_bytes();
         let program = lower(source).unwrap_or_else(|e| panic!("{e:?}"));
-        for (name, other) in [("with", &case.with_form), ("lambdas", &case.lambdas)] {
-            let written = lower(other.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {other}"));
-            assert!(program == written, "differs from the {name} form\n{other}");
-        }
+        let written = lower(case.lambdas.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(program == written, "differs from the lambdas form\n{}", case.lambdas);
         for &target in &targets {
             let bytes = compile(source, target).unwrap_or_else(|e| panic!("{e:?}"));
             let other =
                 compile(case.lambdas.as_bytes(), target).unwrap_or_else(|e| panic!("{e:?}"));
             assert!(bytes == other, "{} differs", target.name());
         }
+    });
+}
+
+/// `try e` goes on with what `e` splits into when it goes, and returns from
+/// the function with what it splits into when it stops, so the program that
+/// writes each `try` out as that `match` prints what the one with `try` does.
+fn a_program_with_try_prints_what_it_prints_with_each_try_written_out_as_the_match() {
+    generate::check(44, 110, tries::program, |case| {
+        let program = lower(case.matched.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(scalar::run(&program), expected, "{}", case.matched);
     });
 }
 

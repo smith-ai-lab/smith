@@ -18,7 +18,6 @@ pub enum Part {
 /// text.
 fn interpolated(
     tokens: &[Token],
-    hoisted: &mut Vec<Hoisted>,
     modules: &[(String, String)],
     qualified: &mut Vec<Qualified>,
 ) -> Result<Expr, Error> {
@@ -28,7 +27,6 @@ fn interpolated(
         errors: Vec::new(),
         unbuilt: Vec::new(),
         no_lambda: false,
-        hoisted: Vec::new(),
         binds: Vec::new(),
         modules: modules.to_vec(),
         qualified: Vec::new(),
@@ -37,7 +35,6 @@ fn interpolated(
     if p.at + 1 != tokens.len() {
         return Err(p.expected("`}` to close the expression in the string", p.tok()));
     }
-    hoisted.append(&mut p.hoisted);
     qualified.append(&mut p.qualified);
     let pos = value.pos();
     Ok(Expr::Call(Call {
@@ -63,26 +60,7 @@ impl Parser<'_> {
             match piece {
                 Piece::Text(text) => parts.push(Part::Text(text.clone())),
                 Piece::Expr(tokens) => {
-                    let mark = self.hoisted.len();
-                    let e = interpolated(
-                        tokens,
-                        &mut self.hoisted,
-                        &self.modules,
-                        &mut self.qualified,
-                    )?;
-                    if self.hoisted.len() > mark {
-                        let mut at = mark;
-                        for part in &mut parts {
-                            // The expression is held as the call that
-                            // turns it into text, which is not what runs
-                            // first.
-                            if let Part::Expr(Expr::Call(fmt)) = part {
-                                for arg in &mut fmt.args {
-                                    self.spill(&mut arg.value, &mut at);
-                                }
-                            }
-                        }
-                    }
+                    let e = interpolated(tokens, &self.modules, &mut self.qualified)?;
                     parts.push(Part::Expr(e));
                 }
             }
@@ -92,7 +70,7 @@ impl Parser<'_> {
 
     /// A list written out, `[]` or `[a, b, c]`, starting at the `[` at `pos`.
     pub(super) fn list_literal(&mut self, pos: Pos) -> Result<Expr, Error> {
-        let items = self.list_until("]", Self::expr, Self::spill_exprs)?;
+        let items = self.list_until("]", Self::expr)?;
         Ok(Expr::List { pos, items })
     }
 

@@ -299,12 +299,7 @@ const DOWN: &str = "struct Down {
 
 impl Iterate[Down, i64] {
   fn each(c: Down, body: fn(i64) -> Flow) -> Flow {
-    loop i in 0..c.from {
-      match body(c.from - i) {
-        .stop { return .stop }
-        .go { }
-      }
-    }
+    loop i in 0..c.from { try body(c.from - i) }
     .go
   }
 }
