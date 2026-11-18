@@ -31,7 +31,7 @@ fn utf8(bytes: List[u8]) -> Result[str, Utf8Error]
 
 `utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of a list whose first byte is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`.
 
-A piece of a text is a text. `s[a..b]` is the bytes from `a` up to `b` as a `str`, which shares the memory of `s`, so nothing is copied. Text implements [`Index`](arrays.md) for a range, and its `valid` asks two things: that the range lies inside the text, and that both of its ends fall between characters and not inside one.
+A piece of a text is a text. `s[a..b]` is the bytes from `a` up to `b` as a `str`, which shares the memory of `s`, so nothing is copied. Text implements [`Index`](indexing.md) for a range, and its `valid` asks two things: that the range lies inside the text, and that both of its ends fall between characters and not inside one.
 
 ```
 fn word(source: str, start: Nat, end: Nat) -> Option[str] {

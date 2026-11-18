@@ -26,7 +26,7 @@ fn age_of(m: Map[str, u8], name: str) -> u8 {
 
 - `[]` is the empty map where a map is expected.
 - `insert` gives a map with the value under the key, in place of any value the key had. A map is a value, as a [`List`](list.md) is: when the map it is given is a `var` that is assigned the result, as in `m = insert(m, k, v)`, the map grows in place.
-- `m[key]` is `.some` of the value under the key, or `.none`. A map implements [`Index`](../language/arrays.md) with a `valid` that is `true`, since it answers for every key.
+- `m[key]` is `.some` of the value under the key, or `.none`. A map implements [`Index`](../language/indexing.md) with a `valid` that is `true`, since it answers for every key.
 - `m.size` is the number of entries.
 
 A map keeps its entries in the order their keys were first added. `m.keys` and `m.values` are lists in that order, and the value at a place belongs to the key at the same place. So a walk over a map is a walk over two lists, and it visits the same entries in the same order every time the program runs.

@@ -35,7 +35,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [main.md](main.md): the arguments `main` may take, and the `Exit` trait, which turns what `main` returns into the status a program ends with.
 - [text.md](text.md): a `str` as bytes known to be valid UTF-8, `utf8`, and pieces of a text.
 - [ownership.md](ownership.md): the `Copy` and `Discard` traits, lending and `take`, and values that must be used at most once or exactly once.
-- [arrays.md](arrays.md): arrays whose sizes are part of their types, indices proven to be in range when the program is built, indexing as the `Index` trait, and ranges.
+- [arrays.md](arrays.md): an array as a fixed number of elements of one type, a size that is a `Nat` and may be any name that cannot change, and a `List` as an array kept with its size.
+- [indexing.md](indexing.md): `x[i]`, an index proven to be in range when the program is built, the `Index` trait with its `valid`, and assigning an element.
+- [ranges.md](ranges.md): `a..b`, which excludes `b`, and `x[a..b]`, `x[..k]`, and `x[k..]` as parts of an array.
+- [array-patterns.md](array-patterns.md): a pattern in brackets, which takes an array or a list apart with a pattern for each element.
 - [for.md](for.md): `for` as an unordered description of an array, reductions, the operators of linear algebra, `@`, and the rules for float arithmetic.
 - [loop.md](loop.md): `loop` for steps that run in order, the `Iterate` trait, and `break`.
 - [contracts.md](contracts.md): `requires`, `ensures`, and `check`, what the `arith` procedure can prove, termination, and `hole`.

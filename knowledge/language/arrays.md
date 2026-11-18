@@ -1,52 +1,108 @@
 ---
 type: specification
 title: Arrays and sizes
-description: Arrays whose sizes are part of their types, indices proven to be in range when the program is built, indexing as the Index trait, and ranges.
+description: An array is a fixed number of elements of one type, with its size in its type, where a size is a Nat that may be any name that cannot change, and a List is an array kept together with its size.
 status: partial
-built: "indexing a `List` of whole numbers or `bool`s as `xs[i]`, which compiles when `arith` proves `i < xs.size` from the size of a list written out or given to a name, the range of a `loop`, an `if`, or a `requires` over a list's `size`, where `i` is a whole number of an unsigned type; `size` is a `u64`, as `Nat` is not built; not arrays whose size is in their type, `Index` as a trait a program implements, slices, ranges outside a `loop`, or an element assigned"
+built: "the `size` of a `List`, a `u64`, as `Nat` is not built; not an array type, a size in brackets, or arithmetic on sizes"
 ---
 
 # Arrays and sizes
 
-An array's size is part of its type: `[3]f32` is three floats and `[m, k]f32` is an `m` by `k` matrix. A size is a `Nat`, and it may be any name that cannot change: one in brackets, which the compiler works out from the arguments, an ordinary parameter, a binding, or an earlier field of the same struct. An index is a whole number that is proven, when the program is built, to be below the size, so indexing needs no bounds check.
+An array is a fixed number of elements of one type, and the number is part of its type.
+
+## The type of an array
+
+`[3]f32` is three floats. An array written in brackets, as `[1.0, 2.0, 3.0]`, has that type, as [Literals](literals.md) says.
 
 ```
-fn first_of_three(a: [3]f32) -> f32 { a[0] }
-
-fn entry[m: Nat, k: Nat](a: [m, k]f32, r: Nat, c: Nat) -> f32
-  requires r < m and c < k
-{
-  a[r, c]
-}
-
-fn zeros(n: Nat) -> [n]f32 { for i { 0.0 } }
-
-trait Index[C, I, out T] {
-  fn valid(c: C, i: I) -> bool
-  fn at(c: C, i: I) -> T
-    requires valid(c, i)
-}
+fn pass_on(a: [3]f32) -> [3]f32 { a }
 ```
 
-- Indexing is a trait function, as an operator is: `x[i]` means `at(x, i)` from the `Index` trait above. Any type may implement it, so nothing about an array's brackets is special.
-- `valid` says which indices a container has, and `at` requires it. For an array it is that the index is below the size. So `x[i]` is written with nothing beside it, and it compiles when [`arith`](contracts.md) proves `valid(x, i)` from what is in scope: the array's size, an `if`, the range of a `loop`, or a `requires`, as in `entry`. When it cannot, the compiler states what it needs, such as `i < n`, and the author supplies it. `valid` is used to prove and is never run for an index.
-- A type whose `at` answers for every index, as one that returns an `Option` does, has a `valid` that is `true`.
-- An element of a `var` array is assigned as a field is, as in `a[0] = 1.0`, and only that `var` sees the change.
-- A literal index is checked against the size at compile time, so `a[3]` on a `[3]f32` is a compile error.
-- Arithmetic on sizes inside a type, such as `[n + w - 1]f32`, is exact and has no limit, because it is reasoned about and never computed.
-- A `Nat` that the program holds when it runs is 64 bits on every target. The size of an array that exists always fits. A `Nat` worked out from others, such as `n * 2`, must be shown to fit, like any other integer.
-- A size may be known only when the program runs, as the `n` of `zeros` is. An array that is kept together with its size is a [`List`](../library/list.md).
-- An array is taken apart by a pattern in brackets, with one pattern for each element. It matches a [`List`](../library/list.md) too, when the list has exactly that many elements, so a `match` on a list ends with a bare name. There is no pattern for the rest of a list.
+`pass_on` takes three floats and gives them back. Two arrays have the same type only when their sizes are the same.
+
+A matrix is an array with two sizes written in one pair of brackets. `[m, k]f32` is `m` rows of `k` floats, an `m` by `k` matrix. [Indexing](indexing.md) says how to read one element of it.
+
+## A size is a `Nat`
+
+A size is a `Nat`, and it may be any name that cannot change. There are four places such a name comes from.
+
+- A name in brackets after the function's name, which the compiler works out from the arguments. Here `n` is the size of whatever array is passed.
 
   ```
-  fn name(rgb: [3]u8) -> str {
-    match rgb {
-      [0, 0, 0] { "black" }
-      [255, 255, 255] { "white" }
-      [r, g, b] { "something else" }
-    }
+  fn pass_any[n: Nat](a: [n]f32) -> [n]f32 { a }
+  ```
+
+  `pass_any` takes an array of any size and gives back one of the same size.
+- An ordinary parameter. Here the size is a number the caller gives.
+
+  ```
+  fn zeros(n: Nat) -> [n]f32 { for i { 0.0 } }
+  ```
+
+  `zeros(4)` is four floats, each `0.0`. [`for`](for.md) builds an array of the size the type names.
+- A binding.
+
+  ```
+  fn pair(x: f32) -> [2]f32 {
+    n = 2
+    a: [n]f32 = [x, x]
+    a
   }
   ```
-- A range is `a..b` and excludes `b`. `x[a..b]` has size `b - a`, with `x[..k]` and `x[k..]` as short forms.
+- An earlier field of the same struct. A later field's type may mention it.
 
-Next: [`for` expressions](for.md)
+  ```
+  struct Row {
+    n: Nat
+    cells: [n]f32
+  }
+  ```
+
+A name that can change cannot be a size. [`var`](var.md) names are the ones that can.
+
+## Arithmetic on sizes
+
+A size inside a type may be worked out from others, as in `[n + w - 1]f32`. The arithmetic is exact and has no limit, because it is reasoned about and never computed.
+
+```
+fn widen[n: Nat, w: Nat](a: [n]f32, kernel: [w]f32) -> [n + w - 1]f32
+```
+
+`widen` gives an array of `n + w - 1` floats, so a call with arrays of 5 and 3 gives one of 7.
+
+## A size known only when the program runs
+
+A size may be known only when the program runs, as the `n` of `zeros` is. Whatever the size is, the program holds it as a `Nat`, and a `Nat` that the program holds is 64 bits on every target, so the size of an array that exists always fits.
+
+A `Nat` worked out from others, such as `n * 2`, is an ordinary integer once the program holds it, and it must be shown to fit, as any other integer must.
+
+```
+fn doubled(n: u64) -> u64 { n * 2 }
+```
+
+This is refused, with `u64` standing in for `Nat`: "cannot prove that `n * 2 <= 18446744073709551615`, so `n * 2` may not fit `u64`", with the fix "check the operands first, or use `wrapping_mul`, `saturating_mul`, or `checked_mul`". [Integer arithmetic](arithmetic.md) says how each of these works.
+
+## An array kept with its size
+
+An array that is kept together with its size is a [`List`](../library/list.md). Its size is a field, `size`, which is a `Nat` and so can be read like any other.
+
+```
+fn main() ! console, alloc {
+  xs: List[u8] = [10, 20, 30]
+  print("{xs.size}")
+}
+```
+
+This prints `3`. Where a program is built today, `size` is a `u64`.
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `[3]f32` | Three floats |
+| `[m, k]f32` | An `m` by `k` matrix of floats |
+| `[n]f32` with `n: Nat` in brackets | An array of whatever size the argument has |
+| `[n + w - 1]f32` | An array whose size is worked out from others, exactly |
+| `List[f32]` | Floats kept together with their size |
+
+Next: [Indexing](indexing.md)
