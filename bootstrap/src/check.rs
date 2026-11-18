@@ -623,6 +623,30 @@ fn fits_i64(expr: &Expr) -> bool {
     }
 }
 
+/// Fills in `sol` the type parameters of `pattern` that `given` says, where
+/// `given` is wholly known and holds no whole number whose type is not yet
+/// decided. Nothing is noted of a use, and a mismatch is left to the call.
+fn seed(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) {
+    match (pattern, given) {
+        (Ty::Param(i), given) if sol[*i].is_none() && !given.unknown() && !has_flex(given) => {
+            sol[*i] = Some(given.clone());
+        }
+        (Ty::Param(_), _) => {}
+        (Ty::Struct(s, a), Ty::Struct(t, b)) | (Ty::Enum(s, a), Ty::Enum(t, b)) if s == t => {
+            a.iter().zip(b).for_each(|(a, b)| seed(a, b, sol));
+        }
+        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::List(a), Ty::List(b)) if a.len() == b.len() => {
+            a.iter().zip(b).for_each(|(a, b)| seed(a, b, sol));
+        }
+        _ => {}
+    }
+}
+
+/// Whether a whole number whose type is not yet decided is part of `t`.
+fn has_flex(t: &Ty) -> bool {
+    matches!(t, Ty::Flex(_)) || t.args().iter().any(has_flex)
+}
+
 /// What a caller needs to know of a function.
 struct Signature {
     /// The type parameters its types are written among.
@@ -6155,12 +6179,12 @@ impl<'a> Checker<'a> {
         }
         if is_prelude_call(call, "__eprint") {
             let print = Signature::print();
-            self.arguments(body, call, &print, true, None);
+            self.arguments(body, call, &print, true, None, None);
             return Ty::Nothing;
         }
         if is_prelude_call(call, "__end") {
             let end = Signature::end();
-            self.arguments(body, call, &end, true, None);
+            self.arguments(body, call, &end, true, None, None);
             return Ty::Nothing;
         }
         if is_prelude_call(call, "__convert") {
@@ -6183,7 +6207,7 @@ impl<'a> Checker<'a> {
             if self.effect_in_default(body, call, &print) {
                 return self.unknown_call(body, call);
             }
-            self.arguments(body, call, &print, true, None);
+            self.arguments(body, call, &print, true, None, None);
             return Ty::Nothing;
         }
         if let Some(&f) = defs.function_names.get(name) {
@@ -6192,7 +6216,11 @@ impl<'a> Checker<'a> {
                 return self.unknown_call(body, call);
             }
             let refused = self.refusals;
-            let sol = self.arguments(body, call, sig, false, None);
+            let placed = match want {
+                Want::Ty(t) => Some(t),
+                _ => None,
+            };
+            let sol = self.arguments(body, call, sig, false, None, placed);
             if self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
                 return Ty::Unknown;
             }
@@ -6454,8 +6482,15 @@ impl<'a> Checker<'a> {
         signature: &Signature,
         is_print: bool,
         via: Option<(usize, &Want)>,
+        placed: Option<&Ty>,
     ) -> Vec<Option<Ty>> {
         let vars = &signature.scope;
+        // What the place of the call's result says the type parameters are,
+        // which only a literal that nothing else decides takes.
+        let mut from_place: Vec<Option<Ty>> = vec![None; vars.names.len()];
+        if let Some(t) = placed {
+            seed(&signature.gives, t, &mut from_place);
+        }
         let mut sol: Vec<Option<Ty>> = vec![None; vars.names.len()];
         for effect in &signature.effects {
             self.needs(body, effect, call.pos, &format!("`{}`", call.callee));
@@ -6637,6 +6672,9 @@ impl<'a> Checker<'a> {
             let wanted = match pattern.partial(&sol) {
                 // A whole number that fits an `i64` is one when nothing
                 // decides, with no mistake to report, so it is given its type.
+                t if t.unknown() && !pattern.partial(&from_place).unknown() => {
+                    Want::Ty(pattern.partial(&from_place))
+                }
                 t if t.unknown() && fits_i64(value) => Want::Any,
                 t if t.unknown() && reported => Want::Ty(Ty::Unknown),
                 t if t.unknown() => {
