@@ -232,6 +232,89 @@ impl Asm {
         self.bytes(&[Self::rex_w(rs, rd), 0x29, Self::modrm(rs, rd)]);
     }
 
+    /// `op r64, imm`, sign-extended, for `add` as 0, `or` as 1, `and` as 4,
+    /// `sub` as 5, `xor` as 6, and `cmp` as 7.
+    fn alu_imm(&mut self, op: u8, r: Reg, value: i32) {
+        match i8::try_from(value) {
+            Ok(small) => self.bytes(&[
+                Self::rex_w(RAX, r),
+                0x83,
+                Self::modrm(Reg(op), r),
+                small as u8,
+            ]),
+            Err(_) => {
+                self.bytes(&[Self::rex_w(RAX, r), 0x81, Self::modrm(Reg(op), r)]);
+                self.bytes(&value.to_le_bytes());
+            }
+        }
+    }
+
+    /// A 64-bit instruction with one operand in memory and a register in the
+    /// ModRM reg field: `cmp [place], r` is 0x39, `cmp r, [place]` 0x3b, and
+    /// `imul r, [place], imm32` 0x69 with an immediate after it.
+    fn with_memory(&mut self, opcode: u8, reg: Reg, place: Place) {
+        self.bytes(&[0x48 | (reg.0 >> 3) << 2 | Self::base(place) >> 3, opcode]);
+        self.place(reg, place);
+    }
+
+    /// `cmp qword [place], imm`, sign-extended.
+    fn cmp_memory_imm(&mut self, place: Place, value: i32) {
+        match i8::try_from(value) {
+            Ok(small) => {
+                self.with_memory(0x83, Reg(7), place);
+                self.bytes(&[small as u8]);
+            }
+            Err(_) => {
+                self.with_memory(0x81, Reg(7), place);
+                self.bytes(&value.to_le_bytes());
+            }
+        }
+    }
+
+    /// `imul rd, qword [place], imm32`.
+    fn imul_memory_imm(&mut self, rd: Reg, place: Place, value: i32) {
+        self.with_memory(0x69, rd, place);
+        self.bytes(&value.to_le_bytes());
+    }
+
+    /// `imul rd, rs, imm32`.
+    fn imul_imm(&mut self, rd: Reg, rs: Reg, value: i32) {
+        self.bytes(&[Self::rex_w(rd, rs), 0x69, Self::modrm(rd, rs)]);
+        self.bytes(&value.to_le_bytes());
+    }
+
+    /// `lea rd, [ra + rb]`.
+    fn lea_sum(&mut self, rd: Reg, ra: Reg, rb: Reg) {
+        // rsp cannot be an index, and rbp and r13 as a base need a
+        // displacement, so the sum is taken the other way round or with a
+        // displacement of 0.
+        let (base, index) = if rb.0 == 4 { (rb, ra) } else { (ra, rb) };
+        let rex = 0x48 | (rd.0 >> 3) << 2 | (index.0 >> 3) << 1 | base.0 >> 3;
+        if base.0 & 7 == 5 {
+            self.bytes(&[rex, 0x8d, 0x44 | (rd.0 & 7) << 3, (index.0 & 7) << 3 | 5, 0]);
+        } else {
+            self.bytes(&[
+                rex,
+                0x8d,
+                0x04 | (rd.0 & 7) << 3,
+                (index.0 & 7) << 3 | (base.0 & 7),
+            ]);
+        }
+    }
+
+    /// `lea rd, [rs + disp32]`.
+    fn lea_displaced(&mut self, rd: Reg, rs: Reg, disp: i32) {
+        self.bytes(&[
+            Self::rex_w(rd, rs),
+            0x8d,
+            0x80 | (rd.0 & 7) << 3 | (rs.0 & 7),
+        ]);
+        if rs.0 & 7 == 4 {
+            self.bytes(&[0x24]);
+        }
+        self.bytes(&disp.to_le_bytes());
+    }
+
     /// `cmp r64, imm8`, sign-extended.
     pub fn cmp_imm8(&mut self, r: Reg, value: i8) {
         self.bytes(&[
@@ -589,6 +672,15 @@ struct Writer<'a, S> {
     /// where it keeps what they held.
     saved: Vec<(Reg, u32)>,
     labels: Vec<usize>,
+    /// Which blocks end with a choice between two jumps on a comparison that
+    /// is the last instruction of the block and that nothing else reads. That
+    /// comparison is not made into a value: the branch tests it.
+    branches_on_compare: Vec<bool>,
+    /// The number each value that a constant integer gives is.
+    constants: Vec<Option<u64>>,
+    /// Which values that a constant gives are only ever read as the number in
+    /// an instruction that can hold it, so that nothing makes them.
+    unmade: Vec<bool>,
     system: std::marker::PhantomData<S>,
 }
 
@@ -600,6 +692,7 @@ fn function<S: System>(
     functions: &[usize],
     fail: usize,
 ) {
+    let f = &crate::scalar::rematerialized(f);
     let allocation = alloc::allocate(f, REGISTERS);
     let below = S::RESERVED + frame::outgoing(program, f, REGISTERS.passed);
     let saved_from = round_up(below + allocation.frame, 8);
@@ -622,6 +715,9 @@ fn function<S: System>(
         .map(|(i, r)| (HOMES[*r], saved_from + 8 * i as u32))
         .collect();
     let labels = f.blocks.iter().map(|_| asm.label()).collect();
+    let branches_on_compare = super::branch::on_compare(f);
+    let constants = super::branch::constants(f);
+    let unmade = unmade(f, &constants);
     let w = Writer::<S> {
         program,
         f,
@@ -634,6 +730,9 @@ fn function<S: System>(
         leave,
         saved,
         labels,
+        branches_on_compare,
+        constants,
+        unmade,
         system: std::marker::PhantomData,
     };
     if S::STACK_BY_PAGE && total > PAGE {
@@ -656,14 +755,65 @@ fn function<S: System>(
     w.run(asm, &moves);
     for (b, block) in f.blocks.iter().enumerate() {
         asm.bind(w.labels[b]);
-        for instruction in &block.instructions {
+        let made = block.instructions.len() - usize::from(w.branches_on_compare[b]);
+        for instruction in &block.instructions[..made] {
             w.instruction(asm, &instruction.results, &instruction.op);
         }
         w.end(asm, b);
     }
 }
 
+/// The number an instruction holds in itself in place of its second operand,
+/// when it is a constant that fits 32 bits as the instruction reads it:
+/// sign-extended to 64 bits it is the number the operand stands for.
+fn immediate(f: &Function, constants: &[Option<u64>], op: &Op) -> Option<i32> {
+    let (a, b, signed) = match op {
+        Op::Binary {
+            op: Binary::Add | Binary::Sub | Binary::And | Binary::Or | Binary::Xor | Binary::Mul,
+            a,
+            b,
+        } => (*a, *b, false),
+        Op::Compare { op, a, b } => (*a, *b, matches!(op, Compare::LessS)),
+        _ => return None,
+    };
+    let n = constants[b.0]?;
+    let bytes = size(f.types[a.0]);
+    if bytes == 8 {
+        i32::try_from(n as i64).ok()
+    } else if signed {
+        let shift = 64 - 8 * bytes;
+        i32::try_from(((n << shift) as i64) >> shift).ok()
+    } else {
+        i32::try_from(n).ok()
+    }
+}
+
+/// Which values that a constant gives are only read as the second operand of
+/// an instruction that holds it, so that nothing makes them.
+fn unmade(f: &Function, constants: &[Option<u64>]) -> Vec<bool> {
+    let mut made = vec![false; f.types.len()];
+    for block in &f.blocks {
+        for i in &block.instructions {
+            let held = immediate(f, constants, &i.op).is_some();
+            for (k, v) in i.op.operands().into_iter().enumerate() {
+                made[v.0] |= !(held && k == 1);
+            }
+        }
+        for v in block.end.operands() {
+            made[v.0] = true;
+        }
+    }
+    (0..made.len())
+        .map(|v| constants[v].is_some() && !made[v])
+        .collect()
+}
+
 impl<S: System> Writer<'_, S> {
+    /// The number the instruction holds in itself, if it does.
+    fn immediate(&self, op: &Op) -> Option<i32> {
+        immediate(self.f, &self.constants, op)
+    }
+
     fn width(&self, v: Value) -> u32 {
         size(self.f.types[v.0])
     }
@@ -773,8 +923,9 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
-    fn instruction(&self, asm: &mut Asm, results: &[Value], op: &Op) {
-        match op {
+    fn instruction(&self, asm: &mut Asm, results: &[Value], operation: &Op) {
+        match operation {
+            Op::Constant(_) if self.unmade[results[0].0] => {}
             Op::Constant(c) => {
                 let result = results[0];
                 let t = self.target(result, &[]);
@@ -794,22 +945,13 @@ impl<S: System> Writer<'_, S> {
                 }
                 self.finish(asm, result, t, true);
             }
-            Op::Binary { op, a, b } => self.binary(asm, results[0], *op, *a, *b),
+            Op::Binary { op, a, b } => {
+                let immediate = self.immediate(operation);
+                self.binary(asm, results[0], *op, *a, *b, immediate)
+            }
             Op::Compare { op, a, b } => {
-                let (ra, rb) = if matches!(op, Compare::LessS) {
-                    (
-                        self.read_signed(asm, RAX, *a),
-                        self.read_signed(asm, RCX, *b),
-                    )
-                } else {
-                    (self.read(asm, RAX, *a), self.read(asm, RCX, *b))
-                };
-                asm.cmp(ra, rb);
-                asm.truth(match op {
-                    Compare::Equal => Z,
-                    Compare::LessU => B,
-                    Compare::LessS => L,
-                });
+                let cond = self.compare(asm, op, *a, *b);
+                asm.truth(cond);
                 self.finish(asm, results[0], RAX, true);
             }
             Op::Widen { signed, value } => {
@@ -905,7 +1047,15 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
-    fn binary(&self, asm: &mut Asm, result: Value, op: Binary, a: Value, b: Value) {
+    fn binary(
+        &self,
+        asm: &mut Asm,
+        result: Value,
+        op: Binary,
+        a: Value,
+        b: Value,
+        immediate: Option<i32>,
+    ) {
         let bits = self.width(result) * 8;
         let wide = bits == 64;
         match op {
@@ -949,6 +1099,67 @@ impl<S: System> Writer<'_, S> {
                 asm.shift_cl(n, RAX);
                 self.finish(asm, result, RAX, extended);
             }
+            Binary::Mul if immediate.is_some() => {
+                let t = self.target(result, &[]);
+                match self.at[a.0] {
+                    Loc::Frame(at) if wide => {
+                        asm.imul_memory_imm(t, Place::Frame(at), immediate.unwrap());
+                    }
+                    _ => {
+                        let ra = self.read(asm, RAX, a);
+                        asm.imul_imm(t, ra, immediate.unwrap());
+                    }
+                }
+                self.finish(asm, result, t, false);
+            }
+            Binary::Add | Binary::Sub if immediate.is_some() && wide => {
+                let ra = self.read(asm, RAX, a);
+                let t = self.target(result, &[]);
+                let n = immediate.unwrap();
+                match (op, n.checked_neg()) {
+                    (Binary::Add, _) if t != ra => asm.lea_displaced(t, ra, n),
+                    (Binary::Sub, Some(n)) if t != ra => asm.lea_displaced(t, ra, n),
+                    _ => {
+                        if t != ra {
+                            asm.mov(t, ra);
+                        }
+                        asm.alu_imm(if matches!(op, Binary::Add) { 0 } else { 5 }, t, n);
+                    }
+                }
+                self.finish(asm, result, t, true);
+            }
+            _ if immediate.is_some() => {
+                let t = self.target(result, &[]);
+                self.read_into(asm, t, a);
+                let ext = match op {
+                    Binary::Add => 0,
+                    Binary::Or => 1,
+                    Binary::And => 4,
+                    Binary::Sub => 5,
+                    Binary::Xor => 6,
+                    _ => unreachable!(),
+                };
+                asm.alu_imm(ext, t, immediate.unwrap());
+                self.finish(
+                    asm,
+                    result,
+                    t,
+                    matches!(op, Binary::And | Binary::Xor | Binary::Or),
+                );
+            }
+            Binary::Add if wide => {
+                let ra = self.read(asm, RAX, a);
+                let rb = self.read(asm, RCX, b);
+                let t = self.target(result, &[]);
+                if t == ra {
+                    asm.add(t, rb);
+                } else if t == rb {
+                    asm.add(t, ra);
+                } else {
+                    asm.lea_sum(t, ra, rb);
+                }
+                self.finish(asm, result, t, true);
+            }
             _ => {
                 let b = self.read(asm, RCX, b);
                 let t = self.target(result, &[b]);
@@ -976,20 +1187,98 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
-    /// Makes the jump: gives the block its parameters as if all were copied
-    /// at once, and goes there, unless it is the next block.
-    fn jump(&self, asm: &mut Asm, jump: &crate::scalar::Jump, next: usize) {
+    /// Compares the two values, and gives the condition code under which the
+    /// first is below, or the same as, the second, as the comparison says.
+    fn compare(&self, asm: &mut Asm, op: &Compare, a: Value, b: Value) -> u8 {
+        let signed = matches!(op, Compare::LessS);
+        let cond = match op {
+            Compare::Equal => Z,
+            Compare::LessU => B,
+            Compare::LessS => L,
+        };
+        let held = self.immediate(&Op::Compare { op: *op, a, b });
+        // An integer of 8 bytes in the frame is compared where it is.
+        let in_frame = |v: Value| match self.at[v.0] {
+            Loc::Frame(at) if self.width(v) == 8 => Some(Place::Frame(at)),
+            _ => None,
+        };
+        match (in_frame(a), held, in_frame(b)) {
+            (Some(at), Some(n), _) => asm.cmp_memory_imm(at, n),
+            (Some(at), None, _) if matches!(self.at[b.0], Loc::Register(_)) => {
+                let Loc::Register(rb) = self.at[b.0] else {
+                    unreachable!()
+                };
+                asm.with_memory(0x39, rb, at);
+            }
+            (None, None, Some(at)) if matches!(self.at[a.0], Loc::Register(_)) => {
+                let Loc::Register(ra) = self.at[a.0] else {
+                    unreachable!()
+                };
+                asm.with_memory(0x3b, ra, at);
+            }
+            _ => {
+                let ra = if signed {
+                    self.read_signed(asm, RAX, a)
+                } else {
+                    self.read(asm, RAX, a)
+                };
+                match held {
+                    Some(n) => asm.alu_imm(7, ra, n),
+                    None => {
+                        let rb = if signed {
+                            self.read_signed(asm, RCX, b)
+                        } else {
+                            self.read(asm, RCX, b)
+                        };
+                        asm.cmp(ra, rb);
+                    }
+                }
+            }
+        }
+        cond
+    }
+
+    /// The moves that give the block a jump goes to its parameters.
+    fn jump_moves(&self, jump: &crate::scalar::Jump) -> Vec<Move<Loc>> {
         let target = &self.f.blocks[jump.block];
-        let moves: Vec<Move<Loc>> = (jump.args.iter().zip(&target.params))
+        (jump.args.iter().zip(&target.params))
             .map(|(from, to)| Move {
                 to: self.at[to.0],
                 from: self.at[from.0],
                 width: self.width(*to),
             })
-            .collect();
-        self.run(asm, &moves);
+            .collect()
+    }
+
+    /// Makes the jump: gives the block its parameters as if all were copied
+    /// at once, and goes there, unless it is the next block.
+    fn jump(&self, asm: &mut Asm, jump: &crate::scalar::Jump, next: usize) {
+        self.run(asm, &self.jump_moves(jump));
         if jump.block != next {
             asm.jmp(self.labels[jump.block]);
+        }
+    }
+
+    /// Makes the first jump, or the second when the flags say the condition
+    /// holds. A jump that gives its block nothing to move is the branch
+    /// itself, so the code is one branch and the code of the other jump.
+    fn branch(&self, asm: &mut Asm, cond: u8, jumps: &[crate::scalar::Jump], next: usize) {
+        let [no, yes] = jumps else { unreachable!() };
+        let (moves_no, moves_yes) = (self.jump_moves(no), self.jump_moves(yes));
+        let free = |m: &[Move<Loc>]| moves::sequence(m).is_empty();
+        let (free_no, free_yes) = (free(&moves_no), free(&moves_yes));
+        if free_no && (!free_yes || yes.block == next) {
+            asm.jcc(cond ^ 1, self.labels[no.block]);
+            self.jump(asm, yes, next);
+        } else if free_yes {
+            asm.jcc(cond, self.labels[yes.block]);
+            self.jump(asm, no, next);
+        } else {
+            let skip = asm.label();
+            asm.jcc(cond, skip);
+            self.jump(asm, no, usize::MAX);
+            asm.bind(skip);
+            self.jump(asm, yes, next);
         }
     }
 
@@ -997,6 +1286,20 @@ impl<S: System> Writer<'_, S> {
         let next = block + 1;
         match &self.f.blocks[block].end {
             End::Jump(jump) => self.jump(asm, jump, next),
+            End::Switch { on, jumps } if self.branches_on_compare[block] => {
+                let compare = self.f.blocks[block].instructions.last().unwrap();
+                let Op::Compare { op, a, b } = &compare.op else {
+                    unreachable!()
+                };
+                debug_assert_eq!(compare.results, [*on]);
+                let cond = self.compare(asm, op, *a, *b);
+                self.branch(asm, cond, jumps, next);
+            }
+            End::Switch { on, jumps } if jumps.len() == 2 => {
+                let on = self.read(asm, RAX, *on);
+                asm.cmp_imm8(on, 0);
+                self.branch(asm, NE, jumps, next);
+            }
             End::Switch { on, jumps } => {
                 // Each jump but the last is chosen by comparing the number
                 // with its place, and the last is made when none was.
