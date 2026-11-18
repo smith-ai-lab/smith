@@ -7,6 +7,7 @@ built:
   - "`std.json`, which a program imports with `use std.json (to_json, to_json_as, Json)`, with `to_json` and `to_json_as` of any value that has `Serialize` and the `Json`, `Cases`, and `Names` of the settings, written in Smith from `Serialize` and `Writer` alone"
   - "every shape of the table below, a case of an enum as a key and as a tag, and `Names.camel`"
   - "not a float, which waits for `f64`, and not a `Map`, which is not built"
+  - "not the refusal of a tag that is also a member: `to_json_as` gives a `str` today, and writes the member twice"
 ---
 
 # JSON
@@ -95,12 +96,35 @@ enum Names {
 | A struct | The struct's members after the tag, `{"type":"circle","radius":2}` |
 | Anything else | The value under `value`, `{"type":"square","value":4}` |
 
+**A tag that is also a member is refused.** An object has each name once, so the tag's name may not be the name of another member of the same object. `to_json_as` gives a `Result`, and the error says which enum, which case, and which name.
+
+```
+struct Clash {
+  of: str
+  case: str
+  member: str
+}
+
+fn to_json_as[T: Serialize](value: T, json: Json) -> Result[str, Clash] ! alloc
+```
+
+```
+struct Circle {
+  type: str
+  radius: u64
+}
+
+to_json_as(Shape.circle(Circle(type: "round", radius: 2)), Json(cases: .tag("type"), names: .written))
+```
+
+This is `.err(Clash(of: "Shape", case: "circle", member: "type"))`: the struct's field `type` would be written beside the tag `type`. The name compared is the one that is written, so with `Names.camel` a field `my_tag` clashes with `.tag("myTag")`. A case that holds anything but a struct is written under `value`, so `.tag("value")` clashes with every such case. The first clash met ends the writing, and no text is given. `to_json` writes no tag, has no clash, and gives a `str`.
+
 **`Names.camel`** writes a field's name with each `_` taken out and the letter after it in upper case, so `input_schema` is `inputSchema`. A `_` stays where the byte before it is `_` or the byte after it is not a lower case letter, so `x_`, `a__b`, and `a_1` are written as they are and `_x` is `X`. No two names of lower case letters, digits, and `_` are written alike. The names of cases are written as they are.
 
 ```
 mcp = Json(cases: .tag("type"), names: .camel)
 
-fn reply(c: Content) -> str ! alloc { to_json_as(c, mcp) }
+fn reply(c: Content) -> Result[str, Clash] ! alloc { to_json_as(c, mcp) }
 ```
 
 The settings hold for the whole value that is written. A type that needs another form writes its own `impl` of `Serialize`, as [Serialize](serialize.md#writing-it-yourself) shows, and no type carries a setting of its own.
@@ -110,4 +134,4 @@ The settings hold for the whole value that is written. A type that needs another
 | Written | Is |
 | --- | --- |
 | `to_json(x)` | The JSON of `x`, with a case as a key and names as written |
-| `to_json_as(x, Json(cases: .tag("type"), names: .camel))` | The JSON of `x`, with the case under `type` and names in camel case |
+| `to_json_as(x, Json(cases: .tag("type"), names: .camel))` | `.ok` of the JSON of `x`, with the case under `type` and names in camel case, or `.err` of the first `Clash` |
