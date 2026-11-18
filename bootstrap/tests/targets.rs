@@ -202,7 +202,7 @@ pub fn record_for_every_target(source: &[u8]) {
 
 /// Builds a program in the scalar form for `target`, and checks that its executable does what `said` says, or, for a
 /// fingerprint, notes both.
-fn scalar_runs_as(program: &scalar::Program, target: Target, said: &Outcome) {
+pub fn scalar_runs_as(program: &scalar::Program, target: Target, said: &Outcome) {
     let bytes = target.emit(program);
     if fingerprinting() {
         record(target, &[&bytes, &said.stdout, &said.status.to_le_bytes()]);
