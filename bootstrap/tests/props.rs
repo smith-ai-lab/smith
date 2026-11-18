@@ -1107,7 +1107,7 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ("", "struct C { x: str = \"a\" }", None),
         ("fn d(a: str = ", ") {}", Some("an expression")),
         ("", "struct B {\n  x: f32\n}", None),
-        ("", "use std.console (input)", Some("not supported yet")),
+        ("", "use std.console", Some("not supported yet")),
         ("", ")", Some("definition")),
         ("", "fn f() ! console { print(\"a\") }", None),
         ("fn g()\n{\n  x = ", "1.5\n}", Some("not supported yet")),

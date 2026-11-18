@@ -47,6 +47,84 @@ use traits::{
     impls_for, needs_named, overlaps, prelude_trait, split_needs, withouts,
 };
 
+include!(concat!(env!("OUT_DIR"), "/std_modules.rs"));
+
+/// The effects a module of the standard library exports that its source does
+/// not declare, because effect declarations are not built: the module, and
+/// the effect. The compiler holds this fact until they are.
+const LIBRARY_EFFECTS_EXPORTED: &[(&str, &str)] = &[("console", "console")];
+
+/// The names that are in scope in every file with no `use`, as the page of
+/// the prelude lists them, which a `use` is refused for.
+const PRELUDE_LISTED: &[&str] = &[
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "f16",
+    "bf16",
+    "f32",
+    "f64",
+    "bool",
+    "str",
+    "Nat",
+    "List",
+    "Option",
+    "Result",
+    "Try",
+    "then",
+    "Order",
+    "Eq",
+    "Ord",
+    "eq",
+    "compare",
+    "Add",
+    "Sub",
+    "Mul",
+    "Div",
+    "Rem",
+    "Pow",
+    "Neg",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "rem",
+    "pow",
+    "neg",
+    "Index",
+    "valid",
+    "at",
+    "Iterate",
+    "each",
+    "Flow",
+    "Exit",
+    "exit",
+    "Fmt",
+    "Repr",
+    "fmt",
+    "repr",
+    "Convert",
+    "convert",
+    "Hash",
+    "Copy",
+    "Discard",
+    "FromInt",
+    "FromFloat",
+    "FromString",
+    "FromArray",
+    "alloc",
+    "spawn",
+    "gpu",
+    "diverge",
+    "foreign",
+    "exec",
+];
+
 /// The effects the standard library declares, other than `console`.
 const LIBRARY_EFFECTS: &[&str] = &["fs", "net", "time", "ui"];
 
@@ -1152,8 +1230,10 @@ pub struct Checked {
 /// error is reported, except one that a mistake already reported would
 /// explain.
 pub fn check(file: File) -> Result<Checked, Vec<Error>> {
-    let file = split_needs(with_prelude(file));
     let mut errors = Vec::new();
+    let mut import_warnings = Vec::new();
+    imports(&file, &mut errors, &mut import_warnings);
+    let file = split_needs(with_prelude(file));
 
     // The first definition of a name holds it, and a later one is a
     // mistake. Types and functions have names of their own, and the
@@ -1569,8 +1649,145 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     let program = to_scalar::lower(&typed, start);
     Ok(Checked {
         program,
-        warnings: warnings(&file, &reached),
+        warnings: {
+            let mut all = warnings(&file, &reached);
+            all.extend(import_warnings);
+            all
+        },
     })
+}
+
+/// The names a module of the standard library exports: those its source
+/// writes with `pub`, and the effects the compiler holds for it.
+fn library_exports(module: &str) -> Option<Vec<String>> {
+    let source = library_source(module)?;
+    let mut tokens = crate::lexer::lex(source.as_bytes()).expect("the library lexes");
+    for t in &mut tokens {
+        t.pos.line = 0;
+    }
+    let file = crate::parser::parse_library(&tokens).expect("the library parses");
+    let mut names = file.exports;
+    for (m, effect) in LIBRARY_EFFECTS_EXPORTED {
+        if *m == module {
+            names.push(effect.to_string());
+        }
+    }
+    Some(names)
+}
+
+/// Checks the `use` lines of the file: each names a module of the standard
+/// library and lists names it exports, once each, none of which the file
+/// defines or the prelude holds, and no name comes from two modules. Only the
+/// modules the lines name are read. A name that is listed and never written
+/// in the file is a warning.
+fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
+    let defined: HashSet<&str> = (file.functions.iter().map(|f| f.name.as_str()))
+        .chain(file.structs.iter().map(|s| s.name.as_str()))
+        .chain(file.enums.iter().map(|e| e.name.as_str()))
+        .chain(file.traits.iter().flat_map(|t| {
+            std::iter::once(t.name.as_str()).chain(t.functions.iter().map(|f| f.name.as_str()))
+        }))
+        .collect();
+    let mut modules: Vec<String> = Vec::new();
+    let mut taken: Vec<(String, String)> = Vec::new();
+    for u in &file.uses {
+        let written: Vec<&str> = u.module.iter().map(|(n, _)| n.as_str()).collect();
+        let module = written.join(".");
+        let at = u.module[0].1;
+        let exports = match written.as_slice() {
+            ["std", m] => library_exports(m),
+            _ => None,
+        };
+        let Some(exports) = exports else {
+            let known: Vec<String> = LIBRARY_MODULES
+                .iter()
+                .map(|m| format!("`std.{m}`"))
+                .collect();
+            errors.push(
+                Error::new(at, format!("there is no module `{module}`"))
+                    .with_fix(format!("import from one of {}", known.join(", "))),
+            );
+            continue;
+        };
+        if modules.contains(&module) {
+            errors.push(
+                Error::new(
+                    at,
+                    format!("`{module}` is already listed by an earlier `use`"),
+                )
+                .with_fix(format!(
+                    "list every name from `{module}` in its first `use`"
+                )),
+            );
+            continue;
+        }
+        modules.push(module.clone());
+        let mut listed: Vec<&str> = Vec::new();
+        for (name, pos) in &u.names {
+            let name = name.as_str();
+            let error = if listed.contains(&name) {
+                Some(
+                    Error::new(*pos, format!("`{name}` is listed twice from `{module}`"))
+                        .with_fix(format!("list `{name}` once")),
+                )
+            } else if defined.contains(name) {
+                Some(
+                    Error::new(
+                        *pos,
+                        format!(
+                            "`{name}` is imported, and this file defines it: a name means one thing"
+                        ),
+                    )
+                    .with_fix(format!(
+                        "rename the definition, or delete `{name}` from the `use`"
+                    )),
+                )
+            } else if PRELUDE_LISTED.contains(&name) {
+                Some(
+                    Error::new(
+                        *pos,
+                        format!("`{name}` is in the prelude, so it needs no `use`"),
+                    )
+                    .with_fix(format!("delete `{name}` from the `use`")),
+                )
+            } else if !exports.iter().any(|e| e == name) {
+                let mut error = Error::new(*pos, format!("`{module}` has no name `{name}`"));
+                let home = LIBRARY_MODULES
+                    .iter()
+                    .find(|m| library_exports(m).is_some_and(|e| e.iter().any(|e| e == name)));
+                if let Some(home) = home {
+                    error = error.with_fix(format!("write `use std.{home} ({name})`"));
+                }
+                Some(error)
+            } else if let Some((_, from)) = taken.iter().find(|(n, _)| n == name) {
+                Some(
+                    Error::new(
+                        *pos,
+                        format!("`{name}` is listed from `{from}` and from `{module}`: a name means one thing"),
+                    )
+                    .with_fix(format!("delete `{name}` from one of them")),
+                )
+            } else {
+                None
+            };
+            listed.push(name);
+            match error {
+                Some(error) => errors.push(error),
+                None => {
+                    taken.push((name.to_string(), module.clone()));
+                    if !file.written.contains(name) {
+                        warnings.push(
+                            Error::new(
+                                *pos,
+                                format!("`{name}` is imported from `{module}` and never used"),
+                            )
+                            .with_fix(format!("delete `{name}` from the `use`")),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A warning for each definition `main` does not reach, at its name, and

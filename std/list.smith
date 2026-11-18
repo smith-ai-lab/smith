@@ -1,0 +1,3 @@
+pub fn push[T](list: List[T], item: T) -> List[T] ! alloc {
+  __push(list, item)
+}

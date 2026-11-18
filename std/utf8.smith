@@ -1,0 +1,7 @@
+pub struct Utf8Error {
+  at: u64
+}
+
+pub fn utf8(bytes: List[u8]) -> Result[str, Utf8Error] {
+  __utf8(bytes)
+}
