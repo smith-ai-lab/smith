@@ -1,0 +1,3 @@
+eq_written.smith:6:6: `==` means that two values are the same value, so `Eq` is given to a type and is not written; a looser comparison is a function with its own name
+  6 | impl Eq[Cat] {
+    |      ^

@@ -4,6 +4,7 @@ title: Comparisons
 description: == and != through the Eq trait, <, <=, >, and >= through the Ord trait, and the laws every implementation keeps.
 status: partial
 built:
+  - "An `impl Eq[T]` that a program writes is refused"
   - "`==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every integer type has"
 ---
 
@@ -47,6 +48,14 @@ This prints `yes`, `yes`, `no`, and `yes`.
 The two sides must have the same type unless an `impl` relates them. `tom == 3` is refused: "this is a number, where a `Cat` is needed".
 
 `==` means that two values are the same value, and it means nothing else. So a program does not write `Eq` for a type: the `Eq` a type has is the one it is given, which compares it part by part, as [Traits a type is given](automatic-traits.md) describes. An `impl Eq[Cat]` is refused.
+
+```
+impl Eq[Cat] {
+  fn eq(a: Cat, b: Cat) -> bool { a.age == b.age }
+}
+```
+
+This is refused: "`==` means that two values are the same value, so `Eq` is given to a type and is not written; a looser comparison is a function with its own name".
 
 A comparison that is looser than "the same" is a function with a name of its own.
 
