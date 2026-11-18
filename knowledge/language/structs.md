@@ -136,11 +136,25 @@ This prints `1 2 4 3`. A field with no default still has to be given: `Margin()`
 
 ## At the top level of a file
 
-A definition that is not a function may sit at the top level of a file, outside every function. Here `unit` is a `Rect` that any function of the file can read.
+A value may be defined at the top level of a file, outside every function. Here `unit` is a `Rect` that any function of the file can read.
 
 ```
 unit = Rect(w: 1, h: 1)
 ```
+
+A top-level value is fixed. It is worked out when the program is built and kept in the executable, so it costs nothing when the program starts, and it cannot be assigned, as no name that is not a `var` can.
+
+It is made of literals, structs, enums, tuples, lists, other top-level values, and calls of functions that carry no effect. A list is allowed, though building one in a function needs `alloc`, since here the compiler builds it.
+
+```
+keywords = ["fn", "if", "else", "loop", "match"]
+
+fn area(r: Rect) -> i64 { r.w * r.h }
+
+unit_area = area(unit)
+```
+
+A top-level value that needs an effect is refused: one that prints, reads a file, or calls a function that carries `diverge`. So is one that is defined by itself, directly or through another. What a program must do when it starts, it does in `main`, where its effects are in the signature. What a build must read from the project's files, a [build step](build-steps.md) reads.
 
 ## The forms
 
@@ -151,5 +165,6 @@ unit = Rect(w: 1, h: 1)
 | `S(a: e)` | A `S` whose field `a` is `e`, every field named |
 | `s.a` | The field `a` of `s` |
 | `s.a = e` | Replaces the field `a` of the `var` `s` |
+| `x = e` at the top level | A fixed value, worked out when the program is built, from what carries no effect |
 
 Next: [Tuples](tuples.md)
