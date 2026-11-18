@@ -23,11 +23,13 @@ Each arithmetic operator has one trait, and the trait has one function.
 | `a ^ b` | `pow(a, b)` | `Pow` |
 | `-a` | `neg(a)` | `Neg` |
 
-The six that take two operands have one shape: the types of the two operands, and the type of the result, which they fix.
+The six that take two operands have one shape: the types of the two operands, and the type of the result, which they fix. Each has two functions: `valid`, which says for which operands the operator has an answer, and the function that gives it, which requires `valid`.
 
 ```
 trait Add[A, B = A, out C = A] {
+  fn valid(a: A, b: B) -> bool
   fn add(a: A, b: B) -> C
+    requires valid(a, b)
 }
 ```
 
@@ -35,7 +37,9 @@ trait Add[A, B = A, out C = A] {
 
 ```
 trait Neg[A, out C = A] {
+  fn valid(a: A) -> bool
   fn neg(a: A) -> C
+    requires valid(a)
 }
 ```
 
@@ -52,19 +56,36 @@ struct Rect {
 }
 
 impl Add[Rect] {
+  fn valid(a: Rect, b: Rect) -> bool { Add.valid(a.w, b.w) and Add.valid(a.h, b.h) }
   fn add(a: Rect, b: Rect) -> Rect { Rect(w: a.w + b.w, h: a.h + b.h) }
 }
 ```
 
+Two `Rect`s are added when both of their sides are, so `valid` says that, and with it known the two `+` inside `add` are proven.
+
 Now `unit + unit` is a `Rect`, and it means `add(unit, unit)`. The operator is the form that is written, and the call of `add` is accepted because `add` is an ordinary trait function.
 
 ```
-fn twice[T: Add](x: T) -> T { x + x }
+fn twice[T: Add](x: T) -> T
+  requires Add.valid(x, x)
+{
+  x + x
+}
 
 big = twice(unit)
 ```
 
 A type with no `impl` of `Add` has no `+`. `x + x` in `twice` is allowed only because `T` is bound by `Add`, as [Bounds and `requires`](bounds.md) says.
+
+## When an operator has an answer
+
+An operator compiles only where its `valid` is proven, as `x[i]` compiles only where the `valid` of [`Index`](indexing.md#indexing-is-a-trait) is. `valid` is used to prove, and is never run for an operator.
+
+- For a whole number type, `valid` of `Add`, `Sub`, and `Mul` is that the answer fits the type, which is the rule of [Integer arithmetic](arithmetic.md): nothing overflows silently, and nothing is checked at run time. `valid` of `Div` and `Rem` is that the second operand is not zero, and that the answer fits.
+- For a float, `valid` is `true`, as a float has an answer for every pair.
+- For a type of a program's own, it is what its `impl` says, as `Rect` above.
+
+Inside a function with a type parameter nothing is known of `T`, so nothing proves that `x + x` has an answer. The function says so in a `requires`, as `twice` does, and each caller proves it for the type it calls with. `twice(200)` with a `u8` is refused where it is called, as `200 + 200` written there would be. Without the `requires`, `twice` itself is refused at its `+`. Operators through traits are not built, so no words are quoted.
 
 ## Operands of different types
 
@@ -101,7 +122,7 @@ This is the `impl` written out field by field, and it is the short way to write 
 
 | Written | Is |
 | --- | --- |
-| `a + b` | `Add.add(a, b)` |
+| `a + b` | `Add.add(a, b)`, which compiles where `Add.valid(a, b)` is proven |
 | `a - b`, `a * b`, `a / b`, `a % b`, `a ^ b` | `Sub.sub`, `Mul.mul`, `Div.div`, `Rem.rem`, `Pow.pow`, each shaped as `Add` is |
 | `-a` | `Neg.neg(a)` |
 | `impl Add[Rect] { ... }` | `+` for two `Rect`s |
