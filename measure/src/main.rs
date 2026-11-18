@@ -1,10 +1,14 @@
 //! Times the two programs that decide how fast a Smith program is, a loop
 //! that pushes to a list and the lexer in `compiler/lexer.smith`, and the Rust
-//! lexer on the same inputs. It prints one line for each program, each
-//! implementation, and each size, with the time for each push or each byte.
-//! Run it with `sh measure/run.sh`, which times the compiler in
-//! `bootstrap/target/release`, or set `SMITH` to the path of another compiler. It needs the compiler built in
-//! `bootstrap/target/release`, which `run.sh` builds. Nothing here is a test.
+//! lexer on the same inputs, and how fast the compiler builds. It prints one
+//! line for each program, each implementation, and each size, with the time
+//! for each push or each byte, and for `build` the time of each stage of a
+//! build. Run it with `sh measure/run.sh`, which times the compiler in
+//! `bootstrap/target/release`, or set `SMITH` to the path of another
+//! compiler. It needs the compiler built in `bootstrap/target/release`, which
+//! `run.sh` builds. Nothing here is a test.
+
+mod build;
 
 use std::hint::black_box;
 use std::io::Read;
@@ -23,7 +27,7 @@ const GIVE_UP: Duration = Duration::from_secs(30);
 const LONG_ENOUGH: Duration = Duration::from_millis(30);
 
 /// How many times an executable is run, and the least is kept.
-const RUNS: usize = 5;
+pub(crate) const RUNS: usize = 5;
 
 /// One piece of Smith source, repeated to make the input of the lexer. It
 /// holds names, keywords, numbers, a string, a comment, and punctuation.
@@ -52,6 +56,9 @@ fn main() {
     if wants("lexer") {
         lex(&smith, &work, lexer_source);
     }
+    if wants("build") {
+        build::run(&smith, &work, &root);
+    }
     std::fs::remove_dir_all(&work).ok();
 }
 
@@ -78,31 +85,49 @@ fn push(smith: &Path, work: &Path) {
 }
 
 fn lex(smith: &Path, work: &Path, lexer_source: &str) {
-    let piece: Vec<String> = PIECE.bytes().map(|b| b.to_string()).collect();
-    let piece = piece.join(", ");
     for size in SIZES {
-        let pieces = size / PIECE.len();
-        let bytes = pieces * PIECE.len();
-        let input: Vec<u8> = PIECE.as_bytes().repeat(pieces);
-        let program = |reps: usize, body: &str| {
-            format!(
-                "{lexer_source}\nfn piece() -> List[u8] ! alloc {{\n  [{piece}]\n}}\n\nfn main() ! console, alloc {{\n  p = piece()\n  var last: Nat = 0\n  loop k in 0..{reps} {{\n    var src: List[u8] = []\n    loop r in 0..{pieces} {{\n      loop j in 0..p.size {{ src = push(src, p[j]) }}\n    }}\n    {body}\n  }}\n  print(\"{{last}}\")\n}}\n"
-            )
-        };
-        let lexing = "match lex(src) {\n      .ok(tokens) { last = tokens.size }\n      .err(errors) { last = 0 }\n    }";
-        let tokens = smith::count_tokens(&input).expect("the input lexes");
-        let (time, reps) = smith_time(smith, work, "lexer", &tokens.to_string(), |reps| {
-            (program(reps, lexing), program(reps, "last = src.size"))
-        });
-        let rust = per_run(|| {
-            black_box(smith::count_tokens(black_box(&input)).ok());
-        });
+        let (bytes, tokens, time, reps) = lex_at(smith, work, lexer_source, size);
         println!(
             "check lexer size={bytes} tokens={tokens} (the Smith lexer prints the same count)"
         );
         report("lexer", "smith", bytes, "byte", reps, time);
+        let rust = per_run(|| {
+            black_box(smith::count_tokens(black_box(&lexer_input(size).1)).ok());
+        });
         report("lexer", "rust", bytes, "byte", 1, Some(rust));
     }
+}
+
+/// The input of the lexer of about `size` bytes: how many pieces it is, and
+/// its bytes.
+pub(crate) fn lexer_input(size: usize) -> (usize, Vec<u8>) {
+    let pieces = size / PIECE.len();
+    (pieces, PIECE.as_bytes().repeat(pieces))
+}
+
+/// The Smith lexer on an input of about `size` bytes: the bytes, the tokens
+/// the Rust lexer finds in them, and the time of one lexing of them with the
+/// rounds a run is of.
+pub(crate) fn lex_at(
+    smith: &Path,
+    work: &Path,
+    lexer_source: &str,
+    size: usize,
+) -> (usize, usize, Option<Duration>, usize) {
+    let piece: Vec<String> = PIECE.bytes().map(|b| b.to_string()).collect();
+    let piece = piece.join(", ");
+    let (pieces, input) = lexer_input(size);
+    let program = |reps: usize, body: &str| {
+        format!(
+            "{lexer_source}\nfn piece() -> List[u8] ! alloc {{\n  [{piece}]\n}}\n\nfn main() ! console, alloc {{\n  p = piece()\n  var last: Nat = 0\n  loop k in 0..{reps} {{\n    var src: List[u8] = []\n    loop r in 0..{pieces} {{\n      loop j in 0..p.size {{ src = push(src, p[j]) }}\n    }}\n    {body}\n  }}\n  print(\"{{last}}\")\n}}\n"
+        )
+    };
+    let lexing = "match lex(src) {\n      .ok(tokens) { last = tokens.size }\n      .err(errors) { last = 0 }\n    }";
+    let tokens = smith::count_tokens(&input).expect("the input lexes");
+    let (time, reps) = smith_time(smith, work, "lexer", &tokens.to_string(), |reps| {
+        (program(reps, lexing), program(reps, "last = src.size"))
+    });
+    (input.len(), tokens, time, reps)
 }
 
 /// How long one round of the program takes, and how many rounds a run is of.
@@ -111,7 +136,7 @@ fn lex(smith: &Path, work: &Path, lexer_source: &str) {
 /// baseline for a number of rounds. The baseline builds the same input and
 /// does nothing with it, and its time is taken away. The time is `None` when a
 /// run does not finish.
-fn smith_time(
+pub(crate) fn smith_time(
     smith: &Path,
     work: &Path,
     name: &str,
@@ -147,7 +172,7 @@ fn smith_time(
 }
 
 /// The least of several runs of an executable, or `None` if one is given up on.
-fn least(exe: &Path, expected: Option<&str>) -> Option<Duration> {
+pub(crate) fn least(exe: &Path, expected: Option<&str>) -> Option<Duration> {
     let mut best: Option<Duration> = None;
     for _ in 0..RUNS {
         let start = Instant::now();
@@ -188,7 +213,7 @@ fn least(exe: &Path, expected: Option<&str>) -> Option<Duration> {
 }
 
 /// The time of one call of `f`, from as many calls as take a fifth of a second.
-fn per_run(mut f: impl FnMut()) -> Duration {
+pub(crate) fn per_run(mut f: impl FnMut()) -> Duration {
     let start = Instant::now();
     let mut calls = 0u32;
     while start.elapsed() < Duration::from_millis(200) || calls < 3 {
