@@ -326,3 +326,11 @@ The first compiler is written in Rust with no dependencies. It is retired once S
 - **Contracts come before the port,** so that the compiler's own source, which is full of integer arithmetic, is the first real test of arithmetic that must be proven to fit.
 - **The port is done by hand and checked by comparison.** The compiler is rewritten in Smith. For every program a generator produces, the Rust compiler and the Smith compiler must emit identical bytes.
 - **The switch.** The Rust compiler builds the Smith compiler, that builds itself, and that builds itself again. The last two binaries must match byte for byte. Then the Rust compiler is deleted.
+
+### Where each feature's code is
+
+In `bootstrap/src/`, a feature of the language has a file of its own in each of the three stages that every feature changes, so work on it does not meet work on another. Whatever several features use stays in `parser.rs`, `check.rs`, and `check/to_scalar.rs`: the syntax tree's other nodes, type parameters and their scopes, the checker's `Defs`, `Checker`, and `Body`, and the lowering's `Out`, `Lowering`, and the lowering of expressions. A feature is moved just before work on it is due, so a feature not in the table is still in those three. Moving code changes nothing the compiler does.
+
+| Feature | Parsing | Checking | Lowering to the scalar form |
+| --- | --- | --- | --- |
+| Traits | `parser/traits.rs`: a trait, an implementation with its `requires` lines, `without`, and their nodes of the syntax tree | `check/traits.rs`: what a trait or an implementation must satisfy, bounds and `requires`, finding the implementation a call uses, the traits a type is given and what `without` takes away, a call of a trait's function, and the prelude's traits with their implementations | `check/to_scalar/traits.rs`: the functions of the given `Fmt`, `Repr`, and `Eq` |
