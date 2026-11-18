@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::Test;
+use crate::clock;
 use crate::generate::{self, Gen};
 
 pub const ONCE: &[Test] = &[
@@ -43,8 +44,9 @@ const FILES: &[(&str, bool)] = &[
 ];
 
 fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args([
+    let output = clock::output_within(
+        Command::new("git")
+            .args([
             "-c",
             "user.name=t",
             "-c",
@@ -53,10 +55,15 @@ fn git(dir: &Path, args: &[&str]) {
             "commit.gpgsign=false",
         ])
         .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}");
+        .current_dir(dir),
+        true,
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Whether `changed.sh` says that a commit that adds `files` needs the jobs.
@@ -76,13 +83,19 @@ fn says(files: &[&str]) -> bool {
     git(&root, &["add", "--all"]);
     git(&root, &["commit", "--quiet", "--allow-empty", "-m", "head"]);
     let script = format!("{}/../.github/changed.sh", env!("CARGO_MANIFEST_DIR"));
-    let output = Command::new("sh")
-        .args([script.as_str(), "HEAD~1", "HEAD"])
-        .current_dir(&root)
-        .output()
-        .unwrap();
+    let output = clock::output_within(
+        Command::new("sh")
+            .args([script.as_str(), "HEAD~1", "HEAD"])
+            .current_dir(&root),
+        true,
+    )
+    .unwrap();
     let _ = std::fs::remove_dir_all(&root);
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     match String::from_utf8(output.stdout).unwrap().trim() {
         "true" => true,
         "false" => false,
