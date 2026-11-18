@@ -66,6 +66,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [check.md](check.md): `check`, which gives a proof of outside data when a test passes, and a failure that is returned.
 - [proof-functions.md](proof-functions.md): a proof passed, returned, and held, and a predicate as a function that returns `bool`.
 - [hole.md](hole.md): `hole`, which stands in for code or a proof not yet written.
+- [trust.md](trust.md): the rule that Smith trusts nothing but a small kernel, the four rules that keep a proof honest, and what is still taken on trust.
 - [buffers.md](buffers.md): when an array gets a buffer and when it fuses into the code that reads it.
 - [arenas.md](arenas.md): the `alloc` effect, which data of a size known only at run time carries, and `with arena()`.
 - [recursion.md](recursion.md): a tail call as a loop, other recursion with its frames in an arena, and why the stack cannot overflow.

@@ -32,6 +32,10 @@ fn token[v: Nat](raw: Nat) -> Fin[v] {
 
 The report for `inside` is the statement `raw < v`, which a [`check`](check.md) would give.
 
+## A hole is not built
+
+A program with a `hole` in it is checked, and it is not built or run. A hole where a proof is owed would otherwise be a fact taken with no proof, which [nothing in Smith is](trust.md).
+
 ## The forms
 
 | Written | Stands in for |
@@ -39,4 +43,4 @@ The report for `inside` is the statement `raw < v`, which a [`check`](check.md) 
 | `hole(name)` where an expression is wanted | Code of the type, and effects, the place needs |
 | `hole(name)` where a proof is wanted | A proof of the statement the place needs |
 
-Next: [Array buffers](buffers.md)
+Next: [What is trusted](trust.md)

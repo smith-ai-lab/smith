@@ -22,6 +22,10 @@ fn small(a: Nat) -> Option[Fin[10]] {
 
 `keep` takes a proof that `a < 10` and gives it back. The parameter `p` is a proof, so the caller owes one, and here it comes from the `check`.
 
+## What a proof may not do
+
+A proof is erased before the program runs, so three rules hold of it, which [What is trusted](trust.md) gives the reasons for. A function that returns a proof carries no effect, `diverge` among them. The statement it proves names no `var`. And a proof is passed, held, and given where one is owed, and no `match` picks a value by which proof it was given.
+
 ## A fact proved once
 
 A function that takes proofs and returns one proves a fact once for every place that needs it. This is how a fact that `arith` does not decide is supplied: the function that supplies it is written once, and each caller passes the proofs it has.
