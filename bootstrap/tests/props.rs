@@ -962,10 +962,22 @@ fn errors(source: &str) -> Vec<Error> {
 const BAD_PIECES: &[(&str, &str)] = &[
     ("\\q", "unknown escape"),
     ("\\0", "unknown escape"),
-    ("\\ ", "unknown escape"),
     ("\\é", "unknown escape"),
+    // A whitespace or control character is shown by its number, as it
+    // cannot be seen.
+    ("\\ ", "followed by U+0020"),
+    ("\\\t", "followed by U+0009"),
+    ("\\\u{1}", "followed by U+0001"),
     ("}", "closes no expression"),
 ];
+
+/// How the line of a string in a file with token errors may end inside an
+/// expression in braces, so that the string has no closing quote. Those in
+/// the first list end with the expression, and the error is at the whole
+/// string. Each in the second list is followed by a string that the line ends
+/// inside, and the error is at that string.
+const OPEN_ENDS: &[&str] = &["{", "{x", "{\"a\"", "{x + \"a\""];
+const OPEN_BEFORE_STRING: &[&str] = &["{", "{x + "];
 
 /// A file whose only mistakes are in the tokens, each at a known place,
 /// along with what each error must mention. It also holds a mistake for the
@@ -979,7 +991,9 @@ fn file_with_token_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         expected.push((pos_after(&source), "unexpected character"));
         source.push_str(g.pick(&["#", "$", "?"]));
     }
-    source.push_str("print(\"");
+    source.push_str("print(");
+    let string_at = pos_after(&source);
+    source.push('"');
     for _ in 0..1 + g.below(8) {
         if g.one_in(2) {
             let (written, what) = g.pick(BAD_PIECES);
@@ -988,6 +1002,23 @@ fn file_with_token_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         } else {
             source.push_str(g.pick(PIECES).0);
         }
+    }
+    if g.one_in(3) {
+        // The line ends inside an expression in the string, so the string
+        // has no closing quote, and nothing after it on the line is read.
+        let at = if g.one_in(2) {
+            source.push_str(g.pick(OPEN_ENDS));
+            string_at
+        } else {
+            source.push_str(g.pick(OPEN_BEFORE_STRING));
+            let at = pos_after(&source);
+            source.push_str("\"a");
+            at
+        };
+        expected.push((at, "no closing quote"));
+        expected.sort_by_key(|(pos, _)| *pos);
+        source.push('\n');
+        return (source, expected);
     }
     if expected
         .iter()
@@ -1019,6 +1050,9 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ("", "x = \"a\"", None),
         ("x = ", "1.5", Some("not supported yet")),
         ("var x = ", "1.5", Some("not supported yet")),
+        ("x = ", "1e5", Some("not supported yet")),
+        ("var x = ", "2.5E-3", Some("not supported yet")),
+        ("x = ", "1e+5", Some("not supported yet")),
         ("print(\"a\" ", "\"b\")", Some("`,` or `)`")),
         ("print(\"a\")", "(0)", Some("not supported yet")),
         ("x.y ", "+= \"a\"", Some("not supported yet")),
@@ -1034,6 +1068,25 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ("", "fn f() ! console { print(\"a\") }", None),
         ("fn g()\n{\n  x = ", "1.5\n}", Some("not supported yet")),
         ("fn h(a: str ", "b: str) {}", Some("`,` or `)`")),
+        // A mistake in the signature of a function in an implementation is
+        // the only error.
+        (
+            "impl Named[Cat] {\n  fn f(a: str ",
+            "b: str) {}\n}",
+            Some("`,` or `)`"),
+        ),
+        // A function in a trait has no body, so a contract after its
+        // signature is not supported yet, on the line after it or not.
+        (
+            "trait T[A] {\n  fn f(x: A) -> str\n    ",
+            "requires x > 1\n}",
+            Some("not supported yet"),
+        ),
+        (
+            "trait T[A] {\n  fn f(x: A) -> str\n    ",
+            "ensures x > 1\n}",
+            Some("not supported yet"),
+        ),
     ];
     {
         let mut source = String::new();
