@@ -26,10 +26,11 @@ These lines, written in `db/transaction.smith`, are the module `db.transaction`.
 
 ## The name of a module
 
-The name is the path with each `/` written as `.` and `.smith` left off, counted from the project's root, as [Projects](projects.md) describes. A folder adds one segment to the name of every module below it.
+The name is the path with each `/` written as `.` and `.smith` left off, counted from the project's root, as [Projects](projects.md) describes. A folder adds one segment to the name of every module below it. No file is named another way: the entry file `main.smith` is the module `main`.
 
 | Path | Module |
 | --- | --- |
+| `main.smith` | `main` |
 | `db/transaction.smith` | `db.transaction` |
 | `model/gpt.smith` | `model.gpt` |
 | `vendor/toml/parse.smith` | `vendor.toml.parse` |
