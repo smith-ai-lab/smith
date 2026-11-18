@@ -27,6 +27,15 @@ pub(super) fn text_as_bytes(given: &Ty, needed: &Ty) -> bool {
     matches!(given, Ty::Text) && *needed == Ty::list(Ty::Int(Int::U8))
 }
 
+/// The type a value of the type `given` has where a `pattern` is needed: a
+/// text where a list is needed is the list of bytes it is used as.
+pub(super) fn as_read(given: &Ty, pattern: &Ty) -> Ty {
+    match (given, pattern) {
+        (Ty::Text, Ty::List(_)) => Ty::list(Ty::Int(Int::U8)),
+        _ => given.clone(),
+    }
+}
+
 impl<'a> Checker<'a> {
     /// Checks `utf8(bytes)`, which gives `.ok` of the text that is the same
     /// bytes, or `.err` with the place of the first byte that is not valid.

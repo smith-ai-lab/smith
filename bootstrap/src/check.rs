@@ -42,7 +42,7 @@ use crate::parser::{
     Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Loop, Match, Part,
     Pattern, Range, Stmt, Type,
 };
-use lists_and_text::{is_push, is_utf8, text_as_bytes};
+use lists_and_text::{as_read, is_push, is_utf8, text_as_bytes};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
     impls_for, needs_named, overlaps, prelude_trait, split_needs, withouts,
@@ -2740,7 +2740,7 @@ impl<'a> Typed<'a> {
         let solve = |params: &[(String, Ty)], vars: usize| {
             let mut sol = vec![None; vars];
             for (i, p) in params_of(params, &call.args).into_iter().enumerate() {
-                unify(&params[p].1, &given(i), &mut sol);
+                unify(&params[p].1, &as_read(&given(i), &params[p].1), &mut sol);
             }
             sol.into_iter()
                 .map(|t| t.unwrap_or(Ty::Unknown))
@@ -3680,9 +3680,14 @@ impl<'a> Checker<'a> {
             (given, pattern) => {
                 use_at(value.pos());
                 let needed = defs.describe_pattern(pattern, sol, vars, body.scope);
-                if !unify(pattern, given, sol) {
-                    let message =
-                        self.mismatch(body, value, defs.describe(given, body.scope), needed);
+                let read = as_read(given, pattern);
+                if !unify(pattern, &read, sol) {
+                    let message = match given {
+                        Ty::Text if read != *given => format!(
+                            "this gives text, which is a `List[u8]`, where {needed} is needed"
+                        ),
+                        _ => self.mismatch(body, value, defs.describe(given, body.scope), needed),
+                    };
                     self.errors.push(Error::new(value.pos(), message));
                 }
             }
@@ -6101,13 +6106,19 @@ impl<'a> Checker<'a> {
                 deferred.push((i, &arg.value));
                 continue;
             }
+            // A list written out whose element type is not settled yet.
+            if let (Some(i), Expr::List { .. }, Want::Ty(t)) = (param, &arg.value, &wanted)
+                && *t != Ty::Unknown
+                && t.unknown()
+            {
+                deferred.push((i, &arg.value));
+                continue;
+            }
             let gives = self.expr(body, &arg.value, &wanted);
             match param {
                 Some(i) => {
                     let pattern = &signature.params[i].1;
-                    if !text_as_bytes(&gives, pattern) {
-                        self.fit(body, &arg.value, &gives, pattern, &mut sol, vars);
-                    }
+                    self.fit(body, &arg.value, &gives, pattern, &mut sol, vars);
                 }
                 None if gives == Ty::Nothing => {
                     self.errors.push(self.nothing_where(&arg.value, "text"));
@@ -6121,8 +6132,8 @@ impl<'a> Checker<'a> {
         for (i, value) in deferred {
             let pattern = &signature.params[i].1;
             let wanted = match pattern.partial(&sol) {
-                Ty::Unknown if reported => Want::Ty(Ty::Unknown),
-                Ty::Unknown => {
+                t if t.unknown() && reported => Want::Ty(Ty::Unknown),
+                t if t.unknown() => {
                     reported = true;
                     Want::Any
                 }
