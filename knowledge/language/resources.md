@@ -2,7 +2,13 @@
 type: specification
 title: Values used exactly once
 description: A value with neither Copy nor Discard must be taken exactly once on every path, which is how a resource such as a file or a transaction is checked.
-status: planned
+status: partial
+built:
+  - "a value of a type without `Discard`, held by a parameter marked `take`, a binding, or a `var`, is refused where a path drops it: at the end of the function, on one branch of an `if` or a `match`, before a `return` or a `try` that leaves, in a loop with `break`, and when a `var` is assigned again"
+  - "a struct, a tuple, an enum, and a list that holds a value without `Discard` has no `Discard`, and a value of one is taken apart or given on as any other is"
+  - "reading a value, lending it, and reading a field of it take nothing, and a value given away twice is refused at the second use"
+  - "a call whose result is a value without `Discard` and is a statement of its own is refused as dropped"
+  - "a lambda that gives away a value without `Discard` is refused where its function is lent or may be left uncalled, with one error at the lambda"
 ---
 
 # Values used exactly once
@@ -73,6 +79,35 @@ fn partial(db: Db, ok: bool) -> Result[(), DbError] ! net {
   if ok { commit(t) } else { .ok(()) }
 }
 ```
+
+A struct, a tuple, an enum, and a list that holds a `Transaction` has neither trait either, so a value of one is taken exactly once, and a value is given on whole, or taken apart and each part taken.
+
+## Leaving and assigning
+
+A `try` that leaves, a `return`, and a `break` each end a path, and the value must be taken on it as on any other. This is refused, as `try` leaves when `prepare` fails and `t` is dropped there.
+
+```
+fn prepare(db: Db) -> Result[(), DbError] ! net
+
+fn early(db: Db) -> Result[(), DbError] ! net {
+  t = begin(db)
+  try prepare(db)
+  commit(t)
+}
+```
+
+A `var` that holds such a value is taken before it is assigned again, as the assignment drops the value it held, and before it goes out of scope.
+
+```
+fn replaced(db: Db) -> Result[(), DbError] ! net {
+  var t = begin(db)
+  debit(t, 100)
+  t = begin(db)
+  commit(t)
+}
+```
+
+This is refused at the first `t`, which the assignment drops.
 
 ## A resource wrapper
 

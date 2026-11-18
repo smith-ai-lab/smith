@@ -625,13 +625,19 @@ fn a_call_that_gives_a_type_without_what_a_bound_asks_is_one_error_at_the_call()
         let mut source = format!(
             "{TYPES}fn use_it[T: {bound}](a: T) -> u64 {{ 1 }}
 
-fn main() {{
+fn end[T](x: take T) ! diverge {{
+  loop {{
+    n = 1
+  }}
+}}
+
+fn main() ! diverge {{
   {}
   n = ",
             given.define()
         );
         let at = pos_after(&source);
-        source.push_str("use_it(v)\n  m = n\n}\n");
+        source.push_str("use_it(v)\n  m = n\n  end(v)\n}\n");
         let found = errors(&source);
         assert_eq!(found.len(), 1, "{found:?}\n{source}");
         assert_eq!(found[0].pos, at, "{source}");

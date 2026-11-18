@@ -975,8 +975,15 @@ fn without_copy_and_without_discard_are_refused_for_what_is_not_a_type_of_the_pr
 without Copy for Key
 without Discard for Key
 
-fn main() {
+fn end[T](x: take T) ! diverge {
+  loop {
+    n = 1
+  }
+}
+
+fn main() ! diverge {
   k = Key(secret: 1)
+  end(k)
 }
 ";
     assert!(errors(ok).is_empty(), "{:?}", errors(ok));
