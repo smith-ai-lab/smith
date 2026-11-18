@@ -10,8 +10,39 @@
 //! time computing, so a test starts no thread, and starts a program only
 //! through `output_within`, which gives the program the limit of a test on
 //! the wall and fails the test when the program has not ended by then.
+//!
+//! The run takes a test to hang only when nothing has ended for the whole of
+//! the limit: not the test, and not a program it started through
+//! `output_within`. A program that ends is progress, so a test that starts
+//! many programs, each of which ends in time, never hangs however long
+//! together they take.
 
-use std::time::Duration;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// When a test last made progress: it began, or a program it started began or
+/// ended.
+pub type Progress = Arc<Mutex<Instant>>;
+
+thread_local! {
+    static WATCHED: RefCell<Option<Progress>> = const { RefCell::new(None) };
+}
+
+/// Makes the calling thread's progress the one the run watches, until it is
+/// called again.
+pub fn watch(progress: Option<Progress>) {
+    WATCHED.with(|w| *w.borrow_mut() = progress);
+}
+
+fn progressed() {
+    WATCHED.with(|w| {
+        if let Some(progress) = &*w.borrow() {
+            *progress.lock().unwrap() = Instant::now();
+        }
+    });
+}
 
 /// The processor time the calling thread has used so far. Where the
 /// machine gives none, the time since the first call, which is all the
@@ -50,14 +81,25 @@ pub fn thread_time() -> Duration {
     FIRST.get_or_init(Instant::now).elapsed()
 }
 
-/// How long a test, or a command a test starts, may take on the wall before it
-/// is taken to never end. It is far above what one that ends takes, even on a
+/// How long a test may go on the wall without anything ending, and how long a
+/// command a test starts may take, before it is taken to never end. It is far above what one that ends takes, even on a
 /// machine that is busy, as the limit counts only the time a test spends
 /// computing, and a busy machine stretches the wall.
-pub const HANG: Duration = Duration::from_secs(10);
+const HANG: Duration = Duration::from_secs(10);
+
+static HANG_MILLISECONDS: AtomicU64 = AtomicU64::new(HANG.as_millis() as u64);
+
+/// The limit, which the run's own tests make small with `--hang`.
+pub fn hang() -> Duration {
+    Duration::from_millis(HANG_MILLISECONDS.load(Ordering::Relaxed))
+}
+
+pub fn set_hang(limit: Duration) {
+    HANG_MILLISECONDS.store(limit.as_millis() as u64, Ordering::Relaxed);
+}
 
 /// Runs the command and gives what it did, as `Command::output` does, except
-/// that a command still running after `HANG` is killed, and the test
+/// that a command still running after the limit is killed, and the test
 /// fails saying that the program never ends. So a program that does not end is
 /// a failing test, and not a run that does not end. What the command writes
 /// to standard error is given only when `with_stderr` is, and is dropped
@@ -71,7 +113,6 @@ pub fn output_within(
 ) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
     static COUNT: AtomicUsize = AtomicUsize::new(0);
     let name = format!(
         "smith-out-{}-{}",
@@ -83,6 +124,7 @@ pub fn output_within(
         std::env::temp_dir().join(format!("{name}.err")),
     );
     let begin = Instant::now();
+    progressed();
     command
         .stdin(Stdio::null())
         .stdout(std::fs::File::create(&out).unwrap());
@@ -105,13 +147,14 @@ pub fn output_within(
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
         }
-        if begin.elapsed() > HANG {
+        if begin.elapsed() > hang() {
             child.kill().unwrap();
             child.wait().unwrap();
             break None;
         }
         std::thread::sleep(Duration::from_millis(1));
     };
+    progressed();
     let output = status.map(|status| std::process::Output {
         status,
         stdout: std::fs::read(&out).unwrap(),
@@ -128,7 +171,7 @@ pub fn output_within(
     Ok(output.unwrap_or_else(|| {
         panic!(
             "the program never ends: it ran for more than {} ms",
-            HANG.as_millis()
+            hang().as_millis()
         )
     }))
 }
