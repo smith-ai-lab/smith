@@ -68,11 +68,50 @@ Wherever the function calls itself, `arith` must prove that the expression of th
 
 A call whose expression is not smaller is refused where it is made. In `first_zero`, the call `first_zero(x, from)` leaves `x.size - from` as it was, so it is refused.
 
+## Functions that call each other
+
+Functions that call each other in a circle each state a `decreases`, and a call from one to another is held to the rule above: the measure of the call's arguments, as the function that is called states it, is smaller than the caller's own.
+
+One number is often not enough. A parser's `sum` calls `product` before it has read anything, so the tokens that are left are as many as they were. So a measure may have several parts, separated by commas, and it is compared as words are in a dictionary: a call must make the first part smaller, or leave the first as it was and make the second smaller, and so on.
+
+```
+fn sum(toks: List[Token], at: u64) -> Parsed
+  decreases toks.size - at, 2
+{
+  left = product(toks, at)
+  ...
+}
+
+fn product(toks: List[Token], at: u64) -> Parsed
+  decreases toks.size - at, 1
+{
+  left = atom(toks, at)
+  ...
+}
+
+fn atom(toks: List[Token], at: u64) -> Parsed
+  decreases toks.size - at, 0
+{
+  if at < toks.size and toks[at] == .open {
+    sum(toks, at + 1)
+  } else {
+    ...
+  }
+}
+```
+
+`sum` calls `product` at the same place, so the first part stays and the second goes from `2` to `1`. `product` calls `atom` the same way, from `1` to `0`. `atom` calls `sum` one token on, so the first part gets smaller, and the second may be anything. The first part says that input was read, and the second which of the functions is the lower. Every part is proven not below zero, as a measure of one part is.
+
+The measures of functions that call each other have the same number of parts. A function in the circle with no `decreases` is refused, and so is a call that makes the measure no smaller.
+
+A loop's measure may have several parts too, written `loop decreases a, b { ... }`, and each time round is held to the same rule.
+
 ## The forms
 
 | Written | Means |
 | --- | --- |
 | `loop i in a..b`, a recursion into a part of the argument | Ends, and carries nothing |
+| `decreases a, b` | A measure of two parts: `a` gets smaller, or `a` stays and `b` gets smaller |
 | `loop { ... }` | May not end, and its function carries `diverge` |
 | `loop decreases e { ... }` | Ends, because `e` is smaller each time round again |
 | `fn f(...) -> T decreases e` | Ends, because `e` is smaller at each call of `f` from itself |

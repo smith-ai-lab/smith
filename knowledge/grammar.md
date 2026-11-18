@@ -61,7 +61,7 @@ generic    = [ "out" ] IDENT [ ":" type ] [ "=" type ] ;
 params     = param { "," param } [ "," ] ;
 param      = IDENT ":" [ "take" ] type [ "=" expr ] ;
 effects    = "!" IDENT { "," IDENT } ;
-contract   = ( "requires" | "ensures" | "decreases" ) expr ;
+contract   = ( "requires" | "ensures" ) expr | "decreases" expr { "," expr } ;
 
 struct_def = "struct" IDENT [ generics ] "{" { [ "pub" ] IDENT ":" type [ "=" expr ] } "}" ;
 enum_def   = "enum" IDENT [ generics ] "{" { IDENT [ ":" type ] } "}" ;
@@ -104,7 +104,7 @@ case       = "." IDENT [ "(" [ args ] ")" ] ;
 if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
 for        = "for" IDENT { "," IDENT } block ;
-loop       = "loop" [ IDENT "in" expr | "decreases" expr ] block ;
+loop       = "loop" [ IDENT "in" expr | "decreases" expr { "," expr } ] block ;
 lambda     = [ "fn" "(" IDENT { "," IDENT } ")" ] block ;
 
 type       = statement
