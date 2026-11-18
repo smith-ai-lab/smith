@@ -55,6 +55,10 @@ pub const ONCE: &[Test] = &[
         "of_literals_that_no_other_argument_settles_only_the_first_is_reported",
         of_literals_that_no_other_argument_settles_only_the_first_is_reported,
     ),
+    (
+        "a_pattern_that_assigns_to_a_var_twice_is_refused_at_each_name_after_the_first",
+        a_pattern_that_assigns_to_a_var_twice_is_refused_at_each_name_after_the_first,
+    ),
 ];
 
 /// A file being written, and the errors its mistakes must give, each with
@@ -578,4 +582,75 @@ fn file_with_literals_that_nothing_settles(g: &mut Gen) -> File {
 
 fn of_literals_that_no_other_argument_settles_only_the_first_is_reported() {
     generate::check(129, 20, file_with_literals_that_nothing_settles, File::check);
+}
+
+/// Writes a pattern of `vars` at some depth, and the tuple it matches to
+/// `value`. Each name that an earlier part of the pattern named is a mistake.
+fn write_pattern(
+    g: &mut Gen,
+    file: &mut File,
+    value: &mut String,
+    vars: usize,
+    named: &mut Vec<usize>,
+    depth: usize,
+) {
+    if depth == 0 || g.below(3) == 0 {
+        let i = g.below(vars);
+        let name = format!("v{i}");
+        if named.contains(&i) {
+            file.mistake(&name, format!("names `{name}` twice"));
+        } else {
+            file.push(&name);
+        }
+        named.push(i);
+        value.push_str(&format!("{}", g.below(100)));
+        return;
+    }
+    file.push("(");
+    value.push('(');
+    for k in 0..2 + g.below(2) {
+        if k > 0 {
+            file.push(", ");
+            value.push_str(", ");
+        }
+        write_pattern(g, file, value, vars, named, depth - 1);
+    }
+    file.push(")");
+    value.push(')');
+}
+
+/// A file whose `main` assigns a pattern to some `var`s, where the pattern
+/// names a `var` more than once, as deep in the pattern as it likes.
+fn file_with_patterns_that_assign_twice(g: &mut Gen) -> File {
+    let mut file = File::default();
+    let vars = 1 + g.below(3);
+    file.push("fn main() ! console, alloc {\n");
+    for i in 0..vars {
+        file.push(&format!("  var v{i} = {i}\n"));
+    }
+    file.push("  ");
+    let (mut value, mut named) = (String::new(), Vec::new());
+    // A bare name is no pattern, so the outside is a tuple.
+    file.push("(");
+    value.push('(');
+    for k in 0..2 + g.below(2) {
+        if k > 0 {
+            file.push(", ");
+            value.push_str(", ");
+        }
+        let depth = g.below(3);
+        write_pattern(g, &mut file, &mut value, vars, &mut named, depth);
+    }
+    file.push(")");
+    value.push(')');
+    file.push(&format!(" = {value}\n"));
+    for i in 0..vars {
+        file.push(&format!("  print(\"{{v{i}}}\")\n"));
+    }
+    file.push("}\n");
+    file
+}
+
+fn a_pattern_that_assigns_to_a_var_twice_is_refused_at_each_name_after_the_first() {
+    generate::check(130, 100, file_with_patterns_that_assign_twice, File::check);
 }
