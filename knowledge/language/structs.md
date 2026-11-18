@@ -3,7 +3,8 @@ type: specification
 title: Structs
 description: Structs with named fields and defaults, reading a field, assigning to a field of a var, and a definition at the top level of a file.
 status: partial
-built: "structs with fields and defaults, reading a field, and assigning to a field of a `var` with `=`"
+built:
+  - "structs with fields and defaults, reading a field, and assigning to a field of a `var` with `=`"
 ---
 
 # Structs

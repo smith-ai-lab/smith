@@ -3,7 +3,8 @@ type: specification
 title: The effects Smith provides
 description: The five effects the standard library declares, the six the compiler gives, and where an effect that nothing handles ends.
 status: partial
-built: "`console`, `alloc`, and `diverge` in a signature, `console` required by `print`, `alloc` by a string that holds an expression, and `diverge` by an open-ended `loop` with no `decreases`"
+built:
+  - "`console`, `alloc`, and `diverge` in a signature, `console` required by `print`, `alloc` by a string that holds an expression, and `diverge` by an open-ended `loop` with no `decreases`"
 ---
 
 # The effects Smith provides

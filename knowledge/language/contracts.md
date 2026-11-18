@@ -3,7 +3,9 @@ type: specification
 title: Contracts
 description: requires and ensures on a function, which state what the caller owes and what the function gives, and are proven when the program is built.
 status: partial
-built: "`requires` and `ensures` on a function, each a comparison of whole numbers joined with `and`, `or`, and `not` over its parameters and the result's name, which `arith` proves of the arguments at every call and of what the function returns at each place it returns, and takes as facts in the other place; not a predicate in a contract, and not a float"
+built:
+  - "`requires` and `ensures` on a function, each a comparison of whole numbers joined with `and`, `or`, and `not` over its parameters and the result's name, which `arith` proves of the arguments at every call and of what the function returns at each place it returns, and takes as facts in the other place"
+  - "not a predicate in a contract, and not a float"
 ---
 
 # Contracts

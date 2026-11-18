@@ -3,7 +3,9 @@ type: specification
 title: Ranges and slices
 description: A range a..b runs from a up to but not including b, and x[a..b] is the part of x between them, with x[..k] and x[k..] as short forms.
 status: partial
-built: "`a..b` as the range of a `loop`, which runs in order and not at all when `a >= b`; not a range outside a `loop`, or a slice"
+built:
+  - "`a..b` as the range of a `loop`, which runs in order and not at all when `a >= b`"
+  - "not a range outside a `loop`, or a slice"
 ---
 
 # Ranges and slices

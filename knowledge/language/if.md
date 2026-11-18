@@ -3,7 +3,8 @@ type: specification
 title: If
 description: if as an expression that chooses between blocks, else if, and the words not, and, and or that combine conditions.
 status: partial
-built: "`if` with and without `else`, `else if`, and `not`, `and`, and `or`"
+built:
+  - "`if` with and without `else`, `else if`, and `not`, `and`, and `or`"
 ---
 
 # If

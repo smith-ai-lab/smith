@@ -3,7 +3,8 @@ type: specification
 title: Function values
 description: A function with a name used as a value, which can be passed, stored, and returned.
 status: partial
-built: "a function with a name passed to a call"
+built:
+  - "a function with a name passed to a call"
 ---
 
 # Function values

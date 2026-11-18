@@ -3,7 +3,8 @@ type: specification
 title: Bounds and requires
 description: What a function or an impl needs of its type parameters, written as a bound such as T: Named or as requires lines, and how an impl with type parameters is chosen.
 status: partial
-built: "bounds such as `T: Plus`, `requires Trait[...]` on a function or an `impl`"
+built:
+  - "bounds such as `T: Plus`, `requires Trait[...]` on a function or an `impl`"
 ---
 
 # Bounds and requires

@@ -26,5 +26,5 @@ description: Add to or change the files in knowledge/, which define the Smith la
 - Examples use only features introduced above them in the same file, or in a file earlier in the tour that `knowledge/language/index.md` lists.
 - A change to `knowledge/language/` or `knowledge/grammar.md` changes the language. Only the lead merges it, so open the pull request and stop.
 - A function added to the standard library is written into `knowledge/library/`, in the file for its module, by whoever adds it. A new effect is a design question for the owner and the lead, because it defines a permission.
-- When your change makes the compiler build something a page of `knowledge/language/` describes, update that page's `status` and `built`, as `knowledge/okf.md` describes them.
+- When your change makes the compiler build something a page of `knowledge/language/` describes, update that page's `status` and `built`, as `knowledge/okf.md` describes them. Add a line to the `built` list for what you built, and leave the others as they are.
 - Plans, open questions, and work to be done go in GitHub issues, not in `knowledge/`.
