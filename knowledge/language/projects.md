@@ -94,7 +94,18 @@ fn main() ! console {
 }
 ```
 
-`main_test.smith` holds a test of that function, as [Tests](tests.md) describes.
+`main_test.smith` holds a test of that function, as [Tests](tests.md) describes. `main.smith` is the module `main`, named by its path as every module is, and the test file imports from it as any file would.
+
+```
+use main (greeting)
+use std.test (Failed, expect)
+
+fn test_greeting() -> Result[(), Failed] {
+  expect { greeting() == "hello world" }
+}
+```
+
+Only what `main.smith` marks `pub` can be listed, so `greeting` is `pub`.
 
 `project.smith` is the one above.
 
