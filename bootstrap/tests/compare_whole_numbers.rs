@@ -278,20 +278,22 @@ fn counted(source: &str) -> (usize, usize) {
 
 /// A program of six functions that each give a comparison of two values of
 /// the type that the program cannot know, of which the one at `at` is the
-/// comparison and the others give `true`, which the program uses by
-/// printing and by an `if`.
+/// comparison and the others give the `bool` they are passed, which the
+/// program cannot know either, and uses by printing and by an `if`. So the
+/// program holds the same code for printing and for the `if` whichever
+/// function is the comparison, however far the passes inline it.
 fn program_with(name: &str, at: Option<usize>, bound: Option<&str>) -> String {
     let mut source = String::new();
     for (k, (op, _)) in OPS.iter().enumerate() {
         let body = if at == Some(k) {
             format!("a {op} b")
         } else {
-            "true".to_string()
+            "c".to_string()
         };
         match bound {
-            None => source += &format!("fn f{k}(a: {name}, b: {name}) -> bool {{ {body} }}\n"),
+            None => source += &format!("fn f{k}(a: {name}, b: {name}, c: bool) -> bool {{ {body} }}\n"),
             Some(bound) => {
-                source += &format!("fn f{k}[T: {bound}](a: T, b: T) -> bool {{ {body} }}\n")
+                source += &format!("fn f{k}[T: {bound}](a: T, b: T, c: bool) -> bool {{ {body} }}\n")
             }
         }
     }
@@ -299,9 +301,10 @@ fn program_with(name: &str, at: Option<usize>, bound: Option<&str>) -> String {
     source += COUNT;
     source += &format!("  x: {name} = {}\n", unknown(name, 0));
     source += &format!("  y: {name} = {}\n", unknown(name, 1));
+    source += "  z: bool = n == 7\n";
     for k in 0..OPS.len() {
-        source += &format!("  print(\"{{f{k}(x, y)}}\")\n");
-        source += &format!("  if f{k}(y, x) {{ print(\"yes\") }} else {{ print(\"no\") }}\n");
+        source += &format!("  print(\"{{f{k}(x, y, z)}}\")\n");
+        source += &format!("  if f{k}(y, x, z) {{ print(\"yes\") }} else {{ print(\"no\") }}\n");
     }
     source += "}\n";
     source

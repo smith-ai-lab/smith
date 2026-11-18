@@ -595,7 +595,16 @@ fn a_return_costs_a_jump_and_a_last_return_is_the_value_it_gives() {
                 .filter(|l| !matches!(l, Item::Return(_)))
                 .cloned()
                 .collect();
-            let with = |end: String| program(&format!("var acc: i64 = 0\n{}{end}\n", write(&lines, "x")));
+            // The function is larger than the bound, so that it stays a
+            // function that both programs compile alike, and not a part of
+            // `main` that the passes make what they can of.
+            let mut padding = String::from("var padding = x\n");
+            for _ in 0..scalar::BOUND {
+                padding += "padding = wrapping_add(padding, x)\n";
+            }
+            let with = |end: String| {
+                program(&format!("{padding}var acc: i64 = 0\n{}{end}\n", write(&lines, "x")))
+            };
             let by_return = with(format!("return {}", last.write("x")));
             let by_value = with(last.write("x"));
             let built = |source: &str| {

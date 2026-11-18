@@ -1862,7 +1862,8 @@ fn the_passes_leave_no_block_that_holds_only_a_jump() {
 
 /// A function that writes `A` once or twice, as many times as the value that
 /// the two blocks it jumps to give one block that only jumps on, and that a
-/// loop after it reads. Too large to be inlined, and called with 0 and 1.
+/// loop after it reads. Too large to be inlined, for it ends in more
+/// writes of no bytes than the bound allows, which nothing removes, and called with 0 and 1.
 fn a_function_that_joins_two_values_for_a_loop() -> scalar::Program {
     let long = Type::Int(Bits::B64);
     let mut f = Builder::new();
@@ -1896,6 +1897,13 @@ fn a_function_that_joins_two_values_for_a_loop() -> scalar::Program {
     let next = f.binary(scalar::Binary::Add, rounds[0], one);
     f.switch(done, vec![(round, vec![next]), (end, Vec::new())]);
     f.at(end);
+    for _ in 0..scalar::BOUND {
+        let write = Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, zero],
+        };
+        f.emit(write, &[]);
+    }
     f.ret(Vec::new());
     let function = f.finish(&[]);
     let mut m = Builder::new();

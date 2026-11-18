@@ -11,8 +11,9 @@
 use super::{Block, End, Function, Instruction, Jump, Op, Program, Value};
 
 /// The most a function may hold, as `size` counts, for a call of it to be
-/// replaced when it is called from more than one place.
-pub const BOUND: usize = 4;
+/// replaced when it is called from more than one place. It is the one past which the lexer in `compiler/lexer.smith` runs almost no
+/// fewer instructions, as `knowledge/compiler.md` says.
+pub const BOUND: usize = 40;
 
 /// How large a function is: its instructions, and one for how each block
 /// ends.
