@@ -166,6 +166,22 @@ fn transfer(db: Db) -> Result[(), DbError] ! net {
 
 Nothing is re-exported. A name a file imports is for that file alone, and a module that imports `begin` does not offer `begin` to the modules that import it.
 
+## Modules do not import each other
+
+No module imports a module that imports it, directly or through others. Here each of two modules lists a name of the other.
+
+```
+use db.rows (Row)
+```
+
+```
+use db.transaction (Transaction)
+```
+
+The first is `db/transaction.smith` and the second is `db/rows.smith`. The build is refused at one of the two `use` lines, and the error names the modules in the ring.
+
+So the modules of a project have an order: each is checked once, after the modules it imports, and two that do not import one another are checked at the same time. A module is understood from itself and from what it imports. Two things that need each other are written in one module, or what they share is moved to a third that both import.
+
 ## The forms
 
 | Written | Means |
@@ -177,6 +193,7 @@ Nothing is re-exported. A name a file imports is for that file alone, and a modu
 | `use app.log (log)`, then a call of `write` | Refused: an effect's operations are imported by name too |
 | A name never imported | An error that names the module to import from |
 | A name imported, never used | A warning from `smith check` |
+| Two modules that import each other | Refused: the modules of a project have an order |
 | `use` below code | Not written: every `use` is at the top of the file |
 
 Next: [The prelude](prelude.md)
