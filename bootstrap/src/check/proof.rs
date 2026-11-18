@@ -52,9 +52,33 @@ impl Key {
     }
 }
 
+/// A function of `Bits` whose result `arith` knows something of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BitOp {
+    And,
+    Or,
+    Xor,
+    ShiftLeft,
+    ShiftRight,
+}
+
+/// A call of a function of `Bits` on a whole number of type `ty`, with the
+/// places among its arguments of the two numbers it works on: the number and
+/// the other number, or the amount.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct BitCall {
+    pub(super) op: BitOp,
+    pub(super) ty: Int,
+    pub(super) first: usize,
+    pub(super) second: usize,
+}
+
 /// What `arith` has been told in a body, and the variables it has.
 #[derive(Default)]
 pub(super) struct Facts {
+    /// The calls of the functions of `Bits` that have been checked, by the
+    /// place of the call.
+    bits: HashMap<usize, BitCall>,
     known: Vec<Formula>,
     /// The names, by their place among the names, that were given a number
     /// that is the same every time, with the number.
@@ -108,6 +132,33 @@ impl Facts {
     fn bump(&mut self, at: usize) {
         self.epoch += 1;
         self.versions.insert(at, self.epoch);
+    }
+
+    /// Notes that `call`, a call of the function `name` of `Bits` on a whole
+    /// number of type `ty`, is one whose result `arith` knows something of.
+    pub(super) fn note_bit_call(&mut self, call: &Call, sig: &Signature, name: &str, ty: Int) {
+        let op = match name {
+            "bit_and" => BitOp::And,
+            "bit_or" => BitOp::Or,
+            "bit_xor" => BitOp::Xor,
+            "shift_left" => BitOp::ShiftLeft,
+            "shift_right" => BitOp::ShiftRight,
+            _ => return,
+        };
+        let places = params_of(&sig.params, &call.args);
+        let (Some(first), Some(second)) = (
+            places.iter().position(|p| *p == 0),
+            places.iter().position(|p| *p == 1),
+        ) else {
+            return;
+        };
+        let info = BitCall {
+            op,
+            ty,
+            first,
+            second,
+        };
+        self.bits.insert(addr(call), info);
     }
 
     /// What the `var` at `at` holds, when it is tracked: the sum, or none
@@ -286,6 +337,11 @@ impl Builder<'_, '_> {
             Expr::Call(call) if self.narrowed.contains(&addr(call)) => {
                 self.lin(&call.args[0].value)
             }
+            Expr::Call(call)
+                if self.facts.subst.is_none() && self.facts.bits.contains_key(&addr(call)) =>
+            {
+                self.bit_call(call)
+            }
             Expr::Call(call) => {
                 let (lo, hi) = match self.types.get(&addr(e)) {
                     Some(Ty::Int(t)) => (t.min(), t.max()),
@@ -295,6 +351,125 @@ impl Builder<'_, '_> {
             }
             _ => self.goal.then(|| self.fresh(e)),
         }
+    }
+
+    /// Whether `goal` follows from what is known.
+    fn provable(&mut self, goal: &Formula) -> bool {
+        let used = background(self.facts, std::iter::once(goal));
+        proves(&used, goal)
+    }
+
+    /// Says that `lin >= 0`, which is so whatever values the call is given.
+    fn state(&mut self, lin: Lin) {
+        let fact = Formula::Ge(lin);
+        if !self.facts.known.contains(&fact) {
+            self.facts.known.push(fact);
+        }
+    }
+
+    /// The sum a call of a function of `Bits` stands for: the number it
+    /// gives, which of an unsigned number is known by what is known of its
+    /// operands, where that is true of every value.
+    ///
+    /// - `bit_and(a, b)` is at most `a` and at most `b`.
+    /// - `bit_or(a, b)` and `bit_xor(a, b)` are below the least power of two
+    ///   that is above both `a` and `b`.
+    /// - `shift_right(a, k)` by a number `k` is `a / 2^k`, rounded down.
+    /// - `shift_left(a, k)` by a number `k` is `a * 2^k` when that is proven
+    ///   to fit the type, since no bit is dropped.
+    fn bit_call(&mut self, call: &Call) -> Option<Lin> {
+        let info = self.facts.bits[&addr(call)];
+        let t = info.ty;
+        let result = {
+            let key = Key::Call(addr(call), t.min(), t.max());
+            self.variable(key)
+        };
+        let operands = (
+            self.lin(&call.args[info.first].value),
+            self.lin(&call.args[info.second].value),
+        );
+        let (Some(a), Some(b)) = operands else {
+            return Some(result);
+        };
+        // A number too large for the facts is no fact, and no overflow of
+        // the operands.
+        let base = self.overflow;
+        match info.op {
+            BitOp::And if !t.signed() => {
+                for side in [&a, &b] {
+                    let up = self.combine(side, -1, &result);
+                    if self.overflow == base {
+                        self.state(up);
+                    }
+                }
+            }
+            BitOp::Or | BitOp::Xor if !t.signed() => {
+                // The least number of bits that both operands are proven to
+                // fit, found by halving, as what fits more bits fits fewer.
+                let (mut low, mut high) = (0u32, t.bits());
+                while low < high {
+                    let mid = low + (high - low) / 2;
+                    let top = (1i128 << mid) - 1;
+                    let both = Formula::And(vec![
+                        Formula::Ge(self.combine(&constant(top), -1, &a)),
+                        Formula::Ge(self.combine(&constant(top), -1, &b)),
+                    ]);
+                    if self.overflow != base {
+                        self.overflow = base;
+                        return Some(result);
+                    }
+                    if self.provable(&both) {
+                        high = mid;
+                    } else {
+                        low = mid + 1;
+                    }
+                }
+                if low < t.bits() {
+                    let top = constant((1i128 << low) - 1);
+                    let up = self.combine(&top, -1, &result);
+                    if self.overflow == base {
+                        self.state(up);
+                    }
+                }
+            }
+            BitOp::ShiftRight if !t.signed() => {
+                if let Some(power) = self.power(&b, t) {
+                    // `power * result <= a <= power * result + power - 1`.
+                    let scaled = self.scaled(power, &result);
+                    let low = self.combine(&a, -1, &scaled);
+                    let mut high = self.combine(&scaled, -1, &a);
+                    high.constant = high.constant.saturating_add(power - 1);
+                    if self.overflow == base {
+                        self.state(low);
+                        self.state(high);
+                    }
+                }
+            }
+            BitOp::ShiftLeft => {
+                if let Some(power) = self.power(&b, t) {
+                    let product = self.scaled(power, &a);
+                    let (mut up, down) = (
+                        product.negated().unwrap_or_default(),
+                        self.combine(&product, 1, &constant(-t.min())),
+                    );
+                    up.constant = up.constant.saturating_add(t.max());
+                    let fits = Formula::And(vec![Formula::Ge(up), Formula::Ge(down)]);
+                    if self.overflow == base && self.provable(&fits) {
+                        return Some(product);
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.overflow = base;
+        Some(result)
+    }
+
+    /// Two to the power of the amount `by` of a shift of a number of type
+    /// `t`, when the amount is a number below the bits of `t`.
+    fn power(&self, by: &Lin, t: Int) -> Option<i128> {
+        let k = u32::try_from(by.constant).ok().filter(|k| *k < t.bits())?;
+        by.terms.is_empty().then(|| 1i128 << k)
     }
 
     /// The sum the size of the list `of` stands for.

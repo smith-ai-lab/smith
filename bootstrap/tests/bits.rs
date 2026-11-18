@@ -5,11 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use smith::scalar::{self, Op};
+use smith::scalar::{self, Op, Outcome};
 use smith::{check, lower};
 
 use crate::Test;
-use crate::numbers::{INTS, Int};
+use crate::generate::{self, Gen};
+use crate::numbers::{INTS, Int, value};
 
 pub const ONCE: &[Test] = &[
     (
@@ -35,6 +36,42 @@ pub const ONCE: &[Test] = &[
     (
         "narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert",
         narrow_to_a_type_that_holds_every_value_is_an_error_that_says_to_convert,
+    ),
+    (
+        "arith_knows_the_range_of_a_bit_operation_and_no_more_than_is_true",
+        arith_knows_the_range_of_a_bit_operation_and_no_more_than_is_true,
+    ),
+    (
+        "the_bound_of_bit_and_is_not_one_too_small_and_not_one_too_large",
+        the_bound_of_bit_and_is_not_one_too_small_and_not_one_too_large,
+    ),
+    (
+        "the_bound_of_bit_or_and_bit_xor_is_not_one_too_small_and_not_one_too_large",
+        the_bound_of_bit_or_and_bit_xor_is_not_one_too_small_and_not_one_too_large,
+    ),
+    (
+        "the_bound_of_shift_right_is_not_one_too_small_and_not_one_too_large",
+        the_bound_of_shift_right_is_not_one_too_small_and_not_one_too_large,
+    ),
+    (
+        "the_bound_of_shift_left_is_not_one_too_small_and_not_one_too_large",
+        the_bound_of_shift_left_is_not_one_too_small_and_not_one_too_large,
+    ),
+    (
+        "arith_knows_a_least_of_a_shift_right_of_an_unsigned_number_and_no_more_than_is_true",
+        arith_knows_a_least_of_a_shift_right_of_an_unsigned_number_and_no_more_than_is_true,
+    ),
+    (
+        "the_least_of_shift_right_is_not_one_too_large_and_not_one_too_small",
+        the_least_of_shift_right_is_not_one_too_large_and_not_one_too_small,
+    ),
+    (
+        "a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type",
+        a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type,
+    ),
+    (
+        "a_mask_of_a_number_keeps_a_sum_with_it_inside_the_type",
+        a_mask_of_a_number_keeps_a_sum_with_it_inside_the_type,
     ),
 ];
 
@@ -346,6 +383,455 @@ fn what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing(
                 compiles(&program(function, k, &requires)).is_err(),
                 "{function} from {name}"
             );
+        }
+    }
+}
+
+/// The bit operations `arith` knows the range of.
+#[derive(Clone, Copy, Debug)]
+enum Bit {
+    And,
+    Or,
+    Xor,
+    Left,
+    Right,
+}
+
+/// A bit operation on a number bounded above, and a bound that a function
+/// that takes what the operation gives needs of it.
+#[derive(Clone, Debug)]
+struct Range {
+    ty: Int,
+    op: Bit,
+    /// The number is at least this and at most `most`.
+    least: i128,
+    most: i128,
+    /// What the operation is given with the number: a bound of a second
+    /// number, written as a literal or as a name with that bound, and for a
+    /// shift the amount.
+    other: i128,
+    literal: bool,
+    /// What the function that takes the result needs of it: at most this.
+    needs: i128,
+}
+
+/// The value with the bits that do not fit the type left off.
+fn wrap(ty: Int, n: i128) -> i128 {
+    (n - ty.min()).rem_euclid(1i128 << ty.bits) + ty.min()
+}
+
+/// What the operation gives, worked out on 128 bits.
+fn gives(r: &Range, a: i128, b: i128) -> i128 {
+    match r.op {
+        Bit::And => a & b,
+        Bit::Or => a | b,
+        Bit::Xor => a ^ b,
+        Bit::Left => wrap(r.ty, a << b),
+        Bit::Right => a >> b,
+    }
+}
+
+/// The least power of two above `n`, less one: every bit below the highest
+/// bit of `n` set.
+fn all_ones_to(n: i128) -> i128 {
+    let mut ones = 0;
+    while ones < n {
+        ones = ones * 2 + 1;
+    }
+    ones
+}
+
+/// The bound the range of the result is known to have, or none where `arith`
+/// is not to know a bound: of a signed number, other than a shift left that
+/// fits, which is the number times a power of two.
+fn known(r: &Range) -> Option<i128> {
+    match r.op {
+        _ if r.ty.signed && !matches!(r.op, Bit::Left) => None,
+        Bit::And => Some(r.most.min(r.other)),
+        Bit::Or | Bit::Xor => Some(all_ones_to(r.most.max(r.other))),
+        Bit::Right => Some(r.most >> r.other),
+        Bit::Left => {
+            let (low, high) = (r.least << r.other, r.most << r.other);
+            Some(if low >= r.ty.min() && high <= r.ty.max() {
+                high
+            } else {
+                r.ty.max()
+            })
+        }
+    }
+}
+
+fn program(r: &Range) -> String {
+    let t = r.ty.name;
+    let function = match r.op {
+        Bit::And => "bit_and",
+        Bit::Or => "bit_or",
+        Bit::Xor => "bit_xor",
+        Bit::Left => "shift_left",
+        Bit::Right => "shift_right",
+    };
+    let shift = matches!(r.op, Bit::Left | Bit::Right);
+    let (params, requires, second) = if shift || r.literal {
+        (
+            format!("x: {t}"),
+            format!("x >= {} and x <= {}", r.least, r.most),
+            r.other.to_string(),
+        )
+    } else {
+        (
+            format!("x: {t}, z: {t}"),
+            format!("x >= {0} and x <= {1} and z >= {0} and z <= {2}", r.least, r.most, r.other),
+            "z".to_string(),
+        )
+    };
+    format!(
+        "fn g(y: {t}) -> {t}\n  requires y <= {needs}\n{{\n  y\n}}\n\nfn f({params}) -> {t}\n  requires {requires}\n{{\n  g({function}(x, {second}))\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({args})}}\")\n}}\n",
+        needs = r.needs,
+        args = if params.contains("z") {
+            format!("{}, {}", r.least, r.least)
+        } else {
+            r.least.to_string()
+        },
+    )
+}
+
+/// The values of a bound that can show a fact false: both ends, the ones
+/// next to them, and the powers of two and the ones below them.
+fn edges(ty: Int, least: i128, most: i128) -> Vec<i128> {
+    let mut out = vec![0, 1];
+    for d in 0..8 {
+        out.push(least + d);
+        out.push(most - d);
+    }
+    for bit in 0..ty.bits.min(63) {
+        out.push((1i128 << bit) - 1);
+        out.push(1i128 << bit);
+    }
+    out.retain(|n| (least..=most).contains(n));
+    out
+}
+
+fn range(g: &mut Gen) -> Range {
+    let ty = *g.pick(INTS);
+    let op = *g.pick(&[Bit::And, Bit::Or, Bit::Xor, Bit::Left, Bit::Right]);
+    let shift = matches!(op, Bit::Left | Bit::Right);
+    let small = g.below(40) as i128;
+    let (a, b) = if g.one_in(2) {
+        (value(g, ty), value(g, ty))
+    } else {
+        (small, (small ^ g.below(40) as i128).min(ty.max()))
+    };
+    let (least, most) = if ty.signed && matches!(op, Bit::Left) {
+        (a.min(b), a.max(b))
+    } else if ty.signed {
+        (ty.min(), a.max(b))
+    } else {
+        (0, a)
+    };
+    let any = g.below(ty.bits as usize) as i128;
+    let other = if shift {
+        *g.pick(&[0, 1, i128::from(ty.bits) - 1, any])
+    } else if g.one_in(2) {
+        value(g, ty).max(0)
+    } else {
+        b.clamp(0, ty.max())
+    };
+    let mut r = Range {
+        ty,
+        op,
+        least,
+        most,
+        other,
+        literal: g.one_in(2),
+        needs: 0,
+    };
+    // A bound near what is known, near what is true, or any.
+    let near = known(&r).unwrap_or(ty.max());
+    let result = gives(&r, *g.pick(&edges(ty, least, most)), other);
+    let any = value(g, ty);
+    let needs = *g.pick(&[near, near - 1, near + 1, result, result - 1, ty.max(), any]);
+    r.needs = needs.clamp(ty.min(), ty.max());
+    r
+}
+
+/// For every integer type, each of `bit_and`, `bit_or`, `bit_xor`,
+/// `shift_left` and `shift_right` of a number, whose bounds are values the
+/// generator draws, gives a number that `arith` knows a bound of, and no
+/// bound is claimed that some values make false: when a function that needs
+/// the result to be at most a bound is called with it, it compiles only when
+/// every value in the bounds gives a result that is, as 128-bit arithmetic
+/// says. It compiles exactly when the bound is what is known of an unsigned
+/// number, which is the smaller bound for `bit_and`, below the next power of
+/// two above the larger for `bit_or` and `bit_xor`, the bound divided by two
+/// to the amount for `shift_right`, and the bound times two to the amount for
+/// `shift_left` where that fits the type.
+fn arith_knows_the_range_of_a_bit_operation_and_no_more_than_is_true() {
+    generate::check(241, 100, range, holds);
+}
+
+/// What must be true when the function that needs the result to be at most
+/// `r.needs` is called with the operation: it compiles only when every
+/// number in the bounds, those at each end and each power of two among them,
+/// gives a result that is, and exactly when `r.needs` is the bound that is
+/// known.
+fn holds(r: &Range) {
+    let compiled = check(program(r).as_bytes()).is_ok();
+    if compiled {
+        let shift = matches!(r.op, Bit::Left | Bit::Right);
+        let b_least = if r.literal || shift { r.other } else { 0 };
+        let (xs, zs) = (
+            edges(r.ty, r.least, r.most),
+            edges(r.ty, b_least, r.other),
+        );
+        for a in &xs {
+            let others = if shift || r.literal {
+                vec![r.other]
+            } else {
+                zs.clone()
+            };
+            for b in others {
+                let result = gives(r, *a, b);
+                assert!(
+                    result <= r.needs,
+                    "accepted, though {a} and {b} give {result}, above {}",
+                    r.needs
+                );
+            }
+        }
+    }
+    if let Some(bound) = known(r) {
+        assert_eq!(
+            compiled,
+            r.needs >= bound,
+            "{r:?} is known to be at most {bound}, and {} is needed",
+            r.needs
+        );
+    }
+}
+
+/// The bounds at which each fact is tight, for every type: a bound that is
+/// all ones, one that is not, the greatest and the least of the type, and the
+/// one that makes a shift left just fit and just not.
+fn tight() -> Vec<Range> {
+    let mut out = Vec::new();
+    let mut add = |ty: Int, op: Bit, least: i128, most: i128, other: i128, literal: bool| {
+        if (ty.min()..=ty.max()).contains(&least)
+            && (ty.min()..=ty.max()).contains(&most)
+            && (0..=ty.max()).contains(&other)
+        {
+            out.push(Range {
+                ty,
+                op,
+                least,
+                most,
+                other,
+                literal,
+                needs: 0,
+            });
+        }
+    };
+    for ty in INTS {
+        let (m, n) = (ty.max(), i128::from(ty.bits));
+        if !ty.signed {
+            for (a, b, literal) in [(m, 1, true), (5, 12, false), (m, m >> 1, false), (6, 3, true)] {
+                add(*ty, Bit::And, 0, a, b, literal);
+            }
+            for op in [Bit::Or, Bit::Xor] {
+                for (a, b, literal) in [
+                    (5, 2, false),
+                    (7, 7, false),
+                    (7, 0, true),
+                    (8, 0, false),
+                    (4, 1, true),
+                    (m >> 1, 1, true),
+                    (m, 0, true),
+                ] {
+                    add(*ty, op, 0, a, b, literal);
+                }
+            }
+            for k in [0, 1, n - 1] {
+                for a in [m, 5, 1 << (n - 1), m - 1] {
+                    add(*ty, Bit::Right, 0, a, k, true);
+                }
+            }
+        }
+        for k in [0, 1, n - 1] {
+            // Both ends of what fits, and one past each.
+            let (low, high) = (ty.min() >> k, m >> k);
+            for (least, most) in [(low, high), (low, 0), (0, high), (0, high + 1), (low - 1, 0)] {
+                add(*ty, Bit::Left, least, most, k, true);
+            }
+        }
+    }
+    out
+}
+
+/// A function that needs the result to be at most the bound that is known of
+/// each of the cases of `tight` for the operations, compiles, and one that
+/// needs one less does not, so the bound is neither one too small, which a
+/// number in the bounds makes false, nor one too large.
+fn bounds_are_tight(ops: &[&str]) {
+    for tight in tight() {
+        if !ops.contains(&format!("{:?}", tight.op).as_str()) {
+            continue;
+        }
+        let Some(bound) = known(&tight) else { continue };
+        for needs in [bound, bound - 1] {
+            if needs >= tight.ty.min() {
+                holds(&Range {
+                    needs,
+                    ..tight.clone()
+                });
+            }
+        }
+    }
+}
+
+fn the_bound_of_bit_and_is_not_one_too_small_and_not_one_too_large() {
+    bounds_are_tight(&["And"]);
+}
+
+fn the_bound_of_bit_or_and_bit_xor_is_not_one_too_small_and_not_one_too_large() {
+    bounds_are_tight(&["Or", "Xor"]);
+}
+
+fn the_bound_of_shift_right_is_not_one_too_small_and_not_one_too_large() {
+    bounds_are_tight(&["Right"]);
+}
+
+fn the_bound_of_shift_left_is_not_one_too_small_and_not_one_too_large() {
+    bounds_are_tight(&["Left"]);
+}
+
+/// A shift of any type by a number compiles exactly when the number is below
+/// the bits of the type, whether the shift is left or right, and the amount
+/// of the last place, of 0, and of 1 are all inside it. A shift by the bits
+/// of the type or more is refused when the program is built, since nothing
+/// tests it when the program runs.
+fn a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type() {
+    for ty in INTS {
+        for function in ["shift_left", "shift_right"] {
+            for by in [0, 1, ty.bits - 1, ty.bits, ty.bits + 1, 255] {
+                let source = format!(
+                    "fn f(x: {0}) -> {0} {{ {function}(x, {by}) }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
+                    ty.name
+                );
+                let result = check(source.as_bytes());
+                assert_eq!(
+                    result.is_ok(),
+                    by < ty.bits,
+                    "{function} of a {} by {by}",
+                    ty.name
+                );
+                if let Err(errors) = result {
+                    assert!(
+                        errors.iter().any(|e| e.message.contains(&format!("{by} <"))),
+                        "{errors:?} does not state `{by} < {}`",
+                        ty.bits
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The function of the issue: a number masked to its low five bits and
+/// added to 200 fits a `u8`, and is 231 for 255, and a mask that keeps one
+/// bit more does not.
+fn a_mask_of_a_number_keeps_a_sum_with_it_inside_the_type() {
+    let source = |mask: u32| {
+        format!(
+            "fn f(x: u8) -> u8 {{ bit_and(x, {mask}) + 200 }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(255)}}\")\n}}\n"
+        )
+    };
+    let program = lower(source(31).as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        scalar::run(&program),
+        Outcome {
+            stdout: b"231\n".to_vec(),
+            status: 0
+        }
+    );
+    assert!(check(source(63).as_bytes()).is_err());
+}
+
+#[derive(Debug)]
+struct Least {
+    ty: Int,
+    least: i128,
+    most: i128,
+    by: i128,
+    needs: i128,
+}
+
+fn least(g: &mut Gen) -> Least {
+    let unsigned: Vec<Int> = INTS.iter().copied().filter(|t| !t.signed).collect();
+    let ty = *g.pick(&unsigned);
+    let (a, b) = (value(g, ty), value(g, ty));
+    let any = g.below(ty.bits as usize) as i128;
+    let by = *g.pick(&[0, 1, i128::from(ty.bits) - 1, any]);
+    let (least, most) = (a.min(b), a.max(b));
+    let known = least >> by;
+    let other = value(g, ty);
+    let needs = *g.pick(&[known, known + 1, known - 1, 0, other, ty.max()]);
+    Least {
+        ty,
+        least,
+        most,
+        by,
+        needs: needs.clamp(ty.min(), ty.max()),
+    }
+}
+
+/// For every unsigned type, a function that needs the result of
+/// `shift_right(x, k)` to be at least a bound compiles exactly when the bound
+/// is the least of `x` divided by two to the `k`, rounded down, and then
+/// every value in the bounds gives a result that is, as 128-bit arithmetic
+/// says.
+fn arith_knows_a_least_of_a_shift_right_of_an_unsigned_number_and_no_more_than_is_true() {
+    generate::check(242, 60, least, holds_least);
+}
+
+/// The least of `shift_right` is neither one too large, which a number in the
+/// bounds makes false, nor one too small, which makes a function that needs
+/// the true least refused: where it is tight, a function that needs it
+/// compiles and one that needs one more does not.
+fn the_least_of_shift_right_is_not_one_too_large_and_not_one_too_small() {
+    for ty in INTS.iter().filter(|t| !t.signed) {
+        let (m, n) = (ty.max(), i128::from(ty.bits));
+        for by in [0, 1, n - 1] {
+            for (low, most) in [(m, m), (m - 1, m), (5, m), (1 << (n - 1), m), (0, m), (3, 9)] {
+                let known = low >> by;
+                for needs in [known, known + 1] {
+                    if needs <= m {
+                        holds_least(&Least {
+                            ty: *ty,
+                            least: low,
+                            most,
+                            by,
+                            needs,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn holds_least(l: &Least) {
+    let t = l.ty.name;
+    let source = format!(
+        "fn g(y: {t}) -> {t}\n  requires y >= {needs}\n{{\n  y\n}}\n\nfn f(x: {t}) -> {t}\n  requires x >= {least} and x <= {most}\n{{\n  g(shift_right(x, {by}))\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({least})}}\")\n}}\n",
+        needs = l.needs,
+        least = l.least,
+        most = l.most,
+        by = l.by,
+    );
+    let compiled = check(source.as_bytes()).is_ok();
+    assert_eq!(compiled, l.needs <= l.least >> l.by, "{source}");
+    if compiled {
+        for x in edges(l.ty, l.least, l.most) {
+            assert!(l.needs <= x >> l.by, "accepted, though {x} gives less");
         }
     }
 }
