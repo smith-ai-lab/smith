@@ -27,6 +27,10 @@ pub const ONCE: &[Test] = &[
         an_instruction_that_can_hold_a_constant_does_and_the_constant_costs_no_instruction,
     ),
     (
+        "a_function_saves_a_register_a_call_does_not_change_only_for_a_value_alive_across_a_call",
+        a_function_saves_a_register_a_call_does_not_change_only_for_a_value_alive_across_a_call,
+    ),
+    (
         "an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says",
         an_arm64_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_says,
     ),
@@ -410,6 +414,105 @@ fn every_executable_that_holds_numbers_in_instructions_does_what_the_evaluator_s
         for &target in &targets {
             scalar_runs_as(program, target, &said);
         }
+    });
+}
+
+/// A program of three functions. `leaf` reads `held` numbers through its
+/// parameter and gives their sum, so that all are alive together, and calls
+/// nothing. `middle` reads `across` numbers, calls `leaf`, and adds them to
+/// what it gave, so that all are alive across the call. `main` calls `middle`.
+fn saving(held: usize, across: usize) -> scalar::Program {
+    let int = Type::Int(Bits::B64);
+    let read = |b: &mut Builder, from: Value, count: usize| -> Vec<Value> {
+        (0..count)
+            .map(|i| {
+                let at = b.int(Bits::B64, 8 * i as u64);
+                let place = b.binary(Binary::Add, from, at);
+                b.load(int, place)
+            })
+            .collect()
+    };
+    let sum = |b: &mut Builder, values: &[Value], first: Value| {
+        values.iter().fold(first, |s, v| b.binary(Binary::Add, s, *v))
+    };
+    let mut leaf = Builder::new();
+    let from = leaf.params(&[Type::Address])[0];
+    let values = read(&mut leaf, from, held);
+    let zero = leaf.int(Bits::B64, 0);
+    let total = sum(&mut leaf, &values, zero);
+    leaf.ret(vec![total]);
+    let leaf = leaf.finish(&[int]);
+
+    let mut middle = Builder::new();
+    let from = middle.params(&[Type::Address])[0];
+    let values = read(&mut middle, from, across);
+    let given = middle.call(0, vec![from], &[int])[0];
+    let total = sum(&mut middle, &values, given);
+    middle.ret(vec![total]);
+    let middle = middle.finish(&[int]);
+
+    let mut main = Builder::new();
+    let size = main.int(Bits::B64, 8 * 64);
+    let buffer = main.allocate(size);
+    main.call(1, vec![buffer], &[int]);
+    main.ret(vec![]);
+    program(vec![leaf, middle, main.finish(&[])], 2)
+}
+
+/// How many instructions of the executable write a register that a call does
+/// not change to the frame, which is how a function saves it.
+fn saves(file: &[u8]) -> Option<usize> {
+    let (machine, found) = machine_code::instructions(file)?;
+    let saving = found.iter().filter(|i| {
+        let code = &file[i.at..i.at + i.len];
+        match machine {
+            // `mov [rsp + disp], r` of rbx, rbp, or r12 to r15.
+            Machine::X86_64 => {
+                let rex = if (0x40..0x50).contains(&code[0]) { code[0] } else { 0 };
+                let at = usize::from(rex != 0);
+                if code.len() < at + 3 {
+                    return false;
+                }
+                let reg = ((rex >> 2) & 1) << 3 | (code[at + 1] >> 3) & 7;
+                code[at] == 0x89
+                    && code[at + 1] >> 6 != 3
+                    && code[at + 1] & 7 == 4
+                    && code[at + 2] == 0x24
+                    && matches!(reg, 3 | 5 | 12..=15)
+            }
+            // `str xt, [sp, #imm]` of x19 to x28.
+            Machine::Arm64 => {
+                let word = u32::from_le_bytes(code[..4].try_into().unwrap());
+                word & 0xffc0_03e0 == 0xf900_03e0 && matches!(word & 31, 19..=28)
+            }
+        }
+    });
+    Some(saving.count())
+}
+
+/// A function that has no value alive across a call saves no register, however
+/// many values are alive together in it, and one that has some saves
+/// registers for them and for no more.
+fn a_function_saves_a_register_a_call_does_not_change_only_for_a_value_alive_across_a_call() {
+    let generate = |g: &mut Gen| (1 + g.below(30), g.below(5));
+    generate::check(106, 20, generate, |(held, across)| {
+        let mut read = 0;
+        for target in Target::ALL {
+            let Some(saved) = saves(&target.emit(&saving(*held, *across))) else {
+                continue;
+            };
+            read += 1;
+            if *across == 0 {
+                assert_eq!(saved, 0, "{held} alive together, on {}", target.name());
+            } else {
+                assert!(
+                    (1..=*across).contains(&saved),
+                    "{across} alive across a call and {saved} registers saved, on {}",
+                    target.name()
+                );
+            }
+        }
+        assert!(read > 0, "no target is an ELF file the reader knows");
     });
 }
 
