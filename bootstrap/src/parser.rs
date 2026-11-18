@@ -376,6 +376,15 @@ pub enum Expr {
         /// Where the `[` is.
         pos: Pos,
     },
+    /// `of[a..b]`, `of[..b]`, or `of[a..]`, the part of `of` from `a` up to
+    /// `b`, where a left-out end is the start or the size.
+    Slice {
+        of: Box<Expr>,
+        from: Option<Box<Expr>>,
+        to: Option<Box<Expr>>,
+        /// Where the `[` is.
+        pos: Pos,
+    },
     /// `loop i in a..b { ... }`, or an open-ended `loop { ... }`.
     Loop(Box<Loop>),
     /// `break`, which ends the nearest `loop` around it.
@@ -575,7 +584,7 @@ impl Expr {
             | Expr::Unbuilt { pos }
             | Expr::Break { pos }
             | Expr::Return { pos, .. } => *pos,
-            Expr::Index { of, .. } => of.pos(),
+            Expr::Index { of, .. } | Expr::Slice { of, .. } => of.pos(),
             Expr::Loop(l) => l.pos,
             Expr::Call(call) => call.pos,
             Expr::Field { of, .. } => of.pos(),

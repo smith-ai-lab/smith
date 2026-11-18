@@ -531,6 +531,13 @@ impl<'a> Walk<'a> {
                 self.eval(st, index, Flow::Lend);
                 None
             }
+            Expr::Slice { of, from, to, .. } => {
+                self.eval(st, of, Flow::Lend);
+                for end in [from, to].into_iter().flatten() {
+                    self.eval(st, end, Flow::Lend);
+                }
+                None
+            }
             Expr::Lambda(l) => {
                 self.lambda(st, l, &[], Kept::Lent);
                 None
@@ -873,10 +880,31 @@ impl<'a> Walk<'a> {
             if let Some(i) = ix {
                 given.push((i, &arg.value));
             }
+            // A slice cannot change, so it is not given where a list is
+            // taken, which the callee may grow.
+            if param.is_some_and(|p| p.take && p.ty.name == "List")
+                && matches!(self.types.get(&addr(&arg.value)), Some(Ty::Slice(_)))
+                && let Some(error) = self.error(
+                    arg.value.pos(),
+                    format!(
+                        "`{}` takes a list, which it may grow, and this is a slice, which cannot change",
+                        call.callee
+                    ),
+                )
+            {
+                error.fix = Some(format!(
+                    "write `copy({})`, which is a new list",
+                    super::written_expr(&arg.value)
+                ));
+            }
             let flow = match (param, value_fn) {
                 _ if constructs => Flow::Stored,
                 // `push` takes its list and its item.
-                _ if super::lists_and_text::is_push(defs, call) => Flow::Taken(name),
+                _ if super::lists_and_text::is_push(defs, call)
+                    || super::lists_and_text::is_freeze(defs, call) =>
+                {
+                    Flow::Taken(name)
+                }
                 (Some(p), _) if p.take => Flow::Taken(name),
                 (None, Some(f)) => {
                     let at = if arg.name.is_none() && !arg.after {
