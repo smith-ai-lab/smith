@@ -33,7 +33,7 @@
 //! every register the chip says a call may change.
 
 use super::frame::lay_out;
-use crate::scalar::{Function, Value};
+use crate::scalar::{End, Function, Jump, Op, Value};
 
 /// The registers a chip offers the allocator, by number. The registers from 0
 /// below `changed` are those a call may change, and the `preserved` after them
@@ -97,6 +97,13 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
     let mut defined_in = vec![NONE; values];
     let mut uses: Vec<Vec<(usize, usize)>> = vec![Vec::new(); values];
     let mut preds: Vec<Vec<usize>> = vec![Vec::new(); blocks];
+    // The values the jumps give each parameter, and the parameters each value
+    // is given to.
+    let mut given: Vec<Vec<Value>> = vec![Vec::new(); values];
+    let mut feeds: Vec<Vec<Value>> = vec![Vec::new(); values];
+    // The register a call passes a value in, or takes it from, or a function
+    // gives it back in, for the first it is found in.
+    let mut passed_in = vec![NONE; values];
     for (b, block) in f.blocks.iter().enumerate() {
         for p in &block.params {
             defined_in[p.0] = b;
@@ -115,6 +122,34 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
         }
         for s in block.end.successors() {
             preds[s].push(b);
+        }
+        for instruction in &block.instructions {
+            if let Op::Call { args, .. } = &instruction.op {
+                for (i, v) in args.iter().chain(&instruction.results).enumerate() {
+                    let i = if i < args.len() { i } else { i - args.len() };
+                    if i < registers.passed && passed_in[v.0] == NONE {
+                        passed_in[v.0] = i;
+                    }
+                }
+            }
+        }
+        if let End::Return(values) = &block.end {
+            for (i, v) in values.iter().enumerate().take(registers.passed) {
+                if passed_in[v.0] == NONE {
+                    passed_in[v.0] = i;
+                }
+            }
+        }
+        let jumps: &[Jump] = match &block.end {
+            End::Jump(jump) => std::slice::from_ref(jump),
+            End::Switch { jumps, .. } => jumps,
+            End::Return(_) => &[],
+        };
+        for jump in jumps {
+            for (arg, param) in jump.args.iter().zip(&f.blocks[jump.block].params) {
+                given[param.0].push(*arg);
+                feeds[arg.0].push(*param);
+            }
         }
     }
 
@@ -241,6 +276,11 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
             } else {
                 None
             };
+            let near = if arrives.is_some() {
+                Vec::new()
+            } else {
+                near(&given[p.0], &register, &spilled, passed_in[p.0])
+            };
             colour(
                 registers,
                 &mut holder,
@@ -249,6 +289,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
                 &crosses,
                 *p,
                 arrives,
+                &near,
             );
         }
         release(&mut holder, &register, &dead[base[b]]);
@@ -256,6 +297,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
             let at = base[b] + i + 1;
             release(&mut holder, &register, &dying[at]);
             for r in &instruction.results {
+                let near = near(&feeds[r.0], &register, &spilled, passed_in[r.0]);
                 colour(
                     registers,
                     &mut holder,
@@ -264,6 +306,7 @@ pub fn allocate(f: &Function, registers: Registers) -> Allocation {
                     &crosses,
                     *r,
                     None,
+                    &near,
                 );
             }
             release(&mut holder, &register, &dead[at]);
@@ -424,10 +467,37 @@ fn spill(
     }
 }
 
+/// The registers that the values given to a parameter, or the parameters a
+/// value is given to, are in so far, the one most of them are in first. A
+/// value that moves in or out of the register of the one it is given to or
+/// takes is not moved at the jump.
+fn near(others: &[Value], register: &[usize], spilled: &[bool], passed: usize) -> Vec<usize> {
+    let mut found: Vec<(usize, usize)> = Vec::new();
+    for v in others {
+        let r = register[v.0];
+        if r == NONE || spilled[v.0] {
+            continue;
+        }
+        match found.iter_mut().find(|(seen, _)| *seen == r) {
+            Some((_, n)) => *n += 1,
+            None => found.push((r, 1)),
+        }
+    }
+    // The sort keeps the order they were found in among those that tie.
+    found.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    let mut near: Vec<usize> = found.into_iter().map(|(r, _)| r).collect();
+    if passed != NONE {
+        near.push(passed);
+    }
+    near
+}
+
 /// Gives the value the register it arrives in, if it has one and may have it
-/// and no value alive holds it, and otherwise the first register that no
-/// value alive holds, from those it may have, or sends it to the frame when
-/// there is none.
+/// and no value alive holds it, and otherwise the first of the registers
+/// `near` that it may have and no value alive holds, and otherwise the first
+/// register that no value alive holds, from those it may have, or sends it to
+/// the frame when there is none.
+#[allow(clippy::too_many_arguments)]
 fn colour(
     registers: Registers,
     holder: &mut [usize],
@@ -436,12 +506,16 @@ fn colour(
     crosses: &[bool],
     v: Value,
     arrives: Option<usize>,
+    near: &[usize],
 ) {
     if spilled[v.0] {
         return;
     }
     let from = if crosses[v.0] { registers.changed } else { 0 };
-    let wanted = arrives.filter(|&r| r >= from && holder[r] == NONE);
+    let free = |r: usize| r >= from && r < registers.count() && holder[r] == NONE;
+    let wanted = arrives
+        .filter(|&r| free(r))
+        .or_else(|| near.iter().copied().find(|&r| free(r)));
     match wanted.or_else(|| (from..registers.count()).find(|&r| holder[r] == NONE)) {
         Some(r) => {
             holder[r] = v.0;
