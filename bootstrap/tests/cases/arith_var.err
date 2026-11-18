@@ -1,4 +1,0 @@
-arith_var.smith:3:18: cannot prove that `v + 1 <= 255`, so `v + 1` may not fit `u8`
-  3 |   if v < 255 { v + 1 } else { v }
-    |                  ^
-  fix: check the operands first, or use `wrapping_add`, `saturating_add`, or `checked_add`
