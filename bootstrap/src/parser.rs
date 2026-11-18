@@ -42,6 +42,10 @@ pub struct File {
     /// of its place and the names the traits have among the file's items. The
     /// checker reads it to find a call that two of them could mean.
     pub scopes: Vec<(usize, Vec<String>)>,
+    /// What the file uses that is not built yet, which the parser read past
+    /// by putting an `Expr::Unbuilt` or an unbuilt `Type` in its place, so
+    /// that the rest of the file is checked.
+    pub unbuilt: Vec<Error>,
 }
 
 /// A name written with the name of an imported module before it.
@@ -214,11 +218,24 @@ pub struct Param {
 /// by the type it gives.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Type {
+    /// The name, which is `UNBUILT` for a type that is not built yet.
     pub name: String,
     pub pos: Pos,
     pub args: Vec<Type>,
     /// Whether it is a function type, written `(T) -> U`.
     pub function: bool,
+}
+
+/// The name of a type that is not built yet, as an array type is. It is no
+/// name a program can write. Its `args` are the names written inside it and
+/// the type of its elements, so that what names a type parameter still does.
+pub const UNBUILT: &str = "?";
+
+impl Type {
+    /// Whether the type is one that is not built yet.
+    pub fn unbuilt(&self) -> bool {
+        self.name == UNBUILT
+    }
 }
 
 /// A statement of a block.
@@ -257,6 +274,11 @@ pub enum Stmt {
 /// An expression.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// What is not built yet, whose place the parser kept so that the rest
+    /// of the file is checked. It has no type, and nothing is said of it.
+    Unbuilt {
+        pos: Pos,
+    },
     /// A string literal with its escapes applied.
     Text {
         text: Vec<u8>,
@@ -517,6 +539,7 @@ impl Expr {
             | Expr::Case { pos, .. }
             | Expr::Tuple { pos, .. }
             | Expr::List { pos, .. }
+            | Expr::Unbuilt { pos }
             | Expr::Break { pos }
             | Expr::Return { pos, .. } => *pos,
             Expr::Index { of, .. } => of.pos(),
@@ -581,6 +604,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
         tokens,
         at: 0,
         errors: Vec::new(),
+        unbuilt: Vec::new(),
         no_lambda: false,
         hoisted: Vec::new(),
         binds: Vec::new(),
@@ -690,7 +714,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
     if !library {
         for field in structs.iter().flat_map(|s| &s.fields) {
             if let Some(pos) = field.public {
-                p.errors.push(Error::unsupported(pos, "`pub`"));
+                p.unbuilt.push(Error::unsupported(pos, "`pub`"));
             }
         }
     }
@@ -713,8 +737,12 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             exports,
             qualified: p.qualified,
             scopes: Vec::new(),
+            unbuilt: p.unbuilt,
         })
     } else {
+        // What is not built is reported with the mistakes of the syntax, as
+        // the file is not read further.
+        p.errors.append(&mut p.unbuilt);
         Err(p.errors)
     }
 }
@@ -873,6 +901,9 @@ struct Parser<'a> {
     tokens: &'a [Token],
     at: usize,
     errors: Vec<Error>,
+    /// What is not built yet and was read past, which is not a mistake of
+    /// the syntax.
+    unbuilt: Vec<Error>,
     /// Whether a `{` after a call opens the body of a construct, as it does
     /// after the value of a `match`, rather than a lambda. Inside
     /// parentheses and braces it opens a lambda again.
@@ -1335,6 +1366,11 @@ impl Parser<'_> {
                 }
                 _ => match self.statement_into(&mut block) {
                     Ok(()) => {}
+                    Err(e) if e.unbuilt => {
+                        if !self.read_past_statement(start, e, &mut block) {
+                            return Ok(None);
+                        }
+                    }
                     Err(e) => {
                         self.errors.push(e);
                         ok = false;
@@ -1542,6 +1578,7 @@ impl Parser<'_> {
             }
             Expr::Text { .. }
             | Expr::Number { .. }
+            | Expr::Unbuilt { .. }
             | Expr::Name { .. }
             | Expr::Case { payload: None, .. }
             | Expr::Lambda(_)
@@ -1640,10 +1677,13 @@ impl Parser<'_> {
         let (takes, mut args): (Vec<bool>, Vec<Type>) = marked.into_iter().unzip();
         if self.tok() != &Tok::Punct("->") {
             if takes.contains(&true) {
-                return Err(Error::unsupported(pos, "`take` in a tuple type"));
+                self.unbuilt
+                    .push(Error::unsupported(pos, "`take` in a tuple type"));
             }
             if args.len() == 1 {
-                return Err(Error::unsupported(pos, "one type in parentheses"));
+                self.unbuilt
+                    .push(Error::unsupported(pos, "one type in parentheses"));
+                return Ok((args.remove(0), Vec::new()));
             }
             let tuple = Type {
                 name: String::new(),
@@ -1655,12 +1695,7 @@ impl Parser<'_> {
         }
         self.bump();
         args.push(self.ty()?);
-        if self.tok() == &Tok::Punct("!") {
-            return Err(Error::unsupported(
-                self.pos(),
-                "an effect on a function type",
-            ));
-        }
+        self.function_effects();
         let function = Type {
             name: String::new(),
             pos,
@@ -1668,6 +1703,58 @@ impl Parser<'_> {
             function: true,
         };
         Ok((function, takes))
+    }
+
+    /// Reads past the effects written after a function type, which is not
+    /// built, if there are any.
+    fn function_effects(&mut self) {
+        if self.tok() != &Tok::Punct("!") {
+            return;
+        }
+        self.unbuilt.push(Error::unsupported(
+            self.pos(),
+            "an effect on a function type",
+        ));
+        self.bump();
+        while matches!(self.tok(), Tok::Ident(_)) {
+            self.bump();
+            if self.tok() != &Tok::Punct(",") {
+                break;
+            }
+            self.bump();
+        }
+    }
+
+    /// Reads past an array type, which is not built, from its `[`: the sizes
+    /// in brackets and the type of its elements. The type it gives holds the
+    /// names the sizes write and the type of the elements.
+    fn array_type(&mut self, pos: Pos) -> Result<Type, Error> {
+        self.unbuilt.push(Error::unsupported(pos, "an array type"));
+        self.bump();
+        let mut args = Vec::new();
+        let mut depth = 1;
+        while depth > 0 {
+            match self.tok() {
+                Tok::Eof | Tok::Newline => return Err(self.expected("`]`", self.tok())),
+                Tok::Punct("[") => depth += 1,
+                Tok::Punct("]") => depth -= 1,
+                Tok::Ident(name) => args.push(Type {
+                    name: name.clone(),
+                    pos: self.pos(),
+                    args: Vec::new(),
+                    function: false,
+                }),
+                _ => {}
+            }
+            self.bump();
+        }
+        args.push(self.ty()?);
+        Ok(Type {
+            name: UNBUILT.to_string(),
+            pos,
+            args,
+            function: false,
+        })
     }
 
     /// Parses a type: a name, and the types in brackets after it, if any.
@@ -1689,18 +1776,13 @@ impl Parser<'_> {
                     function: false,
                 })
             }
-            Tok::Punct("[") => Err(Error::unsupported(pos, "an array type")),
+            Tok::Punct("[") => self.array_type(pos),
             Tok::Punct("(") => {
                 let mut args = self.list(Self::ty, Self::no_spill)?;
                 if self.tok() == &Tok::Punct("->") {
                     self.bump();
                     args.push(self.ty()?);
-                    if self.tok() == &Tok::Punct("!") {
-                        return Err(Error::unsupported(
-                            self.pos(),
-                            "an effect on a function type",
-                        ));
-                    }
+                    self.function_effects();
                     return Ok(Type {
                         name: String::new(),
                         pos,
@@ -1709,7 +1791,9 @@ impl Parser<'_> {
                     });
                 }
                 if args.len() == 1 {
-                    return Err(Error::unsupported(pos, "one type in parentheses"));
+                    self.unbuilt
+                        .push(Error::unsupported(pos, "one type in parentheses"));
+                    return Ok(args.remove(0));
                 }
                 Ok(Type {
                     name: String::new(),
@@ -2650,8 +2734,72 @@ impl Parser<'_> {
                 self.bump();
                 return Ok((block.finish(end), end));
             }
-            self.statement_into(&mut block)?;
+            let start = self.at;
+            match self.statement_into(&mut block) {
+                Ok(()) => {}
+                Err(e) if e.unbuilt => {
+                    if !self.read_past_statement(start, e.clone(), &mut block) {
+                        return Err(e);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
+    }
+
+    /// Reads past a statement that uses what is not built yet, from the
+    /// token `start`, so that the statements after it are checked. In its
+    /// place the block holds a binding of the name it defines, if it defines
+    /// one, to what is not built, so that uses of the name are not said to
+    /// have none. Gives whether the end of the statement was found.
+    fn read_past_statement(&mut self, start: usize, error: Error, block: &mut Block) -> bool {
+        let pos = error.pos;
+        self.unbuilt.push(error);
+        let found = self.skip_statement(start);
+        let var = self.tokens[start].tok == Tok::Keyword("var");
+        let first = start + usize::from(var);
+        // The names the statement binds: one, or those of a tuple taken
+        // apart, which are the names in its parentheses.
+        let names: Vec<(&String, Pos)> = match &self.tokens[first].tok {
+            Tok::Ident(n)
+                if matches!(
+                    self.tokens.get(first + 1).map(|t| &t.tok),
+                    Some(Tok::Punct("=" | ":"))
+                ) =>
+            {
+                vec![(n, self.tokens[first].pos)]
+            }
+            Tok::Punct("(") => {
+                let close = self.tokens[first..]
+                    .iter()
+                    .position(|t| t.tok == Tok::Punct(")"))
+                    .map_or(first, |i| first + i);
+                if self.tokens.get(close + 1).map(|t| &t.tok) == Some(&Tok::Punct("=")) {
+                    (self.tokens[first..close].iter())
+                        .filter_map(|t| match &t.tok {
+                            Tok::Ident(n) => Some((n, t.pos)),
+                            _ => None,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+        if names.is_empty() {
+            block.inner.push(Stmt::Expr(Expr::Unbuilt { pos }));
+        }
+        for (name, at) in names {
+            block.inner.push(Stmt::Define {
+                name: name.clone(),
+                pos: at,
+                ty: None,
+                var,
+                value: Expr::Unbuilt { pos },
+            });
+        }
+        found
     }
 
     /// Parses the arguments of a call, from its `(`.

@@ -26,6 +26,7 @@ fn interpolated(
         tokens,
         at: 0,
         errors: Vec::new(),
+        unbuilt: Vec::new(),
         no_lambda: false,
         hoisted: Vec::new(),
         binds: Vec::new(),

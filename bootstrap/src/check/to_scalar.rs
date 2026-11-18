@@ -99,7 +99,9 @@ fn stops(body: &[Stmt], breaks: bool, returns: bool) -> bool {
             Expr::Interp { parts, .. } => parts
                 .iter()
                 .any(|p| matches!(p, Part::Expr(e) if one(e, breaks, returns))),
-            Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } => false,
+            Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } | Expr::Unbuilt { .. } => {
+                false
+            }
         }
     }
     values(body).any(|e| one(e, breaks, returns))
@@ -1013,6 +1015,7 @@ impl<'a> Lowering<'a> {
         let typed = self.typed;
         let defs = typed.defs;
         match expr {
+            Expr::Unbuilt { .. } => unreachable!("what is not built is an error"),
             Expr::Text { text, .. } => (Ty::Text, self.text(out, text)),
             Expr::Number {
                 magnitude,

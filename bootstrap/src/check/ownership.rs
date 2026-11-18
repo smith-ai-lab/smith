@@ -269,7 +269,7 @@ impl<'a> Walk<'a> {
             return self.read(st, e, path, flow);
         }
         match e {
-            Expr::Text { .. } | Expr::Number { .. } => None,
+            Expr::Text { .. } | Expr::Number { .. } | Expr::Unbuilt { .. } => None,
             Expr::Interp { parts, .. } => {
                 for part in parts {
                     if let Part::Expr(value) = part {
