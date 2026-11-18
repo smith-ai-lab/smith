@@ -52,7 +52,7 @@ fn quarter(x: f32) -> f32 {
 Here `fn(v) { v * 0.5 }` is the `f` of `twice`, so `quarter(8.0)` is `2.0`.
 
 - The types of a lambda's parameters and of its result are those of the function type it is passed as, so `v` is an `f32`. A lambda may write them as a function does, `fn(v: f32) -> f32 { v * 0.5 }`, each one or none. A type that is written and is not the one the function type needs is refused at the type.
-- A lambda has no type parameters of its own. It uses those of the function it is written in, and when nothing decides the type of its parameters, it writes them.
+- A lambda uses the type parameters of the function it is written in, and may write its own, as [Where a lambda may go](#where-a-lambda-may-go) shows. When nothing decides the type of its parameters, it writes them.
 - A lambda has as many parameters as that function type. `twice(x) fn(a, b) { a }` is refused: "this lambda takes 2 parameters, where a `fn(f32) -> f32` is needed, which takes 1".
 - The value of a lambda is the last expression of its block, as for a function. Its block may have several lines.
 
@@ -190,6 +190,17 @@ fn quarter(x: f32) -> f32 {
 }
 ```
 
+A lambda may write type parameters in brackets after `fn`, as a function writes them after its name, and each use settles them, as each call of a function does.
+
+```
+fn both() -> (i64, str) {
+  same = fn[T](x: T) -> T { x }
+  (same(1), same("a"))
+}
+```
+
+`both()` is `(1, "a")`: `T` is `i64` in the first call and `str` in the second. A lambda passed where a function type is needed has its type parameters settled by that type. No parameter asks for a function whose type parameters are still open, so no function type writes brackets.
+
 A lambda that uses no name around it is a function with a name in all but the name, so it goes where a [function value](function-values.md) goes, as into a field whose type is a function type. A lambda that takes names holds them, and has a type of its own, so a field that holds it has a type parameter for it. A type parameter never stands for a lambda that holds something lent.
 
 ```
@@ -200,7 +211,7 @@ struct Step[F] {
 
 A lambda that is bound, stored, or returned is written with `fn`, also when it takes nothing: `fn() { 1.0 }`. The block alone is a lambda only as the argument of a call, so `x = { 1.0 }` is still refused, as a block that stands alone is not an expression.
 
-Binding, storing, and returning a lambda are not built, so the second and third examples are refused today, and no words are quoted.
+Binding, storing, and returning a lambda, and a lambda's own type parameters, are not built, so every example of this section but the first is refused today, and no words are quoted.
 
 A lambda that is passed to a call is inlined: it costs what its block costs, written where the function calls it.
 

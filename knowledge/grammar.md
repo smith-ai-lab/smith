@@ -107,7 +107,7 @@ if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
 for        = "for" IDENT { "," IDENT } block ;
 loop       = "loop" [ ( IDENT | tuple_pat ) "in" expr | "decreases" expr { "," expr } ] block ;
-lambda     = [ "fn" "(" lambda_arg { "," lambda_arg } ")" [ "->" type ] ] block ;
+lambda     = [ "fn" [ generics ] "(" lambda_arg { "," lambda_arg } ")" [ "->" type ] ] block ;
 lambda_arg = ( IDENT | tuple_pat ) [ ":" type ] ;
 
 type       = statement
