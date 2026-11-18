@@ -46,6 +46,14 @@ pub const ONCE: &[Test] = &[
         the_examples_of_the_page_that_are_built_give_what_it_says,
     ),
     (
+        "try_on_a_flow_leaves_with_stop_and_goes_on_with_go",
+        try_on_a_flow_leaves_with_stop_and_goes_on_with_go,
+    ),
+    (
+        "each_of_a_list_called_directly_gives_stop_exactly_when_its_lambda_stopped",
+        each_of_a_list_called_directly_gives_stop_exactly_when_its_lambda_stopped,
+    ),
+    (
         "a_function_may_be_named_each_and_a_loop_over_a_list_still_runs",
         a_function_may_be_named_each_and_a_loop_over_a_list_still_runs,
     ),
@@ -535,4 +543,71 @@ impl Iterate[Countdown, i32] {
 fn a_function_may_be_named_each_and_a_loop_over_a_list_still_runs() {
     let source = "fn each(f: (str) -> str) -> str { f(\"q\") }\n\nfn main() ! console, alloc {\n  print(each() fn(v) { v })\n  xs: List[u8] = [7, 8]\n  loop x in xs { print(\"{x}\") }\n}\n";
     assert_eq!(evaluate(source), Outcome { stdout: b"q\n7\n8\n".to_vec(), status: 0 });
+}
+
+/// The program that prints what a lambda was called with, answering `.stop`
+/// for `stop`, and then which `Flow` the call `call` gave.
+fn tracing(functions: &str, setup: &str, call: &str, stop: i64) -> String {
+    format!(
+        "{functions}\nfn main() ! console, alloc {{\n{setup}  r = {call} fn(v) {{\n    print(\"{{v}}\")\n    if v == {stop} {{ .stop }} else {{ .go }}\n  }}\n  match r {{\n    .stop {{ print(\"stop\") }}\n    .go {{ print(\"go\") }}\n  }}\n}}\n"
+    )
+}
+
+/// What `tracing` prints when the lambda is called with `seen` in order, up
+/// to the first that is `stop`.
+fn traced(seen: &[i64], stop: i64) -> Outcome {
+    let mut lines = Vec::new();
+    for v in seen {
+        lines.push(v.to_string());
+        if *v == stop {
+            lines.push("stop".into());
+            return says(&lines.join("\n"));
+        }
+    }
+    lines.push("go".into());
+    says(&lines.join("\n"))
+}
+
+/// A chain of `try` on what a lambda gives, as long as the generator draws,
+/// ends with `.stop` at the first call that stops and calls the lambda no more.
+fn try_on_a_flow_leaves_with_stop_and_goes_on_with_go() {
+    generate::check(
+        710,
+        24,
+        |g| (g.below(5) + 1, g.below(7) as i64),
+        |(length, stop)| {
+            let mut function = String::from("fn chain(body: (i64) -> Flow) -> Flow {\n");
+            for n in 1..*length {
+                function.push_str(&format!("  try body({n})\n"));
+            }
+            function.push_str(&format!("  body({length})\n}}\n"));
+            let source = tracing(&function, "", "chain()", *stop);
+            let seen: Vec<i64> = (1..=*length as i64).collect();
+            assert_eq!(evaluate(&source), traced(&seen, *stop), "for {source}");
+        },
+    );
+}
+
+/// `each` of a list, called with a lambda, gives `.stop` exactly when the
+/// lambda answered `.stop`, and calls it for the elements up to that one.
+fn each_of_a_list_called_directly_gives_stop_exactly_when_its_lambda_stopped() {
+    generate::check(
+        711,
+        24,
+        |g| {
+            let count = g.below(6);
+            let xs: Vec<i64> = (0..count).map(|_| g.below(6) as i64).collect();
+            (xs, g.below(8) as i64)
+        },
+        |(xs, stop)| {
+            let list = Walked::List(xs.clone());
+            let source = tracing(
+                "",
+                &format!("  xs: List[i64] = {}\n", list.written()),
+                "each(xs)",
+                *stop,
+            );
+            assert_eq!(evaluate(&source), traced(xs, *stop), "for {source}");
+        },
+    );
 }
