@@ -4,7 +4,7 @@ title: Overview
 description: What Smith is for, the rules that hold throughout the language, and the four principles its design follows.
 status: partial
 built:
-  - "blocks in braces for every body, statements separated by line breaks, and a name defined once per function"
+  - "blocks in braces for every body, statements separated by line breaks, and a name never defined again where it can be used"
 ---
 
 # Overview
