@@ -432,6 +432,34 @@ impl Pattern {
     }
 }
 
+/// Whether a token starts a pattern that is not a name: a tuple, a case, a
+/// literal, or a list.
+fn starts_pattern(tok: &Tok) -> bool {
+    matches!(
+        tok,
+        Tok::Punct("(" | "." | "[" | "-") | Tok::Number(_) | Tok::Str(_) | Tok::Interp(_)
+    )
+}
+
+/// The name that stands for a value a pattern takes apart, and where the
+/// pattern is. No source text can write it, so a call cannot give it by name.
+fn hidden(pattern: &Pattern) -> (String, Pos) {
+    let pos = pattern.pos();
+    (format!("pattern@{}:{}", pos.line, pos.col), pos)
+}
+
+/// The binding of a pattern to the name that stands for what it takes apart.
+fn taken_apart(pattern: Pattern, name: &str, pos: Pos) -> Stmt {
+    Stmt::Destructure {
+        pattern,
+        ty: None,
+        value: Expr::Name {
+            name: name.to_string(),
+            pos,
+        },
+    }
+}
+
 impl Expr {
     /// Where the expression starts.
     pub fn pos(&self) -> Pos {
@@ -509,6 +537,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
         errors: Vec::new(),
         no_lambda: false,
         hoisted: Vec::new(),
+        binds: Vec::new(),
     };
     let mut uses = Vec::new();
     let mut exports = Vec::new();
@@ -797,6 +826,10 @@ struct Parser<'a> {
     /// with where its `try` is and the name that stands for what it holds,
     /// in the order they run.
     hoisted: Vec<Hoisted>,
+    /// The bindings that take apart the parameters of the function whose
+    /// signature was read last that are written as patterns, in order. They
+    /// open its body.
+    binds: Vec<Stmt>,
 }
 
 /// The operand of a `try` and the name that stands for the value it
@@ -1200,6 +1233,7 @@ impl Parser<'_> {
                 }
             };
         let mut block = Block::default();
+        block.inner.append(&mut self.binds);
         let mut ok = true;
         let end = loop {
             self.skip_newlines();
@@ -1298,6 +1332,7 @@ impl Parser<'_> {
 
     /// Parses a function's signature, through its list of effects.
     fn signature(&mut self) -> Result<Signature, Error> {
+        self.binds.clear();
         self.bump();
         let (name, pos) = self.defined("the function's name")?;
         let generics = self.generics()?;
@@ -1308,6 +1343,7 @@ impl Parser<'_> {
             match self.tok() {
                 Tok::Punct(")") => break,
                 Tok::Ident(_) => params.push(self.param()?),
+                tok if starts_pattern(tok) => params.push(self.param()?),
                 tok => return Err(self.expected("a parameter or `)`", tok)),
             }
             self.skip_newlines();
@@ -1434,17 +1470,58 @@ impl Parser<'_> {
         }
     }
 
+    /// Parses a tuple pattern where a name is introduced: a parameter, or
+    /// the name of a `loop`. Its parts are names, `var` and a name, and
+    /// tuples of these, as these always match.
+    fn binder(&mut self) -> Result<Pattern, Error> {
+        match self.tok() {
+            Tok::Ident(name) if name != "true" && name != "false" => self.pattern(),
+            Tok::Keyword("var") => self.pattern(),
+            Tok::Punct("(") => {
+                let pos = self.pos();
+                let items = self.list(Self::binder, Self::no_spill)?;
+                match items.len() {
+                    0 => Err(Error::new(pos, "expected a pattern, found `()`")),
+                    1 => Err(Error::unsupported(pos, "one pattern in parentheses")),
+                    _ => Ok(Pattern::Tuple { pos, items }),
+                }
+            }
+            _ => Err(Error::new(
+                self.pos(),
+                "this pattern may not match, so it cannot stand where a name is introduced, and is written in a `match`",
+            )),
+        }
+    }
+
     /// Parses `name: type`, and `= default` after it if it has one.
     fn param(&mut self) -> Result<Param, Error> {
-        let (name, pos) = self.defined("a parameter")?;
+        let pattern = !matches!(self.tok(), Tok::Ident(_));
+        let (name, pos, pattern) = if pattern {
+            let pattern = self.binder()?;
+            let (name, pos) = hidden(&pattern);
+            (name, pos, Some(pattern))
+        } else {
+            let (name, pos) = self.defined("a parameter")?;
+            (name, pos, None)
+        };
         self.expect_punct(":", "`:` and the parameter's type")?;
         let take = self.taking();
         let (ty, takes) = self.ty_taking()?;
         let mut default = None;
         if self.tok() == &Tok::Punct("=") {
+            if pattern.is_some() {
+                return Err(Error::new(
+                    self.pos(),
+                    "a parameter written as a pattern has no name to leave out at a call, so it takes no default",
+                )
+                .with_fix("give the parameter a name and take it apart in the body"));
+            }
             self.bump();
             self.skip_newlines();
             default = Some(self.default()?);
+        }
+        if let Some(pattern) = pattern {
+            self.binds.push(taken_apart(pattern, &name, pos));
         }
         Ok(Param {
             name,
@@ -1986,6 +2063,7 @@ impl Parser<'_> {
         self.bump();
         let mut decreases = None;
         let mut over = None;
+        let mut lead = Vec::new();
         let range = match self.tok() {
             Tok::Punct("{") => None,
             Tok::Ident(name) if name == "decreases" => {
@@ -1996,10 +2074,23 @@ impl Parser<'_> {
                 decreases = Some(measure?);
                 None
             }
-            Tok::Ident(name) if self.next_tok() == &Tok::Keyword("in") => {
-                let name = name.clone();
+            tok if starts_pattern(tok)
+                || matches!(tok, Tok::Ident(_)) && self.next_tok() == &Tok::Keyword("in") =>
+            {
                 let at = self.pos();
-                self.bump();
+                let name = if let Tok::Ident(name) = self.tok() {
+                    let name = name.clone();
+                    self.bump();
+                    name
+                } else {
+                    let pattern = self.binder()?;
+                    let (name, _) = hidden(&pattern);
+                    lead.push(taken_apart(pattern, &name, at));
+                    name
+                };
+                if self.tok() != &Tok::Keyword("in") {
+                    return Err(self.expected("`in`", self.tok()));
+                }
                 self.bump();
                 let no_lambda = std::mem::replace(&mut self.no_lambda, true);
                 let head = self.range_head();
@@ -2024,7 +2115,7 @@ impl Parser<'_> {
             tok => return Err(self.expected("`{`, or a name and `in` and a range", tok)),
         };
         self.expect_punct("{", "`{` to open the body of the `loop`")?;
-        let (body, end) = self.inner_block()?;
+        let (body, end) = self.inner_block(lead)?;
         Ok(Loop {
             pos,
             range,
@@ -2057,7 +2148,7 @@ impl Parser<'_> {
         self.no_lambda = no_lambda;
         let of = of?;
         self.expect_punct("{", "`{` to open the block of the `if`")?;
-        let (then, then_end) = self.inner_block()?;
+        let (then, then_end) = self.inner_block(Vec::new())?;
         let has_else = self.tok() == &Tok::Keyword("else");
         let (otherwise, end) = if has_else {
             self.bump();
@@ -2067,7 +2158,7 @@ impl Parser<'_> {
                 (vec![Stmt::Expr(Expr::Match(Box::new(inner)))], end)
             } else {
                 self.expect_punct("{", "`{` to open the block of the `else`")?;
-                self.inner_block()?
+                self.inner_block(Vec::new())?
             }
         } else {
             (Vec::new(), then_end)
@@ -2087,9 +2178,9 @@ impl Parser<'_> {
 
     /// Parses the statements of a block after its `{`, where a `{` after a
     /// call opens a lambda again, through the `}` that closes it.
-    fn inner_block(&mut self) -> Result<(Vec<Stmt>, Pos), Error> {
+    fn inner_block(&mut self, lead: Vec<Stmt>) -> Result<(Vec<Stmt>, Pos), Error> {
         let no_lambda = std::mem::replace(&mut self.no_lambda, false);
-        let block = self.block_rest();
+        let block = self.block_rest(lead);
         self.no_lambda = no_lambda;
         block
     }
@@ -2230,7 +2321,7 @@ impl Parser<'_> {
             }
             let pattern = self.pattern()?;
             self.expect_punct("{", "`{` to open the pattern's block")?;
-            let (body, end) = self.inner_block()?;
+            let (body, end) = self.inner_block(Vec::new())?;
             match self.tok() {
                 Tok::Newline | Tok::Punct("}") => {}
                 tok => return Err(self.expected("a line break or `}`", tok)),
@@ -2397,6 +2488,7 @@ impl Parser<'_> {
     fn lambda(&mut self) -> Result<Lambda, Error> {
         let pos = self.pos();
         let mut params = Vec::new();
+        let mut binds = Vec::new();
         if self.tok() == &Tok::Keyword("fn") {
             self.bump();
             self.expect_punct("(", "`(` and the lambda's parameters")?;
@@ -2409,7 +2501,14 @@ impl Parser<'_> {
                 .with_fix("leave out `fn()`"));
             }
             loop {
-                params.push(self.defined("a parameter's name")?);
+                if starts_pattern(self.tok()) {
+                    let pattern = self.binder()?;
+                    let (name, pos) = hidden(&pattern);
+                    binds.push(taken_apart(pattern, &name, pos));
+                    params.push((name, pos));
+                } else {
+                    params.push(self.defined("a parameter's name")?);
+                }
                 self.skip_newlines();
                 match self.tok() {
                     Tok::Punct(",") => {
@@ -2424,7 +2523,7 @@ impl Parser<'_> {
         }
         self.expect_punct("{", "`{` to open the lambda's body")?;
         let no_lambda = std::mem::replace(&mut self.no_lambda, false);
-        let body = self.block_rest();
+        let body = self.block_rest(binds);
         self.no_lambda = no_lambda;
         let (body, end) = body?;
         Ok(Lambda {
@@ -2437,8 +2536,11 @@ impl Parser<'_> {
 
     /// Parses the statements of a block, after its `{`, through the `}` that
     /// closes it, and gives where that is.
-    fn block_rest(&mut self) -> Result<(Vec<Stmt>, Pos), Error> {
-        let mut block = Block::default();
+    fn block_rest(&mut self, lead: Vec<Stmt>) -> Result<(Vec<Stmt>, Pos), Error> {
+        let mut block = Block {
+            inner: lead,
+            ..Block::default()
+        };
         loop {
             self.skip_newlines();
             if self.tok() == &Tok::Punct("}") {
