@@ -51,6 +51,16 @@ fn greet() ! log {
 }
 ```
 
+A trait's function is imported by its own name in the same way. `area` is a function of the trait `Area`, so a file that calls it lists it with the trait and the type.
+
+```
+use shapes (Area, Rect, area)
+
+fn size(r: Rect) -> i32 {
+  area(r)
+}
+```
+
 What the standard library puts in scope everywhere, such as `print` and the five effects, is unchanged, as [The prelude](prelude.md) describes.
 
 ## The formatter sorts the list
