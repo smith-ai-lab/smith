@@ -1265,3 +1265,325 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> LambdaCase {
         mistake: w.mistake,
     }
 }
+
+// A function that calls its lambda in loops, and the `var`s the lambda
+// assigns.
+
+/// How a function calls the lambda it is given, `body`, which takes a
+/// number and gives nothing.
+#[derive(Clone, Debug)]
+enum Shape {
+    /// `body(x)`, with a number written out, or the counter of the
+    /// `loop` around it that is `depth` rounds in, counting from the
+    /// outermost.
+    Call(Option<usize>, u32),
+    Seq(Vec<Shape>),
+    /// `loop i in 0..n { ... }`.
+    Range(u32, Box<Shape>),
+    /// An open-ended `loop` that breaks after `n` rounds.
+    Open(u32, Box<Shape>),
+    /// `if n == k { ... } else { ... }` on the first parameter.
+    If(u32, Box<Shape>, Box<Shape>),
+    /// A `match` on the second parameter.
+    Match(Box<Shape>, Box<Shape>),
+    /// A call of the function `f` with an earlier place, passing on the
+    /// lambda, with the two values it takes.
+    Pass(usize, u32, bool),
+}
+
+/// What the lambda does with the `var`s `a`, `b` and the field `p.a`, for
+/// the number `x` it is given. Each is a `u32` that wraps.
+#[derive(Clone, Copy, Debug)]
+enum Effect {
+    /// `a = wrapping_add(a, x)`
+    Add,
+    /// `a = wrapping_add(wrapping_mul(a, 3), x)`, which reads what it assigns.
+    ReadsAndAssigns,
+    /// `a` and `b` both.
+    Two,
+    /// `p.a = wrapping_add(p.a, x)`, a field of a `var`.
+    Field,
+}
+
+const EFFECTS: &[Effect] = &[
+    Effect::Add,
+    Effect::ReadsAndAssigns,
+    Effect::Two,
+    Effect::Field,
+];
+
+#[derive(Clone, Copy, Default)]
+struct Vars {
+    a: u32,
+    b: u32,
+    p: u32,
+}
+
+impl Effect {
+    fn apply(self, v: &mut Vars, x: u32) {
+        match self {
+            Effect::Add => v.a = v.a.wrapping_add(x),
+            Effect::ReadsAndAssigns => v.a = v.a.wrapping_mul(3).wrapping_add(x),
+            Effect::Two => {
+                v.a = v.a.wrapping_add(x);
+                v.b = v.b.wrapping_mul(2).wrapping_add(1);
+            }
+            Effect::Field => v.p = v.p.wrapping_add(x),
+        }
+    }
+
+    fn text(self) -> &'static str {
+        match self {
+            Effect::Add => "a = wrapping_add(a, x)",
+            Effect::ReadsAndAssigns => "a = wrapping_add(wrapping_mul(a, 3), x)",
+            Effect::Two => "a = wrapping_add(a, x)\n    b = wrapping_add(wrapping_mul(b, 2), 1)",
+            Effect::Field => "p.a = wrapping_add(p.a, x)",
+        }
+    }
+}
+
+/// What a function does when called with `n` and the case of `Mode` that
+/// `second` says, `f` being the lambda and `others` the functions before it.
+fn run_shape(
+    shape: &Shape,
+    n: u32,
+    second: bool,
+    counters: &mut Vec<u32>,
+    others: &[Shape],
+    v: &mut Vars,
+    effect: Effect,
+) {
+    match shape {
+        Shape::Call(counter, k) => {
+            let x = counter.map_or(*k, |d| counters[d]);
+            effect.apply(v, x);
+        }
+        Shape::Seq(items) => {
+            for item in items {
+                run_shape(item, n, second, counters, others, v, effect);
+            }
+        }
+        Shape::Range(rounds, inner) => {
+            counters.push(0);
+            let depth = counters.len() - 1;
+            for i in 0..*rounds {
+                counters[depth] = i;
+                run_shape(inner, n, second, counters, others, v, effect);
+            }
+            counters.pop();
+        }
+        Shape::Open(rounds, inner) => {
+            // Its counter is not offered to a call, so a call inside holds
+            // the depth of the nearest `loop` over a range.
+            for _ in 0..*rounds {
+                run_shape(inner, n, second, counters, others, v, effect);
+            }
+        }
+        Shape::If(k, then, otherwise) => {
+            let chosen = if n == *k { then } else { otherwise };
+            run_shape(chosen, n, second, counters, others, v, effect);
+        }
+        Shape::Match(one, two) => {
+            let chosen = if second { two } else { one };
+            run_shape(chosen, n, second, counters, others, v, effect);
+        }
+        Shape::Pass(f, n, second) => {
+            let mut inner = Vec::new();
+            run_shape(
+                &others[*f],
+                *n,
+                *second,
+                &mut inner,
+                &others[..*f],
+                v,
+                effect,
+            );
+        }
+    }
+}
+
+/// Whether the function runs an open-ended loop, or calls one that does.
+fn diverges(shape: &Shape, others: &[Shape]) -> bool {
+    match shape {
+        Shape::Call(..) => false,
+        Shape::Seq(items) => items.iter().any(|s| diverges(s, others)),
+        Shape::Range(_, s) => diverges(s, others),
+        Shape::Open(..) => true,
+        Shape::If(_, a, b) | Shape::Match(a, b) => diverges(a, others) || diverges(b, others),
+        Shape::Pass(f, ..) => diverges(&others[*f], &others[..*f]),
+    }
+}
+
+/// A shape of at most `size` levels, `ranges` loops over a range being around
+/// it, so that a call may read the counter of one, and `before` functions
+/// being there to pass the lambda on to.
+fn shape_of(g: &mut Gen, size: usize, ranges: usize, before: usize) -> Shape {
+    let choices = if size == 0 { 1 } else { 7 };
+    match g.below(choices) {
+        0 => {
+            let counter = (ranges > 0 && g.one_in(2)).then(|| g.below(ranges));
+            Shape::Call(counter, g.below(5) as u32 + 1)
+        }
+        1 => {
+            let items = g.below(2) + 2;
+            Shape::Seq(
+                (0..items)
+                    .map(|_| shape_of(g, size - 1, ranges, before))
+                    .collect(),
+            )
+        }
+        2 => Shape::Range(
+            g.below(4) as u32,
+            Box::new(shape_of(g, size - 1, ranges + 1, before)),
+        ),
+        3 => Shape::Open(
+            g.below(4) as u32,
+            Box::new(shape_of(g, size - 1, ranges, before)),
+        ),
+        4 => Shape::If(
+            g.below(2) as u32,
+            Box::new(shape_of(g, size - 1, ranges, before)),
+            Box::new(shape_of(g, size - 1, ranges, before)),
+        ),
+        5 => Shape::Match(
+            Box::new(shape_of(g, size - 1, ranges, before)),
+            Box::new(shape_of(g, size - 1, ranges, before)),
+        ),
+        _ if before > 0 => Shape::Pass(g.below(before), g.below(2) as u32, g.one_in(2)),
+        _ => Shape::Call(None, 1),
+    }
+}
+
+fn indent_of(depth: usize) -> String {
+    "  ".repeat(depth)
+}
+
+/// The text of a shape, which `counters` are the names of the counters of
+/// the loops around it and `opens` how many open-ended loops are around it.
+fn write_shape(
+    shape: &Shape,
+    depth: usize,
+    counters: &mut Vec<String>,
+    opens: &mut usize,
+    out: &mut String,
+) {
+    let pad = indent_of(depth);
+    match shape {
+        Shape::Call(counter, k) => {
+            let x = counter.map_or(k.to_string(), |d| counters[d].clone());
+            out.push_str(&format!("{pad}body({x})\n"));
+        }
+        Shape::Seq(items) => {
+            for item in items {
+                write_shape(item, depth, counters, opens, out);
+            }
+        }
+        Shape::Range(rounds, inner) => {
+            let name = format!("i{}", counters.len());
+            out.push_str(&format!("{pad}loop {name} in 0..{rounds} {{\n"));
+            counters.push(name);
+            write_shape(inner, depth + 1, counters, opens, out);
+            counters.pop();
+            out.push_str(&format!("{pad}}}\n"));
+        }
+        Shape::Open(rounds, inner) => {
+            let name = format!("k{}", *opens);
+            *opens += 1;
+            out.push_str(&format!("{pad}var {name}: u32 = 0\n{pad}loop {{\n"));
+            out.push_str(&format!("{pad}  if {name} == {rounds} {{ break }}\n"));
+            write_shape(inner, depth + 1, counters, opens, out);
+            out.push_str(&format!(
+                "{pad}  {name} = wrapping_add({name}, 1)\n{pad}}}\n"
+            ));
+        }
+        Shape::If(k, then, otherwise) => {
+            out.push_str(&format!("{pad}if n == {k} {{\n"));
+            write_shape(then, depth + 1, counters, opens, out);
+            out.push_str(&format!("{pad}}} else {{\n"));
+            write_shape(otherwise, depth + 1, counters, opens, out);
+            out.push_str(&format!("{pad}}}\n"));
+        }
+        Shape::Match(one, two) => {
+            out.push_str(&format!("{pad}match m {{\n{pad}  .one {{\n"));
+            write_shape(one, depth + 2, counters, opens, out);
+            out.push_str(&format!("{pad}  }}\n{pad}  .two {{\n"));
+            write_shape(two, depth + 2, counters, opens, out);
+            out.push_str(&format!("{pad}  }}\n{pad}}}\n"));
+        }
+        Shape::Pass(f, n, second) => {
+            let mode = if *second { ".two" } else { ".one" };
+            out.push_str(&format!("{pad}f{f}({n}, {mode}, body)\n"));
+        }
+    }
+}
+
+/// A program in which functions call the lambda they are given in loops,
+/// and what it prints.
+#[derive(Clone)]
+pub struct LoopCase {
+    pub source: String,
+    pub stdout: Vec<u8>,
+}
+
+impl std::fmt::Debug for LoopCase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.source)
+    }
+}
+
+/// A program with functions that call their lambda in a `loop` over a
+/// range, in an open-ended loop, in nested loops, under an `if` or a
+/// `match`, or by passing it on, and a `main` that gives one a lambda
+/// that assigns `var`s. What it prints is what the lambda's statements
+/// written in place of each call give.
+pub fn loop_program(g: &mut Gen) -> LoopCase {
+    let count = g.below(3) + 1;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for at in 0..count {
+        let shape = shape_of(g, 3, 0, at);
+        shapes.push(shape);
+    }
+    let effect = *g.pick(EFFECTS);
+    let called = g.below(count);
+    let (n, second) = (g.below(2) as u32, g.one_in(2));
+
+    let mut v = Vars::default();
+    run_shape(
+        &shapes[called],
+        n,
+        second,
+        &mut Vec::new(),
+        &shapes[..called],
+        &mut v,
+        effect,
+    );
+
+    let mut text =
+        String::from("struct Pair {\n  a: u32\n  b: u32\n}\n\nenum Mode {\n  one\n  two\n}\n");
+    for (at, shape) in shapes.iter().enumerate() {
+        let diverge = if diverges(shape, &shapes[..at]) {
+            " ! diverge"
+        } else {
+            ""
+        };
+        text.push_str(&format!(
+            "\nfn f{at}(n: u32, m: Mode, body: (u32) -> ()){diverge} {{\n"
+        ));
+        write_shape(shape, 1, &mut Vec::new(), &mut 0, &mut text);
+        text.push_str("}\n");
+    }
+    let diverge = if diverges(&shapes[called], &shapes[..called]) {
+        "diverge, "
+    } else {
+        ""
+    };
+    let mode = if second { ".two" } else { ".one" };
+    text.push_str(&format!(
+        "\nfn main() ! {diverge}console, alloc {{\n  var a: u32 = 0\n  var b: u32 = 0\n  var p = Pair(a: 0, b: 0)\n  f{called}({n}, {mode}) fn(x) {{\n    {}\n  }}\n  print(\"{{a}} {{b}} {{p.a}}\")\n}}\n",
+        effect.text()
+    ));
+    LoopCase {
+        source: text,
+        stdout: format!("{} {} {}\n", v.a, v.b, v.p).into_bytes(),
+    }
+}

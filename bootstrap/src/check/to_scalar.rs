@@ -1523,8 +1523,17 @@ impl<'a> Lowering<'a> {
     /// leave meet in one, which gives the names their values after the
     /// `loop`.
     fn round(&mut self, out: &mut Out<'a>, l: &'a Loop, env: &[Ty]) {
+        // A lambda written outside the `loop` may be called inside it, so
+        // what the lambdas in any frame assign is carried too.
+        let lambdas = (out.frames.iter().flatten())
+            .filter_map(|bound| match &bound.func {
+                Some(Func::Lambda(lambda, ..)) => Some(lambda.body.as_slice()),
+                _ => None,
+            })
+            .flat_map(statements);
         let assigned: Vec<&str> = statements(&l.body)
             .into_iter()
+            .chain(lambdas)
             .flat_map(|stmt| match stmt {
                 Stmt::Define { name, .. } | Stmt::Assign { name, .. } => vec![name.as_str()],
                 Stmt::Destructure { pattern, .. } => {
