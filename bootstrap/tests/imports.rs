@@ -432,7 +432,7 @@ fn a_use_after_another_item_is_one_error_at_the_use() {
 /// The compiler alone in a folder, with a file that imports from `std`.
 fn alone(name: &str) -> PathBuf {
     let dir = crate::cli::folder(name);
-    std::fs::copy(env!("CARGO_BIN_EXE_smith"), dir.join("smith")).unwrap();
+    crate::executable::copy(env!("CARGO_BIN_EXE_smith"), &dir.join("smith"));
     std::fs::write(
         dir.join("hello.smith"),
         "use std.console (console, print)\n\nfn main() ! console {\n  print(\"hello\")\n}\n",
