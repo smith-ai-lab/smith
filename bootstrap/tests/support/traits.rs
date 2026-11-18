@@ -1313,6 +1313,9 @@ struct Builder<'a> {
     /// A definition written at the end of the file, as the text before the
     /// mistake and the rest.
     last: Option<(&'static str, &'static str)>,
+    /// A parameter written under a new name in the body being written, as
+    /// the name the model gives it and the name the program does.
+    renamed: Option<(String, String)>,
 }
 
 impl Builder<'_> {
@@ -1438,6 +1441,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
         clashes: 0,
         spare: None,
         last: None,
+        renamed: None,
     };
 
     let mut items: Vec<Item> = Vec::new();
@@ -1615,13 +1619,15 @@ fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites) {
         } else if here && b.kind == Some(Kind::SignatureDiffers) {
             b.push("fn ");
             b.mark(format!("`{}`", f.name), Some(format!("`{wanted}`")));
-            let text = differing(b.g, m, f, &im.args, &ctx_names);
+            let (text, renamed) = differing(b.g, m, f, &im.args, &ctx_names);
+            b.renamed = renamed;
             b.push(&text);
         } else {
             b.push(&wanted);
         }
         b.push(" {\n");
         statements(b, m, &im.bodies[func], &ctx_names, "    ", true);
+        b.renamed = None;
         b.push("  }\n");
         if here && b.kind == Some(Kind::ExtraFn) {
             b.push("  ");
@@ -1635,8 +1641,14 @@ fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites) {
 }
 
 /// A signature for trait function `f` that differs from the trait's in one
-/// way.
-fn differing(g: &mut Gen, m: &Model, f: &TraitFn, args: &[Ty], names: &[&str]) -> String {
+/// way, and the parameter it renames, if that is the way.
+fn differing(
+    g: &mut Gen,
+    m: &Model,
+    f: &TraitFn,
+    args: &[Ty],
+    names: &[&str],
+) -> (String, Option<(String, String)>) {
     let mut params: Vec<(String, String)> = (f.params.iter())
         .map(|(p, t)| (p.to_string(), type_text(m, &t.subst(args), names)))
         .collect();
@@ -1649,9 +1661,13 @@ fn differing(g: &mut Gen, m: &Model, f: &TraitFn, args: &[Ty], names: &[&str]) -
             "str".to_string()
         }
     };
+    let mut renamed = None;
     match g.below(5) {
         0 => params[0].1 = other(&params[0].1),
-        1 => params[0].0 = "y".to_string(),
+        1 => {
+            renamed = Some((params[0].0.clone(), "y".to_string()));
+            params[0].0 = "y".to_string();
+        }
         2 => result = other(&result),
         3 => console = !console,
         _ => params.push(("extra".to_string(), "str".to_string())),
@@ -1661,7 +1677,7 @@ fn differing(g: &mut Gen, m: &Model, f: &TraitFn, args: &[Ty], names: &[&str]) -
     if console {
         text.push_str(" ! console");
     }
-    text
+    (text, renamed)
 }
 
 /// Writes a bound that names something other than a trait.
@@ -1888,7 +1904,13 @@ fn expr(b: &mut Builder, m: &Model, e: &Expr, names: &[&str], reached: bool) {
             let pieces: String = pieces.iter().map(|&p| PIECES[p].0).collect();
             b.push(&format!("\"{pieces}\""));
         }
-        Expr::Name(name) => b.push(name),
+        Expr::Name(name) => match &b.renamed {
+            Some((from, to)) if from == name => {
+                let to = to.clone();
+                b.push(&to);
+            }
+            _ => b.push(name),
+        },
         Expr::Print(e) => {
             b.push("print(");
             expr(b, m, e, names, reached);
