@@ -7,7 +7,7 @@ status: planned
 
 # Text and bytes
 
-A `str` is a [`List`](../library/list.md) of bytes kept together with a proof that they are valid UTF-8, in the way [Contracts and proofs](contracts.md) describes for any struct that holds a proof. So a `str` is used wherever bytes are expected, with no call and no copy: its `size` is how many bytes it has, and `s[i]` is a byte.
+A `str` is a [`List`](../library/list.md) of bytes kept together with a proof that they are valid UTF-8, in the way [A struct that holds a proof](proof-fields.md) describes. So a `str` is used wherever bytes are expected, with no call and no copy: its `size` is how many bytes it has, and `s[i]` is a byte.
 
 ```
 fn count_spaces(s: str) -> u64 {
@@ -42,7 +42,7 @@ fn word(source: str, start: Nat, end: Nat) -> Option[str] {
 }
 ```
 
-`arith` proves that a range lies inside a text. That an end falls between characters is a fact about the bytes, which a [`check`](contracts.md) supplies by looking at the byte at each end, however long the piece is.
+`arith` proves that a range lies inside a text. That an end falls between characters is a fact about the bytes, which a [`check`](check.md) supplies by looking at the byte at each end, however long the piece is.
 
 - Nothing else makes a `str` from bytes, and no bytes are replaced to make them valid. So `utf8` is the only way, and a list with an invalid byte gives the `.err` above, never a text with the byte changed.
 - A range of a text's bytes, as bytes, is taken from its bytes and not from the text.

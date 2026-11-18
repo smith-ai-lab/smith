@@ -48,7 +48,7 @@ evens: [4]f32 = for i { float(i) * 2.0 }
 ```
 
 - When both places give a size, the two must agree. An index with neither is a compile error that names the index.
-- Arithmetic on an index, as in `x[i + 1]`, never gives it a size. The compiler does not solve for one. The access is instead proven to be in range, as [Contracts and proofs](contracts.md) describes.
+- Arithmetic on an index, as in `x[i + 1]`, never gives it a size. The compiler does not solve for one. The access is instead proven to be in range, as [What arith proves](arith.md) describes.
 
 - `sum`, `max`, and `mean` reduce a view to a value, and `map(f, v)` is shorthand for `for i { f(v[i]) }`.
 - An operator on arrays means what it means in linear algebra. Two arrays of the same shape add and subtract, an array is scaled by a number with `*` and `/`, and `-x` negates. Each returns a view, so `x + y` is `for i { x[i] + y[i] }`. Two arrays have no `*`, `/`, or `^`: a product of elements is written with `for`, where the indices say which elements meet.

@@ -59,7 +59,7 @@ fn spin() ! diverge {
 fn main() { spin() }
 ```
 
-This gives "`spin` needs the `diverge` effect, which `main` does not declare", with the fix "write `fn main() ! diverge`". With `loop decreases n`, as [Contracts and proofs](contracts.md) describes, the loop is proven to end and the function lists nothing.
+This gives "`spin` needs the `diverge` effect, which `main` does not declare", with the fix "write `fn main() ! diverge`". With `loop decreases n`, as [the open-ended `loop`](open-loop.md#a-loop-that-is-proven-to-end) describes, the loop is proven to end and the function lists nothing.
 
 ## Where an effect ends
 

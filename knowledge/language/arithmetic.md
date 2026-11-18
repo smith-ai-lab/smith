@@ -57,7 +57,7 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `2 0`. In the first block `a >= b` holds, so `a - b` is at least 0, and in the `else` the subtraction is not written. The same holds for a condition with `and`, `or`, and `not`. Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic. What the compiler can prove, and how to state a fact once for a whole function, appears under [Contracts and proofs](contracts.md).
+This prints `2 0`. In the first block `a >= b` holds, so `a - b` is at least 0, and in the `else` the subtraction is not written. The same holds for a condition with `and`, `or`, and `not`. Most integer arithmetic is on indices and sizes, whose limits are already in their types, so the proof is usually automatic. What the compiler can prove appears under [What arith proves](arith.md), and how to state a fact once for a whole function under [Contracts](contracts.md).
 
 ## Choosing what happens
 

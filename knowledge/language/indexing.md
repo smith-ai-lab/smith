@@ -24,7 +24,7 @@ This prints `10` and `30`. The same is written on an array, as `a[0]` for a `[3]
 
 ## An index must be proven in range
 
-An index is a whole number, and it must be below the size of what it reads. The compiler proves that, with the procedure [`arith`](contracts.md), from what is in scope. When it cannot, the program is refused.
+An index is a whole number, and it must be below the size of what it reads. The compiler proves that, with the procedure [`arith`](arith.md), from what is in scope. When it cannot, the program is refused.
 
 ```
 fn main() ! console, alloc {

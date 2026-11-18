@@ -1,0 +1,200 @@
+---
+type: specification
+title: What arith proves
+description: The procedure that proves a + - * fits and an index is in range, what facts it starts from, what it cannot decide, and what the compiler says when it cannot prove.
+status: partial
+built: "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`, and the range of each `loop i in a..b` over whole numbers; not the facts of a `match` block, a `var` outside a loop that was given a value, or a proof held in a value"
+---
+
+# What arith proves
+
+`arith` is the procedure that proves, when the program is built, that a `+`, `-`, or `*` fits its type and that an index is in range. It decides linear arithmetic over the integers and nothing more, which is why it always answers yes or no, in a time that can be predicted.
+
+```
+fn main() ! console, alloc {
+  a: u8 = 20
+  b: u8 = 5
+  print("{a * b}")
+}
+```
+
+This prints `100`. `arith` knows that `a` is 20 and `b` is 5, so `a * b` is at most 255. [Integer arithmetic](arithmetic.md) shows what is refused when it cannot know.
+
+## What it starts from
+
+`arith` uses every fact in scope. Each of these is one.
+
+**The range of a type.** A `u8` is at least 0 and at most 255, so `255 - x` never goes below 0.
+
+```
+fn rest(x: u8) -> u8 { 255 - x }
+```
+
+`rest(250)` is `5`.
+
+**The value of a literal, and of a name that is not a `var`.** A name is what it was given, so what is known of the value is known of the name.
+
+```
+fn bump(x: u8) -> u8 {
+  if x < 100 {
+    y = x + 100
+    y + 50
+  } else {
+    0
+  }
+}
+```
+
+`bump(7)` is `157` and `bump(200)` is `0`. In the block, `x < 100` gives `y = x + 100 < 200`, and so `y + 50 < 250` fits.
+
+**The condition of an `if`.** The block it guards has it as a fact, and the `else` has its opposite. The condition may be joined with `and`, `or`, and `not`.
+
+```
+fn shift(x: u8) -> u8 {
+  if x < 10 and x > 3 { x + 200 } else if not (x < 100) { 0 } else { x + 100 }
+}
+```
+
+`shift(5)` is `205` and `shift(50)` is `150`. In the first block `x` is below 10, and `x + 200` is below 210. In the last, `not (x < 100)` has failed, so `x` is below 100.
+
+A block of a `match` is the same: what its pattern says is a fact in it.
+
+```
+fn before(x: u8) -> u8 {
+  match x {
+    0 { 0 }
+    n { n - 1 }
+  }
+}
+```
+
+`before(5)` is `4` and `before(0)` is `0`. In the second arm `x` is not `0`, so `n - 1` is not below 0.
+
+**The range of a `loop`.** Inside `loop i in 0..n`, `i` is below `n`, as [Loops](loop.md) says. So `i + 1` fits where `i + 2` does not.
+
+**The facts of a `var`.** A `var` has the facts its type states, and, where no loop assigns it, those of the value it was last given. Inside one round of a loop that assigns it, it also has those of the value that round last gave it, stated against what it held when the round began.
+
+```
+fn five() -> u8 {
+  var v: u8 = 5
+  v + 100
+}
+```
+
+`v` is last given `5`, so `v + 100` is 105, which fits.
+
+Inside a loop that assigns a `var`, what is known is what that round last gave it, stated against what it held when the round began, and a fact that holds when the round began holds still.
+
+```
+fn rounds() -> u8 {
+  var v: u8 = 100
+  var t: u8 = 0
+  loop i in 0..3 {
+    v = 50
+    t = v + 200
+  }
+  t
+}
+```
+
+`rounds()` is `250`. In the round, `v` was just given `50`, so `v + 200` fits. A fact is also kept after an `if` or a `match` some of whose blocks end in `break`: only the blocks that go on reach the line after it.
+
+```
+fn climb(x: u8) -> u8 {
+  var v: u8 = 0
+  loop i in 0..10 {
+    if x > 200 { break }
+    v = x + 50
+  }
+  v
+}
+```
+
+`climb(100)` is `150` and `climb(250)` is `0`. The line after the `if` is reached only when `x > 200` is false, so `x + 50` fits. Without the `if`, `v = x + 50` is refused: "cannot prove that `x + 50 <= 255`, so `x + 50` may not fit `u8`".
+
+**A contract.** The function's own `requires`, and the `ensures` of a function that was called, are facts. [Contracts](contracts.md) says how.
+
+**A proof held in a value.** Every proof it can see, as a value or as a field of a value, is a fact. [A struct that holds a proof](proof-fields.md) says how a value comes to hold one.
+
+## What it cannot decide
+
+`arith` decides comparisons between sums and differences of variables and constants, where any multiplication is by a constant, such as `i + k < n + w - 1` and `2 * n + 1 <= m`. Comparisons may be joined with `and`, `or`, and `not`.
+
+```
+fn left(n: u8, m: u8) -> u8
+  requires 2 * n + 1 <= m
+{
+  m - 2 * n
+}
+```
+
+`left(3, 9)` is `3`. Here `2 * n` is multiplication by a constant, so `m - 2 * n` is proven to be at least 1.
+
+It does not reason about a product of two variables, or about dividing by a variable. It treats such a term as one unknown quantity, and knows only the facts stated about that same term.
+
+```
+fn area(w: u8, h: u8) -> u8 { w * h }
+```
+
+This is refused: "cannot prove that `w * h <= 255`, so `w * h` may not fit `u8`". Nothing is known of `w * h` from what is known of `w` and `h`.
+
+A fact stated about the same product is a fact about that term, so it is known.
+
+```
+fn area(w: u8, h: u8) -> u8
+  requires w * h <= 255
+{
+  w * h
+}
+```
+
+`area(15, 17)` is `255`. So `rows * cols <= limit` is never proven from facts about `rows` and `cols` alone. A function that needs it states it in a `requires`, and a caller whose sizes are known only when the program runs gets it from a [`check`](check.md).
+
+A caller that cannot show it is refused where it calls.
+
+```
+fn caller(x: u8, y: u8) -> u8 { area(x, y) }
+```
+
+This is refused: "cannot prove that `x * y <= 255`, which `area` requires of its arguments".
+
+A `-` on a `Nat` compiles only when `arith` can show that the second operand is at most the first.
+
+```
+fn drop(n: Nat, k: Nat) -> Nat {
+  if k <= n { n - k } else { 0 }
+}
+```
+
+`drop(5, 2)` is `3` and `drop(2, 5)` is `0`. Without the `if`, `n - k` is refused, since `k <= n` is not known.
+
+## When it cannot prove
+
+When `arith` cannot prove a goal, the compiler reports the goal and the line that needs it.
+
+```
+fn double_plus(i: u8, n: u8) -> u8
+  requires i < n
+{
+  2 * i + 1
+}
+```
+
+This is refused: "cannot prove that `2 * i <= 255`, so `2 * i` may not fit `u8`", with the fix "check the operands first, or use `wrapping_mul`, `saturating_mul`, or `checked_mul`". Nothing says `n` is small, so `i` may be 254.
+
+The author supplies the missing fact in one of three ways: with a [`requires`](contracts.md), with a [`check`](check.md), or with [a type that carries the proof](proof-fields.md). Adding `n <= 100` to the `requires` above makes the function compile.
+
+## The forms
+
+| Fact | Where it comes from |
+| --- | --- |
+| The limits of a type | The type of each value |
+| What a literal or an unassigned name is | The binding |
+| A condition | The `if` whose block the operation is in |
+| `i` below the end | The range of `loop i in a..b` |
+| What a `var` was last given | The value assigned, in a round of a loop or outside any |
+| What a caller owes | The `requires` of the function |
+| What a function gave | The `ensures` of a function that was called |
+| A proof | A value or field that holds one |
+
+Next: [Contracts](contracts.md)
