@@ -1,0 +1,12 @@
+struct Box[T] {
+  item: T
+}
+
+fn main() ! console {
+  print(f1(Box(item: "")))
+}
+
+fn f1(b: Box[str]) -> str {
+  x = nothere
+  Box(item: x).item
+}
