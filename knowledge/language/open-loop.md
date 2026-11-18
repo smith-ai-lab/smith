@@ -2,7 +2,8 @@
 type: specification
 title: The open-ended loop
 description: An open-ended loop runs its block again and again until break, carries the diverge effect, and with decreases is proven to end.
-status: built
+status: partial
+built: "an open-ended `loop` ended by `break`, whose function carries `diverge`, and `loop decreases e` with a measure of an unsigned type that `arith` proves smaller at every place the loop goes round again, where the measure must also fit its type when the round begins; not a measure checked only where the loop goes round again, so not a distance to an end"
 ---
 
 # The open-ended loop
@@ -42,7 +43,7 @@ This is refused: "`takes` needs the `diverge` effect, which `main` does not decl
 
 ## A loop that is proven to end
 
-A loop written `loop decreases e { ... }` is an open-ended loop that is proven to end, and its function lists no `diverge`. The expression `e`, the measure, is a whole number of an unsigned type. Each time the loop goes round again, the measure must be smaller than it was when that round began, and [`arith`](arith.md) must prove it. An unsigned number cannot go below zero, so the loop cannot go on forever. The measure is never computed when the program runs.
+A loop written `loop decreases e { ... }` is an open-ended loop that is proven to end, and its function lists no `diverge`. The expression `e`, the measure, is made of whole numbers. At each place the loop goes round again, [`arith`](arith.md) must prove two things of it: that it is not below zero, and that it is smaller than it was when that round began. A number that gets smaller each round and never goes below zero cannot do so forever, so the loop ends. The measure is never computed when the program runs, so it is reasoned about as an exact number, with no type it must fit, as the size of an array is.
 
 ```
 fn count_down(n: u64) -> u64 {
@@ -75,7 +76,48 @@ fn count_down(n: u64) -> u64 {
 
 This is refused: "cannot prove that `left` is smaller than when the round began, so this `loop` may not end", with the fix "make each round that goes on make the measure smaller, or check what it needs first with an `if`".
 
-A measure of a signed type is refused, since a signed number can go below zero. With `left: i64`, `loop decreases left` gives "`decreases` is a whole number of an unsigned type, and this is a `i64`".
+## A distance to an end
+
+The measure is checked only where the loop goes round again, and nowhere before. So a loop that moves a place toward an end is proven to end by the distance that is left, though nothing says the place is inside when the round begins.
+
+```
+fn count_to(size: u64) -> u64 {
+  var at: u64 = 0
+  var n: u64 = 0
+  loop decreases size - at {
+    if at >= size { break }
+    at = at + 1
+    n = wrapping_add(n, 1)
+  }
+  n
+}
+```
+
+`count_to(3)` is `3`. A round that goes on has passed `at >= size`, so `at` was below `size` when it began. It ends with `at` one more, so `size - at` is not below zero and is one smaller than it was.
+
+A function that moves the place says how far in its contract, and the loop that calls it uses that. Here `skip` promises a place after the one it was given and not past the end, which is what the loop needs.
+
+```
+fn skip(src: List[u8], at: u64) -> next: u64
+  requires at < src.size
+  ensures next > at and next <= src.size
+{
+  at + 1
+}
+
+fn steps(src: List[u8]) -> u64 {
+  var at: u64 = 0
+  var n: u64 = 0
+  loop decreases src.size - at {
+    if at >= src.size { break }
+    at = skip(src, at)
+    n = wrapping_add(n, 1)
+  }
+  n
+}
+```
+
+A measure that is not proven to stay at zero or above is refused as one that does not get smaller is. With `loop decreases left` where `left` is an `i64` that the round makes one smaller and nothing keeps from going below zero, the loop is refused.
 
 How `decreases` proves a function that calls itself to end is on [Termination](termination.md#proving-that-a-function-ends).
 
@@ -84,7 +126,7 @@ How `decreases` proves a function that calls itself to end is on [Termination](t
 | Written | Is |
 | --- | --- |
 | `loop { e }` | Runs the block until a `break`; its function and every caller list `diverge` |
-| `loop decreases e { e2 }` | The same, with the unsigned measure `e` proven smaller each time round again; no `diverge` |
+| `loop decreases e { e2 }` | The same, with the measure `e` proven not below zero and smaller each time round again; no `diverge` |
 | `break` | Ends the nearest `loop` |
 
 Next: [Iterate](iterate.md)

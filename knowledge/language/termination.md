@@ -48,7 +48,7 @@ This is refused: "`settled` needs the `diverge` effect, which `first` does not d
 
 ## Proving that a function ends
 
-Anything that is not a loop over a range, a loop over an array or an `Iterate` type, or structural recursion ends because of a `decreases`, which names one expression of an unsigned integer type. For an open-ended loop it is written `loop decreases e`, as [the open-ended `loop`](open-loop.md#a-loop-that-is-proven-to-end) shows. For a function that calls itself on something other than a part of its argument, it is written after the signature.
+Anything that is not a loop over a range, a loop over an array or an `Iterate` type, or structural recursion ends because of a `decreases`, which names one expression of whole numbers, the measure. For an open-ended loop it is written `loop decreases e`, as [the open-ended `loop`](open-loop.md#a-loop-that-is-proven-to-end) shows. For a function that calls itself on something other than a part of its argument, it is written after the signature.
 
 ```
 fn first_zero(x: List[u8], from: u64) -> Option[u64]
@@ -64,7 +64,7 @@ fn first_zero(x: List[u8], from: u64) -> Option[u64]
 }
 ```
 
-Wherever the function calls itself, `arith` must prove that the expression of the call's arguments is smaller than that of its own. The call is made where `from < x.size`, so `x.size - (from + 1)` is below `x.size - from`. `first_zero([5, 0, 7], 0)` is `.some(1)`. An unsigned number cannot go below zero, so the calls cannot go on forever, and the expression is never computed when the program runs.
+Wherever the function calls itself, `arith` must prove that the expression of the call's arguments is not below zero and is smaller than that of its own. The call is made where `from < x.size`, so `x.size - (from + 1)` is below `x.size - from`. `first_zero([5, 0, 7], 0)` is `.some(1)`. A number that gets smaller at each call and never goes below zero cannot do so forever, so the calls end. The expression is never computed when the program runs, so it is reasoned about as an exact number.
 
 A call whose expression is not smaller is refused where it is made. In `first_zero`, the call `first_zero(x, from)` leaves `x.size - from` as it was, so it is refused.
 
