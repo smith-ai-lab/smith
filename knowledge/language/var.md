@@ -56,7 +56,7 @@ fn grow(start: f32, rate: f32) -> f32 {
 }
 ```
 
-`grow(10.0, 0.5)` is `16.0`. The same four forms assign to a field of a `var`, which [Structs and tuples](structs.md) shows.
+`grow(10.0, 0.5)` is `16.0`. The same four forms assign to a field of a `var`, which [Structs](structs.md) shows.
 
 ## Where a `var` can be used
 

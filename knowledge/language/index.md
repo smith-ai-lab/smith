@@ -12,8 +12,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [bindings.md](bindings.md): how `x = e` defines an immutable name, once per function, how a binding states its type, and where a name can be used.
 - [var.md](var.md): locals that change, declared with `var`, given a new value with `=`, and accumulated into with `+=`, `-=`, `*=`, and `/=`.
 - [if.md](if.md): `if` as an expression that chooses between blocks, `else if`, and the words `not`, `and`, and `or`.
-- [structs.md](structs.md): structs with named fields and defaults, assigning to a field of a `var`, tuples, and patterns that take them apart.
-- [enums.md](enums.md): enums that hold one of their cases, and `match` to take a value apart.
+- [structs.md](structs.md): structs with named fields and defaults, reading a field, assigning to a field of a `var`, and a definition at the top level of a file.
+- [tuples.md](tuples.md): tuples that group values without names, patterns that take them apart and assign, and the empty tuple.
+- [enums.md](enums.md): enums that hold exactly one of their cases, each case holding a type or nothing, and how a case is built.
+- [match.md](match.md): `match`, which takes a value apart with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
 - [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
 - [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
