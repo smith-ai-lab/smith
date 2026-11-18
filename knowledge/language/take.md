@@ -26,6 +26,20 @@ fn keep(k: Key) -> Key { k }
 
 This is refused: `k` is lent to `keep`, and a lent value cannot be returned. Written `fn keep(k: take Key) -> Key { k }` it is accepted, as `keep` owns `k`.
 
+No part of a lent value is returned either, and there is no exception. The check is made inside one function at a time, and no result is tied to how long an argument lasts.
+
+## A function that hands on what it is given
+
+A function that gives back what it was passed, or passes it to a lambda that keeps it, takes it. A function type marks a parameter `take` as a function does. `then`, which [`try`](try.md) is made of, is such a function: it gives the failure back and passes the value to its lambda.
+
+```
+trait Try[C, R, out T] {
+  fn then(c: take C, body: (take T) -> R) -> R
+}
+```
+
+A `try` gives `then` a value nothing else holds, so no call changes. And the lines after `with t = then(begin(db))` own `t`, so they may `commit` it. Until ownership is built, `Try` is written without `take`, as [try](try.md) shows it.
+
 ## Types that have Copy
 
 For a type that has [`Copy`](ownership.md) the difference between lending and `take` is invisible.
@@ -58,5 +72,6 @@ So a random key cannot be reused. Randomness needs no effect, because every rand
 | --- | --- |
 | `fn f(x: T)` | `x` is lent: `f` cannot keep, store, or return it |
 | `fn f(x: take T)` | `f` owns `x`, and the caller cannot use it again |
+| `(take T) -> R` | A function type whose function owns its argument |
 
 Next: [Values used exactly once](resources.md)
