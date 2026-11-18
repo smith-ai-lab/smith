@@ -21,7 +21,7 @@ Written in `x_test.smith`, `test_one_and_one` is a test of `x.smith`. A test tha
 
 ## A test returns a Result
 
-A test returns a `Result`, and `expect` is the one check. `expect { ... }` gives `.ok(())` when its condition holds, and a `Failed` when it does not.
+A test returns a `Result`, and `expect` is the one check. `expect { ... }` is the check.
 
 ```
 use model.tokenizer (encode)
@@ -71,7 +71,7 @@ Test files are left out of normal builds, so `smith build` never compiles `x_tes
 | --- | --- |
 | `x_test.smith` | The tests of `x.smith` |
 | `fn test_name() -> Result[(), Failed]` | A test: a single example that runs once |
-| `expect { e }` | The check: `.ok(())` when `e` holds, a `Failed` reporting both sides when it does not |
+| `expect { e }` | The check, which reports both sides of a comparison when it fails |
 | `try expect { e }` | A check that ends the test when it fails |
 | `fn test_name(key: take Key)` or `fn test_name(x: T)` | A property, as [Properties](properties.md) describes |
 

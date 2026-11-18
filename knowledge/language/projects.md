@@ -96,15 +96,6 @@ fn main() ! console {
 
 `main_test.smith` holds a test of that function, as [Tests](tests.md) describes.
 
-```
-use main (greeting)
-use std.test (Failed, expect)
-
-fn test_greeting() -> Result[(), Failed] {
-  expect { greeting() == "hello world" }
-}
-```
-
 `project.smith` is the one above.
 
 ## The forms
