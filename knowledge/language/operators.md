@@ -7,7 +7,7 @@ status: planned
 
 # Operators
 
-An operator is a call of a trait function. `a + b` means `Add.add(a, b)`, so a type has `+` when it has an `impl` of `Add`. The arithmetic operators are `+`, `-`, `*`, `/`, and `^` for a power.
+An operator is a call of a trait function. `a + b` means `Add.add(a, b)`, so a type has `+` when it has an `impl` of `Add`. The arithmetic operators are `+`, `-`, `*`, `/`, `%` for what is left over from dividing, and `^` for a power.
 
 ## The trait behind each operator
 
@@ -19,10 +19,11 @@ Each arithmetic operator has one trait, and the trait has one function.
 | `a - b` | `sub(a, b)` | `Sub` |
 | `a * b` | `mul(a, b)` | `Mul` |
 | `a / b` | `div(a, b)` | `Div` |
+| `a % b` | `rem(a, b)` | `Rem` |
 | `a ^ b` | `pow(a, b)` | `Pow` |
 | `-a` | `neg(a)` | `Neg` |
 
-The five that take two operands have one shape: the types of the two operands, and the type of the result, which they fix.
+The six that take two operands have one shape: the types of the two operands, and the type of the result, which they fix.
 
 ```
 trait Add[A, B = A, out C = A] {
@@ -30,7 +31,7 @@ trait Add[A, B = A, out C = A] {
 }
 ```
 
-`Sub`, `Mul`, `Div`, and `Pow` are the same with their own function. `Neg` takes one operand:
+`Sub`, `Mul`, `Div`, `Rem`, and `Pow` are the same with their own function. `Neg` takes one operand:
 
 ```
 trait Neg[A, out C = A] {
@@ -101,7 +102,7 @@ This is the `impl` written out field by field, and it is the short way to write 
 | Written | Is |
 | --- | --- |
 | `a + b` | `Add.add(a, b)` |
-| `a - b`, `a * b`, `a / b`, `a ^ b` | `Sub.sub`, `Mul.mul`, `Div.div`, `Pow.pow`, each shaped as `Add` is |
+| `a - b`, `a * b`, `a / b`, `a % b`, `a ^ b` | `Sub.sub`, `Mul.mul`, `Div.div`, `Rem.rem`, `Pow.pow`, each shaped as `Add` is |
 | `-a` | `Neg.neg(a)` |
 | `impl Add[Rect] { ... }` | `+` for two `Rect`s |
 | `impl Mul[f32, Weights, Weights] { ... }` | `*` for a number and a `Weights` |
