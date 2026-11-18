@@ -71,8 +71,7 @@ impl System for Macos {
         asm.load(R12, 8, false, Place::Frame(8));
     }
 
-    fn exit(asm: &mut Asm, status: u32) {
-        asm.mov32(RDI, status);
+    fn end(asm: &mut Asm) {
         asm.call_slot(EXIT);
     }
 

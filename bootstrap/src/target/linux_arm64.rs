@@ -63,8 +63,7 @@ impl System for Linux {
         asm.load(X20, 8, false, Place::Frame(8));
     }
 
-    fn exit(asm: &mut Asm, status: u16) {
-        asm.mov_w(X0, status);
+    fn end(asm: &mut Asm) {
         asm.mov_w(X8, SYS_EXIT_GROUP);
         asm.svc();
     }

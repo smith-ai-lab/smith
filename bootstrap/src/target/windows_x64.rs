@@ -87,6 +87,11 @@ impl System for Windows {
         asm.call_slot(EXIT_PROCESS);
     }
 
+    fn end(asm: &mut Asm) {
+        asm.mov(RCX, RDI);
+        asm.call_slot(EXIT_PROCESS);
+    }
+
     /// Reserves and commits fresh pages. A failure gives no address.
     fn alloc(asm: &mut Asm, fail: usize) {
         asm.mov32(RCX, 0);

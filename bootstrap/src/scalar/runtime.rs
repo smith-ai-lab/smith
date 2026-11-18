@@ -86,7 +86,7 @@ pub enum Runtime {
     Valid,
     /// Takes a list of texts, and gives nothing when each is valid UTF-8. When
     /// one is not, it writes one line to standard error that says which, counted
-    /// from 1, and ends the program with a failing status.
+    /// from 1, and ends the program with status 1.
     Check,
 }
 

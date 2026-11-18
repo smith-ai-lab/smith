@@ -622,7 +622,8 @@ pub(super) fn check(valid: usize, decimal: usize, join: usize) -> Function {
         &[ADDRESS, LENGTH],
     );
     f.write_error(line[0], line[1]);
-    f.fail();
+    let status = byte(&mut f, 1);
+    f.exit(status);
     f.ret(vec![]);
     f.finish(&[])
 }

@@ -246,12 +246,16 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     used(count, i, Type::Int(Bits::B64))?;
                 }
                 Op::System {
-                    call: System::Fail,
+                    call: System::Exit,
                     args,
                 } => {
-                    if !args.is_empty() || !instruction.results.is_empty() {
+                    let [status] = &args[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    if !instruction.results.is_empty() {
                         return Err(Why::WrongCount);
                     }
+                    used(status, i, Type::Int(Bits::B8))?;
                 }
                 Op::System {
                     call: System::Allocate,

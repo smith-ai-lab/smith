@@ -50,8 +50,7 @@ impl System for Linux {
         asm.bind(done);
     }
 
-    fn exit(asm: &mut Asm, status: u32) {
-        asm.mov32(RDI, status);
+    fn end(asm: &mut Asm) {
         asm.mov32(RAX, SYS_EXIT_GROUP);
         asm.syscall();
     }
