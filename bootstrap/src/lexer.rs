@@ -66,6 +66,57 @@ pub struct Token {
     pub pos: Pos,
 }
 
+/// The tokens in the plain form that the lexer written in Smith prints, one
+/// line each: the kind, the line, the column, and what the token holds. Text
+/// is its bytes, a keyword or a punctuation is its place in its table, and a
+/// string that holds expressions is `interp_open`, its text and the tokens of
+/// its expressions in order, and `interp_close`.
+pub fn plain(tokens: &[Token]) -> String {
+    let mut out = String::new();
+    for token in tokens {
+        plain_token(token, &mut out);
+    }
+    out
+}
+
+fn plain_bytes(bytes: &[u8]) -> String {
+    let bytes: Vec<String> = bytes.iter().map(|b| b.to_string()).collect();
+    bytes.join(",")
+}
+
+fn plain_token(token: &Token, out: &mut String) {
+    let Pos { line, col } = token.pos;
+    let place = |kind: &str, rest: String| format!("{kind} {line} {col}{rest}\n");
+    let line = match &token.tok {
+        Tok::Ident(name) => place("ident", format!(" {}", plain_bytes(name.as_bytes()))),
+        Tok::Keyword(word) => {
+            let at = KEYWORDS.iter().position(|k| k == word).unwrap();
+            place("keyword", format!(" {at}"))
+        }
+        Tok::Number(text) => place("number", format!(" {}", plain_bytes(text.as_bytes()))),
+        Tok::Str(bytes) => place("string", format!(" {}", plain_bytes(bytes))),
+        Tok::Interp(pieces) => {
+            out.push_str(&place("interp_open", String::new()));
+            for piece in pieces {
+                match piece {
+                    Piece::Text(bytes) => {
+                        out.push_str(&place("text", format!(" {}", plain_bytes(bytes))))
+                    }
+                    Piece::Expr(tokens) => tokens.iter().for_each(|t| plain_token(t, out)),
+                }
+            }
+            place("interp_close", String::new())
+        }
+        Tok::Punct(mark) => {
+            let at = PUNCTUATION.iter().position(|p| p == mark).unwrap();
+            place("punct", format!(" {at}"))
+        }
+        Tok::Newline => place("newline", String::new()),
+        Tok::Eof => place("eof", String::new()),
+    };
+    out.push_str(&line);
+}
+
 /// Splits a file into tokens. The last token is always `Tok::Eof`.
 ///
 /// Every error is reported. If the text itself is not valid Smith source,
