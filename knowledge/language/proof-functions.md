@@ -56,4 +56,4 @@ That is how `arith` proves the `valid` of an [index](indexing.md): `valid(c, i)`
 | `-> a < 10` as a result | A proof the function gives |
 | `requires f(x)` | The comparison that `f(x)` returns, owed by the caller |
 
-Next: [hole](hole.md)
+Next: [Statements](statements.md)
