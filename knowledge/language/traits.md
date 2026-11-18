@@ -124,6 +124,14 @@ impl Described[double] {
 
 The function is still called and passed as it always is. Only where a type is expected does its name mean this type.
 
+A trait that is implemented for functions can speak of what a function takes and gives. Every function is given `Function`, as a struct is given `Eq`:
+
+```
+trait Function[F, out Args, out R]
+```
+
+`Args` is the types of the function's parameters as one tuple, and `R` is the type of its result. For `fn scale(x: f32, by: f32) -> f32`, `Args` is `(f32, f32)` and `R` is `f32`. A function of one parameter has that parameter's type as its `Args`, and a function of none has `()`. So one trait is declared for functions of every number of parameters, with a tuple standing for them, and nothing about how a function is called changes: `scale(3.0, 2.0)` is written as it always was.
+
 ## Defaults of a trait's functions
 
 A trait may give a function's parameter a default, as [Functions](functions.md) shows for any function. A call may leave the argument out.
