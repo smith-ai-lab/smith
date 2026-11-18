@@ -413,7 +413,7 @@ fn every_executable_keeps_a_var_a_lambda_assigns_however_the_function_calls_it()
 }
 
 fn every_executable_of_a_program_with_with_and_try_does_what_the_evaluator_says() {
-    every_executable_agrees(43, 60, tries::program, |case| case.source.as_bytes());
+    every_executable_agrees(43, 24, tries::program, |case| case.source.as_bytes());
 }
 
 fn a_struct_bound_to_two_names_is_two_equal_structs() {

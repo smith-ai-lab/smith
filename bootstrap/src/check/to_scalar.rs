@@ -1447,7 +1447,7 @@ impl<'a> Lowering<'a> {
         let params: Vec<(String, Ty)> = (view.params.iter())
             .map(|(n, t)| (n.clone(), t.subst(&instance.args)))
             .collect();
-        let flow = Ty::Enum(defs.flow, Vec::new());
+        let flow = Ty::Enum(defs.flow, vec![Ty::Nothing, Ty::Nothing]);
         let outer = out.names().len();
         if has_return(&l.body) {
             let gives = out.returns.last().expect("checked").gives.clone();

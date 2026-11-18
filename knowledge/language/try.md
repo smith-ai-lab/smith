@@ -5,6 +5,8 @@ description: try, which continues a function only when a step succeeded, and the
 status: partial
 built:
   - "`try` as a statement, after a binding, and inside an expression, `Option`, `Result`, and the `Try` trait from the prelude, and a type of a program's own that implements `Try`"
+  - "`try` written anywhere an expression is: in a `loop`, in a loop inside a loop, in an arm of a `match`, in a block of an `if`, and in an argument of a call, over an `Option`, a `Result`, a `Flow`, and a type of a program's own"
+  - "`Try` with the one function `split`, which gives a `Flow`, and `Flow` with its two type parameters"
 ---
 
 # `try`
@@ -65,6 +67,21 @@ fn pair(a: Option[str], b: Option[str]) -> Result[(str, str), str] {
 
 The two `try`s run from left to right, as the arguments of a call do, so `pair(.none, .none)` is `.err("a")`.
 
+A `try` is written wherever an expression is, in an arm of a `match`, in a block of an `if`, and in a `loop`, where the failure ends the loop and the function with it:
+
+```
+fn first_bad(xs: List[Result[u64, str]]) -> Result[u64, str] {
+  var total: u64 = 0
+  loop i in 0..xs.size {
+    v = try xs[i]
+    total = wrapping_add(total, v)
+  }
+  .ok(total)
+}
+```
+
+`first_bad([.ok(1), .err("x"), .ok(3)])` is `.err("x")`, having read two elements.
+
 ## A failure is a value
 
 An error is an ordinary value. Nothing unwinds: `try` only returns a value, so code after a call always runs. A function that matches on the `Result` instead of writing `try` goes on with the next line whatever the result was.
@@ -91,34 +108,58 @@ This is refused: "this gives a `Result[str, str]`, which nothing uses, so a fail
 
 ## What try means
 
-`x = try e` means `with x = then(e)`, so this is the `parse_pair` of [`with`](with.md), written with a keyword because continuing only on success is so common.
+`x = try e` splits `e` into a `Flow`, and goes on with the value in `.go`, or returns from the function with the value in `.stop`:
+
+```
+x = match split(e) {
+  .go(v) { v }
+  .stop(r) { return r }
+}
+```
+
+So `try` is written anywhere an expression is, and the rest of the function is no lambda: nothing runs it more than once, and a value the function owns is used after a `try` as before it. This is the `parse_pair` above, with each `try` written out:
 
 ```
 fn parse_pair(a: str, b: str) -> Result[(i32, i32), ParseError] {
-  with x = then(parse_int(a))
-  with y = then(parse_int(b))
+  x = match split(parse_int(a)) {
+    .go(v) { v }
+    .stop(r) { return r }
+  }
+  y = match split(parse_int(b)) {
+    .go(v) { v }
+    .stop(r) { return r }
+  }
   .ok((x, y))
 }
 ```
 
-The keyword is fixed and its meaning is extensible. `then` is the one function of the `Try` trait, which relates a container `C`, the final result `R`, and the value inside the container, `T`, and `try` works on any type that has an implementation. The `then` of [`with`](with.md) is the one for `Result`. An `impl` takes its own type parameters in brackets, and this is the one for `Option`:
+The keyword is fixed and its meaning is extensible. `split` is the one function of the `Try` trait, which relates a container `C`, the result of the function `try` is written in, `R`, and the value inside the container, `T`. `try` works on any type that has an implementation, and `split` takes its container, as [`take`](take.md) says, since the value it gives back is made of it. `Flow` is the prelude's, and its two types are each `()` when they are not written, as [Iterate](iterate.md) says:
 
 ```
-trait Try[C, R, out T] {
-  fn then(c: C, body: fn(T) -> R) -> R
+enum Flow[T = (), R = ()] {
+  go: T
+  stop: R
 }
 
-impl[T, U] Try[Option[T], Option[U], T] {
-  fn then(c: Option[T], body: fn(T) -> Option[U]) -> Option[U] {
+trait Try[C, R, out T] {
+  fn split(c: take C) -> Flow[T, R]
+}
+```
+
+An `impl` takes its own type parameters in brackets. This is the one for `Result`, which keeps a failure as it is and gives it back as the failure of the function:
+
+```
+impl[T, U, E] Try[Result[T, E], Result[U, E], T] {
+  fn split(c: take Result[T, E]) -> Flow[T, Result[U, E]] {
     match c {
-      .some(x) { body(x) }
-      .none { .none }
+      .ok(x) { .go(x) }
+      .err(e) { .stop(.err(e)) }
     }
   }
 }
 ```
 
-The trait and its implementations for `Option` and `Result` are the prelude's, so a program writes none of them to use `try` on those types. A function that gives an `Option` writes `try` on one.
+The trait and its implementations for `Option`, `Result`, and `Flow` are the prelude's, so a program writes none of them to use `try` on those types. A function that gives an `Option` writes `try` on one.
 
 ```
 fn first(o: Option[str]) -> Option[str] {
@@ -165,10 +206,10 @@ enum Maybe {
 }
 
 impl Try[Maybe, Maybe, str] {
-  fn then(c: Maybe, body: fn(str) -> Maybe) -> Maybe {
+  fn split(c: take Maybe) -> Flow[str, Maybe] {
     match c {
-      .some(x) { body(x) }
-      .none { .none }
+      .some(x) { .go(x) }
+      .none { .stop(.none) }
     }
   }
 }
@@ -204,10 +245,10 @@ fn port(text: str) -> Result[u16, PortError] {
 impl[T, U, E, F] Try[Result[T, E], Result[U, F], T]
   requires Convert[E, F]
 {
-  fn then(c: Result[T, E], body: fn(T) -> Result[U, F]) -> Result[U, F] {
+  fn split(c: take Result[T, E]) -> Flow[T, Result[U, F]] {
     match c {
-      .ok(x) { body(x) }
-      .err(e) { .err(convert(e)) }
+      .ok(x) { .go(x) }
+      .err(e) { .stop(.err(convert(e))) }
     }
   }
 }
@@ -224,8 +265,8 @@ Only `try` converts. A function's own result is written out, as `.ok(p)` is.
 | `x = try e` | The value inside `e`, or return the failure |
 | `try e` | The same, for a step with no value to keep |
 | `.ok((try a, try b))` | `try` inside an expression, left to right |
-| `x = try e` | Another way to write `with x = then(e)` |
-| `impl Try[C, R, T]` | How a type joins, with its own `then` |
+| `x = try e` | `match split(e)`, going on with `.go(v)` and doing `return r` for `.stop(r)` |
+| `impl Try[C, R, T]` | How a type joins, with its own `split` |
 | `Result[T, E]` into `Result[U, F]` | Allowed when `Convert[E, F]` exists |
 
 Next: [`return`](return.md)

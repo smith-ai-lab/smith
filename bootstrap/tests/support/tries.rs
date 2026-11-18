@@ -15,22 +15,23 @@
 //!
 //! The generator first builds a model of the program and works out from it
 //! what the program prints. Then it writes the model out three ways that
-//! mean the same: with `try` and `with`, as written, with every `try` as a
-//! `with` of `Try.then`, and with every `with` and `try` as the call and the
-//! lambda after it that it means. A mistake is placed as the model is
-//! written the first way.
+//! mean the same: with `try` and `with`, as written, with every `try` as the
+//! `match` on what `Try.split` gives that it means, and with every `with` as
+//! the call and the lambda after it that it means. A mistake is placed as the
+//! model is written the first way.
 
 use crate::generate::Gen;
 use crate::programs::{Expected, pos_after};
 
-/// A program that passes blocks on: its source in each of its three
-/// spellings, what it prints, and the mistake placed in it, if any.
+/// A program that passes blocks on and leaves on a failure: its source in
+/// each of its three spellings, what it prints, and the mistake placed in
+/// it, if any.
 pub struct TryCase {
     pub source: String,
-    /// The same program with every `try` written as a `with` of `Try.then`.
-    pub with_form: String,
-    /// The same program with every `with` and `try` written as the call and
-    /// the lambda after it that it means.
+    /// The same program with every `try` written as the `match` it means.
+    pub matched: String,
+    /// The same program with every `with` written as the call and the lambda
+    /// after it that it means.
     pub lambdas: String,
     pub stdout: Vec<u8>,
     pub mistake: Option<Expected>,
@@ -151,10 +152,8 @@ enum Part {
 struct Step {
     op: Op,
     /// Whether what it continues with is bound to a name, so that the step
-    /// is `x = try e` or `with x = Try.then(e)` and not `try e`.
+    /// is `x = try e` and not `try e`.
     bind: bool,
-    /// Whether it is written as a `with` when `try` is not required.
-    with: bool,
 }
 
 /// How a function ends.
@@ -237,9 +236,9 @@ struct Model {
 enum Style {
     /// As written: `try` where the generator chose it, and `with`.
     Sugar,
-    /// Every `try` as a `with` of `Try.then`.
-    With,
-    /// Every `with` and `try` as a call and the lambda after it.
+    /// Every `try` as the `match` on `Try.split` it means.
+    Match,
+    /// Every `with` as a call and the lambda after it.
     Lambdas,
 }
 
@@ -339,8 +338,7 @@ fn func(g: &mut Gen, fam: Fam, earlier_r: usize, earlier_o: usize, k: &mut usize
             (_, _) => Op::Param(if g.one_in(2) { Arg::A } else { Arg::B }),
         };
         let bind = g.below(4) != 0 || matches!(op, Op::Order(..));
-        let with = g.one_in(2);
-        steps.push(Step { op, bind, with });
+        steps.push(Step { op, bind });
     }
     let fin = if fam == Fam::R && g.one_in(3) {
         Final::Tail(name(k), arg(g, k, false).no_v())
@@ -575,13 +573,19 @@ enum Done {
 }
 
 impl Try[Maybe, Done, str] {
-  fn then(c: Maybe, body: fn(str) -> Done) -> Done {
+  fn split(c: take Maybe) -> Flow[str, Done] {
     match c {
-      .yes(s) { body(s) }
-      .no { .stop }
+      .yes(s) { .go(s) }
+      .no { .stop(.stop) }
     }
   }
 }
+
+fn split_r(c: take Result[str, str]) -> Flow[str, Result[str, str]] { Try.split(c) }
+
+fn split_o(c: take Option[str]) -> Flow[str, Option[str]] { Try.split(c) }
+
+fn split_m(c: take Maybe) -> Flow[str, Done] { Try.split(c) }
 
 fn find(name: str, have: Option[str]) -> Result[str, str] ! alloc {
   match have {
@@ -723,7 +727,6 @@ impl Writer {
                 let step = Step {
                     op: Op::Find(n.clone(), Arg::V),
                     bind: true,
-                    with: false,
                 };
                 let f = Func {
                     steps: vec![step],
@@ -761,47 +764,52 @@ impl Writer {
         };
         let x = format!("x{}", base + i);
         if let Op::Order(shape, parts) = &step.op {
-            let opened = self.order(*shape, parts, &x, by, base);
-            let inner = by + 2 * opened;
-            self.steps(fam, f, i + 1, inner, base, bad);
-            for depth in (0..opened).rev() {
-                self.line(by + 2 * depth, "}");
-            }
+            self.order(*shape, parts, &x, by, base);
+            self.steps(fam, f, i + 1, by, base, bad);
             return;
         }
         let operand = self.operand(fam, &step.op, by);
-        let close = self.style == Style::Lambdas;
-        let start = match (self.style, step.bind, step.with) {
-            (Style::Sugar, true, false) => format!("{x} = try {operand}"),
-            (Style::Sugar, false, _) => format!("try {operand}"),
-            (Style::Lambdas, ..) => format!("Try.then({operand}) fn({x}) {{"),
-            _ => format!("with {x} = Try.then({operand})"),
-        };
-        self.line(by, &start);
-        let by = if close { by + 2 } else { by };
-        self.steps(fam, f, i + 1, by, base, bad);
-        if close {
-            self.line(by - 2, "}");
+        let split = self.split(fam, &operand, &x, by);
+        if step.bind {
+            self.line(by, &format!("{x} = {split}"));
+        } else {
+            self.line(by, &split);
         }
+        self.steps(fam, f, i + 1, by, base, bad);
     }
 
-    /// Writes `x = <the parts in a shape>`. Written as the program has it,
-    /// the parts that fail are `try`s inside it. Written out, what a `try`
-    /// after a part makes run before the `try` is bound first, as are the
-    /// `try`s, each as a `with` or as a call with a lambda. Gives how many
-    /// lambdas it opened.
-    fn order(&mut self, shape: Shape, parts: &[Part; 3], x: &str, by: usize, base: usize) -> usize {
-        let last_try = parts.iter().rposition(|p| matches!(p, Part::Try(..)));
-        let sugar = self.style == Style::Sugar;
-        let mut opened = 0;
-        let mut texts = Vec::new();
-        for (k, part) in parts.iter().enumerate() {
-            let ind = by + 2 * opened;
-            let name = format!("{x}p{k}");
-            let pad = " ".repeat(ind);
-            let inline = |part: &Part| match part {
+    /// `try operand`, or the `match` that it means, where the names that the
+    /// `match` binds start with `tag`. What `operand` splits into is given
+    /// by the function of its family that splits it and says what the
+    /// function that is written in gives, which `try` takes from the function.
+    fn split(&self, fam: Fam, operand: &str, tag: &str, by: usize) -> String {
+        if self.style != Style::Match {
+            return format!("try {operand}");
+        }
+        let split = match fam {
+            Fam::R => "split_r",
+            Fam::O => "split_o",
+            Fam::M => "split_m",
+        };
+        let pad = " ".repeat(by);
+        format!(
+            "match {split}({operand}) {{\n{pad}  .go({tag}g) {{ {tag}g }}\n\
+             {pad}  .stop({tag}s) {{ return {tag}s }}\n{pad}}}"
+        )
+    }
+
+    /// Writes `x = <the parts in a shape>`, where the parts that fail are
+    /// `try`s, or the `match`es they mean, inside it, and run where they are
+    /// written, from left to right.
+    fn order(&mut self, shape: Shape, parts: &[Part; 3], x: &str, by: usize, base: usize) {
+        let pad = " ".repeat(by);
+        let texts: Vec<String> = (parts.iter().enumerate())
+            .map(|(k, part)| match part {
                 Part::Say(label) => format!("say(\"{label}\")"),
-                Part::Try(n, o) => format!("try find(\"{n}\", {})", o.text(Fam::R)),
+                Part::Try(n, o) => {
+                    let find = format!("find(\"{n}\", {})", o.text(Fam::R));
+                    self.split(Fam::R, &find, &format!("{x}p{k}"), by)
+                }
                 Part::Lit(lit) => format!("\"{lit}\""),
                 Part::Name(j) => format!("x{}", base + j),
                 Part::Interp(label) => format!("\"<{{say(\"{label}\")}}>\""),
@@ -814,42 +822,25 @@ impl Writer {
                 Part::Fld(label) => {
                     format!("Trio(first: say(\"{label}\"), second: \"s\", third: \"t\").first")
                 }
-            };
-            let before_try = last_try.is_some_and(|l| k < l);
-            let text = if sugar {
-                inline(part)
-            } else {
-                match part {
-                    Part::Try(n, o) => {
-                        let find = format!("find(\"{n}\", {})", o.text(Fam::R));
-                        if self.style == Style::With {
-                            self.line(ind, &format!("with {name} = Try.then({find})"));
-                        } else {
-                            self.line(ind, &format!("Try.then({find}) fn({name}) {{"));
-                            opened += 1;
-                        }
-                        name
-                    }
-                    // What a `try` after it makes run first is bound, and a
-                    // field is read from what is bound.
-                    Part::Fld(label) if before_try => {
-                        let built =
-                            format!("Trio(first: say(\"{label}\"), second: \"s\", third: \"t\")");
-                        self.line(ind, &format!("{name} = {built}"));
-                        format!("{name}.first")
-                    }
-                    Part::Say(_) | Part::Interp(_) | Part::Match(..) | Part::Lam(_)
-                        if before_try =>
-                    {
-                        self.line(ind, &format!("{name} = {}", inline(part)));
-                        name
-                    }
-                    part => inline(part),
+            })
+            .collect();
+        // A `match` is not written inside the braces of a string, so the
+        // parts of a text are bound first, in the order they run.
+        let texts: Vec<String> = if self.style == Style::Match && matches!(shape, Shape::Text) {
+            let mut bound = Vec::new();
+            for (k, (part, text)) in parts.iter().zip(texts).enumerate() {
+                if matches!(part, Part::Lit(_) | Part::Name(_)) {
+                    bound.push(text);
+                    continue;
                 }
-            };
-            texts.push(text);
-        }
-        let ind = by + 2 * opened;
+                let name = format!("{x}b{k}");
+                self.line(by, &format!("{name} = {text}"));
+                bound.push(name);
+            }
+            bound
+        } else {
+            texts
+        };
         let text = match shape {
             Shape::Call => format!("join3({}, {}, {})", texts[0], texts[1], texts[2]),
             Shape::Tuple => format!("join_t(({}, {}, {}))", texts[0], texts[1], texts[2]),
@@ -871,8 +862,7 @@ impl Writer {
                 text
             }
         };
-        self.line(ind, &format!("{x} = {text}"));
-        opened
+        self.line(by, &format!("{x} = {text}"));
     }
 
     fn end(&mut self, fam: Fam, f: &Func, by: usize, base: usize) {
@@ -1050,9 +1040,9 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TryCase {
     let m = model(g, kind);
     let sugar = write(&m, Style::Sugar);
     assert_eq!(sugar.mistake.is_some(), kind.is_some(), "{kind:?}");
-    let (with_form, lambdas, stdout) = if kind.is_none() {
+    let (matched, lambdas, stdout) = if kind.is_none() {
         (
-            write(&m, Style::With).text,
+            write(&m, Style::Match).text,
             write(&m, Style::Lambdas).text,
             stdout(&m),
         )
@@ -1061,7 +1051,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TryCase {
     };
     TryCase {
         source: sugar.text,
-        with_form,
+        matched,
         lambdas,
         stdout,
         mistake: sugar.mistake,

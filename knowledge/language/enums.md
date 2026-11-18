@@ -5,6 +5,7 @@ description: Enums that hold exactly one of their cases, each case holding a typ
 status: partial
 built:
   - "enums whose cases hold a type or nothing, with type parameters, and cases built with a leading dot or in full"
+  - "a case that holds `()` built and matched without it, as `.more`, and `.more(())` in a pattern meaning the same"
 ---
 
 # Enums

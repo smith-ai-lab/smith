@@ -8,7 +8,7 @@ built:
   - "`break` and `return` in a `loop` over a value: a `break` answers `.stop`, and a `return` keeps its value, answers `.stop`, and gives the function the value once `each` is over, from any `if`, `match`, or loop in the block"
   - "`each(x) fn(v) { ... }` as a call of a function that takes a function, whose lambda gives a `Flow`"
   - "a `loop` whose block cannot answer `.stop` builds no `Flow` and tests none, and a `loop` over a type with no implementation of `Iterate` is one error that names the type"
-  - "not `try` inside a `loop`, so the `Countdown` of the page does not compile yet, and its `each` is written with a `match` on what `body` gives and a `return .stop` until it does"
+  - "`try` inside a `loop`, as the `Countdown` of the page writes it"
   - "not an `each` that calls itself, as the `each` of a `Tree` does, since a function that calls itself is not built"
 ---
 
@@ -17,9 +17,9 @@ built:
 A type becomes loopable by implementing `Iterate`, a trait with one function, `each`, which walks a value and calls a lambda on every element, until the lambda says to stop.
 
 ```
-enum Flow {
-  go
-  stop
+enum Flow[T = (), R = ()] {
+  go: T
+  stop: R
 }
 
 trait Iterate[C, out T] {
@@ -27,7 +27,7 @@ trait Iterate[C, out T] {
 }
 ```
 
-`C` is the type that is walked, `T` is the type of its elements, and `body` is called once for each element. `body` answers with a `Flow`: `.go` to be given the next element, and `.stop` to be given no more. `each` gives a `Flow` too: `.stop` when `body` stopped it, and `.go` when it walked to the end. `T` is marked `out`, so it is determined by `C`, as [`out` parameters](out-parameters.md) says: once the type that is walked is known, so is the type of its elements.
+`Flow` takes two type parameters, each `()` when it is not written, so a `Flow` written alone is `Flow[(), ()]`, whose `.go` and `.stop` hold `()` and are written without it, as [Enums](enums.md#a-case-that-holds-) says. `C` is the type that is walked, `T` is the type of its elements, and `body` is called once for each element. `body` answers with a `Flow`: `.go` to be given the next element, and `.stop` to be given no more. `each` gives a `Flow` too: `.stop` when `body` stopped it, and `.go` when it walked to the end. `T` is marked `out`, so it is determined by `C`, as [`out` parameters](out-parameters.md) says: once the type that is walked is known, so is the type of its elements.
 
 ## Making a type loopable
 
@@ -49,11 +49,11 @@ impl Iterate[Countdown, i32] {
 `Flow` works with [`try`](try.md): `try body(v)` goes on to the next line when `body` gave `.go`, and leaves `each` with `.stop` when it gave `.stop`. So an `each` passes a stop along by writing `try` before each call of `body`, and ends with `.go`. The prelude gives `Flow` its `Try`:
 
 ```
-impl Try[Flow, Flow, ()] {
-  fn then(c: Flow, body: fn(()) -> Flow) -> Flow {
+impl[T, U, R] Try[Flow[T, R], Flow[U, R], T] {
+  fn split(c: take Flow[T, R]) -> Flow[T, Flow[U, R]] {
     match c {
-      .go { body(()) }
-      .stop { .stop }
+      .go(x) { .go(x) }
+      .stop(r) { .stop(.stop(r)) }
     }
   }
 }
