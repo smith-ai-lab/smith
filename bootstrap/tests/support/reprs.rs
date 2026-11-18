@@ -74,6 +74,14 @@ const PARAMS: &[&str] = &["T", "U"];
 const DEPTH: usize = 2;
 /// The longest text a value is written as, so that a run stays short.
 const MOST: usize = 600;
+/// The largest type a value is bound to, as `Ty::size` counts it. The compiler
+/// checks a program in time that grows with the size of its types, about 40
+/// microseconds for each, and the size grows about eight times for each level
+/// of `Cat[Cat[..]]`, so a program whose types are not bounded can take it
+/// longer than a test may compute, whatever the program prints. A type of 400
+/// takes it under 20 milliseconds, and the size of one the generator builds
+/// is 1 to 350 in all but one case in a hundred.
+const LARGEST: usize = 400;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
@@ -95,6 +103,26 @@ impl Ty {
             Ty::Option(t) => Ty::Option(Box::new(t.subst(args))),
             Ty::Tuple(of) => Ty::Tuple(of.iter().map(|t| t.subst(args)).collect()),
             t => t.clone(),
+        }
+    }
+
+    /// How many types the type is made of once each struct and enum in it
+    /// is written out as what it holds. A type argument that a definition
+    /// holds more than once is counted each time, so the size grows with the
+    /// product of the definitions that hold their parameter many times, not
+    /// with how the type is written.
+    fn size(&self, defs: &[Def]) -> usize {
+        match self {
+            Ty::Def(d, args) => {
+                let held: usize = (defs[*d].items.iter())
+                    .filter_map(|(_, t)| t.as_ref())
+                    .map(|t| t.subst(args).size(defs))
+                    .sum();
+                1 + held
+            }
+            Ty::Option(t) => 1 + t.size(defs),
+            Ty::Tuple(of) => 1 + of.iter().map(|t| t.size(defs)).sum::<usize>(),
+            Ty::Str | Ty::Param(_) | Ty::Hidden => 1,
         }
     }
 
@@ -415,7 +443,9 @@ fn model(g: &mut Gen, overrides: bool, prints: &[Print]) -> Model {
             values.push((t, v, ways));
         }
         let m = Model { defs, values };
-        if (m.values.iter()).all(|(_, v, _)| repr(&m.defs, v).len() <= MOST) {
+        if (m.values.iter()).all(|(t, v, _)| {
+            t.size(&m.defs) <= LARGEST && repr(&m.defs, v).len() <= MOST
+        }) {
             return m;
         }
     }
