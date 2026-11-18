@@ -13,6 +13,7 @@ built:
   - "a file that no `use` reaches is never read by `smith build` or `smith run`, and `smith check` with no file named reads it and says what its syntax and its `use` lines say"
   - "`use m (a as c)`, which gives the name `a` of the module `m` the name `c` in this file only, so that two modules' `begin` are both used, and a function of a trait or of the library that the compiler builds is not given another name; an error at its place for a `c` that the file defines, that the prelude holds, that another `use` lists, or that is the name of an imported module, and nothing in the executable says `c`"
   - "a function of a trait that two traits the file can name both have, called with no trait written before it, is one error at the call, which says to write `Trait.function`; `Trait.function(x)` is the call of that trait's function, for a trait the file defines or lists"
+  - "an `impl` of a trait that a file lists with `use`, whose functions the file does not list: a function written in the `impl` is the function of that trait of the same name, so two traits of two modules that each have `show` are both implemented in one file, and an `impl` that lacks a function of the trait or writes one it does not have is one error at its place that names the function as the module wrote it"
   - "not a name used and not imported from the standard library, which is still in scope as it was, so the examples of the other pages are still written without their `use` lines; nor `pub` in the file that is built"
   - "a function, struct, enum, trait, or `impl` of a module of the standard library whose source is Smith is compiled when a program reaches it, as one of the program's own file is, so the library can be written in Smith; the library's names that the compiler builds, as [the compiler's design](../compiler.md#bootstrap) says, are still supplied by it, because effect declarations are not built"
 ---
@@ -72,6 +73,26 @@ fn size(r: Rect) -> i32 {
   area(r)
 }
 ```
+
+An `impl` of a trait needs the trait listed and not its functions. A function written inside `impl Shown[Mine]` is the function `show` of `Shown`, whether or not the file lists `show`. A `use` lists a trait's function only so that a call may be written without the trait before it.
+
+```
+use ui.animation (Shown)
+
+struct Mine {
+  n: i32
+}
+
+impl Shown[Mine] {
+  fn show(x: Mine) -> str { "shown" }
+}
+
+fn main() ! console, alloc {
+  print(Shown.show(Mine(n: 1)))
+}
+```
+
+So a file may implement `Shown` of `ui.animation` and `Drawn` of `db.render` for its own types when both traits have a function `show`, and calls each as `Shown.show(x)` and `Drawn.show(x)`.
 
 The few names that need no `use` are those the syntax itself means, which [The prelude](prelude.md) lists. `print` is not one of them.
 

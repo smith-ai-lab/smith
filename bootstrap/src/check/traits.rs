@@ -315,7 +315,11 @@ pub(super) fn impl_info(defs: &Defs, im: &crate::parser::Impl) -> Option<ImplInf
     let chosen = (0..scope.names.len())
         .all(|p| (args.iter().zip(&defs.outs[of])).any(|(a, out)| !out && a.mentions(p)));
     let fns = (t.functions.iter())
-        .map(|f| im.functions.iter().position(|g| g.name == f.name))
+        .map(|f| {
+            im.functions
+                .iter()
+                .position(|g| written_name(&g.name) == written_name(&f.name))
+        })
         .collect();
     Some(ImplInfo {
         of,
@@ -976,21 +980,28 @@ impl<'a> Checker<'a> {
             if im.functions[..j].iter().any(|g| g.name == f.name) {
                 self.errors.push(Error::new(
                     f.pos,
-                    format!("`{}` is already in this implementation", f.name),
+                    format!(
+                        "`{}` is already in this implementation",
+                        written_name(&f.name)
+                    ),
                 ));
                 continue;
             }
-            match t.functions.iter().position(|g| g.name == f.name) {
+            match t
+                .functions
+                .iter()
+                .position(|g| written_name(&g.name) == written_name(&f.name))
+            {
                 Some(fi) => self.implemented(i, fi, f),
                 None => self.errors.push(Error::new(
                     f.pos,
-                    format!("`{}` is not a function of `{name}`", f.name),
+                    format!("`{}` is not a function of `{name}`", written_name(&f.name)),
                 )),
             }
         }
         let lacking: Vec<&str> = (t.functions.iter().zip(&info.fns))
             .filter(|(_, at)| at.is_none())
-            .map(|(f, _)| f.name.as_str())
+            .map(|(f, _)| written_name(&f.name))
             .collect();
         if !lacking.is_empty() {
             self.errors.push(Error::new(
