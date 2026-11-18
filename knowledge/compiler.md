@@ -164,7 +164,7 @@ A Smith executable carries everything it runs. All of its code is compiled from 
 
 ## Why builds are fast
 
-- **Only what is reached is compiled.** A run costs what its roots use, not the size of the project or the standard library.
+- **Only what is reached is compiled.** A run costs what its roots use, not the size of the project or the standard library. This holds of the prelude too. It is read, lexed and parsed once in a process, and each file shares its items instead of copying them, so a program that uses nothing the prelude defines checks the body of none of its functions or implementations.
 - **Bodies check independently.** Signatures are complete, so bodies are checked in parallel across every core.
 - **Rules, not search.** Every optimization above is a fixed rule.
 - **Proofs are checked, not found.**
