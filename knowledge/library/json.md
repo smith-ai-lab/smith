@@ -5,9 +5,8 @@ description: std.json, a format for Serialize that writes a value as JSON text, 
 status: partial
 built:
   - "`std.json`, which a program imports with `use std.json (to_json, to_json_as, Json)`, with `to_json` and `to_json_as` of any value that has `Serialize` and the `Json`, `Cases`, and `Names` of the settings, written in Smith from `Serialize` and `Writer` alone"
-  - "every shape of the table below, a case of an enum as a key and as a tag, and `Names.camel`"
+  - "every shape of the table below, a case of an enum as a key and as a tag, `Names.camel`, and the refusal of a tag that is also a member, with `Clash`"
   - "not a float, which waits for `f64`, and not a `Map`, which is not built"
-  - "not the refusal of a tag that is also a member: `to_json_as` gives a `str` today, and writes the member twice"
 ---
 
 # JSON
