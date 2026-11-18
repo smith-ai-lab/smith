@@ -104,10 +104,9 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
     let mut defined_in = vec![NONE; values];
     let mut uses: Vec<Vec<(usize, usize)>> = vec![Vec::new(); values];
     let mut preds: Vec<Vec<usize>> = vec![Vec::new(); blocks];
-    // The values the jumps give each parameter, and the parameters each value
-    // is given to.
-    let mut given: Vec<Vec<Value>> = vec![Vec::new(); values];
-    let mut feeds: Vec<Vec<Value>> = vec![Vec::new(); values];
+    // The first parameter each value is given to by a jump.
+    let mut fed_to = vec![NONE; values];
+    let mut operands: Vec<Value> = Vec::new();
     // The register a call passes a value in, or takes it from, or a function
     // gives it back in, for the first it is found in.
     let mut passed_in = vec![NONE; values];
@@ -119,14 +118,16 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
             for r in &instruction.results {
                 defined_in[r.0] = b;
             }
-            for v in instruction.op.operands() {
+            instruction.op.operands_into(&mut operands);
+            for v in &operands {
                 if !homeless[v.0] {
                     uses[v.0].push((b, i + 1));
                 }
             }
         }
         let last = block.instructions.len() + 1;
-        for v in block.end.operands() {
+        block.end.operands_into(&mut operands);
+        for v in &operands {
             if !homeless[v.0] {
                 uses[v.0].push((b, last));
             }
@@ -158,9 +159,8 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
         };
         for jump in jumps {
             for (arg, param) in jump.args.iter().zip(&f.blocks[jump.block].params) {
-                if !homeless[arg.0] {
-                    given[param.0].push(*arg);
-                    feeds[arg.0].push(*param);
+                if !homeless[arg.0] && fed_to[arg.0] == NONE {
+                    fed_to[arg.0] = param.0;
                 }
             }
         }
@@ -211,7 +211,8 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
             alive[v.0] = true;
         }
         let last = block.instructions.len() + 1;
-        for v in block.end.operands() {
+        block.end.operands_into(&mut operands);
+        for &v in &operands {
             if !alive[v.0] && !homeless[v.0] {
                 alive[v.0] = true;
                 dying[base[b] + last].push(v);
@@ -228,7 +229,8 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
                     dead[base[b] + i + 1].push(*r);
                 }
             }
-            for v in instruction.op.operands() {
+            instruction.op.operands_into(&mut operands);
+            for &v in &operands {
                 if !alive[v.0] && !homeless[v.0] {
                     alive[v.0] = true;
                     dying[base[b] + i + 1].push(v);
@@ -257,7 +259,8 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
     // A function with no value alive across a call has no use for a register
     // a call does not change, which it would have to save, so it is offered
     // none.
-    let registers = if any_across_a_call(f, &facts, homeless) {
+    let has_a_call = (f.blocks.iter()).any(|b| b.instructions.iter().any(|i| i.op.is_call()));
+    let registers = if has_a_call && any_across_a_call(f, &facts, homeless) {
         registers
     } else {
         Registers {
@@ -299,9 +302,21 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
                 None
             };
             let near = if arrives.is_some() {
-                Vec::new()
+                Near::none()
             } else {
-                near(&given[p.0], &register, &spilled, passed_in[p.0])
+                // The values the jumps into the block give this parameter.
+                let given = preds[b].iter().flat_map(|&pred| {
+                    let jumps: &[Jump] = match &f.blocks[pred].end {
+                        End::Jump(jump) => std::slice::from_ref(jump),
+                        End::Switch { jumps, .. } => jumps,
+                        End::Return(_) => &[],
+                    };
+                    jumps
+                        .iter()
+                        .filter(|j| j.block == b)
+                        .map(move |j| j.args[i])
+                });
+                Near::of(given, &register, &spilled, passed_in[p.0])
             };
             colour(
                 registers,
@@ -311,7 +326,7 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
                 &crosses,
                 *p,
                 arrives,
-                &near,
+                near.registers(),
             );
         }
         release(&mut holder, &register, &dead[base[b]]);
@@ -319,7 +334,13 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
             let at = base[b] + i + 1;
             release(&mut holder, &register, &dying[at]);
             for r in instruction.results.iter().filter(|r| !homeless[r.0]) {
-                let near = near(&feeds[r.0], &register, &spilled, passed_in[r.0]);
+                // The parameter a jump gives the result to.
+                let near = if fed_to[r.0] == NONE && passed_in[r.0] == NONE {
+                    Near::none()
+                } else {
+                    let fed = (fed_to[r.0] != NONE).then(|| Value(fed_to[r.0]));
+                    Near::of(fed.into_iter(), &register, &spilled, passed_in[r.0])
+                };
                 colour(
                     registers,
                     &mut holder,
@@ -328,7 +349,7 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
                     &crosses,
                     *r,
                     None,
-                    &near,
+                    near.registers(),
                 );
             }
             release(&mut holder, &register, &dead[at]);
@@ -534,28 +555,66 @@ fn spill(
 }
 
 /// The registers that the values given to a parameter, or the parameters a
-/// value is given to, are in so far, the one most of them are in first. A
-/// value that moves in or out of the register of the one it is given to or
+/// value is given to, are in so far, the one most of them are in first, and
+/// then the one a call passes the value in or takes it from, if it has one.
+/// A value that moves in or out of the register of the one it is given to or
 /// takes is not moved at the jump.
-fn near(others: &[Value], register: &[usize], spilled: &[bool], passed: usize) -> Vec<usize> {
-    let mut found: Vec<(usize, usize)> = Vec::new();
-    for v in others {
-        let r = register[v.0];
-        if r == NONE || spilled[v.0] {
-            continue;
+struct Near {
+    registers: [usize; Near::MOST],
+    count: usize,
+}
+
+impl Near {
+    const MOST: usize = 5;
+
+    fn of(
+        others: impl Iterator<Item = Value>,
+        register: &[usize],
+        spilled: &[bool],
+        passed: usize,
+    ) -> Near {
+        let mut found = [(NONE, 0usize); Near::MOST];
+        let mut kinds = 0;
+        for v in others {
+            let r = register[v.0];
+            if r == NONE || spilled[v.0] {
+                continue;
+            }
+            match found[..kinds].iter_mut().find(|(seen, _)| *seen == r) {
+                Some((_, n)) => *n += 1,
+                None if kinds < Near::MOST - 1 => {
+                    found[kinds] = (r, 1);
+                    kinds += 1;
+                }
+                None => {}
+            }
         }
-        match found.iter_mut().find(|(seen, _)| *seen == r) {
-            Some((_, n)) => *n += 1,
-            None => found.push((r, 1)),
+        // The sort keeps the order they were found in among those that tie.
+        found[..kinds].sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        let mut near = Near {
+            registers: [NONE; Near::MOST],
+            count: kinds,
+        };
+        for (slot, (r, _)) in near.registers.iter_mut().zip(&found[..kinds]) {
+            *slot = *r;
+        }
+        if passed != NONE {
+            near.registers[near.count] = passed;
+            near.count += 1;
+        }
+        near
+    }
+
+    fn none() -> Near {
+        Near {
+            registers: [NONE; Near::MOST],
+            count: 0,
         }
     }
-    // The sort keeps the order they were found in among those that tie.
-    found.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
-    let mut near: Vec<usize> = found.into_iter().map(|(r, _)| r).collect();
-    if passed != NONE {
-        near.push(passed);
+
+    fn registers(&self) -> &[usize] {
+        &self.registers[..self.count]
     }
-    near
 }
 
 /// Gives the value the register it arrives in, if it has one and may have it

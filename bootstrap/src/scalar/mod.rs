@@ -253,18 +253,27 @@ pub enum Op {
 impl Op {
     /// The values the instruction reads, in order.
     pub fn operands(&self) -> Vec<Value> {
+        let mut values = Vec::new();
+        self.operands_into(&mut values);
+        values
+    }
+
+    /// Puts the values the instruction reads, in order, in `values`, which it
+    /// empties first.
+    pub fn operands_into(&self, values: &mut Vec<Value>) {
+        values.clear();
         match self {
-            Op::Constant(_) => Vec::new(),
-            Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => vec![*a, *b],
-            Op::Widen { value, .. } | Op::Narrow(value) => vec![*value],
+            Op::Constant(_) => {}
+            Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => values.extend([*a, *b]),
+            Op::Widen { value, .. } | Op::Narrow(value) => values.push(*value),
             Op::Choose {
                 on,
                 then,
                 otherwise,
-            } => vec![*on, *then, *otherwise],
-            Op::Load { address, .. } => vec![*address],
-            Op::Store { address, value, .. } => vec![*address, *value],
-            Op::Call { args, .. } | Op::System { args, .. } => args.clone(),
+            } => values.extend([*on, *then, *otherwise]),
+            Op::Load { address, .. } => values.push(*address),
+            Op::Store { address, value, .. } => values.extend([*address, *value]),
+            Op::Call { args, .. } | Op::System { args, .. } => values.extend(args),
         }
     }
 
@@ -305,14 +314,22 @@ pub enum End {
 impl End {
     /// The values the end reads, in order.
     pub fn operands(&self) -> Vec<Value> {
+        let mut values = Vec::new();
+        self.operands_into(&mut values);
+        values
+    }
+
+    /// Puts the values the end reads, in order, in `values`, which it empties
+    /// first.
+    pub fn operands_into(&self, values: &mut Vec<Value>) {
+        values.clear();
         match self {
-            End::Jump(jump) => jump.args.clone(),
+            End::Jump(jump) => values.extend(&jump.args),
             End::Switch { on, jumps } => {
-                let mut values = vec![*on];
+                values.push(*on);
                 values.extend(jumps.iter().flat_map(|j| j.args.iter().copied()));
-                values
             }
-            End::Return(values) => values.clone(),
+            End::Return(returned) => values.extend(returned),
         }
     }
 
