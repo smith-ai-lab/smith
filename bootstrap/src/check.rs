@@ -283,6 +283,26 @@ impl Fmt[str] {
   fn fmt(value: str) -> str ! alloc { value }
 }
 
+trait Exit[T] {
+  fn exit(value: T) -> u8 ! console, alloc
+}
+
+impl Exit[()] {
+  fn exit(value: ()) -> u8 ! console, alloc { 0 }
+}
+
+impl[T: Exit, E: Fmt] Exit[Result[T, E]] {
+  fn exit(value: Result[T, E]) -> u8 ! console, alloc {
+    match value {
+      .ok(x) { Exit.exit(x) }
+      .err(e) {
+        __eprint(fmt(e))
+        1
+      }
+    }
+  }
+}
+
 trait Try[C, R, out T] {
   fn then(c: C, body: (T) -> R) -> R
 }
@@ -310,6 +330,7 @@ impl[T, U] Try[Option[T], Option[U], T] {
 const PRELUDE_TRAITS: &[&str] = &[
     "Fmt",
     "Repr",
+    "Exit",
     "Try",
     "Eq",
     "Ord",
@@ -345,6 +366,7 @@ fn with_prelude(mut file: File) -> File {
         source.push('\n');
         source.push_str(&integer_impls(t));
     }
+    source.push_str(&start_function(&file));
     let mut tokens = crate::lexer::lex(source.as_bytes()).expect("the prelude lexes");
     for t in &mut tokens {
         t.pos.line = 0;
@@ -353,7 +375,41 @@ fn with_prelude(mut file: File) -> File {
     file.enums.splice(0..0, prelude.enums);
     file.traits.splice(0..0, prelude.traits);
     file.impls.splice(0..0, prelude.impls);
+    file.functions.splice(0..0, prelude.functions);
     file
+}
+
+/// The name of the function the program starts at when `main` gives a
+/// status.
+const START: &str = "__main";
+
+/// The function that starts a program whose `main` returns a type: it calls
+/// `main` and ends the program with the status that the `Exit` of what
+/// `main` returns gives. It lists the effects of `main`, and the two that
+/// `Exit` carries. A program whose `main` returns nothing starts at `main`.
+fn start_function(file: &File) -> String {
+    let Some(main) = file
+        .functions
+        .iter()
+        .find(|f| f.name == "main" && f.result.is_some())
+    else {
+        return String::new();
+    };
+    let mut effects: Vec<&str> = vec!["console", "alloc"];
+    for (name, _) in &main.effects {
+        if !effects.contains(&name.as_str()) {
+            effects.push(name);
+        }
+    }
+    let (params, args) = if main.params.is_empty() {
+        ("", "")
+    } else {
+        ("args: List[str]", "args")
+    };
+    format!(
+        "\nfn {START}({params}) ! {} {{\n  __end(Exit.exit(main({args})))\n}}\n",
+        effects.join(", ")
+    )
 }
 
 /// What an expression gives.
@@ -700,6 +756,17 @@ struct Signature {
 }
 
 impl Signature {
+    /// What `__end` takes: the status, a byte.
+    fn end() -> Signature {
+        Signature {
+            scope: Scope::default(),
+            params: vec![("status".to_string(), Ty::Int(Int::U8))],
+            defaults: vec![false],
+            gives: Ty::Nothing,
+            effects: Vec::new(),
+        }
+    }
+
     fn print() -> Signature {
         Signature {
             scope: Scope::default(),
@@ -762,6 +829,8 @@ struct Defs<'a> {
     fmt: usize,
     repr: usize,
     eq: usize,
+    /// The prelude's `Exit`, by its place in the file's traits.
+    exit: usize,
     /// The prelude's `bool`, `Order`, and `Option`, by their places in the
     /// file's enums.
     boolean: usize,
@@ -1731,8 +1800,11 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         return Err(errors);
     };
 
+    // Where the program starts: at `main`, or at the function that ends the
+    // program with the status `main`'s result gives.
+    let start_at = function_names.get(START).copied().unwrap_or(main);
     // What `main` reaches, each in the order it is first reached.
-    let mut reached: Vec<Item> = vec![Item::Fn(main)];
+    let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
     let mut i = 0;
     while i < reached.len() {
         let mut found: Vec<Item> = Vec::new();
@@ -1882,6 +1954,7 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
         fmt: prelude_trait(&file, "Fmt"),
         repr: prelude_trait(&file, "Repr"),
         eq: prelude_trait(&file, "Eq"),
+        exit: prelude_trait(&file, "Exit"),
         boolean: (file.enums.iter())
             .position(|e| e.name == "bool" && of_prelude(e.pos))
             .expect("the prelude defines it"),
@@ -1993,12 +2066,17 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
             Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
         }
     }
-    checker.recursion(main, &mut Vec::new(), &mut Vec::new());
+    checker.recursion(start_at, &mut Vec::new(), &mut Vec::new());
     if !checker.errors.is_empty() {
+        // What the function that starts the program says is wrong follows from
+        // what `main` says, which is at a place the reader can see.
+        if checker.errors.iter().any(|e| !of_prelude(e.pos)) {
+            checker.errors.retain(|e| !of_prelude(e.pos));
+        }
         return Err(checker.errors);
     }
     let start = Instance {
-        template: Template::Free(main),
+        template: Template::Free(start_at),
         args: Vec::new(),
     };
     let typed = Typed {
@@ -2558,6 +2636,10 @@ struct View<'a> {
 /// What a checked call does, once every type in it is known.
 enum Callee {
     Print,
+    /// `__eprint`, which the prelude calls to write a line to standard error.
+    Eprint,
+    /// `__end`, which the prelude calls to end the program with a status.
+    End,
     Construct(usize, Vec<Ty>),
     /// A case of an enum written in full, by its place among the enum's
     /// cases.
@@ -2660,7 +2742,7 @@ impl<'a> Defs<'a> {
                         .map(|f| (f.name.as_str(), f.default.as_ref()))
                         .collect();
                     (fields, false)
-                } else if name == "print" {
+                } else if name == "print" || is_stream_call(call) {
                     return Vec::new();
                 } else if let Some(&f) = self.function_names.get(name) {
                     (params(&file.functions[f]), true)
@@ -2778,6 +2860,17 @@ fn is_intrinsic(call: &Call) -> bool {
     call.qualifier.is_none() && call.callee.starts_with("__") && of_prelude(call.pos)
 }
 
+/// Whether a call is of the function `name`, which the compiler builds for
+/// the prelude and no other file may call.
+fn is_prelude_call(call: &Call, name: &str) -> bool {
+    call.qualifier.is_none() && call.callee == name && of_prelude(call.pos)
+}
+
+/// Whether a call is of `__eprint` or `__end`, which only the prelude calls.
+fn is_stream_call(call: &Call) -> bool {
+    is_prelude_call(call, "__eprint") || is_prelude_call(call, "__end")
+}
+
 /// Whether a call is of `push`, which the compiler builds, and no function
 /// of the program takes the name of.
 fn is_push(defs: &Defs, call: &Call) -> bool {
@@ -2839,6 +2932,12 @@ impl<'a> Typed<'a> {
                 if name == "print" {
                     return Callee::Print;
                 }
+                if name == "__eprint" {
+                    return Callee::Eprint;
+                }
+                if name == "__end" {
+                    return Callee::End;
+                }
                 if is_intrinsic(call) {
                     return Callee::Intrinsic;
                 }
@@ -2889,6 +2988,8 @@ impl<'a> Typed<'a> {
             },
             Callee::Construct(_, args) => args.clone(),
             Callee::Print
+            | Callee::Eprint
+            | Callee::End
             | Callee::Case(_)
             | Callee::Value
             | Callee::Intrinsic
@@ -3369,8 +3470,24 @@ impl<'a> Checker<'a> {
             }
         }
         if let Some(t) = &f.result {
-            self.errors
-                .push(Error::unsupported(t.pos, "a return type on `main`"));
+            let gives = &signature.gives;
+            let exit = self.defs.exit;
+            if *gives != Ty::Unknown
+                && let Found::No = self
+                    .defs
+                    .meets(exit, gives, &signature.scope, &mut Vec::new())
+            {
+                self.errors.push(
+                    Error::new(
+                        t.pos,
+                        format!(
+                            "`main` returns {}, which does not implement `Exit`, the trait that gives the status the program ends with",
+                            self.defs.describe(gives, &signature.scope)
+                        ),
+                    )
+                    .with_fix("return `()`, or a `Result` of it, or write `impl Exit` for the type"),
+                );
+            }
         }
     }
 
@@ -5963,6 +6080,16 @@ impl<'a> Checker<'a> {
         }
         if let Some(&s) = defs.struct_names.get(name) {
             return self.construction(body, call, s, want);
+        }
+        if is_prelude_call(call, "__eprint") {
+            let print = Signature::print();
+            self.arguments(body, call, &print, true, None);
+            return Ty::Nothing;
+        }
+        if is_prelude_call(call, "__end") {
+            let end = Signature::end();
+            self.arguments(body, call, &end, true, None);
+            return Ty::Nothing;
         }
         if is_intrinsic(call) {
             return self.intrinsic(body, call);
