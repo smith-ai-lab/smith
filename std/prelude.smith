@@ -602,3 +602,15 @@ impl Fmt[Nat] {
 impl Repr[Nat] {
   fn repr(value: Nat) -> str ! alloc { __decimal(value) }
 }
+
+impl Saturating[Nat] {
+  fn saturating_add(a: Nat, b: Nat) -> Nat { __saturating_add(a, b) }
+  fn saturating_sub(a: Nat, b: Nat) -> Nat { __saturating_sub(a, b) }
+  fn saturating_mul(a: Nat, b: Nat) -> Nat { __saturating_mul(a, b) }
+}
+
+impl Checked[Nat] {
+  fn checked_add(a: Nat, b: Nat) -> Option[Nat] { __checked_add(a, b) }
+  fn checked_sub(a: Nat, b: Nat) -> Option[Nat] { __checked_sub(a, b) }
+  fn checked_mul(a: Nat, b: Nat) -> Option[Nat] { __checked_mul(a, b) }
+}
