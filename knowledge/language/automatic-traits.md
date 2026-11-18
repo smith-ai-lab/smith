@@ -4,6 +4,7 @@ title: Traits a type is given
 description: Eq and Ord, which a struct, an enum, a tuple, or an array is given without an impl, how each orders its values, and how without takes one away.
 status: partial
 built:
+  - "`Ord` given to a `str`, a struct, an enum, a tuple, `bool`, and `()`, from their parts as the page says, and `without Ord for T`, which takes it away, and a type's own `impl Ord`, which replaces it"
   - "An `impl Eq[T]` that a program writes is refused, as `==` is only the `Eq` a type is given"
   - "`without Eq for T`, which takes away the `Eq` a struct was given, and a struct with a part that has no `Eq` has none"
 ---
