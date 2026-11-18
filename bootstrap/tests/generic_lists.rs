@@ -124,7 +124,7 @@ fn function(k: usize, name: &str, generics: &str, t: &str, u: &str, mistake: boo
     let push = if mistake { "true" } else { "b[i]" };
     let (params, gives, body) = match k {
         0 => (
-            format!("a: List[{t}], b: List[{t}]"),
+            format!("a: take List[{t}], b: List[{t}]"),
             format!("List[{t}]"),
             format!("var r = a\n  loop i in 0..b.size {{ r = push(r, {push}) }}\n  r"),
         ),
@@ -160,7 +160,7 @@ fn function(k: usize, name: &str, generics: &str, t: &str, u: &str, mistake: boo
             "if a.size > 0 { a[0] } else { y }".to_string(),
         ),
         6 => (
-            format!("a: List[{t}], b: List[{u}], y: {t}"),
+            format!("a: take List[{t}], b: List[{u}], y: {t}"),
             format!("List[{t}]"),
             "var r = a\n  loop i in 0..b.size { r = push(r, y) }\n  r".to_string(),
         ),

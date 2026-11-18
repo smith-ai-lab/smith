@@ -50,6 +50,8 @@ fn has(
         Ty::Enum(e, args) => (defs.cases[*e].iter().flatten())
             .map(|t| t.subst(args))
             .collect(),
+        // A list is never copied unasked, whatever its elements are.
+        Ty::List(_) if which == COPY => return Err(None),
         Ty::Tuple(items) | Ty::List(items) => items.clone(),
         _ => return Ok(()),
     };
@@ -381,9 +383,20 @@ impl<'a> Walk<'a> {
                 at.line,
                 at.col
             );
-            let blame =
-                (self.types.get(&addr(e))).and_then(|ty| lacking(self.defs, self.scope, COPY, ty));
-            let fix = blame.map(|p| format!("write `{}: Copy`", self.scope.names[p]));
+            let ty = self.types.get(&addr(e));
+            let blame = ty.and_then(|ty| lacking(self.defs, self.scope, COPY, ty));
+            let duplicable = match ty {
+                Some(Ty::List(of)) => copies(self.defs, self.scope, &of[0]),
+                _ => false,
+            };
+            let fix = match blame {
+                Some(p) => Some(format!("write `{}: Copy`", self.scope.names[p])),
+                None if duplicable => Some(format!(
+                    "write `copy({})` where two lists are meant",
+                    written(&path)
+                )),
+                None => None,
+            };
             if let Some(error) = self.error(e.pos(), message) {
                 error.fix = fix;
             }

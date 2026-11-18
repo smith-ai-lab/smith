@@ -43,11 +43,8 @@ pub enum Runtime {
     /// address of its elements, its size, and how many elements the memory at
     /// that address has room for, then the scalars of the element to add. It
     /// gives the list with the element after the last. The element is written
-    /// in place when there is room and the memory's first word, the 8 bytes
-    /// before the address, says that the list's elements are all in use, and
-    /// otherwise the elements are copied into new memory with room for twice
-    /// as many, or for one when there are none, and 8 bytes before it for that
-    /// word.
+    /// in place when there is room, and otherwise the elements are copied into
+    /// new memory with room for twice as many, or for one when there are none.
     Push(Vec<Type>),
     /// Is where a program that takes the words it was started with starts. It
     /// takes what the system gives, as `Arguments` does, and calls the
@@ -178,7 +175,7 @@ pub(super) fn repeat(
     results
 }
 
-fn copy() -> Function {
+pub(super) fn copy() -> Function {
     let mut f = Builder::new();
     let p = f.params(&[ADDRESS, ADDRESS, LENGTH]);
     let (to, from, count) = (p[0], p[1], p[2]);
@@ -497,42 +494,28 @@ fn push(scalars: &[Type], copy: usize) -> Function {
     let one = int(&mut f, 1);
     let left = f.compare(Compare::LessU, size, room);
     let (moved, _) = f.block(&[]);
-    let (checked, _) = f.block(&[]);
     let (kept, _) = f.block(&[]);
-    f.switch(left, vec![(moved, vec![]), (checked, vec![])]);
-    // Memory with room to spare begins with a word that says how many of its
-    // elements are in use, so a list grows where it is only when it is the
-    // one that uses them all, and a list that shares its memory with a longer
-    // one is copied.
-    f.at(checked);
-    let before = int(&mut f, 8u64.wrapping_neg());
-    let head = after(&mut f, address, before);
-    let used = f.load(LENGTH, head);
-    let last = f.compare(Compare::Equal, size, used);
-    f.switch(last, vec![(moved, vec![]), (kept, vec![])]);
+    f.switch(left, vec![(moved, vec![]), (kept, vec![])]);
+    // A list is held by one name, so memory with room to spare is written
+    // where it is.
     f.at(kept);
     let used = f.binary(Binary::Mul, size, width);
     let at = after(&mut f, address, used);
     write(&mut f, at, item, &places);
     let bigger = f.binary(Binary::Add, size, one);
-    f.store(head, bigger);
     f.ret(vec![address, bigger, room]);
     f.at(moved);
     let zero = int(&mut f, 0);
     let none = f.compare(Compare::Equal, size, zero);
     let twice = f.binary(Binary::Add, size, size);
     let places_of_room = f.choose(none, one, twice);
-    let bytes = f.binary(Binary::Mul, places_of_room, width);
-    let eight = int(&mut f, 8);
-    let asked = f.binary(Binary::Add, bytes, eight);
-    let start = f.allocate(asked);
-    let data = after(&mut f, start, eight);
+    let asked = f.binary(Binary::Mul, places_of_room, width);
+    let data = f.allocate(asked);
     let used = f.binary(Binary::Mul, size, width);
     f.call(copy, vec![data, address, used], &[]);
     let at = after(&mut f, data, used);
     write(&mut f, at, item, &places);
     let bigger = f.binary(Binary::Add, size, one);
-    f.store(start, bigger);
     f.ret(vec![data, bigger, places_of_room]);
     f.finish(&LIST)
 }
