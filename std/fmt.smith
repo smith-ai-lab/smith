@@ -1,0 +1,42 @@
+fn text(bytes: List[u8]) -> str {
+  match utf8(bytes) {
+    .ok(t) { t }
+    .err(e) { "" }
+  }
+}
+
+fn hex_digit(d: u64, upper: bool) -> u8 {
+  if d < 10 {
+    wrapping_narrow(wrapping_add(48, d))
+  } else if upper {
+    wrapping_narrow(wrapping_add(55, d))
+  } else {
+    wrapping_narrow(wrapping_add(87, d))
+  }
+}
+
+pub fn hex(n: u64, width: u8 = 0, upper: bool = true) -> str ! alloc {
+  var digits: List[u8] = []
+  loop i in 16..width { digits = push(digits, '0') }
+  var started: bool = false
+  loop j in 0..16 {
+    pos = 15 - j
+    d = bit_and(shift_right(n, pos * 4), 15)
+    if d > 0 { started = true }
+    if started or pos < width or pos == 0 { digits = push(digits, hex_digit(d, upper)) }
+  }
+  text(digits)
+}
+
+pub fn binary(n: u64, width: u8 = 0) -> str ! alloc {
+  var digits: List[u8] = []
+  loop i in 64..width { digits = push(digits, '0') }
+  var started: bool = false
+  loop j in 0..64 {
+    pos = 63 - j
+    d = bit_and(shift_right(n, pos), 1)
+    if d > 0 { started = true }
+    if started or pos < width or pos == 0 { digits = push(digits, hex_digit(d, true)) }
+  }
+  text(digits)
+}

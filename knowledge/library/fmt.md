@@ -2,7 +2,7 @@
 type: specification
 title: Number bases
 description: The functions of std.fmt that write a whole number in base 16 or base 2, padded with zeros to a least width.
-status: planned
+status: built
 ---
 
 # Number bases

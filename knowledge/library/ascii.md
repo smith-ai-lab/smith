@@ -2,7 +2,7 @@
 type: specification
 title: ASCII
 description: The functions of std.ascii that say which kind of ASCII character a byte is, a digit, a hexadecimal digit, a letter, or a space.
-status: planned
+status: built
 ---
 
 # ASCII

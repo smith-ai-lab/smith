@@ -1,0 +1,13 @@
+pub fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }
+
+pub fn is_hex_digit(b: u8) -> bool {
+  (b >= '0' and b <= '9') or (b >= 'a' and b <= 'f') or (b >= 'A' and b <= 'F')
+}
+
+pub fn is_letter(b: u8) -> bool {
+  (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')
+}
+
+pub fn is_space(b: u8) -> bool {
+  b == ' ' or b == '\t' or b == '\n' or b == 13
+}
