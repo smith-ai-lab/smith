@@ -6,6 +6,7 @@ status: partial
 built:
   - "lambdas passed to a call, after it or by name, and function types on parameters"
   - "a lambda that writes the types of its parameters and of its result"
+  - "a lambda that gives away a value of the function it is written in, passed to a parameter that takes its function"
 ---
 
 # Lambdas

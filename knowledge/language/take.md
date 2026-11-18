@@ -7,7 +7,10 @@ built:
   - "`take` before a parameter's type, and before a parameter of a function type, which a lambda passed to it is held to"
   - "A lent value, or a part of one, refused where it is returned, stored, or passed to a `take` parameter, unless its type has `Copy`"
   - "An argument of a `take` parameter given away, so that a use of it after the call is refused"
-  - "not a value without `Copy` given away inside a lambda that the lambda did not define or take, which is refused, as nothing says how often a lambda is called"
+  - "a lambda that gives away a value of the function it is written in, passed to a parameter that takes its function, which spends the value from the call, and refused with one error at the lambda where the parameter lends its function"
+  - "a function marked `take` is spent by its first call or by being passed to a parameter that takes its function, so a second call, on any path or in a later round of a loop, is refused"
+  - "a lambda that gives away a value without `Discard` is refused where the function it is passed to takes its function, as that function may not call it"
+  - "a function that is lent is called any number of times, and is passed to a parameter that lends its function and not to one that takes it"
   - "a type parameter has `Copy` and `Discard` only where a bound or a `requires` line asks, so a value of one is used at most once and must be taken, and a call, or an implementation it chooses, is given only a type that has what the bounds ask"
 ---
 
@@ -70,11 +73,15 @@ fn collect(acc: take List[u8], xs: take List[u8]) -> u64 {
 }
 ```
 
-This is refused: `twice` may call its function any number of times, and the lambda can give `acc` away once. Ownership of a lambda's names is not built, so no words are quoted.
+This is refused at the lambda: "this lambda gives away `acc`, and the function it is passed to may call it more than once". `twice` may call its function any number of times, and the lambda can give `acc` away once.
 
-A lambda that takes a value without [`Discard`](resources.md) has no `Discard` either, so the function it is given to must call it: a function that must run exactly once needs no word of its own.
+A value the lambda gives away is spent in `collect` from the call the lambda is passed to: a use of `acc` after the call is refused, as a use after any give-away is, and a use before it is not. A second lambda of the same call that gives `acc` away is refused at the second use.
 
-The short form of a function type says one of two things, by whether its parameter is lent or taken. Anything else is said with a type parameter and `requires`, as for any type: `Function[F, Args, R]` for a function that is called once, and `Copy[F]` beside it for one that is called again.
+A function that takes its function calls it at most once, and may leave it uncalled. So a lambda that takes a value without [`Discard`](resources.md) is refused there, as the value is dropped when the function is not called. A function that must run exactly once is written with a type parameter, as the end of this section says.
+
+A function that is taken is passed on only to a parameter that takes its function, and one that is lent only to a parameter that lends it. A lent function given to a `take` parameter is refused as any lent value is, and a taken function given to a lent parameter is refused, as that parameter may call it again.
+
+The short form of a function type says one of two things, by whether its parameter is lent or taken. Anything else is said with a type parameter and `requires`, as for any type: `Function[F, Args, R]` for a function that is called once, with no `Discard` bound on `F` when it must be called exactly once, and `Copy[F]` beside it for one that is called again.
 
 ## Types that have Copy
 
