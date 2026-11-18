@@ -3,6 +3,7 @@
 The modules of the standard library, one file each, named for the module. A module that declares an effect lists the effect's operations.
 
 - [list.md](list.md): `List`, an array kept together with its size, which can grow.
+- [slice.md](slice.md): `Slice`, a run of elements that cannot change and is shared freely, made from a `List` by `freeze`.
 - [list-functions.md](list-functions.md): `std.list`'s functions that search and compare any list, a text among them, and `append`.
 - [text.md](text.md): `std.text`'s `split_once` and `strip_prefix`, which cut a text into pieces that share its memory.
 - [int.md](int.md): `std.int`, arithmetic that wraps, saturates, or is checked, and `narrow`.

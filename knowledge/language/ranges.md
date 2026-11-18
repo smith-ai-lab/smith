@@ -54,17 +54,19 @@ fn word(src: List[u8], from: u64, to: u64) -> List[u8]
 
 ## A slice of a list
 
-A slice of a [`List`](../library/list.md) is a `List` of the same elements, and it shares the memory of the list it was cut from, so nothing is copied. Values never change, so nothing can be seen through the shared memory that was not there when the slice was made.
+A [`List`](../library/list.md) is owned and may still grow, so a piece of it is lent, as the list itself is when it is passed: it is given to a function that reads, or looped over, and it is not given a name or stored. Nothing is copied.
 
 ```
-fn first_two(xs: List[u32]) -> List[u32]
+fn first_two_total(xs: List[u32]) -> u32
   requires xs.size >= 2
 {
-  xs[0..2]
+  total(xs[..2])
 }
 ```
 
-`first_two([4, 9, 6])` is `[4, 9]`. A slice has no room of its own, so a `push` to it copies its elements first, as a `push` to any list held inside another value does.
+`total` is a function that takes a `List[u32]` and adds its elements, so `first_two_total([4, 9, 6])` is `13`. A piece that is kept is a copy, written `copy(xs[..2])`.
+
+A [`Slice`](../library/slice.md) cannot change, so a piece of it is a `Slice` that shares its memory and is kept like any value, as a piece of a text is.
 
 ## Leaving an end out
 
@@ -84,7 +86,8 @@ fn take_two(a: [4]u8) -> [2]u8 { a[..2] }
 | --- | --- |
 | `a..b` | The numbers from `a` up to `b`, excluding `b` |
 | `x[a..b]` | The elements of `x` from `a` up to `b`, of size `b - a`, compiled when `a <= b` and `b <= x.size` are proven |
-| `xs[a..b]` on a `List` | A `List` that shares the memory of `xs` |
+| `xs[a..b]` on a `List` | A lent piece of `xs`, for a function that reads |
+| `s[a..b]` on a `Slice` | A `Slice` that shares the memory of `s` |
 | `x[..k]` | `x[0..k]`, which the formatter writes this way |
 | `x[k..]` | `x[k..x.size]`, which the formatter writes this way |
 

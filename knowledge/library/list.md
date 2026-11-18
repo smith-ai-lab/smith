@@ -54,6 +54,6 @@ struct List[T] {
 fn push[T](list: List[T], item: T) -> List[T] ! alloc
 ```
 
-A list is never copied unless `copy` is written: `push` takes the list it is given, and a list used after it is given away is refused, as [Ownership](../language/ownership.md#a-list-is-never-copied-unasked) says. The compiler does not build that yet, and copies such a list.
+A list is what a program builds, and [`freeze`](slice.md) turns one that is done into a `Slice`, which is shared freely. A list is never copied unless `copy` is written: `push` takes the list it is given, and a list used after it is given away is refused, as [Ownership](../language/ownership.md#a-list-is-never-copied-unasked) says. The compiler does not build that yet, and copies such a list.
 
 The functions that search a list, compare its ends, and join two lists are in [List functions](list-functions.md).
