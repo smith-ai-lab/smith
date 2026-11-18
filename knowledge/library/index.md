@@ -5,6 +5,8 @@ The modules of the standard library, one file each, named for the module. A modu
 - [list.md](list.md): `List`, an array kept together with its size, which can grow.
 - [list-functions.md](list-functions.md): `std.list`'s functions that search and compare any list, a text among them, and `append`.
 - [text.md](text.md): `std.text`'s `split_once` and `strip_prefix`, which cut a text into pieces that share its memory.
+- [int.md](int.md): `std.int`, arithmetic that wraps, saturates, or is checked, and `narrow`.
+- [bits.md](bits.md): `std.bits`, the `Bits` trait and its functions on the bits of a whole number.
 - [ascii.md](ascii.md): `std.ascii`, which says whether a byte is a digit, a hexadecimal digit, a letter, or a space.
 - [utf8.md](utf8.md): `std.utf8`'s `decode` and `encode`, which turn between one character's number and its bytes.
 - [fmt.md](fmt.md): `std.fmt`'s `hex` and `binary`, which write a whole number in base 16 or base 2, padded with zeros.

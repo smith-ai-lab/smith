@@ -53,7 +53,7 @@ fn lines_of(path: str) -> Result[List[u8], FsError] ! fs, alloc {
 }
 ```
 
-`push` grows a list, and no syntax means it, so it is imported. So are `narrow` and the `wrapping_`, `saturating_`, and `checked_` functions, the functions of `Bits`, `utf8`, `Map`, and the array functions such as `sum` and `map`. An effect the standard library declares is imported as any effect is, by its name, with each operation the file calls: `fs` and `read_all` above, and `console` and `print` in the first program.
+`push` grows a list, and no syntax means it, so it is imported. So are `narrow` and the `wrapping_`, `saturating_`, and `checked_` functions, from [`std.int`](../library/int.md), the functions of `Bits`, from [`std.bits`](../library/bits.md), `utf8`, `Map`, and the array functions such as `sum` and `map`. An effect the standard library declares is imported as any effect is, by its name, with each operation the file calls: `fs` and `read_all` above, and `console` and `print` in the first program.
 
 A name used and not imported is refused, and the error names the module to import it from, as [Importing with use](use.md#a-name-that-is-missing) says.
 
