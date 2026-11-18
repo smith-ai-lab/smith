@@ -82,7 +82,8 @@ pub enum Runtime {
     /// three bytes.
     Utf8,
     /// Takes the address of bytes and how many there are, and gives a byte that
-    /// is 1 if they are valid UTF-8 and 0 if they are not.
+    /// is 1 if they are valid UTF-8 and 0 if they are not, and where the first
+    /// character that is not valid begins, or how many bytes there are.
     Valid,
     /// Takes a list of texts, and gives nothing when each is valid UTF-8. When
     /// one is not, it writes one line to standard error that says which, counted

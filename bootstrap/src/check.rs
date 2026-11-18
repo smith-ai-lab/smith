@@ -41,7 +41,7 @@ use crate::parser::{
     Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Loop, Match, Part,
     Pattern, Range, Stmt, Type,
 };
-use lists_and_text::is_push;
+use lists_and_text::{is_push, is_utf8, text_as_bytes};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
     impls_for, needs_named, overlaps, prelude_trait, split_needs, withouts,
@@ -164,11 +164,28 @@ enum Order {
   greater
 }
 
+struct Utf8Error {
+  at: u64
+}
+
 ";
 
 /// The names of the types `PRELUDE` defines.
 const PRELUDE_TYPES: &[&str] = &[
-    TEXT, "Option", "Result", "bool", "Order", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+    TEXT,
+    "Option",
+    "Result",
+    "bool",
+    "Order",
+    "Utf8Error",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
 ];
 
 /// Whether a definition is the prelude's.
@@ -193,6 +210,7 @@ fn with_prelude(mut file: File) -> File {
     }
     let prelude = crate::parser::parse(&tokens).expect("the prelude parses");
     file.enums.splice(0..0, prelude.enums);
+    file.structs.splice(0..0, prelude.structs);
     file.traits.splice(0..0, prelude.traits);
     file.impls.splice(0..0, prelude.impls);
     file.functions.splice(0..0, prelude.functions);
@@ -1978,6 +1996,8 @@ enum Callee {
     Intrinsic,
     /// `push`, which gives a list with one more element.
     Push,
+    /// `utf8`, which gives a text of the bytes, or where they stop being valid.
+    Utf8,
     /// `narrow` or one of its three relatives, which take a whole number to
     /// a type that does not hold all of its values.
     Narrow(Narrowing),
@@ -2260,6 +2280,9 @@ impl<'a> Typed<'a> {
                 if is_push(defs, call) {
                     return Callee::Push;
                 }
+                if is_utf8(defs, call) {
+                    return Callee::Utf8;
+                }
                 if let Some(narrowing) = narrowing(defs, call) {
                     return Callee::Narrow(narrowing);
                 }
@@ -2310,6 +2333,7 @@ impl<'a> Typed<'a> {
             | Callee::Value
             | Callee::Intrinsic
             | Callee::Push
+            | Callee::Utf8
             | Callee::Narrow(_) => Vec::new(),
         }
     }
@@ -3636,7 +3660,7 @@ impl<'a> Checker<'a> {
                     return self.case(body, Some(e), name, of.pos(), *pos, None, want);
                 }
                 match self.expr(body, of, &Want::Any) {
-                    Ty::List(_) if name == "size" => Ty::Int(Int::U64),
+                    Ty::List(_) | Ty::Text if name == "size" => Ty::Int(Int::U64),
                     Ty::List(_) => {
                         self.errors.push(Error::new(
                             *pos,
@@ -5059,6 +5083,9 @@ impl<'a> Checker<'a> {
         if is_push(defs, call) {
             return self.push(body, call, want);
         }
+        if is_utf8(defs, call) {
+            return self.utf8(body, call);
+        }
         if let Some(narrowing) = narrowing(defs, call) {
             return self.narrow(body, call, narrowing, want);
         }
@@ -5470,7 +5497,9 @@ impl<'a> Checker<'a> {
             match param {
                 Some(i) => {
                     let pattern = &signature.params[i].1;
-                    self.fit(body, &arg.value, &gives, pattern, &mut sol, vars);
+                    if !text_as_bytes(&gives, pattern) {
+                        self.fit(body, &arg.value, &gives, pattern, &mut sol, vars);
+                    }
                 }
                 None if gives == Ty::Nothing => {
                     self.errors.push(self.nothing_where(&arg.value, "text"));

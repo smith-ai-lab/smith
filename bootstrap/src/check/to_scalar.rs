@@ -960,6 +960,7 @@ impl<'a> Lowering<'a> {
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Push => self.push(out, call, env, false),
+                Callee::Utf8 => self.utf8(out, expr, call, env),
                 Callee::Narrow(narrowing) => {
                     let (given, values) = self.expr(out, &call.args[0].value, env);
                     let (Ty::Int(from), ty) = (given, typed.type_of(expr, env)) else {
@@ -1000,13 +1001,14 @@ impl<'a> Lowering<'a> {
                 Callee::Run(instance, gives) => {
                     let inner = typed.env_of(&Callee::Run(instance.clone(), gives.clone()));
                     let params = defs.params(instance.template);
-                    let function = self.place(Body::Copy(instance));
+                    let function = self.place(Body::Copy(instance.clone()));
                     // Arguments are worked out in the order they are
                     // written, and then passed in the order of the
                     // parameters.
                     let mut args: Vec<Vec<form::Value>> = vec![Vec::new(); params.len()];
                     for (arg, at) in call.args.iter().zip(params_of(&params, &call.args)) {
-                        args[at] = self.expr(out, &arg.value, env).1;
+                        let param = params[at].1.subst(&instance.args);
+                        args[at] = self.passed(out, &arg.value, &param, env);
                     }
                     // Then the defaults it leaves out, in the order of the
                     // parameters, as if they were written after the rest.
@@ -1042,7 +1044,7 @@ impl<'a> Lowering<'a> {
                     return (ty, self.load(out, address, &scalars));
                 }
                 let (of_ty, values) = self.expr(out, of, env);
-                if matches!(of_ty, Ty::List(_)) {
+                if matches!(of_ty, Ty::List(_) | Ty::Text) {
                     return (typed.type_of(expr, env), vec![values[1]]);
                 }
                 let Ty::Struct(s, args) = of_ty else {
@@ -1302,7 +1304,7 @@ impl<'a> Lowering<'a> {
             };
             (Vec::new(), Some(func))
         } else {
-            (self.expr(out, value, env).1, None)
+            (self.passed(out, value, ty, env), None)
         };
         Bound {
             name: name.clone(),

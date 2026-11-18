@@ -456,7 +456,8 @@ fn byte_at(f: &mut Builder, at: Value, i: Value, k: u64) -> Value {
     f.widen(false, b, Bits::B64)
 }
 
-/// Valid UTF-8 is a sequence of characters, each of one to four bytes: a byte
+/// Whether the bytes are valid UTF-8, and where the first character that is not
+/// valid begins, or how many bytes there are when all are. Valid UTF-8 is a sequence of characters, each of one to four bytes: a byte
 /// below `0x80`, or a lead byte and then as many continuation bytes as it
 /// says, with the second kept from the ranges that make a character that is
 /// not written longer than it must be, is not half of a pair of UTF-16, and is
@@ -477,10 +478,10 @@ pub(super) fn valid() -> Function {
     f.switch(at_end, vec![(look, vec![]), (good, vec![])]);
     f.at(good);
     let yes = byte(&mut f, 1);
-    f.ret(vec![yes]);
+    f.ret(vec![yes, length]);
     f.at(bad);
     let no = byte(&mut f, 0);
-    f.ret(vec![no]);
+    f.ret(vec![no, i]);
 
     f.at(look);
     let one = int(&mut f, 1);
@@ -556,7 +557,7 @@ pub(super) fn valid() -> Function {
     let n4 = int(&mut f, 4);
     let past4 = f.binary(Binary::Add, i, n4);
     f.switch(ok, vec![(bad, vec![]), (head, vec![past4])]);
-    f.finish(&[BYTE])
+    f.finish(&[BYTE, LENGTH])
 }
 
 /// Whether the 64-bit integer is the number.
@@ -603,7 +604,7 @@ pub(super) fn check(valid: usize, decimal: usize, join: usize) -> Function {
     let eight = int(&mut f, 8);
     let place = after(&mut f, element, eight);
     let length = f.load(LENGTH, place);
-    let ok = f.call(valid, vec![text, length], &[BYTE])[0];
+    let ok = f.call(valid, vec![text, length], &[BYTE, LENGTH])[0];
     let (next, _) = f.block(&[]);
     let (invalid, _) = f.block(&[]);
     f.switch(ok, vec![(invalid, vec![]), (next, vec![])]);
