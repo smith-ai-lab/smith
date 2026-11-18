@@ -83,12 +83,12 @@ fn count_if_different(b: &mut Builder, count: Value, one: Value, other: Value) -
     b.binary(Binary::Add, count, widened)
 }
 
-/// A program that copies, with the runtime's copy, every length from `from`
-/// to `to`, from every place of a list of bytes that is one of `offsets`
+/// A program that copies, with the runtime's copy, every length of each of
+/// the ranges, from every place of a list of bytes that is one of `offsets`
 /// past an address to every place that is one of them past another, and writes
 /// as 8 bytes how many bytes were not what they should be: those the copy
 /// was given that did not arrive, and those around them that it must leave.
-fn copies(from: u64, to: u64, offsets: u64) -> Program {
+fn copies(ranges: &[(u64, u64)], offsets: u64) -> Program {
     with_runtime(Runtime::Copy, Vec::new(), |b| {
         let room = b.int(Bits::B64, MOST + 32);
         let source = b.allocate(room);
@@ -104,9 +104,11 @@ fn copies(from: u64, to: u64, offsets: u64) -> Program {
             vec![]
         });
         let zero = b.int(Bits::B64, 0);
-        let lengths = b.int(Bits::B64, to - from + 1);
         let places = b.int(Bits::B64, offsets);
-        let wrong = counted(b, lengths, vec![zero], |b, l, wrong| {
+        let mut wrong = vec![zero];
+        for &(from, to) in ranges {
+        let lengths = b.int(Bits::B64, to - from + 1);
+        wrong = counted(b, lengths, wrong, |b, l, wrong| {
             let first = b.int(Bits::B64, from);
             let length = b.binary(Binary::Add, first, l);
             counted(b, places, wrong, |b, read, wrong| {
@@ -141,6 +143,7 @@ fn copies(from: u64, to: u64, offsets: u64) -> Program {
                 })
             })
         });
+        }
         b.store(target, wrong[0]);
         let size = b.int(Bits::B64, 8);
         let call = scalar::System::Write(scalar::Stream::Stdout);
@@ -156,16 +159,21 @@ fn nothing_wrong() -> Vec<u8> {
 /// Every length to 40 from and to every offset of 8, and a long one from and
 /// to a few, which is as much as the evaluator can do in a test's time.
 fn the_copy_leaves_the_bytes_it_was_given_on_the_evaluator() {
-    for program in [copies(0, 40, 8), copies(MOST, MOST, 3)] {
+    for program in [copies(&[(0, 40)], 8), copies(&[(MOST, MOST)], 3)] {
         let ran = scalar::run(&program);
         assert_eq!((ran.status, ran.stdout), (0, nothing_wrong()));
     }
 }
 
-/// Every length from 0 to 4,096 from and to every offset of 8, in each
-/// executable this machine can run.
+/// Every length from 0 to 64, and every length within 8 of each power of two
+/// from 128 to 4,096, from and to every offset of 8, in each executable this
+/// machine can run. The lengths that are not covered are the same words and
+/// bytes of the same loop, and every length to 4,096 took too long for the
+/// slowest machine.
 fn the_copy_leaves_the_bytes_it_was_given_in_every_executable() {
-    let program = copies(0, MOST, 8);
+    let mut ranges = vec![(0, 64)];
+    ranges.extend((7..=12).map(|k| ((1u64 << k) - 8, ((1u64 << k) + 8).min(MOST))));
+    let program = copies(&ranges, 8);
     let said = scalar::Outcome {
         status: 0,
         stdout: nothing_wrong(),
