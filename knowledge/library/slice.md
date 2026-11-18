@@ -2,7 +2,14 @@
 type: specification
 title: Slice
 description: Slice, a run of elements that cannot change and so is shared freely, made from a List by freeze with nothing copied, and how a function that only reads takes either.
-status: planned
+status: partial
+built:
+  - "`Slice[T]`, a type written like `List[T]`, which has `Copy` and `Discard`, so it is bound, stored in a struct, a tuple, or an enum, passed, and returned freely, and `freeze(xs)`, which takes a list and gives its memory as a `Slice` with nothing copied: the address and the size, and no instruction"
+  - "`s[a..b]`, `s[..k]`, and `s[k..]` on a `Slice`, a `Slice` that shares the memory of `s`, which compiles when `arith` proves `a <= b` and `b <= s.size`, and has `b - a` elements, with `size`, an index, and `loop` on a slice as on a list"
+  - "a slice given to a parameter of type `List[T]` that is not `take`, as a list and a text are, with no call and no copy, and refused where the parameter takes a list, with the fix `copy`; `copy(s)` gives a new `List`, carrying `alloc`"
+  - "a slice written out of whole numbers where a `Slice` is expected, which is data in the executable with no `alloc` and no request for memory"
+  - "no `push` on a slice, and no assignment to an element, which no list has yet either"
+  - "not a piece of a `List`, a slice written out of anything but whole numbers written out, `Eq`, `Fmt`, `Hash`, `Repr`, or `Serialize` of a slice, `utf8` of a slice, or a `str` made of one"
 ---
 
 # Slice
@@ -11,13 +18,13 @@ A `Slice[T]` is a run of elements that cannot change. A [`List`](list.md) is wha
 
 ```
 fn evens(n: u64) -> Slice[u64] ! alloc {
-  var out: List[u64] = []
-  loop i in 0..n { out = push(out, wrapping_mul(i, 2)) }
-  freeze(out)
+  var built: List[u64] = []
+  loop i in 0..n { built = push(built, wrapping_mul(i, 2)) }
+  freeze(built)
 }
 ```
 
-`evens(3)` is the slice `[0, 2, 4]`. `freeze` takes the list and gives the same memory back as a `Slice`, so nothing is copied, and `out` is gone, so nothing can grow it or assign into it afterwards.
+`evens(3)` is the slice `[0, 2, 4]`. `freeze` takes the list and gives the same memory back as a `Slice`, so nothing is copied, and `built` is gone, so nothing can grow it or assign into it afterwards.
 
 ```
 fn freeze[T](list: take List[T]) -> Slice[T]
