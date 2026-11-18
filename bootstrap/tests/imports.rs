@@ -257,11 +257,11 @@ fn some_program(g: &mut Gen) -> String {
 /// A file that lists the names it uses, and only those, is built as the
 /// same executable, with the same warnings, as the file with no `use`,
 /// because every name of the standard library is in scope until a name
-/// without its `use` is an error.
+/// without its `use` is an error. A program that uses no name of the library
+/// lists none, and is the file it was.
 fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() {
     generate::check(300, 50, some_program, |source| {
         let with = with_imports(source);
-        assert_ne!(&with, source, "a program that prints imports `print`");
         assert_eq!(
             compile(with.as_bytes(), any()).map_err(|e| format!("{e:?}")),
             compile(source.as_bytes(), any()).map_err(|e| format!("{e:?}")),
