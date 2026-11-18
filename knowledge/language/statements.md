@@ -55,6 +55,41 @@ fn size_of_append(a: List[u8], b: List[u8]) -> append(a, b).size == a.size + b.s
 
 `size_of_append` is declared here without its body. Its result is a statement that names its parameters, and a call of it gives the caller that statement for the two lists it passes.
 
+## The steps of a proof
+
+The body of a proof is made of a few steps, each a function whose result is a statement. The kernel knows these and nothing else, and it [takes no step of its own](trust.md#what-the-kernel-does-by-itself).
+
+| Step | Gives a proof that |
+| --- | --- |
+| `same` | `a == a`, and any statement with nothing unknown in it, which the kernel runs |
+| `unfold(f(x))` | `f(x)` equals the body of `f` with `x` put in |
+| `replace(eq)` | A statement holds still when one side of `eq` is put where the other stood |
+| `arith(p, q)` | A fact about numbers that follows from the proofs it is handed |
+
+Nothing else is new. An `if` or a `match` splits a proof into cases, and each branch may use the case it is in. A call of the function by itself, on a smaller value, is the step of an induction.
+
+```
+fn sum_to(n: Nat) -> Nat {
+  if n == 0 { 0 } else { n + sum_to(n - 1) }
+}
+
+fn gauss(n: Nat) -> 2 * sum_to(n) == n * (n + 1)
+  decreases n
+{
+  if n == 0 {
+    same
+  } else {
+    earlier = gauss(n - 1)
+    opened = unfold(sum_to(n))
+    arith(earlier, opened)
+  }
+}
+```
+
+When `n` is `0` both sides have nothing unknown in them, so `same` proves the statement by running them. Otherwise `earlier` is the statement for `n - 1`, `opened` says that `sum_to(n)` is `n + sum_to(n - 1)`, and `arith` gets the statement for `n` from the two.
+
+Whatever is cleverer than a step is a [function over code](code.md) that writes steps, such as one that unfolds and replaces until nothing changes. It is outside the kernel, so what it writes is checked like any proof.
+
 ## The kinds stay apart in use, not in kind
 
 - A statement that is a boolean expression can be worked out, so `arith` may decide it and a `check` may test it when the program runs. This is the everyday kind, and nothing about it changes.
@@ -75,5 +110,6 @@ A proof is written once. The compiler checks proofs and never searches for one, 
 | `fn(p: P) -> Q` | A proof that P gives Q |
 | `fn(i: Nat, p: i < n) -> xs[i] < m` | A proof for every `i` below `n` |
 | A struct with a value and a proof | A proof that there is such a value |
+| `same`, `unfold(f(x))`, `replace(eq)`, `arith(p, q)` | The steps a proof is made of |
 
 Next: [hole](hole.md)
