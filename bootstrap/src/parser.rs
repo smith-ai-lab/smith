@@ -299,6 +299,8 @@ pub struct Loop {
     /// Where `loop` is.
     pub pos: Pos,
     pub range: Option<Range>,
+    /// The list a `loop v in xs` runs over.
+    pub over: Option<Over>,
     /// The measure of an open-ended `loop decreases e`.
     pub decreases: Option<Expr>,
     pub body: Vec<Stmt>,
@@ -314,6 +316,15 @@ pub struct Range {
     pub pos: Pos,
     pub from: Expr,
     pub to: Expr,
+}
+
+/// The head of a `loop` over the elements of a value: `v in xs`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Over {
+    /// The name each element is given, and where it is.
+    pub name: String,
+    pub pos: Pos,
+    pub value: Expr,
 }
 
 /// The operators of whole number arithmetic.
@@ -2152,6 +2163,7 @@ impl Parser<'_> {
         let pos = self.pos();
         self.bump();
         let mut decreases = None;
+        let mut over = None;
         let range = match self.tok() {
             Tok::Punct("{") => None,
             Tok::Ident(name) if name == "decreases" => {
@@ -2168,15 +2180,24 @@ impl Parser<'_> {
                 self.bump();
                 self.bump();
                 let no_lambda = std::mem::replace(&mut self.no_lambda, true);
-                let range = self.range_head();
+                let head = self.range_head();
                 self.no_lambda = no_lambda;
-                let (from, to) = range?;
-                Some(Range {
-                    name,
-                    pos: at,
-                    from,
-                    to,
-                })
+                match head? {
+                    (from, Some(to)) => Some(Range {
+                        name,
+                        pos: at,
+                        from,
+                        to,
+                    }),
+                    (value, None) => {
+                        over = Some(Over {
+                            name,
+                            pos: at,
+                            value,
+                        });
+                        None
+                    }
+                }
             }
             tok => return Err(self.expected("`{`, or a name and `in` and a range", tok)),
         };
@@ -2185,25 +2206,24 @@ impl Parser<'_> {
         Ok(Loop {
             pos,
             range,
+            over,
             decreases,
             body,
             end,
         })
     }
 
-    /// Parses `a..b`, the range a `loop` runs over.
-    fn range_head(&mut self) -> Result<(Expr, Expr), Error> {
+    /// Parses what a `loop` runs over: `a..b`, or a value alone, whose
+    /// elements it runs over.
+    fn range_head(&mut self) -> Result<(Expr, Option<Expr>), Error> {
         let from = self.sum()?;
         if self.tok() != &Tok::Punct("..") {
-            return Err(Error::unsupported(
-                self.pos(),
-                "a `loop` over anything but a range of whole numbers",
-            ));
+            return Ok((from, None));
         }
         self.bump();
         self.skip_newlines();
         let to = self.sum()?;
-        Ok((from, to))
+        Ok((from, Some(to)))
     }
 
     /// Parses `if`, through the block that ends it.

@@ -15,6 +15,10 @@ use crate::programs::pos_after;
 
 pub const ONCE: &[Test] = &[
     (
+        "the_element_a_loop_over_a_list_gives_is_lent_and_is_refused_where_it_is_returned",
+        the_element_a_loop_over_a_list_gives_is_lent_and_is_refused_where_it_is_returned,
+    ),
+    (
         "the_examples_of_the_pages_on_ownership_and_take_are_accepted_or_refused_as_they_say",
         the_examples_of_the_pages_on_ownership_and_take_are_accepted_or_refused_as_they_say,
     ),
@@ -1093,4 +1097,42 @@ fn main() {{
         assert!(found[0].message.contains(what), "{}", found[0]);
         assert!(found[0].message.contains("not supported yet"), "{}", found[0]);
     }
+}
+
+/// A `Key` that a loop over a list gives stays in the list, so the loop may
+/// read it and may not return it, and the list is still there after the loop.
+fn the_element_a_loop_over_a_list_gives_is_lent_and_is_refused_where_it_is_returned() {
+    let read = format!(
+        "{KEY}fn total(ks: List[Key]) -> u64 {{
+  var n: u64 = 0
+  loop k in ks {{ n = wrapping_add(n, k.secret) }}
+  n + 0
+}}
+
+fn main() ! alloc {{
+  ks: List[Key] = [Key(secret: 1)]
+  a = total(ks)
+  b = total(ks)
+}}
+"
+    );
+    assert!(errors(&read).is_empty(), "{:?}", errors(&read));
+    let returned = format!(
+        "{KEY}fn first(ks: List[Key]) -> Key {{
+  loop k in ks {{ return k }}
+  Key(secret: 0)
+}}
+
+fn main() ! alloc {{
+  ks: List[Key] = [Key(secret: 1)]
+  k = first(ks)
+}}
+"
+    );
+    let found = errors(&returned);
+    let at = pos_after(&returned[..returned.find("return k").expect("written") + "return ".len()]);
+    assert!(
+        found.iter().any(|e| e.pos == at && e.message.contains("lent")),
+        "{found:?} does not refuse the place {at:?} for {returned}"
+    );
 }

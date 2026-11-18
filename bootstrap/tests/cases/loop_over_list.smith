@@ -1,0 +1,41 @@
+struct Person {
+  name: str
+  age: u8
+}
+
+fn sum(xs: List[u64]) -> u64 {
+  var total: u64 = 0
+  loop v in xs { total = wrapping_add(total, v) }
+  total
+}
+
+fn first_over(xs: List[u64], limit: u64) -> u64 {
+  loop v in xs {
+    if v > limit { return v }
+  }
+  0
+}
+
+fn main() ! console, alloc {
+  xs: List[u64] = [1, 2, 3]
+  print("{sum(xs)}")
+  print("{first_over(xs, 1)} {first_over(xs, 5)}")
+  var ys: List[u8] = [4, 5]
+  loop v in ys {
+    ys = push(ys, v)
+    print("{v}")
+  }
+  print("{ys.size}")
+  loop v in ys {
+    if v == 5 { break }
+    print("{v}")
+  }
+  empty: List[u8] = []
+  loop v in empty { print("never") }
+  var people: List[Person] = []
+  people = push(people, Person(name: "ada", age: 36))
+  people = push(people, Person(name: "alan", age: 41))
+  loop p in people {
+    loop q in people { print("{p.name} {q.age}") }
+  }
+}

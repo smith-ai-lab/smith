@@ -88,6 +88,22 @@ pub const ONCE: &[Test] = &[
         "reading_a_field_of_an_element_reads_only_the_scalars_of_that_field",
         reading_a_field_of_an_element_reads_only_the_scalars_of_that_field,
     ),
+    (
+        "a_loop_over_a_list_sums_it",
+        a_loop_over_a_list_sums_it,
+    ),
+    (
+        "a_loop_over_a_list_of_any_type_gives_each_element_of_the_list_it_began_with_until_a_break",
+        a_loop_over_a_list_of_any_type_gives_each_element_of_the_list_it_began_with_until_a_break,
+    ),
+    (
+        "a_loop_over_a_list_is_one_comparison_and_one_load_of_the_element_each_time_round",
+        a_loop_over_a_list_is_one_comparison_and_one_load_of_the_element_each_time_round,
+    ),
+    (
+        "a_loop_runs_over_a_range_or_a_list_and_nothing_else",
+        a_loop_runs_over_a_range_or_a_list_and_nothing_else,
+    ),
 ];
 
 fn prints(source: &str, lines: Vec<String>) {
@@ -1246,4 +1262,134 @@ fn reading_a_field_of_an_element_reads_only_the_scalars_of_that_field() {
             assert_eq!(loads, field.scalars().len(), "for {source}");
         },
     );
+}
+
+/// The program of the issue: a loop over a list sums it, and needs neither
+/// `diverge` nor anything but the effects of its body.
+fn a_loop_over_a_list_sums_it() {
+    let source = "fn main() ! console, alloc {\n  xs: List[u64] = [1, 2, 3]\n  var sum: u64 = 0\n  loop v in xs { sum = wrapping_add(sum, v) }\n  print(\"{sum}\")\n}\n";
+    prints(source, vec!["6".into()]);
+}
+
+/// A loop over a list of a type, a `break` at some round, and a push to the
+/// list in each round.
+#[derive(Debug)]
+struct Looped {
+    ty: Ty,
+    items: Vec<V>,
+    /// What is pushed to the list before the loop, which may leave it room.
+    before: Vec<V>,
+    /// The round that breaks, when one does.
+    stop: Option<usize>,
+    /// What each round pushes to the list it loops over, when it does.
+    push: Option<V>,
+}
+
+fn looped(g: &mut Gen) -> Looped {
+    let ty = ty(g, 3, EVERY, &mut 0);
+    let items = (0..g.below(4)).map(|_| ty.value(g)).collect();
+    let before = (0..g.below(4)).map(|_| ty.value(g)).collect();
+    let stop = g.one_in(2).then(|| g.below(6));
+    let push = g.one_in(2).then(|| ty.value(g));
+    Looped {
+        ty,
+        items,
+        before,
+        stop,
+        push,
+    }
+}
+
+/// For every list of every type the generator builds, `loop v in xs` gives
+/// `v` each element from the first to the last, once each, and not at all
+/// for an empty list, whatever the block does to the `var` list `xs`, and a
+/// `break` ends it.
+fn a_loop_over_a_list_of_any_type_gives_each_element_of_the_list_it_began_with_until_a_break() {
+    generate::check(97, 30, looped, |l| {
+        let t = l.ty.name();
+        let mut setup = String::new();
+        for v in &l.before {
+            setup += &format!("ys = push(ys, {})\n", l.ty.written(v));
+        }
+        let mut block = String::new();
+        if let Some(k) = l.stop {
+            block += &format!("if seen == {k} {{ break }}\n");
+        }
+        block += "seen = wrapping_add(seen, 1)\n";
+        if let Some(extra) = &l.push {
+            block += &format!("ys = push(ys, {})\n", l.ty.written(extra));
+        }
+        block += &l.ty.dump("v", &mut 0);
+        let source = format!(
+            "{}fn main() ! console, alloc {{\nvar ys: List[{t}] = {}\nvar seen: u64 = 0\n{setup}loop v in ys {{\n{block}}}\nprint(\"{{ys.size}}\")\n}}\n",
+            Ty::source(&[&l.ty]),
+            items(&l.ty, &l.items)
+        );
+        let all: Vec<&V> = l.items.iter().chain(&l.before).collect();
+        let rounds = all.len().min(l.stop.unwrap_or(usize::MAX));
+        let mut lines: Vec<String> = (all[..rounds].iter())
+            .flat_map(|v| l.ty.lines(v))
+            .collect();
+        let pushed = if l.push.is_some() { rounds } else { 0 };
+        lines.push((all.len() + pushed).to_string());
+        prints(&source, lines);
+    });
+}
+
+/// For every type of element, the function that sums a list with `loop v in
+/// xs` has what the one that sums it with `xs[i]` in a loop over `0..xs.size`
+/// has: one comparison, one load, and the same calls.
+fn a_loop_over_a_list_is_one_comparison_and_one_load_of_the_element_each_time_round() {
+    let counted = |source: &str| {
+        let program = lower(source.as_bytes()).expect("compiles");
+        let (mut compares, mut loads, mut calls) = (0, 0, 0);
+        for f in program
+            .functions
+            .iter()
+            .enumerate()
+            .filter(|(at, f)| *at != program.main && !handler::takes_room(&program, f))
+            .map(|(_, f)| f)
+        {
+            for block in &f.blocks {
+                for instruction in &block.instructions {
+                    match &instruction.op {
+                        Op::Compare { .. } => compares += 1,
+                        Op::Load { .. } => loads += 1,
+                        Op::Call { .. } => calls += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        (compares, loads, calls)
+    };
+    for ty in INTS {
+        let t = ty.name;
+        let sum = |head: &str, element: &str| {
+            format!(
+                "fn total(xs: List[{t}]) -> {t} {{\n  var sum: {t} = 0\n  {head} {{ sum = wrapping_add(sum, {element}) }}\n  sum\n}}\n\nfn main() ! alloc {{\n  xs: List[{t}] = [1, 2, 3]\n  total(xs)\n}}\n"
+            )
+        };
+        let each = sum("loop v in xs", "v");
+        let (compares, loads, calls) = counted(&each);
+        assert_eq!((compares, loads), (1, 1), "for {each}");
+        let indexed = sum("loop i in 0..xs.size", "xs[i]");
+        assert_eq!(calls, counted(&indexed).2, "for {each}");
+    }
+}
+
+/// A loop runs over the numbers of a range or the elements of a list, and
+/// what else it is given is refused, naming its type.
+fn a_loop_runs_over_a_range_or_a_list_and_nothing_else() {
+    for ty in INTS {
+        let t = ty.name;
+        let source = format!(
+            "fn main() ! console, alloc {{\n  n: {t} = 3\n  loop v in n {{ print(\"{{v}}\") }}\n}}\n"
+        );
+        let errors = refused(&source);
+        assert!(
+            errors.iter().any(|e| e.contains(&format!("`{t}`"))),
+            "{errors:?} does not name `{t}` for {source}"
+        );
+    }
 }
