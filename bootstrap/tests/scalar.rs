@@ -1507,7 +1507,10 @@ fn the_passes_give_a_well_formed_program_that_does_what_it_did() {
     let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
     for (l, s) in taken() {
         let [inlined, trimmed, threaded, folded, shared, removed] = after_each_pass(s);
-        for after in [&trimmed, &threaded, &folded, &shared, &removed] {
+        if let Err(malformed) = scalar::check(&threaded) {
+            panic!("{malformed:?} in {threaded:?}");
+        }
+        for after in [&trimmed, &folded, &shared, &removed] {
             if let Err(malformed) = scalar::check(after) {
                 panic!("{malformed:?} in {after:?}");
             }
