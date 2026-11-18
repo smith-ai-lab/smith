@@ -104,6 +104,26 @@ fn main() ! console {
 
 This prints `Tom` and then `Mr`. Written as `label(c)`, the call is refused: "`label` is a function of `Named` and `Titled`", and the fix is to write `Named.label` or `Titled.label`. A trait function whose name is not shared is written plain.
 
+## An impl for a function
+
+A function's name may be written where a type is expected. It names the type whose one value is that function. So a trait is implemented for a function as it is for any type, and that is how something is said about a function without a new kind of declaration.
+
+```
+fn double(x: f32) -> f32 { x + x }
+
+trait Described[F] {
+  fn describe() -> str
+}
+
+impl Described[double] {
+  fn describe() -> str { "twice its argument" }
+}
+```
+
+`Described[double]` is the `impl` for the function `double` and for no other. It is found as any `impl` is, and it lives where any `impl` may, as [Where an impl lives](impl-placement.md) says: beside the trait or beside the function. This is how a function is given its rule for [differentiation](differentiable.md).
+
+The function is still called and passed as it always is. Only where a type is expected does its name mean this type.
+
 ## Defaults of a trait's functions
 
 A trait may give a function's parameter a default, as [Functions](functions.md) shows for any function. A call may leave the argument out.
