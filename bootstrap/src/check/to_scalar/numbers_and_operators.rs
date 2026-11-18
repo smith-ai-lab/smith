@@ -212,6 +212,34 @@ impl<'a> Lowering<'a> {
         (typed.type_of(expr, env), values)
     }
 
+    /// Lowers a call of a function that only calls the function the compiler
+    /// builds for `kind` and `op` on its parameters, in order, at the call: a
+    /// `wrapping_`, `saturating_`, or `checked_` `add`, `sub`, or `mul`. No
+    /// call, frame, or return is left, whatever the function's size.
+    /// `places` says which parameter each argument is for.
+    pub(super) fn number_call(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        call: &'a Call,
+        (kind, op): (&str, &str),
+        places: &[usize],
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let mut args = [None; 2];
+        let mut int = None;
+        for (arg, at) in call.args.iter().zip(places) {
+            let (ty, values) = self.expr(out, &arg.value, env);
+            if let (Ty::Int(t), None) = (ty, int) {
+                int = Some(if t == Int::Nat { Int::U64 } else { t });
+            }
+            args[*at] = Some(values[0]);
+        }
+        let (a, b) = (args[0].expect("checked"), args[1].expect("checked"));
+        let values = self.arithmetic(out, kind, op, int.expect("checked"), a, b);
+        (self.typed.type_of(expr, env), values)
+    }
+
     /// What the function the compiler builds for an operation on numbers of
     /// type `t` gives for the values `args`: whether they are equal, how
     /// they are ordered, or the result of `wrapping_`, `saturating_`, or
@@ -313,7 +341,8 @@ impl<'a> Lowering<'a> {
         }
         if !t.signed() && op != "mul" {
             // The sum wraps and is below an operand exactly when it did not
-            // fit, and a difference does not fit exactly when the operand
+            // fit, and the second is the one that is a number written out
+            // more often, which a compare holds in itself, and a difference does not fit exactly when the operand
             // taken is the greater: one operation, one comparison, and one
             // choice at every width.
             if kind == "saturating" && op == "sub" {
@@ -326,7 +355,7 @@ impl<'a> Lowering<'a> {
             let end = out.int(bits, if op == "add" { t.max() } else { 0 });
             let r = out.binary(word, a, b);
             let wrong = if op == "add" {
-                out.compare(LessU, r, a)
+                out.compare(LessU, r, b)
             } else {
                 out.compare(LessU, a, b)
             };
@@ -434,10 +463,16 @@ impl<'a> Lowering<'a> {
         let defs = self.typed.defs;
         let some = defs.case_of(defs.option, "some").expect("a case");
         let none = defs.case_of(defs.option, "none").expect("a case");
-        let some = out.int(form::Bits::B8, some as i128);
-        let none = out.int(form::Bits::B8, none as i128);
         let zero = out.int(bits, 0);
-        vec![out.choose(wrong, none, some), out.choose(wrong, zero, r)]
+        // `wrong` is 1 or 0, which is the case when `.none` is 1 and `.some` is 0.
+        let tag = if (none, some) == (1, 0) {
+            wrong
+        } else {
+            let some = out.int(form::Bits::B8, some as i128);
+            let none = out.int(form::Bits::B8, none as i128);
+            out.choose(wrong, none, some)
+        };
+        vec![tag, out.choose(wrong, zero, r)]
     }
 
     /// The value `a`, a whole number of type `from`, taken to type `to`,
@@ -500,4 +535,17 @@ impl<'a> Lowering<'a> {
     ) -> Vec<form::Value> {
         vec![out.resize(from.signed(), value, bits_of(to))]
     }
+}
+
+/// For a function whose whole body, in the prelude or the library, is a call of the function the compiler builds for `wrapping_`,
+/// `saturating_`, or `checked_` `add`, `sub`, or `mul`, which kind it is and
+/// which operation.
+pub(super) fn number_function(f: &Function) -> Option<(&'static str, &'static str)> {
+    let (kind, op) = f.name.split_once('_')?;
+    let kind = ["wrapping", "saturating", "checked"]
+        .into_iter()
+        .find(|k| *k == kind)?;
+    let op = ["add", "sub", "mul"].into_iter().find(|o| *o == op)?;
+    (f.body.len() == 1 && f.params.len() == 2 && (of_prelude(f.pos) || of_std(f.pos)))
+        .then_some((kind, op))
 }

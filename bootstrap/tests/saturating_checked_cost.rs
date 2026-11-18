@@ -45,13 +45,10 @@ pub const MACHINE: &[Test] = &[(
 /// the `u64` functions.
 const UNSIGNED: [&str; 5] = ["u8", "u16", "u32", "u64", "Nat"];
 
-/// What a function may cost over the `wrapping_` function of the same
-/// operation: a comparison, the end that is chosen, and the choice for an add,
-/// and the comparison and the choice for a subtraction, which takes the
-/// greater of its two values and subtracts the second.
-fn extra(op: &str) -> usize {
-    if op == "add" { 3 } else { 2 }
-}
+/// What a use of `saturating_add` or `saturating_sub` may cost over the
+/// `wrapping_` function of the same operation: a comparison, the end that is
+/// chosen, and the choice.
+const EXTRA: usize = 3;
 
 /// The type of the values that the program makes from a list, and what the
 /// wrapping function that stands beside a `Nat` is, which has none.
@@ -83,14 +80,18 @@ fn counted(source: &str) -> Vec<(Target, (usize, usize, usize))> {
         .collect()
 }
 
-/// For each type and each operation, on every chip: the function has no call
-/// and no jump that the program with the `wrapping_` function has not, and
-/// costs no more than `extra` instructions beyond it.
+/// For each type and each operation, on every chip, with the function used
+/// twice so that it is not the one call that is replaced for being the only
+/// one: the function has no call and no jump that the program with the
+/// `wrapping_` function has not, and costs no more than `EXTRA` instructions
+/// beyond it for each use.
 fn a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_with_no_call_and_no_jump() {
     let mut read = 0;
     for ty in UNSIGNED {
         for op in ["add", "sub"] {
-            let program = |f: String, ty: &str| with_values(ty, &format!("  print(\"{{{f}(x, y)}}\")\n"));
+            let program = |f: String, ty: &str| {
+                with_values(ty, &format!("  print(\"{{{f}(x, y)}}\")\n  print(\"{{{f}(y, x)}}\")\n"))
+            };
             let saturating = program(format!("saturating_{op}"), ty);
             let wrapping = program(format!("wrapping_{op}"), wrapping_type(ty));
             let (saturating, wrapping) = (counted(&saturating), counted(&wrapping));
@@ -102,7 +103,7 @@ fn a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_w
                     "`saturating_{op}` of `{ty}` makes a call or a jump on {target:?}"
                 );
                 assert!(
-                    s.0 <= w.0 + extra(op),
+                    s.0 <= w.0 + 2 * EXTRA,
                     "`saturating_{op}` of `{ty}` is {} instructions, and `wrapping_{op}` is {}, on {target:?}",
                     s.0,
                     w.0
