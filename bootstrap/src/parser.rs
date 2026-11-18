@@ -98,7 +98,7 @@ impl Use {
 }
 
 /// A type parameter, as in `[T: Named]` or `[A, out B]`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Generic {
     pub name: String,
     pub pos: Pos,
@@ -218,7 +218,7 @@ pub struct Param {
 /// type has no name, and its elements are its `args`. A function type has
 /// no name either, and its `args` are the types of its parameters followed
 /// by the type it gives.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Type {
     /// The name, which is `UNBUILT` for a type that is not built yet.
     pub name: String,

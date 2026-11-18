@@ -965,27 +965,39 @@ impl<'a> Walk<'a> {
         let (bounds, sol, what): (&Scope, Vec<Option<Ty>>, String) = if let Some((k, fi)) = of_trait
         {
             let sig = &defs.trait_sigs[k][fi];
-            let sol = solve(&sig.params, &sig.gives, defs.file.traits[k].generics.len());
+            let mut sol = solve(&sig.params, &sig.gives, sig.scope.names.len());
+            // The function's own type parameters follow the trait's types.
+            let own = sol.split_off(defs.file.traits[k].generics.len());
             let outs = &defs.outs[k];
             if sol.iter().zip(outs).any(|(t, out)| t.is_none() && !out) {
                 return;
             }
+            let n = sol.len();
             let types: Vec<Ty> = (sol.into_iter())
                 .map(|t| t.unwrap_or(Ty::Unknown))
                 .collect();
-            let Found::Yes(_, traits::By::Impl(i, chosen)) =
-                defs.find(k, &types, self.scope, &mut Vec::new())
-            else {
-                return;
-            };
-            let Some(info) = &defs.impls[i] else {
-                return;
-            };
             let what = format!(
                 "the implementation of `{}` chosen here",
                 defs.file.traits[k].name
             );
-            (&info.scope, chosen.into_iter().map(Some).collect(), what)
+            match defs.find(k, &types, self.scope, &mut Vec::new()) {
+                Found::Yes(_, traits::By::Impl(i, chosen)) => {
+                    let Some(info) = &defs.impls[i] else {
+                        return;
+                    };
+                    let mut sol: Vec<Option<Ty>> = chosen.into_iter().map(Some).collect();
+                    sol.extend(own);
+                    (&info.fn_scopes[fi], sol, what)
+                }
+                // A bound promises the implementation, and the function's own
+                // type parameters are bounded as the trait says.
+                Found::Yes(..) if !own.is_empty() => {
+                    let mut sol: Vec<Option<Ty>> = vec![None; n];
+                    sol.extend(own);
+                    (&sig.scope, sol, what)
+                }
+                _ => return,
+            }
         } else if let Some(&f) = defs.function_names.get(name) {
             let sig = &defs.signatures[f];
             let sol = solve(&sig.params, &sig.gives, sig.scope.names.len());

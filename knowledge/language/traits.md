@@ -5,6 +5,7 @@ description: A trait as a set of functions over one or more types, an impl that 
 status: partial
 built:
   - "`impl`, calls of trait functions with defaults"
+  - "a type parameter of a trait's function, with a bound"
 ---
 
 # Traits
@@ -158,6 +159,56 @@ impl Named[Cat] {
 
 `name_of(c)` is `"Dr"`, and `name_of(c, title: "Mr")` is `"Mr"`. The trait states the default and the `impl` does not repeat it. An `impl` that writes `title: str = "Dr"` is refused: "the defaults of `name_of` are stated in `Named`, and an implementation does not repeat them", and the fix is to remove the default of `title`.
 
+## A function with type parameters of its own
+
+A trait's function takes type parameters of its own, with [bounds](bounds.md), as any function does. They are the function's and not the trait's, so one function serves every type that meets the bound.
+
+```
+trait Sink[W] {
+  fn put(w: take W, n: u64) -> W
+}
+
+trait Emit[T] {
+  fn emit[W: Sink](value: T, to: take W) -> W
+}
+
+struct Total {
+  sum: u64
+}
+
+impl Sink[Total] {
+  fn put(w: take Total, n: u64) -> Total { Total(sum: wrapping_add(w.sum, n)) }
+}
+
+impl Emit[u64] {
+  fn emit[W: Sink](value: u64, to: take W) -> W { put(to, value) }
+}
+
+fn main() ! console, alloc {
+  n: u64 = 7
+  t = emit(n, Total(sum: 1))
+  print("{t.sum}")
+}
+```
+
+This prints `8`. The call settles `W` from its arguments, as [Type parameters](type-parameters.md) says, and the `impl` is chosen by `T` alone, so `W` is `Total` here and another type that has `Sink` elsewhere. The `impl` is checked once, with `W` standing for any type that has `Sink`, and `emit` is called for each type it is given, as any function with a type parameter is.
+
+The `impl` writes the type parameters the trait writes, with the same names and the same bounds. This one writes `V`, and is refused: "`emit` has the type parameters `[V: Sink]` here, and `[W: Sink]` in `Emit`", and the fix is to write `fn emit[W: Sink]`. A call that gives `W` a type with no `Sink` is refused at the call: "there is no implementation of `Sink` for `Plain`, which `emit` needs".
+
+A function that is bound by `Emit` calls `emit` as it calls any function of a bound.
+
+```
+fn all[T: Emit, W: Sink](xs: List[T], to: take W) -> W {
+  var w = to
+  loop i in 0..xs.size {
+    w = emit(xs[i], w)
+  }
+  w
+}
+```
+
+A value of `W` is a value of a type of which nothing is known but its bounds, so `to` is given away once, as [Lending and take](take.md) says.
+
 ## What a trait costs
 
 Calls are specialized at compile time, so a trait costs nothing at run time.
@@ -171,5 +222,6 @@ Calls are specialized at compile time, so a trait costs nothing at run time.
 | `f(c)` | A call of a trait function, which finds the `impl` from the arguments |
 | `T.f(c)` | The same call, written with the trait, when two traits have an `f` |
 | `fn f(x: A, y: B = e) -> R` in a trait | A default that the `impl` does not repeat |
+| `fn f[W: B](x: A, w: take W) -> W` in a trait | A function with a type parameter of its own, which the `impl` writes the same |
 
 Next: [Bounds and `requires`](bounds.md)
