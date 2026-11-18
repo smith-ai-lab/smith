@@ -1,106 +1,131 @@
 ---
 type: specification
 title: Effects
-description: Effects listed in a signature as permissions, how an effect is declared, how a handler is used and written, and the effects Smith provides.
+description: An effect as something a function does outside itself, how a signature lists the effects a function may perform, and what a caller must have.
 status: partial
-built: "`console`, `alloc`, and `diverge` in a signature, each listed once and required of every caller that needs it, `console` by `print`, `alloc` by a string that holds an expression, and `diverge` by an open-ended `loop` with no `decreases`, and checked where a lambda is written"
+built: "`console`, `alloc`, and `diverge` in a signature, each listed once and required of every caller that needs it, and checked where a lambda is written; not an effect on a function type"
 ---
 
 # Effects
 
-A function with no `!` clause is pure. Effects are listed after the return type, and a caller must have every effect its callees use. A function without an effect cannot perform it, so effects work as permissions. Below, `read_all` is shown by its signature alone.
+An effect is something a function does outside itself, and a signature lists each one the function may do, after its return type with a `!`.
 
 ```
-fn read_all(path: str) -> Result[List[u8], FsError] ! fs, alloc
-
-fn fixture_config() -> Result[Config, FsError] ! alloc {
-  with memory_fs(fixtures)
-  bytes = try read_all("model.toml")
-  parse_config(bytes)
+fn main() ! console {
+  print("hello")
 }
 ```
 
-An effect is a parameter that the compiler passes for you. A signature states it, a call does not, and it costs nothing at run time. So a signature says everything a function may do, while the code that calls it stays plain.
+`! console` says that `main` may use the console, and `print` does. This prints `hello`.
 
-- An effect is named once in a list, so naming it again is an error.
-- The stored signature always states the effect list. The compiler proposes it while the function is being written, and lambdas are inferred.
-- A lambda's other effects are checked where it is written: whatever its body does must be allowed by the function it sits in, and the function receiving it says nothing about them. This is sound because a lambda passed to a call cannot be stored or returned. There are no effect variables.
-- A function stored in a value states its effects in its type, and is pure when none are written.
+## A function with no effect
 
-## Declaring an effect
-
-An effect is declared by listing its operations. The standard library declares `time` this way, shown here with only its operation for reading the clock.
+A function with no `!` clause is pure. It does nothing outside itself, so it can be called anywhere.
 
 ```
-effect time {
-  fn now() -> u64
+fn first(a: i32, b: i32) -> i32 { a }
+```
+
+## Effects as permissions
+
+A function without an effect cannot perform it, so an effect works as a permission. A pure function that prints is refused.
+
+```
+fn greet(name: str) {
+  print("hello")
+}
+
+fn main() ! console {
+  greet("Ana")
 }
 ```
 
-The declaration gives two things, and nothing else is generated.
+This gives "`print` needs the `console` effect, which `greet` does not declare", with the fix "write `fn greet(name: str) ! console`".
 
-- Each operation is an ordinary function that carries the effect. `now()` has the signature `fn now() -> u64 ! time`.
-- The effect's name is a function that handles it. It takes a lambda for each operation, named as the operation is, and the body to run. Calling it is to an effect what calling a struct's name is to a struct.
+## Listing more than one
 
-An operation may give its parameters defaults, like any function. The lambda that a handler supplies for it takes every argument.
-
-A program declares its own effects in the same way, so nothing about `time` is special. An effect is a name like any other: it is defined in one module and imported by name, as [Modules](modules.md) describes. The five effects the standard library declares are in scope everywhere.
-
-## Handlers
-
-A handler is a function that runs a lambda with an effect handled, installed with `with`. It is declared by putting the effect on its lambda parameter, as in `fn memory_fs[T](files: Files, body: () -> T ! fs) -> T`. `memory_fs` above handles `fs` with an in-memory file system, so `fixture_config` does not carry `fs`.
-
-A handler is an ordinary function that calls the effect's name. This one is a clock for tests, which reads one tick later every time it is asked.
+Effects are listed after the return type, separated by commas, in any order.
 
 ```
-fn fake_clock[T](body: () -> T ! time) -> T {
-  var ticks: u64 = 0
-  time(
-    now: {
-      ticks = saturating_add(ticks, 1)
-      ticks
-    },
-    body: body,
-  )
-}
-
-fn two_readings() -> (u64, u64) {
-  with fake_clock()
-  (now(), now())
+fn shout(name: str) -> str ! console, alloc {
+  print("hey")
+  "hello {name}"
 }
 ```
 
-`two_readings` returns `(1, 2)` and carries no effect. Inside it, each `now()` runs the lambda that `fake_clock` supplied.
+`! alloc, console` means the same. An effect is named once in a list, so naming it again is refused.
 
-- A handler keeps its state in a `var`. The lambda assigns `ticks`, a local of the function it is written in, which a lambda passed to a call may do because it cannot outlive that function.
-- An operation is an ordinary call. Its lambda runs and returns a value to the code that asked, so a handler cannot stop that code or run it twice.
-- The lambda runs under the handlers outside its own. An operation of `fake_clock` that read the clock would get the clock that was in force around `with fake_clock()`.
-- The lambda's own effects are checked where it is written, like any lambda's. A handler whose operations read files must sit in a function that carries `fs`, and the code running under the handler does not.
-- The handler in force at every call is known when the program is built, because `with` is part of the source and a lambda cannot escape. The compiler builds a copy of a function for each handler it runs under, as it does for each type a generic function is used with.
+```
+fn main() ! console, console {
+  print("hi")
+}
+```
 
-## The effects Smith provides
+This gives "the `console` effect is already listed".
 
-The standard library declares five effects. Each has operations, and a program can handle it.
+## What a caller needs
 
-| Effect | Allows |
+A caller must have every effect its callees use. `main` below calls `shout`, which needs `console` and `alloc`.
+
+```
+fn main() ! console, alloc {
+  print(shout("Ana"))
+}
+```
+
+This prints `hey` and then `hello Ana`. A caller that lacks one of them is refused.
+
+```
+fn main() ! console {
+  print(shout("Ana"))
+}
+```
+
+This gives "`shout` needs the `alloc` effect, which `main` does not declare", with the fix "write `fn main() ! console, alloc`".
+
+A call states no effect. `shout("Ana")` is written as it would be for a pure function, because an effect is a parameter that the compiler passes for you, and it costs nothing at run time. So a signature says everything a function may do, while the code that calls it stays plain.
+
+## Who writes the list
+
+The stored signature always states the effect list. The compiler proposes it while the function is being written, as the fix beside each refusal above does. A [lambda](lambdas.md) has no signature, and its effects are inferred.
+
+## A lambda's effects
+
+A lambda's effects are checked where it is written: whatever its body does must be allowed by the function it sits in, and the function receiving it says nothing about them. `do` below runs a lambda and states no effect.
+
+```
+fn do[T](body: () -> T) -> T { body() }
+
+fn main() ! console {
+  do { print("hi") }
+}
+```
+
+This prints `hi`, because `main` allows `console`. With `fn main() {` in its place the program is refused: "`print` needs the `console` effect, which `main` does not declare".
+
+A function that receives a lambda never lists the effects of the lambda, and no signature can say "whatever the lambda does". There are no effect variables. This is sound because a lambda passed to a call cannot be stored or returned, so it runs only inside the function it is written in.
+
+## A function stored in a value
+
+A function stored in a value states its effects in its type, after the result as in a signature, and is pure when none are written.
+
+```
+struct Button {
+  label: str
+  on_press: () -> () ! console
+}
+```
+
+`on_press` is a function that may use the console. A field of type `() -> ()` would be pure.
+
+## The forms
+
+| Written | Means |
 | --- | --- |
-| [`console`](../library/console.md) | Standard input, output, and error |
-| [`fs`](../library/fs.md) | Files |
-| `net` | The network |
-| `time` | The clock |
-| `ui` | Windows and events |
+| `fn f() { ... }` | `f` is pure |
+| `fn f() ! console { ... }` | `f` may use the console |
+| `fn f() -> T ! console, alloc { ... }` | The effects follow the return type, in any order, each once |
+| `(A) -> B ! console` | A stored function that may use the console |
+| `(A) -> B` | A stored function that is pure |
 
-Six more are built in, because the compiler itself gives them their meaning. They have no operations to replace.
-
-| Effect | Allows | Ends at |
-| --- | --- | --- |
-| `alloc` | Memory whose size is known only at run time | An [arena](storage.md) |
-| `spawn` | Starting a task | A [task group](tasks.md) |
-| `gpu` | Opening a [device](devices.md) to run on a GPU | Nothing |
-| `diverge` | Not terminating | Nothing |
-| `foreign` | Calling a [foreign function](foreign.md) | Nothing |
-| `exec` | Running another program | Nothing |
-
-An effect that nothing handles is carried by every caller up to [`main`](first-program.md), where a program starts. The effects `main` lists are provided by the operating system.
-
-Next: [Strings that hold expressions](interpolation.md)
+Next: [Declaring an effect](effect-declarations.md)

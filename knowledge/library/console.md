@@ -6,7 +6,7 @@ description: The console effect, for a program's standard input, output, and err
 
 # Console
 
-The module `std.console` declares the `console` [effect](../language/effects.md). It covers the three standard streams of a program, which the operating system grants together.
+The module `std.console` declares the `console` [effect](../language/effect-declarations.md). It covers the three standard streams of a program, which the operating system grants together.
 
 ```
 enum Stream {

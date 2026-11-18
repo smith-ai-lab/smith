@@ -6,7 +6,7 @@ description: The fs effect, for files, a file open for a block, ranges of it rea
 
 # Files
 
-The module `std.fs` declares the `fs` [effect](../language/effects.md). A program reads a file by asking for a range of its bytes, which it gets as a value.
+The module `std.fs` declares the `fs` [effect](../language/effect-declarations.md). A program reads a file by asking for a range of its bytes, which it gets as a value.
 
 Most programs read a whole file, or write one.
 
@@ -69,4 +69,4 @@ effect fs {
 - **How a range is fetched is not the program's business.** The system may read it, read ahead, or map the file into memory and copy from there. The source is the same, and [under tasks](../language/tasks.md) a read suspends its task.
 - **Every failure is a value.** No operation ends the program.
 
-A handler supplies the six operations, so a test runs code that reads and writes files over files kept in memory, as `memory_fs` does under [Effects](../language/effects.md).
+A handler supplies the six operations, so a test runs code that reads and writes files over files kept in memory, as `memory_fs` does under [Handlers](../language/handlers.md).
