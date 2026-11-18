@@ -12,13 +12,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-#[allow(dead_code)]
-#[path = "../../bootstrap/src/diag.rs"]
-mod diag;
-#[allow(dead_code)]
-#[path = "../../bootstrap/src/lexer.rs"]
-mod lexer;
-
 /// The sizes, in pushes or in bytes: 1 KB to 1 MB.
 const SIZES: [usize; 6] = [1 << 10, 1 << 12, 1 << 14, 1 << 16, 1 << 18, 1 << 20];
 
@@ -97,12 +90,12 @@ fn lex(smith: &Path, work: &Path, lexer_source: &str) {
             )
         };
         let lexing = "match lex(src) {\n      .ok(tokens) { last = tokens.size }\n      .err(errors) { last = 0 }\n    }";
-        let tokens = lexer::lex(&input).expect("the input lexes").len();
+        let tokens = smith::lex_plain(&input).expect("the input lexes").lines().count();
         let (time, reps) = smith_time(smith, work, "lexer", &tokens.to_string(), |reps| {
             (program(reps, lexing), program(reps, "last = src.size"))
         });
         let rust = per_run(|| {
-            black_box(lexer::lex(black_box(&input)).ok());
+            black_box(smith::lex_plain(black_box(&input)).ok());
         });
         println!(
             "check lexer size={bytes} tokens={tokens} (the Smith lexer prints the same count)"

@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "measure"
 version = "0.0.0"
+dependencies = [
+ "smith",
+]
+
+[[package]]
+name = "smith"
+version = "0.0.0"

@@ -63,6 +63,11 @@ jobs:
         run: cargo test --locked -- --group=machine
       - name: Timings
         run: target/debug/smith build --timings tests/cases/hello.smith
+      # The harness in `measure/` takes the compiler as a crate. It is built
+      # here and not run, as a time on a shared machine says nothing.
+      - name: Build the harness that measures
+        working-directory: measure
+        run: cargo build --release --locked
 
   # Which kinds of machine need their tests. The tests that depend on the
   # machine run only executables, so a kind of machine has nothing new to find
