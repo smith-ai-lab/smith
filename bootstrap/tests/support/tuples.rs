@@ -1002,7 +1002,7 @@ impl Writer {
             self.push("\n");
         }
         self.push("}\n\nfn say(text: str) ! console { print(text) }\n");
-        self.push("\nfn swap[A, B](pair: (A, B)) -> (B, A) {\n  (a, b) = pair\n  (b, a)\n}\n");
+        self.push("\nfn swap[A: Copy, B: Copy](pair: (A, B)) -> (B, A) {\n  (a, b) = pair\n  (b, a)\n}\n");
         self.push("\nfn main() ! console {\n");
         self.stmts(&m.main, 1);
         self.push("}\n");

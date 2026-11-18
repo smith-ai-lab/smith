@@ -90,7 +90,7 @@ fn greeting() -> str ! alloc {
 Here `on_ok` is a function the page defines. It runs its lambda on what a `Result` holds, and only when it holds one. `Result` is the prelude's.
 
 ```
-fn on_ok[T, U, E](r: Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
+fn on_ok[T, U, E](r: take Result[T, E], body: fn(T) -> Result[U, E]) -> Result[U, E] {
   match r {
     .ok(x) { body(x) }
     .err(e) { .err(e) }

@@ -8,7 +8,7 @@ built:
   - "A lent value, or a part of one, refused where it is returned, stored, or passed to a `take` parameter, unless its type has `Copy`"
   - "An argument of a `take` parameter given away, so that a use of it after the call is refused"
   - "not a value without `Copy` given away inside a lambda that the lambda did not define or take, which is refused, as nothing says how often a lambda is called"
-  - "not a function's type parameter given a type without `Copy`, nor an implementation chosen for one, which are refused, as no bound says that a type parameter has `Copy`"
+  - "a type parameter has `Copy` and `Discard` only where a bound or a `requires` line asks, so a value of one is used at most once and must be taken, and a call, or an implementation it chooses, is given only a type that has what the bounds ask"
 ---
 
 # Lending and take

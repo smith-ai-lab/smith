@@ -152,6 +152,10 @@ pub(super) enum Bound {
     None,
     /// A trait, by its place in the file's traits.
     Trait(usize),
+    /// `Copy`, which every value of the type parameter may be given.
+    Copy,
+    /// `Discard`, in the same way.
+    Discard,
     /// A bound already reported as a mistake.
     Invalid,
 }
@@ -421,6 +425,12 @@ impl<'a> Defs<'a> {
         let name = t.name.as_str();
         let error = if !t.args.is_empty() {
             Error::unsupported(t.args[0].pos, "a bound with type arguments")
+        } else if name == "Copy" || name == "Discard" {
+            return if name == "Copy" {
+                Bound::Copy
+            } else {
+                Bound::Discard
+            };
         } else if let Some(&k) = self.trait_names.get(name) {
             return Bound::Trait(k);
         } else if name == "Nat" {
@@ -443,15 +453,26 @@ impl<'a> Defs<'a> {
             names: generics.iter().map(|g| g.name.clone()).collect(),
             requires: Vec::new(),
             invalid: vec![false; generics.len()],
+            copy: vec![false; generics.len()],
+            discard: vec![false; generics.len()],
         };
         for (p, g) in generics.iter().enumerate() {
             match self.bound(&g.bound, &mut Vec::new()) {
                 Bound::None => {}
+                Bound::Copy => scope.copy[p] = true,
+                Bound::Discard => scope.discard[p] = true,
                 Bound::Trait(of) => scope.requires.push(Requirement {
                     of,
                     types: vec![Ty::Param(p); self.outs[of].len()],
                 }),
                 Bound::Invalid => scope.invalid[p] = true,
+            }
+        }
+        for (is_copy, p) in self.ownership_needs(needs, &scope, &mut Vec::new()) {
+            if is_copy {
+                scope.copy[p] = true;
+            } else {
+                scope.discard[p] = true;
             }
         }
         let mut found = Vec::new();
@@ -465,6 +486,43 @@ impl<'a> Defs<'a> {
         scope
     }
 
+    /// The `requires` lines that ask `Copy` or `Discard` of a type parameter
+    /// of `scope`: whether each is `Copy`, and the parameter's place. A line
+    /// that is not of this form is reported by `requirements`.
+    pub(super) fn ownership_needs(
+        &self,
+        needs: &[Expr],
+        scope: &Scope,
+        errors: &mut Vec<Error>,
+    ) -> Vec<(bool, usize)> {
+        let mut found = Vec::new();
+        for e in needs {
+            let Expr::Index { of, index, .. } = e else {
+                continue;
+            };
+            let Expr::Name { name, .. } = &**of else {
+                continue;
+            };
+            if name != "Copy" && name != "Discard" {
+                continue;
+            }
+            match &**index {
+                Expr::Name { name: t, pos } => match scope.names.iter().position(|n| n == t) {
+                    Some(p) => found.push((name == "Copy", p)),
+                    None => errors.push(Error::new(
+                        *pos,
+                        format!("`{name}` is asked of a type parameter, and `{t}` is not one"),
+                    )),
+                },
+                other => errors.push(Error::unsupported(
+                    other.pos(),
+                    &format!("`{name}` asked of anything but a type parameter"),
+                )),
+            }
+        }
+        found
+    }
+
     /// What each `requires` line that names a trait requires, among the
     /// type parameters of `scope`. A line that is a mistake gives `None`,
     /// and goes in `errors`.
@@ -474,8 +532,13 @@ impl<'a> Defs<'a> {
         scope: &Scope,
         errors: &mut Vec<Error>,
     ) -> Vec<Option<Requirement>> {
+        self.ownership_needs(needs, scope, errors);
         needs
             .iter()
+            .filter(|e| {
+                !matches!(e, Expr::Index { of, .. }
+                    if matches!(&**of, Expr::Name { name, .. } if name == "Copy" || name == "Discard"))
+            })
             .map(|e| {
                 let Expr::Index { of, index, .. } = e else {
                     errors.push(Error::unsupported(e.pos(), "a `requires` of this form"));

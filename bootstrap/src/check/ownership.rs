@@ -7,8 +7,9 @@
 //! have been given away. It reads the type of every expression from what the
 //! checker recorded, so it holds no types of its own.
 //!
-//! A type parameter and a function have `Copy` for now, as a bound that asks
-//! for it is not built yet.
+//! Nothing is known of a type parameter but what its bounds say, so it has
+//! `Copy` and `Discard` only where a bound asks. A function has `Copy` for
+//! now.
 
 use super::*;
 use crate::parser::Param;
@@ -21,41 +22,90 @@ pub(super) const COPY: usize = usize::MAX;
 pub(super) const DISCARD: usize = usize::MAX - 1;
 
 /// Whether a type has the trait `which`, `COPY` or `DISCARD`: when no
-/// `without` takes it from the type, and each of its parts has it.
-fn has(defs: &Defs, which: usize, ty: &Ty, open: &mut Vec<Ty>) -> bool {
+/// `without` takes it from the type, each of its parts has it, and each type
+/// parameter in it has it by a bound of `scope`. When it has not, `Err`
+/// gives the first type parameter that lacks it, if that is why.
+fn has(
+    (defs, scope): (&Defs, &Scope),
+    which: usize,
+    ty: &Ty,
+    open: &mut Vec<Ty>,
+) -> Result<(), Option<usize>> {
     let parts: Vec<Ty> = match ty {
-        Ty::Struct(s, _) if defs.withouts.contains(&(which, Def::Struct(*s))) => return false,
-        Ty::Enum(e, _) if defs.withouts.contains(&(which, Def::Enum(*e))) => return false,
+        Ty::Param(i) => {
+            let flags = if which == COPY {
+                &scope.copy
+            } else {
+                &scope.discard
+            };
+            return if flags.get(*i).copied().unwrap_or(true) {
+                Ok(())
+            } else {
+                Err(Some(*i))
+            };
+        }
+        Ty::Struct(s, _) if defs.withouts.contains(&(which, Def::Struct(*s))) => return Err(None),
+        Ty::Enum(e, _) if defs.withouts.contains(&(which, Def::Enum(*e))) => return Err(None),
         Ty::Struct(s, args) => defs.fields[*s].iter().map(|t| t.subst(args)).collect(),
         Ty::Enum(e, args) => (defs.cases[*e].iter().flatten())
             .map(|t| t.subst(args))
             .collect(),
         Ty::Tuple(items) | Ty::List(items) => items.clone(),
-        _ => return true,
+        _ => return Ok(()),
     };
     // A type that holds itself, which is reported elsewhere, has what its
     // other parts have.
     if open.contains(ty) {
-        return true;
+        return Ok(());
     }
     open.push(ty.clone());
-    let all = parts.iter().all(|t| has(defs, which, t, open));
+    let mut all = Ok(());
+    for t in &parts {
+        match has((defs, scope), which, t, open) {
+            Err(Some(i)) => {
+                all = Err(Some(i));
+                break;
+            }
+            Err(None) => all = Err(None),
+            Ok(()) => {}
+        }
+    }
     open.pop();
     all
 }
 
 /// Whether a value of the type may be duplicated.
-fn copies(defs: &Defs, ty: &Ty) -> bool {
-    has(defs, COPY, ty, &mut Vec::new())
+fn copies(defs: &Defs, scope: &Scope, ty: &Ty) -> bool {
+    has((defs, scope), COPY, ty, &mut Vec::new()).is_ok()
+}
+
+/// The type parameter, if there is one, that a type lacks `which` because of.
+fn lacking(defs: &Defs, scope: &Scope, which: usize, ty: &Ty) -> Option<usize> {
+    has((defs, scope), which, ty, &mut Vec::new())
+        .err()
+        .flatten()
 }
 
 /// A name, and the fields after it that are read from it.
 type Path = (String, Vec<String>);
 
+/// A value the function owns and has not taken on some path, whose type has
+/// a type parameter that gives it no `Discard`.
+#[derive(Clone, Debug)]
+struct Held {
+    name: String,
+    pos: Pos,
+    ty: Ty,
+}
+
 /// What is known at one point of the body: which places have been given
-/// away, and where. A path in it is a place whose value is gone, whole or
-/// in part.
-type Moved = Vec<(Path, Pos)>;
+/// away, and where, and which values may not have been used yet. A path in
+/// `gone` is a place whose value is gone, whole or in part.
+#[derive(Clone, Debug, Default)]
+struct Moved {
+    gone: Vec<(Path, Pos)>,
+    held: Vec<Held>,
+}
 
 /// What lends a value, if it is lent: the function, or the lambda, whose
 /// parameter it is.
@@ -85,9 +135,14 @@ fn join(a: State, b: State) -> State {
     match (a, b) {
         (None, other) | (other, None) => other,
         (Some(mut a), Some(b)) => {
-            for (path, at) in b {
-                if !a.iter().any(|(p, _)| *p == path) {
-                    a.push((path, at));
+            for (path, at) in b.gone {
+                if !a.gone.iter().any(|(p, _)| *p == path) {
+                    a.gone.push((path, at));
+                }
+            }
+            for h in b.held {
+                if !a.held.iter().any(|g| g.name == h.name && g.pos == h.pos) {
+                    a.held.push(h);
                 }
             }
             Some(a)
@@ -118,7 +173,7 @@ struct Walk<'a> {
 pub(super) fn check(
     defs: &Defs,
     types: &HashMap<usize, Ty>,
-    (f, scope): (&Function, &Scope),
+    (f, scope, params): (&Function, &Scope, &[(String, Ty)]),
     errors: &mut Vec<Error>,
 ) {
     let mut walk = Walk {
@@ -139,7 +194,14 @@ pub(super) fn check(
     } else {
         Flow::Lend
     };
-    walk.block(&mut Some(Vec::new()), &f.body, flow);
+    let mut st = Some(Moved::default());
+    for p in f.params.iter().filter(|p| p.take) {
+        if let Some((_, ty)) = params.iter().find(|(n, _)| *n == p.name) {
+            walk.own(&mut st, &p.name, p.pos, ty);
+        }
+    }
+    walk.block(&mut st, &f.body, flow);
+    walk.dropped(&st);
 }
 
 fn written((name, fields): &Path) -> String {
@@ -173,15 +235,105 @@ impl<'a> Walk<'a> {
     }
 
     fn copies(&self, e: &Expr) -> bool {
-        self.types
-            .get(&addr(e))
-            .is_none_or(|ty| copies(self.defs, ty))
+        (self.types.get(&addr(e))).is_none_or(|ty| copies(self.defs, self.scope, ty))
+    }
+
+    /// Notes that a value was bound that must be used, if its type has a
+    /// type parameter that gives it no `Discard`. A value the walk knows
+    /// nothing more of, as one of a concrete type, may be dropped.
+    fn own(&mut self, st: &mut State, name: &str, pos: Pos, ty: &Ty) {
+        if self.lent.contains_key(name) || lacking(self.defs, self.scope, DISCARD, ty).is_none() {
+            return;
+        }
+        if let Some(moved) = st {
+            let held = Held {
+                name: name.to_string(),
+                pos,
+                ty: ty.clone(),
+            };
+            moved.held.retain(|h| h.name != name);
+            moved.held.push(held);
+        }
+    }
+
+    /// Reports each value that may be dropped where `st` is, as the function
+    /// ends there.
+    fn dropped(&mut self, st: &State) {
+        let Some(moved) = st else {
+            return;
+        };
+        for h in &moved.held {
+            let Some(p) = lacking(self.defs, self.scope, DISCARD, &h.ty) else {
+                continue;
+            };
+            let param = self.scope.names[p].clone();
+            let message = format!(
+                "`{}` is dropped here, as nothing takes it, and `{param}` has no `Discard`",
+                h.name
+            );
+            if let Some(error) = self.error(h.pos, message) {
+                error.fix = Some(format!("write `{param}: Discard`"));
+            }
+        }
+    }
+
+    /// Reports a value that nothing uses, as the result of a call that is
+    /// a statement of its own is, when its type has a type parameter that gives it
+    /// no `Discard`.
+    fn temporary(&mut self, e: &Expr) {
+        let made = matches!(
+            e,
+            Expr::Call(_) | Expr::Tuple { .. } | Expr::List { .. } | Expr::Case { .. }
+        );
+        if !made {
+            return;
+        }
+        let Some(ty) = self.types.get(&addr(e)) else {
+            return;
+        };
+        let Some(p) = lacking(self.defs, self.scope, DISCARD, ty) else {
+            return;
+        };
+        let param = self.scope.names[p].clone();
+        let message =
+            format!("this value is dropped, as nothing takes it, and `{param}` has no `Discard`");
+        if let Some(error) = self.error(e.pos(), message) {
+            error.fix = Some(format!("write `{param}: Discard`"));
+        }
+    }
+
+    /// Notes each name a pattern binds to a part of a value of type `ty`.
+    fn own_pattern(&mut self, st: &mut State, pattern: &Pattern, ty: &Ty) {
+        match (pattern, ty) {
+            (Pattern::Bind { name, pos, .. }, ty) => self.own(st, name, *pos, ty),
+            (
+                Pattern::Case {
+                    name,
+                    inner: Some(inner),
+                    ..
+                },
+                Ty::Enum(e, args),
+            ) => {
+                if let Some(c) = self.defs.case_of(*e, name)
+                    && let Some(held) = self.defs.cases[*e][c].as_ref()
+                {
+                    self.own_pattern(st, inner, &held.subst(args));
+                }
+            }
+            (Pattern::Tuple { items, .. }, Ty::Tuple(tys)) => {
+                for (p, t) in items.iter().zip(tys) {
+                    self.own_pattern(st, p, t);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn error(&mut self, pos: Pos, message: String) -> Option<&mut Error> {
         if !self.reported.insert(pos) {
             return None;
         }
+
         self.errors.push(Error::new(pos, message));
         self.errors.last_mut()
     }
@@ -192,14 +344,24 @@ impl<'a> Walk<'a> {
             return None;
         };
         let lent = self.lent.get(&path.0).cloned();
-        if let Some((_, at)) = moved.iter().find(|(p, _)| overlap(p, &path)) {
+        // A value is taken where a value without `Copy` would be given away:
+        // looking at it, lending it, and reading a part of it take nothing.
+        if !matches!(flow, Flow::Lend) && path.1.is_empty() {
+            moved.held.retain(|h| h.name != path.0);
+        }
+        if let Some((_, at)) = moved.gone.iter().find(|(p, _)| overlap(p, &path)) {
             let message = format!(
                 "`{}` is used here, after it was given away at {}:{}",
                 written(&path),
                 at.line,
                 at.col
             );
-            self.error(e.pos(), message);
+            let blame =
+                (self.types.get(&addr(e))).and_then(|ty| lacking(self.defs, self.scope, COPY, ty));
+            let fix = blame.map(|p| format!("write `{}: Copy`", self.scope.names[p]));
+            if let Some(error) = self.error(e.pos(), message) {
+                error.fix = fix;
+            }
             return lent;
         }
         if self.copies(e) {
@@ -218,7 +380,7 @@ impl<'a> Walk<'a> {
         match flow {
             Flow::Lend => {}
             Flow::Bind if lent.is_some() => {}
-            Flow::Bind => moved.push((path, e.pos())),
+            Flow::Bind => moved.gone.push((path, e.pos())),
             _ if lent.is_some() => {
                 let by = lent.clone().unwrap_or_default();
                 let what = match flow {
@@ -254,7 +416,7 @@ impl<'a> Walk<'a> {
                     error.fix = Some(fix);
                 }
             }
-            _ => moved.push((path, e.pos())),
+            _ => moved.gone.push((path, e.pos())),
         }
         lent
     }
@@ -333,6 +495,7 @@ impl<'a> Walk<'a> {
                 if let Some(value) = value {
                     self.eval(st, value, Flow::Returned);
                 }
+                self.dropped(st);
                 *st = None;
                 None
             }
@@ -346,9 +509,14 @@ impl<'a> Walk<'a> {
         for (i, stmt) in stmts.iter().enumerate() {
             let last = i + 1 == stmts.len();
             match stmt {
-                Stmt::Define { name, value, .. } => {
+                Stmt::Define {
+                    name, value, pos, ..
+                } => {
                     let l = self.eval(st, value, Flow::Bind);
                     self.bind(st, name, l);
+                    if let Some(ty) = self.types.get(&addr(value)) {
+                        self.own(st, name, *pos, &ty.clone());
+                    }
                 }
                 Stmt::Assign {
                     name,
@@ -360,15 +528,23 @@ impl<'a> Walk<'a> {
                     if let Some(moved) = st {
                         let path: Path =
                             (name.clone(), fields.iter().map(|f| f.0.clone()).collect());
-                        moved.retain(|(p, _)| !(path.0 == p.0 && p.1.starts_with(&path.1)));
+                        moved
+                            .gone
+                            .retain(|(p, _)| !(path.0 == p.0 && p.1.starts_with(&path.1)));
                     }
                 }
                 Stmt::Destructure { pattern, value, .. } => {
                     let l = self.eval(st, value, Flow::Bind);
                     self.bind_pattern(st, pattern, &l);
+                    if let Some(ty) = self.types.get(&addr(value)) {
+                        self.own_pattern(st, pattern, &ty.clone());
+                    }
                 }
                 Stmt::Expr(value) => {
                     lent = self.eval(st, value, if last { flow } else { Flow::Lend });
+                    if !last && st.is_some() {
+                        self.temporary(value);
+                    }
                 }
             }
         }
@@ -380,8 +556,21 @@ impl<'a> Walk<'a> {
         if let Some(own) = self.inside.last_mut() {
             own.insert(name.to_string());
         }
+        if st.is_some() {
+            let old = st
+                .as_ref()
+                .and_then(|m| m.held.iter().find(|h| h.name == name).cloned());
+            if let Some(old) = old {
+                let mut dropping = Some(Moved {
+                    gone: Vec::new(),
+                    held: vec![old],
+                });
+                self.dropped(&dropping.take());
+            }
+        }
         if let Some(moved) = st {
-            moved.retain(|(p, _)| p.0 != name);
+            moved.gone.retain(|(p, _)| p.0 != name);
+            moved.held.retain(|h| h.name != name);
         }
         match lent {
             Some(by) => {
@@ -414,7 +603,7 @@ impl<'a> Walk<'a> {
     /// that has no `Copy`.
     fn binds_part(&self, pattern: &Pattern, ty: &Ty) -> bool {
         match (pattern, ty) {
-            (Pattern::Bind { .. }, ty) => !copies(self.defs, ty),
+            (Pattern::Bind { .. }, ty) => !copies(self.defs, self.scope, ty),
             (
                 Pattern::Case {
                     name,
@@ -446,6 +635,9 @@ impl<'a> Walk<'a> {
         for arm in &m.arms {
             let mut arm_st = start.clone();
             self.bind_pattern(&mut arm_st, &arm.pattern, &lent_scrutinee);
+            if let Some(ty) = self.types.get(&addr(&m.of)) {
+                self.own_pattern(&mut arm_st, &arm.pattern, &ty.clone());
+            }
             lent = lent.or(self.block(&mut arm_st, &arm.body, flow));
             end = join(end, arm_st);
         }
@@ -577,6 +769,8 @@ impl<'a> Walk<'a> {
             }
             let flow = match (param, value_fn) {
                 _ if constructs => Flow::Stored,
+                // `push` takes its list and its item.
+                _ if super::lists_and_text::is_push(defs, call) => Flow::Taken(name),
                 (Some(p), _) if p.take => Flow::Taken(name),
                 (None, Some(f)) => {
                     let at = if arg.name.is_none() && !arg.after {
@@ -609,8 +803,9 @@ impl<'a> Walk<'a> {
     }
 
     /// Refuses a call that gives a type parameter of the function, or of the
-    /// implementation it chooses, a type without `Copy`, as nothing yet says
-    /// that a type parameter has `Copy`, and the function may copy its value.
+    /// implementation it chooses, a type that lacks what a bound of the
+    /// parameter asks: `Copy` or `Discard`. One mistake is reported for the
+    /// call.
     fn generic(&mut self, call: &Call, given: &[(usize, &Expr)]) {
         let defs = self.defs;
         let name = call.callee.as_str();
@@ -641,7 +836,10 @@ impl<'a> Walk<'a> {
             }
             sol
         };
-        if let Some((k, fi)) = of_trait {
+        // The scope that bounds the types, with the types it is given, and
+        // what it is, as an error names it.
+        let (bounds, sol, what): (&Scope, Vec<Option<Ty>>, String) = if let Some((k, fi)) = of_trait
+        {
             let sig = &defs.trait_sigs[k][fi];
             let sol = solve(&sig.params, &sig.gives, defs.file.traits[k].generics.len());
             let outs = &defs.outs[k];
@@ -651,30 +849,62 @@ impl<'a> Walk<'a> {
             let types: Vec<Ty> = (sol.into_iter())
                 .map(|t| t.unwrap_or(Ty::Unknown))
                 .collect();
-            if let Found::Yes(_, traits::By::Impl(_, chosen)) =
+            let Found::Yes(_, traits::By::Impl(i, chosen)) =
                 defs.find(k, &types, self.scope, &mut Vec::new())
-                && chosen.iter().any(|t| !copies(defs, t))
-            {
-                let what = format!(
-                    "an implementation of `{}` chosen for a type without `Copy`",
-                    defs.file.traits[k].name
-                );
-                self.errors.push(Error::unsupported(call.pos, &what));
-            }
+            else {
+                return;
+            };
+            let Some(info) = &defs.impls[i] else {
+                return;
+            };
+            let what = format!(
+                "the implementation of `{}` chosen here",
+                defs.file.traits[k].name
+            );
+            (&info.scope, chosen.into_iter().map(Some).collect(), what)
         } else if let Some(&f) = defs.function_names.get(name) {
             let sig = &defs.signatures[f];
             let sol = solve(&sig.params, &sig.gives, sig.scope.names.len());
-            let bad = sol
-                .iter()
-                .enumerate()
-                .find(|(_, t)| t.as_ref().is_some_and(|t| !copies(defs, t)));
-            if let Some((i, _)) = bad {
-                let what = format!(
-                    "a type without `Copy` for the type parameter `{}` of `{name}`",
-                    sig.scope.names[i]
-                );
-                self.errors.push(Error::unsupported(call.pos, &what));
+            (&sig.scope, sol, format!("`{name}`"))
+        } else {
+            return;
+        };
+        for (i, t) in sol.iter().enumerate() {
+            let Some(t) = t else {
+                continue;
+            };
+            let mut lacks: Vec<&str> = Vec::new();
+            if bounds.copy.get(i).copied().unwrap_or(false) && !copies(defs, self.scope, t) {
+                lacks.push("Copy");
             }
+            let discards = has((defs, self.scope), DISCARD, t, &mut Vec::new()).is_ok();
+            if bounds.discard.get(i).copied().unwrap_or(false) && !discards {
+                lacks.push("Discard");
+            }
+            if lacks.is_empty() {
+                continue;
+            }
+            let param = bounds.names.get(i).cloned().unwrap_or_default();
+            let message = format!(
+                "`{}` has no {}, which {what} needs of `{param}`",
+                defs.text(t, self.scope),
+                lacks
+                    .iter()
+                    .map(|l| format!("`{l}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            );
+            // A type that lacks it only because of a type parameter of the
+            // caller is mended by a bound there.
+            let fix = lacks.iter().find_map(|l| {
+                let which = if *l == "Copy" { COPY } else { DISCARD };
+                let p = lacking(defs, self.scope, which, t)?;
+                Some(format!("write `{}: {l}`", self.scope.names[p]))
+            });
+            if let Some(error) = self.error(call.pos, message) {
+                error.fix = fix;
+            }
+            return;
         }
     }
 }

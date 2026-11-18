@@ -1,3 +1,3 @@
-pub fn push[T](list: List[T], item: T) -> List[T] ! alloc {
+pub fn push[T](list: take List[T], item: take T) -> List[T] ! alloc {
   __push(list, item)
 }
