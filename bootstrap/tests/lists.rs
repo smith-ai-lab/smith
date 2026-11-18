@@ -4,7 +4,7 @@
 //! Every generator keeps a model of the lists it builds, in plain vectors, so
 //! it shares nothing with the compiler.
 
-use smith::scalar::{self, Op};
+use smith::scalar::{self, Op, handler};
 use smith::{check, lower};
 
 use crate::Test;
@@ -393,7 +393,7 @@ fn an_index_is_never_tested_when_the_program_runs() {
             .functions
             .iter()
             .enumerate()
-            .filter(|(at, _)| *at != program.main)
+            .filter(|(at, f)| *at != program.main && !handler::takes_room(&program, f))
             .map(|(_, f)| f)
         {
             for block in &f.blocks {
@@ -573,7 +573,7 @@ fn building_a_list_by_pushing_asks_for_memory_a_logarithmic_number_of_times() {
     for (elem, n) in sizes_of() {
         let source = pushed(elem, n);
         let program = lower(source.as_bytes()).expect("compiles");
-        let (outcome, requests) = scalar::run_counting(&program, usize::MAX);
+        let (outcome, requests) = scalar::run_taking(&program, usize::MAX);
         assert_eq!(outcome.status, 0, "for {source}");
         assert!(
             requests.len() <= 1 + ceil_log2(n),
@@ -589,7 +589,7 @@ fn a_list_has_room_for_at_most_twice_its_elements_each_at_the_size_of_its_type()
     for (elem, n) in sizes_of() {
         let source = pushed(elem, n);
         let program = lower(source.as_bytes()).expect("compiles");
-        let (_, requests) = scalar::run_counting(&program, usize::MAX);
+        let (_, requests) = scalar::run_taking(&program, usize::MAX);
         let room = *requests.last().expect("memory was asked for") - WORD;
         assert!(room >= n * elem.width(), "{room} bytes for {source}");
         assert!(room <= 2 * n * elem.width(), "{room} bytes for {source}");
@@ -1103,7 +1103,7 @@ fn a_list_held_inside_another_value_is_unchanged_by_a_push_to_any_other_name() {
 /// How many times a program asks the system for memory.
 fn requests(source: &str) -> usize {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
-    let (outcome, requests) = scalar::run_counting(&program, usize::MAX);
+    let (outcome, requests) = scalar::run_taking(&program, usize::MAX);
     assert_eq!(outcome.status, 0, "for {source}");
     requests.len()
 }
@@ -1174,7 +1174,7 @@ fn a_list_that_a_function_pushes_to_and_returns_grows_as_a_plain_var_does() {
 fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest() {
     let mixed = "struct M {\n  a: u8\n  b: u32\n  c: u8\n}\n\nfn main() ! alloc {\n  var xs: List[M] = []\n  loop i in 0..3 { xs = push(xs, M(a: 1, b: 2, c: 3)) }\n}\n";
     let program = lower(mixed.as_bytes()).expect("compiles");
-    let (_, asked) = scalar::run_counting(&program, usize::MAX);
+    let (_, asked) = scalar::run_taking(&program, usize::MAX);
     // `a` at 0, `b` at 4, `c` at 8, which ends at 9, and 12 is a whole number
     // of 4, so the last list has room for 4 elements of 12 bytes.
     assert_eq!(asked.last(), Some(&(WORD + 48)), "{asked:?}");
@@ -1198,7 +1198,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
                 t.written(v),
             );
             let program = lower(source.as_bytes()).expect("compiles");
-            let (_, asked) = scalar::run_counting(&program, usize::MAX);
+            let (_, asked) = scalar::run_taking(&program, usize::MAX);
             let room = *asked.last().expect("memory was asked for") - WORD;
             let stride = t.stride();
             assert_eq!(room % stride, 0, "{room} bytes for {source}");
@@ -1238,7 +1238,7 @@ fn reading_a_field_of_an_element_reads_only_the_scalars_of_that_field() {
             );
             let program = lower(source.as_bytes()).expect("compiles");
             let loads: usize = (program.functions.iter().enumerate())
-                .filter(|(k, _)| *k != program.main)
+                .filter(|(k, f)| *k != program.main && !handler::takes_room(&program, f))
                 .flat_map(|(_, f)| &f.blocks)
                 .flat_map(|b| &b.instructions)
                 .filter(|i| matches!(i.op, Op::Load { .. }))

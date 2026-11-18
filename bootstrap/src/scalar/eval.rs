@@ -44,6 +44,10 @@ struct Machine<'a> {
     left: usize,
     /// How many bytes each request to the system for memory has asked for.
     requests: Vec<usize>,
+    /// The place of the handler's `take`, when the program has it, and how many
+    /// bytes each call of it asked for.
+    taking: Option<usize>,
+    taken: Vec<usize>,
     /// How many blocks the program may still enter.
     blocks: u64,
     /// How many calls are open.
@@ -78,8 +82,17 @@ pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
 /// Runs the program as `run_with_limit` does, and also gives how many bytes
 /// each request to the system for memory asked for, in order.
 pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
-    let (outcome, _, requests) = start(program, limit, Given::Words(&[]));
+    let (outcome, _, requests, _) = start(program, limit, Given::Words(&[]));
     (outcome, requests)
+}
+
+/// Runs the program as `run_counting` does, and gives how many bytes each call
+/// of the handler's `take` asked for, in order, as the program asked, before
+/// they are rounded and taken from a piece. A program that has no handler asks
+/// for none.
+pub fn run_taking(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
+    let (outcome, _, _, taken) = start(program, limit, Given::Words(&[]));
+    (outcome, taken)
 }
 
 /// Runs a program that takes the words it was started with, as Linux and
@@ -91,7 +104,7 @@ pub fn run_with_words(program: &Program, words: &[Vec<u8>]) -> Outcome {
 /// Runs a program as `run_with_words` does, and also gives what it wrote to
 /// standard error.
 pub fn run_with_words_and_errors(program: &Program, words: &[Vec<u8>]) -> (Outcome, Vec<u8>) {
-    let (outcome, errors, _) = start(program, usize::MAX, Given::Words(words));
+    let (outcome, errors, _, _) = start(program, usize::MAX, Given::Words(words));
     (outcome, errors)
 }
 
@@ -104,13 +117,13 @@ pub fn run_with_command_line(program: &Program, line: &[u16]) -> Outcome {
 /// Runs a program as `run_with_command_line` does, and also gives what it
 /// wrote to standard error.
 pub fn run_with_command_line_and_errors(program: &Program, line: &[u16]) -> (Outcome, Vec<u8>) {
-    let (outcome, errors, _) = start(program, usize::MAX, Given::Line(line));
+    let (outcome, errors, _, _) = start(program, usize::MAX, Given::Line(line));
     (outcome, errors)
 }
 
 /// What a run gave: the outcome, what was written to standard error, and each
 /// request for memory.
-type Run = (Outcome, Vec<u8>, Vec<usize>);
+type Run = (Outcome, Vec<u8>, Vec<usize>, Vec<usize>);
 
 fn start(program: &Program, limit: usize, given: Given) -> Run {
     let mut memory = Vec::new();
@@ -132,6 +145,8 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
         stderr: Vec::new(),
         left: limit,
         requests: Vec::new(),
+        taking: (program.functions.iter()).position(|f| *f == super::handler::take()),
+        taken: Vec::new(),
         blocks: BLOCKS,
         depth: 0,
     };
@@ -146,6 +161,7 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
         },
         machine.stderr,
         machine.requests,
+        machine.taken,
     )
 }
 
@@ -197,6 +213,8 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
         stderr: Vec::new(),
         left: usize::MAX,
         requests: Vec::new(),
+        taking: None,
+        taken: Vec::new(),
         blocks: BLOCKS,
         depth: 0,
     };
@@ -367,7 +385,13 @@ impl Machine<'_> {
                     Op::Constant(Constant::Null) => vec![Word::Address(0)],
                     Op::Constant(Constant::Data(t)) => vec![Word::Address(self.starts[*t])],
                     Op::Call { function, args } => {
-                        let args = args.iter().map(get).collect();
+                        let args: Vec<Word> = args.iter().map(get).collect();
+                        if self.taking == Some(*function) {
+                            let Word::Int(count) = args[2] else {
+                                panic!("a request for room that is not a number")
+                            };
+                            self.taken.push(count as usize);
+                        }
                         self.call(*function, args)?
                     }
                     Op::Load { ty, address } => {

@@ -66,11 +66,11 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
             Body::Runtime(kind) => runtime::build(kind, &mut |k| lowering.place(Body::Runtime(k))),
         });
     }
-    form::Program {
+    form::handler::install(&form::Program {
         data: lowering.data,
         functions,
         main: usize::from(takes),
-    }
+    })
 }
 
 /// A function of the program: a copy of one the source defines, or one the
