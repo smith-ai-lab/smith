@@ -1,0 +1,19 @@
+struct Cat {
+  name: str
+}
+
+enum Pet {
+  cat: Cat
+  none
+}
+
+impl Fmt[Cat] {
+  fn fmt(value: Cat) -> str ! alloc { "{value.name}" }
+}
+
+fn main() ! console {
+  t = match Pet.cat(Cat(name: fmt(Cat(name: "")))) {
+    .cat(c) { fmt(c) }
+    .none { "" }
+  }
+}
