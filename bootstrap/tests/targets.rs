@@ -298,24 +298,8 @@ fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> O
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("program");
-    std::fs::write(&path, bytes).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    // Another test's process may briefly hold the file open while it
-    // starts, which makes running it fail as busy.
-    let mut tries = 0;
-    let output = loop {
-        match crate::clock::output_within(&mut command(&path), false) {
-            Err(e) if e.raw_os_error() == Some(26) && tries < 100 => {
-                tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            result => break result.unwrap(),
-        }
-    };
+    crate::executable::write(&path, bytes);
+    let output = crate::clock::output_within(&mut command(&path), false).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     Outcome {
         stdout: output.stdout,
