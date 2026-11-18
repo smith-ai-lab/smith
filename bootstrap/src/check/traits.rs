@@ -358,14 +358,6 @@ pub(super) fn overlaps(outs: &[bool], a: &ImplInfo, b: &ImplInfo) -> bool {
         .all(|((x, y), _)| overlap(x, &shifted(y, by), &mut sol))
 }
 
-/// The implementations whose types name `name`, which live with that type.
-pub(super) fn impls_for(file: &File, name: &str) -> Vec<Item> {
-    (file.impls.iter().enumerate())
-        .filter(|(_, im)| im.args.iter().flat_map(type_names).any(|(n, _)| n == name))
-        .map(|(i, _)| Item::Impl(i))
-        .collect()
-}
-
 /// The names the `requires` lines that name a trait use: the trait, and the
 /// types it is given.
 pub(super) fn needs_named(needs: &[Expr]) -> Vec<&str> {

@@ -49,7 +49,7 @@ use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
-    impls_for, needs_named, overlaps, prelude_trait, split_needs, withouts,
+    needs_named, overlaps, prelude_trait, split_needs, withouts,
 };
 
 include!(concat!(env!("OUT_DIR"), "/std_modules.rs"));
@@ -1390,7 +1390,7 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
 }
 
 /// A definition of the file, by its place among those of its kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Item {
     Fn(usize),
     Struct(usize),
@@ -1922,6 +1922,25 @@ impl<'a> Names<'a> {
 /// choosing the prelude's `impl`s does: `by <= 30` there needs `Ord`.
 fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<Item> {
     let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
+    let mut seen: HashSet<Item> = HashSet::from([Item::Fn(start_at)]);
+    // The `impl`s that name a type in their arguments, and those of a trait,
+    // each in order, so that an item finds its own without a walk of all.
+    let mut for_type: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut of_trait: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, im) in file.impls.iter().enumerate() {
+        of_trait.entry(im.name.as_str()).or_default().push(i);
+        let mut named: Vec<&str> = im
+            .args
+            .iter()
+            .flat_map(type_names)
+            .map(|(n, _)| n)
+            .collect();
+        named.sort_unstable();
+        named.dedup();
+        for name in named {
+            for_type.entry(name).or_default().push(i);
+        }
+    }
     let mut i = 0;
     while i < reached.len() {
         let mut found: Vec<Item> = Vec::new();
@@ -1995,7 +2014,13 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                 }
                 let defaults = s.fields.iter().filter_map(|f| f.default.as_ref());
                 called(defaults.collect(), &mut found);
-                found.extend(impls_for(file, &s.name));
+                found.extend(
+                    for_type
+                        .get(s.name.as_str())
+                        .into_iter()
+                        .flatten()
+                        .map(|&i| Item::Impl(i)),
+                );
             }
             Item::Enum(e) => {
                 let e = &file.enums[e];
@@ -2007,7 +2032,13 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                 for name in bounds_named(&e.generics) {
                     type_name(name, &mut found);
                 }
-                found.extend(impls_for(file, &e.name));
+                found.extend(
+                    for_type
+                        .get(e.name.as_str())
+                        .into_iter()
+                        .flatten()
+                        .map(|&i| Item::Impl(i)),
+                );
             }
             Item::Trait(k) => {
                 let t = &file.traits[k];
@@ -2021,10 +2052,8 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                 for name in bounds_named(&t.generics) {
                     type_name(name, &mut found);
                 }
-                for (i, im) in file.impls.iter().enumerate() {
-                    if im.name == t.name {
-                        found.push(Item::Impl(i));
-                    }
+                for &i in of_trait.get(t.name.as_str()).into_iter().flatten() {
+                    found.push(Item::Impl(i));
                 }
             }
             Item::Impl(i) => {
@@ -2047,7 +2076,7 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
             }
         }
         for item in found {
-            if !reached.contains(&item) {
+            if seen.insert(item) {
                 reached.push(item);
             }
         }
