@@ -891,6 +891,7 @@ pub(super) fn tails(stmts: &[Stmt], out: &mut Vec<usize>) {
                 tails(&arm.body, out);
             }
         }
+        Some(Stmt::Expr(Expr::Return { .. })) => {}
         Some(Stmt::Expr(e)) => out.push(addr(e)),
         _ => {}
     }
@@ -979,6 +980,9 @@ impl<'a> Checker<'a> {
             contract: true,
             loops: 0,
             outer_loops: 0,
+            returns: Ty::Nothing,
+            returned: None,
+            lambdas: 0,
         };
         for e in &f.requires {
             self.contract(&mut body, e);
@@ -1231,14 +1235,15 @@ pub(super) struct Path {
     held: Vec<(usize, Option<Lin>)>,
 }
 
-/// Whether a block never reaches its end, because it ends with a `break`, or
-/// with an `if` with an `else`, or a `match`, each of whose blocks does.
-pub(super) fn ends_in_break(stmts: &[Stmt]) -> bool {
+/// Whether a block never reaches its end, because it ends with a `break` or
+/// a `return`, or with an `if` with an `else`, or a `match`, each of whose
+/// blocks does.
+pub(super) fn ends_in_exit(stmts: &[Stmt]) -> bool {
     match stmts.last() {
-        Some(Stmt::Expr(Expr::Break { .. })) => true,
+        Some(Stmt::Expr(Expr::Break { .. } | Expr::Return { .. })) => true,
         Some(Stmt::Expr(Expr::Match(m))) => match m.form {
-            Form::If { otherwise } => otherwise && m.arms.iter().all(|a| ends_in_break(&a.body)),
-            Form::Match => m.arms.iter().all(|a| ends_in_break(&a.body)),
+            Form::If { otherwise } => otherwise && m.arms.iter().all(|a| ends_in_exit(&a.body)),
+            Form::Match => m.arms.iter().all(|a| ends_in_exit(&a.body)),
             _ => false,
         },
         _ => false,
@@ -1504,7 +1509,7 @@ impl<'a> Checker<'a> {
     /// `start` when the round began: `arith` must prove that `e` is smaller,
     /// and is still a number of an unsigned type.
     pub(super) fn decreased(&mut self, body: &mut Body<'a>, l: &Loop, e: &Expr, start: &Lin) {
-        if !Self::decided(body) || body.contract || ends_in_break(&l.body) {
+        if !Self::decided(body) || body.contract || ends_in_exit(&l.body) {
             return;
         }
         let end = self.value_of(body, e);

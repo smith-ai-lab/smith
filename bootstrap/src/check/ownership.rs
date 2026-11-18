@@ -323,6 +323,18 @@ impl<'a> Walk<'a> {
                 }
                 None
             }
+            // A `return` ends the path where it is, as the function or the
+            // lambda gives its value to its caller and no line after it runs.
+            // The value goes where the result of the function or the lambda
+            // goes, so a lent value is not returned and a value without
+            // `Copy` is given away, as the last expression gives it away.
+            Expr::Return { value, .. } => {
+                if let Some(value) = value {
+                    self.eval(st, value, Flow::Returned);
+                }
+                *st = None;
+                None
+            }
         }
     }
 
