@@ -161,7 +161,7 @@ fn x86_64_instruction(file: &[u8], start: usize) -> Option<Instruction> {
         0x01 | 0x03 | 0x09 | 0x21 | 0x29 | 0x31 | 0x39 | 0x3b | 0x63 | 0x85 | 0x88 | 0x89
         | 0x8b | 0x8d | 0xd3 => (true, 0, Kind::Other),
         0x69 | 0x81 | 0xc7 => (true, 4, Kind::Other),
-        0x83 | 0xc1 => (true, 1, Kind::Other),
+        0x83 | 0xc1 | 0xc6 => (true, 1, Kind::Other),
         0xf7 => (true, if (file[at] >> 3) & 7 < 2 { 4 } else { 0 }, Kind::Other),
         0xff => (
             true,

@@ -188,8 +188,10 @@ fn an_operation_that_leaves_no_bits_above_costs_one_instruction_at_every_width()
     ];
     let generate = |g: &mut Gen| (*g.pick(&operations), *g.pick(&Bits::ALL), 1 + g.below(6));
     generate::check(91, 24, generate, |(op, bits, times)| {
-        let without = executables(&repeating(*op, *bits, 0));
-        let with = executables(&repeating(*op, *bits, *times));
+        // The first operation makes the two integers, which a program with
+        // none does not, as it only stores one and holds it in the store.
+        let without = executables(&repeating(*op, *bits, 1));
+        let with = executables(&repeating(*op, *bits, 1 + *times));
         assert!(!with.is_empty(), "no target is built for arm64");
         for (with, without) in with.iter().zip(&without) {
             assert_eq!(with.len() - without.len(), WORD * times);

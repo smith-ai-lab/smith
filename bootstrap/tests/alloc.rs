@@ -228,7 +228,7 @@ fn cases() -> &'static [Case] {
         for f in functions {
             let facts = facts(&f);
             for registers in offers(most_together(&facts)) {
-                let allocation = allocate(&f, registers);
+                let allocation = allocate(&f, registers, &vec![false; f.types.len()]);
                 cases.push(Case {
                     f: f.clone(),
                     facts: facts.clone(),
@@ -260,6 +260,7 @@ fn no_two_values_alive_together_share_a_home() {
                     assert_eq!(at % size, 0, "a place is a multiple of its size");
                     assert!(at + size <= a.frame, "a place is in the frame");
                 }
+                Home::Held => panic!("{v} has no home, and none was said to need none"),
             }
         }
         for set in &facts.together {
@@ -364,7 +365,7 @@ fn a_parameter_that_arrives_in_a_register_stays_there_when_it_may() {
 
 fn allocating_twice_gives_the_same_homes() {
     for_every_allocation(|f, _, registers, a| {
-        assert_eq!(*a, allocate(f, registers));
+        assert_eq!(*a, allocate(f, registers, &vec![false; f.types.len()]));
     });
 }
 
