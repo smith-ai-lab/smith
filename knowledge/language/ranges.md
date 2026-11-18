@@ -36,9 +36,37 @@ fn middle(a: [4]u8) -> [2]u8 { a[1..3] }
 
 A slice is read through [`Index`](indexing.md), with a range as the index. The slice of a text is a `str`: [Text](text.md) shows `s[a..b]`.
 
+## A slice must be proven inside
+
+A slice compiles only when [`arith`](arith.md) proves that the range lies inside: that its first end is not above its second, and that its second is not above the size. This is the `valid` of `Index` for a range, as [Indexing](indexing.md#indexing-is-a-trait) says of one index, so nothing is checked when the program runs.
+
+```
+fn word(src: List[u8], from: u64, to: u64) -> List[u8]
+  requires from <= to and to <= src.size
+{
+  src[from..to]
+}
+```
+
+`word("let x", 4, 5)` is the one byte of `x`. Without the `requires`, `src[from..to]` is refused, and the error states what is needed, as it does for an index. The three ways to supply it are those of an index: the range of a `loop`, an `if`, or a `requires`.
+
+## A slice of a list
+
+A slice of a [`List`](../library/list.md) is a `List` of the same elements, and it shares the memory of the list it was cut from, so nothing is copied. Values never change, so nothing can be seen through the shared memory that was not there when the slice was made.
+
+```
+fn first_two(xs: List[u32]) -> List[u32]
+  requires xs.size >= 2
+{
+  xs[0..2]
+}
+```
+
+`first_two([4, 9, 6])` is `[4, 9]`. A slice has no room of its own, so a `push` to it copies its elements first, as a `push` to any list held inside another value does.
+
 ## Leaving an end out
 
-Where the range begins at the start, the first end is left out, and where it ends at the end, the second is. `x[..k]` is `x[0..k]`, and `x[k..]` is `x[k..x.size]`.
+Where the range begins at the start, the first end is left out, and where it ends at the end, the second is. `x[..k]` is `x[0..k]`, and `x[k..]` is `x[k..x.size]`. The short form is the one that is written: the formatter rewrites `x[0..k]` as `x[..k]` and `x[k..x.size]` as `x[k..]`.
 
 ```
 fn drop_one(a: [4]u8) -> [3]u8 { a[1..] }
@@ -53,8 +81,9 @@ fn take_two(a: [4]u8) -> [2]u8 { a[..2] }
 | Written | Is |
 | --- | --- |
 | `a..b` | The numbers from `a` up to `b`, excluding `b` |
-| `x[a..b]` | The elements of `x` from `a` up to `b`, of size `b - a` |
-| `x[..k]` | `x[0..k]` |
-| `x[k..]` | `x[k..x.size]` |
+| `x[a..b]` | The elements of `x` from `a` up to `b`, of size `b - a`, compiled when `a <= b` and `b <= x.size` are proven |
+| `xs[a..b]` on a `List` | A `List` that shares the memory of `xs` |
+| `x[..k]` | `x[0..k]`, which the formatter writes this way |
+| `x[k..]` | `x[k..x.size]`, which the formatter writes this way |
 
 Next: [Patterns in brackets](array-patterns.md)
