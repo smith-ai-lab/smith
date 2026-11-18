@@ -20,8 +20,6 @@
 //! through stays for the jumps that could not be sent past it, and `remove`
 //! takes it away when none is left.
 
-use std::collections::HashMap;
-
 use super::eval::{binary, bits_of, compare, mask, narrow, widen};
 use super::{Constant, End, Function, Instruction, Jump, Op, Program, Type, Value};
 
@@ -126,7 +124,19 @@ fn localize(f: &mut Function, reached: &[bool]) {
             }
         }
     }
+    let wanted = |v: Value, b: usize| {
+        let d = defined[v.0];
+        constant[v.0].is_some() && d != b && d != usize::MAX && !effects[d] && d != 0
+    };
     for b in 0..f.blocks.len() {
+        let mut any = false;
+        for i in &f.blocks[b].instructions {
+            each_read(&i.op, |v| any |= wanted(v, b));
+        }
+        each_end_read(&f.blocks[b].end, |v| any |= wanted(v, b));
+        if !any {
+            continue;
+        }
         let mut made: Vec<(Value, Value)> = Vec::new();
         let mut instructions: Vec<Instruction> = Vec::new();
         let mut by = |v: Value, types: &mut Vec<Type>| {
@@ -150,16 +160,12 @@ fn localize(f: &mut Function, reached: &[bool]) {
         let mut block = std::mem::replace(&mut f.blocks[b], empty_block());
         for i in &mut block.instructions {
             let mut ops = Vec::new();
-            for v in i.op.operands() {
-                ops.push((v, by(v, &mut f.types)));
-            }
+            each_read(&i.op, |v| ops.push((v, by(v, &mut f.types))));
             let lookup = |v: Value| ops.iter().find(|(from, _)| *from == v).map_or(v, |p| p.1);
             i.op = super::inline::renamed(&i.op, &lookup);
         }
         let mut ops = Vec::new();
-        for v in block.end.operands() {
-            ops.push((v, by(v, &mut f.types)));
-        }
+        each_end_read(&block.end, |v| ops.push((v, by(v, &mut f.types))));
         let lookup = |v: Value| ops.iter().find(|(from, _)| *from == v).map_or(v, |p| p.1);
         super::graph::rename_end(&mut block.end, &lookup);
         instructions.append(&mut block.instructions);
@@ -180,12 +186,15 @@ fn localize(f: &mut Function, reached: &[bool]) {
         }
     }
     for (b, block) in f.blocks.iter().enumerate().filter(|(b, _)| reached[*b]) {
-        let reads = (block.instructions.iter()).flat_map(|i| i.op.operands());
-        for v in reads.chain(block.end.operands()) {
+        let mut note = |v: Value| {
             if defined[v.0] != b && defined[v.0] != usize::MAX && !readers[v.0].contains(&b) {
                 readers[v.0].push(b);
             }
+        };
+        for i in &block.instructions {
+            each_read(&i.op, &mut note);
         }
+        each_end_read(&block.end, &mut note);
     }
     let mut given: Vec<Vec<(Value, Value)>> = vec![Vec::new(); f.blocks.len()];
     for v in 0..values {
@@ -279,6 +288,58 @@ fn reached_by(f: &Function) -> Vec<bool> {
     reached
 }
 
+/// What is known of the values a block is given and makes, which are few.
+struct Env(Vec<(Value, Bind)>);
+
+impl Env {
+    fn get(&self, v: Value) -> Option<&Bind> {
+        self.0.iter().find(|(w, _)| *w == v).map(|(_, bind)| bind)
+    }
+
+    fn insert(&mut self, v: Value, bind: Bind) {
+        self.0.push((v, bind));
+    }
+}
+
+/// Calls `f` with each value the op reads, in order.
+fn each_read(op: &Op, mut f: impl FnMut(Value)) {
+    match op {
+        Op::Constant(_) => {}
+        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => {
+            f(*a);
+            f(*b);
+        }
+        Op::Widen { value, .. } | Op::Narrow(value) => f(*value),
+        Op::Choose {
+            on,
+            then,
+            otherwise,
+        } => {
+            f(*on);
+            f(*then);
+            f(*otherwise);
+        }
+        Op::Load { address, .. } => f(*address),
+        Op::Store { address, value, .. } => {
+            f(*address);
+            f(*value);
+        }
+        Op::Call { args, .. } | Op::System { args, .. } => args.iter().for_each(|&v| f(v)),
+    }
+}
+
+/// Calls `f` with each value the end reads, in order.
+fn each_end_read(end: &End, mut f: impl FnMut(Value)) {
+    match end {
+        End::Jump(j) => j.args.iter().for_each(|&v| f(v)),
+        End::Switch { on, jumps } => {
+            f(*on);
+            jumps.iter().flat_map(|j| &j.args).for_each(|&v| f(v));
+        }
+        End::Return(values) => values.iter().for_each(|&v| f(v)),
+    }
+}
+
 fn empty_block() -> super::Block {
     super::Block {
         params: Vec::new(),
@@ -326,13 +387,16 @@ fn facts(f: &Function, reached: &[bool]) -> Facts {
     // A block whose value is read in another block is not gone through. A
     // block that nothing reaches reads nothing.
     for (b, block) in f.blocks.iter().enumerate().filter(|(b, _)| reached[*b]) {
-        let reads = (block.instructions.iter()).flat_map(|i| i.op.operands());
-        for v in reads.chain(block.end.operands()) {
+        let mut note = |v: Value| {
             let d = defined[v.0];
             if d != b && d != usize::MAX {
                 through[d] = false;
             }
+        };
+        for i in &block.instructions {
+            each_read(&i.op, &mut note);
         }
+        each_end_read(&block.end, &mut note);
     }
     Facts {
         constant,
@@ -456,11 +520,11 @@ fn step(
 /// value, and every value it gives is known or is in the block that jumps.
 fn resolve(f: &Function, facts: &Facts, b: usize, binds: &[Bind]) -> Option<(usize, Vec<Arg>)> {
     let block = &f.blocks[b];
-    let mut env: HashMap<Value, Bind> = HashMap::new();
+    let mut env = Env(Vec::new());
     for (&p, &bind) in block.params.iter().zip(binds) {
         env.insert(p, bind);
     }
-    let known = |env: &HashMap<Value, Bind>, v: Value| match env.get(&v) {
+    let known = |env: &Env, v: Value| match env.get(v) {
         Some(bind) => bind.known,
         None => facts.constant[v.0],
     };
@@ -508,7 +572,7 @@ fn resolve(f: &Function, facts: &Facts, b: usize, binds: &[Bind]) -> Option<(usi
     };
     let mut args = Vec::with_capacity(chosen.args.len());
     for &v in &chosen.args {
-        args.push(match env.get(&v) {
+        args.push(match env.get(v) {
             None => Arg::Value(v),
             Some(Bind { value: Some(v), .. }) => Arg::Value(*v),
             Some(Bind { known: Some(c), .. }) => Arg::Const(*c, f.types[v.0]),
