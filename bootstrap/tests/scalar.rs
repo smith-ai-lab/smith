@@ -152,6 +152,10 @@ pub const ONCE: &[Test] = &[
         the_passes_leave_no_block_that_holds_only_a_jump,
     ),
     (
+        "a_block_that_only_jumps_on_stays_when_what_it_is_given_is_read_beyond_it",
+        a_block_that_only_jumps_on_stays_when_what_it_is_given_is_read_beyond_it,
+    ),
+    (
         "a_comparison_only_a_choice_reads_is_the_last_instruction_of_its_block",
         a_comparison_only_a_choice_reads_is_the_last_instruction_of_its_block,
     ),
@@ -1805,10 +1809,33 @@ fn jumps_to(f: &scalar::Function) -> Vec<usize> {
     count
 }
 
+/// Whether the block `b` of `f` holds only a jump, and one of its parameters
+/// is read by something besides that jump, so that the block is where two
+/// values become one for the blocks after it.
+fn only_jumps_on_what_is_read_beyond(f: &scalar::Function, b: usize) -> bool {
+    let block = &f.blocks[b];
+    let End::Jump(j) = &block.end else {
+        return false;
+    };
+    if !block.instructions.is_empty() {
+        return false;
+    }
+    let reads = |v: Value| {
+        let operands = f.blocks.iter().flat_map(|b| {
+            let ops = b.instructions.iter().flat_map(|i| i.op.operands());
+            ops.chain(b.end.operands()).collect::<Vec<_>>()
+        });
+        operands.filter(|o| *o == v).count()
+    };
+    (block.params.iter()).any(|p| reads(*p) > j.args.iter().filter(|a| *a == p).count())
+}
+
 /// No block holds only a jump, except the first block of a function when
 /// the block it jumps to is jumped to from elsewhere too, as a loop's is: the
 /// function must start in a block that no jump need leave, and the block
-/// that jumps to the loop cannot be joined to what it jumps to.
+/// that jumps to the loop cannot be joined to what it jumps to. Nor is a
+/// block that is given a value by more than one jump, and that blocks after
+/// it read, as there is nowhere else for the two to become one.
 fn the_passes_leave_no_block_that_holds_only_a_jump() {
     for (_, s) in taken() {
         let after = scalar::passes(s);
@@ -1820,12 +1847,81 @@ fn the_passes_leave_no_block_that_holds_only_a_jump() {
                     continue;
                 }
                 assert!(
-                    b == 0 && count[j.block] > 1,
+                    (b == 0 && count[j.block] > 1) || only_jumps_on_what_is_read_beyond(f, b),
                     "block {b} holds only a jump in {f:?}"
                 );
             }
         }
     }
+}
+
+/// A function that writes `A` once or twice, as many times as the value that
+/// the two blocks it jumps to give one block that only jumps on, and that a
+/// loop after it reads. Too large to be inlined, and called with 0 and 1.
+fn a_function_that_joins_two_values_for_a_loop() -> scalar::Program {
+    let long = Type::Int(Bits::B64);
+    let mut f = Builder::new();
+    let [n] = f.params(&[long])[..] else { panic!() };
+    let (first, _) = f.block(&[]);
+    let (second, _) = f.block(&[]);
+    let (join, joined) = f.block(&[long]);
+    let (round, rounds) = f.block(&[long]);
+    let (end, _) = f.block(&[]);
+    let zero = f.int(Bits::B64, 0);
+    let one = f.int(Bits::B64, 1);
+    let two = f.int(Bits::B64, 2);
+    let text = f.emit(Op::Constant(Constant::Data(0)), &[Type::Address])[0];
+    let is_zero = f.compare(scalar::Compare::Equal, n, zero);
+    f.switch(is_zero, vec![(first, Vec::new()), (second, Vec::new())]);
+    f.at(first);
+    f.jump(join, vec![one]);
+    f.at(second);
+    f.jump(join, vec![two]);
+    f.at(join);
+    f.jump(round, vec![zero]);
+    f.at(round);
+    f.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, joined[0]],
+        },
+        &[],
+    );
+    let done = f.compare(scalar::Compare::Equal, rounds[0], one);
+    let next = f.binary(scalar::Binary::Add, rounds[0], one);
+    f.switch(done, vec![(round, vec![next]), (end, Vec::new())]);
+    f.at(end);
+    f.ret(Vec::new());
+    let function = f.finish(&[]);
+    let mut m = Builder::new();
+    let zero = m.int(Bits::B64, 0);
+    let one = m.int(Bits::B64, 1);
+    m.call(1, vec![zero], &[]);
+    m.call(1, vec![one], &[]);
+    m.ret(Vec::new());
+    scalar::Program {
+        data: vec![b"AA".to_vec()],
+        functions: vec![m.finish(&[]), function],
+        main: 0,
+    }
+}
+
+fn a_block_that_only_jumps_on_stays_when_what_it_is_given_is_read_beyond_it() {
+    let before = a_function_that_joins_two_values_for_a_loop();
+    scalar::check(&before).unwrap();
+    let expected = scalar::run(&before);
+    assert_eq!(expected.stdout, b"AAAAAA");
+    for after in after_each_pass(&before) {
+        scalar::check(&after).unwrap();
+        assert_eq!(scalar::run(&after), expected, "{after:?}");
+    }
+    let after = scalar::passes(&before);
+    let f = &after.functions[1];
+    assert!(
+        (0..f.blocks.len()).any(|b| only_jumps_on_what_is_read_beyond(f, b)),
+        "{f:?}"
+    );
+    assert_eq!(scalar::passes(&after), after);
 }
 
 /// A comparison that only the choice that ends its block reads is the last
