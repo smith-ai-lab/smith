@@ -8,7 +8,8 @@ built:
   - "and the index of a `List` read as `xs[i]`, which `arith` proves below `xs.size`, and the `size` of a list as a value in a comparison, in a `requires`, an `if`, and the range of a `loop`, which a list has from the list it was given, whether bound to a name or to a `var`"
   - "and, for a `var` of a list, a struct, or a tuple, and each of its fields, what is known of it, as of any value, until it or a field of it is assigned, at which a fact about it is forgotten, in a loop, a lambda, and an arm of an `if` or a `match` as it is outside one, and a `var` the loop or lambda assigns is not known from before it"
   - "and the range of what `bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left` give, of an unsigned number or, for a shift left, of any whole number, from what is known of the numbers they are given"
-  - "not the facts of a `match` block, a `var` of a whole number outside a loop that was given a value, or a proof held in a value"
+  - "and, for a `var` of a whole number, outside a loop as inside one, what it was last given, where no assignment to it lies between that and the use on any path, an `if`, a `match`, a loop that may run no time, an earlier round of a loop, and a lambda each counting as one that may lie between"
+  - "not the facts of a `match` block, or a proof held in a value"
 ---
 
 # What arith proves
