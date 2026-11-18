@@ -83,30 +83,31 @@ impl State {
 }
 
 /// The program with the stacks passed to every function that needs room.
-pub fn install(program: &Program) -> Program {
+pub fn install(program: Program) -> Program {
     let given: Vec<Vec<bool>> = program.functions.iter().map(escape::given_back).collect();
-    let uses = needing(program, &given);
+    let uses = needing(&program, &given);
     if !uses[program.main].any() {
-        return program.clone();
+        return program;
     }
     let at_take = program.functions.len();
-    let mut functions: Vec<Function> = (program.functions.iter().enumerate())
+    let main = program.functions[program.main].clone();
+    let mut functions: Vec<Function> = (program.functions.into_iter().enumerate())
         .map(|(k, f)| {
             if uses[k].any() {
                 with_state(f, &given[k], &uses, k == program.main, at_take)
             } else {
-                f.clone()
+                f
             }
         })
         .collect();
     functions.push(take());
     functions.push(ready(at_take));
-    let mut data = program.data.clone();
+    let mut data = program.data;
     // What a stack that has no piece reads at its end: a piece that holds
     // nothing and has none after it.
     data.push(vec![0; TRAILER as usize]);
     functions.push(entry(
-        &program.functions[program.main],
+        &main,
         program.main,
         uses[program.main],
         data.len() - 1,
@@ -156,9 +157,14 @@ fn fresh(f: &mut Function) -> [Value; 2] {
 /// The function with the stacks it takes before its parameters, and the one
 /// for results before its results, taking room where it asked the system, and
 /// giving the stacks to each call that needs them, and to each block.
-fn with_state(f: &Function, given: &[bool], uses: &[Uses], first: bool, take: usize) -> Function {
-    let me = needing_of(f, given, uses);
-    let mut f = f.clone();
+fn with_state(
+    mut f: Function,
+    given: &[bool],
+    uses: &[Uses],
+    first: bool,
+    take: usize,
+) -> Function {
+    let me = needing_of(&f, given, uses);
     let start = |f: &mut Function| State {
         results: me.results.then(|| fresh(f)),
         temporaries: me.temporaries.then(|| fresh(f)),
