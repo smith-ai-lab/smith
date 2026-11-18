@@ -143,7 +143,7 @@ fn main() ! console, alloc {
 
 This prints `first`, `second`, and `1 2`.
 
-A pattern names a `var` once. `(a, a) = (2, 3)` is refused, whether `a` is a `var` it assigns to or a name it defines, as one of the two values would be lost.
+A pattern names a `var` once. `(a, a) = (2, 3)` is refused, whether `a` is a `var` it assigns to or a name it defines, as one of the two values would be lost. For a `var` `a` it assigned to, the error is at the second `a`, at any depth of the pattern, as in `(a, (b, a))`: "this pattern names `a` twice". For a name it defines, it is "`a` is already defined in `main`".
 
 ## The empty tuple
 
