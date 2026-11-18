@@ -68,7 +68,7 @@ pub effect log {
 }
 ```
 
-Written in `app/log.smith`, this effect is imported by another file with `use app.log (log)`. The effects the standard library declares need no import, as [The effects Smith provides](provided-effects.md) says.
+Written in `app/log.smith`, this effect is imported by another file with `use app.log (log, write)`: importing an effect brings in its name and nothing else, so each operation the file calls is imported by its own name, as [Nothing is imported implicitly](use.md#nothing-is-imported-implicitly) describes. The effects the standard library declares need no import, as [The effects Smith provides](provided-effects.md) says.
 
 ## The forms
 
