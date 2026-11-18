@@ -300,7 +300,15 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
     for w in &defs.file.withouts {
         let name = w.name.as_str();
         let k = match defs.trait_names.get(name) {
-            Some(&k) if k == defs.fmt || k == defs.repr || k == defs.eq || k == defs.convert() => k,
+            Some(&k)
+                if k == defs.fmt
+                    || k == defs.repr
+                    || k == defs.eq
+                    || k == defs.ord()
+                    || k == defs.convert() =>
+            {
+                k
+            }
             Some(_) => {
                 errors.push(Error::new(
                     w.name_pos,
@@ -748,8 +756,8 @@ impl<'a> Defs<'a> {
     /// writes it with, if the trait is one a type is given automatically
     /// and the type is one it is given to, and nothing takes it away: the
     /// fields of a struct, what the cases of an enum hold, and the elements
-    /// of a tuple. A `str` is given `Repr` and `Eq`, and `()` each of the
-    /// three, which have no parts.
+    /// of a tuple. A `str` is given `Repr`, `Eq`, and `Ord`, and `()` each of
+    /// the four, which have no parts.
     fn given_parts(&self, k: usize, types: &[Ty]) -> Option<Vec<Ty>> {
         if k == self.convert() {
             let Ty::Enum(e, args) = &types[1] else {
@@ -759,7 +767,7 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
-        if k != self.fmt && k != self.repr && k != self.eq {
+        if k != self.fmt && k != self.repr && k != self.eq && k != self.ord() {
             return None;
         }
         let taken = |d: Def| self.withouts.contains(&(k, d));
@@ -775,6 +783,11 @@ impl<'a> Defs<'a> {
             Ty::Tuple(items) => Some(items.clone()),
             _ => None,
         }
+    }
+
+    /// The trait `Ord`, which the prelude defines.
+    pub(super) fn ord(&self) -> usize {
+        self.trait_names["Ord"]
     }
 
     /// The trait `Convert`, which the prelude defines.
@@ -837,7 +850,7 @@ impl<'a> Defs<'a> {
     }
 
     /// The copies a copy of a given implementation runs: for `Fmt`, the
-    /// `Repr` of its type, and for `Repr` and `Eq`, that of each part.
+    /// `Repr` of its type, and for `Repr`, `Eq`, and `Ord`, that of each part.
     pub(super) fn given_calls(&self, k: usize, types: &[Ty]) -> Vec<Instance> {
         let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()]).0;
         if k == self.fmt {
