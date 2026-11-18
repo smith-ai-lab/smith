@@ -6347,12 +6347,20 @@ impl<'a> Checker<'a> {
 
     /// Reports that what is at `pos`, which an error names as `what`, needs
     /// an effect the body does not list, unless that is already reported or
-    /// a listed effect with no such name may be it misspelt.
+    /// a listed effect with no such name may be it misspelt. A default lists
+    /// none, so each thing in it that needs one is reported.
     fn needs(&mut self, body: &mut Body, effect: &str, pos: Pos, what: &str) {
-        if body.listed.contains(&effect)
-            || body.unknown_effect
-            || body.missing.iter().any(|m| m == effect)
-        {
+        if body.listed.contains(&effect) || body.unknown_effect {
+            return;
+        }
+        if body.default.is_some() {
+            self.errors.push(Error::new(
+                pos,
+                format!("a default carries no effect, and {what} needs the `{effect}` effect"),
+            ));
+            return;
+        }
+        if body.missing.iter().any(|m| m == effect) {
             return;
         }
         body.missing.push(effect.to_string());

@@ -205,10 +205,7 @@ impl<'a> Checker<'a> {
     pub(super) fn interpolation(&mut self, body: &mut Body<'a>, pos: Pos, parts: &[Part]) -> Ty {
         let needs = "a string that holds an expression";
         if body.default.is_some() {
-            self.errors.push(Error::new(
-                pos,
-                format!("a default carries no effect, and {needs} needs the `alloc` effect"),
-            ));
+            self.needs(body, "alloc", pos, needs);
             for part in parts {
                 if let Part::Expr(Expr::Call(call)) = part {
                     self.unknown_call(body, call);

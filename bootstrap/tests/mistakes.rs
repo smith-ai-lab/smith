@@ -28,6 +28,10 @@ pub const ONCE: &[Test] = &[
         the_fix_for_a_missing_effect_writes_the_signature_with_its_defaults_as_they_were_written,
     ),
     (
+        "a_default_that_needs_an_effect_is_refused_at_what_needs_it",
+        a_default_that_needs_an_effect_is_refused_at_what_needs_it,
+    ),
+    (
         "a_type_that_contains_itself_is_reported_once_and_its_uses_are_not_checked",
         a_type_that_contains_itself_is_reported_once_and_its_uses_are_not_checked,
     ),
@@ -278,6 +282,44 @@ fn file_with_a_default_text(g: &mut Gen) -> File {
 
 fn the_fix_for_a_missing_effect_writes_the_signature_with_its_defaults_as_they_were_written() {
     generate::check(123, 200, file_with_a_default_text, File::check);
+}
+
+/// A file whose `main` calls functions whose defaults each hold one thing that needs the
+/// `alloc` effect, which a default carries none of: a list with elements, or
+/// a call of `push`. Each is refused where the thing is written, and a
+/// default that needs nothing is not.
+fn file_with_defaults_that_need_an_effect(g: &mut Gen) -> File {
+    let mut file = File::default();
+    let mut calls = String::new();
+    for i in 0..1 + g.below(4) {
+        calls.push_str(&format!("  f{i}()\n"));
+        file.push(&format!("fn f{i}(a: List[u8] = "));
+        match g.below(4) {
+            0 => file.push("[]"),
+            1 => {
+                file.mistake("[", "a list that holds elements");
+                for n in 0..1 + g.below(3) {
+                    file.push(if n == 0 { "1" } else { ", 2" });
+                }
+                file.push("]");
+            }
+            2 => {
+                file.mistake("push", "`push`");
+                file.push("([], 3)");
+            }
+            _ => {
+                file.mistake("[", "a list that holds elements");
+                file.push("7]");
+            }
+        }
+        file.push(") {}\n\n");
+    }
+    file.push(&format!("fn main() {{\n{calls}}}\n"));
+    file
+}
+
+fn a_default_that_needs_an_effect_is_refused_at_what_needs_it() {
+    generate::check(283, 200, file_with_defaults_that_need_an_effect, File::check);
 }
 
 /// A file that defines a struct or an enum that contains itself, directly or
