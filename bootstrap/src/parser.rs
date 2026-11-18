@@ -147,6 +147,11 @@ pub struct Param {
     pub pos: Pos,
     pub ty: Type,
     pub default: Option<Expr>,
+    /// Whether the parameter is marked `take`.
+    pub take: bool,
+    /// For a parameter of a function type, whether each of the function's
+    /// own parameters is marked `take`.
+    pub takes: Vec<bool>,
 }
 
 /// A type: a name, and the types in brackets after it, if any. A tuple
@@ -1456,10 +1461,8 @@ impl Parser<'_> {
     fn param(&mut self) -> Result<Param, Error> {
         let (name, pos) = self.defined("a parameter")?;
         self.expect_punct(":", "`:` and the parameter's type")?;
-        if self.tok() == &Tok::Keyword("take") {
-            return Err(Error::unsupported(self.pos(), "`take`"));
-        }
-        let ty = self.ty()?;
+        let take = self.taking();
+        let (ty, takes) = self.ty_taking()?;
         let mut default = None;
         if self.tok() == &Tok::Punct("=") {
             self.bump();
@@ -1471,7 +1474,65 @@ impl Parser<'_> {
             pos,
             ty,
             default,
+            take,
+            takes,
         })
+    }
+
+    /// Reads `take` before a type, if it is there.
+    fn taking(&mut self) -> bool {
+        let take = self.tok() == &Tok::Keyword("take");
+        if take {
+            self.bump();
+        }
+        take
+    }
+
+    /// Parses a type, and for a function type whether each of its parameters
+    /// is marked `take`.
+    fn ty_taking(&mut self) -> Result<(Type, Vec<bool>), Error> {
+        if self.tok() != &Tok::Punct("(") {
+            return Ok((self.ty()?, Vec::new()));
+        }
+        let pos = self.pos();
+        let marked = self.list(
+            |p| {
+                let take = p.taking();
+                Ok((take, p.ty()?))
+            },
+            Self::no_spill,
+        )?;
+        let (takes, mut args): (Vec<bool>, Vec<Type>) = marked.into_iter().unzip();
+        if self.tok() != &Tok::Punct("->") {
+            if takes.contains(&true) {
+                return Err(Error::unsupported(pos, "`take` in a tuple type"));
+            }
+            if args.len() == 1 {
+                return Err(Error::unsupported(pos, "one type in parentheses"));
+            }
+            let tuple = Type {
+                name: String::new(),
+                pos,
+                args,
+                function: false,
+            };
+            return Ok((tuple, Vec::new()));
+        }
+        self.bump();
+        args.push(self.ty()?);
+        if self.tok() == &Tok::Punct("!") {
+            return Err(Error::unsupported(
+                self.pos(),
+                "an effect on a function type",
+            ));
+        }
+        let function = Type {
+            name: String::new(),
+            pos,
+            args,
+            function: true,
+        };
+        Ok((function, takes))
     }
 
     /// Parses a type: a name, and the types in brackets after it, if any.
