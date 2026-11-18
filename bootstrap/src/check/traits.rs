@@ -1163,8 +1163,12 @@ impl<'a> Checker<'a> {
                     ));
                     return Ty::Unknown;
                 }
-                let shifts = defs.file.traits[k].name == "Bits"
-                    && defs.file.traits[k].functions[fi].name.starts_with("shift_");
+                let bits = defs.file.traits[k].name == "Bits";
+                let function = defs.file.traits[k].functions[fi].name.as_str();
+                let shifts = bits && function.starts_with("shift_");
+                if let (true, Ty::Int(t)) = (bits, &types[0]) {
+                    body.facts.note_bit_call(call, sig, function, *t);
+                }
                 if shifts && self.errors.len() == mistakes {
                     self.shift(body, call, sig, &types[0]);
                 }
