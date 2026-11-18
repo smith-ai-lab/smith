@@ -90,7 +90,7 @@ fn hex_and_binary_give_what_rust_formats_padded_and_never_cut() {
 }
 
 fn the_examples_of_the_pages_on_ascii_and_fmt_hold() {
-    let source = "use std.ascii (is_digit)\nuse std.fmt (binary, hex)\n\nfn digits(s: str) -> u64 {\n  var n: u64 = 0\n  loop i in 0..s.size {\n    if is_digit(s[i]) { n = wrapping_add(n, 1) }\n  }\n  n\n}\n\nfn byte(b: u8) -> str ! alloc { hex(convert(b), width: 2) }\n\nfn main() ! console, alloc {\n  print(\"{digits(\"a1b22\")}\")\n  print(\"U+{hex(233, width: 4)}\")\n  print(byte(10))\n  print(hex(255))\n  print(hex(255, upper: false))\n  print(hex(255, width: 1))\n  print(hex(0))\n  print(hex(0, width: 4))\n  print(binary(5))\n  print(binary(5, width: 8))\n  print(binary(5, width: 2))\n  print(binary(0))\n  print(hex(18446744073709551615, width: 20))\n  print(binary(18446744073709551615))\n}\n";
+    let source = "use std.ascii (is_digit)\nuse std.fmt (binary, hex)\n\nfn digits(s: str) -> Nat {\n  var n: Nat = 0\n  loop i in 0..s.size {\n    if is_digit(s[i]) { n = saturating_add(n, 1) }\n  }\n  n\n}\n\nfn byte(b: u8) -> str ! alloc { hex(convert(b), width: 2) }\n\nfn main() ! console, alloc {\n  print(\"{digits(\"a1b22\")}\")\n  print(\"U+{hex(233, width: 4)}\")\n  print(byte(10))\n  print(hex(255))\n  print(hex(255, upper: false))\n  print(hex(255, width: 1))\n  print(hex(0))\n  print(hex(0, width: 4))\n  print(binary(5))\n  print(binary(5, width: 8))\n  print(binary(5, width: 2))\n  print(binary(0))\n  print(hex(18446744073709551615, width: 20))\n  print(binary(18446744073709551615))\n}\n";
     let lines = [
         "3",
         "U+00E9",
