@@ -29,6 +29,7 @@ mod lists_and_text;
 mod numbers_and_operators;
 mod traits;
 
+use super::lists_and_text::as_list;
 use lists_and_text::indexed;
 use numbers_and_operators::{bits_of, signed};
 
@@ -85,6 +86,13 @@ fn stops(body: &[Stmt], breaks: bool, returns: bool) -> bool {
             }
             Expr::Index { of, index, .. } => {
                 one(of, breaks, returns) || one(index, breaks, returns)
+            }
+            Expr::Slice { of, from, to, .. } => {
+                one(of, breaks, returns)
+                    || [from, to]
+                        .into_iter()
+                        .flatten()
+                        .any(|end| one(end, breaks, returns))
             }
             // A `return` in a lambda leaves the lambda.
             Expr::Lambda(l) => any(&mut values(&l.body), false, false),
@@ -603,7 +611,9 @@ impl<'a> Lowering<'a> {
     fn scalars(&self, ty: &Ty) -> Vec<form::Type> {
         let defs = self.typed.defs;
         match ty {
-            Ty::Text => vec![form::Type::Address, form::Type::Int(form::Bits::B64)],
+            Ty::Text | Ty::Slice(_) => {
+                vec![form::Type::Address, form::Type::Int(form::Bits::B64)]
+            }
             Ty::List(_) => vec![
                 form::Type::Address,
                 form::Type::Int(form::Bits::B64),
@@ -1112,6 +1122,7 @@ impl<'a> Lowering<'a> {
                     (Ty::Nothing, Vec::new())
                 }
                 Callee::Push => self.push(out, call, env),
+                Callee::Freeze => self.freeze(out, expr, call, env),
                 Callee::Utf8 => self.utf8(out, expr, call, env),
                 Callee::Narrow(narrowing) => self.narrow_call(out, expr, call, narrowing, env),
                 Callee::Value => self.call_value(out, call, env),
@@ -1180,7 +1191,7 @@ impl<'a> Lowering<'a> {
                     return (ty, self.load(out, address, &scalars));
                 }
                 let (of_ty, values) = self.expr(out, of, env);
-                if matches!(of_ty, Ty::List(_) | Ty::Text) {
+                if matches!(of_ty, Ty::List(_) | Ty::Slice(_) | Ty::Text) {
                     return (typed.type_of(expr, env), vec![values[1]]);
                 }
                 let Ty::Struct(s, args) = of_ty else {
@@ -1227,6 +1238,9 @@ impl<'a> Lowering<'a> {
                 (Ty::tuple(types), values)
             }
             Expr::List { items, .. } => self.list_literal(out, expr, items, env),
+            Expr::Slice { of, from, to, .. } => {
+                self.piece(out, expr, (of, from.as_deref(), to.as_deref()), env)
+            }
             Expr::Index { .. } => {
                 let (ty, address, scalars) = self.element_at(out, expr, env);
                 (ty, self.load(out, address, &scalars))

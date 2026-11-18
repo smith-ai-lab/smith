@@ -45,7 +45,7 @@ use crate::parser::{
     Arg, ArithOp, Arm, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop, Match,
     Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
-use lists_and_text::{as_read, is_push, is_utf8, text_as_bytes};
+use lists_and_text::{as_read, is_freeze, is_push, is_utf8};
 use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
@@ -353,6 +353,9 @@ enum Ty {
     Tuple(Vec<Ty>),
     /// A `List`, which holds its one element type.
     List(Vec<Ty>),
+    /// A `Slice`, a run of elements that cannot change, which holds its one
+    /// element type.
+    Slice(Vec<Ty>),
     /// A function: the types of its parameters, followed by the type it
     /// gives.
     Fn(Vec<Ty>),
@@ -399,6 +402,15 @@ impl Ty {
         }
     }
 
+    /// The slice of this element type, or unknown if it is.
+    fn slice(element: Ty) -> Ty {
+        if element.unknown() {
+            Ty::Unknown
+        } else {
+            Ty::Slice(vec![element])
+        }
+    }
+
     /// The tuple of these types: the empty tuple if there are none, and
     /// unknown if one of them is.
     fn tuple(items: Vec<Ty>) -> Ty {
@@ -430,7 +442,8 @@ impl Ty {
             | Ty::Enum(_, args)
             | Ty::Tuple(args)
             | Ty::Fn(args)
-            | Ty::List(args) => args,
+            | Ty::List(args)
+            | Ty::Slice(args) => args,
             _ => &[],
         }
     }
@@ -467,6 +480,7 @@ impl Ty {
             Ty::Tuple(_) => Ty::tuple(args),
             Ty::Fn(_) => Ty::func(args),
             Ty::List(_) => Ty::list(args[0].clone()),
+            Ty::Slice(_) => Ty::slice(args[0].clone()),
             t => t.clone(),
         }
     }
@@ -498,6 +512,7 @@ impl Ty {
             Ty::Enum(e, of) => Ty::Enum(*e, of.iter().map(|t| t.partial(args)).collect()),
             Ty::Tuple(of) => Ty::Tuple(of.iter().map(|t| t.partial(args)).collect()),
             Ty::List(of) => Ty::List(of.iter().map(|t| t.partial(args)).collect()),
+            Ty::Slice(of) => Ty::Slice(of.iter().map(|t| t.partial(args)).collect()),
             Ty::Fn(of) => Ty::Fn(of.iter().map(|t| t.partial(args)).collect()),
             t => t.clone(),
         }
@@ -529,7 +544,10 @@ fn agrees(a: &Ty, b: &Ty) -> bool {
         (Ty::Struct(s, x), Ty::Struct(t, y)) | (Ty::Enum(s, x), Ty::Enum(t, y)) => {
             s == t && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
-        (Ty::Tuple(x), Ty::Tuple(y)) | (Ty::Fn(x), Ty::Fn(y)) | (Ty::List(x), Ty::List(y)) => {
+        (Ty::Tuple(x), Ty::Tuple(y))
+        | (Ty::Fn(x), Ty::Fn(y))
+        | (Ty::List(x), Ty::List(y))
+        | (Ty::Slice(x), Ty::Slice(y)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(a, b)| agrees(a, b))
         }
         (a, b) => a == b,
@@ -562,7 +580,10 @@ fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
         (Ty::Struct(s, a), Ty::Struct(t, b)) | (Ty::Enum(s, a), Ty::Enum(t, b)) => {
             s == t && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
-        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::Fn(a), Ty::Fn(b)) | (Ty::List(a), Ty::List(b)) => {
+        (Ty::Tuple(a), Ty::Tuple(b))
+        | (Ty::Fn(a), Ty::Fn(b))
+        | (Ty::List(a), Ty::List(b))
+        | (Ty::Slice(a), Ty::Slice(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| unify(a, b, sol))
         }
         (a, b) => a == b,
@@ -852,6 +873,26 @@ impl<'a> Defs<'a> {
                 element => Ty::list(element),
             };
         }
+        if name == "Slice" && !self.struct_names.contains_key(name) {
+            if t.args.len() != 1 {
+                errors.push(Error::new(
+                    t.pos,
+                    format!(
+                        "`Slice` takes one type argument, and this gives {}",
+                        t.args.len()
+                    ),
+                ));
+                return Ty::Unknown;
+            }
+            return match self.resolve(&t.args[0], scope, errors) {
+                Ty::Unknown => Ty::Unknown,
+                Ty::Fn(_) | Ty::Nothing => {
+                    errors.push(Error::unsupported(t.pos, "a slice of functions or of `()`"));
+                    Ty::Unknown
+                }
+                element => Ty::slice(element),
+            };
+        }
         if name == TEXT || Int::named(name).is_some() {
             no_args("the type", errors);
             return match (t.args.is_empty(), Int::named(name)) {
@@ -951,6 +992,7 @@ impl<'a> Defs<'a> {
         self.struct_names.contains_key(name)
             || self.enum_names.contains_key(name)
             || name == TEXT
+            || name == "Slice"
             || Int::named(name).is_some()
             || TYPES_NOT_BUILT.contains(&name)
     }
@@ -1027,6 +1069,7 @@ impl<'a> Defs<'a> {
                 format!("({})", items.join(", "))
             }
             Ty::List(items) => format!("List[{}]", self.text(&items[0], scope)),
+            Ty::Slice(items) => format!("Slice[{}]", self.text(&items[0], scope)),
             Ty::Fn(items) => {
                 let items: Vec<String> = items.iter().map(|t| self.text(t, scope)).collect();
                 function_text(&items)
@@ -1082,6 +1125,7 @@ impl<'a> Defs<'a> {
                     format!("{}[{}]", defs.type_name(t), args.join(", "))
                 }
                 Ty::List(args) => format!("List[{}]", text(defs, &args[0], sol, vars, scope)),
+                Ty::Slice(args) => format!("Slice[{}]", text(defs, &args[0], sol, vars, scope)),
                 t => defs.text(t, scope),
             }
         }
@@ -1308,6 +1352,15 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
         }
         Expr::Index { of, index, .. } => {
             format!("{}[{}]", written_with(s, of), written_with(s, index))
+        }
+        Expr::Slice { of, from, to, .. } => {
+            let end = |e: &Option<Box<Expr>>| e.as_ref().map(|e| written_with(s, e));
+            format!(
+                "{}[{}..{}]",
+                written_with(s, of),
+                end(from).unwrap_or_default(),
+                end(to).unwrap_or_default()
+            )
         }
         Expr::Lambda(l) if l.params.is_empty() => "{ ... }".to_string(),
         Expr::Lambda(l) => {
@@ -3181,6 +3234,12 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
             walk(of, out);
             walk(index, out);
         }
+        Expr::Slice { of, from, to, .. } => {
+            walk(of, out);
+            for end in [from, to].into_iter().flatten() {
+                walk(end, out);
+            }
+        }
         Expr::Lambda(l) => {
             for value in values(&l.body) {
                 walk(value, out);
@@ -3253,6 +3312,12 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
             Expr::Index { of, index, .. } => {
                 blocks(of, out);
                 blocks(index, out);
+            }
+            Expr::Slice { of, from, to, .. } => {
+                blocks(of, out);
+                for end in [from, to].into_iter().flatten() {
+                    blocks(end, out);
+                }
             }
             Expr::Lambda(l) => out.push(&l.body),
             Expr::Loop(l) => {
@@ -3400,6 +3465,8 @@ enum Callee {
     Intrinsic,
     /// `push`, which gives a list with one more element.
     Push,
+    /// `freeze`, which gives the memory of a list as a slice.
+    Freeze,
     /// `utf8`, which gives a text of the bytes, or where they stop being valid.
     Utf8,
     /// `narrow` or one of its three relatives, which take a whole number to
@@ -3668,6 +3735,9 @@ impl<'a> Typed<'a> {
                 if is_push(defs, call) {
                     return Callee::Push;
                 }
+                if is_freeze(defs, call) {
+                    return Callee::Freeze;
+                }
                 if is_utf8(defs, call) {
                     return Callee::Utf8;
                 }
@@ -3732,6 +3802,7 @@ impl<'a> Typed<'a> {
             | Callee::Value
             | Callee::Intrinsic
             | Callee::Push
+            | Callee::Freeze
             | Callee::Utf8
             | Callee::Narrow(_) => Vec::new(),
         }
@@ -5152,13 +5223,16 @@ impl<'a> Checker<'a> {
             } => self.arith(body, expr, (*op, left, right, *op_pos), want),
             Expr::List { pos, items } => self.list_literal(body, *pos, items, want),
             Expr::Index { of, index, pos } => self.index(body, of, index, *pos),
+            Expr::Slice { of, from, to, pos } => {
+                self.piece(body, of, (from.as_deref(), to.as_deref()), *pos)
+            }
             Expr::Field { of, name, pos } => {
                 if let Some(e) = defs.qualified_case(of, &body.names) {
                     return self.case(body, Some(e), name, of.pos(), *pos, None, want);
                 }
                 match self.expr(body, of, &Want::Any) {
-                    Ty::List(_) | Ty::Text if name == "size" => Ty::Int(Int::Nat),
-                    Ty::List(_) => {
+                    Ty::List(_) | Ty::Slice(_) | Ty::Text if name == "size" => Ty::Int(Int::Nat),
+                    Ty::List(_) | Ty::Slice(_) => {
                         self.errors.push(Error::new(
                             *pos,
                             format!("a list has no field named `{name}`"),
@@ -6428,6 +6502,9 @@ impl<'a> Checker<'a> {
         }
         if is_push(defs, call) {
             return self.push(body, call, want);
+        }
+        if is_freeze(defs, call) {
+            return self.freeze(body, call, want);
         }
         if is_utf8(defs, call) {
             return self.utf8(body, call);

@@ -78,7 +78,16 @@ impl Parser<'_> {
     pub(super) fn index(&mut self, of: Expr) -> Result<Expr, Error> {
         let at = self.pos();
         self.bump();
-        let mut index = self.expr()?;
+        if self.tok() == &Tok::Punct("..") {
+            return self.piece(of, None, at);
+        }
+        let mut index = self.either()?;
+        if self.tok() == &Tok::Punct("..") {
+            return self.piece(of, Some(index), at);
+        }
+        if continues_expression(self.tok()) {
+            return Err(self.continuation());
+        }
         if self.tok() == &Tok::Punct(",") {
             let mut items = vec![index];
             while self.tok() == &Tok::Punct(",") {
@@ -91,6 +100,22 @@ impl Parser<'_> {
         Ok(Expr::Index {
             of: Box::new(of),
             index: Box::new(index),
+            pos: at,
+        })
+    }
+
+    /// The rest of `of[a..b]`, `of[..b]`, or `of[a..]`, from the `..`.
+    fn piece(&mut self, of: Expr, from: Option<Expr>, at: Pos) -> Result<Expr, Error> {
+        self.bump();
+        let to = match self.tok() {
+            Tok::Punct("]") => None,
+            _ => Some(Box::new(self.expr()?)),
+        };
+        self.expect_punct("]", "`]`")?;
+        Ok(Expr::Slice {
+            of: Box::new(of),
+            from: from.map(Box::new),
+            to,
             pos: at,
         })
     }

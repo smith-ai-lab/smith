@@ -730,7 +730,7 @@ impl<'a> Checker<'a> {
     /// Notes what the name defined last was given, when it is a whole number
     /// and not a `var`.
     pub(super) fn assume_binding(&mut self, body: &mut Body<'a>, value: &Expr) {
-        if let Some((_, Ty::List(_))) = body.names.last() {
+        if let Some((_, Ty::List(_) | Ty::Slice(_))) = body.names.last() {
             if Self::decided(body) {
                 self.give_list(body, body.names.len() - 1, value);
             }
@@ -769,6 +769,27 @@ impl<'a> Checker<'a> {
         let given = match value {
             Expr::List { items, .. } => Some(constant(items.len() as i128)),
             Expr::Name { .. } => builder.list_size(value),
+            // A frozen list is as long as the list was.
+            Expr::Call(call)
+                if super::lists_and_text::is_freeze(self.defs, call) && call.args.len() == 1 =>
+            {
+                builder.list_size(&call.args[0].value)
+            }
+            // A piece is as long as its ends are apart.
+            Expr::Slice { of, from, to, .. } => {
+                let size = match to {
+                    Some(to) => builder.lin(to),
+                    None => builder.list_size(of),
+                };
+                let start = match from {
+                    Some(from) => builder.lin(from),
+                    None => Some(constant(0)),
+                };
+                match (size, start) {
+                    (Some(size), Some(start)) => Some(builder.combine(&size, -1, &start)),
+                    _ => None,
+                }
+            }
             _ => None,
         };
         let overflow = builder.overflow;
@@ -866,6 +887,63 @@ impl<'a> Checker<'a> {
                 .with_fix(format!(
                     "put `{i}` in the range of a `loop` over `0..{xs}.size`, check `{i} < {xs}.size` \
                      with an `if`, or state it in a `requires`"
+                )),
+            );
+        }
+    }
+
+    /// Whether `arith` proves that the part of the slice `of` from `a` up to
+    /// `b` lies inside it, that `a <= b` and `b <= of.size`, where an end that
+    /// is left out is the start or the size, and if it does not, the goal it
+    /// could not prove.
+    pub(super) fn in_piece(
+        &mut self,
+        body: &mut Body<'a>,
+        of: &Expr,
+        ends: (Option<&Expr>, Option<&Expr>),
+        pos: Pos,
+    ) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let size = builder.list_size(of);
+        let from = match ends.0 {
+            Some(from) => builder.lin(from),
+            None => Some(constant(0)),
+        };
+        let to = match ends.1 {
+            Some(to) => builder.lin(to),
+            None => size.clone(),
+        };
+        let overflow = builder.overflow;
+        let goal = match (from, to, size) {
+            (Some(from), Some(to), Some(size)) if !overflow => {
+                let ordered = self.sum(body, &mut facts, &to, &from, 0);
+                let inside = self.sum(body, &mut facts, &size, &to, 0);
+                ordered
+                    .zip(inside)
+                    .map(|(ordered, inside)| Formula::And(vec![ordered, inside]))
+            }
+            _ => None,
+        };
+        let goals: Vec<&Formula> = goal.iter().collect();
+        let used = background(&facts, goals.into_iter());
+        body.facts = facts;
+        if !goal.as_ref().is_some_and(|g| proves(&used, g)) {
+            let xs = written_expr(of);
+            let a = ends.0.map_or_else(|| "0".to_string(), written_expr);
+            let b = ends.1.map_or_else(|| format!("{xs}.size"), written_expr);
+            self.errors.push(
+                Error::new(
+                    pos,
+                    format!(
+                        "cannot prove that `{a} <= {b}` and `{b} <= {xs}.size`, which a piece of `{xs}` needs"
+                    ),
+                )
+                .with_fix(format!(
+                    "check `{a} <= {b}` and `{b} <= {xs}.size` with an `if`, or state them in a `requires`"
                 )),
             );
         }
@@ -1269,7 +1347,7 @@ impl<'a> Checker<'a> {
         let mut texts: HashMap<String, String> = HashMap::new();
         for (arg, place) in call.args.iter().zip(params_of(&sig.params, &call.args)) {
             let (name, ty) = &sig.params[place];
-            if matches!(ty, Ty::List(_)) {
+            if matches!(ty, Ty::List(_) | Ty::Slice(_)) {
                 let mut builder = self.builder(body, &mut facts, true);
                 if let Some(size) = builder.list_size(&arg.value).filter(|_| !builder.overflow) {
                     sums.insert(format!("{name}.size"), size);
@@ -1550,7 +1628,7 @@ impl<'a> Checker<'a> {
                 body.facts.held.push((at, sum));
             }
             Ty::Int(_) => {}
-            Ty::List(_) => self.give_list(body, at, value),
+            Ty::List(_) | Ty::Slice(_) => self.give_list(body, at, value),
             _ => body.facts.bump(at),
         }
     }
@@ -1570,7 +1648,7 @@ impl<'a> Checker<'a> {
         let at = body.names.len() - 1;
         match body.names[at].1 {
             Ty::Int(_) => {}
-            Ty::List(_) => return self.give_list(body, at, value),
+            Ty::List(_) | Ty::Slice(_) => return self.give_list(body, at, value),
             _ => return body.facts.bump(at),
         }
         let sum = self.value_of(body, value);

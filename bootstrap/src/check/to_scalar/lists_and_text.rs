@@ -24,8 +24,8 @@ impl<'a> Lowering<'a> {
         vec![address, length]
     }
 
-    /// Lowers an argument for a parameter of the type: a text is a list of
-    /// bytes whose room is its size, so that it is passed as one, with no call.
+    /// Lowers an argument for a parameter of the type: a text or a slice is a
+    /// list whose room is its size, so that it is passed as one, with no call.
     pub(super) fn passed(
         &mut self,
         out: &mut Out<'a>,
@@ -34,7 +34,7 @@ impl<'a> Lowering<'a> {
         env: &[Ty],
     ) -> Vec<form::Value> {
         let (ty, mut values) = self.expr(out, value, env);
-        if text_as_bytes(&ty, param) {
+        if as_list(&ty, param) {
             values.push(values[1]);
         }
         values
@@ -83,9 +83,56 @@ impl<'a> Lowering<'a> {
     /// The types of the scalars of each element of a list of the type.
     pub(super) fn element(&self, list: &Ty) -> Vec<form::Type> {
         match list {
-            Ty::List(of) => self.scalars(&of[0]),
+            Ty::List(of) | Ty::Slice(of) => self.scalars(&of[0]),
             _ => unreachable!("checked"),
         }
+    }
+
+    /// Lowers `freeze`, which gives the address and the size of the list and
+    /// not its room, so that no instruction is made for it.
+    pub(super) fn freeze(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        call: &'a Call,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let values = self.expr(out, &call.args[0].value, env).1;
+        (self.typed.type_of(expr, env), values[..2].to_vec())
+    }
+
+    /// Lowers `of[a..b]`, `of[..b]`, or `of[a..]`: the address of element `a`
+    /// and `b - a` elements, with nothing copied.
+    pub(super) fn piece(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        (of, from, to): (&'a Expr, Option<&'a Expr>, Option<&'a Expr>),
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let (ty, values) = self.expr(out, of, env);
+        let (_, stride) = form::element(&self.element(&ty));
+        let (address, size) = (values[0], values[1]);
+        let to = match to {
+            Some(to) => self.expr(out, to, env).1[0],
+            None => size,
+        };
+        let (start, count) = match from {
+            Some(from) => {
+                let from = self.expr(out, from, env).1[0];
+                (Some(from), out.binary(form::Binary::Sub, to, from))
+            }
+            None => (None, to),
+        };
+        let address = match start {
+            Some(from) => {
+                let width = out.int(form::Bits::B64, i128::from(stride));
+                let offset = out.binary(form::Binary::Mul, from, width);
+                out.binary(form::Binary::Add, address, offset)
+            }
+            None => address,
+        };
+        (self.typed.type_of(expr, env), vec![address, count])
     }
 
     /// Lowers `push`, which gives the list with the item after its last
@@ -132,7 +179,7 @@ impl<'a> Lowering<'a> {
                 let offset = out.binary(form::Binary::Mul, place, width);
                 let address = out.binary(form::Binary::Add, values[0], offset);
                 let element = match list {
-                    Ty::List(of) => of[0].clone(),
+                    Ty::List(of) | Ty::Slice(of) => of[0].clone(),
                     _ => Ty::Int(Int::U8),
                 };
                 (element, address, scalars.into_iter().zip(places).collect())
@@ -140,7 +187,7 @@ impl<'a> Lowering<'a> {
             Expr::Field { of, name, .. } => {
                 let (ty, address, scalars) = self.element_at(out, of, env);
                 let (start, size, ty) = match ty {
-                    Ty::List(_) | Ty::Text => (1, 1, Ty::Int(Int::Nat)),
+                    Ty::List(_) | Ty::Slice(_) | Ty::Text => (1, 1, Ty::Int(Int::Nat)),
                     Ty::Struct(s, args) => {
                         let mut start = 0;
                         let mut found = None;
@@ -216,6 +263,9 @@ impl<'a> Lowering<'a> {
         let ty = self.typed.type_of(expr, env);
         let scalars = self.element(&ty);
         let (places, stride) = form::element(&scalars);
+        if matches!(ty, Ty::Slice(_)) {
+            return self.slice_literal(out, ty, items, &scalars);
+        }
         let elements: Vec<Vec<form::Value>> = items
             .iter()
             .map(|item| self.expr(out, item, env).1)
@@ -248,6 +298,42 @@ impl<'a> Lowering<'a> {
             }
         }
         (ty, vec![start, count, count])
+    }
+}
+
+impl<'a> Lowering<'a> {
+    /// Lowers a slice written out: its elements, which the checker holds to
+    /// be whole numbers written out, are bytes of the program's data, and no
+    /// memory is asked for.
+    fn slice_literal(
+        &mut self,
+        out: &mut Out<'a>,
+        ty: Ty,
+        items: &'a [Expr],
+        scalars: &[form::Type],
+    ) -> (Ty, Vec<form::Value>) {
+        let width = scalars[0].bytes() as usize;
+        let mut bytes = Vec::with_capacity(items.len() * width);
+        for item in items {
+            let Expr::Number {
+                magnitude,
+                negative,
+                ..
+            } = item
+            else {
+                unreachable!("checked")
+            };
+            let magnitude = *magnitude as i128;
+            let number = if *negative { -magnitude } else { magnitude };
+            bytes.extend_from_slice(&number.to_le_bytes()[..width]);
+        }
+        let count = out.int(form::Bits::B64, items.len() as i128);
+        if items.is_empty() {
+            let none = out.constant(form::Constant::Null, form::Type::Address);
+            return (ty, vec![none, count]);
+        }
+        let address = self.text(out, &bytes)[0];
+        (ty, vec![address, count])
     }
 }
 
