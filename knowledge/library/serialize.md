@@ -1,0 +1,141 @@
+---
+type: specification
+title: Serialize
+description: The Serialize trait, by which a value describes its shape to a writer that knows a format, given automatically to a type whose parts have it.
+status: planned
+---
+
+# Serialize
+
+`Serialize` is the trait by which a value describes its shape to a writer. The writer knows a format, such as JSON, and the value knows none.
+
+```
+struct Point {
+  x: i64
+  y: i64
+}
+
+fn main() ! console, alloc {
+  print(to_json(Point(x: 3, y: 4)))
+}
+```
+
+This prints `{"x":3,"y":4}`. `Point` has `Serialize` without a line written for it, and `to_json` is a function of `std.json` that hands the value a writer of JSON. Nothing here is built, so no words are quoted for what the compiler says today.
+
+## The trait
+
+`Serialize` has one function, which takes a value and a writer and gives the writer back with the value written to it.
+
+```
+trait Serialize[T] {
+  fn write[W: Writer](value: T, to: take W) -> W
+}
+```
+
+The writer is [taken](../language/take.md) and given back, so a value is written straight to where it goes, and nothing is built in between.
+
+## The shapes
+
+A value describes itself with eleven shapes and no others. A format is a type that has `Writer`, which has a function for each.
+
+| Shape | Is written by | For |
+| --- | --- | --- |
+| A boolean | `boolean(w, value)` | `bool` |
+| A whole number | `signed(w, value)` and `unsigned(w, value)` | `i8` to `i64`, and `u8` to `u64` and `Nat` |
+| A float | `float(w, value)` | `f32`, `f64` |
+| A text | `text(w, value)` | `str` |
+| Nothing | `nothing(w)` | `()` |
+| A value that may be missing | `absent(w)`, or `present(w)` and then the value | `Option[T]` |
+| A sequence | `sequence(w, size)`, each element, `end_sequence(w)` | `List[T]`, `Slice[T]`, an array |
+| A tuple | `tuple(w, size)`, each part, `end_tuple(w)` | `(A, B)` |
+| A struct | `structure(w, name, fields)`, then `field(w, name)` and the value for each field, `end_structure(w)` | A struct |
+| A case of an enum | `case(w, of, name, holds)`, and then what it holds when it holds something | An enum |
+| A map | `map(w, size)`, then a key and its value for each entry, `end_map(w)` | `Map[K, V]` |
+
+```
+trait Writer[W] {
+  fn boolean(w: take W, value: bool) -> W
+  fn signed(w: take W, value: i64) -> W
+  fn unsigned(w: take W, value: u64) -> W
+  fn float(w: take W, value: f64) -> W
+  fn text(w: take W, value: str) -> W
+  fn nothing(w: take W) -> W
+  fn absent(w: take W) -> W
+  fn present(w: take W) -> W
+  fn sequence(w: take W, size: Nat) -> W
+  fn end_sequence(w: take W) -> W
+  fn tuple(w: take W, size: Nat) -> W
+  fn end_tuple(w: take W) -> W
+  fn structure(w: take W, name: str, fields: Nat) -> W
+  fn field(w: take W, name: str) -> W
+  fn end_structure(w: take W) -> W
+  fn case(w: take W, of: str, name: str, holds: bool) -> W
+  fn map(w: take W, size: Nat) -> W
+  fn end_map(w: take W) -> W
+}
+```
+
+How a shape looks in the output is the format's to say: whether a case of an enum is a text or an object in JSON is said by `std.json`, and `Serialize` says only that it is a case.
+
+## Given automatically
+
+A struct, an enum, a tuple, a list, a slice, and an `Option` have `Serialize` when each of their parts has it, as they have [`Eq`](../language/comparisons.md). The numbers, `bool`, `str`, and `()` have it. What `Point` above is given is what this writes:
+
+```
+impl Serialize[Point] {
+  fn write[W: Writer](value: Point, to: take W) -> W {
+    var w = structure(to, "Point", 2)
+    w = field(w, "x")
+    w = write(value.x, w)
+    w = field(w, "y")
+    w = write(value.y, w)
+    end_structure(w)
+  }
+}
+```
+
+The fields are written in the order the struct lists them.
+
+## Taking it away
+
+[`without`](../language/without.md) takes `Serialize` from a type, as it takes any trait that is given.
+
+```
+struct Session {
+  token: str
+}
+
+without Serialize for Session
+```
+
+`to_json(Session(token: "s"))` is then refused, and so is writing any struct that holds a `Session`.
+
+## Writing it yourself
+
+A type's own `impl` replaces the one it is given, wherever the type is a part of another. This writes a `Celsius` as the number it holds.
+
+```
+struct Celsius {
+  degrees: i64
+}
+
+impl Serialize[Celsius] {
+  fn write[W: Writer](value: Celsius, to: take W) -> W { signed(to, value.degrees) }
+}
+```
+
+`to_json(Celsius(degrees: 21))` is `21`, and a struct with a `Celsius` field writes `21` for that field.
+
+## A format of your own
+
+A format is a type with an `impl` of `Writer`, written in any module. `std.json` is one, and it has no place the language knows of: a program's own format is written the same way and takes every type that has `Serialize`.
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `write(value, w)` | `value` written to the writer `w`, which is given back |
+| A struct, enum, tuple, list, slice, or `Option` | Has `Serialize` when its parts have |
+| `without Serialize for T` | `T` and what holds it cannot be written |
+| `impl Serialize[T] { ... }` | Replaces what `T` is given |
+| `impl Writer[F] { ... }` | Makes `F` a format |
