@@ -63,9 +63,36 @@ fn size(r: Rect) -> i32 {
 
 What the standard library puts in scope everywhere, such as `print` and the five effects, is unchanged, as [The prelude](prelude.md) describes.
 
+## Two names that are the same
+
+A name in a file means one thing, so a name cannot be listed from two modules. Here both modules export `begin`.
+
+```
+use db.transaction (begin)
+use ui.animation (begin)
+```
+
+This is refused at the second `use`. Modules are not built, so no words are quoted.
+
+`as` after a name in the list gives it another name in this file, and then both can be listed.
+
+```
+use db.transaction (begin)
+use ui.animation (begin as start)
+
+fn open(db: Db, view: View) ! net, ui {
+  t = begin(db)
+  a = start(view)
+}
+```
+
+`start` is `begin` of `ui.animation`, and `begin` is that of `db.transaction`. The other name holds in this file only: the module still exports `begin`, and another file lists it as `begin`.
+
+`as` on a name is written where a file uses that one name of the module. Where it uses several of the module's names that clash, the module is imported and the names are written with it, as [Importing a module](qualified-names.md) shows.
+
 ## The formatter sorts the list
 
-The names in a list are written in the order the formatter gives them, which is sorted. `use db.transaction (begin, commit, Transaction)` is rewritten by the formatter as `use db.transaction (Transaction, begin, commit)`.
+The names in a list are written in the order the formatter gives them, which is sorted by the name the module gives, so `begin as start` sorts as `begin`. `use db.transaction (begin, commit, Transaction)` is rewritten by the formatter as `use db.transaction (Transaction, begin, commit)`.
 
 ## A name that is missing
 
@@ -112,6 +139,8 @@ Nothing is re-exported. A name a file imports is for that file alone, and a modu
 | --- | --- |
 | `use m (a, b)` | The names `a` and `b` of the module `m` are in this file |
 | `use m (b, a)` | The same, which the formatter writes as `use m (a, b)` |
+| `use m (a as c)` | The name `a` of `m` is in this file as `c`, which ends a clash with another `a` |
+| `use m (a)` and `use n (a)` | Refused: a name in a file means one thing |
 | `use app.log (log)`, then a call of `write` | Refused: an effect's operations are imported by name too |
 | A name never imported | An error that names the module to import from |
 | A name imported, never used | A warning from `smith check` |
