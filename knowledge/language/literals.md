@@ -5,6 +5,7 @@ description: How a number, a character, a text, true, false, or an array is writ
 status: partial
 built:
   - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, including a literal given for a type parameter, which the place of the call's result decides when it names the parameter, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
+  - "a whole number that ends a block of an `if` or a `match` that gives a value, which takes the type of the other blocks, or of the place the value is used when every block ends in one"
 ---
 
 # Literals
@@ -202,6 +203,26 @@ fn scaled(w: Weights) -> Weights {
   w * two
 }
 ```
+
+## A literal at the end of a block
+
+An `if` or a `match` that gives a value has blocks that give one type. A block that ends in a whole number literal takes the type of the other blocks, whichever block comes first.
+
+```
+fn main() ! console, alloc {
+  e: u8 = 110
+  decoded = if e == 'n' { '\n' } else { e }
+  digit = match decoded {
+    10 { 1 }
+    _ { e }
+  }
+  print("{decoded} {digit}")
+}
+```
+
+This prints `10 1`, with `decoded` and `digit` both `u8`. A literal that the type cannot hold is refused at the literal, as `300` is in `if e == 'n' { 1 } else { 300 }`: "`300` does not fit `u8`, which holds 0 to 255".
+
+When every block ends in a literal, the type comes from the place the value is used, as a literal's does: a binding that states its type, an argument, an operand whose other side has a type, on either side of the operator, a field, a returned value, or a use of the name it is bound to. It is an `i64` when nothing decides. Blocks that end in values of two different types are an error, as [If](if.md) says, and a literal does not settle which.
 
 ## A character
 
