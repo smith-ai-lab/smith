@@ -19,7 +19,7 @@ fn main() ! console {
 
 ## Declared by the standard library
 
-The standard library declares five effects. Each has operations, and a program can handle it. All five are in scope everywhere, so none is imported.
+The standard library declares five effects. Each has operations, and a program can handle it. Each is imported by name, as any effect is: none is in [the prelude](prelude.md).
 
 | Effect | Allows |
 | --- | --- |
@@ -29,7 +29,7 @@ The standard library declares five effects. Each has operations, and a program c
 | `time` | The clock |
 | `ui` | Windows and events |
 
-`console` is needed by `print`, which is also in scope everywhere. A function that calls it lists `console`, as `main` does above.
+`console` is needed by `print`, and a program imports both with `use std.console (console, print)`. A function that calls it lists `console`, as `main` does above.
 
 ## Built in
 

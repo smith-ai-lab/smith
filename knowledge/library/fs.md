@@ -11,7 +11,7 @@ The module `std.fs` declares the `fs` [effect](../language/effect-declarations.m
 Most programs read a whole file, or write one.
 
 ```
-use std.fs (read_all, write_all, FsError)
+use std.fs (fs, read_all, write_all, FsError)
 
 fn copy(from: str, to: str) -> Result[(), FsError] ! fs, alloc {
   bytes = try read_all(from)
@@ -27,7 +27,7 @@ fn copy(from: str, to: str) -> Result[(), FsError] ! fs, alloc {
 Both are written in Smith with the operations below, and a program that needs less than a whole file uses those. `open` is written for [`with`](../language/with.md): it lends the file to the rest of the block and closes it afterwards, on every path.
 
 ```
-use std.fs (open, read, size, FsError)
+use std.fs (fs, open, read, size, FsError)
 
 fn header(path: str) -> Result[List[u8], FsError] ! fs, alloc {
   with f = open(path)

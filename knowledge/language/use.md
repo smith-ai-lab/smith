@@ -61,7 +61,7 @@ fn size(r: Rect) -> i32 {
 }
 ```
 
-What the standard library puts in scope everywhere, such as `print` and the five effects, is unchanged, as [The prelude](prelude.md) describes.
+The few names that need no `use` are those the syntax itself means, which [The prelude](prelude.md) lists. `print` is not one of them.
 
 ## Two names that are the same
 
