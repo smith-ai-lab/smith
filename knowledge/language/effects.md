@@ -3,7 +3,9 @@ type: specification
 title: Effects
 description: An effect as something a function does outside itself, how a signature lists the effects a function may perform, and what a caller must have.
 status: partial
-built: "`console`, `alloc`, and `diverge` in a signature, each listed once and required of every caller that needs it, and checked where a lambda is written; not an effect on a function type"
+built:
+  - "`console`, `alloc`, and `diverge` in a signature, each listed once and required of every caller that needs it, and checked where a lambda is written"
+  - "not an effect on a function type"
 ---
 
 # Effects

@@ -3,7 +3,8 @@ type: specification
 title: without
 description: A without statement takes away a trait a type would get automatically, for Copy, Discard, Fmt, Repr, Eq, Ord, Random, or any other that is derived.
 status: partial
-built: "`without`, for `Fmt`, `Repr`, and `Eq`"
+built:
+  - "`without`, for `Fmt`, `Repr`, and `Eq`"
 ---
 
 # without

@@ -3,7 +3,8 @@ type: specification
 title: Traits
 description: A trait as a set of functions over one or more types, an impl that supplies them for particular types, how a call finds the impl, and the defaults of a trait's parameters.
 status: partial
-built: "`impl`, calls of trait functions with defaults"
+built:
+  - "`impl`, calls of trait functions with defaults"
 ---
 
 # Traits

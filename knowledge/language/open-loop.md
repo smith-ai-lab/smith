@@ -3,7 +3,9 @@ type: specification
 title: The open-ended loop
 description: An open-ended loop runs its block again and again until break, carries the diverge effect, and with decreases is proven to end.
 status: partial
-built: "an open-ended `loop` ended by `break`, whose function carries `diverge`, and `loop decreases e` with a measure of an unsigned type that `arith` proves smaller at every place the loop goes round again, where the measure must also fit its type when the round begins; not a measure checked only where the loop goes round again, so not a distance to an end"
+built:
+  - "an open-ended `loop` ended by `break`, whose function carries `diverge`, and `loop decreases e` with a measure of an unsigned type that `arith` proves smaller at every place the loop goes round again, where the measure must also fit its type when the round begins"
+  - "not a measure checked only where the loop goes round again, so not a distance to an end"
 ---
 
 # The open-ended loop

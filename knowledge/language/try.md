@@ -3,7 +3,8 @@ type: specification
 title: try
 description: try, which continues a function only when a step succeeded, and the Try trait that gives it its meaning.
 status: partial
-built: "`try` as a statement, after a binding, and inside an expression, `Option`, `Result`, and the `Try` trait from the prelude, and a type of a program's own that implements `Try`"
+built:
+  - "`try` as a statement, after a binding, and inside an expression, `Option`, `Result`, and the `Try` trait from the prelude, and a type of a program's own that implements `Try`"
 ---
 
 # `try`

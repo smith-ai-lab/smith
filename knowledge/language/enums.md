@@ -3,7 +3,8 @@ type: specification
 title: Enums
 description: Enums that hold exactly one of their cases, each case holding a type or nothing, and how a case is built.
 status: partial
-built: "enums whose cases hold a type or nothing, with type parameters, and cases built with a leading dot or in full"
+built:
+  - "enums whose cases hold a type or nothing, with type parameters, and cases built with a leading dot or in full"
 ---
 
 # Enums

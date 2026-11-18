@@ -3,7 +3,8 @@ type: specification
 title: Mutable locals
 description: Locals that change, declared with var, given a new value with =, and accumulated into with +=, -=, *=, and /=.
 status: partial
-built: "`var` and `=`, an error for assigning to a name that is not a `var`"
+built:
+  - "`var` and `=`, an error for assigning to a name that is not a `var`"
 ---
 
 # Mutable locals

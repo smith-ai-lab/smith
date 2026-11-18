@@ -3,7 +3,8 @@ type: specification
 title: The command line
 description: The smith commands, how build, run, and check take a file and a target, and what each prints when it fails.
 status: partial
-built: "`smith build`, `smith run`, and `smith check` on `main.smith` or a named file"
+built:
+  - "`smith build`, `smith run`, and `smith check` on `main.smith` or a named file"
 ---
 
 # The command line

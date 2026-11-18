@@ -3,7 +3,8 @@ type: specification
 title: Number types
 description: The whole number and float types, what each holds, why a number has exactly one type, and what the operators do with two of them.
 status: partial
-built: "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
+built:
+  - "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
 ---
 
 # Number types

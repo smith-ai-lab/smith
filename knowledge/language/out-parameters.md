@@ -3,7 +3,8 @@ type: specification
 title: out parameters
 description: A trait parameter marked out is determined by the others, so a call's result type follows from its operands, and a trait parameter may have a default.
 status: partial
-built: "traits with `out` parameters"
+built:
+  - "traits with `out` parameters"
 ---
 
 # out parameters

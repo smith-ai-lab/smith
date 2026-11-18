@@ -3,7 +3,8 @@ type: specification
 title: Comparisons
 description: == and != through the Eq trait, <, <=, >, and >= through the Ord trait, and the laws every implementation keeps.
 status: partial
-built: "`==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every integer type has"
+built:
+  - "`==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every integer type has"
 ---
 
 # Comparisons

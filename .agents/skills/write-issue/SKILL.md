@@ -32,6 +32,9 @@ Must be true
 - One or two concrete examples: a program or command and its exact result.
 - Properties, each starting with "For every".
 
+Touches
+The files or folders of bootstrap/src and knowledge/ the work is expected to change, one to a line.
+
 Out of scope
 What not to build.
 
@@ -45,7 +48,7 @@ Read first
 The sections of knowledge/ that apply, as links.
 ```
 
-The first three parts are the goal, the finished result, and its limits. "Ask first" says when to stop. "After" tells the lead what can run at the same time: two issues with neither under the other's "After" get workers together. "Read first" points at the sources, so nothing is pasted into the issue that the repository already holds.
+The first three parts are the goal, the finished result, and where it lands. "Ask first" says when to stop. "Touches" and "After" tell the lead what can run at the same time, as the `lead-issue` skill says. "Read first" points at the sources, so nothing is pasted into the issue that the repository already holds.
 
 ## Rules
 

@@ -3,7 +3,8 @@ type: specification
 title: Tuples
 description: Tuples that group values without names, patterns that take them apart and assign, and the empty tuple.
 status: partial
-built: "tuples, and patterns that define and assign"
+built:
+  - "tuples, and patterns that define and assign"
 ---
 
 # Tuples

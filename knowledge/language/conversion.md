@@ -3,7 +3,8 @@ type: specification
 title: Conversion
 description: The Convert trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
 status: partial
-built: "`narrow`, `wrapping_narrow`, `saturating_narrow`, and `checked_narrow` between whole number types, the type that is expected picking the result, `narrow` compiling when `arith` proves that the value fits, and an error that says to use `convert` when the second type holds every value of the first"
+built:
+  - "`narrow`, `wrapping_narrow`, `saturating_narrow`, and `checked_narrow` between whole number types, the type that is expected picking the result, `narrow` compiling when `arith` proves that the value fits, and an error that says to use `convert` when the second type holds every value of the first"
 ---
 
 # Conversion

@@ -84,7 +84,9 @@ Work through these in order, and stop at the first that applies.
 ## Rules
 
 - One worker builds features at a time. A second may run beside it on upkeep, such as making tests faster, in files the first does not touch. Each time something merges while a second worker's pull request is open, look at that pull request: a conflict stops its checks, and its worker may be waiting in silence.
-- More than that runs together only when the owner asks, when neither issue is listed under the other's "After", and never when each would have to move the same code into a shared place.
+- More than that runs together only when the owner asks, and never when each would have to move the same code into a shared place.
+- Two issues have workers at once only when their "Touches" lines do not meet, as a file and the folder that holds it do, and neither is under the other's "After". An issue with no "Touches" line runs alone.
+- An issue that changes generated code for cases that exist, so that its pull request says `Changes generated code.`, runs alone.
 - A worker's work depends on what is on `main` when it starts. Confirm that a pull request it builds on has merged before starting it.
 - Before changing an issue a worker is on, read the issue's comments: the worker may have asked a question the change should answer.
 - After a merge that changes the compiler, confirm that a release was published before telling the owner it is out. A workflow that ends green has not always done its work.

@@ -3,7 +3,8 @@ type: specification
 title: Strings that hold expressions
 description: A string that holds expressions in braces, which the Fmt trait turns into text, and the escapes that write a brace or a quote.
 status: partial
-built: "strings that hold expressions of any type that implements `Fmt`, an `impl` of `Fmt`, and every escape"
+built:
+  - "strings that hold expressions of any type that implements `Fmt`, an `impl` of `Fmt`, and every escape"
 ---
 
 # Strings that hold expressions
