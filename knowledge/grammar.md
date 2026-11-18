@@ -72,7 +72,8 @@ impl_def   = "impl" [ generics ] IDENT "[" type { "," type } "]" { "requires" ex
 derive     = "derive" IDENT "for" IDENT ;
 without    = "without" IDENT "for" IDENT ;
 use        = "use" IDENT { "." IDENT } [ "as" IDENT ]
-             [ "(" IDENT { "," IDENT } [ "," ] ")" ] ;
+             [ "(" use_name { "," use_name } [ "," ] ")" ] ;
+use_name   = IDENT [ "as" IDENT ] ;
 foreign    = "foreign" STRING fn_sig ;
 
 block      = "{" { stmt } "}" ;
