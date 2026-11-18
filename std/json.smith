@@ -1,0 +1,228 @@
+use std.serialize (Serialize, Writer, write)
+
+pub enum Cases {
+  key
+  tag: str
+}
+
+pub enum Names {
+  written
+  camel
+}
+
+pub struct Json {
+  pub cases: Cases
+  pub names: Names
+}
+
+// A case whose value is being written, and which is closed when the value
+// ends: the depth the value is at, and the case below it.
+struct Open {
+  depth: Nat
+  below: Nat
+}
+
+struct Out {
+  settings: Json
+  bytes: List[u8]
+  depth: Nat
+  comma: bool
+  tagged: bool
+  opens: List[Open]
+  top: Nat
+}
+
+fn put(to: take Out, b: u8) -> Out ! alloc {
+  var w = to
+  w.bytes = push(w.bytes, b)
+  w
+}
+
+fn put_text(to: take Out, s: str) -> Out ! alloc {
+  var w = to
+  loop i in 0..s.size { w.bytes = push(w.bytes, s[i]) }
+  w
+}
+
+fn hex_digit(d: u8) -> u8 {
+  if d < 10 { wrapping_add(d, '0') } else { wrapping_add(d, 87) }
+}
+
+// The text as a string of JSON: `"`, `\`, and the bytes below a space are
+// written as escapes, and every other byte as it is.
+fn quote(to: take Out, s: str) -> Out ! alloc {
+  var w = put(to, '"')
+  loop i in 0..s.size {
+    b = s[i]
+    if b == '"' {
+      w = put(put(w, '\\'), '"')
+    } else if b == '\\' {
+      w = put(put(w, '\\'), '\\')
+    } else if b == '\n' {
+      w = put(put(w, '\\'), 'n')
+    } else if b == '\t' {
+      w = put(put(w, '\\'), 't')
+    } else if b == 13 {
+      w = put(put(w, '\\'), 'r')
+    } else if b == 8 {
+      w = put(put(w, '\\'), 'b')
+    } else if b == 12 {
+      w = put(put(w, '\\'), 'f')
+    } else if b < 32 {
+      w = put(put(put(put(put(put(w, '\\'), 'u'), '0'), '0'), hex_digit(shift_right(b, 4))), hex_digit(bit_and(b, 15)))
+    } else {
+      w = put(w, b)
+    }
+  }
+  put(w, '"')
+}
+
+
+// A name with each `_` that is followed by a lower case letter taken out, and
+// the letter in upper case. A `_` that follows a `_`, that ends the name, or
+// that is followed by anything else stays, so two names written with lower
+// case letters, digits, and `_` are never made one.
+fn camel_case(to: take Out, name: str) -> Out ! alloc {
+  var w = to
+  var up = false
+  var before: u8 = 0
+  loop i in 0..name.size {
+    b = name[i]
+    if up {
+      w = put(w, wrapping_sub(b, 32))
+      up = false
+    } else if b == '_' and before != '_' and i + 1 < name.size and name[i + 1] >= 'a' and name[i + 1] <= 'z' {
+      up = true
+    } else {
+      w = put(w, b)
+    }
+    before = b
+  }
+  w
+}
+
+// Starts a value: a `,` where the value follows another, or what a case
+// that holds a value gives before it.
+fn start(to: take Out) -> Out ! alloc {
+  var w = to
+  if w.tagged {
+    w = put_text(w, ",\"value\":")
+    w.opens = push(w.opens, Open(depth: w.depth, below: w.top))
+    w.top = w.opens.size
+    w.tagged = false
+  } else if w.comma {
+    w = put(w, ',')
+  }
+  w.comma = false
+  w
+}
+
+// Ends a value, and closes each case whose value it is.
+fn finish(to: take Out) -> Out ! alloc {
+  var w = to
+  w.comma = true
+  loop j in 0..w.top {
+    t = w.top
+    if t > 0 and t <= w.opens.size {
+      frame = w.opens[t - 1]
+      if frame.depth == w.depth {
+        w = put(w, '}')
+        w.top = frame.below
+      } else {
+        break
+      }
+    } else {
+      break
+    }
+  }
+  w
+}
+
+fn scalar(to: take Out, s: str) -> Out ! alloc { finish(put_text(start(to), s)) }
+
+fn open(to: take Out, b: u8) -> Out ! alloc {
+  var w = put(start(to), b)
+  w.depth = saturating_add(w.depth, 1)
+  w
+}
+
+fn close(to: take Out, b: u8) -> Out ! alloc {
+  var w = put(to, b)
+  w.depth = saturating_sub(w.depth, 1)
+  finish(w)
+}
+
+impl Writer[Out] {
+  fn boolean(w: take Out, value: bool) -> Out ! alloc {
+    if value { scalar(w, "true") } else { scalar(w, "false") }
+  }
+  fn signed(w: take Out, value: i64) -> Out ! alloc { scalar(w, fmt(value)) }
+  fn unsigned(w: take Out, value: u64) -> Out ! alloc { scalar(w, fmt(value)) }
+  fn text(w: take Out, value: str) -> Out ! alloc { finish(quote(start(w), value)) }
+  fn nothing(w: take Out) -> Out ! alloc { scalar(w, "null") }
+  fn absent(w: take Out) -> Out ! alloc { scalar(w, "null") }
+  fn present(w: take Out) -> Out ! alloc { if w.tagged { start(w) } else { w } }
+  fn sequence(w: take Out, size: Nat) -> Out ! alloc { open(w, '[') }
+  fn end_sequence(w: take Out) -> Out ! alloc { close(w, ']') }
+  fn tuple(w: take Out, size: Nat) -> Out ! alloc { open(w, '[') }
+  fn end_tuple(w: take Out) -> Out ! alloc { close(w, ']') }
+  fn structure(w: take Out, name: str, fields: Nat) -> Out ! alloc {
+    if w.tagged {
+      var v = w
+      v.tagged = false
+      v.depth = saturating_add(v.depth, 1)
+      v
+    } else {
+      open(w, '{')
+    }
+  }
+  fn field(w: take Out, name: str) -> Out ! alloc {
+    var v = w
+    if v.comma { v = put(v, ',') }
+    match v.settings.names {
+      .written { v = quote(v, name) }
+      .camel { v = put(camel_case(put(v, '"'), name), '"') }
+    }
+    v.comma = false
+    put(v, ':')
+  }
+  fn end_structure(w: take Out) -> Out ! alloc { close(w, '}') }
+  fn case(w: take Out, of: str, name: str, holds: bool) -> Out ! alloc {
+    match w.settings.cases {
+      .key {
+        if holds {
+          var v = put(quote(put(start(w), '{'), name), ':')
+          v.opens = push(v.opens, Open(depth: v.depth, below: v.top))
+          v.top = v.opens.size
+          v
+        } else {
+          finish(quote(start(w), name))
+        }
+      }
+      .tag(t) {
+        var v = quote(put(quote(put(start(w), '{'), t), ':'), name)
+        if holds {
+          v.tagged = true
+          v.comma = true
+          v
+        } else {
+          finish(put(v, '}'))
+        }
+      }
+    }
+  }
+  fn map(w: take Out, size: Nat) -> Out ! alloc { open(w, '[') }
+  fn end_map(w: take Out) -> Out ! alloc { close(w, ']') }
+}
+
+pub fn to_json_as[T: Serialize](value: T, json: Json) -> str ! alloc {
+  w = write(value, Out(settings: json, bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0))
+  match utf8(w.bytes) {
+    .ok(t) { t }
+    .err(e) { "" }
+  }
+}
+
+pub fn to_json[T: Serialize](value: T) -> str ! alloc {
+  to_json_as(value, Json(cases: .key, names: .written))
+}

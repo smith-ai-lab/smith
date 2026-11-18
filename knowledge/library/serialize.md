@@ -24,7 +24,7 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `{"x":3,"y":4}`. `Point` has `Serialize` without a line written for it, and `to_json` is a function of `std.json` that hands the value a writer of JSON. `std.json` is not built, so no words are quoted for it; `Serialize` and `Writer` are in `std.serialize`, which a program imports with `use std.serialize (Serialize, Writer, write)`, and the prelude holds neither.
+This prints `{"x":3,"y":4}`. `Point` has `Serialize` without a line written for it, and `to_json` is a function of `std.json` that hands the value a writer of JSON. `Serialize` and `Writer` are in `std.serialize`, which a program imports with `use std.serialize (Serialize, Writer, write)`, and the prelude holds neither.
 
 ## The trait
 
