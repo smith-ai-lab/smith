@@ -282,7 +282,7 @@ fn stdout(source: &str) -> String {
 fn the_generic_functions_that_take_and_give_a_list_compile_and_give_what_they_say() {
     let append = "fn ap[T](a: List[T], b: List[T]) -> List[T] ! alloc {\n  var r = a\n  loop i in 0..b.size { r = push(r, b[i]) }\n  r\n}\n\n";
     let eq = "fn e[T: Eq](x: List[T], y: T) -> bool { x.size > 0 and x[0] == y }\n\n";
-    let n = "fn n[T](x: List[T]) -> u64 { x.size }\n\n";
+    let n = "fn n[T](x: List[T]) -> Nat { x.size }\n\n";
     let main = "fn main() ! console, alloc {\n  a: List[u8] = [1, 2]\n  b: List[u8] = [3]\n  loop i in 0..ap(a, b).size { print(\"x\") }\n  c: List[u8] = [5]\n  d: List[u8] = [1, 2]\n  l: List[u8] = ap(c, d)\n  loop i in 0..l.size { print(\"{l[i]}\") }\n  e1: List[u8] = [7, 8]\n  e2: List[u8] = [7]\n  print(\"{e(e1, 7)} {e(e2, 9)}\")\n  print(\"{n(\"abc\")}\")\n  f: List[u8] = [9]\n  g: List[u8] = ap([4, 5], f)\n  print(\"{g.size}\")\n}\n";
     assert_eq!(stdout(&format!("{append}{eq}{n}{main}")), "x\nx\nx\n5\n1\n2\ntrue false\n3\n3\n");
 }

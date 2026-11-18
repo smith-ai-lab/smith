@@ -5,6 +5,7 @@ description: The whole number and float types and Nat, what each holds, why a nu
 status: partial
 built:
   - "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
+  - "`Nat`, written for a parameter, a result, a field, and inside another type, the type of the `size` of a `List` and of a `str` and of a `loop` variable over `0..xs.size`, a literal where one is needed, an error where a `Nat` meets a `u64` or any other type in an operator or is bound to one, `convert` from `u8`, `u16`, `u32`, and `u64` to a `Nat` and from a `Nat` to a `u64`, and neither a wrapping function nor a bit operation"
 ---
 
 # Number types
@@ -51,14 +52,20 @@ fn longer(a: List[u8], b: List[u8]) -> Nat {
 `Nat` is a type of its own, and not another name for `u64`. A `u64` is a word of the machine: it has the [wrapping functions](../library/int.md) and the [bit operations](bits.md), which mean nothing for a count, and a `Nat` has neither. So a hash or a mask is not used as a place in a list by accident.
 
 - A whole number literal is a `Nat` where one is needed, as it is any whole number type.
-- `Nat` and `u64` hold the same numbers, so each [converts](conversion.md) to the other, and the conversion is written.
+- `Nat` and `u64` hold the same numbers, so each [converts](conversion.md) to the other, and the conversion is written. A `u8`, a `u16`, and a `u32` convert to a `Nat` as they do to any type that holds every value of theirs.
 - An operator between a `Nat` and a `u64` is refused, as between any two number types.
 
 ```
 fn width(xs: List[u8]) -> u64 { xs.size }
 ```
 
-This is refused, since `xs.size` is a `Nat` and the result is a `u64`. `Nat` is not built, so a size is a `u64` today, and no words are quoted.
+This is refused: "this gives a `Nat`, where a `u64` is needed". A `u64` is made from it by writing `convert(xs.size)`.
+
+```
+fn wrap(n: Nat) -> Nat { wrapping_add(n, 1) }
+```
+
+This is refused too, since a `Nat` has no wrapping function. A `Nat` that is worked out is shown to fit, as [What arith proves](arith.md) says.
 
 ## Floats
 
@@ -117,6 +124,7 @@ fn widen(small: u8) -> u32 { convert(small) }
 | `Nat` | A count, 0 and up, in 64 bits: a type of its own |
 | `f16`, `bf16`, `f32`, `f64` | A float of 16, 16, 32, or 64 bits |
 | `a + b` with two types | Refused, unless one converts to the other |
+| `wrapping_add(n, 1)` or `bit_and(n, m)` on a `Nat` | Refused: a `Nat` has neither |
 | `a == b`, `a < b`, and the rest | A `bool`, for two numbers of one type |
 
 Next: [Integer arithmetic](arithmetic.md)

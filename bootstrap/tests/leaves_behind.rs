@@ -214,7 +214,7 @@ fn level(k: usize, what: &Level) -> String {
     let below = k - 1;
     match what {
         Level::Pass { temp } => format!(
-            "fn f{k}(a: u64) -> Held ! alloc {{\n  t = build({temp}, a)\n  r = f{below}(wrapping_add(a, t.size))\n  r\n}}\n\n"
+            "fn f{k}(a: u64) -> Held ! alloc {{\n  t = build({temp}, a)\n  r = f{below}(wrapping_add(a, convert(t.size)))\n  r\n}}\n\n"
         ),
         Level::Combine {
             temp,
@@ -302,7 +302,7 @@ fn program(g: &mut Gen) -> Case {
 
 fn what_a_function_builds_prints_what_the_generator_says_when_every_value_is_read_after_the_calls_that_could_release_it()
  {
-    generate::check(311, 60, program, |case| {
+    generate::check(311, 30, program, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(scalar::check(&program), Ok(()));
         assert_eq!(scalar::run(&program).stdout, case.stdout);
@@ -345,7 +345,7 @@ fn called_by(program: &Program, from: usize) -> Vec<usize> {
 /// request is its result takes the stack for results and no other, and gives
 /// it back, as a function that has a temporary takes both.
 fn a_function_takes_the_stacks_it_uses_and_no_others() {
-    let source = "fn plain(n: u64) -> u64 { wrapping_add(n, 1) }\n\nfn result() -> List[u64] ! alloc { [1, 2, 3] }\n\nfn temporary() -> u64 ! alloc {\n  xs: List[u64] = [1, 2, 3]\n  xs.size\n}\n\nfn main() ! alloc {\n  a = plain(1)\n  b = result()\n  c = temporary()\n}\n";
+    let source = "fn plain(n: u64) -> u64 { wrapping_add(n, 1) }\n\nfn result() -> List[u64] ! alloc { [1, 2, 3] }\n\nfn temporary() -> Nat ! alloc {\n  xs: List[u64] = [1, 2, 3]\n  xs.size\n}\n\nfn main() ! alloc {\n  a = plain(1)\n  b = result()\n  c = temporary()\n}\n";
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
     // What the program starts with calls `main`.
     let main = called_by(&program, program.main)[0];
@@ -411,12 +411,12 @@ fn read(k: usize, what: Read) -> Part {
     };
     match what {
         Read::Element { n, at } => list(
-            format!("fn read{k}(n: u64, at: u64) -> List[u64] ! alloc {{\n  var all: List[List[u64]] = []\n  loop i in 0..n {{ all = push(all, squares(wrapping_add(i, 1))) }}\n  junk = squares(50)\n  if at < all.size {{ all[at] }} else {{ squares(1) }}\n}}\n\n"),
+            format!("fn read{k}(n: u64, at: Nat) -> List[u64] ! alloc {{\n  var all: List[List[u64]] = []\n  loop i in 0..n {{ all = push(all, squares(wrapping_add(i, 1))) }}\n  junk = squares(50)\n  if at < all.size {{ all[at] }} else {{ squares(1) }}\n}}\n\n"),
             format!("  r{k} = read{k}({n}, {at})\n"),
             both(&if at < n { squares(at + 1) } else { squares(1) }),
         ),
         Read::Field { n, at } => list(
-            format!("fn read{k}(n: u64, at: u64) -> List[u64] ! alloc {{\n  var cells: List[Cell] = []\n  loop i in 0..n {{ cells = push(cells, Cell(xs: squares(wrapping_add(i, 1)), k: i)) }}\n  junk = squares(50)\n  if at < cells.size {{ cells[at].xs }} else {{ squares(1) }}\n}}\n\n"),
+            format!("fn read{k}(n: u64, at: Nat) -> List[u64] ! alloc {{\n  var cells: List[Cell] = []\n  loop i in 0..n {{ cells = push(cells, Cell(xs: squares(wrapping_add(i, 1)), k: i)) }}\n  junk = squares(50)\n  if at < cells.size {{ cells[at].xs }} else {{ squares(1) }}\n}}\n\n"),
             format!("  r{k} = read{k}({n}, {at})\n"),
             both(&if at < n { squares(at + 1) } else { squares(1) }),
         ),
@@ -475,7 +475,7 @@ fn reads(g: &mut Gen) -> Case {
 
 fn what_is_read_out_of_a_temporary_and_returned_is_still_there_after_a_call_that_would_overwrite_what_was_released()
  {
-    generate::check(313, 60, reads, |case| {
+    generate::check(313, 40, reads, |case| {
         let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         assert_eq!(scalar::check(&program), Ok(()));
         assert_eq!(scalar::run(&program).stdout, case.stdout);

@@ -242,15 +242,19 @@ fn literal(name: &str, n: i128) -> String {
 }
 
 /// A value of the type that the compiler cannot know, made from the size of
-/// the arguments, which is not known until the program runs.
+/// the arguments, which is not known until the program runs: the `n` that
+/// `COUNT` binds, which is their size as a `u64`.
 fn unknown(name: &str, plus: u64) -> String {
-    let size = format!("wrapping_add(args.size, {plus})");
+    let size = format!("wrapping_add(n, {plus})");
     match name {
         "bool" => format!("{size} == 1"),
         "u64" => size,
         _ => format!("wrapping_narrow({size})"),
     }
 }
+
+/// The line that binds the size of the arguments to a `u64`, which wraps.
+const COUNT: &str = "  n: u64 = convert(args.size)\n";
 
 /// How many comparisons and how many calls a program has after the passes.
 fn counted(source: &str) -> (usize, usize) {
@@ -292,6 +296,7 @@ fn program_with(name: &str, at: Option<usize>, bound: Option<&str>) -> String {
         }
     }
     source += "fn main(args: List[str]) ! console, alloc {\n";
+    source += COUNT;
     source += &format!("  x: {name} = {}\n", unknown(name, 0));
     source += &format!("  y: {name} = {}\n", unknown(name, 1));
     for k in 0..OPS.len() {
@@ -449,7 +454,7 @@ fn comparisons(program: &scalar::Program) -> (usize, usize) {
 /// that it cannot know, so that no two comparisons are one. With `ops` false
 /// each condition is `true` instead, and with `equal` each operator is `==`.
 fn branching(name: &str, ops: bool, equal: bool) -> String {
-    let mut source = String::from("fn main(args: List[str]) ! console, alloc {\n");
+    let mut source = format!("fn main(args: List[str]) ! console, alloc {{\n{COUNT}");
     for (k, (op, _)) in OPS.iter().enumerate() {
         let condition = if ops {
             source += &format!("  x{k}: {name} = {}\n", unknown(name, 2 * k as u64));

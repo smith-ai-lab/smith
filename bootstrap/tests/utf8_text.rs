@@ -236,7 +236,7 @@ fn the_size_and_an_index_of_a_text_cost_what_they_cost_on_a_list() {
 fn a_text_given_where_bytes_are_expected_is_neither_called_nor_copied() {
     generate::check(305, 40, text, |s| {
         let source = format!(
-            "fn total(b: List[u8]) -> u64 {{ b.size }}\n\nfn main() ! console {{\n  if total(\"{s}\") == {} {{ print(\"same\") }}\n}}\n",
+            "fn total(b: List[u8]) -> Nat {{ b.size }}\n\nfn main() ! console {{\n  if total(\"{s}\") == {} {{ print(\"same\") }}\n}}\n",
             s.len()
         );
         let program = lower(source.as_bytes()).expect("compiles");

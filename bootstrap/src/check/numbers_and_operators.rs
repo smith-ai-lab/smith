@@ -15,10 +15,12 @@ pub(super) enum Int {
     U16,
     U32,
     U64,
+    /// A count: 0 and up, in 64 bits, a type of its own and not `u64`.
+    Nat,
 }
 
 impl Int {
-    pub(super) const ALL: [Int; 8] = [
+    pub(super) const ALL: [Int; 9] = [
         Int::I8,
         Int::I16,
         Int::I32,
@@ -27,6 +29,7 @@ impl Int {
         Int::U16,
         Int::U32,
         Int::U64,
+        Int::Nat,
     ];
 
     pub(super) fn name(self) -> &'static str {
@@ -39,6 +42,7 @@ impl Int {
             Int::U16 => "u16",
             Int::U32 => "u32",
             Int::U64 => "u64",
+            Int::Nat => "Nat",
         }
     }
 
@@ -55,7 +59,7 @@ impl Int {
             Int::I8 | Int::U8 => 8,
             Int::I16 | Int::U16 => 16,
             Int::I32 | Int::U32 => 32,
-            Int::I64 | Int::U64 => 64,
+            Int::I64 | Int::U64 | Int::Nat => 64,
         }
     }
 

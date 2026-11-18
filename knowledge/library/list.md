@@ -4,7 +4,7 @@ title: List
 description: List, an array kept together with its size, which can grow.
 status: partial
 built:
-  - "a `List` of any type a program can make, written `List[u8]` or `List[Person]`, built from `[]` or a literal such as `[1, 2, 3]` where a list of a known type is expected, grown with `push`, in place wherever the list is held, in a `var`, in a field, or as what a function takes and returns, and read with `size` and an index that is proven in range, of a `var` as of any name, where `xs[i].field` reads only that field"
+  - "a `List` of any type a program can make, written `List[u8]` or `List[Person]`, built from `[]` or a literal such as `[1, 2, 3]` where a list of a known type is expected, grown with `push`, in place wherever the list is held, in a `var`, in a field, or as what a function takes and returns, and read with `size`, a `Nat`, and an index, a `Nat` that is proven in range, of a `var` as of any name, where `xs[i].field` reads only that field"
   - "a list may be held inside a struct, a tuple, an enum, or another list, and be a function's parameter and result, and a name that holds a list never sees another name's `push`"
   - "a function with a type parameter, bounded by `Eq` or `Ord` or by nothing, takes and gives a `List[T]`, reads its size and elements, compares them, loops over them, and pushes, and is specialised for each element type as any generic function is; a list written out where `T` is settled by no other argument is refused with one error, as is `[]`, and one where another argument settles it takes that type"
   - "`loop v in xs` over a `List` of any type, which is built as [`loop`](../language/loop.md) says"
