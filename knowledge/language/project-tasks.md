@@ -20,7 +20,7 @@ Every public function in `project.smith` is a command.
 
 ## Its parameters are its flags
 
-A task's parameters are named flags. `env` is the flag `--env`.
+A task's parameters are named flags. `env` is the flag `--env`. A flag is spelled exactly as its parameter is, so `batch_size` is `--batch_size`. No other spelling is taken: `--batch-size` names no parameter.
 
 - A `bool` is a bare flag.
 - A parameter with a default, or of type `Option`, may be left out.
@@ -81,6 +81,7 @@ serving/
 | --- | --- |
 | `pub fn name(...)` in `project.smith` | The command `smith name` |
 | `--env staging` | The parameter `env`, given `"staging"` |
+| `--batch_size 64` | The parameter `batch_size`, spelled as it is in the source |
 | `verbose: bool` | A bare flag, `--verbose` |
 | `region: str = "eu"` or `note: Option[str]` | A flag that may be left out |
 | `! exec` | The task may run another program |
