@@ -205,7 +205,9 @@ pub const ONCE: &[Test] = &[
 fn operands(op: &mut Op) -> Vec<&mut Value> {
     match op {
         Op::Constant(_) => Vec::new(),
-        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } => vec![a, b],
+        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } | Op::Overflows { a, b, .. } => {
+            vec![a, b]
+        }
         Op::Widen { value, .. } | Op::Narrow(value) => vec![value],
         Op::Choose {
             on,

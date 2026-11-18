@@ -59,6 +59,10 @@ pub const LT: u32 = 0xb;
 pub const LO: u32 = 0x3;
 /// Unsigned lower or same.
 pub const LS: u32 = 0x9;
+/// Carry set: an unsigned addition did not fit.
+const HS: u32 = 0x2;
+/// Overflow set: a signed operation did not fit.
+const VS: u32 = 0x6;
 
 /// A place in the code that refers to something placed later.
 enum Fixup {
@@ -796,7 +800,7 @@ fn function<S: System>(
                     continue;
                 }
                 match i.checked_sub(1).filter(|j| w.before_choice[b][*j]) {
-                    Some(j) => w.choice(asm, &block.instructions[j].op, instruction),
+                    Some(j) => w.choice(asm, &block.instructions[j], instruction),
                     None => w.instruction(asm, &instruction.results, &instruction.op),
                 }
             }
@@ -810,7 +814,8 @@ fn function<S: System>(
 }
 
 /// The number an `add` or a `sub` holds in itself in place of its second
-/// operand, when it is a constant below 4096.
+/// operand, when it is a constant below 4096, and the count a shift holds in
+/// itself, when it is a constant below 64.
 fn immediate(constants: &[Option<u64>], op: &Op) -> Option<u32> {
     match op {
         Op::Binary {
@@ -820,6 +825,13 @@ fn immediate(constants: &[Option<u64>], op: &Op) -> Option<u32> {
         } => constants[b.0]
             .and_then(|n| u32::try_from(n).ok())
             .filter(|n| *n < 1 << 12),
+        Op::Binary {
+            op: Binary::ShiftLeft | Binary::ShiftRightU | Binary::ShiftRightS,
+            b,
+            ..
+        } => constants[b.0]
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n < 64),
         _ => None,
     }
 }
@@ -982,20 +994,35 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
-    /// A choice on a comparison that nothing else reads: compares, and takes
-    /// `then` on the condition the comparison says. Moving a value does not
-    /// change what the comparison found.
-    fn choice(&self, asm: &mut Asm, compare: &Op, choose: &crate::scalar::Instruction) {
-        let (
-            Op::Compare { op, a, b },
-            Op::Choose {
-                then, otherwise, ..
-            },
-        ) = (compare, &choose.op)
+    /// Makes the flags say what the comparison, or the operation that tells
+    /// whether its answer fitted, found, and gives the condition under which
+    /// the value it makes is 1.
+    fn flags(&self, asm: &mut Asm, i: &crate::scalar::Instruction) -> u32 {
+        match &i.op {
+            Op::Compare { op, a, b } => self.compare(asm, op, *a, *b),
+            Op::Overflows { op, signed, a, b } => {
+                self.overflow(asm, i.results[0], *op, *signed, *a, *b)
+            }
+            _ => unreachable!("only a comparison and an overflow make a flag"),
+        }
+    }
+
+    /// A choice on a comparison, or on whether an answer fitted, that nothing
+    /// else reads: compares, and takes `then` on the condition the flags say.
+    /// Moving a value does not change what the flags found.
+    fn choice(
+        &self,
+        asm: &mut Asm,
+        compare: &crate::scalar::Instruction,
+        choose: &crate::scalar::Instruction,
+    ) {
+        let Op::Choose {
+            then, otherwise, ..
+        } = &choose.op
         else {
             unreachable!()
         };
-        let cond = self.compare(asm, op, *a, *b);
+        let cond = self.flags(asm, compare);
         let then = self.read(asm, X16, *then);
         let otherwise = self.read(asm, X17, *otherwise);
         let t = self.target(choose.results[0]);
@@ -1028,6 +1055,12 @@ impl<S: System> Writer<'_, S> {
                 let t = self.target(results[0]);
                 asm.cset(t, cond ^ 1);
                 self.finish(asm, results[0], t, true);
+            }
+            Op::Overflows { op, signed, a, b } => {
+                let cond = self.overflow(asm, results[0], *op, *signed, *a, *b);
+                let t = self.target(results[1]);
+                asm.cset(t, cond ^ 1);
+                self.finish(asm, results[1], t, true);
             }
             Op::Widen { signed, value } => {
                 let t = self.target(results[0]);
@@ -1128,10 +1161,28 @@ impl<S: System> Writer<'_, S> {
 
     fn binary(&self, asm: &mut Asm, result: Value, op: Binary, a: Value, b: Value) {
         if let Some(n) = immediate(&self.constants, &Op::Binary { op, a, b }) {
-            let a = self.read(asm, X16, a);
             let t = self.target(result);
-            asm.add_or_sub_imm(matches!(op, Binary::Sub), t, a, n);
-            self.finish(asm, result, t, false);
+            let extended = matches!(op, Binary::ShiftRightU);
+            match op {
+                Binary::ShiftLeft => {
+                    let a = self.read(asm, X16, a);
+                    // `lsl xd, xn, #n`, which is `ubfm xd, xn, #-n mod 64, #63-n`.
+                    asm.word(0xd340_0000 | ((64 - n) & 63) << 16 | (63 - n) << 10 | a << 5 | t);
+                }
+                Binary::ShiftRightU => {
+                    let a = self.read(asm, X16, a);
+                    asm.word(0xd340_fc00 | n << 16 | a << 5 | t);
+                }
+                Binary::ShiftRightS => {
+                    let a = self.read_signed(asm, X16, a);
+                    asm.word(0x9340_fc00 | n << 16 | a << 5 | t);
+                }
+                _ => {
+                    let a = self.read(asm, X16, a);
+                    asm.add_or_sub_imm(matches!(op, Binary::Sub), t, a, n);
+                }
+            }
+            self.finish(asm, result, t, extended);
             return;
         }
         let bits = self.width(result) * 8;
@@ -1192,6 +1243,71 @@ impl<S: System> Writer<'_, S> {
             }
         }
         self.finish(asm, result, t, extended);
+    }
+
+    /// Works out `op` of `a` and `b`, read as signed or as unsigned numbers,
+    /// puts the result where `result` lives, and leaves the flags to say
+    /// whether it did not fit: the condition that gives is the one returned.
+    /// A number of 64 bits is worked out by the operation that sets the flags,
+    /// or for a product by the high half of it. A narrower number is worked
+    /// out in 64 bits, where it cannot overflow, and looked at: for unsigned
+    /// numbers, whether any bit is left above the size, and for signed
+    /// numbers, whether the answer is what its low bytes, extended, are.
+    fn overflow(
+        &self,
+        asm: &mut Asm,
+        result: Value,
+        op: Binary,
+        signed: bool,
+        a: Value,
+        b: Value,
+    ) -> u32 {
+        let width = self.width(result);
+        let (a, b) = if signed {
+            (self.read_signed(asm, X16, a), self.read_signed(asm, X17, b))
+        } else {
+            (self.read(asm, X16, a), self.read(asm, X17, b))
+        };
+        if width == 8 {
+            let t = self.target(result);
+            if op == Binary::Mul {
+                // The high half of the product, which is 0 or all the sign
+                // when it fits, is in x15 until the flags say so.
+                asm.three(if signed { 0x9b40_7c00 } else { 0x9bc0_7c00 }, X15, a, b);
+                asm.three(0x9b00_7c00, t, a, b);
+                if signed {
+                    // `cmp x15, xt, asr #63`.
+                    asm.word(0xeb80_0000 | 63 << 10 | t << 16 | X15 << 5 | XZR);
+                } else {
+                    asm.cmp_imm(X15, 0);
+                }
+                self.finish(asm, result, t, true);
+                return NE;
+            }
+            let sub = op == Binary::Sub;
+            asm.three(if sub { 0xeb00_0000 } else { 0xab00_0000 }, t, a, b);
+            self.finish(asm, result, t, true);
+            return match (signed, sub) {
+                (true, _) => VS,
+                (false, true) => LO,
+                (false, false) => HS,
+            };
+        }
+        match op {
+            Binary::Add => asm.add(X17, a, b),
+            Binary::Sub => asm.three(0xcb00_0000, X17, a, b),
+            _ => asm.three(0x9b00_7c00, X17, a, b),
+        }
+        if signed {
+            asm.sign_extend(X16, X17, width);
+            asm.cmp(X16, X17);
+        } else {
+            // `lsr x16, x17, #bits`.
+            asm.word(0xd340_fc00 | (width * 8) << 16 | X17 << 5 | X16);
+            asm.cmp_imm(X16, 0);
+        }
+        self.finish(asm, result, X17, false);
+        NE
     }
 
     /// Compares the two values, and gives the condition code that holds when
@@ -1273,11 +1389,8 @@ impl<S: System> Writer<'_, S> {
             End::Jump(jump) => self.jump(asm, jump, next),
             End::Switch { on, jumps } if self.branches_on_compare[block] => {
                 let compare = self.f.blocks[block].instructions.last().unwrap();
-                let Op::Compare { op, a, b } = &compare.op else {
-                    unreachable!()
-                };
-                debug_assert_eq!(compare.results, [*on]);
-                let cond = self.compare(asm, op, *a, *b);
+                debug_assert_eq!(compare.results.last(), Some(on));
+                let cond = self.flags(asm, compare);
                 self.branch(asm, cond, jumps, next);
             }
             End::Switch { on, jumps } if jumps.len() == 2 => {

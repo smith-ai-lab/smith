@@ -239,8 +239,15 @@ impl Machine {
                 self.set_sp(rd, result);
             }
         } else if w & 0x1f20_0000 == 0x0b00_0000 {
-            assert!(w >> 10 & 0x3f == 0 && w >> 22 & 3 == 0, "unknown instruction {w:#010x}");
-            let (a, b) = (self.get(rn), self.get(rm));
+            // The second register may be shifted left, or right as an unsigned
+            // or as a signed number, by a number of bits the instruction holds.
+            assert!(w >> 22 & 3 != 3 && bits == 64 || w >> 10 & 0x3f == 0, "unknown instruction {w:#010x}");
+            let (a, by) = (self.get(rn), w >> 10 & 0x3f);
+            let b = match w >> 22 & 3 {
+                0 => self.get(rm) << by,
+                1 => self.get(rm) >> by,
+                _ => ((self.get(rm) as i64) >> by) as u64,
+            };
             let subtract = w >> 30 & 1 == 1;
             let (b, carry) = if subtract { (!b, true) } else { (b, false) };
             let (result, c, v) = add_with_carry(a, b, carry, bits);
@@ -277,7 +284,14 @@ impl Machine {
             }
         } else if w & 0x1f80_0000 == 0x1300_0000 {
             let (immr, imms) = (w >> 16 & 63, w >> 10 & 63);
-            assert!(imms >= immr && imms < bits, "unknown instruction {w:#010x}");
+            assert!(imms < bits, "unknown instruction {w:#010x}");
+            if imms < immr {
+                // `lsl`: the low `imms + 1` bits, placed `bits - immr` up.
+                assert!(w >> 29 & 3 == 2, "unknown instruction {w:#010x}");
+                let field = self.get(rn) & (u64::MAX >> (64 - (imms + 1)));
+                self.set(rd, field << (bits - immr) & mask);
+                return None;
+            }
             let width = imms - immr + 1;
             let field = (self.get(rn) & mask) >> immr & (u64::MAX >> (64 - width));
             let result = match w >> 29 & 3 {
