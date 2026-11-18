@@ -65,7 +65,7 @@ effect fs {
 
 - **A place in a file is a number the program holds.** A file has no position of its own that a read moves, so two tasks read one file without disturbing each other, and reading any part costs the same as reading the next.
 - **What is read is a value.** It never changes after it is read. If another program changes the file, a later read gives other bytes, as reading the console twice gives two lines.
-- **A `File` is used exactly once,** as [Ownership](../language/ownership.md) says. So a file that is not closed, is closed twice, or is used after it is closed does not compile. `open` and `create` take care of it, and most code writes only the `with` line.
+- **A `File` is used exactly once,** as [Values used exactly once](../language/resources.md) says. So a file that is not closed, is closed twice, or is used after it is closed does not compile. `open` and `create` take care of it, and most code writes only the `with` line.
 - **How a range is fetched is not the program's business.** The system may read it, read ahead, or map the file into memory and copy from there. The source is the same, and [under tasks](../language/tasks.md) a read suspends its task.
 - **Every failure is a value.** No operation ends the program.
 

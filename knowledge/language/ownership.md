@@ -1,14 +1,44 @@
 ---
 type: specification
 title: Ownership
-description: The Copy and Discard traits, lending and take, and values that must be used at most once or exactly once.
-status: partial
-built: "`without`, for `Fmt`, `Repr`, and `Eq`"
+description: The Copy and Discard traits, which say whether a value may be duplicated and whether it may be dropped unused, and the three kinds of value they make.
+status: planned
 ---
 
 # Ownership
 
-Two traits say what may happen to a value. `Copy` means it may be duplicated, and `Discard` means it may be dropped unused. Both are derived automatically: a type has each trait unless one of its fields lacks it.
+Two traits say what may happen to a value. `Copy` means it may be duplicated, and `Discard` means it may be dropped unused.
+
+```
+struct Point {
+  x: u64
+  y: u64
+}
+
+fn mirror(p: Point) -> Point {
+  q = p
+  Point(x: q.y, y: p.x)
+}
+```
+
+`p` is used after `q = p` copied it, which is allowed because `Point` has `Copy`. A number has `Copy`, so a struct of numbers has it.
+
+## Derived
+
+Both traits are derived automatically: a type has each trait unless one of its fields lacks it. Nothing is written for a type to have them.
+
+```
+struct Seeded {
+  key: Key
+  count: u64
+}
+```
+
+A `Key`, the type [random numbers](take.md) come from, has `Discard` and not `Copy`. So `Seeded` has `Discard` and not `Copy`, because one of its fields lacks it, and `count` having both changes nothing.
+
+## The three kinds
+
+The two traits make three kinds of value.
 
 | Kind | Traits | Examples |
 | --- | --- | --- |
@@ -16,57 +46,36 @@ Two traits say what may happen to a value. `Copy` means it may be duplicated, an
 | Used at most once | `Discard` only | A random `Key` |
 | Used exactly once | Neither | A raw file handle, a transaction |
 
-Passing an argument lends it: the callee cannot keep, store, or return it. A parameter marked `take` receives ownership, and the caller cannot use the value again. For `Copy` types the difference is invisible.
+A value that is used at most once may be dropped unused and may not be used twice. [`take`](take.md) is how that is checked. A value that is used exactly once may be neither, and is checked as [Values used exactly once](resources.md) says. A type gets the third kind by taking its traits away, as [`without`](without.md) says.
+
+## Discard
+
+A value that is never used is dropped, and that is an error when its type lacks `Discard`.
 
 ```
-fn split(k: take Key) -> (Key, Key)
-fn uniform(k: take Key) -> f32
-
-fn two_numbers(key: take Key) -> (f32, f32) {
-  (k1, k2) = split(key)
-  (uniform(k1), uniform(k2))
+fn forget(path: str) -> Result[(), FsError] ! fs {
+  f = try open_file(path)
+  .ok(())
 }
 ```
 
-Using `k1` twice would be a compile error, so a random key cannot be reused. Randomness needs no effect, because every random function takes a key.
+This is refused: `f` is a `File`, which cannot be dropped, and nothing closes it. A type with `Discard` is dropped without a word.
 
-A type opts out of a trait it would get automatically with a `without` statement, which works for any automatically derived trait. Its fields stay plain.
+## Copy in a generic function
 
-```
-struct Transaction {
-  id: u64
-}
-
-without Copy for Transaction
-without Discard for Transaction
-
-fn commit(t: take Transaction) -> Result[(), DbError] ! net
-
-fn transfer(db: Db) -> Result[(), DbError] ! net {
-  t = begin(db)
-  debit(t, 100)
-  commit(t)
-}
-```
-
-`debit` borrows `t` and `commit` takes it. Leaving out `commit(t)`, or calling it twice, does not compile.
-
-A value with neither trait must be taken exactly once on every path. That is how a resource wrapper is checked. `open` below is written for `with`: it lends the handle to the rest of the caller's block and closes it afterwards. Leaving out `close_file`, or putting a step that can fail between opening and closing, does not compile. The body's own effects, here `alloc` from `read`, are allowed because `first_bytes` declares them.
+A generic function that duplicates a value says so in the bound of its type parameter.
 
 ```
-fn open[T](path: str, body: (File) -> Result[T, FsError]) -> Result[T, FsError] ! fs {
-  handle = try open_file(path)
-  r = body(handle)
-  close_file(handle)
-  r
-}
-
-fn first_bytes(path: str) -> Result[List[u8], FsError] ! fs, alloc {
-  with f = open(path)
-  read(f, 0..16)
-}
+fn pair[T: Copy](x: T) -> (T, T) { (x, x) }
 ```
 
-Most code only ever writes the `with` line. Generic functions state `T: Copy` where they copy, and tooling proposes the bound.
+Without `T: Copy`, `(x, x)` is refused, as `T` may be a type that cannot be copied. A bound is written where the function copies, and tooling proposes it.
 
-Next: [Arrays and sizes](arrays.md)
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `T: Copy` | A type parameter that may be duplicated |
+| `T: Discard` | A type parameter that may be dropped unused |
+
+Next: [without](without.md)

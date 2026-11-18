@@ -36,7 +36,7 @@ Six more are built in, because the compiler itself gives them their meaning. The
 
 | Effect | Allows | Ends at |
 | --- | --- | --- |
-| `alloc` | Memory whose size is known only at run time | An [arena](storage.md) |
+| `alloc` | Memory whose size is known only at run time | An [arena](arenas.md) |
 | `spawn` | Starting a task | A [task group](tasks.md) |
 | `gpu` | Opening a [device](devices.md) to run on a GPU | Nothing |
 | `diverge` | Not terminating | Nothing |

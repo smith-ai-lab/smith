@@ -78,7 +78,7 @@ fn apply[i: Nat, o: Nat](l: Linear[i, o], x: [i]f32) -> [o]f32 {
 
 Passing the output of a `Linear[784, 256]` to a `Linear[128, 10]` is a compile error, because `256` and `128` do not match.
 
-Random arrays follow the key rule from [Ownership](ownership.md). A random function fills a whole array from one key, and the expected type gives the shape, as it does for a literal. When each iteration needs its own key, `split_n` turns one key into an array of keys.
+Random arrays follow the key rule from [Lending and take](take.md). A random function fills a whole array from one key, and the expected type gives the shape, as it does for a literal. When each iteration needs its own key, `split_n` turns one key into an array of keys.
 
 ```
 fn init_linear[i: Nat, o: Nat](key: take Key) -> Linear[i, o] {
