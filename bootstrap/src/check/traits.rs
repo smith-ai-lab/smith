@@ -1123,13 +1123,6 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // A type that nothing settles is its default, if it has one.
-        for (i, g) in defs.file.traits[k].generics.iter().enumerate() {
-            if let (None, Some(d)) = (&sol[i], &g.default) {
-                let ty = defs.quietly(d, &sig.scope).solved(&sol);
-                sol[i] = (!ty.unknown()).then_some(ty);
-            }
-        }
         // A type an argument names that is not known is that of a mistake
         // already reported, so only one that the result alone names is
         // reported here.

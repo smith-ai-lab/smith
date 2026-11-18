@@ -23,6 +23,10 @@ pub const ONCE: &[Test] = &[
         a_lambda_whose_parameter_nothing_decides_takes_the_default_of_a_function,
     ),
     (
+        "a_call_finds_the_impl_by_its_arguments_whether_the_trait_has_defaults_or_not",
+        a_call_finds_the_impl_by_its_arguments_whether_the_trait_has_defaults_or_not,
+    ),
+    (
         "a_parameter_with_no_default_after_one_with_a_default_is_one_error_at_the_parameter",
         a_parameter_with_no_default_after_one_with_a_default_is_one_error_at_the_parameter,
     ),
@@ -73,7 +77,7 @@ fn a_use_that_leaves_a_parameter_out_is_the_program_that_writes_its_default() {
                  fn count(m: Maybe{maybe}) -> {ty} {{\n  match m {{\n    .some(x) {{ x }}\n    \
                  .none {{ 0 }}\n  }}\n}}\n\n\
                  fn main() ! console, alloc {{\n  b: Box[str{last}] = Box(first: \"a\", second: 3)\n  \
-                 n = count(.some(4))\n  m = Make.make(\"x\")\n  print(\"{{b.second}} {{n}} {{m}}\")\n}}\n"
+                 n = count(.some(4))\n  m: {ty} = Make.make(\"x\")\n  print(\"{{b.second}} {{n}} {{m}}\")\n}}\n"
             )
         };
         let (left_out, written) = (program("", ""), program(&format!(", {ty}"), &format!("[{ty}]")));
@@ -110,6 +114,28 @@ fn a_lambda_whose_parameter_nothing_decides_takes_the_default_of_a_function() {
         };
         same(&program("fn(v) { 2 }"), &program(&format!("fn(v: {ty}) {{ 2 }}")));
         assert_eq!(printed(&program("fn(v) { 2 }")), b"1\n");
+    });
+}
+
+/// A default stands in where a type is written with the parameter left out,
+/// and nowhere else: a call finds the `impl` by the types of its arguments,
+/// so a trait with defaults answers every call that the same trait written
+/// in full answers, with `impl`s written in full or with parameters left out.
+fn a_call_finds_the_impl_by_its_arguments_whether_the_trait_has_defaults_or_not() {
+    generate::check(307, 8, |g| (*g.pick(&INTS), *g.pick(&INTS)), |&(ty, other)| {
+        let program = |trait_head: &str, first: &str, second: &str| {
+            format!(
+                "trait Mix{trait_head} {{\n  fn mix(a: A, b: B) -> C\n}}\n\n\
+                 impl Mix{first} {{\n  fn mix(a: {ty}, b: {ty}) -> {ty} {{ b }}\n}}\n\n\
+                 impl Mix{second} {{\n  fn mix(a: str, b: {other}) -> {other} {{ b }}\n}}\n\n\
+                 fn main() ! console, alloc {{\n  x: {ty} = 1\n  y: {other} = 2\n  \
+                 print(\"{{mix(x, x)}} {{mix(\"t\", y)}}\")\n}}\n"
+            )
+        };
+        let left_out = program("[A, B = A, out C = A]", &format!("[{ty}]"), &format!("[str, {other}, {other}]"));
+        let written = program("[A, B, out C]", &format!("[{ty}, {ty}, {ty}]"), &format!("[str, {other}, {other}]"));
+        same(&left_out, &written);
+        assert_eq!(printed(&left_out), b"1 2\n");
     });
 }
 
