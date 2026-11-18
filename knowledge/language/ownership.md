@@ -61,7 +61,7 @@ fn both(xs: take List[u8]) -> (List[u8], List[u8]) ! alloc {
 
 `push` [takes](take.md) its list, so the list it gives back is the same memory with one more element, always, and not only where the compiler can see that it may be. `both` wants the old list too, so it writes `copy(xs)`. Without the `copy`, `xs` is used after it was given to `push`, and that is refused.
 
-Reading a list lends it and copies nothing: its `size`, an element, and passing it to a function that does not take it. A struct that holds a list has no `Copy` either, by the rule above, so the state of a program that is kept in a struct is moved and never duplicated. A `str` has `Copy`: a text cannot be changed, so two names for one text share it.
+Reading a list lends it and copies nothing: its `size`, an element, and passing it to a function that does not take it. A struct that holds a list has no `Copy` either, by the rule above, so the state of a program that is kept in a struct is moved and never duplicated. A `str` has `Copy`: a text cannot be changed, so two names for one text share it. So has a [`Slice`](../library/slice.md), which is what a list becomes when a program is done building it.
 
 The compiler does not build this yet. Today a list that is used after it is given away is copied.
 
