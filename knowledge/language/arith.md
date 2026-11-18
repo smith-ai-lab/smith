@@ -7,6 +7,7 @@ built:
   - "`arith`, which decides linear arithmetic over the integers and proves that a plain `+`, `-`, or `*` fits, from the range of each value's type, the value of a literal, what a binding that is not a `var` was given, the condition of each `if` the operation is inside, joined with `and`, `or`, and `not`, and the range of each `loop i in a..b` over whole numbers, and, inside one round of a loop, what that round last gave each `var` of a whole number the loop assigns, stated against what it held when the round began, and what stays so after an `if` or a `match` some of whose blocks end in `break`"
   - "and the index of a `List` read as `xs[i]`, which `arith` proves below `xs.size`, and the `size` of a list as a value in a comparison, in a `requires`, an `if`, and the range of a `loop`, which a list has from the list it was given, whether bound to a name or to a `var`"
   - "and, for a `var` of a list, a struct, or a tuple, and each of its fields, what is known of it, as of any value, until it or a field of it is assigned, at which a fact about it is forgotten, in a loop, a lambda, and an arm of an `if` or a `match` as it is outside one, and a `var` the loop or lambda assigns is not known from before it"
+  - "and the range of what `bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left` give, of an unsigned number or, for a shift left, of any whole number, from what is known of the numbers they are given"
   - "not the facts of a `match` block, a `var` of a whole number outside a loop that was given a value, or a proof held in a value"
 ---
 
@@ -155,6 +156,29 @@ fn forgotten(q: Pair) -> u8 {
 
 `kept(Pair(a: 5, b: 1))` is `105`. `forgotten` is refused: "cannot prove that `p.a + 100 <= 255`, so `p.a + 100` may not fit `u8`", since `p.a` was assigned after `p.a < 100` was known. The same holds in a loop, a lambda, and an arm of an `if` or a `match` as outside one, and a `var` that the loop or lambda assigns is not known from before it.
 
+**A bit operation.** What [`bit_and`, `bit_or`, `bit_xor`, `shift_right`, and `shift_left`](bits.md) give is known from what is known of the numbers they are given, as far as it is true of every value.
+
+- `bit_and(a, b)` of unsigned numbers is at most `a` and at most `b`.
+- `bit_or(a, b)` and `bit_xor(a, b)` of unsigned numbers are below the least power of two that is above both what is known of `a` and what is known of `b`.
+- `shift_right(a, k)` of an unsigned `a` by a number `k` is `a` divided by two to the `k`, rounded down, so it is at most that of the greatest `a` and at least that of the least.
+- `shift_left(a, k)` by a number `k` is `a` times two to the `k`, when `arith` proves that this fits the type, since no bit is dropped then. Otherwise nothing is known of it but the range of its type.
+
+```
+fn low(x: u8) -> u8 { bit_and(x, 31) + 200 }
+
+fn join(x: u8, y: u8) -> u8 {
+  if x < 8 and y < 8 { bit_or(x, y) + 248 } else { 0 }
+}
+
+fn high(x: u8) -> u8 { shift_right(x, 3) + 224 }
+
+fn up(x: u8) -> u8 { if x < 64 { shift_left(x, 2) + 3 } else { 0 } }
+```
+
+`low(255)` is `231`, `join(7, 1)` is `255`, `high(255)` is `255`, and `up(63)` is `255`. `bit_and(x, 31)` is at most 31, so `+ 200` fits. Both numbers of `bit_or` are below 8, so it is below 8. `shift_right(x, 3)` is at most 31. `shift_left(x, 2)` is `x * 4`, which is below 256 when `x < 64`.
+
+It claims no more. `bit_and(x, 63) + 200` is refused, since 63 + 200 does not fit a `u8`, and so is `bit_or(x, y) + 248` with `x < 8` and `y < 9`, which is below 16. Nothing is known of what these give for a signed number, except `shift_left`, and a shift by a number that is not below the bits of the type is refused, as [Bit operations](bits.md) says.
+
 **A contract.** The function's own `requires`, and the `ensures` of a function that was called, are facts. [Contracts](contracts.md) says how.
 
 **A proof held in a value.** Every proof it can see, as a value or as a field of a value, is a fact. [A struct that holds a proof](proof-fields.md) says how a value comes to hold one.
@@ -238,6 +262,7 @@ The author supplies the missing fact in one of three ways: with a [`requires`](c
 | What a `var` was last given | The value assigned, in a round of a loop or outside any |
 | What a caller owes | The `requires` of the function |
 | What a function gave | The `ensures` of a function that was called |
+| What a bit operation gave | The numbers it was given |
 | A proof | A value or field that holds one |
 
 Next: [Contracts](contracts.md)
