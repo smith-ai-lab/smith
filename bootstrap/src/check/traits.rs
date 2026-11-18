@@ -127,6 +127,7 @@ pub(super) const PRELUDE_TRAITS: &[&str] = &[
     "Try",
     "Eq",
     "Ord",
+    "Hash",
     "Wrapping",
     "Saturating",
     "Checked",
@@ -301,11 +302,15 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
         let name = w.name.as_str();
         let k = match defs.trait_names.get(name) {
             Some(&k)
-                if k == defs.fmt
-                    || k == defs.repr
-                    || k == defs.eq
-                    || k == defs.ord()
-                    || k == defs.convert() =>
+                if [
+                    defs.fmt,
+                    defs.repr,
+                    defs.eq,
+                    defs.ord(),
+                    defs.hash(),
+                    defs.convert(),
+                ]
+                .contains(&k) =>
             {
                 k
             }
@@ -473,6 +478,10 @@ trait Eq[T] {
 
 trait Ord[T] {
   fn compare(a: T, b: T) -> Order
+}
+
+trait Hash[T] {
+  fn hash(value: T) -> u64
 }
 
 trait Convert[A, B] {
@@ -756,8 +765,8 @@ impl<'a> Defs<'a> {
     /// writes it with, if the trait is one a type is given automatically
     /// and the type is one it is given to, and nothing takes it away: the
     /// fields of a struct, what the cases of an enum hold, and the elements
-    /// of a tuple. A `str` is given `Repr`, `Eq`, and `Ord`, and `()` each of
-    /// the four, which have no parts.
+    /// of a tuple. A `str` is given `Repr`, `Eq`, `Ord`, and `Hash`, and `()` each of
+    /// the four, which have no parts, and a whole number and a list `Hash`.
     fn given_parts(&self, k: usize, types: &[Ty]) -> Option<Vec<Ty>> {
         if k == self.convert() {
             let Ty::Enum(e, args) = &types[1] else {
@@ -767,13 +776,15 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
-        if k != self.fmt && k != self.repr && k != self.eq && k != self.ord() {
+        if k != self.fmt && k != self.repr && k != self.eq && k != self.ord() && k != self.hash() {
             return None;
         }
         let taken = |d: Def| self.withouts.contains(&(k, d));
         match &types[0] {
             Ty::Text if k != self.fmt => Some(Vec::new()),
             Ty::Nothing => Some(Vec::new()),
+            Ty::Int(_) if k == self.hash() => Some(Vec::new()),
+            Ty::List(of) if k == self.hash() => Some(vec![of[0].clone()]),
             Ty::Struct(s, args) if !taken(Def::Struct(*s)) => {
                 Some(self.fields[*s].iter().map(|t| t.subst(args)).collect())
             }
@@ -788,6 +799,11 @@ impl<'a> Defs<'a> {
     /// The trait `Ord`, which the prelude defines.
     pub(super) fn ord(&self) -> usize {
         self.trait_names["Ord"]
+    }
+
+    /// The trait `Hash`, which the prelude defines.
+    pub(super) fn hash(&self) -> usize {
+        self.trait_names["Hash"]
     }
 
     /// The trait `Convert`, which the prelude defines.

@@ -1,7 +1,24 @@
-//! Lowers the implementations a type is given: `Repr`, `Eq`, `Ord`, and
+//! Lowers the implementations a type is given: `Repr`, `Eq`, `Ord`, `Hash`, and
 //! `Fmt`, each made of the same trait of the type's parts.
 
 use super::*;
+
+/// The type of a hash, and of the numbers it is worked out from.
+const WORD: form::Type = form::Type::Int(form::Bits::B64);
+
+/// The multiplier that spreads one part of a hash over the next, which is
+/// the fraction of the golden ratio in 64 bits.
+const SPREAD: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// The two multipliers and the shift of `mix`, which are those of the
+/// finalizer of MurmurHash3.
+const MIX: [u64; 2] = [0xff51_afd7_ed55_8ccd, 0xc4ce_b9fe_1a85_ec53];
+const MIX_SHIFT: i128 = 33;
+
+/// What a hash of text starts from, and what it multiplies by for each byte,
+/// which are those of 64-bit FNV-1a.
+const BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const PRIME: u64 = 0x0000_0100_0000_01b3;
 
 impl<'a> Lowering<'a> {
     /// The number `value` of type `from` as a number of type `to`, which
@@ -42,6 +59,8 @@ impl<'a> Lowering<'a> {
             let b = out.params(&types);
             let order = self.ordered(&mut out, ty, &a, &b);
             (vec![order], self.scalars(&Ty::Enum(defs.order, Vec::new())))
+        } else if k == defs.hash() {
+            (vec![self.hash(&mut out, ty, &a)], vec![WORD])
         } else {
             let b = out.params(&types);
             let same = self.equal(&mut out, ty, &a, &b);
@@ -468,5 +487,149 @@ impl<'a> Lowering<'a> {
         let count = parts.len();
         let args = parts.concat();
         self.call_runtime(out, Runtime::Join(count), args, TEXT.to_vec())
+    }
+
+    /// The hash of the values of a value of the type: for a number, its 64
+    /// bits mixed; for text, FNV-1a over its bytes and then its size, mixed;
+    /// for the rest, the hashes of its parts one after another with
+    /// `combine`, and for an enum those of the case's number and what it
+    /// holds. Each part is hashed by its own type's `Hash`.
+    fn hash(&mut self, out: &mut Out<'a>, ty: &Ty, values: &[form::Value]) -> form::Value {
+        let defs = self.typed.defs;
+        let parts: Vec<Ty> = match ty {
+            Ty::Int(t) => {
+                let word = out.resize(t.signed(), values[0], form::Bits::B64);
+                return self.mix(out, word);
+            }
+            Ty::Text => {
+                let basis = out.int(form::Bits::B64, i128::from(BASIS));
+                let prime = out.int(form::Bits::B64, i128::from(PRIME));
+                let (address, size) = (values[0], values[1]);
+                let h = self.fold(out, size, basis, |_, out, i, h| {
+                    let at = out.binary(form::Binary::Add, address, i);
+                    let byte = out.emit(
+                        form::Op::Load {
+                            ty: BYTE,
+                            address: at,
+                        },
+                        vec![BYTE],
+                    )[0];
+                    let byte = out.widen(false, byte);
+                    let mixed = out.binary(form::Binary::Xor, h, byte);
+                    out.binary(form::Binary::Mul, mixed, prime)
+                });
+                let sized = out.binary(form::Binary::Xor, h, size);
+                return self.mix(out, sized);
+            }
+            Ty::List(of) => {
+                let scalars = self.scalars(&of[0]);
+                let (places, stride) = form::element(&scalars);
+                let places: Vec<(form::Type, u64)> = scalars.into_iter().zip(places).collect();
+                let stride = out.int(form::Bits::B64, i128::from(stride));
+                let zero = out.int(form::Bits::B64, 0);
+                let (address, size) = (values[0], values[1]);
+                let h = self.fold(out, size, zero, |this, out, i, h| {
+                    let offset = out.binary(form::Binary::Mul, i, stride);
+                    let at = out.binary(form::Binary::Add, address, offset);
+                    let element = this.load(out, at, &places);
+                    let part = this.run(out, defs.hash(), &of[0], element)[0];
+                    this.combine(out, h, part)
+                });
+                return self.combine(out, h, size);
+            }
+            Ty::Enum(e, args) => {
+                let layout = self.layout(*e, args);
+                let holds: Vec<Option<Ty>> = (defs.cases[*e].iter())
+                    .map(|t| t.as_ref().map(|t| t.subst(args)))
+                    .collect();
+                let arms = out.switch(values[0], holds.len());
+                let mut ends = Vec::new();
+                for (k, (held, block)) in holds.iter().zip(arms).enumerate() {
+                    out.current = block;
+                    let zero = out.int(form::Bits::B64, 0);
+                    let case = out.int(form::Bits::B64, k as i128);
+                    let mut h = self.combine(out, zero, case);
+                    if let Some(t) = held {
+                        let part: Vec<form::Value> =
+                            layout.cases[k].iter().map(|&p| values[1 + p]).collect();
+                        let part = self.run(out, defs.hash(), t, part)[0];
+                        h = self.combine(out, h, part);
+                    }
+                    ends.push((out.current, vec![h]));
+                }
+                return out.join(&[WORD], ends)[0];
+            }
+            Ty::Struct(s, args) => defs.fields[*s].iter().map(|t| t.subst(args)).collect(),
+            Ty::Tuple(of) => of.clone(),
+            Ty::Nothing => Vec::new(),
+            _ => unreachable!("a type given `Hash`"),
+        };
+        let mut h = out.int(form::Bits::B64, 0);
+        let mut at = 0;
+        for t in &parts {
+            let size = self.size(t);
+            let part = self.run(out, defs.hash(), t, values[at..at + size].to_vec())[0];
+            h = self.combine(out, h, part);
+            at += size;
+        }
+        h
+    }
+
+    /// A hash of the hash `h` followed by the hash `part`, as a function of
+    /// both whose result differs for every `part` and for every `h`.
+    fn combine(&mut self, out: &mut Out<'a>, h: form::Value, part: form::Value) -> form::Value {
+        let spread = out.int(form::Bits::B64, i128::from(SPREAD));
+        let spread = out.binary(form::Binary::Mul, h, spread);
+        let sum = out.binary(form::Binary::Add, spread, part);
+        self.mix(out, sum)
+    }
+
+    /// `x` with its bits spread over all 64: the finalizer of MurmurHash3,
+    /// which takes every 64-bit number to a different one.
+    fn mix(&mut self, out: &mut Out<'a>, x: form::Value) -> form::Value {
+        use form::Binary::*;
+        let shift = out.int(form::Bits::B64, MIX_SHIFT);
+        let mut x = x;
+        for by in MIX {
+            let high = out.binary(ShiftRightU, x, shift);
+            x = out.binary(Xor, x, high);
+            let by = out.int(form::Bits::B64, i128::from(by));
+            x = out.binary(Mul, x, by);
+        }
+        let high = out.binary(ShiftRightU, x, shift);
+        out.binary(Xor, x, high)
+    }
+
+    /// A loop that, for each `i` below `count`, takes the 64-bit `h`, which
+    /// starts as `seed`, to what `step` makes of `i` and `h`, and gives the
+    /// `h` after the last.
+    fn fold(
+        &mut self,
+        out: &mut Out<'a>,
+        count: form::Value,
+        seed: form::Value,
+        step: impl FnOnce(&mut Self, &mut Out<'a>, form::Value, form::Value) -> form::Value,
+    ) -> form::Value {
+        let zero = out.int(form::Bits::B64, 0);
+        let header = out.new_block();
+        let (i, h) = (out.fresh(WORD), out.fresh(WORD));
+        out.blocks[header].params = vec![i, h];
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: vec![zero, seed],
+        });
+        out.current = header;
+        let more = out.compare(form::Compare::LessU, i, count);
+        let arms = out.switch(more, 2);
+        out.current = arms[1];
+        let next = step(self, out, i, h);
+        let one = out.int(form::Bits::B64, 1);
+        let after = out.binary(form::Binary::Add, i, one);
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: vec![after, next],
+        });
+        out.current = arms[0];
+        h
     }
 }

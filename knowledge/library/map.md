@@ -2,6 +2,10 @@
 type: specification
 title: Map
 description: Map, which finds a value by its key, kept in the order its entries were added, and the Hash trait a key needs.
+status: partial
+built:
+  - "`Hash`, which a whole number, `bool`, `()`, `str`, and every struct, enum, tuple, or list is given unless a part lacks it, which `without Hash for T` takes away, and which a type's own `impl` replaces"
+  - "not `Map`"
 ---
 
 # Map
