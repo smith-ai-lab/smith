@@ -32,6 +32,9 @@ impl<'a> Lowering<'a> {
         if defs.serialize == Some(k) {
             return self.serialized(&given[0], &given[1]);
         }
+        if defs.deserialize() == Some(k) {
+            return self.deserialized(&given[0], &given[1]);
+        }
         let ty = &given[0];
         let mut out = Out::new();
         let types = self.scalars(ty);
@@ -820,4 +823,501 @@ impl<'a> Lowering<'a> {
         out.current = arms[0];
         h
     }
+}
+
+/// What reading one value shares: the type of the whole value, which the
+/// error of a read that stops is given back in, and the type of the reader.
+struct Read {
+    top: Ty,
+    reader: Ty,
+}
+
+impl<'a> Lowering<'a> {
+    /// The function that reads a value of `ty` from a reader of type `r`,
+    /// which takes the reader and gives it back with the value, or with what
+    /// was wrong. It calls the function of the reader's `Reader` for each
+    /// shape of the value, and the part's own `Deserialize` for each part,
+    /// and builds nothing between. A read that finds something wrong ends
+    /// there, with the reader as it was left.
+    fn deserialized(&mut self, ty: &Ty, r: &Ty) -> form::Function {
+        let mut out = Out::new();
+        let reader = self.scalars(r);
+        let params = out.params(&reader);
+        let c = Read {
+            top: ty.clone(),
+            reader: r.clone(),
+        };
+        let (reader_now, values) = self.read_shape(&mut out, &c, ty, params);
+        let result = self.result_ty(ty);
+        let ok = self.enum_value(&mut out, &result, "ok", values);
+        out.blocks[out.current].end = form::End::Return([reader_now, ok].concat());
+        let mut results = reader;
+        results.extend(self.scalars(&result));
+        form::Function {
+            types: out.types,
+            results,
+            blocks: out.blocks,
+        }
+    }
+
+    /// `Result[ok, ReadError]`.
+    fn result_ty(&self, ok: &Ty) -> Ty {
+        let defs = self.typed.defs;
+        let result = (defs.file.enums.iter())
+            .position(|e| e.name == "Result" && crate::check::of_prelude(e.pos))
+            .expect("the prelude defines it");
+        Ty::Enum(result, vec![ok.clone(), self.read_error()])
+    }
+
+    fn read_error(&self) -> Ty {
+        let defs = self.typed.defs;
+        let at = (defs.file.structs.iter())
+            .position(|s| s.name == "ReadError" && crate::check::of_std(s.pos))
+            .expect("a program that reads has the module");
+        Ty::Struct(at, Vec::new())
+    }
+
+    fn problem_ty(&self) -> Ty {
+        let defs = self.typed.defs;
+        let at = (defs.file.enums.iter())
+            .position(|e| e.name == "Problem" && crate::check::of_std(e.pos))
+            .expect("a program that reads has the module");
+        Ty::Enum(at, Vec::new())
+    }
+
+    /// The values of the case `name` of the enum `ty`, holding `held`.
+    fn enum_value(
+        &mut self,
+        out: &mut Out<'a>,
+        ty: &Ty,
+        name: &str,
+        held: Vec<form::Value>,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let Ty::Enum(e, args) = ty else {
+            unreachable!("an enum")
+        };
+        let k = defs.case_of(*e, name).expect("a case");
+        let layout = self.layout(*e, args);
+        let mut places: Vec<Option<form::Value>> = vec![None; layout.places.len()];
+        for (v, &place) in held.iter().zip(&layout.cases[k]) {
+            places[place] = Some(*v);
+        }
+        let case = out.constant(form::Constant::Int(k as u64), BYTE);
+        let mut values = vec![case];
+        for (place, ty) in places.into_iter().zip(&layout.places) {
+            values.push(place.unwrap_or_else(|| out.zero(*ty)));
+        }
+        values
+    }
+
+    /// What the case `name` of the enum `ty` holds, from the values of the
+    /// enum.
+    fn held(&self, ty: &Ty, name: &str, values: &[form::Value]) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let Ty::Enum(e, args) = ty else {
+            unreachable!("an enum")
+        };
+        let k = defs.case_of(*e, name).expect("a case");
+        let layout = self.layout(*e, args);
+        layout.cases[k].iter().map(|&p| values[1 + p]).collect()
+    }
+
+    /// Calls the function `name` of the reader's `Reader`, which is given the
+    /// reader and then `args`, and gives the reader and what the function
+    /// gives, which is of type `gives`.
+    fn reader_call(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        name: &str,
+        reader: Vec<form::Value>,
+        args: Vec<Vec<form::Value>>,
+        gives: &Ty,
+    ) -> (Vec<form::Value>, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        let k = defs.reader().expect("a program that reads has the module");
+        let at = crate::check::traits::trait_function(&defs.file.traits[k], name)
+            .expect("a function of `Reader`");
+        let (instance, _) = defs.chosen(k, at, vec![c.reader.clone()], Vec::new());
+        let function = self.place(Body::Copy(instance));
+        let mut types = self.scalars(&c.reader);
+        types.extend(self.scalars(gives));
+        let args = std::iter::once(reader).chain(args).flatten().collect();
+        let mut all = out.emit(form::Op::Call { function, args }, types);
+        let value = all.split_off(self.size(&c.reader));
+        (all, value)
+    }
+
+    /// Ends the block being filled by giving back the reader with the error.
+    fn give_error(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        reader: Vec<form::Value>,
+        error: Vec<form::Value>,
+    ) {
+        let result = self.result_ty(&c.top);
+        let err = self.enum_value(out, &result, "err", error);
+        out.blocks[out.current].end = form::End::Return([reader, err].concat());
+    }
+
+    /// Ends the block being filled with the error the reader makes of the
+    /// `Problem` that is the case `name` holding `held`.
+    fn failure(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        reader: Vec<form::Value>,
+        name: &str,
+        held: Vec<form::Value>,
+    ) {
+        let problem = self.problem_ty();
+        let problem = self.enum_value(out, &problem, name, held);
+        let error = self.read_error();
+        let (reader, error) = self.reader_call(out, c, "fail", reader, vec![problem], &error);
+        self.give_error(out, c, reader, error);
+    }
+
+    /// Goes on in the block of the `ok` of what a function of the reader gave,
+    /// which holds a value of type `ok`, and gives the value. The block of the
+    /// `err` ends the read.
+    fn proceed(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        ok: &Ty,
+        reader: Vec<form::Value>,
+        gave: Vec<form::Value>,
+    ) -> Vec<form::Value> {
+        let result = self.result_ty(ok);
+        let arms = out.switch(gave[0], 2);
+        out.current = arms[1];
+        let error = self.held(&result, "err", &gave);
+        self.give_error(out, c, reader, error);
+        out.current = arms[0];
+        self.held(&result, "ok", &gave)
+    }
+
+    /// Calls a function of the reader that gives `Result[ok, ReadError]`,
+    /// and goes on with the `ok` of it.
+    fn reader_step(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        name: &str,
+        reader: Vec<form::Value>,
+        args: Vec<Vec<form::Value>>,
+        ok: &Ty,
+    ) -> (Vec<form::Value>, Vec<form::Value>) {
+        let result = self.result_ty(ok);
+        let (reader, gave) = self.reader_call(out, c, name, reader, args, &result);
+        let value = self.proceed(out, c, ok, reader.clone(), gave);
+        (reader, value)
+    }
+
+    /// Reads a part, by the `Deserialize` its type is given or writes itself.
+    fn read_part(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        ty: &Ty,
+        reader: Vec<form::Value>,
+    ) -> (Vec<form::Value>, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        let k = defs
+            .deserialize()
+            .expect("a program that reads has the module");
+        let (instance, _) = defs.chosen(k, 0, vec![ty.clone()], vec![c.reader.clone()]);
+        let function = self.place(Body::Copy(instance));
+        let result = self.result_ty(ty);
+        let mut types = self.scalars(&c.reader);
+        types.extend(self.scalars(&result));
+        let mut all = out.emit(
+            form::Op::Call {
+                function,
+                args: reader,
+            },
+            types,
+        );
+        let gave = all.split_off(self.size(&c.reader));
+        let value = self.proceed(out, c, ty, all.clone(), gave);
+        (all, value)
+    }
+
+    /// The reader after a value of the type is read from it, and the value,
+    /// by the shape of the type: a number as `signed` or `unsigned`, text as
+    /// `text`, a struct as its name, the name and value of each field it
+    /// holds, and a list as its elements for as long as the reader has more.
+    fn read_shape(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        ty: &Ty,
+        reader: Vec<form::Value>,
+    ) -> (Vec<form::Value>, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        match ty {
+            Ty::Int(t) => {
+                let signed = t.signed();
+                let wide = Ty::Int(if signed { Int::I64 } else { Int::U64 });
+                let name = if signed { "signed" } else { "unsigned" };
+                let (reader, value) = self.reader_step(out, c, name, reader, Vec::new(), &wide);
+                let bits = bits_of(*t);
+                if bits == form::Bits::B64 {
+                    return (reader, value);
+                }
+                let narrow = out.narrow(value[0], bits);
+                let back = out.resize(signed, narrow, form::Bits::B64);
+                let fits = out.compare(form::Compare::Equal, back, value[0]);
+                let arms = out.switch(fits, 2);
+                out.current = arms[0];
+                let name = self.text(out, t.name().as_bytes());
+                self.failure(out, c, reader.clone(), "range", name);
+                out.current = arms[1];
+                (reader, vec![narrow])
+            }
+            Ty::Text => self.reader_step(out, c, "text", reader, Vec::new(), ty),
+            Ty::Nothing => self.reader_step(out, c, "nothing", reader, Vec::new(), ty),
+            Ty::Tuple(of) => {
+                let size = self.count(out, of.len());
+                let (mut reader, _) =
+                    self.reader_step(out, c, "tuple", reader, vec![size], &Ty::Nothing);
+                let mut values = Vec::new();
+                for t in of {
+                    let (next, part) = self.read_part(out, c, t, reader);
+                    reader = next;
+                    values.extend(part);
+                }
+                let (reader, _) =
+                    self.reader_step(out, c, "end_tuple", reader, Vec::new(), &Ty::Nothing);
+                (reader, values)
+            }
+            Ty::List(of) => self.read_list(out, c, &of[0], reader),
+            Ty::Struct(s, args) => self.read_struct(out, c, *s, args, reader),
+            Ty::Enum(e, _) if *e == defs.boolean => {
+                self.reader_step(out, c, "boolean", reader, Vec::new(), ty)
+            }
+            Ty::Enum(e, args) if *e == defs.option => {
+                let (reader, present) =
+                    self.reader_step(out, c, "present", reader, Vec::new(), &defs.bool_ty());
+                let arms = out.switch(present[0], 2);
+                out.current = arms[0];
+                let none = self.enum_value(out, ty, "none", Vec::new());
+                let mut ends = vec![(out.current, [reader.clone(), none].concat())];
+                out.current = arms[1];
+                let (after, inner) = self.read_part(out, c, &args[0], reader);
+                let some = self.enum_value(out, ty, "some", inner);
+                ends.push((out.current, [after, some].concat()));
+                let mut types = self.scalars(&c.reader);
+                types.extend(self.scalars(ty));
+                let mut all = out.join(&types, ends);
+                let value = all.split_off(self.size(&c.reader));
+                (all, value)
+            }
+            Ty::Enum(e, args) => {
+                let def = &defs.file.enums[*e];
+                let of = self.text(out, crate::check::written_name(&def.name).as_bytes());
+                let (reader, name) = self.reader_step(out, c, "case", reader, vec![of], &Ty::Text);
+                let mut ends = Vec::new();
+                for (case, held) in def.cases.iter().zip(&defs.cases[*e]) {
+                    let literal = self.text(out, case.name.as_bytes());
+                    let same = self.call_runtime(
+                        out,
+                        Runtime::Equal,
+                        [name.clone(), literal].concat(),
+                        vec![BYTE],
+                    )[0];
+                    let arms = out.switch(same, 2);
+                    out.current = arms[1];
+                    let (after, inside) = match held {
+                        Some(t) => self.read_part(out, c, &t.subst(args), reader.clone()),
+                        None => (reader.clone(), Vec::new()),
+                    };
+                    let (after, _) =
+                        self.reader_step(out, c, "end_case", after, Vec::new(), &Ty::Nothing);
+                    let value = self.enum_value(out, ty, &case.name, inside);
+                    ends.push((out.current, [after, value].concat()));
+                    out.current = arms[0];
+                }
+                self.failure(out, c, reader, "case", name);
+                let mut types = self.scalars(&c.reader);
+                types.extend(self.scalars(ty));
+                let mut all = out.join(&types, ends);
+                let value = all.split_off(self.size(&c.reader));
+                (all, value)
+            }
+            _ => unreachable!("a type given `Deserialize`"),
+        }
+    }
+
+    /// The reader after a list of `element` is read from it, and the list.
+    fn read_list(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        element: &Ty,
+        reader: Vec<form::Value>,
+    ) -> (Vec<form::Value>, Vec<form::Value>) {
+        let (reader, _) = self.reader_step(out, c, "sequence", reader, Vec::new(), &Ty::Nothing);
+        let list = Ty::List(vec![element.clone()]);
+        let kinds = self.scalars(&c.reader);
+        let header = out.new_block();
+        let params: Vec<form::Value> = (kinds.iter())
+            .chain(&self.scalars(&list))
+            .map(|t| out.fresh(*t))
+            .collect();
+        out.blocks[header].params = params.clone();
+        let none = out.constant(form::Constant::Null, form::Type::Address);
+        let zero = out.int(form::Bits::B64, 0);
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: [reader, vec![none, zero, zero]].concat(),
+        });
+        out.current = header;
+        let (reader, rest) = params.split_at(kinds.len());
+        let (reader, rest) = (reader.to_vec(), rest.to_vec());
+        let (reader, more) = self.reader_step(out, c, "more", reader, Vec::new(), &defs_bool(self));
+        let arms = out.switch(more[0], 2);
+        out.current = arms[1];
+        let (after, item) = self.read_part(out, c, element, reader.clone());
+        let kind = Runtime::Push(self.scalars(element));
+        let grown = self.call_runtime(
+            out,
+            kind,
+            [rest.clone(), item].concat(),
+            self.scalars(&list),
+        );
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: [after, grown].concat(),
+        });
+        out.current = arms[0];
+        (reader, rest)
+    }
+
+    /// The reader after a struct is read from it, and the struct. The fields
+    /// come in any order, each at most once, and what is left out is its
+    /// default, or `.none` for an `Option`, or an error that names it.
+    fn read_struct(
+        &mut self,
+        out: &mut Out<'a>,
+        c: &Read,
+        s: usize,
+        args: &[Ty],
+        reader: Vec<form::Value>,
+    ) -> (Vec<form::Value>, Vec<form::Value>) {
+        let defs = self.typed.defs;
+        let def = &defs.file.structs[s];
+        let types: Vec<Ty> = defs.fields[s].iter().map(|t| t.subst(args)).collect();
+        let name = self.text(out, crate::check::written_name(&def.name).as_bytes());
+        let (reader, _) = self.reader_step(out, c, "structure", reader, vec![name], &Ty::Nothing);
+        // The loop carries the reader, and for each field whether it was
+        // read and what it was.
+        let kinds = self.scalars(&c.reader);
+        let mut carried = kinds.clone();
+        for t in &types {
+            carried.push(BYTE);
+            carried.extend(self.scalars(t));
+        }
+        let header = out.new_block();
+        let params: Vec<form::Value> = carried.iter().map(|t| out.fresh(*t)).collect();
+        out.blocks[header].params = params.clone();
+        let start: Vec<form::Value> = carried.iter().map(|t| out.zero(*t)).collect();
+        let start = [reader, start[kinds.len()..].to_vec()].concat();
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: start,
+        });
+        out.current = header;
+        let now = params[..kinds.len()].to_vec();
+        let mut state: Vec<(form::Value, Vec<form::Value>)> = Vec::new();
+        let mut at = kinds.len();
+        for t in &types {
+            let size = self.size(t);
+            state.push((params[at], params[at + 1..at + 1 + size].to_vec()));
+            at += 1 + size;
+        }
+        let option = Ty::Enum(defs.option, vec![Ty::Text]);
+        let (reader, next) = self.reader_step(out, c, "field", now, Vec::new(), &option);
+        let arms = out.switch(next[0], 2);
+        let (some, none) = (
+            defs.case_of(defs.option, "some").expect("a case"),
+            defs.case_of(defs.option, "none").expect("a case"),
+        );
+        // A field the input holds.
+        out.current = arms[some];
+        let given = self.held(&option, "some", &next);
+        for (i, field) in def.fields.iter().enumerate() {
+            let literal = self.text(out, field.name.as_bytes());
+            let same = self.call_runtime(
+                out,
+                Runtime::Equal,
+                [given.clone(), literal.clone()].concat(),
+                vec![BYTE],
+            )[0];
+            let found = out.switch(same, 2);
+            out.current = found[1];
+            let seen = out.switch(state[i].0, 2);
+            out.current = seen[1];
+            self.failure(out, c, reader.clone(), "twice", literal);
+            out.current = seen[0];
+            let (after, value) = self.read_part(out, c, &types[i], reader.clone());
+            let one = out.int(form::Bits::B8, 1);
+            let mut jump = after;
+            for (j, (flag, held)) in state.iter().enumerate() {
+                if j == i {
+                    jump.push(one);
+                    jump.extend(value.iter().copied());
+                } else {
+                    jump.push(*flag);
+                    jump.extend(held.iter().copied());
+                }
+            }
+            out.blocks[out.current].end = form::End::Jump(form::Jump {
+                block: header,
+                args: jump,
+            });
+            out.current = found[0];
+        }
+        let (after, _) =
+            self.reader_step(out, c, "unknown", reader.clone(), vec![given], &Ty::Nothing);
+        let mut jump = after;
+        for (flag, held) in &state {
+            jump.push(*flag);
+            jump.extend(held.iter().copied());
+        }
+        out.blocks[out.current].end = form::End::Jump(form::Jump {
+            block: header,
+            args: jump,
+        });
+        // The input has no more fields.
+        out.current = arms[none];
+        let mut values = Vec::new();
+        for (i, field) in def.fields.iter().enumerate() {
+            let seen = out.switch(state[i].0, 2);
+            let mut ends = vec![(seen[1], state[i].1.clone())];
+            out.current = seen[0];
+            let left_out = match &field.default {
+                Some(default) => Some(self.expr(out, default, args).1),
+                None if matches!(&types[i], Ty::Enum(e, _) if *e == defs.option) => {
+                    Some(self.enum_value(out, &types[i], "none", Vec::new()))
+                }
+                None => None,
+            };
+            match left_out {
+                Some(value) => ends.push((out.current, value)),
+                None => {
+                    let literal = self.text(out, field.name.as_bytes());
+                    self.failure(out, c, reader.clone(), "missing", literal);
+                }
+            }
+            values.extend(out.join(&self.scalars(&types[i]), ends));
+        }
+        (reader, values)
+    }
+}
+
+fn defs_bool(l: &Lowering) -> Ty {
+    l.typed.defs.bool_ty()
 }
