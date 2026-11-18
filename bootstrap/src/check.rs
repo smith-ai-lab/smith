@@ -39,7 +39,7 @@ mod traits;
 
 use crate::diag::{Error, Pos};
 use crate::parser::{
-    Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Loop, Match, Part,
+    Arg, ArithOp, Arm, Call, Expr, File, Form, Function, Generic, Lambda, Loop, Match, Over, Part,
     Pattern, Range, Stmt, Type,
 };
 use lists_and_text::{as_read, is_push, is_utf8, text_as_bytes};
@@ -1168,14 +1168,17 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
             let params: Vec<&str> = l.params.iter().map(|(p, _)| p.as_str()).collect();
             format!("fn({}) {{ ... }}", params.join(", "))
         }
-        Expr::Loop(l) => match &l.range {
-            Some(r) => format!(
+        Expr::Loop(l) => match (&l.range, &l.over) {
+            (Some(r), _) => format!(
                 "loop {} in {}..{} {{ ... }}",
                 r.name,
                 written_with(s, &r.from),
                 written_with(s, &r.to)
             ),
-            None => match &l.decreases {
+            (None, Some(o)) => {
+                format!("loop {} in {} {{ ... }}", o.name, written_with(s, &o.value))
+            }
+            (None, None) => match &l.decreases {
                 Some(e) => format!("loop decreases {} {{ ... }}", written_with(s, e)),
                 None => "loop { ... }".to_string(),
             },
@@ -2280,6 +2283,9 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 walk(&r.from, out);
                 walk(&r.to, out);
             }
+            if let Some(o) = &l.over {
+                walk(&o.value, out);
+            }
             if let Some(e) = &l.decreases {
                 walk(e, out);
             }
@@ -2341,6 +2347,9 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                 if let Some(r) = &l.range {
                     blocks(&r.from, out);
                     blocks(&r.to, out);
+                }
+                if let Some(o) = &l.over {
+                    blocks(&o.value, out);
                 }
                 if let Some(e) = &l.decreases {
                     blocks(e, out);
@@ -5126,18 +5135,20 @@ impl<'a> Checker<'a> {
 
     /// Checks a `loop`, which gives nothing. Over a range, its body runs once
     /// for each whole number from the first end up to but not including the
-    /// second, and `arith` knows that in it. Open-ended, it runs until a
-    /// `break`, and its function carries `diverge`.
+    /// second, and `arith` knows that in it. Over a list, it runs once for
+    /// each element, in order. Open-ended, it runs until a `break`, and its
+    /// function carries `diverge`.
     fn loop_expr(&mut self, body: &mut Body<'a>, l: &Loop) -> Ty {
         let counter = match &l.range {
             Some(r) => Some((r, self.range_type(body, r))),
             None => {
-                if l.decreases.is_none() {
+                if l.decreases.is_none() && l.over.is_none() {
                     self.needs(body, "diverge", l.pos, "an open-ended `loop`");
                 }
                 None
             }
         };
+        let element = l.over.as_ref().map(|o| (o, self.element_type(body, o)));
         let measure = l.decreases.as_ref();
         if let Some(e) = measure {
             let gives = self.expr(body, e, &Want::Any);
@@ -5166,6 +5177,12 @@ impl<'a> Checker<'a> {
             body.names.push((r.name.clone(), ty));
             self.assume_range(body, r);
         }
+        if let Some((o, ty)) = element {
+            if body.names.iter().any(|(n, _)| n == &o.name) {
+                self.errors.push(self.defined_twice(body, &o.name, o.pos));
+            }
+            body.names.push((o.name.clone(), ty));
+        }
         self.begin_round(body, &assigned);
         let start = measure.and_then(|e| self.measure(body, e));
         body.loops += 1;
@@ -5183,6 +5200,25 @@ impl<'a> Checker<'a> {
         body.facts.reset(&known);
         self.forget(body, &assigned);
         Ty::Nothing
+    }
+
+    /// Checks the value a `loop` runs over, which is a list, and gives the
+    /// type of its elements. The list is worked out once, when the loop
+    /// starts, so assigning a `var` it was read from changes nothing about
+    /// which elements the loop gives.
+    fn element_type(&mut self, body: &mut Body<'a>, o: &Over) -> Ty {
+        match self.expr(body, &o.value, &Want::Any) {
+            Ty::List(of) => of[0].clone(),
+            Ty::Unknown => Ty::Unknown,
+            other => {
+                let given = self.defs.describe(&other, body.scope);
+                self.errors.push(Error::new(
+                    o.value.pos(),
+                    format!("a `loop` runs over a range or a list, and this is {given}"),
+                ));
+                Ty::Unknown
+            }
+        }
     }
 
     /// Checks the two ends of a range, which are whole numbers of one type,

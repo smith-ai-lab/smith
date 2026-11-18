@@ -249,7 +249,8 @@ impl<'a> Walk<'a> {
                 if let Some(error) = self.error(
                     e.pos(),
                     format!("{whole}, and a lent value cannot be {what}"),
-                ) {
+                ) && by != "this `loop`"
+                {
                     error.fix = Some(fix);
                 }
             }
@@ -462,9 +463,14 @@ impl<'a> Walk<'a> {
             self.eval(st, &range.from, Flow::Lend);
             self.eval(st, &range.to, Flow::Lend);
         }
+        if let Some(over) = &l.over {
+            self.eval(st, &over.value, Flow::Lend);
+        }
         if let Some(measure) = &l.decreases {
             self.eval(st, measure, Flow::Lend);
         }
+        // The elements stay in the list, so the block is lent each one.
+        let element = "this `loop`";
         let entry = st.clone();
         self.breaks.push(Vec::new());
         // The body is read a second time with what the first round gave
@@ -473,17 +479,23 @@ impl<'a> Walk<'a> {
         if let (Some(range), Some(_)) = (&l.range, &round) {
             self.bind(&mut round, &range.name, None);
         }
+        if let (Some(over), Some(_)) = (&l.over, &round) {
+            self.bind(&mut round, &over.name, Some(element.to_string()));
+        }
         self.block(&mut round, &l.body, Flow::Lend);
         let mut again = join(entry.clone(), round.clone());
         if let (Some(range), Some(_)) = (&l.range, &again) {
             self.bind(&mut again, &range.name, None);
+        }
+        if let (Some(over), Some(_)) = (&l.over, &again) {
+            self.bind(&mut again, &over.name, Some(element.to_string()));
         }
         self.block(&mut again, &l.body, Flow::Lend);
         let mut after: State = None;
         for exit in self.breaks.pop().unwrap_or_default() {
             after = join(after, Some(exit));
         }
-        if l.range.is_some() {
+        if l.range.is_some() || l.over.is_some() {
             after = join(after, join(entry, join(round, again)));
         }
         *st = after;

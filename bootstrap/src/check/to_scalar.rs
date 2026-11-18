@@ -1224,16 +1224,30 @@ impl<'a> Lowering<'a> {
                 .flat_map(|&(f, at)| out.frames[f][at].values.clone())
                 .collect()
         };
-        let range = match &l.range {
-            Some(r) => {
+        // A loop over a list counts from 0 to the list's size, which is
+        // read once, before the first round, and reads each element from
+        // the address the list had then.
+        let mut element = None;
+        let range = match (&l.range, &l.over) {
+            (Some(r), _) => {
                 let Ty::Int(t) = self.typed.type_of(&r.from, env) else {
                     unreachable!("checked")
                 };
                 let from = self.expr(out, &r.from, env).1[0];
                 let to = self.expr(out, &r.to, env).1[0];
-                Some((r, t, from, to))
+                Some((r.name.as_str(), t, from, to))
             }
-            None => None,
+            (None, Some(o)) => {
+                let (list, values) = self.expr(out, &o.value, env);
+                let scalars = self.element(&list);
+                let Ty::List(of) = list else {
+                    unreachable!("checked")
+                };
+                element = Some((of[0].clone(), scalars, values[0]));
+                let from = out.int(form::Bits::B64, 0);
+                Some((o.name.as_str(), Int::U64, from, values[1]))
+            }
+            (None, None) => None,
         };
         let start = held(out);
         let mut types: Vec<form::Type> = start.iter().map(|v| out.types[v.0]).collect();
@@ -1258,7 +1272,7 @@ impl<'a> Lowering<'a> {
             leaving: Vec::new(),
         };
         let names = out.names().len();
-        if let Some((r, t, _, to)) = range {
+        if let Some((name, t, _, to)) = range {
             // A number below the end is on this round, and the rest leave.
             let signed = t.signed();
             let below = out.compare(
@@ -1275,7 +1289,18 @@ impl<'a> Lowering<'a> {
             };
             round.leaving.push((leave, held(out)));
             out.current = inside;
-            out.define(&r.name, Ty::Int(t), vec![params[0]]);
+            match element.take() {
+                None => out.define(name, Ty::Int(t), vec![params[0]]),
+                Some((ty, scalars, start)) => {
+                    let (places, stride) = form::element(&scalars);
+                    let width = out.int(form::Bits::B64, i128::from(stride));
+                    let offset = out.binary(form::Binary::Mul, params[0], width);
+                    let address = out.binary(form::Binary::Add, start, offset);
+                    let at: Vec<(form::Type, u64)> = scalars.into_iter().zip(places).collect();
+                    let values = self.load(out, address, &at);
+                    out.define(name, ty, values);
+                }
+            }
         }
         out.loops.push(round);
         self.block(out, &l.body, env);
