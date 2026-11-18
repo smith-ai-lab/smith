@@ -6,7 +6,7 @@ description: Random bits from a key, distributions as ordinary structs with the 
 
 # Random
 
-Randomness comes from a [`Key`](../language/ownership.md), which is used at most once, so the same key never gives the same number twice by accident and a program's random results can be repeated. One function turns a key into bits, and everything else in this module is written in Smith on top of it.
+Randomness comes from a [`Key`](../language/take.md), which is used at most once, so the same key never gives the same number twice by accident and a program's random results can be repeated. One function turns a key into bits, and everything else in this module is written in Smith on top of it.
 
 ```
 fn bits(key: take Key) -> u64

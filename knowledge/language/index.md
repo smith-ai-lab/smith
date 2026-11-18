@@ -40,7 +40,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [repr.md](repr.md): the `Repr` trait, which writes a value as source, and the `Fmt` and `Repr` that structs, enums, and tuples are given.
 - [main.md](main.md): the arguments `main` may take, and the `Exit` trait, which turns what `main` returns into the status a program ends with.
 - [text.md](text.md): a `str` as bytes known to be valid UTF-8, `utf8`, and pieces of a text.
-- [ownership.md](ownership.md): the `Copy` and `Discard` traits, lending and `take`, and values that must be used at most once or exactly once.
+- [ownership.md](ownership.md): the `Copy` and `Discard` traits, which say whether a value may be duplicated and whether it may be dropped unused, and the three kinds of value they make.
+- [without.md](without.md): `without`, which takes away a trait a type would get automatically.
+- [take.md](take.md): lending an argument, `take`, which gives the callee ownership, and a random `Key` that cannot be used twice.
+- [resources.md](resources.md): a value with neither `Copy` nor `Discard`, which must be taken exactly once on every path.
 - [arrays.md](arrays.md): an array as a fixed number of elements of one type, a size that is a `Nat` and may be any name that cannot change, and a `List` as an array kept with its size.
 - [indexing.md](indexing.md): `x[i]`, an index proven to be in range when the program is built, the `Index` trait with its `valid`, and assigning an element.
 - [ranges.md](ranges.md): `a..b`, which excludes `b`, and `x[a..b]`, `x[..k]`, and `x[k..]` as parts of an array.
@@ -56,7 +59,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [check.md](check.md): `check`, which gives a proof of outside data when a test passes, and a failure that is returned.
 - [proof-functions.md](proof-functions.md): a proof passed, returned, and held, and a predicate as a function that returns `bool`.
 - [hole.md](hole.md): `hole`, which stands in for code or a proof not yet written.
-- [storage.md](storage.md): when an array gets a buffer, the `alloc` effect and arenas, recursion without stack overflow, and types that contain themselves.
+- [buffers.md](buffers.md): when an array gets a buffer and when it fuses into the code that reads it.
+- [arenas.md](arenas.md): the `alloc` effect, which data of a size known only at run time carries, and `with arena()`.
+- [recursion.md](recursion.md): a tail call as a loop, other recursion with its frames in an arena, and why the stack cannot overflow.
+- [recursive-types.md](recursive-types.md): a type that contains itself, which is how a tree is written, and a graph as a collection plus indices.
 - [code.md](code.md): functions that receive the checked code of an argument when the program is built and return code, which is how `expect` and `grad` are library functions.
 - [differentiation.md](differentiation.md): `grad`, a function over code that returns the gradient of a function, shown by training an MLP.
 - [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`.

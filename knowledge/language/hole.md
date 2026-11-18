@@ -39,4 +39,4 @@ The report for `inside` is the statement `raw < v`, which a [`check`](check.md) 
 | `hole(name)` where an expression is wanted | Code of the type, and effects, the place needs |
 | `hole(name)` where a proof is wanted | A proof of the statement the place needs |
 
-Next: [Storage and arenas](storage.md)
+Next: [Array buffers](buffers.md)
