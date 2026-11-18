@@ -103,7 +103,7 @@ impl<'a> Lowering<'a> {
         args: Vec<form::Value>,
     ) -> Vec<form::Value> {
         let defs = self.typed.defs;
-        let (instance, _) = defs.chosen(k, 0, vec![ty.clone()]);
+        let (instance, _) = defs.chosen(k, 0, vec![ty.clone()], Vec::new());
         let function = self.place(Body::Copy(instance));
         let types = self.scalars(&defs.trait_sigs[k][0].gives);
         out.emit(form::Op::Call { function, args }, types)
