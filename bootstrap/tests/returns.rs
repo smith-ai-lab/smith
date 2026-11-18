@@ -180,6 +180,36 @@ fn items(g: &mut Gen, depth: usize, loops: bool) -> Vec<Item> {
     out
 }
 
+/// Whether every way through the lines ends in a `return`.
+fn always_returns(items: &[Item]) -> bool {
+    items.iter().any(|item| match item {
+        Item::Return(_) => true,
+        Item::Branch(_, a, b) => always_returns(a) && always_returns(b),
+        Item::Pick(a, b, rest) => always_returns(a) && always_returns(b) && always_returns(rest),
+        _ => false,
+    })
+}
+
+/// The lines without those that nothing reaches, which are the ones after a
+/// line that always returns. The rewrite has no such lines to hold.
+fn reached(items: Vec<Item>) -> Vec<Item> {
+    let mut out = Vec::new();
+    for item in items {
+        let item = match item {
+            Item::Branch(c, a, b) => Item::Branch(c, reached(a), reached(b)),
+            Item::Pick(a, b, rest) => Item::Pick(reached(a), reached(b), reached(rest)),
+            Item::Loop(n, body) => Item::Loop(n, reached(body)),
+            other => other,
+        };
+        let done = always_returns(std::slice::from_ref(&item));
+        out.push(item);
+        if done {
+            break;
+        }
+    }
+    out
+}
+
 /// What the lines give when they return, with `acc` as they leave it.
 fn exec(items: &[Item], x: i64, acc: &mut i64) -> Option<i64> {
     for item in items {
@@ -522,10 +552,13 @@ fn after_an_if_that_returns_arith_knows_the_condition_is_false() {
 }
 
 /// How many functions the program holds, and how many calls it makes once
-/// what nothing uses is taken away.
+/// what nothing uses is taken away. The calls are counted before the passes
+/// that inline and fold, since the rewrite holds the lines after an `if` once
+/// for each block of it, and a pass may know more of each copy than it can of
+/// the one place the `return`s share.
 fn size(source: &str) -> (usize, usize) {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
-    let after = scalar::passes(&program);
+    let after = scalar::remove(&program);
     let calls = (after.functions.iter())
         .flat_map(|f| &f.blocks)
         .flat_map(|b| &b.instructions)
@@ -538,10 +571,11 @@ fn a_return_costs_a_jump_and_a_last_return_is_the_value_it_gives() {
     generate::check(
         64,
         8,
-        |g| items(g, 2, false),
+        |g| reached(items(g, 2, false)),
         |lines| {
             let returned = program(&body(lines, "x"));
             let rewritten = program(&format!("var acc: i64 = 0\n{}", as_value(lines, &[], "x")));
+            assert_eq!(evaluate(&returned), evaluate(&rewritten), "for {returned}");
             // The rewrite holds the lines after an `if` once for each block of
             // it, so it may call more, and the `return`s call nothing more.
             let (functions, calls) = size(&returned);
