@@ -173,7 +173,15 @@ fn function(k: usize, name: &str, generics: &str, t: &str, u: &str, mistake: boo
         ),
     };
     let effects = if matches!(k, 2 | 5) { "" } else { " ! alloc" };
-    format!("fn {name}{generics}({params}) -> {gives}{effects} {{\n  {body}\n}}\n\n")
+    // Nothing is known of a type parameter but what its bounds say, so each
+    // is asked for `Copy` and `Discard`, as the body copies and drops.
+    let asks: String = (generics.trim_matches(['[', ']']).split(", "))
+        .filter(|g| !g.is_empty())
+        .map(|g| g.split(':').next().unwrap_or(g))
+        .map(|g| format!("\n  requires Copy[{g}]\n  requires Discard[{g}]"))
+        .collect();
+    let open = if asks.is_empty() { " {".to_string() } else { format!("{asks}\n{{") };
+    format!("fn {name}{generics}({params}) -> {gives}{effects}{open}\n  {body}\n}}\n\n")
 }
 
 /// A generic function over lists, the arguments of its calls, and the types
@@ -280,7 +288,7 @@ fn stdout(source: &str) -> String {
 }
 
 fn the_generic_functions_that_take_and_give_a_list_compile_and_give_what_they_say() {
-    let append = "fn ap[T](a: List[T], b: List[T]) -> List[T] ! alloc {\n  var r = a\n  loop i in 0..b.size { r = push(r, b[i]) }\n  r\n}\n\n";
+    let append = "fn ap[T](a: take List[T], b: List[T]) -> List[T] ! alloc {\n  var r = a\n  loop i in 0..b.size { r = push(r, b[i]) }\n  r\n}\n\n";
     let eq = "fn e[T: Eq](x: List[T], y: T) -> bool { x.size > 0 and x[0] == y }\n\n";
     let n = "fn n[T](x: List[T]) -> Nat { x.size }\n\n";
     let main = "fn main() ! console, alloc {\n  a: List[u8] = [1, 2]\n  b: List[u8] = [3]\n  loop i in 0..ap(a, b).size { print(\"x\") }\n  c: List[u8] = [5]\n  d: List[u8] = [1, 2]\n  l: List[u8] = ap(c, d)\n  loop i in 0..l.size { print(\"{l[i]}\") }\n  e1: List[u8] = [7, 8]\n  e2: List[u8] = [7]\n  print(\"{e(e1, 7)} {e(e2, 9)}\")\n  print(\"{n(\"abc\")}\")\n  f: List[u8] = [9]\n  g: List[u8] = ap([4, 5], f)\n  print(\"{g.size}\")\n}\n";

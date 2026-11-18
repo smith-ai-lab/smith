@@ -39,12 +39,12 @@ pub const ONCE: &[Test] = &[
         a_function_type_marks_a_parameter_take_and_its_lambda_is_held_to_it,
     ),
     (
-        "what_could_spend_a_value_twice_through_a_lambda_or_a_type_parameter_is_refused_as_not_built",
-        what_could_spend_a_value_twice_through_a_lambda_or_a_type_parameter_is_refused_as_not_built,
+        "what_could_spend_a_value_twice_through_a_lambda_is_refused_as_not_built",
+        what_could_spend_a_value_twice_through_a_lambda_is_refused_as_not_built,
     ),
     (
-        "the_two_readings_that_would_spend_a_key_twice_are_refused_as_not_built",
-        the_two_readings_that_would_spend_a_key_twice_are_refused_as_not_built,
+        "a_key_given_away_inside_a_lambda_is_refused_as_not_built",
+        a_key_given_away_inside_a_lambda_is_refused_as_not_built,
     ),
     (
         "without_copy_and_without_discard_are_refused_for_what_is_not_a_type_of_the_program",
@@ -1003,28 +1003,14 @@ fn main() {
 
 // What is not built yet, because it could spend a value twice.
 
-/// What the shapes below call: a function that calls its argument twice, and
-/// functions over a type parameter, which may copy what they are given, and
-/// an implementation for a type that holds one.
-const GENERIC: &str = "fn twice(f: fn() -> u64) -> u64 {
+/// What the shapes below call: a function that calls its argument twice.
+const TWICE: &str = "fn twice(f: fn() -> u64) -> u64 {
   a = f()
   f()
 }
 
-fn dup[T](x: T) -> (T, T) { (x, x) }
-
-fn first[T, U](x: T, y: U) -> T { x }
-
 struct Box[T] {
   item: T
-}
-
-trait Named[T] {
-  fn name_of(x: T) -> u64
-}
-
-impl[T] Named[Box[T]] {
-  fn name_of(x: Box[T]) -> u64 { 1 }
 }
 
 ";
@@ -1032,19 +1018,15 @@ impl[T] Named[Box[T]] {
 /// A statement of `main`, where `@` is where the one error must be, if the
 /// value has no `Copy`, and `W` is the word of the value's type. The last
 /// ones are accepted for every type.
-const SHAPES: [(&str, bool); 9] = [
+const SHAPES: [(&str, bool); 5] = [
     ("r = twice({ sink_W(@v) })", true),
     ("r = twice({ lend_W(v) })", false),
     ("r = twice({\n    q = VALUE\n    sink_W(q)\n  })", false),
-    ("(a, b) = @dup(v)", true),
-    ("r = @first(v, 1)", true),
-    ("r = @first(1, v)", true),
-    ("r = @name_of(Box(item: v))", true),
     ("o = Option.some(v)", false),
     ("b = Box(item: v)", false),
 ];
 
-fn what_could_spend_a_value_twice_through_a_lambda_or_a_type_parameter_is_refused_as_not_built() {
+fn what_could_spend_a_value_twice_through_a_lambda_is_refused_as_not_built() {
     generate::check(
         704,
         100,
@@ -1053,9 +1035,11 @@ fn what_could_spend_a_value_twice_through_a_lambda_or_a_type_parameter_is_refuse
             let (text, refused) = SHAPES[*shape];
             let text = text.replace('W', held.word()).replace("VALUE", held.value());
             let mut source = String::from(PRELUDE);
-            source.push_str(GENERIC);
+            source.push_str(TWICE);
             source.push_str(&format!("fn main() {{\n  v = {}\n  ", held.value()));
-            let at = text.find('@').map(|at| pos_after(&format!("{source}{}", &text[..at])));
+            let at = text
+                .find('@')
+                .map(|at| pos_after(&format!("{source}{}", &text[..at])));
             source.push_str(&text.replace('@', ""));
             source.push_str("\n}\n");
             let found = errors(&source);
@@ -1063,7 +1047,11 @@ fn what_could_spend_a_value_twice_through_a_lambda_or_a_type_parameter_is_refuse
                 Some(at) if refused && held.lacks_copy() => {
                     assert_eq!(found.len(), 1, "{found:?}\n{source}");
                     assert_eq!(found[0].pos, at, "{source}");
-                    assert!(found[0].message.contains("not supported yet"), "{}", found[0]);
+                    assert!(
+                        found[0].message.contains("not supported yet"),
+                        "{}",
+                        found[0]
+                    );
                 }
                 _ => assert!(found.is_empty(), "{found:?}\n{source}"),
             }
@@ -1071,32 +1059,25 @@ fn what_could_spend_a_value_twice_through_a_lambda_or_a_type_parameter_is_refuse
     );
 }
 
-fn the_two_readings_that_would_spend_a_key_twice_are_refused_as_not_built() {
-    for (body, what) in [
-        ("r = twice({ spend(k) })", "inside a lambda"),
-        ("(a, b) = dup(k)", "the type parameter `T` of `dup`"),
-    ] {
-        let source = format!(
-            "{KEY}fn spend(k: take Key) -> u64 {{ k.secret }}
+fn a_key_given_away_inside_a_lambda_is_refused_as_not_built() {
+    let source = format!(
+        "{KEY}fn spend(k: take Key) -> u64 {{ k.secret }}
 
 fn twice(f: fn() -> u64) -> u64 {{
   a = f()
   f()
 }}
 
-fn dup[T](x: T) -> (T, T) {{ (x, x) }}
-
 fn main() {{
   k = Key(secret: 5)
-  {body}
+  r = twice({{ spend(k) }})
 }}
 "
-        );
-        let found = errors(&source);
-        assert_eq!(found.len(), 1, "{found:?}\n{source}");
-        assert!(found[0].message.contains(what), "{}", found[0]);
-        assert!(found[0].message.contains("not supported yet"), "{}", found[0]);
-    }
+    );
+    let found = errors(&source);
+    assert_eq!(found.len(), 1, "{found:?}\n{source}");
+    assert!(found[0].message.contains("inside a lambda"), "{}", found[0]);
+    assert!(found[0].message.contains("not supported yet"), "{}", found[0]);
 }
 
 /// A `Key` that a loop over a list gives stays in the list, so the loop may

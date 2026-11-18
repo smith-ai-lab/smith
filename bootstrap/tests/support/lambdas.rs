@@ -1236,7 +1236,12 @@ impl Writer {
             if ho.console {
                 self.push(" ! console");
             }
-            self.push(" {\n");
+            // Nothing is known of `T` but what its bounds say.
+            if ho.generic {
+                self.push("\n  requires Copy[T]\n  requires Discard[T]\n{\n");
+            } else {
+                self.push(" {\n");
+            }
             self.stmts(&ho.body, 1);
             self.push("}\n");
         }
