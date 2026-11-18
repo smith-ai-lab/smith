@@ -60,6 +60,82 @@ pub fn check_timed(
     checked(source, timings).map(|checked| in_order(checked.warnings))
 }
 
+/// Where a project's modules are.
+pub trait Source {
+    /// The source of the module with a name written as in a `use`, such as
+    /// `db.transaction`, or `None` when no file holds it. A module of the
+    /// standard library is never asked for.
+    fn source(&self, module: &str) -> Option<String>;
+}
+
+impl<F: Fn(&str) -> Option<String>> Source for F {
+    fn source(&self, module: &str) -> Option<String> {
+        self(module)
+    }
+}
+
+/// The files a project's modules are in.
+pub struct Project<'a> {
+    pub files: &'a dyn Source,
+    /// The module the file that is built is, when its path gives it a name.
+    /// Nothing imports from it.
+    pub entry: Option<&'a str>,
+}
+
+impl Project<'_> {
+    fn library(&self) -> check::Library<'_> {
+        check::Library::in_project(self.files, self.entry)
+    }
+}
+
+/// `check_timed` for a file that imports the modules of a project.
+pub fn check_project_timed(
+    source: &[u8],
+    project: &Project,
+    timings: &mut Timings,
+) -> Result<Vec<diag::Error>, Vec<diag::Error>> {
+    checked_in(source, &project.library(), timings).map(|checked| in_order(checked.warnings))
+}
+
+/// The errors, or else the warnings, found in reading the file of a module
+/// that no file that is built reaches: what its `use` lines and its syntax
+/// say.
+pub fn check_module(name: &str, project: &Project) -> Vec<diag::Error> {
+    match check::check_module(name, &project.library()) {
+        Ok(found) | Err(found) => in_order(found),
+    }
+}
+
+/// `compile_timed` for a file that imports the modules of a project.
+pub fn compile_project_timed(
+    source: &[u8],
+    project: &Project,
+    target: Target,
+    timings: &mut Timings,
+) -> Result<Vec<u8>, Vec<diag::Error>> {
+    let program = checked_in(source, &project.library(), timings)?.program;
+    Ok(emit(program, target, timings))
+}
+
+/// The program a source file describes, in the scalar form, when the modules
+/// the file imports are those given, each by its name and its source.
+pub fn lower_project(
+    source: &[u8],
+    modules: &[(&str, &str)],
+) -> Result<scalar::Program, Vec<diag::Error>> {
+    let files = |name: &str| {
+        modules
+            .iter()
+            .find(|(m, _)| *m == name)
+            .map(|(_, s)| s.to_string())
+    };
+    let project = Project {
+        files: &files,
+        entry: None,
+    };
+    checked_in(source, &project.library(), &mut Timings::new()).map(|checked| checked.program)
+}
+
 /// `compile`, recording how long each stage takes.
 pub fn compile_timed(
     source: &[u8],
@@ -67,11 +143,15 @@ pub fn compile_timed(
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
     let program = lower_timed(source, timings)?;
+    Ok(emit(program, target, timings))
+}
+
+fn emit(program: scalar::Program, target: Target, timings: &mut Timings) -> Vec<u8> {
     let program = timings.stage("inline", || scalar::inline(&program));
     let program = timings.stage("fold", || scalar::fold(&program));
     let program = timings.stage("common", || scalar::common(&program));
     let program = timings.stage("remove", || scalar::remove(&program));
-    Ok(timings.stage("emit", || target.emit(&program)))
+    timings.stage("emit", || target.emit(&program))
 }
 
 fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<scalar::Program, Vec<diag::Error>> {
@@ -80,7 +160,7 @@ fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<scalar::Program, 
 
 /// The source of a module of the standard library, for the errors that show a
 /// line of it.
-pub(crate) fn library_text(module: &str) -> &'static str {
+pub fn library_text(module: &str) -> &'static str {
     check::library_text(module)
 }
 
@@ -99,6 +179,14 @@ pub fn lower_in(
 }
 
 fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<diag::Error>> {
+    checked_in(source, &check::Library::standard(), timings)
+}
+
+fn checked_in(
+    source: &[u8],
+    library: &check::Library,
+    timings: &mut Timings,
+) -> Result<check::Checked, Vec<diag::Error>> {
     let tokens = timings
         .stage("lex", || lexer::lex(source))
         .map_err(in_order)?;
@@ -106,7 +194,7 @@ fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<d
         .stage("parse", || parser::parse(&tokens))
         .map_err(in_order)?;
     timings
-        .stage("check", || check::check(file, &check::Library::standard()))
+        .stage("check", || check::check(file, library))
         .map_err(in_order)
 }
 

@@ -1,8 +1,10 @@
 //! The `smith` command: `build`, `run`, and `check`, over the compiler in
 //! `lib.rs`.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
 use smith::diag;
@@ -157,24 +159,144 @@ fn check(args: &[OsString]) -> Result<ExitCode, String> {
             entry = Some(PathBuf::from(arg));
         }
     }
+    let whole_project = entry.is_none();
     let entry = entry.unwrap_or_else(|| PathBuf::from("main.smith"));
     let (_, source) = read_entry(&entry)?;
+    let files = Files::in_current_folder(&entry)?;
+    let project = files.project();
     let mut stages = Timings::new();
-    let found = match smith::check_timed(&source, &mut stages) {
+    let found = match smith::check_project_timed(&source, &project, &mut stages) {
         Ok(warnings) => warnings,
         Err(errors) => errors,
     };
-    let mut report = diag::render(&entry.to_string_lossy(), &source, &found);
+    let mut report = files.render(&entry.to_string_lossy(), &source, &found);
+    let mut failed = !found.is_empty();
+    // A file that no `use` reached is read too, and what is wrong in it said,
+    // though no build reads it.
+    if whole_project {
+        for name in files.unreached() {
+            if files.read.borrow().contains(&name) {
+                continue;
+            }
+            let found = smith::check_module(&name, &project);
+            failed |= !found.is_empty();
+            report.push_str(&files.render(&entry.to_string_lossy(), &source, &found));
+        }
+    }
     if timings {
         report.push_str(&stages.report());
         report.push('\n');
     }
     eprint!("{report}");
-    Ok(if found.is_empty() {
-        ExitCode::SUCCESS
-    } else {
+    Ok(if failed {
         ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     })
+}
+
+/// The files of the project a command runs in, which is the folder it runs in:
+/// the module `db.transaction` is the file `db/transaction.smith` below it.
+struct Files {
+    root: PathBuf,
+    /// The module the entry is, when its path below the root gives it one.
+    entry: Option<String>,
+    /// The modules a `use` has read, in the order they were asked for.
+    read: RefCell<BTreeSet<String>>,
+}
+
+impl Files {
+    fn in_current_folder(entry: &Path) -> Result<Files, String> {
+        let root = std::env::current_dir().map_err(|e| format!("cannot find this folder: {e}"))?;
+        let relative = entry.strip_prefix(&root).unwrap_or(entry);
+        let mut parts: Vec<String> = Vec::new();
+        for part in relative.with_extension("").components() {
+            match part {
+                Component::Normal(name) => parts.push(name.to_string_lossy().into_owned()),
+                Component::CurDir => {}
+                _ => {
+                    parts.clear();
+                    break;
+                }
+            }
+        }
+        let entry = (!parts.is_empty()).then(|| parts.join("."));
+        Ok(Files {
+            root,
+            entry,
+            read: RefCell::new(BTreeSet::new()),
+        })
+    }
+
+    fn project(&self) -> smith::Project<'_> {
+        smith::Project {
+            files: self,
+            entry: self.entry.as_deref(),
+        }
+    }
+}
+
+impl smith::Source for Files {
+    /// The text of the file of the module with the name, which is noted as
+    /// read.
+    fn source(&self, module: &str) -> Option<String> {
+        let path = self
+            .root
+            .join(format!("{}.smith", module.replace('.', "/")));
+        let bytes = std::fs::read(path).ok()?;
+        self.read.borrow_mut().insert(module.to_string());
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+impl Files {
+    /// Writes errors, showing the line of a module from its file.
+    fn render(&self, file: &str, source: &[u8], errors: &[diag::Error]) -> String {
+        diag::render_with(file, source, errors, &|module| match module {
+            path if path.ends_with(".smith") => std::fs::read(self.root.join(path)).map_or_else(
+                |_| String::new(),
+                |bytes| String::from_utf8_lossy(&bytes).into_owned(),
+            ),
+            std => smith::library_text(std).to_string(),
+        })
+    }
+
+    /// The modules of the project's files that no `use` has read, which are
+    /// all the files below the root but the entry and the hidden folders.
+    fn unreached(&self) -> Vec<String> {
+        let mut found = BTreeSet::new();
+        self.collect(&self.root, &mut Vec::new(), &mut found);
+        let read = self.read.borrow();
+        found
+            .into_iter()
+            .filter(|m| !read.contains(m) && Some(m) != self.entry.as_ref())
+            .collect()
+    }
+
+    fn collect(&self, folder: &Path, above: &mut Vec<String>, found: &mut BTreeSet<String>) {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            if name.starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                above.push(name);
+                self.collect(&path, above, found);
+                above.pop();
+            } else if let Some(stem) = name.strip_suffix(".smith")
+                && !stem.is_empty()
+                && !stem.contains('.')
+            {
+                let mut module = above.clone();
+                module.push(stem.to_string());
+                found.insert(module.join("."));
+            }
+        }
+    }
 }
 
 /// The stem of an entry's name, and its text.
@@ -209,12 +331,14 @@ fn build(request: &Request) -> Result<PathBuf, String> {
 fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, String> {
     let entry = &request.entry;
     let (stem, source) = read_entry(entry)?;
-    let bytes = smith::compile_timed(&source, request.target, timings).map_err(|errors| {
-        let file = entry.to_string_lossy();
-        let text = diag::render(&file, &source, &errors);
-        text.strip_suffix('\n').unwrap_or(&text).to_string()
-    })?;
-    let cwd = std::env::current_dir().map_err(|e| format!("cannot find this folder: {e}"))?;
+    let files = Files::in_current_folder(entry)?;
+    let bytes = smith::compile_project_timed(&source, &files.project(), request.target, timings)
+        .map_err(|errors| {
+            let file = entry.to_string_lossy();
+            let text = files.render(&file, &source, &errors);
+            text.strip_suffix('\n').unwrap_or(&text).to_string()
+        })?;
+    let cwd = files.root.clone();
     let name = if stem == "main" {
         cwd.file_name().unwrap_or(stem)
     } else {
