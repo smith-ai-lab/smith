@@ -302,7 +302,6 @@ impl<'a> Lowering<'a> {
     ) -> Vec<form::Value> {
         use form::Binary::*;
         use form::Compare::*;
-        let defs = self.typed.defs;
         let bits = bits_of(t);
         let word = match op {
             "add" => Add,
@@ -311,6 +310,30 @@ impl<'a> Lowering<'a> {
         };
         if kind == "wrapping" {
             return vec![out.binary(word, a, b)];
+        }
+        if !t.signed() && op != "mul" {
+            // The sum wraps and is below an operand exactly when it did not
+            // fit, and a difference does not fit exactly when the operand
+            // taken is the greater: one operation, one comparison, and one
+            // choice at every width.
+            if kind == "saturating" && op == "sub" {
+                // The greater of the two, less the second: no number below
+                // 0 is made, so no comparison of the difference is needed.
+                let below = out.compare(LessU, a, b);
+                let greater = out.choose(below, b, a);
+                return vec![out.binary(Sub, greater, b)];
+            }
+            let end = out.int(bits, if op == "add" { t.max() } else { 0 });
+            let r = out.binary(word, a, b);
+            let wrong = if op == "add" {
+                out.compare(LessU, r, a)
+            } else {
+                out.compare(LessU, a, b)
+            };
+            if kind == "saturating" {
+                return vec![out.choose(wrong, end, r)];
+            }
+            return self.optional(out, bits, wrong, r);
         }
         let (r, below, above) = if t.bits() < 64 {
             let (x, y) = (out.widen(t.signed(), a), out.widen(t.signed(), b));
@@ -396,6 +419,19 @@ impl<'a> Lowering<'a> {
         }
         let one = out.int(form::Bits::B8, 1);
         let wrong = out.choose(below, one, above);
+        self.optional(out, bits, wrong, r)
+    }
+
+    /// The `Option` that holds `r`, a number of `bits`, unless `wrong`, a
+    /// `bool`, says it did not fit: its tag, then its number.
+    fn optional(
+        &mut self,
+        out: &mut Out<'a>,
+        bits: form::Bits,
+        wrong: form::Value,
+        r: form::Value,
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
         let some = defs.case_of(defs.option, "some").expect("a case");
         let none = defs.case_of(defs.option, "none").expect("a case");
         let some = out.int(form::Bits::B8, some as i128);
