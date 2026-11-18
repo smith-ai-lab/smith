@@ -104,13 +104,15 @@ fn checked(main: &str, change: &str, description: &str) -> (bool, String) {
     std::fs::write(dir.join("main"), main).unwrap();
     std::fs::write(dir.join("change"), change).unwrap();
     std::fs::write(dir.join("description"), description).unwrap();
-    let output = Command::new("sh")
-        .arg(github().join("check-generated.sh"))
-        .arg(dir.join("main"))
-        .arg(dir.join("change"))
-        .arg(dir.join("description"))
-        .output()
-        .unwrap();
+    let output = crate::clock::output_within(
+        Command::new("sh")
+            .arg(github().join("check-generated.sh"))
+            .arg(dir.join("main"))
+            .arg(dir.join("change"))
+            .arg(dir.join("description")),
+        false,
+    )
+    .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     (
         output.status.success(),

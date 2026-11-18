@@ -1,10 +1,11 @@
 //! What a release is made of: the version worked out from commit messages,
 //! the version the compiler reports, and who may write to the repository.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::Test;
+use crate::clock;
+use crate::executable;
 use crate::generate::{self, Gen};
 
 pub const ONCE: &[Test] = &[
@@ -132,22 +133,14 @@ fn the_next_version_follows_the_rules_for_every_list_of_commits() {
         let last = case.last.map_or("none".to_string(), |(minor, patch)| {
             format!("0.{minor}.{patch}")
         });
-        let mut child = Command::new("sh")
-            .arg(script())
-            .arg(&last)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
         let mut lines = case.subjects.join("\n");
         lines.push('\n');
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(lines.as_bytes())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
+        let output = clock::output_within_given(
+            Command::new("sh").arg(script()).arg(&last),
+            lines.as_bytes(),
+            true,
+        )
+        .unwrap();
         assert!(output.status.success());
         let version = String::from_utf8(output.stdout).unwrap();
         assert_eq!(version.trim(), case.expected.as_deref().unwrap_or(""));
@@ -155,10 +148,9 @@ fn the_next_version_follows_the_rules_for_every_list_of_commits() {
 }
 
 fn a_build_that_is_not_a_release_reports_dev() {
-    let output = Command::new(env!("CARGO_BIN_EXE_smith"))
-        .arg("--version")
-        .output()
-        .unwrap();
+    let output =
+        clock::output_within(Command::new(env!("CARGO_BIN_EXE_smith")).arg("--version"), true)
+            .unwrap();
     assert!(output.status.success());
     // A release is built with its version set, which this build does not
     // have, so the line is `smith` and a version or `dev`, and no more.
@@ -247,19 +239,21 @@ fn tag_names(g: &mut Gen) -> Vec<String> {
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
+    let output = clock::output_within(
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(dir),
+        true,
+    )
+    .unwrap();
     assert!(output.status.success(), "git {args:?}");
     String::from_utf8(output.stdout).unwrap()
 }
@@ -287,11 +281,9 @@ fn the_mirror_pushes_every_tag_under_its_own_name() {
             &clone,
             &["remote", "add", "origin", origin.to_str().unwrap()],
         );
-        let output = Command::new("sh")
-            .arg(&script)
-            .current_dir(&clone)
-            .output()
-            .unwrap();
+        let output =
+            clock::output_within(Command::new("sh").arg(&script).current_dir(&clone), true)
+                .unwrap();
         assert!(output.status.success());
         let mut pushed: Vec<String> = String::from_utf8(output.stdout)
             .unwrap()
@@ -350,12 +342,14 @@ fn plan(github: &[String], gitlab: &[String], tag: &str) -> std::process::Output
         std::fs::write(dir.join(name), text).unwrap();
     }
     let script = format!("{}/../.github/plan-uploads.sh", env!("CARGO_MANIFEST_DIR"));
-    let output = Command::new("sh")
-        .arg(script)
-        .arg(dir.join("github"))
-        .arg(dir.join("gitlab"))
-        .output()
-        .unwrap();
+    let output = clock::output_within(
+        Command::new("sh")
+            .arg(script)
+            .arg(dir.join("github"))
+            .arg(dir.join("gitlab")),
+        true,
+    )
+    .unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     output
 }
@@ -519,9 +513,7 @@ fn run_mirror(
     let (bin, fake) = (root.join("bin"), root.join("fake"));
     std::fs::create_dir_all(&bin).unwrap();
     for (name, text) in [("gh", FAKE_GH), ("curl", FAKE_CURL)] {
-        let path = bin.join(name);
-        std::fs::write(&path, text).unwrap();
-        let _ = Command::new("chmod").arg("+x").arg(&path).status();
+        executable::write(&bin.join(name), text.as_bytes());
     }
     let json: Vec<String> = world
         .releases
@@ -578,7 +570,7 @@ fn run_mirror(
         command.env("FAKE_BROKEN_PAGE", page.to_string());
     }
     command.env("FAKE_UPLOAD", upload);
-    command.output().unwrap()
+    clock::output_within(&mut command, true).unwrap()
 }
 
 fn uploads(root: &std::path::Path) -> Vec<String> {
@@ -816,21 +808,18 @@ fn states(jobs: &Jobs) -> String {
 }
 
 fn decide(mode: &str, machines: &[&str], input: &str) -> (bool, String) {
-    let mut child = Command::new("sh")
-        .arg(format!(
-            "{}/../.github/never-started.sh",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .arg(mode)
-        .args(machines)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    // A script that stops without reading its input closes the pipe.
-    let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
-    let output = child.wait_with_output().unwrap();
+    let output = clock::output_within_given(
+        Command::new("sh")
+            .arg(format!(
+                "{}/../.github/never-started.sh",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .arg(mode)
+            .args(machines),
+        input.as_bytes(),
+        false,
+    )
+    .unwrap();
     (
         output.status.success(),
         String::from_utf8(output.stdout).unwrap(),
@@ -909,17 +898,19 @@ fn a_list_of_jobs_that_cannot_be_read_stops_the_step_that_asked() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("gh"), "#!/bin/sh\nexit 1\n").unwrap();
     let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
-    let output = Command::new("sh")
-        .arg(format!(
-            "{}/../.github/job-states.sh",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .arg("test on ")
-        .env("PATH", path)
-        .env("GITHUB_REPOSITORY", "o/r")
-        .env("GITHUB_RUN_ID", "1")
-        .output()
-        .unwrap();
+    let output = clock::output_within(
+        Command::new("sh")
+            .arg(format!(
+                "{}/../.github/job-states.sh",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .arg("test on ")
+            .env("PATH", path)
+            .env("GITHUB_REPOSITORY", "o/r")
+            .env("GITHUB_RUN_ID", "1"),
+        true,
+    )
+    .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());

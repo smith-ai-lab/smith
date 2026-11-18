@@ -32,10 +32,7 @@ fn passes(front: &str) -> bool {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("page.md"), format!("---\n{front}---\n\n# Page\n")).unwrap();
-    let status = Command::new("sh")
-        .arg(script())
-        .arg(&dir)
-        .output()
+    let status = crate::clock::output_within(Command::new("sh").arg(script()).arg(&dir), false)
         .unwrap()
         .status;
     std::fs::remove_dir_all(&dir).unwrap();

@@ -46,11 +46,13 @@ pub fn run_seed() -> u64 {
         if let Ok(given) = std::env::var("SMITH_SEED") {
             return given.trim().parse().expect("SMITH_SEED is a number");
         }
-        let commit = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .ok()
+        let commit = crate::clock::output_within(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(env!("CARGO_MANIFEST_DIR")),
+            false,
+        )
+        .ok()
             .filter(|o| o.status.success())
             .map(|o| o.stdout)
             .unwrap_or_default();
