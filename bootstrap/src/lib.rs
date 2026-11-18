@@ -32,6 +32,13 @@ pub fn lower(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {
     lower_timed(source, &mut Timings::new())
 }
 
+/// How many functions and implementations of the prelude a source file reaches,
+/// which are the ones the checker checks, or the errors `compile` reports
+/// before a target is involved.
+pub fn prelude_reached(source: &[u8]) -> Result<(usize, usize), Vec<diag::Error>> {
+    checked(source, &mut Timings::new()).map(|checked| checked.prelude_reached)
+}
+
 /// The warnings `smith check` reports about a source file, in the order of
 /// their places, or the errors `compile` reports before a target is
 /// involved. No code is generated for a target.
