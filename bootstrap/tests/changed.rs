@@ -18,6 +18,10 @@ pub const ONCE: &[Test] = &[
         "a_change_to_the_compiler_in_smith_needs_the_jobs_of_a_change_to_bootstrap",
         a_change_to_the_compiler_in_smith_needs_the_jobs_of_a_change_to_bootstrap,
     ),
+    (
+        "a_change_to_the_harness_in_measure_needs_the_jobs_of_a_change_to_bootstrap",
+        a_change_to_the_harness_in_measure_needs_the_jobs_of_a_change_to_bootstrap,
+    ),
 ];
 
 /// A file a change may touch, and whether touching it needs the jobs.
@@ -26,6 +30,8 @@ const FILES: &[(&str, bool)] = &[
     ("bootstrap/tests/main.rs", true),
     ("compiler/lexer.smith", true),
     ("std/list.smith", true),
+    ("measure/src/main.rs", true),
+    ("measure/Cargo.toml", true),
     ("compiler/parser/tokens.smith", true),
     (".github/workflows/ci.yml", true),
     (".gitattributes", true),
@@ -107,4 +113,9 @@ fn a_change_to_the_compiler_in_smith_needs_the_jobs_of_a_change_to_bootstrap() {
     assert!(says(&["compiler/lexer.smith"]));
     assert!(says(&["compiler/lexer.smith", "knowledge/compiler.md"]));
     assert!(!says(&["knowledge/compiler.md"]));
+}
+
+fn a_change_to_the_harness_in_measure_needs_the_jobs_of_a_change_to_bootstrap() {
+    assert!(says(&["measure/src/main.rs"]));
+    assert!(says(&["measure/Cargo.lock", "knowledge/compiler.md"]));
 }
