@@ -2,7 +2,8 @@
 //! that pushes to a list and the lexer in `compiler/lexer.smith`, and the Rust
 //! lexer on the same inputs. It prints one line for each program, each
 //! implementation, and each size, with the time for each push or each byte.
-//! Run it with `sh measure/run.sh`. It needs the compiler built in
+//! Run it with `sh measure/run.sh`, which times the compiler in
+//! `bootstrap/target/release`, or set `SMITH` to the path of another compiler. It needs the compiler built in
 //! `bootstrap/target/release`, which `run.sh` builds. Nothing here is a test.
 
 use std::hint::black_box;
@@ -38,7 +39,9 @@ const PIECE: &str =
 
 fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-    let smith = root.join("bootstrap/target/release/smith");
+    let smith = std::env::var_os("SMITH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("bootstrap/target/release/smith"));
     let lexer_source =
         std::fs::read_to_string(root.join("compiler/lexer.smith")).expect("compiler/lexer.smith");
     let lexer_source = &lexer_source[..lexer_source
