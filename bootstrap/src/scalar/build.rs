@@ -143,10 +143,16 @@ impl Builder {
         );
     }
 
-    /// Ends the program with a failing status.
-    pub fn fail(&mut self) {
-        let call = System::Fail;
-        self.emit(Op::System { call, args: vec![] }, &[]);
+    /// Ends the program with the status, a byte.
+    pub fn exit(&mut self, status: Value) {
+        let call = System::Exit;
+        self.emit(
+            Op::System {
+                call,
+                args: vec![status],
+            },
+            &[],
+        );
     }
 
     /// Ends the block being filled by a jump.

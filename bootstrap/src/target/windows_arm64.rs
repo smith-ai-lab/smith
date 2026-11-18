@@ -87,8 +87,7 @@ impl System for Windows {
         }
     }
 
-    fn exit(asm: &mut Asm, status: u16) {
-        asm.mov_w(X0, status);
+    fn end(asm: &mut Asm) {
         asm.call(EXIT_PROCESS);
     }
 

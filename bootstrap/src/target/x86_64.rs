@@ -490,8 +490,13 @@ pub trait System {
     /// change, and leaves the others as they were, which it may do by
     /// holding them in the bytes at the bottom of the frame.
     fn write(asm: &mut Asm, stream: Stream, fail: usize);
+    /// Ends the program with the status in rdi.
+    fn end(asm: &mut Asm);
     /// Ends the program with the status.
-    fn exit(asm: &mut Asm, status: u32);
+    fn exit(asm: &mut Asm, status: u32) {
+        asm.mov32(RDI, status);
+        Self::end(asm);
+    }
     /// Asks the system for memory for the number of bytes in rsi, which is
     /// not 0, leaves its address in rax, and jumps to `fail` if the system
     /// refuses. It may change what `write` may.
@@ -883,8 +888,12 @@ impl<S: System> Writer<'_, S> {
                 S::write(asm, *stream, self.fail);
             }
             Op::System {
-                call: Call::Fail, ..
-            } => asm.jmp(self.fail),
+                call: Call::Exit,
+                args,
+            } => {
+                self.read_into(asm, RDI, args[0]);
+                S::end(asm);
+            }
             Op::System {
                 call: Call::Allocate,
                 args,
