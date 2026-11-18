@@ -66,6 +66,32 @@ fn ordered(a: i32, b: i32, c: i32) -> bool {
 
 `ordered` means `a < b and b < c`. The first check is passed by name and the last after the call, as [Lambdas](lambdas.md) says of a call with two lambdas.
 
+## What code is
+
+Code is data. A `Code[T]` is a value of the compiler's own typed core term, which is an ordinary enum, so a function over code looks inside the code it is given with [`match`](match.md) and builds code with the enum's cases or with `code { ... }`. Nothing is built into the compiler for it that the compiler does not use itself.
+
+The core term is what a program is once it has been checked. It is small: everything else the language has is one of these by then, so an operator, an index, `try`, and `convert` are each a `call`, the block after a `with` is a `lambda`, and `if` is a `choose`.
+
+| Node | Is | What becomes it |
+| --- | --- | --- |
+| `lit` | A literal | `5`, `2.5`, `"hi"` |
+| `name` | A parameter or a binding | `x` |
+| `call` | A call of a function that has a name, with its types settled | `f(x)`, `a + b`, `x[i]`, `try e` |
+| `apply` | A call of a function held in a value | `callback(x)` |
+| `lambda` | A function written where it is used | `fn(x) { ... }`, the rest of a block after `with` |
+| `bind` | A name given a value, and then what follows | `y = e` and the lines after it |
+| `make` | A struct, a tuple, a case of an enum, or a list that is built | `Point(x: 1, y: 2)`, `.some(v)`, `[a, b]` |
+| `field` | A part that is read | `p.x` |
+| `choose` | One block picked by a pattern | `if`, `match` |
+| `for` | An array described by its indices | `for i { ... }`, `x + y` of two arrays, `a @ b` |
+| `loop` | Rounds in order, each handing values to the next | `loop`, and a `var` that one assigns |
+
+Each node holds its type and the place in the source it came from. There is no node for an assignment: a `var` that a loop assigns is a value the loop hands from one round to the next.
+
+A name in a `call` holds what it names: the signature of the function, and its body as a core term where the source of it is there. A type holds its fields or its cases. So a function over code sees only what it is passed, and what it is passed is enough to follow a call into the function that is called, and to read the fields of a struct. That is how [`grad`](differentiation.md) differentiates through the functions `f` calls, and how `derive` writes an `impl` field by field.
+
+The names of the cases and what each holds are settled when the checker is written in Smith, as they are the checker's own.
+
 ## Other functions over code
 
 [`grad`](differentiation.md) and [`derive`](operators.md#derive) are functions of this kind too.
@@ -78,5 +104,6 @@ fn ordered(a: i32, b: i32, c: i32) -> bool {
 | `-> Code[R]` | A function whose call is an `R`, the code it returns |
 | `code { e }` | The code of `e` |
 | `run(c)` inside `code` | The code `c` |
+| `match c { ... }` on a `Code[T]` | Looks inside the code, by the cases of the core term |
 
 Next: [Differentiation](differentiation.md)
