@@ -46,6 +46,38 @@ trait Try[C, R, out T] {
 
 A `try` gives `then` a value nothing else holds, so no call changes. And the lines after `with t = then(begin(db))` own `t`, so they may `commit` it. Until ownership is built, `Try` is written without `take`, as [try](try.md) shows it.
 
+## A function that is called once
+
+A function is a value like any other, and calling it takes it. So how often a function may be called is said by the two traits that say it of every value: one that has [`Copy`](ownership.md) is called again and again, and one that has not is spent by its first call.
+
+A lambda is lent the names around it that it reads or assigns, and takes the ones it gives away. A lambda that takes a value without `Copy` has no `Copy` itself. This one gives `acc` to `append`, so it can be called once.
+
+```
+fn finish(xs: take List[u8], f: take (take List[u8]) -> u64) -> u64 { f(xs) }
+
+fn collect(acc: take List[u8], xs: take List[u8]) -> u64 {
+  finish(xs) fn(ys) { append(acc, ys).size }
+}
+```
+
+`finish` marks `f` with `take`, so it owns the function and its one call spends it. A second `f(xs)` in `finish` is refused, as a second use of any value that was given away is.
+
+A parameter that is not marked `take` lends the function, as it lends any value, and a lent value is only taken when it has `Copy`. So a lent function is one that can be called again, and a lambda that gives a value away is refused there.
+
+```
+fn twice(xs: take List[u8], f: (take List[u8]) -> u64) -> u64 { f(xs) }
+
+fn collect(acc: take List[u8], xs: take List[u8]) -> u64 {
+  twice(xs) fn(ys) { append(acc, ys).size }
+}
+```
+
+This is refused: `twice` may call its function any number of times, and the lambda can give `acc` away once. Ownership of a lambda's names is not built, so no words are quoted.
+
+A lambda that takes a value without [`Discard`](resources.md) has no `Discard` either, so the function it is given to must call it: a function that must run exactly once needs no word of its own.
+
+The short form of a function type says one of two things, by whether its parameter is lent or taken. Anything else is said with a type parameter and `requires`, as for any type: `Function[F, Args, R]` for a function that is called once, and `Copy[F]` beside it for one that is called again.
+
 ## Types that have Copy
 
 For a type that has [`Copy`](ownership.md) the difference between lending and `take` is invisible.
@@ -79,5 +111,7 @@ So a random key cannot be reused. Randomness needs no effect, because every rand
 | `fn f(x: T)` | `x` is lent: `f` cannot keep, store, or return it |
 | `fn f(x: take T)` | `f` owns `x`, and the caller cannot use it again |
 | `(take T) -> R` | A function type whose function owns its argument |
+| `f: (T) -> R` | `f` is lent: it is called any number of times, and is a function that has `Copy` |
+| `f: take (T) -> R` | The callee owns `f`, and calling it spends it |
 
 Next: [Values used exactly once](resources.md)
