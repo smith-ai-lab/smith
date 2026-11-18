@@ -31,6 +31,8 @@ fn main() ! console {
 
 The error is "there is no implementation of `Named` for `Bird`, which `show` needs", and it points at the call of `show` with a `Bird`, not at `name_of` inside `show`.
 
+A function of a trait that has a bound on a type parameter of its own, as [Traits](traits.md) shows, is held to it the same way: the call settles the type parameter from its arguments, and a type with no implementation is refused at the call.
+
 ## requires
 
 A bound `T: Named` is the short form of a `requires` line, which is written after a function's signature and before its body. It names an implementation that must exist for the types the function is used with.

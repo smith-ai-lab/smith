@@ -542,6 +542,7 @@ fn agrees(a: &Ty, b: &Ty) -> bool {
 fn unify(pattern: &Ty, given: &Ty, sol: &mut [Option<Ty>]) -> bool {
     match (pattern, given) {
         (_, Ty::Unknown) | (Ty::Unknown, _) => true,
+        (Ty::Param(i), _) if *i >= sol.len() => true,
         (Ty::Param(i), given) => match &sol[*i] {
             None => {
                 sol[*i] = Some(given.clone());
@@ -1688,9 +1689,15 @@ fn check_file(
         .collect();
     defs.trait_sigs = (file.traits.iter())
         .map(|t| {
-            let scope = defs.scope(&t.generics, &[]);
             (t.functions.iter())
-                .map(|f| defs.signature(f, scope.clone()))
+                .map(|f| {
+                    // A function's own type parameters come after the trait's.
+                    let generics: Vec<Generic> =
+                        t.generics.iter().chain(&f.generics).cloned().collect();
+                    let mut sig = defs.signature(f, defs.scope(&generics, &[]));
+                    sig.param_defaults = Vec::new();
+                    sig
+                })
                 .collect()
         })
         .collect();
@@ -3518,11 +3525,16 @@ impl<'a> Defs<'a> {
                     .as_ref()
                     .expect("an implementation that is known");
                 let sig = &self.trait_sigs[info.of][fi];
-                let gives = sig.gives.subst(&info.args);
+                let scope = &info.fn_scopes[fi];
+                // The function's own type parameters stand for themselves.
+                let mut env = info.args.clone();
+                let n = info.scope.names.len();
+                env.extend((n..scope.names.len()).map(Ty::Param));
+                let gives = sig.gives.subst(&env);
                 let f = &file.impls[i].functions[info.fns[fi].expect("implemented")];
                 View {
                     f,
-                    scope: &info.scope,
+                    scope,
                     // The names the implementation wrote, so that a renamed
                     // parameter is reported once, where it is renamed.
                     params: (f.params.iter().enumerate())
@@ -3530,11 +3542,11 @@ impl<'a> Defs<'a> {
                             let ty = sig
                                 .params
                                 .get(j)
-                                .map_or(Ty::Unknown, |(_, t)| t.subst(&info.args));
+                                .map_or(Ty::Unknown, |(_, t)| t.subst(&env));
                             (p.name.clone(), ty)
                         })
                         .collect(),
-                    result: (gives != Ty::Nothing).then(|| self.text(&gives, &info.scope)),
+                    result: (gives != Ty::Nothing).then(|| self.text(&gives, scope)),
                     gives,
                     effects: &file.traits[info.of].functions[fi].effects,
                 }
@@ -3663,8 +3675,11 @@ impl<'a> Typed<'a> {
         };
         let sig = &defs.trait_sigs[k][fi];
         let types = solve(&sig.params, sig.scope.names.len());
-        let types = self.result_types(call, sig, env, types);
-        let (instance, all) = defs.chosen(k, fi, types);
+        let mut types = self.result_types(call, sig, env, types);
+        // The function's own type parameters follow the trait's.
+        let own = types.split_off(defs.file.traits[k].generics.len());
+        let (instance, mut all) = defs.chosen(k, fi, types, own.clone());
+        all.extend(own);
         Callee::Run(instance, sig.gives.subst(&all))
     }
 
@@ -3673,7 +3688,8 @@ impl<'a> Typed<'a> {
     fn each_of(&self, o: &Over, env: &[Ty]) -> Instance {
         let walked = as_read(&self.type_of(&o.value, env), &Ty::List(vec![Ty::Unknown]));
         let defs = self.defs;
-        defs.chosen(defs.iterate, 0, vec![walked, Ty::Unknown]).0
+        defs.chosen(defs.iterate, 0, vec![walked, Ty::Unknown], Vec::new())
+            .0
     }
 
     /// The types that stand for the type parameters of the defaults a call

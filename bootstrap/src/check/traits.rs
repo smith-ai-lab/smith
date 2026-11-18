@@ -177,6 +177,9 @@ pub(super) struct ImplInfo {
     /// For each function of the trait, the place of the function that
     /// implements it among the implementation's, if one does.
     pub(super) fns: Vec<Option<usize>>,
+    /// For each function of the trait, the type parameters its function is
+    /// written among: the implementation's, then the function's own.
+    pub(super) fn_scopes: Vec<Scope>,
     /// Whether it is chosen by calls, which an implementation for types an
     /// earlier one already covers is not.
     pub(super) chosen: bool,
@@ -326,12 +329,21 @@ pub(super) fn impl_info(defs: &Defs, im: &crate::parser::Impl) -> Option<ImplInf
                 .iter()
                 .position(|g| written_name(&g.name) == written_name(&f.name))
         })
+        .collect::<Vec<Option<usize>>>();
+    // A function has the type parameters of the trait's, as `implemented`
+    // checks.
+    let fn_scopes = (t.functions.iter())
+        .map(|f| {
+            let generics: Vec<Generic> = (im.generics.iter()).chain(&f.generics).cloned().collect();
+            defs.scope(&generics, &im.requires)
+        })
         .collect();
     Some(ImplInfo {
         of,
         scope,
         args,
         fns,
+        fn_scopes,
         chosen,
     })
 }
@@ -386,6 +398,30 @@ pub(super) fn shifted(t: &Ty, by: usize) -> Ty {
     match t {
         Ty::Param(i) => Ty::Param(i + by),
         t => t.with_args(t.args().iter().map(|t| shifted(t, by)).collect()),
+    }
+}
+
+/// How type parameters are written, as in `[W: Sink, X]`, or nothing for none.
+fn generics_written(generics: &[Generic]) -> String {
+    if generics.is_empty() {
+        return String::new();
+    }
+    let each: Vec<String> = (generics.iter())
+        .map(|g| match &g.bound {
+            Some(b) => format!("{}: {}", g.name, b.name),
+            None => g.name.clone(),
+        })
+        .collect();
+    format!("[{}]", each.join(", "))
+}
+
+/// The type parameters, as an error says what a function has.
+fn generics_text(generics: &[Generic], first: bool) -> String {
+    match (generics.is_empty(), first) {
+        (true, true) => "no type parameters".to_string(),
+        (true, false) => "none".to_string(),
+        (false, true) => format!("the type parameters `{}`", generics_written(generics)),
+        (false, false) => format!("`{}`", generics_written(generics)),
     }
 }
 
@@ -796,15 +832,24 @@ impl<'a> Defs<'a> {
 
     /// The copy that runs function `fi` of trait `k` for `types`, which hold
     /// no type parameter, and the trait's types, `out` ones included.
-    pub(super) fn chosen(&self, k: usize, fi: usize, types: Vec<Ty>) -> (Instance, Vec<Ty>) {
+    pub(super) fn chosen(
+        &self,
+        k: usize,
+        fi: usize,
+        types: Vec<Ty>,
+        own: Vec<Ty>,
+    ) -> (Instance, Vec<Ty>) {
         let Found::Yes(all, by) = self.find(k, &types, &Scope::default(), &mut Vec::new()) else {
             unreachable!("checked")
         };
         let instance = match by {
-            By::Impl(i, args) => Instance {
-                template: Template::Impl(i, fi),
-                args,
-            },
+            By::Impl(i, mut args) => {
+                args.extend(own);
+                Instance {
+                    template: Template::Impl(i, fi),
+                    args,
+                }
+            }
             By::Given => Instance {
                 template: Template::Given(k),
                 args: types,
@@ -817,7 +862,7 @@ impl<'a> Defs<'a> {
     /// The copies a copy of a given implementation runs: for `Fmt`, the
     /// `Repr` of its type, and for `Repr`, `Eq`, and `Ord`, that of each part.
     pub(super) fn given_calls(&self, k: usize, types: &[Ty]) -> Vec<Instance> {
-        let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()]).0;
+        let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()], Vec::new()).0;
         if k == self.fmt {
             vec![run(self.repr, &types[0])]
         } else {
@@ -961,12 +1006,28 @@ impl<'a> Checker<'a> {
                 ));
                 continue;
             }
-            if let Some(g) = f.generics.first() {
-                self.errors.push(Error::unsupported(
-                    g.pos,
-                    "a type parameter of a trait's function",
-                ));
-                continue;
+            self.generics(&f.generics, &format!("`{}`", f.name), Owner::Function);
+            for g in &f.generics {
+                if t.generics.iter().any(|h| h.name == g.name) {
+                    self.errors.push(Error::new(
+                        g.pos,
+                        format!("`{}` is already a type parameter of `{}`", g.name, t.name),
+                    ));
+                }
+                if g.default.is_some() {
+                    self.errors.push(Error::unsupported(
+                        g.pos,
+                        "a default for a type parameter of a trait's function",
+                    ));
+                }
+                let named =
+                    (f.params.iter()).any(|p| type_names(&p.ty).iter().any(|(n, _)| *n == g.name));
+                if !named {
+                    self.errors.push(Error::unsupported(
+                        g.pos,
+                        "a type parameter that no parameter's type names",
+                    ));
+                }
             }
             self.params(f, &defs.trait_sigs[k][i].scope);
             self.defaults(f, &defs.trait_sigs[k][i]);
@@ -1102,7 +1163,6 @@ impl<'a> Checker<'a> {
         let info = defs.impls[i].as_ref().expect("known");
         let trait_fn = &defs.file.traits[info.of].functions[fi];
         let sig = &defs.trait_sigs[info.of][fi];
-        let scope = &info.scope;
         let trait_name = &defs.file.traits[info.of].name;
         for p in &f.params {
             if let Some(value) = &p.default {
@@ -1119,16 +1179,49 @@ impl<'a> Checker<'a> {
                 );
             }
         }
+        let scope = &info.fn_scopes[fi];
+        // The function has the type parameters of the trait's, under the same
+        // names and with the same bounds.
+        let same_generics = f.generics.len() == trait_fn.generics.len()
+            && (f.generics.iter().zip(&trait_fn.generics)).all(|(a, b)| {
+                a.name == b.name
+                    && a.default.is_none()
+                    && a.bound.as_ref().map(|t| &t.name) == b.bound.as_ref().map(|t| &t.name)
+            });
+        if !same_generics {
+            self.errors.push(
+                Error::new(
+                    f.generics.first().map_or(f.pos, |g| g.pos),
+                    format!(
+                        "`{}` has {} here, and {} in `{trait_name}`",
+                        f.name,
+                        generics_text(&f.generics, true),
+                        generics_text(&trait_fn.generics, false)
+                    ),
+                )
+                .with_fix(format!(
+                    "write `fn {}{}`",
+                    f.name,
+                    generics_written(&trait_fn.generics)
+                )),
+            );
+            return;
+        }
         let before = self.errors.len();
         self.params(f, scope);
         self.effects(&f.effects);
         if self.errors.len() > before {
             return;
         }
+        // The trait's types are the implementation's, and the function's own
+        // type parameters stand for themselves.
+        let n = info.scope.names.len();
+        let mut env = info.args.clone();
+        env.extend((0..f.generics.len()).map(|m| Ty::Param(n + m)));
         let wanted: Vec<(String, Ty)> = (sig.params.iter())
-            .map(|(n, t)| (n.clone(), t.subst(&info.args)))
+            .map(|(n, t)| (n.clone(), t.subst(&env)))
             .collect();
-        let gives = sig.gives.subst(&info.args);
+        let gives = sig.gives.subst(&env);
         let written: Vec<(String, Ty)> = (f.params.iter())
             .map(|p| (p.name.clone(), defs.quietly(&p.ty, scope)))
             .collect();
@@ -1142,8 +1235,7 @@ impl<'a> Checker<'a> {
             set.dedup();
             set
         }
-        let same = f.generics.is_empty()
-            && written == wanted
+        let same = written == wanted
             && written_gives == gives
             && set(&f.effects) == set(&trait_fn.effects);
         if same {
@@ -1152,7 +1244,12 @@ impl<'a> Checker<'a> {
         let params: Vec<String> = (wanted.iter())
             .map(|(n, t)| format!("{n}: {}", defs.text(t, scope)))
             .collect();
-        let mut text = format!("fn {}({})", f.name, params.join(", "));
+        let mut text = format!(
+            "fn {}{}({})",
+            f.name,
+            generics_written(&f.generics),
+            params.join(", ")
+        );
         if gives != Ty::Nothing {
             text.push_str(&format!(" -> {}", defs.text(&gives, scope)));
         }
@@ -1227,10 +1324,18 @@ impl<'a> Checker<'a> {
         if (sol.iter().zip(outs)).any(|(t, out)| !out && t.is_none()) {
             return Ty::Unknown;
         }
-        let types: Vec<Ty> = sol
+        // The function's own type parameters follow the trait's, and the
+        // arguments settle them.
+        let n = outs.len();
+        if sol[n..].iter().any(Option::is_none) {
+            return Ty::Unknown;
+        }
+        let own: Vec<Ty> = sol[n..].iter().flatten().map(Ty::concrete).collect();
+        let types: Vec<Ty> = sol[..n]
             .iter()
             .map(|t| t.as_ref().map_or(Ty::Unknown, Ty::concrete))
             .collect();
+        self.own_bounds(body, call, sig, n, &sol);
         match defs.find(k, &types, body.scope, &mut Vec::new()) {
             Found::Yes(all, _) => {
                 let differs = (sol.iter().zip(&all).zip(outs))
@@ -1256,6 +1361,8 @@ impl<'a> Checker<'a> {
                 if shifts && self.errors.len() == mistakes {
                     self.shift(body, call, sig, &types[0]);
                 }
+                let mut all = all;
+                all.extend(own);
                 sig.gives.subst(&all)
             }
             Found::No => {
@@ -1268,6 +1375,48 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             Found::Unknown => Ty::Unknown,
+        }
+    }
+
+    /// Reports the types a call gives the type parameters of the trait's
+    /// function that lack what a bound of the parameter asks.
+    fn own_bounds(
+        &mut self,
+        body: &Body,
+        call: &Call,
+        sig: &Signature,
+        n: usize,
+        sol: &[Option<Ty>],
+    ) {
+        let defs = self.defs;
+        for r in sig.scope.requires.iter().filter(|r| {
+            r.types
+                .iter()
+                .any(|t| (n..sol.len()).any(|p| t.mentions(p)))
+        }) {
+            let types: Vec<Ty> = r.types.iter().map(|t| t.solved(sol)).collect();
+            if types.contains(&Ty::Unknown) {
+                continue;
+            }
+            match defs.meets_types(r.of, &types, body.scope, &mut Vec::new()) {
+                Found::No => {
+                    let because = match types.as_slice() {
+                        [t] => defs.because(r.of, t, body.scope),
+                        _ => String::new(),
+                    };
+                    self.errors.push(Error::new(
+                        call.pos,
+                        format!(
+                            "there is no implementation of `{}` for {}, which `{}` needs{because}",
+                            defs.file.traits[r.of].name,
+                            defs.types_of(r.of, &types, body.scope),
+                            call.callee
+                        ),
+                    ));
+                }
+                Found::Two(a, b) => self.errors.push(defs.ambiguous(call.pos, a, b)),
+                Found::Yes(..) | Found::Unknown => {}
+            }
         }
     }
 
