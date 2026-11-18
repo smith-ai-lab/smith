@@ -675,6 +675,12 @@ impl Pass[u64] {{
   fn pass[W: {bound}](value: u64, w: W) -> u64 {{ 1 }}
 }}
 
+fn end[T](x: take T) ! diverge {{
+  loop {{
+    n = 1
+  }}
+}}
+
 "
         );
         // The call is in `main`, or in a function that is bound by `Pass`
@@ -682,13 +688,13 @@ impl Pass[u64] {{
         let (mut source, callee) = if *through {
             (format!("{head}fn via[T: Pass, W](x: T, w: W) -> u64 {{\n  "), "via")
         } else {
-            (format!("{head}fn main() {{\n  n: u64 = 1\n  {make}\n  r = "), "pass")
+            (format!("{head}fn main() ! diverge {{\n  n: u64 = 1\n  {make}\n  r = "), "pass")
         };
         let at = pos_after(&source);
         if *through {
             // Inside `via`, `W` has only what `via` asks of it, which is nothing.
             source.push_str(&format!(
-                "pass(x, w)\n}}\n\nfn main() {{\n  n: u64 = 1\n  {make}\n  r = via(n, v)\n  s = r\n}}\n"
+                "pass(x, w)\n}}\n\nfn main() ! diverge {{\n  n: u64 = 1\n  {make}\n  r = via(n, v)\n  s = r\n  end(v)\n}}\n"
             ));
             let found = errors(&source);
             assert_eq!(found.len(), 1, "{found:?}\n{source}");
@@ -697,7 +703,7 @@ impl Pass[u64] {{
             assert!(found[0].message.contains(bound), "{}", found[0]);
             return;
         }
-        source.push_str(&format!("{callee}(n, v)\n  s = r\n}}\n"));
+        source.push_str(&format!("{callee}(n, v)\n  s = r\n  end(v)\n}}\n"));
         let found = errors(&source);
         if has {
             assert!(found.is_empty(), "{found:?}\n{source}");
