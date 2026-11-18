@@ -480,8 +480,8 @@ impl Ty {
             Ty::Enum(e, _) => Ty::enumeration(*e, args),
             Ty::Tuple(_) => Ty::tuple(args),
             Ty::Fn(_) => Ty::func(args),
-            Ty::List(_) => Ty::list(args[0].clone()),
-            Ty::Slice(_) => Ty::slice(args[0].clone()),
+            Ty::List(_) => Ty::list(args.into_iter().next().expect("an element type")),
+            Ty::Slice(_) => Ty::slice(args.into_iter().next().expect("an element type")),
             t => t.clone(),
         }
     }
@@ -1974,7 +1974,8 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
         // A case written in full names its enum, and a function may be
         // passed as a value by its name.
         let called = |values: Vec<&Expr>, found: &mut Vec<Item>| {
-            for e in exprs(values.iter().copied()) {
+            let all = exprs(values.iter().copied());
+            for &e in &all {
                 if let Expr::Field { of, .. } = e
                     && let Expr::Name { name, .. } = &**of
                 {
@@ -1990,7 +1991,11 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                     type_name("Iterate", found);
                 }
             }
-            for call in calls(values) {
+            let calls = all.iter().filter_map(|e| match e {
+                Expr::Call(call) => Some(call),
+                _ => None,
+            });
+            for call in calls {
                 if let Some((q, _)) = &call.qualifier {
                     type_name(q, found);
                     continue;
@@ -3063,8 +3068,9 @@ fn placement(file: &File, errors: &mut Vec<Error>) {
 fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     let mut out = Vec::new();
     let reached: Set<Item> = reached.iter().copied().collect();
-    let mut dead = |item: Item, pos: Pos, what: String| {
+    let mut dead = |item: Item, pos: Pos, what: &dyn Fn() -> String| {
         if !reached.contains(&item) && !of_prelude(pos) && !of_library(pos) {
+            let what = what();
             out.push(
                 Error::new(
                     pos,
@@ -3075,21 +3081,25 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
         }
     };
     for (i, f) in file.functions.iter().enumerate() {
-        dead(Item::Fn(i), f.pos, format!("the function `{}`", f.name));
+        dead(Item::Fn(i), f.pos, &|| format!("the function `{}`", f.name));
     }
     for (i, s) in file.structs.iter().enumerate() {
-        dead(Item::Struct(i), s.pos, format!("the struct `{}`", s.name));
+        dead(Item::Struct(i), s.pos, &|| {
+            format!("the struct `{}`", s.name)
+        });
     }
     for (i, e) in file.enums.iter().enumerate() {
-        dead(Item::Enum(i), e.pos, format!("the enum `{}`", e.name));
+        dead(Item::Enum(i), e.pos, &|| format!("the enum `{}`", e.name));
     }
     for (i, t) in file.traits.iter().enumerate() {
-        dead(Item::Trait(i), t.pos, format!("the trait `{}`", t.name));
+        dead(Item::Trait(i), t.pos, &|| format!("the trait `{}`", t.name));
     }
     for (i, im) in file.impls.iter().enumerate() {
-        let args: Vec<String> = im.args.iter().map(written_type).collect();
-        let what = format!("the implementation `{}[{}]`", im.name, args.join(", "));
-        dead(Item::Impl(i), im.pos, what);
+        let what = || {
+            let args: Vec<String> = im.args.iter().map(written_type).collect();
+            format!("the implementation `{}[{}]`", im.name, args.join(", "))
+        };
+        dead(Item::Impl(i), im.pos, &what);
     }
     let bodies =
         (file.functions.iter().map(|f| &**f)).chain(file.impls.iter().flat_map(|im| &im.functions));
@@ -3209,13 +3219,16 @@ fn cycles(
 /// Every name in a type, with where it is: its own, and those of the
 /// types in its brackets.
 fn type_names(t: &Type) -> Vec<(&str, Pos)> {
+    fn names<'a>(t: &'a Type, out: &mut Vec<(&'a str, Pos)>) {
+        if !t.name.is_empty() {
+            out.push((t.name.as_str(), t.pos));
+        }
+        for a in &t.args {
+            names(a, out);
+        }
+    }
     let mut out = Vec::new();
-    if !t.name.is_empty() {
-        out.push((t.name.as_str(), t.pos));
-    }
-    for a in &t.args {
-        out.extend(type_names(a));
-    }
+    names(t, &mut out);
     out
 }
 
@@ -3398,22 +3411,25 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
             | Expr::Return { value: None, .. } => {}
         }
     }
-    let mut out = Vec::new();
-    for (stmt, value) in body.iter().zip(values(body)) {
-        out.push(stmt);
-        let mut found = Vec::new();
-        blocks(value, &mut found);
-        for block in found {
-            out.extend(statements(block));
+    fn collect<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+        for (stmt, value) in body.iter().zip(values(body)) {
+            out.push(stmt);
+            let mut found = Vec::new();
+            blocks(value, &mut found);
+            for block in found {
+                collect(block, out);
+            }
         }
     }
+    let mut out = Vec::with_capacity(16);
+    collect(body, &mut out);
     out
 }
 
 /// Every expression in the expressions, in order, each before the
 /// expressions inside it, and then from left to right.
 fn exprs<'a>(exprs: impl IntoIterator<Item = &'a Expr>) -> Vec<&'a Expr> {
-    let mut inside = Vec::new();
+    let mut inside = Vec::with_capacity(32);
     for e in exprs {
         walk(e, &mut inside);
     }
@@ -3497,7 +3513,7 @@ struct View<'a> {
     params: Vec<(String, Ty)>,
     gives: Ty,
     /// How its result type is written, if it has one.
-    result: Option<String>,
+    result: Option<Written<'a>>,
     /// The effects it lists.
     effects: &'a [(String, Pos)],
 }
@@ -3660,7 +3676,7 @@ impl<'a> Defs<'a> {
                     scope: &sig.scope,
                     params: sig.params.clone(),
                     gives: sig.gives.clone(),
-                    result: def.result.as_ref().map(written_type),
+                    result: def.result.as_ref().map(Written::Source),
                     effects: &def.effects,
                 }
             }
@@ -3690,7 +3706,7 @@ impl<'a> Defs<'a> {
                             (p.name.clone(), ty)
                         })
                         .collect(),
-                    result: (gives != Ty::Nothing).then(|| self.text(&gives, scope)),
+                    result: (gives != Ty::Nothing).then_some(Written::Rendered),
                     gives,
                     effects: &file.traits[info.of].functions[fi].effects,
                 }
@@ -3980,6 +3996,22 @@ impl<'a> Typed<'a> {
             walking.pop();
         }
         done.insert(instance.clone());
+    }
+}
+
+/// How the result type of a function is said when it is wrong: as it is written
+/// in the source, or as the type of the trait's function it implements.
+enum Written<'a> {
+    Source(&'a Type),
+    Rendered,
+}
+
+impl Written<'_> {
+    fn text(&self, view: &View, defs: &Defs) -> String {
+        match self {
+            Written::Source(t) => written_type(t),
+            Written::Rendered => defs.text(&view.gives, view.scope),
+        }
     }
 }
 
@@ -4737,9 +4769,12 @@ impl<'a> Checker<'a> {
             }
             (given, pattern) => {
                 use_at(value.pos());
-                let needed = defs.describe_pattern(pattern, sol, vars, body.scope);
+                // What is needed is said as it is before the types are matched,
+                // and only when they do not match.
+                let before = sol.to_vec();
                 let read = as_read(given, pattern);
                 if !unify(pattern, &read, sol) {
+                    let needed = defs.describe_pattern(pattern, &before, vars, body.scope);
                     let message = match given {
                         Ty::Text if read != *given => format!(
                             "this gives text, which is a `List[u8]`, where {needed} is needed"
@@ -4884,14 +4919,20 @@ impl<'a> Checker<'a> {
         match (self.block(&mut body, &f.body, &want), &view.result) {
             _ if proof::ends_in_exit(&f.body) => {}
             (End::Empty | End::Binding(_), Some(_)) if view.gives == Ty::Nothing => {}
-            (End::Empty, Some(t)) => self.errors.push(Error::new(
-                f.end,
-                format!(
-                    "`{}` returns `{t}`, and its body is empty, which gives nothing",
-                    f.name
-                ),
-            )),
-            (End::Binding(pos), Some(t)) => self.ends_with_nothing(f, pos, t),
+            (End::Empty, Some(t)) => {
+                let t = t.text(&view, self.defs);
+                self.errors.push(Error::new(
+                    f.end,
+                    format!(
+                        "`{}` returns `{t}`, and its body is empty, which gives nothing",
+                        f.name
+                    ),
+                ))
+            }
+            (End::Binding(pos), Some(t)) => {
+                let t = t.text(&view, self.defs);
+                self.ends_with_nothing(f, pos, &t)
+            }
             (End::Value(gives, value), Some(_)) => self.expect(&body, value, &gives, &view.gives),
             (
                 End::Value(

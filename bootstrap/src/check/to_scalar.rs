@@ -608,6 +608,8 @@ struct Arms<'a, 'p> {
     env: &'p [Ty],
     types: Vec<form::Type>,
     before: Vec<usize>,
+    /// What the names defined before it stood for when it began.
+    was: &'p [Vec<Vec<form::Value>>],
 }
 
 impl<'a> Lowering<'a> {
@@ -617,43 +619,50 @@ impl<'a> Lowering<'a> {
     /// its places, and none for a function, whose calls are lowered in
     /// place.
     fn scalars(&self, ty: &Ty) -> Vec<form::Type> {
+        let mut all = Vec::new();
+        self.scalars_into(ty, &mut |t| all.push(t));
+        all
+    }
+
+    /// Gives each scalar of the type to `put`, in order.
+    fn scalars_into(&self, ty: &Ty, put: &mut dyn FnMut(form::Type)) {
         let defs = self.typed.defs;
         match ty {
             Ty::Text | Ty::Slice(_) => {
-                vec![form::Type::Address, form::Type::Int(form::Bits::B64)]
+                put(form::Type::Address);
+                put(form::Type::Int(form::Bits::B64));
             }
-            Ty::List(_) => vec![
-                form::Type::Address,
-                form::Type::Int(form::Bits::B64),
-                form::Type::Int(form::Bits::B64),
-            ],
-            Ty::Int(t) => vec![form::Type::Int(bits_of(*t))],
+            Ty::List(_) => {
+                put(form::Type::Address);
+                put(form::Type::Int(form::Bits::B64));
+                put(form::Type::Int(form::Bits::B64));
+            }
+            Ty::Int(t) => put(form::Type::Int(bits_of(*t))),
             Ty::Struct(s, args) => {
-                let mut all = Vec::new();
                 for f in &defs.fields[*s] {
-                    all.extend(self.scalars(&f.subst(args)));
+                    self.scalars_into(&f.subst(args), put);
                 }
-                all
             }
             Ty::Tuple(items) => {
-                let mut all = Vec::new();
                 for t in items {
-                    all.extend(self.scalars(t));
+                    self.scalars_into(t, put);
                 }
-                all
             }
             Ty::Enum(e, args) => {
-                let mut all = vec![form::Type::Int(form::Bits::B8)];
-                all.extend(self.layout(*e, args).places);
-                all
+                put(form::Type::Int(form::Bits::B8));
+                for place in self.layout(*e, args).places {
+                    put(place);
+                }
             }
-            Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown | Ty::Flex(_) => Vec::new(),
+            Ty::Param(_) | Ty::Fn(_) | Ty::Nothing | Ty::Unknown | Ty::Flex(_) => {}
         }
     }
 
     /// How many scalars a value of the type is lowered to.
     fn size(&self, ty: &Ty) -> usize {
-        self.scalars(ty).len()
+        let mut n = 0;
+        self.scalars_into(ty, &mut |_| n += 1);
+        n
     }
 
     /// The places of an enum, as the rule in the head of this file gives.
@@ -1761,6 +1770,7 @@ impl<'a> Lowering<'a> {
             env,
             types: types.clone(),
             before,
+            was: &was,
         };
         let rows = (m.arms.iter().enumerate())
             .map(|(arm, a)| Row {
@@ -2032,13 +2042,21 @@ impl<'a> Lowering<'a> {
 
     /// The block a row leads to, with the names it binds, which ends a leaf.
     fn leaf(&mut self, out: &mut Out<'a>, arms: &Arms<'a, '_>, row: Row) -> Leaf {
-        let frames = out.frames.clone();
         for (name, ty, value) in row.binds {
             out.define(&name, ty, value);
         }
         let gives = self.block(out, &arms.arms[row.arm].body, arms.env);
         let names = self.names(out, arms);
-        out.frames = frames;
+        // A block defines names and assigns to those before it, and nothing
+        // else: put each frame back as it was.
+        for (f, (frame, was)) in out.frames.iter_mut().zip(arms.was).enumerate() {
+            frame.truncate(arms.before[f]);
+            for (bound, was) in frame.iter_mut().zip(was) {
+                if bound.values != *was {
+                    bound.values.clone_from(was);
+                }
+            }
+        }
         Leaf {
             block: out.current,
             gives,
