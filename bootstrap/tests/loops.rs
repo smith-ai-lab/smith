@@ -292,8 +292,8 @@ fn an_open_ended_loop_makes_its_function_and_every_caller_carry_diverge() {
 }
 
 /// Inside one round of a loop, a `var` the loop assigns has what that round
-/// last gave it, and nothing is known of what it held in an earlier round,
-/// before the loop, or after it.
+/// last gave it, and nothing is known of what it held in an earlier round or
+/// after the loop.
 fn a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only_there() {
     for ty in INTS {
         let t = ty.name;
@@ -308,10 +308,7 @@ fn a_var_assigned_in_a_loop_is_known_to_arith_in_the_round_that_gave_it_and_only
         let earlier = format!(
             "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    y = x + 1\n    print(\"{{y}}\")\n    x = 1\n  }}\n}}\n"
         );
-        let before = format!(
-            "fn main() ! console, alloc {{\n  var x: {t} = 1\n  loop i in 0..2 {{\n    y = x + 1\n    print(\"{{y}}\")\n  }}\n}}\n"
-        );
-        for source in [after, earlier, before] {
+        for source in [after, earlier] {
             let errors = refused(&source);
             assert!(
                 errors.iter().any(|e| e.contains(&goal)),

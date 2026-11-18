@@ -1558,7 +1558,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The `var` defined last, in a loop, is given `value`.
+    /// The `var` defined last is given `value`.
     pub(super) fn track_var(&mut self, body: &mut Body<'a>, value: &Expr) {
         if !Self::decided(body) || body.contract {
             return;
@@ -1568,9 +1568,6 @@ impl<'a> Checker<'a> {
             Ty::Int(_) => {}
             Ty::List(_) => return self.give_list(body, at, value),
             _ => return body.facts.bump(at),
-        }
-        if body.loops == 0 {
-            return;
         }
         let sum = self.value_of(body, value);
         body.facts.held.push((at, sum));
