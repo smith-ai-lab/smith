@@ -3646,13 +3646,6 @@ impl<'a> Typed<'a> {
         let sig = &defs.trait_sigs[k][fi];
         let types = solve(&sig.params, sig.scope.names.len());
         let types = self.result_types(call, sig, env, types);
-        let trait_defaults = (defs.file.traits[k].generics.iter().enumerate())
-            .map(|(i, g)| match (&g.default, defs.outs[k][i]) {
-                (Some(d), false) => Some(defs.quietly(d, &sig.scope)),
-                _ => None,
-            })
-            .collect();
-        let types = defaulted(types, trait_defaults);
         let (instance, all) = defs.chosen(k, fi, types);
         Callee::Run(instance, sig.gives.subst(&all))
     }
