@@ -107,6 +107,24 @@ struct Moved {
     held: Vec<Held>,
 }
 
+/// What a lambda that is being read defines or takes as a parameter, and the
+/// names it gives away that it did not.
+#[derive(Default)]
+struct Frame {
+    own: HashSet<String>,
+    gives: Vec<(String, Pos, Option<Ty>)>,
+}
+
+/// Whether the parameter that receives a lambda owns it.
+#[derive(Clone, Copy, PartialEq)]
+enum Kept {
+    /// It is marked `take`, so the function is called once.
+    Taken,
+    /// It lends the function, so the function may be called any number of
+    /// times.
+    Lent,
+}
+
 /// What lends a value, if it is lent: the function, or the lambda, whose
 /// parameter it is.
 type Lent = Option<String>;
@@ -164,9 +182,8 @@ struct Walk<'a> {
     lent: HashMap<String, String>,
     /// The states at each `break` of the loops being read, innermost last.
     breaks: Vec<Vec<Moved>>,
-    /// The names each lambda being read defines or takes as a parameter,
-    /// innermost last.
-    inside: Vec<HashSet<String>>,
+    /// The lambdas being read, innermost last.
+    inside: Vec<Frame>,
 }
 
 /// Checks the body of `f`. Mistakes go in `errors`.
@@ -232,6 +249,14 @@ impl<'a> Walk<'a> {
             }
             _ => None,
         }
+    }
+
+    /// The parameter of the function that a path is, if it is of a function
+    /// type.
+    fn fn_param(&self, path: &Path) -> Option<&'a Param> {
+        let f: &'a Function = self.f;
+        let own = path.1.is_empty() && self.inside.iter().all(|fr| !fr.own.contains(&path.0));
+        (own.then(|| f.params.iter().find(|p| p.name == path.0 && p.ty.function))).flatten()
     }
 
     fn copies(&self, e: &Expr) -> bool {
@@ -364,18 +389,39 @@ impl<'a> Walk<'a> {
             }
             return lent;
         }
-        if self.copies(e) {
-            return lent;
-        }
-        // Nothing says how often a lambda is called, so a value it did not
-        // define or take is not given away inside it.
-        let captured = (self.inside.last()).is_some_and(|own| !own.contains(&path.0));
-        if captured && lent.is_none() && !matches!(flow, Flow::Lend) {
-            let what = "giving away, inside a lambda, a value the lambda did not define or take";
-            if self.reported.insert(e.pos()) {
-                self.errors.push(Error::unsupported(e.pos(), what));
+        // A function that is called once has no `Copy`. A lent function has,
+        // but it is not given to a parameter that takes its function.
+        let function = self.fn_param(&path);
+        let once = function.is_some_and(|p| p.take);
+        let lent_function = function.is_some_and(|p| !p.take) && matches!(flow, Flow::Taken(_));
+        if once && matches!(flow, Flow::Lend) {
+            let message = format!(
+                "`{}` is given to a parameter that may call it more than once, and it can be called once",
+                path.0
+            );
+            if let Some(moved) = st {
+                moved.held.retain(|h| h.name != path.0);
+            }
+            if let Some(error) = self.error(e.pos(), message) {
+                error.fix =
+                    Some("write `take` before the function type of that parameter".to_string());
             }
             return lent;
+        }
+        if !once && !lent_function && self.copies(e) {
+            return lent;
+        }
+        // A lambda gives away what it did not define or take, and the
+        // lambda is spent by its call, which the parameter it is passed to
+        // must say.
+        if lent.is_none()
+            && !matches!(flow, Flow::Lend)
+            && let Some(frame) = self.inside.last_mut()
+            && !frame.own.contains(&path.0)
+        {
+            frame
+                .gives
+                .push((path.0.clone(), e.pos(), self.types.get(&addr(e)).cloned()));
         }
         match flow {
             Flow::Lend => {}
@@ -473,7 +519,7 @@ impl<'a> Walk<'a> {
                 None
             }
             Expr::Lambda(l) => {
-                self.lambda(st, l, &[]);
+                self.lambda(st, l, &[], Kept::Lent);
                 None
             }
             Expr::Loop(l) => {
@@ -553,8 +599,8 @@ impl<'a> Walk<'a> {
 
     /// Gives a name a new value, which is gone nowhere.
     fn bind(&mut self, st: &mut State, name: &str, lent: Lent) {
-        if let Some(own) = self.inside.last_mut() {
-            own.insert(name.to_string());
+        if let Some(frame) = self.inside.last_mut() {
+            frame.own.insert(name.to_string());
         }
         if st.is_some() {
             let old = st
@@ -693,18 +739,62 @@ impl<'a> Walk<'a> {
         *st = after;
     }
 
-    /// Reads a lambda where it is written, as the block it is, though a
-    /// lambda may be called more than once: what it gives away of what it
-    /// did not define or take is refused. Its parameter owns what it is
-    /// given when `takes` says so.
-    fn lambda(&mut self, st: &mut State, l: &Lambda, takes: &[bool]) {
-        self.inside.push(HashSet::new());
+    /// Reads a lambda where it is written, as the block it is. What it gives
+    /// away of what it did not define or take is spent from here, and the
+    /// lambda is called once, so it is passed to a parameter that takes its
+    /// function. Its parameter owns what it is given when `takes` says so.
+    fn lambda(&mut self, st: &mut State, l: &Lambda, takes: &[bool], kept: Kept) {
+        self.inside.push(Frame::default());
         for (i, param) in l.params.iter().enumerate() {
             let lent = (!takes.get(i).copied().unwrap_or(false)).then(|| "this lambda".to_string());
             self.bind(st, &param.0, lent);
         }
         self.block(st, &l.body, Flow::Returned);
-        self.inside.pop();
+        let frame = self.inside.pop().unwrap_or_default();
+        if frame.gives.is_empty() {
+            return;
+        }
+        if kept == Kept::Lent {
+            let mut names: Vec<String> = Vec::new();
+            for (name, ..) in &frame.gives {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+            let names = names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>();
+            let message = format!(
+                "this lambda gives away {}, and the function it is passed to may call it more than once",
+                names.join(" and ")
+            );
+            if let Some(error) = self.error(l.pos, message) {
+                error.fix =
+                    Some("write `take` before the function type of that parameter".to_string());
+            }
+            return;
+        }
+        // A function that is taken is called at most once, so it may not call
+        // the lambda, and what the lambda gives away is dropped.
+        let lacks = frame.gives.iter().find_map(|(name, _, ty)| {
+            let p = lacking(self.defs, self.scope, DISCARD, ty.as_ref()?)?;
+            Some((name.clone(), p))
+        });
+        if let Some((name, p)) = lacks {
+            let param = self.scope.names[p].clone();
+            let message = format!(
+                "this lambda gives away `{name}`, and the function it is passed to may not call it, which drops `{name}`, and `{param}` has no `Discard`"
+            );
+            if let Some(error) = self.error(l.pos, message) {
+                error.fix = Some(format!("write `{param}: Discard`"));
+            }
+        }
+        // A lambda inside a lambda that gives a name away is called once too.
+        if let Some(outer) = self.inside.last_mut() {
+            for give in frame.gives {
+                if !outer.own.contains(&give.0) {
+                    outer.gives.push(give);
+                }
+            }
+        }
     }
 
     /// Reads a call: each argument is given away when its parameter is
@@ -751,6 +841,9 @@ impl<'a> Walk<'a> {
             || (call.qualifier.is_none()
                 && value_fn.is_none()
                 && defs.struct_names.contains_key(name));
+        if let Some(f) = value_fn.filter(|f| f.take) {
+            self.spend(st, &f.name, call.pos);
+        }
         let mut position = 0;
         let mut given: Vec<(usize, &Expr)> = Vec::new();
         for arg in &call.args {
@@ -790,7 +883,12 @@ impl<'a> Walk<'a> {
             match &arg.value {
                 Expr::Lambda(l) => {
                     let takes = param.map(|p| p.takes.as_slice()).unwrap_or(&[]);
-                    self.lambda(st, l, takes);
+                    let kept = if param.is_some_and(|p| p.take) {
+                        Kept::Taken
+                    } else {
+                        Kept::Lent
+                    };
+                    self.lambda(st, l, takes, kept);
                 }
                 value => {
                     self.eval(st, value, flow);
@@ -799,6 +897,32 @@ impl<'a> Walk<'a> {
         }
         if !constructs && value_fn.is_none() && params.is_some() {
             self.generic(call, &given);
+        }
+    }
+
+    /// Reads the call of a function that is called once: its first call
+    /// spends it, and a second is a second use of a value given away.
+    fn spend(&mut self, st: &mut State, name: &str, pos: Pos) {
+        let Some(moved) = st else {
+            return;
+        };
+        if let Some((_, at)) = moved.gone.iter().find(|(p, _)| p.0 == name) {
+            let message = format!(
+                "`{name}` is called here, after it was given away at {}:{}",
+                at.line, at.col
+            );
+            if let Some(error) = self.error(pos, message) {
+                error.fix = Some(format!(
+                    "call `{name}` once, or write `{name}` without `take` so that it may be called again"
+                ));
+            }
+            return;
+        }
+        moved.gone.push(((name.to_string(), Vec::new()), pos));
+        if let Some(frame) = self.inside.last_mut()
+            && !frame.own.contains(name)
+        {
+            frame.gives.push((name.to_string(), pos, None));
         }
     }
 
