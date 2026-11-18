@@ -46,15 +46,17 @@ This prints `yes`, `yes`, `no`, and `yes`.
 
 The two sides must have the same type unless an `impl` relates them. `tom == 3` is refused: "this is a number, where a `Cat` is needed".
 
-A type's own `impl` of `Eq` says when two of its values are equal.
+`==` means that two values are the same value, and it means nothing else. So a program does not write `Eq` for a type: the `Eq` a type has is the one it is given, which compares it part by part, as [Traits a type is given](automatic-traits.md) describes. An `impl Eq[Cat]` is refused.
+
+A comparison that is looser than "the same" is a function with a name of its own.
 
 ```
-impl Eq[Cat] {
-  fn eq(a: Cat, b: Cat) -> bool { a.age == b.age }
-}
+fn same_age(a: Cat, b: Cat) -> bool { a.age == b.age }
 ```
 
-Now `tom == Cat(name: "Rex", age: 3)` is `true`.
+`same_age(tom, Cat(name: "Rex", age: 4))` is `true`, and `tom == Cat(name: "Rex", age: 4)` is `false`, as they are two cats. A type whose value can be written in more than one way, as a fraction can, keeps one way, so that the same value is always the same parts.
+
+This is what lets a [proof](statements.md) use one of two equal values where the other stood. It holds of every type but the floats, whose rules come from the standard for them: a value that is not a number is not equal to itself, and `0.0` equals `-0.0`.
 
 ## Less and greater
 
