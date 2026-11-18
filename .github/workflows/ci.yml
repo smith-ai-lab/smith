@@ -88,6 +88,11 @@ jobs:
         run: |
           set -eu
           git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+          # The two builds below run side by side, and each would install the
+          # toolchain the repository names if it is missing. Two installs at
+          # once break each other, so it is installed here, once, first.
+          (cd bootstrap && cargo --version)
+          (cd "$RUNNER_TEMP/base/bootstrap" && cargo --version)
           sh .github/fingerprint.sh "$PWD" > head.fingerprint &
           sh .github/fingerprint.sh "$RUNNER_TEMP/base" > base.fingerprint &
           wait
