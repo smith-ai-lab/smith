@@ -40,9 +40,11 @@ fn setting(line: str) -> Option[(str, str)] { split_once(line, "=") }
 
 `setting("depth=3")` is `.some(("depth", "3"))`. `setting("a=b=c")` is `.some(("a", "b=c"))`, cut at the first `=` only, and `setting("depth")` is `.none`. Nothing is left out: `setting("=3")` is `.some(("", "3"))` and `setting("depth=")` is `.some(("depth", ""))`.
 
+An empty `at` is at the start of every text, as it is for [`find`](list-functions.md), so `split_once("depth", "")` is `.some(("", "depth"))`. So for every `s` and `at`, what `split_once` gives is `.none` or two pieces with `at` between them that make up `s`.
+
 ## The forms
 
 | Written | Gives |
 | --- | --- |
 | `strip_prefix(s, prefix)` | `.some` of the text after `prefix`, or `.none` when `s` does not begin with it |
-| `split_once(s, at)` | `.some` of the text before the first `at` and the text after it, or `.none` |
+| `split_once(s, at)` | `.some` of the text before the first `at` and the text after it, or `.none`; an empty `at` is at the start |
