@@ -60,6 +60,105 @@ impl<'a> Lowering<'a> {
         (ty, vec![out.binary(word, a, b)])
     }
 
+    /// Whether the call is `Eq::eq` or `Ord::compare` of two values that are
+    /// whole numbers or `bool`, whose `Eq` and `Ord` no program writes, and
+    /// which are therefore compared where they are.
+    pub(super) fn compares_scalars(&self, call: &Call, name: &str, env: &[Ty]) -> bool {
+        let typed = self.typed;
+        matches!(&call.qualifier, Some((q, _)) if q == if name == "eq" { "Eq" } else { "Ord" })
+            && call.callee == name
+            && call.args.len() == 2
+            && match typed.type_of(&call.args[0].value, env) {
+                Ty::Int(_) => true,
+                Ty::Enum(e, _) => e == typed.defs.boolean,
+                _ => false,
+            }
+    }
+
+    /// Lowers `left == right` of whole numbers or `bool`s: one comparison.
+    pub(super) fn equal_scalars(
+        &mut self,
+        out: &mut Out<'a>,
+        call: &'a Call,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let a = self.expr(out, &call.args[0].value, env).1[0];
+        let b = self.expr(out, &call.args[1].value, env).1[0];
+        (
+            self.typed.defs.bool_ty(),
+            vec![out.compare(form::Compare::Equal, a, b)],
+        )
+    }
+
+    /// Lowers a `match` that the parser wrote for `<`, `<=`, `>`, `>=`, or
+    /// `!=` of whole numbers or `bool`s: one comparison, and for `<=`, `>=`,
+    /// and `!=` the answer of the opposite comparison with its bit flipped,
+    /// which `fold` leaves out when a block branches on it. Gives `None` for any
+    /// other `match`.
+    pub(super) fn comparison(
+        &mut self,
+        out: &mut Out<'a>,
+        m: &'a Match,
+        env: &[Ty],
+    ) -> Option<Vec<form::Value>> {
+        let Expr::Call(call) = &m.of else {
+            return None;
+        };
+        if m.form == Form::Not {
+            if !self.compares_scalars(call, "eq", env) {
+                return None;
+            }
+            let same = self.equal_scalars(out, call, env).1[0];
+            let one = out.int(form::Bits::B8, 1);
+            return Some(vec![out.binary(form::Binary::Xor, same, one)]);
+        }
+        if m.form != Form::Match || !self.compares_scalars(call, "compare", env) {
+            return None;
+        }
+        // What each of `less`, `equal`, and `greater` answers.
+        let mut answers = [None; 3];
+        for arm in &m.arms {
+            let Pattern::Case {
+                name, inner: None, ..
+            } = &arm.pattern
+            else {
+                return None;
+            };
+            let at = ["less", "equal", "greater"]
+                .iter()
+                .position(|c| c == name)?;
+            let [Stmt::Expr(Expr::Name { name, .. })] = &arm.body[..] else {
+                return None;
+            };
+            answers[at] = Some(match name.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => return None,
+            });
+        }
+        let ty = self.typed.type_of(&call.args[0].value, env);
+        let a = self.expr(out, &call.args[0].value, env).1[0];
+        let b = self.expr(out, &call.args[1].value, env).1[0];
+        let less = match ty {
+            Ty::Int(t) if t.signed() => form::Compare::LessS,
+            _ => form::Compare::LessU,
+        };
+        // `a <= b` is not `b < a`, and `a >= b` is not `a < b`.
+        let (op, x, y, flip) = match answers {
+            [Some(true), Some(false), Some(false)] => (less, a, b, false),
+            [Some(false), Some(false), Some(true)] => (less, b, a, false),
+            [Some(true), Some(true), Some(false)] => (less, b, a, true),
+            [Some(false), Some(true), Some(true)] => (less, a, b, true),
+            _ => return None,
+        };
+        let below = out.compare(op, x, y);
+        if !flip {
+            return Some(vec![below]);
+        }
+        let one = out.int(form::Bits::B8, 1);
+        Some(vec![out.binary(form::Binary::Xor, below, one)])
+    }
+
     /// Lowers a call of `narrow` or one of its relatives.
     pub(super) fn narrow_call(
         &mut self,
