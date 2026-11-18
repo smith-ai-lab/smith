@@ -88,6 +88,8 @@ fn demo() ! alloc {
 
 `append([1, 2], [3])` is `[1, 2, 3]`. `append([], [3])` is `[3]`, and with an empty `b` the result has the elements of `a` alone.
 
+Nothing about `append` is known to the compiler. It is a function written with `push`, so `out = append(out, more)` grows `out` in place by the rule that holds of every function: a `var` that is given a new value is [updated in place](../language/arenas.md) when nothing else can read the old one.
+
 ## The forms
 
 | Written | Gives |
