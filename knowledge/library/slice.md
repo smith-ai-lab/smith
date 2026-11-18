@@ -23,6 +23,16 @@ fn evens(n: u64) -> Slice[u64] ! alloc {
 fn freeze[T](list: take List[T]) -> Slice[T]
 ```
 
+## A slice written out
+
+A literal in brackets becomes a `Slice` where one is expected, as it becomes a `List` where a list is, since the type that is expected picks what a [literal](../language/literals.md) makes.
+
+```
+primes: Slice[u8] = [2, 3, 5, 7]
+```
+
+A slice cannot change, so its elements are data in the executable, as the bytes of a string literal are. Nothing is asked of the system for it, and it carries no `alloc`. A `List` written the same way allocates, as it may grow. With nothing expected, `[2, 3, 5, 7]` is an array of four elements, as it always was.
+
 ## Memory is owned by one name, or it cannot change
 
 That is the whole rule, and it is why nothing has to follow which name can see which memory. A `List` is owned: one name holds it, it is [never copied unasked](../language/ownership.md#a-list-is-never-copied-unasked), and `push` grows it where it is. A `Slice` cannot change: it has `Copy`, so any number of names may hold it, and none of them can see it change.
@@ -81,6 +91,7 @@ A piece of a `List` is lent like the list itself: it is passed, looped over, and
 | --- | --- |
 | `Slice[T]` | A run of `T` that cannot change, with `Copy` |
 | `freeze(xs)` | The memory of the list `xs` as a `Slice`, with nothing copied |
+| `s: Slice[u8] = [2, 3]` | A slice whose elements are data in the executable, with no `alloc` |
 | `s[a..b]` on a `Slice` | A `Slice` that shares the memory of `s` |
 | `xs[a..b]` on a `List` | A lent piece of `xs`, for a function that reads |
 | `copy(s)` | A new `List` with the elements of `s` |
