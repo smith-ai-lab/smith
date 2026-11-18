@@ -57,4 +57,6 @@ fn word(source: str, start: Nat, end: Nat) -> Option[str] {
 | `utf8(bytes)` | `.ok(text)` of the same bytes, or `.err` with the place of the first byte that is not valid |
 | `s[a..b]` | The bytes from `a` up to `b` as a `str`, sharing the memory of `s` |
 
+The functions that cut a text and read a character are in [Text functions](../library/text.md) and [UTF-8](../library/utf8.md).
+
 Next: [Ownership](ownership.md)

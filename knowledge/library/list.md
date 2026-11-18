@@ -50,3 +50,5 @@ struct List[T] {
 ```
 fn push[T](list: List[T], item: T) -> List[T] ! alloc
 ```
+
+The functions that search a list, compare its ends, and join two lists are in [List functions](list-functions.md).
