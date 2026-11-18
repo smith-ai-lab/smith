@@ -10,9 +10,12 @@ use crate::diag::{Error, Pos};
 use crate::lexer::{Piece, Tok, Token};
 
 mod lists_and_text;
+mod numbers_and_operators;
 mod traits;
 
 pub use lists_and_text::Part;
+pub use numbers_and_operators::ArithOp;
+use numbers_and_operators::number;
 pub use traits::{Impl, Trait, Without};
 
 /// The definitions of a file, each kind in the order they are written.
@@ -325,25 +328,6 @@ pub struct Over {
     pub name: String,
     pub pos: Pos,
     pub value: Expr,
-}
-
-/// The operators of whole number arithmetic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ArithOp {
-    Add,
-    Sub,
-    Mul,
-}
-
-impl ArithOp {
-    /// The operator as it is written.
-    pub fn symbol(self) -> &'static str {
-        match self {
-            ArithOp::Add => "+",
-            ArithOp::Sub => "-",
-            ArithOp::Mul => "*",
-        }
-    }
 }
 
 /// A lambda: a block, with `fn` and the names of its parameters before it
@@ -681,47 +665,6 @@ fn place(expr: &Expr) -> Option<(String, Pos, Vec<Named>)> {
         },
         _ => None,
     }
-}
-
-/// The literal for the number written as `text`, which the lexer has found
-/// well formed, with a `-` before it if `negative`, starting at `pos`.
-fn number(text: String, negative: bool, pos: Pos) -> Result<Expr, Error> {
-    if let Some(inner) = text.strip_prefix('\'') {
-        let inner = &inner[..inner.len() - 1];
-        let c = match inner {
-            "\\'" => '\'',
-            "\\\\" => '\\',
-            "\\n" => '\n',
-            "\\t" => '\t',
-            _ => inner.chars().next().expect("a character the lexer found"),
-        };
-        return Ok(Expr::Number {
-            magnitude: c as u128,
-            text,
-            negative,
-            pos,
-        });
-    }
-    let (digits, base) = match (text.strip_prefix("0x"), text.strip_prefix("0b")) {
-        (Some(rest), _) => (rest, 16),
-        (_, Some(rest)) => (rest, 2),
-        _ if text.contains(['.', 'e', 'E']) => return Err(Error::unsupported(pos, "a float")),
-        _ => (text.as_str(), 10),
-    };
-    let mut magnitude = 0u128;
-    for c in digits.chars().filter(|c| *c != '_') {
-        let digit = c.to_digit(base).expect("a digit the lexer found") as u128;
-        magnitude = magnitude
-            .checked_mul(base as u128)
-            .and_then(|m| m.checked_add(digit))
-            .unwrap_or(u128::MAX);
-    }
-    Ok(Expr::Number {
-        text,
-        magnitude,
-        negative,
-        pos,
-    })
 }
 
 /// The error for a definition that gives the name `true` or `false`, which
@@ -2025,139 +1968,6 @@ impl Parser<'_> {
         Ok(negated(pos, operand))
     }
 
-    /// Parses operands joined by `+` and `-`, which group to the left.
-    fn sum(&mut self) -> Result<Expr, Error> {
-        let mut left = self.product()?;
-        while let Tok::Punct(op @ ("+" | "-")) = self.tok() {
-            let op = if *op == "+" {
-                ArithOp::Add
-            } else {
-                ArithOp::Sub
-            };
-            left = self.arith(op, left, Self::product)?;
-        }
-        Ok(left)
-    }
-
-    /// Parses operands joined by `*`, which group to the left.
-    fn product(&mut self) -> Result<Expr, Error> {
-        let mut left = self.operand()?;
-        while self.tok() == &Tok::Punct("*") {
-            left = self.arith(ArithOp::Mul, left, Self::operand)?;
-        }
-        Ok(left)
-    }
-
-    /// Parses the right side of an arithmetic operator, from the operator,
-    /// with `side`, and gives the operation. A `try` in the right side
-    /// passes on the rest of the statement, so what is to its left runs
-    /// before it.
-    fn arith(
-        &mut self,
-        op: ArithOp,
-        mut left: Expr,
-        side: fn(&mut Self) -> Result<Expr, Error>,
-    ) -> Result<Expr, Error> {
-        let op_pos = self.pos();
-        self.bump();
-        self.skip_newlines();
-        let mark = self.hoisted.len();
-        let right = side(self)?;
-        if self.hoisted.len() > mark {
-            let mut at = mark;
-            self.spill(&mut left, &mut at);
-        }
-        Ok(Expr::Arith {
-            op,
-            left: Box::new(left),
-            right: Box::new(right),
-            op_pos,
-        })
-    }
-
-    /// Parses an operand, and a comparison of it with another if `==` or
-    /// `!=` follows. A comparison takes no other comparison as an operand
-    /// unless it is in parentheses.
-    fn comparison(&mut self) -> Result<Expr, Error> {
-        let mut left = self.sum()?;
-        let op = match self.tok() {
-            Tok::Punct(op @ ("==" | "!=" | "<" | "<=" | ">" | ">=")) => *op,
-            _ => return Ok(left),
-        };
-        let op_pos = self.pos();
-        self.bump();
-        self.skip_newlines();
-        let mark = self.hoisted.len();
-        let right = if self.tok() == &Tok::Keyword("not") {
-            self.negation()?
-        } else {
-            self.sum()?
-        };
-        if self.hoisted.len() > mark {
-            let mut at = mark;
-            self.spill(&mut left, &mut at);
-        }
-        if let Tok::Punct("==" | "!=" | "<" | "<=" | ">" | ">=") = self.tok() {
-            return Err(Error::new(
-                self.pos(),
-                "a comparison cannot compare what another comparison gives \
-                 unless one of them is in parentheses",
-            )
-            .with_fix("put the comparison that runs first in parentheses"));
-        }
-        let pos = left.pos();
-        let ordered = !matches!(op, "==" | "!=");
-        let same = Expr::Call(Call {
-            qualifier: Some((if ordered { "Ord" } else { "Eq" }.to_string(), op_pos)),
-            callee: if ordered { "compare" } else { "eq" }.to_string(),
-            pos,
-            name_pos: op_pos,
-            args: [left, right]
-                .into_iter()
-                .map(|value| Arg {
-                    name: None,
-                    value,
-                    after: false,
-                })
-                .collect(),
-            end: op_pos,
-        });
-        Ok(match op {
-            "==" => same,
-            "!=" => negated(pos, same),
-            // `a < b` is the `match` on how `a` and `b` stand that says
-            // whether the answer is among the cases it holds.
-            _ => {
-                let holds = |case: &str| {
-                    matches!(
-                        (op, case),
-                        ("<", "less")
-                            | (">", "greater")
-                            | ("<=", "less" | "equal")
-                            | (">=", "greater" | "equal")
-                    )
-                };
-                let arms = ["less", "equal", "greater"]
-                    .into_iter()
-                    .map(|case| {
-                        let name = if holds(case) { "true" } else { "false" };
-                        let value = Expr::Name {
-                            name: name.to_string(),
-                            pos: op_pos,
-                        };
-                        arm(case, op_pos, vec![Stmt::Expr(value)], op_pos)
-                    })
-                    .collect();
-                Expr::Match(Box::new(Match {
-                    pos,
-                    of: same,
-                    arms,
-                    form: Form::Match,
-                }))
-            }
-        })
-    }
-
     /// Parses `loop`, through the block that ends it.
     fn loop_expr(&mut self) -> Result<Loop, Error> {
         let pos = self.pos();
@@ -2289,25 +2099,12 @@ impl Parser<'_> {
             }
             Tok::Number(text) => {
                 let text = text.clone();
-                self.bump();
-                number(text, false, pos)?
+                self.number_literal(text, pos)?
             }
             // A `-` directly before a number, where a value may begin, is
             // part of the number.
-            Tok::Punct("-")
-                if matches!(self.next_tok(), Tok::Number(_))
-                    && self.tokens[self.at + 1].pos
-                        == (Pos {
-                            line: pos.line,
-                            col: pos.col + 1,
-                        }) =>
-            {
-                self.bump();
-                let Tok::Number(text) = self.tok().clone() else {
-                    unreachable!("a number")
-                };
-                self.bump();
-                number(text, true, pos)?
+            Tok::Punct("-") if self.negative_number_follows(pos) => {
+                self.negative_number_literal(pos)?
             }
             Tok::Ident(name) => {
                 let name = name.clone();
