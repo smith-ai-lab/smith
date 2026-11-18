@@ -3,6 +3,8 @@
 // that. Each such place is marked GAP, and says which roadmap issue will remove
 // it. The tests of bootstrap hold it to the Rust lexer.
 
+use std.ascii (is_digit, is_hex_digit, is_letter)
+
 struct Pos {
   line: u64
   col: u64
@@ -82,17 +84,10 @@ fn byte_at(src: List[u8], i: u64) -> Option[u8] {
   if i < src.size { .some(src[i]) } else { .none }
 }
 
-fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }
+// A byte that starts a name: std.ascii's letters are a-z and A-Z only.
+fn is_name_start(b: u8) -> bool { b == '_' or is_letter(b) }
 
-fn is_hex_digit(b: u8) -> bool {
-  is_digit(b) or (b >= 'a' and b <= 'f') or (b >= 'A' and b <= 'F')
-}
-
-fn is_letter(b: u8) -> bool {
-  (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z') or b == '_'
-}
-
-fn is_word_byte(b: u8) -> bool { is_letter(b) or is_digit(b) }
+fn is_word_byte(b: u8) -> bool { is_name_start(b) or is_digit(b) }
 
 // A byte that continues a character and does not start one.
 fn is_continuation(b: u8) -> bool { b >= 0x80 and b <= 0xBF }
@@ -558,7 +553,7 @@ fn token3(lx: Lexer, start: Pos, c: u8) -> Lexer ! alloc {
     comment(lx, start)
   } else if c == '\'' {
     character(lx, start)
-  } else if is_letter(c) {
+  } else if is_name_start(c) {
     word(lx, start)
   } else if is_digit(c) {
     number(lx, start)
@@ -692,7 +687,7 @@ fn token2(lx: Lexer, start: Pos, c: u8) -> Lexer ! alloc {
     string2(lx, start)
   } else if c == '\'' {
     character(lx, start)
-  } else if is_letter(c) {
+  } else if is_name_start(c) {
     word(lx, start)
   } else if is_digit(c) {
     number(lx, start)
@@ -826,7 +821,7 @@ fn token1(lx: Lexer, start: Pos, c: u8) -> Lexer ! alloc {
     string1(lx, start)
   } else if c == '\'' {
     character(lx, start)
-  } else if is_letter(c) {
+  } else if is_name_start(c) {
     word(lx, start)
   } else if is_digit(c) {
     number(lx, start)
@@ -960,7 +955,7 @@ fn token0(lx: Lexer, start: Pos, c: u8) -> Lexer ! alloc {
     string0(lx, start)
   } else if c == '\'' {
     character(lx, start)
-  } else if is_letter(c) {
+  } else if is_name_start(c) {
     word(lx, start)
   } else if is_digit(c) {
     number(lx, start)
