@@ -2,7 +2,13 @@
 type: specification
 title: Lending and take
 description: A parameter lends its argument unless it is marked take, which gives the callee ownership, and so a random Key cannot be used twice.
-status: planned
+status: partial
+built:
+  - "`take` before a parameter's type, and before a parameter of a function type, which a lambda passed to it is held to"
+  - "A lent value, or a part of one, refused where it is returned, stored, or passed to a `take` parameter, unless its type has `Copy`"
+  - "An argument of a `take` parameter given away, so that a use of it after the call is refused"
+  - "not a value without `Copy` given away inside a lambda that the lambda did not define or take, which is refused, as nothing says how often a lambda is called"
+  - "not a function's type parameter given a type without `Copy`, nor an implementation chosen for one, which are refused, as no bound says that a type parameter has `Copy`"
 ---
 
 # Lending and take
