@@ -89,8 +89,25 @@ pub(super) fn flexible(e: &Expr) -> bool {
     match e {
         Expr::Number { .. } => true,
         Expr::Arith { left, right, .. } => flexible(left) && flexible(right),
+        Expr::Match(m) => literal_blocks(m),
         _ => false,
     }
+}
+
+/// Whether an `if` with `else`, or a `match`, gives a value that every block
+/// that does not leave ends in a literal, and at least one does not leave.
+/// Its type is that of what it is used with, as a literal's is.
+pub(super) fn literal_blocks(m: &Match) -> bool {
+    if !matches!(m.form, Form::Match | Form::If { otherwise: true }) {
+        return false;
+    }
+    let mut blocks = m
+        .arms
+        .iter()
+        .filter(|a| !proof::ends_in_exit(&a.body))
+        .peekable();
+    blocks.peek().is_some()
+        && blocks.all(|a| matches!(a.body.last(), Some(Stmt::Expr(e)) if flexible(e)))
 }
 
 /// The whole numbers a body binds to names with no type written.

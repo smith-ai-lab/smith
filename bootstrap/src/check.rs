@@ -45,7 +45,7 @@ use crate::parser::{
     Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
 };
 use lists_and_text::{as_read, is_push, is_utf8, text_as_bytes};
-use numbers_and_operators::{Int, Narrowing, Numbers, flexible, narrowing};
+use numbers_and_operators::{Int, Narrowing, Numbers, flexible, literal_blocks, narrowing};
 use traits::{
     Found, ImplInfo, PRELUDE_TRAITS, Requirement, TRAITS_NOT_BUILT, bounds_named, impl_info,
     impls_for, needs_named, overlaps, prelude_trait, split_needs, withouts,
@@ -4731,7 +4731,8 @@ impl<'a> Checker<'a> {
                                     self.expect(body, value, &gives, &needed);
                                     needed
                                 }
-                                None if matches!(value, Expr::Number { .. })
+                                None if (matches!(value, Expr::Number { .. })
+                                    || matches!(value, Expr::Match(m) if literal_blocks(m)))
                                     && !matches!(body.numbers, Numbers::Off) =>
                                 {
                                     self.literal_binding(body, name, value)
@@ -5439,6 +5440,7 @@ impl<'a> Checker<'a> {
         let (mut paths, mut excluded) = (Vec::new(), false);
         let mut patterns: Vec<Option<Pat>> = Vec::new();
         let mut first: Option<Ty> = None;
+        let mut later = Vec::new();
         for arm in &m.arms {
             let mut binds = Vec::new();
             let pattern = self.pattern(body, &arm.pattern, &of, &mut binds, None);
@@ -5457,7 +5459,7 @@ impl<'a> Checker<'a> {
             }
             patterns.push(pattern);
             body.define(binds);
-            self.arm(body, arm, want, &mut first, "a `match`");
+            self.arm(body, arm, want, (&mut first, &mut later), "a `match`");
             if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
@@ -5467,6 +5469,7 @@ impl<'a> Checker<'a> {
             body.vars.truncate(vars);
             body.facts.reset(&known);
         }
+        self.settle(body, later, &mut first);
         self.join(body, outer, paths, &assigned, excluded);
         if !of.unknown() && patterns.iter().all(Option::is_some) {
             let all: Vec<&Pat> = patterns.iter().flatten().collect();
@@ -5499,14 +5502,27 @@ impl<'a> Checker<'a> {
     /// Checks the block of an arm of a `match`, or of an `if`, which an
     /// error names as `what`, against what is wanted of the whole or what
     /// the first block gives, which is `first` once known.
-    fn arm(
+    ///
+    /// Where nothing says the type yet, a block that ends in a literal does
+    /// not decide it: the literal waits in `later` for the type of a block
+    /// that follows, which `settle` gives it.
+    fn arm<'e>(
         &mut self,
         body: &mut Body<'a>,
-        arm: &Arm,
+        arm: &'e Arm,
         want: &Want,
-        first: &mut Option<Ty>,
+        (first, later): (&mut Option<Ty>, &mut Vec<&'e Expr>),
         what: &str,
     ) {
+        if let (Want::Any, None, Some((Stmt::Expr(tail), rest))) =
+            (want, &*first, arm.body.split_last())
+            && flexible(tail)
+            && !proof::ends_in_exit(&arm.body)
+        {
+            self.block(body, rest, &Want::Unused);
+            later.push(tail);
+            return;
+        }
         let arm_want = match (want, &*first) {
             (Want::Unused, _) => Want::Unused,
             (Want::Ty(t), _) => Want::Ty(t.clone()),
@@ -5520,6 +5536,19 @@ impl<'a> Checker<'a> {
                 first.get_or_insert(gives);
             }
         }
+    }
+
+    /// Gives the blocks that ended in a literal, which waited for a type,
+    /// the type of the first block that gave one, or an `i64` when none did.
+    fn settle(&mut self, body: &mut Body<'a>, later: Vec<&Expr>, first: &mut Option<Ty>) {
+        if later.is_empty() {
+            return;
+        }
+        let ty = first.clone().unwrap_or(Ty::Int(Int::I64));
+        for value in later {
+            self.expr(body, value, &Want::Ty(ty.clone()));
+        }
+        first.get_or_insert(ty);
     }
 
     /// Checks an `if`: its condition, which is a `bool`, and its blocks.
@@ -5557,9 +5586,10 @@ impl<'a> Checker<'a> {
             return Ty::Nothing;
         }
         let mut first = None;
+        let mut later = Vec::new();
         for (k, arm) in m.arms.iter().enumerate() {
             self.assume(body, &m.of, k == 0);
-            self.arm(body, arm, want, &mut first, "an `if`");
+            self.arm(body, arm, want, (&mut first, &mut later), "an `if`");
             if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
@@ -5569,6 +5599,7 @@ impl<'a> Checker<'a> {
             body.vars.truncate(vars);
             body.facts.reset(&known);
         }
+        self.settle(body, later, &mut first);
         self.join(body, outer, paths, &assigned, excluded);
         match want {
             Want::Unused => Ty::Nothing,
@@ -6648,7 +6679,10 @@ impl<'a> Checker<'a> {
                 },
                 None => Want::Ty(Ty::Unknown),
             };
-            if let (Some(i), Expr::Number { .. }, Want::Any) = (param, &arg.value, &wanted) {
+            if let (Some(i), Want::Any) = (param, &wanted)
+                && (matches!(arg.value, Expr::Number { .. })
+                    || matches!(&arg.value, Expr::Match(m) if literal_blocks(m)))
+            {
                 deferred.push((i, &arg.value));
                 continue;
             }
@@ -6695,7 +6729,12 @@ impl<'a> Checker<'a> {
                     Want::Ty(pattern.partial(&from_place))
                 }
                 t if t.unknown() && matches!(value, Expr::Call(_)) => Want::Any,
-                t if t.unknown() && fits_i64(value) => Want::Any,
+                t if t.unknown()
+                    && (fits_i64(value)
+                        || matches!(value, Expr::Match(m) if literal_blocks(m))) =>
+                {
+                    Want::Any
+                }
                 t if t.unknown() && reported => Want::Ty(Ty::Unknown),
                 t if t.unknown() => {
                     reported = true;
