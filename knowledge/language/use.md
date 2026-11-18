@@ -2,7 +2,14 @@
 type: specification
 title: Importing with use
 description: use brings the names of another module into a file, from an explicit list, and what is said when a name is missing or unused.
-status: planned
+status: partial
+built:
+  - "`use m (a, b)` for a module of the standard library, written `std.console`, `std.list`, `std.utf8`, `std.int`, or `std.bits`, listing names that module exports, and a `use` before every other item with one line for a module"
+  - "an error at its place, with a fix where there is one, for a module that does not exist, a name the module lacks, a name listed twice, a name listed from two modules, a name the file defines or the prelude holds, a second `use` of one module, and a `use` below another item"
+  - "a warning from `smith check`, at the name, for a name that is imported and never used"
+  - "only the modules a `use` names are read, and the same executable is built with and without an import"
+  - "not a name used and not imported, which is still in scope as it was, so the examples of the other pages are still written without their `use` lines; nor `as`, a project's own modules, `pub` in a program, or importing a module by its name"
+  - "the library's own source is not compiled yet: the compiler holds the effect `console` as an export of `std.console`, as [the compiler's design](../compiler.md#bootstrap) says, because effect declarations are not built"
 ---
 
 # Importing with use
