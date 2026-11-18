@@ -50,17 +50,22 @@ trait Reader[R] {
   fn more(r: take R) -> (R, Result[bool, ReadError]) ! alloc
   fn tuple(r: take R, size: Nat) -> (R, Result[(), ReadError]) ! alloc
   fn end_tuple(r: take R) -> (R, Result[(), ReadError]) ! alloc
-  fn structure(r: take R, name: str, fields: Slice[str]) -> (R, Result[(), ReadError]) ! alloc
-  fn field(r: take R) -> (R, Result[Option[Nat], ReadError]) ! alloc
-  fn case(r: take R, of: str, names: Slice[str]) -> (R, Result[Nat, ReadError]) ! alloc
+  fn structure(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
+  fn field(r: take R) -> (R, Result[Option[str], ReadError]) ! alloc
+  fn unknown(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
+  fn case(r: take R, of: str) -> (R, Result[str, ReadError]) ! alloc
   fn end_case(r: take R) -> (R, Result[(), ReadError]) ! alloc
+  fn fail(r: take R, problem: Problem) -> (R, ReadError) ! alloc
 }
 ```
 
 - `present` says whether a value that may be missing is there. When it is, the value is read next.
 - `sequence` opens a sequence, and `more` says before each element whether there is another. The sequence is closed when `more` gives `false`.
-- `structure` is given the names of the fields the type has. `field` then gives the place, among those names, of the field the input holds next, and the type reads that field's value. It gives `.none` when the struct has ended. What a reader does with a field of the input that is not among the names is the format's to say.
-- `case` is given the names of the enum's cases and gives the place of the one the input holds. What that case holds is read next, and `end_case` closes it.
+- `structure` opens a struct. `field` then gives the name of the field the input holds next, written as the type writes its fields, and the type reads the value of the field of that name. It gives `.none` when the struct has ended. For a name the type has no field of, the type calls `unknown`, and the reader passes over the value or refuses it, as the format says.
+- `case` gives the name of the case the input holds. What that case holds is read next, and `end_case` closes it.
+- `fail` makes the error for what the type itself finds wrong, as a field that is missing, and the reader puts the path and the place in it.
+
+A reader gives names and is given none, so a type holds no table of its fields: it compares the name it is given with each of its own.
 
 ## Given automatically
 
