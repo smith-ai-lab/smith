@@ -1826,7 +1826,7 @@ fn check_file(
             Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
         }
     }
-    checker.recursion(start_at, &mut Vec::new(), &mut Vec::new());
+    checker.recursion(start_at, &mut HashSet::new(), &mut HashSet::new());
     if !checker.errors.is_empty() {
         // What the function that starts the program says is wrong follows from
         // what `main` says, which is at a place the reader can see.
@@ -7166,8 +7166,8 @@ impl<'a> Checker<'a> {
     ///
     /// The calls in a default that a call leaves out are calls of the
     /// function the call is written in, as the default is filled in there.
-    fn recursion(&mut self, f: usize, path: &mut Vec<usize>, done: &mut Vec<usize>) {
-        path.push(f);
+    fn recursion(&mut self, f: usize, path: &mut HashSet<usize>, done: &mut HashSet<usize>) {
+        path.insert(f);
         let defs = self.defs;
         let mut all = Vec::new();
         let mut cycles = Vec::new();
@@ -7204,7 +7204,7 @@ impl<'a> Checker<'a> {
                 self.recursion(callee, path, done);
             }
         }
-        path.pop();
-        done.push(f);
+        path.remove(&f);
+        done.insert(f);
     }
 }
