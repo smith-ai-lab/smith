@@ -84,7 +84,7 @@ fn double(x: Option[i32]) -> i32 {
 
 `double(.some(4))` is `8` and `double(.none)` is `0`. Written `.some(n) = x`, the binding is refused, as `x` may be `.none`. The compiler does not build `return` yet, so `double` waits for it.
 
-A parameter written as a pattern has no name of its own, so its argument is given by position, and it takes no default. `first(t: (7, "x"))` is refused: "`first` has no parameter named `t`". A pattern that may not match in one of these places is refused with "this pattern may not match, so it cannot stand where a name is introduced, and is written in a `match`", and a pattern of the wrong size, or on a value that is no tuple, gives the message [a binding gives](#a-pattern-must-fit-the-tuple).
+A parameter written as a pattern has no name of its own, so its argument is given by position, and it takes no default. `first(t: (7, "x"))` is refused: "`first` has no parameter named `t`", and that is the one error. An error that would name the parameter speaks of its place instead, as "the first parameter". A pattern that may not match in one of these places is refused with "this pattern may not match, so it cannot stand where a name is introduced, and is written in a `match`", and a pattern of the wrong size, or on a value that is no tuple, gives the message [a binding gives](#a-pattern-must-fit-the-tuple).
 
 Each of these is the same program as the one that has a name there and the pattern as a binding on the first line of the body. A pattern in a `loop` is taken apart in each round, before the rest of the block.
 
