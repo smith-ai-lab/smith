@@ -43,7 +43,13 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [loop.md](loop.md): `loop` over a range, which runs a block once for each number in order, the type of its counter, `break`, and what `arith` knows inside it.
 - [open-loop.md](open-loop.md): `loop` with no range, which runs until `break` and carries `diverge`, and `loop decreases`, which is proven to end.
 - [iterate.md](iterate.md): the `Iterate` trait, which makes a type loopable, and how `loop v in x` calls its `each`.
-- [contracts.md](contracts.md): `requires`, `ensures`, and `check`, what the `arith` procedure can prove, termination, and `hole`.
+- [arith.md](arith.md): what the `arith` procedure proves by itself and from what, what it cannot decide, and what the compiler says when it cannot prove.
+- [contracts.md](contracts.md): `requires` and `ensures` on a function, what the caller owes and what the function gives.
+- [termination.md](termination.md): every function ends unless it carries `diverge`, and `decreases` on a function that calls itself.
+- [proof-fields.md](proof-fields.md): a struct that holds a proof, `Pos` and `Fin`, and a fact kept in a type for every round of a loop.
+- [check.md](check.md): `check`, which gives a proof of outside data when a test passes, and a failure that is returned.
+- [proof-functions.md](proof-functions.md): a proof passed, returned, and held, and a predicate as a function that returns `bool`.
+- [hole.md](hole.md): `hole`, which stands in for code or a proof not yet written.
 - [storage.md](storage.md): when an array gets a buffer, the `alloc` effect and arenas, recursion without stack overflow, and types that contain themselves.
 - [code.md](code.md): functions that receive the checked code of an argument when the program is built and return code, which is how `expect` and `grad` are library functions.
 - [differentiation.md](differentiation.md): `grad`, a function over code that returns the gradient of a function, shown by training an MLP.

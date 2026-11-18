@@ -42,7 +42,7 @@ This is refused: "`takes` needs the `diverge` effect, which `main` does not decl
 
 ## A loop that is proven to end
 
-A loop written `loop decreases e { ... }` is an open-ended loop that is proven to end, and its function lists no `diverge`. The expression `e`, the measure, is a whole number of an unsigned type. Each time the loop goes round again, the measure must be smaller than it was when that round began, and [`arith`](contracts.md) must prove it. An unsigned number cannot go below zero, so the loop cannot go on forever. The measure is never computed when the program runs.
+A loop written `loop decreases e { ... }` is an open-ended loop that is proven to end, and its function lists no `diverge`. The expression `e`, the measure, is a whole number of an unsigned type. Each time the loop goes round again, the measure must be smaller than it was when that round began, and [`arith`](arith.md) must prove it. An unsigned number cannot go below zero, so the loop cannot go on forever. The measure is never computed when the program runs.
 
 ```
 fn count_down(n: u64) -> u64 {
@@ -77,7 +77,7 @@ This is refused: "cannot prove that `left` is smaller than when the round began,
 
 A measure of a signed type is refused, since a signed number can go below zero. With `left: i64`, `loop decreases left` gives "`decreases` is a whole number of an unsigned type, and this is a `i64`".
 
-How `decreases` proves a function that calls itself to end is on [Contracts and proofs](contracts.md).
+How `decreases` proves a function that calls itself to end is on [Termination](termination.md#proving-that-a-function-ends).
 
 ## The forms
 

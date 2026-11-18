@@ -115,7 +115,7 @@ This prints `0`, `1`, and `2`, and then `n is 6`: the loop ran three rounds, tho
 
 ## What the compiler knows inside a loop
 
-Inside the block, [`arith`](contracts.md) knows that the counter is at least the first end and below the second, as they were when the loop started. So an operation on the counter that fits only because of that compiles.
+Inside the block, [`arith`](arith.md) knows that the counter is at least the first end and below the second, as they were when the loop started. So an operation on the counter that fits only because of that compiles.
 
 ```
 fn next(n: u8) -> u8 {

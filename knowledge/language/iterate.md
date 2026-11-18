@@ -141,4 +141,4 @@ This is refused, as a `break` in any lambda is. A loop over a range or an array,
 | `with v = each(x)` | Written only where the walk is the last thing a function does |
 | `break` in these | Refused: there is no loop to end |
 
-Next: [Contracts and proofs](contracts.md)
+Next: [What arith proves](arith.md)
