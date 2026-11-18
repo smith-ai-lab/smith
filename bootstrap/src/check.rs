@@ -1609,6 +1609,7 @@ fn check_file(
         no_impl: false,
         refusals: 0,
         deciding: None,
+        seen: HashMap::new(),
     };
     checker.main(main);
     for &item in &reached {
@@ -3462,6 +3463,9 @@ struct Checker<'a> {
     /// While a number literal is checked against the type the uses of its
     /// name decided, the place of the use that decided it.
     deciding: Option<Pos>,
+    /// Every name a block of the function being checked defines, with where
+    /// it is first defined, kept after the block ends.
+    seen: HashMap<String, Pos>,
 }
 
 /// What is expected of an expression's value.
@@ -4246,6 +4250,7 @@ impl<'a> Checker<'a> {
     /// One look at the body of a function, which gives the places of the
     /// literals of the numbers it bound to names with no type written.
     fn run_body(&mut self, template: Template, numbers: Numbers) -> Vec<Pos> {
+        self.seen.clear();
         let defs = self.defs;
         let view = defs.view(template);
         let f = view.f;
@@ -4332,6 +4337,13 @@ impl<'a> Checker<'a> {
             Numbers::Finding(places) => places,
             _ => Vec::new(),
         }
+    }
+
+    /// Notes that a name is defined at `pos`, and says whether the function
+    /// defines it at another place too, in a block that has ended or not.
+    /// Looking again at the same place is not a second definition.
+    fn earlier(&mut self, name: &str, pos: Pos) -> bool {
+        *self.seen.entry(name.to_string()).or_insert(pos) != pos
     }
 
     /// The error for defining `name` at `pos` where it is already defined.
@@ -4446,9 +4458,11 @@ impl<'a> Checker<'a> {
                                 None => self.expr(body, value, &Want::Any),
                             };
                             let bound = self.not_stored(value, bound);
-                            if defined.is_some() {
+                            let earlier = self.earlier(name, *pos);
+                            if defined.is_some() || earlier {
                                 self.errors.push(self.defined_twice(body, name, *pos));
-                            } else {
+                            }
+                            if defined.is_none() {
                                 body.names.push((name.clone(), bound));
                                 if *var {
                                     body.vars.push(name.clone());
@@ -4839,8 +4853,10 @@ impl<'a> Checker<'a> {
         body.outer_loops += std::mem::take(&mut body.loops);
         let mut types = Vec::new();
         for (i, ((name, pos), ty)) in l.params.iter().zip(params).enumerate() {
+            let earlier = self.earlier(name, *pos);
             let twice = l.params[..i].iter().any(|(n, _)| n == name)
-                || body.names.iter().any(|(n, _)| n == name);
+                || body.names.iter().any(|(n, _)| n == name)
+                || earlier;
             if twice {
                 self.errors.push(self.defined_twice(body, name, *pos));
             }
@@ -5322,14 +5338,16 @@ impl<'a> Checker<'a> {
         // The ends of a range are worked out once, when the loop starts, so
         // what they say is about the values before any round begins.
         if let Some((r, ty)) = counter {
-            if body.names.iter().any(|(n, _)| n == &r.name) {
+            let earlier = self.earlier(&r.name, r.pos);
+            if earlier || body.names.iter().any(|(n, _)| n == &r.name) {
                 self.errors.push(self.defined_twice(body, &r.name, r.pos));
             }
             body.names.push((r.name.clone(), ty));
             self.assume_range(body, r);
         }
         if let Some((o, ty)) = element {
-            if body.names.iter().any(|(n, _)| n == &o.name) {
+            let earlier = self.earlier(&o.name, o.pos);
+            if earlier || body.names.iter().any(|(n, _)| n == &o.name) {
                 self.errors.push(self.defined_twice(body, &o.name, o.pos));
             }
             body.names.push((o.name.clone(), ty));
@@ -5641,6 +5659,11 @@ impl<'a> Checker<'a> {
                     _ if defined.is_some() || in_pattern => {
                         // The name stands for what it matches all the same, as
                         // not known, so that nothing it explains is reported.
+                        self.errors.push(self.defined_twice(body, name, *pos));
+                        binds.push((name.clone(), Ty::Unknown, var.is_some()));
+                        None
+                    }
+                    _ if self.earlier(name, *pos) => {
                         self.errors.push(self.defined_twice(body, name, *pos));
                         binds.push((name.clone(), Ty::Unknown, var.is_some()));
                         None
