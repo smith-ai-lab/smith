@@ -2,7 +2,11 @@
 type: specification
 title: JSON
 description: std.json, a format for Serialize that writes a value as JSON text, and the settings that say how a case of an enum and the name of a field look.
-status: planned
+status: partial
+built:
+  - "`std.json`, which a program imports with `use std.json (to_json, to_json_as, Json)`, with `to_json` and `to_json_as` of any value that has `Serialize` and the `Json`, `Cases`, and `Names` of the settings, written in Smith from `Serialize` and `Writer` alone"
+  - "every shape of the table below, a case of an enum as a key and as a tag, and `Names.camel`"
+  - "not a float, which waits for `f64`, and not a `Map`, which is not built"
 ---
 
 # JSON
@@ -23,7 +27,7 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `{"x":3,"y":4}`. The text has no spaces and no line breaks. Nothing of `std.json` is built, so no words are quoted for what the compiler says today.
+This prints `{"x":3,"y":4}`. The text has no spaces and no line breaks.
 
 ## What each shape becomes
 
@@ -31,7 +35,7 @@ This prints `{"x":3,"y":4}`. The text has no spaces and no line breaks. Nothing 
 | --- | --- |
 | A boolean | `true` or `false` |
 | A whole number | The number in decimal, as `-3` or `18446744073709551615` |
-| A text | A string, with `"`, `\`, and the bytes below a space written as escapes |
+| A text | A string, as [A text](#a-text) says |
 | Nothing, `()` | `null` |
 | A value that is missing | `null` |
 | A value that is there | The value |
@@ -41,6 +45,10 @@ This prints `{"x":3,"y":4}`. The text has no spaces and no line breaks. Nothing 
 | A case of an enum | As [the settings](#settings) say |
 
 An `Option` in an `Option` writes `null` for `.none` and for `.some(.none)`, as JSON has one `null`.
+
+## A text
+
+A text is written between quotes. `"` is `\"` and `\` is `\\`. A line break, a tab, a return, a backspace, and a form feed are `\n`, `\t`, `\r`, `\b`, and `\f`, and each other byte below a space is `\u00` and two lower case hexadecimal digits. Every other byte is written as it is, so a character beyond ASCII keeps its bytes.
 
 ## A case of an enum
 
@@ -87,7 +95,7 @@ enum Names {
 | A struct | The struct's members after the tag, `{"type":"circle","radius":2}` |
 | Anything else | The value under `value`, `{"type":"square","value":4}` |
 
-**`Names.camel`** writes a field's name with each `_` taken out and the letter after it in upper case, so `input_schema` is `inputSchema`. The names of cases are written as they are.
+**`Names.camel`** writes a field's name with each `_` taken out and the letter after it in upper case, so `input_schema` is `inputSchema`. A `_` stays where the byte before it is `_` or the byte after it is not a lower case letter, so `x_`, `a__b`, and `a_1` are written as they are and `_x` is `X`. No two names of lower case letters, digits, and `_` are written alike. The names of cases are written as they are.
 
 ```
 mcp = Json(cases: .tag("type"), names: .camel)
