@@ -114,7 +114,7 @@ fn writer(name: &str, body: impl Fn(&str, &[&str]) -> String) -> String {
 
 /// A writer that appends one line for each call, which names the function
 /// and shows its arguments, and the program that prints what it holds.
-fn log() -> String {
+pub fn log() -> String {
     let body = |function: &str, names: &[&str]| {
         let args: String = names.iter().map(|n| format!(" {{{n}}}")).collect();
         format!("Log(lines: \"{{w.lines}}{function}{args}\\n\")")
@@ -160,7 +160,7 @@ fn main() ! console, alloc {{
 // A type of the generator.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Ty {
+pub enum Ty {
     /// A whole number type, by its name.
     Int(&'static str),
     Bool,
@@ -180,7 +180,7 @@ enum Ty {
 
 /// The whole number types, with each one's least and greatest values and
 /// whether it is signed.
-const INTS: &[(&str, i128, i128)] = &[
+pub const INTS: &[(&str, i128, i128)] = &[
     ("i8", -128, 127),
     ("i16", -32768, 32767),
     ("i32", -2147483648, 2147483647),
@@ -195,15 +195,15 @@ const INTS: &[(&str, i128, i128)] = &[
 /// The structs and enums a type holds, each by its place, so that a type is
 /// written with their names.
 #[derive(Default)]
-struct Defs {
+pub struct Defs {
     /// The type of each field of each struct.
-    structs: Vec<Vec<Ty>>,
+    pub structs: Vec<Vec<Ty>>,
     /// The type each case of each enum holds, if it holds one.
-    enums: Vec<Vec<Option<Ty>>>,
+    pub enums: Vec<Vec<Option<Ty>>>,
 }
 
 impl Defs {
-    fn name(&self, t: &Ty) -> String {
+    pub fn name(&self, t: &Ty) -> String {
         match t {
             Ty::Int(n) => n.to_string(),
             Ty::Bool => "bool".to_string(),
@@ -223,7 +223,7 @@ impl Defs {
     }
 
     /// The source that defines each struct and each enum.
-    fn source(&self) -> String {
+    pub fn source(&self) -> String {
         let mut out = String::new();
         for (s, fields) in self.structs.iter().enumerate() {
             out.push_str(&format!("struct S{s} {{\n"));
@@ -250,15 +250,15 @@ impl Defs {
 /// elements in memory, and which of the types that are not numbers may be a
 /// part.
 #[derive(Clone, Copy)]
-struct Parts {
-    lists: bool,
-    own: bool,
-    barred: bool,
+pub struct Parts {
+    pub lists: bool,
+    pub own: bool,
+    pub barred: bool,
 }
 
 /// A type of at most `depth` levels, which adds the structs and enums it holds
 /// to `defs`. The first choices are the simplest.
-fn ty(g: &mut Gen, defs: &mut Defs, depth: usize, parts: Parts) -> Ty {
+pub fn ty(g: &mut Gen, defs: &mut Defs, depth: usize, parts: Parts) -> Ty {
     let leaves = 4 + usize::from(parts.own) + usize::from(parts.barred);
     let kinds = if depth == 0 { leaves } else { leaves + 5 };
     let mut at = g.below(kinds);
@@ -453,7 +453,7 @@ fn case(g: &mut Gen, parts: Parts, own_impl: bool, writer: &str, to: &str) -> Ca
 }
 
 /// Whether the type is, or holds, `part`.
-fn holds(defs: &Defs, t: &Ty, part: &Ty) -> bool {
+pub fn holds(defs: &Defs, t: &Ty, part: &Ty) -> bool {
     t == part
         || match t {
             Ty::Option(of) | Ty::List(of) => holds(defs, of, part),

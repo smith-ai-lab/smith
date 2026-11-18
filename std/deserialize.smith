@@ -1,0 +1,39 @@
+pub struct ReadError {
+  path: str
+  problem: Problem
+  line: Nat
+  column: Nat
+}
+
+pub enum Problem {
+  malformed
+  missing: str
+  shape: (str, str)
+  range: str
+  case: str
+  unknown: str
+  twice: str
+}
+
+pub trait Reader[R] {
+  fn boolean(r: take R) -> (R, Result[bool, ReadError]) ! alloc
+  fn signed(r: take R) -> (R, Result[i64, ReadError]) ! alloc
+  fn unsigned(r: take R) -> (R, Result[u64, ReadError]) ! alloc
+  fn text(r: take R) -> (R, Result[str, ReadError]) ! alloc
+  fn nothing(r: take R) -> (R, Result[(), ReadError]) ! alloc
+  fn present(r: take R) -> (R, Result[bool, ReadError]) ! alloc
+  fn sequence(r: take R) -> (R, Result[(), ReadError]) ! alloc
+  fn more(r: take R) -> (R, Result[bool, ReadError]) ! alloc
+  fn tuple(r: take R, size: Nat) -> (R, Result[(), ReadError]) ! alloc
+  fn end_tuple(r: take R) -> (R, Result[(), ReadError]) ! alloc
+  fn structure(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
+  fn field(r: take R) -> (R, Result[Option[str], ReadError]) ! alloc
+  fn unknown(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
+  fn case(r: take R, of: str) -> (R, Result[str, ReadError]) ! alloc
+  fn end_case(r: take R) -> (R, Result[(), ReadError]) ! alloc
+  fn fail(r: take R, problem: Problem) -> (R, ReadError) ! alloc
+}
+
+pub trait Deserialize[T] {
+  fn read[R: Reader](from: take R) -> (R, Result[T, ReadError]) ! alloc
+}

@@ -226,7 +226,8 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
                     defs.convert(),
                 ]
                 .contains(&k)
-                    || defs.serialize == Some(k) =>
+                    || defs.serialize == Some(k)
+                    || defs.deserialize() == Some(k) =>
             {
                 k
             }
@@ -737,7 +738,7 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
-        if self.serialize == Some(k) {
+        if self.serialize == Some(k) || self.deserialize() == Some(k) {
             let taken = |d: Def| self.withouts.contains(&(k, d));
             return match &types[0] {
                 Ty::Text | Ty::Nothing | Ty::Int(_) => Some(Vec::new()),
@@ -770,6 +771,19 @@ impl<'a> Defs<'a> {
             Ty::Tuple(items) => Some(items.clone()),
             _ => None,
         }
+    }
+
+    /// The standard library's `Deserialize`, which `std.deserialize` defines,
+    /// when the program has that module. However the program names it, it is
+    /// the one the library defines, and a trait of the program's own is not it.
+    pub(super) fn deserialize(&self) -> Option<usize> {
+        serialize_trait(self.file, "read")
+    }
+
+    /// The standard library's `Reader`, which `std.deserialize` defines, when
+    /// the program has that module.
+    pub(super) fn reader(&self) -> Option<usize> {
+        serialize_trait(self.file, "more")
     }
 
     /// The trait `Ord`, which the prelude defines.
@@ -873,6 +887,9 @@ impl<'a> Defs<'a> {
         if self.serialize == Some(k) {
             return self.serialize_calls(&types[0], &types[1]);
         }
+        if self.deserialize() == Some(k) {
+            return self.deserialize_calls(&types[0], &types[1]);
+        }
         let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()], Vec::new()).0;
         if k == self.fmt {
             vec![run(self.repr, &types[0])]
@@ -912,6 +929,41 @@ impl<'a> Defs<'a> {
             .expect("given");
         out.extend(parts.iter().map(|p| {
             self.chosen(serialize, 0, vec![p.clone()], vec![w.clone()])
+                .0
+        }));
+        out
+    }
+
+    /// The copies a copy of the `Deserialize` given to `t` runs for a reader
+    /// of type `r`: the `Deserialize` of each part, and the functions of the
+    /// reader's `Reader` that the shape of `t` is read with.
+    fn deserialize_calls(&self, t: &Ty, r: &Ty) -> Vec<Instance> {
+        let deserialize = self
+            .deserialize()
+            .expect("a program that reads has the module");
+        let reader = self.reader().expect("a program that reads has the module");
+        let names: &[&str] = match t {
+            Ty::Int(i) if i.signed() => &["signed", "fail"],
+            Ty::Int(_) => &["unsigned", "fail"],
+            Ty::Text => &["text"],
+            Ty::Nothing => &["nothing"],
+            Ty::Tuple(_) => &["tuple", "end_tuple"],
+            Ty::Struct(..) => &["structure", "field", "unknown", "fail"],
+            Ty::List(_) => &["sequence", "more"],
+            Ty::Enum(e, _) if *e == self.boolean => &["boolean"],
+            Ty::Enum(e, _) if *e == self.option => &["present"],
+            _ => &["case", "end_case", "fail"],
+        };
+        let mut out: Vec<Instance> = names
+            .iter()
+            .filter_map(|name| trait_function(&self.file.traits[reader], name))
+            .map(|at| self.chosen(reader, at, vec![r.clone()], Vec::new()).0)
+            .collect();
+        let parts = self
+            .given_parts(deserialize, std::slice::from_ref(t))
+            .expect("given");
+        out.extend(parts.iter().map(|p| {
+            self.chosen(deserialize, 0, vec![p.clone()], vec![r.clone()])
                 .0
         }));
         out
@@ -1337,7 +1389,8 @@ impl<'a> Checker<'a> {
         }
         // A type that only the result names is the one that is expected.
         let outs = &defs.outs[k];
-        if let Want::Ty(needed @ (Ty::Int(_) | Ty::Enum(..) | Ty::Struct(..))) = want {
+        if let Want::Ty(needed @ (Ty::Int(_) | Ty::Enum(..) | Ty::Struct(..) | Ty::Tuple(_))) = want
+        {
             let mut wanted = vec![None; sol.len()];
             unify(&sig.gives, needed, &mut wanted);
             for ((t, w), out) in sol.iter_mut().zip(wanted).zip(outs) {
