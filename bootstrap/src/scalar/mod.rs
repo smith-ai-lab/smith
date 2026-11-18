@@ -22,6 +22,7 @@ mod inline;
 mod remat;
 mod remove;
 pub mod runtime;
+mod sink;
 mod thread;
 mod trim;
 mod wellformed;
