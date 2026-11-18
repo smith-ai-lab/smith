@@ -101,6 +101,10 @@ pub const TESTS: &[Test] = &[
         an_expression_in_parentheses_is_the_expression,
     ),
     (
+        "a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it",
+        a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it,
+    ),
+    (
         "every_placed_mistake_about_lambdas_is_one_error_at_its_place",
         every_placed_mistake_about_lambdas_is_one_error_at_its_place,
     ),
@@ -448,6 +452,17 @@ fn an_expression_in_parentheses_is_the_expression() {
         let wrapped = lower(case.parenthesized.as_bytes())
             .unwrap_or_else(|e| panic!("{e:?} in {}", case.parenthesized));
         assert!(program == wrapped, "differs from\n{}", case.parenthesized);
+    });
+}
+
+fn a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it() {
+    generate::check(117, 150, lambdas::loop_program, |case| {
+        let program = lower(case.source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = Outcome {
+            stdout: case.stdout.clone(),
+            status: 0,
+        };
+        assert_eq!(scalar::run(&program), expected);
     });
 }
 

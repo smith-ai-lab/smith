@@ -1,0 +1,9 @@
+fn each3(body: () -> ()) {
+  loop i in 0..3 { body() }
+}
+
+fn main() ! console, alloc {
+  var count: u32 = 0
+  each3 { count = wrapping_add(count, 1) }
+  print("{count}")
+}
