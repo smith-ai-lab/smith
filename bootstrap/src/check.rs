@@ -2286,6 +2286,7 @@ impl<'a> Typed<'a> {
         };
         let sig = &defs.trait_sigs[k][fi];
         let types = solve(&sig.params, sig.scope.names.len());
+        let types = self.result_types(call, sig, env, types);
         let (instance, all) = defs.chosen(k, fi, types);
         Callee::Run(instance, sig.gives.subst(&all))
     }
@@ -5052,6 +5053,9 @@ impl<'a> Checker<'a> {
             let end = Signature::end();
             self.arguments(body, call, &end, true, None);
             return Ty::Nothing;
+        }
+        if is_prelude_call(call, "__convert") {
+            return self.convert_intrinsic(body, call, want);
         }
         if is_intrinsic(call) {
             return self.intrinsic(body, call);

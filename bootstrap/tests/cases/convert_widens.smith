@@ -1,0 +1,8 @@
+fn widen(small: u8) -> u32 { convert(small) }
+
+fn sign(small: i8) -> i64 { convert(small) }
+
+fn main() ! console, alloc {
+  print("{widen(200)}")
+  print("{sign(-5)}")
+}

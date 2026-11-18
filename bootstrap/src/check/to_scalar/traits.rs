@@ -4,17 +4,35 @@
 use super::*;
 
 impl<'a> Lowering<'a> {
+    /// The number `value` of type `from` as a number of type `to`, which
+    /// holds every value of `from`.
+    pub(super) fn widening(
+        &mut self,
+        out: &mut Out<'a>,
+        from: Int,
+        to: Int,
+        value: form::Value,
+    ) -> Vec<form::Value> {
+        vec![out.resize(from.signed(), value, bits_of(to))]
+    }
+
     /// The function of the implementation of trait `k` given to `ty`. `Fmt`
     /// gives what the type's `Repr` gives, `Repr` writes the type's value as
     /// the source that builds it, with each part written by its own `Repr`,
     /// and `Eq` says whether two values are the same case with equal parts,
     /// by each part's own `Eq`.
-    pub(super) fn given(&mut self, k: usize, ty: &Ty) -> form::Function {
+    pub(super) fn given(&mut self, k: usize, given: &[Ty]) -> form::Function {
         let defs = self.typed.defs;
+        let ty = &given[0];
         let mut out = Out::new();
         let types = self.scalars(ty);
         let a = out.params(&types);
-        let (result, results) = if k == defs.fmt {
+        let (result, results) = if k == defs.convert() {
+            (
+                self.case_of(&mut out, &given[1], ty, &a),
+                self.scalars(&given[1]),
+            )
+        } else if k == defs.fmt {
             let text = self.run(&mut out, defs.repr, ty, a);
             (text, self.scalars(&Ty::Text))
         } else if k == defs.repr {
@@ -30,6 +48,37 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
         }
+    }
+
+    /// The value of the enum `to` that is the case holding `value`, of type `held`.
+    fn case_of(
+        &mut self,
+        out: &mut Out<'a>,
+        to: &Ty,
+        held: &Ty,
+        value: &[form::Value],
+    ) -> Vec<form::Value> {
+        let defs = self.typed.defs;
+        let Ty::Enum(e, args) = to else {
+            unreachable!("a conversion to an enum")
+        };
+        let k = (defs.cases[*e].iter())
+            .position(|t| t.as_ref().is_some_and(|t| t.subst(args) == *held))
+            .expect("a case holds it");
+        let layout = self.layout(*e, args);
+        let mut places: Vec<Option<form::Value>> = vec![None; layout.places.len()];
+        for (v, &place) in value.iter().zip(&layout.cases[k]) {
+            places[place] = Some(*v);
+        }
+        let case = out.constant(
+            form::Constant::Int(k as u64),
+            form::Type::Int(form::Bits::B8),
+        );
+        let mut values = vec![case];
+        for (place, ty) in places.into_iter().zip(&layout.places) {
+            values.push(place.unwrap_or_else(|| out.zero(*ty)));
+        }
+        values
     }
 
     /// Runs the function of trait `k`, which gives text or a `bool`, for

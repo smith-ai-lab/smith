@@ -337,6 +337,16 @@ fn line(g: &mut Gen, vars: &[Var], at: usize) -> Line {
                 &bits(function, first.ty, first.value, amount).to_string(),
             );
         }
+        8 if g.one_in(3) && INTS.iter().any(|t| *t != first.ty && t.holds_all(first.ty)) => {
+            // A type that holds every value of its own, which `convert` goes to.
+            let wider: Vec<Int> = (INTS.iter())
+                .filter(|t| **t != first.ty && t.holds_all(first.ty))
+                .copied()
+                .collect();
+            let to = *g.pick(&wider);
+            line.before = format!("  t{at}: {} = convert({})\n", to.name, first.name);
+            line.braced(&format!("t{at}"), &first.value.to_string());
+        }
         8 => {
             // The type it is taken to is one that does not hold every value
             // of its own. `narrow` is for a value that fits.

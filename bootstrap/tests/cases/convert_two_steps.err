@@ -1,0 +1,4 @@
+convert_two_steps.smith:1:32: `convert` gives the type that is expected here, and none is
+  1 | fn far(n: u8) -> u64 { convert(convert(n)) }
+    |                                ^
+  fix: write the type, as in `y: u32 = convert(x)`

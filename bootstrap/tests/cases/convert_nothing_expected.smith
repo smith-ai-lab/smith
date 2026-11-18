@@ -1,0 +1,5 @@
+fn main() ! console, alloc {
+  small: u8 = 7
+  wide = convert(small)
+  print("{wide}")
+}

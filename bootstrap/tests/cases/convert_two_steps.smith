@@ -1,0 +1,5 @@
+fn far(n: u8) -> u64 { convert(convert(n)) }
+
+fn main() ! console, alloc {
+  print("{far(7)}")
+}
