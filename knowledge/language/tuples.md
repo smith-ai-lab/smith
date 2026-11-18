@@ -140,6 +140,8 @@ fn main() ! console, alloc {
 
 This prints `first`, `second`, and `1 2`.
 
+A pattern names a `var` once. `(a, a) = (2, 3)` is refused, whether `a` is a `var` it assigns to or a name it defines, as one of the two values would be lost.
+
 ## The empty tuple
 
 The empty tuple `()` has no parts. It is what a function with no return type returns, and what an [`if`](if.md) with no `else` gives. A function that says `-> ()` and one that says no return type are the same function.
