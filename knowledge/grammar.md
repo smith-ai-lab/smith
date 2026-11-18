@@ -80,11 +80,11 @@ foreign    = "foreign" STRING fn_sig ;
 
 block      = "{" { stmt } "}" ;
 stmt       = define | var_def | assign | with | "break" | "return" [ expr ] | expr ;
-define     = pattern [ ":" type ] "=" expr ;
+define     = bind_pat [ ":" type ] "=" expr ;
 var_def    = "var" IDENT [ ":" type ] "=" expr ;
 assign     = place ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
 place      = IDENT { "." IDENT | "[" index { "," index } "]" } ;
-with       = "with" [ pattern "=" ] expr ;
+with       = "with" [ bind_pat "=" ] expr ;
 pattern    = IDENT | "var" IDENT | "." IDENT [ "(" pattern ")" ]
            | "(" pattern { "," pattern } ")"
            | LITERAL | string | "[" [ pattern { "," pattern } ] "]" ;
