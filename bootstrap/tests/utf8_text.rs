@@ -6,7 +6,7 @@
 //! says: the generator encodes characters, and breaks the bytes in the ways the
 //! standard lists.
 
-use smith::scalar::{self, Op, System};
+use smith::scalar::{self, Op, handler};
 use smith::{check, lower};
 
 use crate::Test;
@@ -204,7 +204,7 @@ fn costs(source: &str) -> (usize, usize, usize) {
         .functions
         .iter()
         .enumerate()
-        .filter(|(at, _)| *at != program.main)
+        .filter(|(at, f)| *at != program.main && !handler::takes_room(&program, f))
         .map(|(_, f)| f)
     {
         for block in &f.blocks {
@@ -246,6 +246,7 @@ fn a_text_given_where_bytes_are_expected_is_neither_called_nor_copied() {
 }
 
 fn utf8_copies_nothing() {
+    let take = handler::take();
     let allocations = |source: &str| -> usize {
         let program = lower(source.as_bytes()).expect("compiles");
         program
@@ -254,13 +255,7 @@ fn utf8_copies_nothing() {
             .flat_map(|f| &f.blocks)
             .flat_map(|b| &b.instructions)
             .filter(|i| {
-                matches!(
-                    i.op,
-                    Op::System {
-                        call: System::Allocate,
-                        ..
-                    }
-                )
+                matches!(&i.op, Op::Call { function, .. } if program.functions[*function] == take)
             })
             .count()
     };
