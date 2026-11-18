@@ -50,7 +50,11 @@ Then find the work the last lead left in flight, since a worker reports to the s
    - Nothing from "Out of scope" was built.
    - `knowledge/` changed if what Smith is changed.
    - Every check passes and every commit is meaningful.
-   - Check out the branch, run the checks, and run the issue's example yourself. Read the whole diff.
+   - Check out the branch and merge the newest `main` into it before anything else, and review that. A branch that passed alone may fail with what merged since, and the queue then stops for everyone.
+   - Run the checks, and run the tests with several values of `SMITH_SEED`. A generator draws other programs for each seed, and one seed passing says little.
+   - Run the issue's example yourself, and write programs of your own that the tests did not: each form the issue names, each mistake it refuses, and the form beside each that it does not name. Read every error for a name the compiler made.
+   - Plant a fault in what the pull request added, in the compiler and in a file of `std/` it changed, and see a test fail. A line that can be broken with every test passing has no test.
+   - Read the whole diff, and in `knowledge/` read what was deleted as closely as what was added.
    - Start from what the pull request says it could not verify, and verify it.
 
 6. Post what you found as comments on the pull request, each on the line it is about where there is one. Each comment says what is wrong and what must be true instead. It does not say how to fix it. Post everything in one round. Then send the worker one message:
@@ -97,3 +101,6 @@ Work through these in order, and stop at the first that applies.
 - Never push to the worker's branch. Review in comments, and let the worker change the code.
 - A pull request that touches `knowledge/language/` or `knowledge/grammar.md` changes the language. Merge it only when it writes down what the owner and the lead already agreed. A change to the language that nobody agreed is a design question for the owner, not something to merge or to settle in review.
 - Never merge with a failing or pending check.
+- A test that failed once and passed when run again is a finding. Find its cause or write an issue for it: in the merge queue it stops every pull request behind it.
+- One session does one issue. A review round goes to the session that wrote the pull request, and a new issue gets a new session.
+- A brief names the files of its lane and the files other workers are in, asks that the tests it adds or changes pass for `SMITH_SEED` from 1 to 100, and that each runs well inside half a second.
