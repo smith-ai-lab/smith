@@ -4,7 +4,7 @@ title: Arrays and sizes
 description: An array is a fixed number of elements of one type, with its size in its type, where a size is a Nat that may be any name that cannot change, and a List is an array kept together with its size.
 status: partial
 built:
-  - "the `size` of a `List`, a `u64`, as `Nat` is not built"
+  - "the `size` of a `List` and of a `str`, a `Nat`, which a program writes as a parameter, a result, a field, and inside another type, and an arithmetic on a `Nat` that `arith` proves fits"
   - "not an array type, a size in brackets, or arithmetic on sizes"
 ---
 
@@ -79,10 +79,10 @@ A size may be known only when the program runs, as the `n` of `zeros` is. Whatev
 A `Nat` worked out from others, such as `n * 2`, is an ordinary integer once the program holds it, and it must be shown to fit, as any other integer must.
 
 ```
-fn doubled(n: u64) -> u64 { n * 2 }
+fn doubled(n: Nat) -> Nat { n * 2 }
 ```
 
-This is refused, with `u64` standing in for `Nat`: "cannot prove that `n * 2 <= 18446744073709551615`, so `n * 2` may not fit `u64`", with the fix "check the operands first, or use `wrapping_mul`, `saturating_mul`, or `checked_mul`". [Integer arithmetic](arithmetic.md) says how each of these works.
+This is refused: "cannot prove that `n * 2 <= 18446744073709551615`, so `n * 2` may not fit `Nat`", with the fix "check the operands first". A `Nat` has no wrapping function, so a count is shown to fit with a [`requires`](contracts.md) or an `if`, as [What arith proves](arith.md) says.
 
 ## An array kept with its size
 
@@ -95,7 +95,7 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `3`. Where a program is built today, `size` is a `u64`.
+This prints `3`.
 
 ## The forms
 

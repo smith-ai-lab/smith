@@ -1,5 +1,5 @@
 pub struct Utf8Error {
-  at: u64
+  at: Nat
 }
 
 pub fn utf8(bytes: List[u8]) -> Result[str, Utf8Error] {

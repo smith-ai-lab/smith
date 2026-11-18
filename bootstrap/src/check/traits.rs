@@ -714,6 +714,23 @@ impl<'a> Defs<'a> {
         Found::Yes(types.to_vec(), By::Given)
     }
 
+    /// The implementation that runs where the one at `i` is called, which is
+    /// the same implementation for a `u64` when `i` is for a `Nat` and there
+    /// is one, since the two are one type to the scalar form.
+    pub(super) fn lowered_impl(&self, i: usize) -> usize {
+        let Some(info) = &self.impls[i] else {
+            return i;
+        };
+        if info.args != [Ty::Int(Int::Nat)] {
+            return i;
+        }
+        (self.impls_of[info.of].iter().copied())
+            .find(|&j| {
+                (self.impls[j].as_ref()).is_some_and(|other| other.args == [Ty::Int(Int::U64)])
+            })
+            .unwrap_or(i)
+    }
+
     /// The copy that runs function `fi` of trait `k` for `types`, which hold
     /// no type parameter, and the trait's types, `out` ones included.
     pub(super) fn chosen(&self, k: usize, fi: usize, types: Vec<Ty>) -> (Instance, Vec<Ty>) {

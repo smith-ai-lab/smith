@@ -104,6 +104,8 @@ fn names() -> &'static [String] {
         for source in sources() {
             parameters(&source, &mut found, &mut defined);
         }
+        // `Nat` is a type the prelude lists, though no source of it defines one.
+        defined.push("Nat".to_string());
         found.retain(|n| !defined.contains(n));
         found.sort();
         found

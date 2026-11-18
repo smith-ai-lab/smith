@@ -158,19 +158,22 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         let list = self.expr(body, of, &Want::Any);
         let wanted = match flexible(index) {
-            true => Want::Ty(Ty::Int(Int::U64)),
+            true => Want::Ty(Ty::Int(Int::Nat)),
             false => Want::Any,
         };
         let at = self.expr(body, index, &wanted);
         match &at {
-            Ty::Int(t) if t.signed() => {
-                self.errors.push(Error::new(
-                    index.pos(),
-                    "an index is a whole number of an unsigned type",
-                ));
+            Ty::Int(Int::Nat) | Ty::Unknown => {}
+            Ty::Int(t) => {
+                self.errors.push(
+                    Error::new(
+                        index.pos(),
+                        format!("an index is a `Nat`, and this is a `{}`", t.name()),
+                    )
+                    .with_fix("use `convert`"),
+                );
             }
-            Ty::Int(_) | Ty::Unknown => {}
-            Ty::Flex(_) => self.expect(body, index, &at, &Ty::Int(Int::U64)),
+            Ty::Flex(_) => self.expect(body, index, &at, &Ty::Int(Int::Nat)),
             other => {
                 let given = defs.describe(other, body.scope);
                 self.errors.push(Error::new(

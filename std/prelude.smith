@@ -25,7 +25,7 @@ enum Flow {
 }
 
 struct Utf8Error {
-  at: u64
+  at: Nat
 }
 
 trait Eq[T] {
@@ -565,4 +565,40 @@ impl Bits[u64] {
   fn bit_not(a: u64) -> u64 { __bit_not(a) }
   fn shift_left(a: u64, by: u8) -> u64 { __shift_left(a, by) }
   fn shift_right(a: u64, by: u8) -> u64 { __shift_right(a, by) }
+}
+
+impl Convert[u8, Nat] {
+  fn convert(a: u8) -> Nat { __convert(a) }
+}
+
+impl Convert[u16, Nat] {
+  fn convert(a: u16) -> Nat { __convert(a) }
+}
+
+impl Convert[u32, Nat] {
+  fn convert(a: u32) -> Nat { __convert(a) }
+}
+
+impl Convert[u64, Nat] {
+  fn convert(a: u64) -> Nat { __convert(a) }
+}
+
+impl Convert[Nat, u64] {
+  fn convert(a: Nat) -> u64 { __convert(a) }
+}
+
+impl Eq[Nat] {
+  fn eq(a: Nat, b: Nat) -> bool { __equal(a, b) }
+}
+
+impl Ord[Nat] {
+  fn compare(a: Nat, b: Nat) -> Order { __compare(a, b) }
+}
+
+impl Fmt[Nat] {
+  fn fmt(value: Nat) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[Nat] {
+  fn repr(value: Nat) -> str ! alloc { __decimal(value) }
 }

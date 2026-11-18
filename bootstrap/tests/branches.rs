@@ -34,7 +34,7 @@ const QUIET: &[&str] = &[
   var xs: List[u64] = []
   loop i in 0..100 { xs = push(xs, i) }
   var best: u64 = 0
-  var at: u64 = 0
+  var at: Nat = 0
   loop j in 0..xs.size {
     if xs[j] > best {
       best = xs[j]
@@ -43,7 +43,7 @@ const QUIET: &[&str] = &[
       at = j
     }
   }
-  var ys: List[u64] = []
+  var ys: List[Nat] = []
   loop k in 0..xs.size { if xs[k] < best { ys = push(ys, at) } }
 }
 ",
