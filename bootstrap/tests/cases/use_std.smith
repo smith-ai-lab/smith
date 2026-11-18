@@ -1,0 +1,11 @@
+use std.bits (bit_and)
+use std.console (console, print)
+use std.int (checked_add, wrapping_add)
+use std.list (push)
+
+fn main() ! console, alloc {
+  a: u8 = 250
+  var xs: List[u8] = []
+  xs = push(xs, wrapping_add(a, 10))
+  print("{xs.size} {wrapping_add(a, 10)} {bit_and(a, 15)} {checked_add(a, 10)}")
+}

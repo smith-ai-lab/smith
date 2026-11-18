@@ -1,0 +1,51 @@
+pub fn wrapping_add[T](a: T, b: T) -> T {
+  __wrapping_add(a, b)
+}
+
+pub fn wrapping_sub[T](a: T, b: T) -> T {
+  __wrapping_sub(a, b)
+}
+
+pub fn wrapping_mul[T](a: T, b: T) -> T {
+  __wrapping_mul(a, b)
+}
+
+pub fn saturating_add[T](a: T, b: T) -> T {
+  __saturating_add(a, b)
+}
+
+pub fn saturating_sub[T](a: T, b: T) -> T {
+  __saturating_sub(a, b)
+}
+
+pub fn saturating_mul[T](a: T, b: T) -> T {
+  __saturating_mul(a, b)
+}
+
+pub fn checked_add[T](a: T, b: T) -> Option[T] {
+  __checked_add(a, b)
+}
+
+pub fn checked_sub[T](a: T, b: T) -> Option[T] {
+  __checked_sub(a, b)
+}
+
+pub fn checked_mul[T](a: T, b: T) -> Option[T] {
+  __checked_mul(a, b)
+}
+
+pub fn narrow[A, B](x: A) -> B {
+  __narrow(x)
+}
+
+pub fn wrapping_narrow[A, B](x: A) -> B {
+  __wrapping_narrow(x)
+}
+
+pub fn saturating_narrow[A, B](x: A) -> B {
+  __saturating_narrow(x)
+}
+
+pub fn checked_narrow[A, B](x: A) -> Option[B] {
+  __checked_narrow(x)
+}

@@ -19,6 +19,7 @@ const GROUPS: &[(&str, &str)] = &[("ONCE", "once"), ("MACHINE", "machine"), ("RU
 
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    standard_library(&root);
     let tests = root.join("tests");
     println!("cargo:rerun-if-changed=tests");
     println!("cargo:rerun-if-changed=build.rs");
@@ -104,4 +105,47 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
         .collect();
     found.sort();
     found
+}
+
+/// Holds the source of the standard library, which is the `.smith` files in
+/// `std/` at the root of the repository, inside the executable. The result is
+/// `std_modules.rs` in the build folder, a function that gives a module's
+/// source by its name, so that looking one up does not depend on how many
+/// there are, and one that is not looked up is never read.
+fn standard_library(root: &Path) {
+    let std = root.join("..").join("std");
+    println!("cargo:rerun-if-changed=../std");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&std)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "smith"))
+        .collect();
+    files.sort();
+    let mut out = String::from(
+        "/// The source of the module of the standard library with the name.\n\
+         fn library_source(module: &str) -> Option<&'static str> {\n    match module {\n",
+    );
+    for file in &files {
+        let name = file.file_stem().unwrap().to_str().unwrap();
+        writeln!(
+            out,
+            "        {name:?} => Some(include_str!({:?})),",
+            file.canonicalize().unwrap().display().to_string()
+        )
+        .unwrap();
+    }
+    out.push_str("        _ => None,\n    }\n}\n");
+    let names: Vec<String> = files
+        .iter()
+        .map(|f| format!("{:?}", f.file_stem().unwrap().to_str().unwrap()))
+        .collect();
+    writeln!(
+        out,
+        "\n/// The names of the modules of the standard library, in order.\n\
+         const LIBRARY_MODULES: &[&str] = &[{}];",
+        names.join(", ")
+    )
+    .unwrap();
+    let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("std_modules.rs");
+    std::fs::write(dest, out).unwrap();
 }

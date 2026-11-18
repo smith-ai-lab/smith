@@ -3,6 +3,8 @@
 //! compiler builds so far, and reports anything else the grammar allows as
 //! not supported yet.
 
+use std::collections::HashSet;
+
 use crate::diag::{Error, Pos};
 use crate::lexer::{Piece, Tok, Token};
 
@@ -21,6 +23,22 @@ pub struct File {
     pub traits: Vec<Trait>,
     pub impls: Vec<Impl>,
     pub withouts: Vec<Without>,
+    /// The `use` lines, which come before every other item.
+    pub uses: Vec<Use>,
+    /// The names of the items written with `pub`, in a file of the library.
+    pub exports: Vec<String>,
+    /// Every name written after the `use` lines, when there are any.
+    pub written: HashSet<String>,
+}
+
+/// A `use` line: the module's name, one part at a time, and the names listed
+/// from it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Use {
+    /// Where `use` is.
+    pub pos: Pos,
+    pub module: Vec<(String, Pos)>,
+    pub names: Vec<(String, Pos)>,
 }
 
 /// A type parameter, as in `[T: Named]` or `[A, out B]`.
@@ -463,6 +481,16 @@ pub struct Arg {
 /// statement, or one function's signature, only the first mistake is
 /// reported, as what follows it cannot be read with any confidence.
 pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
+    parse_file(tokens, false)
+}
+
+/// Parses a file of the library, in which an item may be written with `pub`
+/// and the names of those items are the file's exports.
+pub fn parse_library(tokens: &[Token]) -> Result<File, Vec<Error>> {
+    parse_file(tokens, true)
+}
+
+fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
     let mut p = Parser {
         tokens,
         at: 0,
@@ -470,6 +498,10 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
         no_lambda: false,
         hoisted: Vec::new(),
     };
+    let mut uses = Vec::new();
+    let mut exports = Vec::new();
+    let mut items = false;
+    let mut after_uses = 0;
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut enums = Vec::new();
@@ -479,8 +511,35 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
     loop {
         p.skip_newlines();
         let start = p.at;
+        let mut public = false;
+        if library && p.tok() == &Tok::Keyword("pub") {
+            public = true;
+            p.bump();
+        }
+        let before = (functions.len(), structs.len(), enums.len(), traits.len());
+        let is_use = p.tok() == &Tok::Keyword("use");
+        let late = items && is_use;
+        if !matches!(p.tok(), Tok::Eof | Tok::Keyword("use")) {
+            items = true;
+        }
         match p.tok() {
             Tok::Eof => break,
+            Tok::Keyword("use") => match p.use_line() {
+                Ok(u) if late => {
+                    p.errors.push(
+                        Error::new(u.pos, "`use` comes before every other item of the file")
+                            .with_fix("move this line to the top of the file"),
+                    );
+                }
+                Ok(u) => {
+                    uses.push(u);
+                    after_uses = p.at;
+                }
+                Err(e) => {
+                    p.errors.push(e);
+                    p.skip_item(start);
+                }
+            },
             Tok::Keyword("fn") => {
                 if let Ok(f) = p.function(start, false) {
                     functions.extend(f);
@@ -527,6 +586,12 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
                 p.skip_item(start);
             }
         }
+        if public {
+            exports.extend(functions[before.0..].iter().map(|f| f.name.clone()));
+            exports.extend(structs[before.1..].iter().map(|s| s.name.clone()));
+            exports.extend(enums[before.2..].iter().map(|e| e.name.clone()));
+            exports.extend(traits[before.3..].iter().map(|t| t.name.clone()));
+        }
     }
     if p.errors.is_empty() {
         Ok(File {
@@ -536,9 +601,37 @@ pub fn parse(tokens: &[Token]) -> Result<File, Vec<Error>> {
             traits,
             impls,
             withouts,
+            written: if uses.is_empty() {
+                HashSet::new()
+            } else {
+                let mut written = HashSet::new();
+                written_names(&tokens[after_uses..], &mut written);
+                written
+            },
+            uses,
+            exports,
         })
     } else {
         Err(p.errors)
+    }
+}
+
+/// Adds every name the tokens write, those in a string's braces among them.
+fn written_names(tokens: &[Token], into: &mut HashSet<String>) {
+    for token in tokens {
+        match &token.tok {
+            Tok::Ident(name) => {
+                into.insert(name.clone());
+            }
+            Tok::Interp(pieces) => {
+                for piece in pieces {
+                    if let Piece::Expr(inner) = piece {
+                        written_names(inner, into);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -922,6 +1015,48 @@ impl Parser<'_> {
         }
     }
 
+    /// Parses a `use` line and the line break after it: the module's name,
+    /// then the names taken from it in parentheses.
+    fn use_line(&mut self) -> Result<Use, Error> {
+        let pos = self.pos();
+        self.bump();
+        let mut module = vec![self.ident("the name of a module")?];
+        while self.tok() == &Tok::Punct(".") {
+            self.bump();
+            module.push(self.ident("a name after `.`")?);
+        }
+        if self.tok() == &Tok::Keyword("as") {
+            return Err(Error::unsupported(self.pos(), "`as`"));
+        }
+        if self.tok() != &Tok::Punct("(") {
+            return Err(Error::unsupported(pos, "importing a module by its name"));
+        }
+        self.bump();
+        let mut names = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.tok() == &Tok::Punct(")") {
+                break;
+            }
+            names.push(self.ident("a name to import or `)`")?);
+            if self.tok() == &Tok::Keyword("as") {
+                return Err(Error::unsupported(self.pos(), "`as`"));
+            }
+            self.skip_newlines();
+            match self.tok() {
+                Tok::Punct(",") => self.bump(),
+                Tok::Punct(")") => {}
+                tok => return Err(self.expected("`,` or `)`", tok)),
+            }
+        }
+        self.bump();
+        match self.tok() {
+            Tok::Newline | Tok::Eof => {}
+            tok => return Err(self.expected("a line break", tok)),
+        }
+        Ok(Use { pos, module, names })
+    }
+
     /// The error for a definition other than a function.
     fn item(&self) -> Error {
         let pos = self.pos();
@@ -930,7 +1065,6 @@ impl Parser<'_> {
             Tok::Keyword("effect") => "declaring an effect",
             Tok::Keyword("derive") => "`derive`",
             Tok::Keyword("foreign") => "a foreign function",
-            Tok::Keyword("use") => "`use`",
             Tok::Ident(_) => "a definition other than a function",
             tok => return self.expected("a definition", tok),
         };

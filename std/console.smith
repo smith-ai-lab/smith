@@ -1,0 +1,3 @@
+pub fn print(text: str, end: str = "\n", to: Stream = .stdout) ! console {
+  __print(text, end, to)
+}
