@@ -56,7 +56,7 @@ fn same_age(a: Cat, b: Cat) -> bool { a.age == b.age }
 
 `same_age(tom, Cat(name: "Rex", age: 4))` is `true`, and `tom == Cat(name: "Rex", age: 4)` is `false`, as they are two cats. A type whose value can be written in more than one way, as a fraction can, keeps one way, so that the same value is always the same parts.
 
-This is what lets a [proof](statements.md) use one of two equal values where the other stood. It holds of every type but the floats, whose rules come from the standard for them: a value that is not a number is not equal to itself, and `0.0` equals `-0.0`.
+This is what lets a [proof](statements.md) use one of two equal values where the other stood. It holds of the floats too: a float that is not a number equals itself, as the laws below say. Whether `0.0` and `-0.0` are the same value is not settled.
 
 ## Less and greater
 
@@ -104,6 +104,21 @@ Both traits keep their laws for every type, so code written over them is right f
 - Every value equals itself.
 - Every two values of a type with `Ord` can be ordered.
 - `compare` gives `equal` exactly when `==` is true.
+- The order agrees with itself: when `a` is below `b` and `b` is below `c`, `a` is below `c`, and `a` is below `b` exactly when `b` is above `a`.
+
+`Eq` keeps its law by what it is, as a program does not write it. The `Ord` a type is given keeps the laws of an order by how it is made, part by part.
+
+A program may write `Ord` for a type whose order is not part by part. A fraction kept in lowest terms is one: a half is above a third, though its parts are not.
+
+```
+impl Ord[Fraction] {
+  fn compare(a: Fraction, b: Fraction) -> Order { compare(a.top * b.bottom, b.top * a.bottom) }
+}
+```
+
+An `Ord` that a program writes owes a proof of each law, given with the `impl`. How the proofs are written waits for [statements](statements.md) to be built, and until then such an `Ord` is [taken on trust](trust.md#what-is-still-taken-on-trust).
+
+An order that calls two different values `equal` is not an `Ord`. People put in order of their ages are sorted by a key, as `sort_by(people, age)`, and two people of one age are still two.
 
 A float that is not a number therefore equals itself and comes after every other float, and `is_nan` says whether a float is one.
 
