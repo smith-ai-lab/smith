@@ -1,0 +1,4 @@
+fmt_after_a_mistake.smith:15:31: `fmt` needs the `alloc` effect, which `main` does not declare
+  15 |   t = match Pet.cat(Cat(name: fmt(Cat(name: "")))) {
+     |                               ^
+  fix: write `fn main() ! console, alloc`

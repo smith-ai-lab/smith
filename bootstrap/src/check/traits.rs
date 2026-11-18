@@ -1207,8 +1207,13 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // A type an argument names that is not known is that of a mistake
+        // already reported, so only one that the result alone names is
+        // reported here.
+        let only_result = |r: usize| !sig.params.iter().any(|(_, p)| p.mentions(r));
         if matches!(want, Want::Any | Want::Unused)
-            && (sol.iter().zip(outs)).any(|(t, out)| !out && t.is_none())
+            && (sol.iter().zip(outs).enumerate())
+                .any(|(i, (t, out))| !out && t.is_none() && only_result(i))
             && self.errors.len() == mistakes
         {
             self.errors.push(
