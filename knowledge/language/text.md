@@ -7,7 +7,8 @@ built:
   - "`s.size` and `s[i]` of a `str`, with `arith` proving the index as it does for a `List`"
   - "`loop b in s` over a `str`, which gives each of its bytes, once each, in order"
   - "a `str` passed where a `List[u8]` is a parameter's type, with no call and no copy, and where a generic function lends a `List[T]`, which makes `T` a `u8`, and is refused with one error when `T` is already another type"
-  - "`utf8`, which copies nothing and gives `.err` with the place where the first character that is not valid begins; `Utf8Error` holds `at` as a `Nat`"
+  - "`utf8`, which takes a `Slice[u8]` or a text, copies nothing, and gives `.ok` of the text of the same bytes, or `.err` with the place where the first character that is not valid begins, the slice still the caller's; `Utf8Error` holds `at` as a `Nat`; a `List` is frozen first, as `utf8(freeze(out))`"
+  - "building a `str` by hand is refused"
 ---
 
 # Text and bytes
@@ -43,7 +44,7 @@ struct Utf8Error {
 fn utf8(bytes: Slice[u8]) -> Result[str, Utf8Error]
 ```
 
-`utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of bytes whose first is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`. The compiler does not build `Slice` yet, so the `utf8` it builds takes a `List[u8]`.
+`utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of bytes whose first is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`.
 
 A piece of a text is a text. `s[a..b]` is the bytes from `a` up to `b` as a `str`, which shares the memory of `s`, so nothing is copied. Text implements [`Index`](indexing.md) for a range, and its `valid` asks two things: that the range lies inside the text, and that both of its ends fall between characters and not inside one.
 

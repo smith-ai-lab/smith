@@ -70,7 +70,7 @@ fn show(r: Result[str, Clash]) ! console, alloc {
 
 /// Source that turns bytes into a text, which a literal cannot do for a byte
 /// below a space other than a line break and a tab.
-const TEXT: &str = "fn s(bytes: List[u8]) -> str {
+const TEXT: &str = "fn s(bytes: Slice[u8]) -> str {
   match utf8(bytes) {
     .ok(t) { t }
     .err(e) { \"\" }

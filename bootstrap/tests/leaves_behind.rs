@@ -435,7 +435,7 @@ fn read(k: usize, what: Read) -> Part {
             let bytes: Vec<String> = (0..letters).map(|i| (97 + i).to_string()).collect();
             let text: String = (0..letters).map(|i| char::from(97 + i as u8)).collect();
             Part {
-                item: format!("fn read{k}() -> Result[str, Utf8Error] ! alloc {{\n  b: List[u8] = [{}]\n  junk = squares(40)\n  utf8(b)\n}}\n\n", bytes.join(", ")),
+                item: format!("fn read{k}() -> Result[str, Utf8Error] ! alloc {{\n  b: List[u8] = [{}]\n  junk = squares(40)\n  utf8(freeze(b))\n}}\n\n", bytes.join(", ")),
                 call: format!("  r{k} = read{k}()\n"),
                 show: format!("  match r{k} {{\n    .ok(t) {{ print(\"{{t}}\") }}\n    .err(e) {{ print(\"err\") }}\n  }}\n"),
                 line: text,

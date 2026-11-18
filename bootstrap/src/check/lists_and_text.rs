@@ -60,14 +60,14 @@ impl<'a> Checker<'a> {
         if call.args.len() != 1 || !plain {
             self.errors.push(Error::new(
                 call.pos,
-                "`utf8` takes the one list of bytes to read",
+                "`utf8` takes the one slice of bytes to read",
             ));
             return self.unknown_call(body, call);
         }
-        let bytes = Ty::list(Ty::Int(Int::U8));
+        let bytes = Ty::Slice(vec![Ty::Int(Int::U8)]);
         let value = &call.args[0].value;
         let given = self.expr(body, value, &Want::Ty(bytes.clone()));
-        if !as_list(&given, &bytes) {
+        if given != Ty::Text {
             self.expect(body, value, &given, &bytes);
         }
         let result = defs.enum_names["Result"];
