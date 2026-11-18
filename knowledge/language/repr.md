@@ -3,7 +3,8 @@ type: specification
 title: Repr
 description: The Repr trait, which writes a value as Smith source, and the Fmt and Repr that structs, enums, and tuples are given.
 status: partial
-built: "`repr` and the `Repr` of a `str`, and the `Fmt` and `Repr` every struct, enum, tuple, `bool`, `()`, and integer type is given, which `without` takes away"
+built:
+  - "`repr` and the `Repr` of a `str`, and the `Fmt` and `Repr` every struct, enum, tuple, `bool`, `()`, and integer type is given, which `without` takes away"
 ---
 
 # Repr

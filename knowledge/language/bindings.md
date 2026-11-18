@@ -3,7 +3,8 @@ type: specification
 title: Bindings
 description: How x = e defines an immutable name, once per function, how a binding states its type, and where a name can be used.
 status: partial
-built: "`x = e` and `x: str = e`, defined once per function"
+built:
+  - "`x = e` and `x: str = e`, defined once per function"
 ---
 
 # Bindings

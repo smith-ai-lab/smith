@@ -3,7 +3,8 @@ type: specification
 title: Traits a type is given
 description: Eq and Ord, which a struct, an enum, a tuple, or an array is given without an impl, how each orders its values, and how without takes one away.
 status: partial
-built: "`without Eq for T`, which takes away the `Eq` a struct was given, and a struct with a part that has no `Eq` has none"
+built:
+  - "`without Eq for T`, which takes away the `Eq` a struct was given, and a struct with a part that has no `Eq` has none"
 ---
 
 # Traits a type is given

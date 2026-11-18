@@ -3,7 +3,8 @@ type: specification
 title: Type parameters
 description: A name for a type that a function or a type leaves open, written in brackets after its name, how a call or a binding settles it, and a default for one.
 status: partial
-built: "type parameters"
+built:
+  - "type parameters"
 ---
 
 # Type parameters

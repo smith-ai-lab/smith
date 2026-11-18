@@ -3,7 +3,8 @@ type: specification
 title: Projects
 description: A folder as a project, its root and entry, the names of its modules and its executable, project.smith, and what smith new creates.
 status: partial
-built: "the entry, `main.smith` or a named file, and the name of the executable"
+built:
+  - "the entry, `main.smith` or a named file, and the name of the executable"
 ---
 
 # Projects

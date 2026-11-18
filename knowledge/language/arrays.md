@@ -3,7 +3,9 @@ type: specification
 title: Arrays and sizes
 description: An array is a fixed number of elements of one type, with its size in its type, where a size is a Nat that may be any name that cannot change, and a List is an array kept together with its size.
 status: partial
-built: "the `size` of a `List`, a `u64`, as `Nat` is not built; not an array type, a size in brackets, or arithmetic on sizes"
+built:
+  - "the `size` of a `List`, a `u64`, as `Nat` is not built"
+  - "not an array type, a size in brackets, or arithmetic on sizes"
 ---
 
 # Arrays and sizes

@@ -3,7 +3,8 @@ type: specification
 title: Match
 description: match takes an enum or another value apart, with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case.
 status: partial
-built: "`match` as a statement and as an expression, patterns that name a case, a bare name, a tuple, and a whole number, a character, or a text, written inside a case and inside a tuple too, the first pattern that matches being taken, and an error for a case left out, for a `match` on whole numbers or text with no bare name at the end, and for a pattern the ones before it cover, with a `match` on whole numbers compiled to one jump"
+built:
+  - "`match` as a statement and as an expression, patterns that name a case, a bare name, a tuple, and a whole number, a character, or a text, written inside a case and inside a tuple too, the first pattern that matches being taken, and an error for a case left out, for a `match` on whole numbers or text with no bare name at the end, and for a pattern the ones before it cover, with a `match` on whole numbers compiled to one jump"
 ---
 
 # Match

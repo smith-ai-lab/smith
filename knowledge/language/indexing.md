@@ -3,7 +3,9 @@ type: specification
 title: Indexing
 description: x[i] reads one element, an index is proven to be in range when the program is built, and indexing is the Index trait, whose valid says which indices a container has.
 status: partial
-built: "indexing a `List` of whole numbers or `bool`s as `xs[i]`, which compiles when `arith` proves `i < xs.size` from the size of a list written out or given to a name, the range of a `loop`, an `if`, or a `requires` over a list's `size`, where `i` is a whole number of an unsigned type; not an array whose size is in its type, `Index` as a trait a program implements, or an element assigned"
+built:
+  - "indexing a `List` of whole numbers or `bool`s as `xs[i]`, which compiles when `arith` proves `i < xs.size` from the size of a list written out or given to a name, the range of a `loop`, an `if`, or a `requires` over a list's `size`, where `i` is a whole number of an unsigned type"
+  - "not an array whose size is in its type, `Index` as a trait a program implements, or an element assigned"
 ---
 
 # Indexing

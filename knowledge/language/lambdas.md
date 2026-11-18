@@ -3,7 +3,8 @@ type: specification
 title: Lambdas
 description: A function with no name, written where it is passed to a call.
 status: partial
-built: "lambdas passed to a call, after it or by name, and function types on parameters"
+built:
+  - "lambdas passed to a call, after it or by name, and function types on parameters"
 ---
 
 # Lambdas

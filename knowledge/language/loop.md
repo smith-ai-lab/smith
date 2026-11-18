@@ -3,7 +3,9 @@ type: specification
 title: loop
 description: loop runs a block once for each number in a range, in order, and break ends it early.
 status: partial
-built: "`loop i in a..b` over whole numbers of one type, whose counter `arith` knows is in range of a `var` list's `size` as of any other, which runs in order and not at all when `a >= b`, ended by `break`; not a `loop` over an array, or `reversed`"
+built:
+  - "`loop i in a..b` over whole numbers of one type, whose counter `arith` knows is in range of a `var` list's `size` as of any other, which runs in order and not at all when `a >= b`, ended by `break`"
+  - "not a `loop` over an array, or `reversed`"
 ---
 
 # `loop`
