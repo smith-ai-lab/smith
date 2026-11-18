@@ -1,7 +1,7 @@
 ---
 type: specification
 title: What is trusted
-description: The rule that Smith trusts nothing but a small kernel that checks proofs, the four rules that keep a proof from being a lie, and the list of what is still taken on trust.
+description: The rule that Smith trusts nothing but a small kernel that checks proofs step by step, the four rules that keep a proof from being a lie, and the list of what is still taken on trust.
 status: planned
 ---
 
@@ -22,6 +22,19 @@ fn first(xs: List[u8]) -> u8
 ## What a kernel is
 
 The kernel is the one part of the compiler whose mistakes would let a false statement through. So it is small, it does one thing, and it is the same in every build: it takes a statement and a proof, as terms of the [core term](code.md#what-code-is), and says whether the proof proves the statement. Everything else is outside it.
+
+## What the kernel does by itself
+
+The kernel checks the steps it is shown and takes none of its own. It does not open a function to see what it does: a proof that needs `append`'s body says where to unfold `append`, and the kernel confirms that the step is what the definition says.
+
+It does one thing unasked: it runs an expression that has nothing unknown in it, with the evaluator the compiler uses for [top-level values](structs.md).
+
+| Statement | How the kernel accepts it |
+| --- | --- |
+| `append([1], [2]).size == 2` | It runs both sides, as every value is known |
+| `append(a, b).size == a.size + b.size` | Only by a proof that writes each step, as `a` and `b` are not known |
+
+So the time a proof takes to check grows with its length and with what it asks to be run, both of which are in the source. The steps are long, and a person does not write them: a [function over code](code.md) writes them once, and it is outside the kernel, so its mistakes are refused and not believed.
 
 ## Four rules that keep a proof honest
 
