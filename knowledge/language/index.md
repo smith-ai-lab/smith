@@ -32,6 +32,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [function-values.md](function-values.md): a function with a name used as a value, which can be passed, stored, and returned.
 - [with.md](with.md): `with`, which passes the rest of a block to a function as a lambda.
 - [try.md](try.md): `try`, which continues a function only when a step succeeded, and the `Try` trait that gives it its meaning.
+- [return.md](return.md): `return`, which leaves the nearest function or lambda early with a value, and cuts nothing short.
 - [effects.md](effects.md): an effect as something a function does outside itself, how a signature lists the effects a function may perform, and what a caller must have.
 - [effect-declarations.md](effect-declarations.md): how an effect is declared by listing its operations, what a declaration gives, and how a program defines and imports effects of its own.
 - [handlers.md](handlers.md): a handler, a function that runs a lambda with an effect handled, what it keeps, and what it may do.
@@ -57,7 +58,7 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [random-arrays.md](random-arrays.md): a random function that fills a whole array from one key, `split_n`, and `keys[i]` inside a `for`.
 - [loop.md](loop.md): `loop` over a range, which runs a block once for each number in order, the type of its counter, `break`, and what `arith` knows inside it.
 - [open-loop.md](open-loop.md): `loop` with no range, which runs until `break` and carries `diverge`, and `loop decreases`, which is proven to end.
-- [iterate.md](iterate.md): the `Iterate` trait, which makes a type loopable, and how `loop v in x` calls its `each`.
+- [iterate.md](iterate.md): the `Iterate` trait, which makes a type loopable, how `loop v in x` calls its `each`, and `Flow`, by which a loop is stopped.
 - [arith.md](arith.md): what the `arith` procedure proves by itself and from what, what it cannot decide, and what the compiler says when it cannot prove.
 - [contracts.md](contracts.md): `requires` and `ensures` on a function, what the caller owes and what the function gives.
 - [termination.md](termination.md): every function ends unless it carries `diverge`, and `decreases` on a function that calls itself.

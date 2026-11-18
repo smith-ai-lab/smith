@@ -54,7 +54,7 @@ This prints `250`, `251`, and `252`. When nothing decides, the ends are `i64`: `
 
 ## Ending early with `break`
 
-`break` ends the loop at once, and the code after the loop goes on.
+`break` ends the loop at once, and the code after the loop goes on. [`return`](return.md) ends the loop and the function with it.
 
 ```
 fn main() ! console, alloc {
