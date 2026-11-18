@@ -42,7 +42,7 @@ fn main() ! console {
 
 This gives "this is a number, where text is needed". A stated type that the first value does not have is refused the same way: `var n: i32 = "a"` gives "this gives text, where a `i32` is needed".
 
-A name is defined once per function, `var` or not. `var word = "b"` after `word` is defined is refused: "`word` is already defined in `main`".
+A name is never defined where it can already be used, `var` or not. `var word = "b"` after `word` is defined is refused: "`word` is already defined in `main`".
 
 ## Accumulating
 

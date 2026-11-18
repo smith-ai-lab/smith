@@ -1,10 +1,10 @@
 ---
 type: specification
 title: Bindings
-description: How x = e defines an immutable name, once per function, how a binding states its type, and where a name can be used.
+description: How x = e defines an immutable name, which is never defined again while it can be used, how a binding states its type, and where a name can be used.
 status: partial
 built:
-  - "`x = e` and `x: str = e`, defined once per function"
+  - "`x = e` and `x: str = e`, refused where the name can already be used, and a name defined again once the block that defined it has ended"
 ---
 
 # Bindings
@@ -59,7 +59,7 @@ This gives "this is a number, where text is needed".
 
 ## A name never changes
 
-A name is defined once per function, so there is no shadowing, and it keeps its value. Binding it again, or assigning to it, is refused.
+A name is never defined where it can already be used, so there is no shadowing, and it keeps its value. Binding it again, or assigning to it, is refused.
 
 ```
 fn main() ! console {
@@ -103,6 +103,21 @@ fn main() ! console {
 ```
 
 This gives "there is no name `inner` defined before this in `main`".
+
+## A name after its block has ended
+
+A name stops where its block ends, so the same name may be defined again after it. Two loops that stand one after the other may both count with `i`, and the arms of a [`match`](match.md) may each bind `v`.
+
+```
+fn both(xs: List[u64], ys: List[u64]) -> u64 {
+  var total: u64 = 0
+  loop i in 0..xs.size { total = wrapping_add(total, xs[i]) }
+  loop i in 0..ys.size { total = wrapping_add(total, ys[i]) }
+  total
+}
+```
+
+`both([1, 2], [3])` is `6`. Nothing is shadowed: the first `i` cannot be used where the second is defined. So at every line a name means one thing, and a name that can be used there is never defined again.
 
 ## What a body must end with
 
