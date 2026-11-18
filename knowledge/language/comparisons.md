@@ -116,7 +116,7 @@ impl Ord[Fraction] {
 }
 ```
 
-An `Ord` that a program writes owes a proof of each law, given with the `impl`. How the proofs are written waits for [statements](statements.md) to be built, and until then such an `Ord` is [taken on trust](trust.md#what-is-still-taken-on-trust).
+An `Ord` that a program writes owes a proof of each law. A law is a function of the trait whose result is the [statement](statements.md), so an `impl` supplies its proof as it supplies `compare`, and code written over `Ord` gets a law by calling it. There is no other place a law is written. The trait gains these functions when statements are built, and until then such an `Ord` is [taken on trust](trust.md#what-is-still-taken-on-trust).
 
 An order that calls two different values `equal` is not an `Ord`. People put in order of their ages are sorted by a key, as `sort_by(people, age)`, and two people of one age are still two.
 
