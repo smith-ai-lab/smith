@@ -7,6 +7,7 @@ built:
   - "`Copy` and `Discard` given to a type exactly when each of its fields has them"
   - "A value without `Copy` used again after it was given away on some path, which includes a later round of a loop, refused at the second use"
   - "a value without `Copy` that a lambda gives away is spent in the function it is written in from the call the lambda is passed to, when that call takes its function"
+  - "a `List` has `Discard` and not `Copy`, and neither has a struct, a tuple, an enum, or a list that holds one, so a list used after it was given away is one error at the second use, whose fix is `copy(xs)`, and `push` takes its list and grows it in place"
   - "a type parameter has `Copy` and `Discard` only where a bound or a `requires` line asks, so a value of one is used at most once and must be taken, and a call, or an implementation it chooses, is given only a type that has what the bounds ask"
 ---
 
@@ -55,7 +56,7 @@ A value that is used at most once may be dropped unused and may not be used twic
 
 ## A list is never copied unasked
 
-A [`List`](../library/list.md) has `Discard` and not `Copy`, as the library takes its `Copy` away with `without Copy for List`. Copying a list costs time in proportion to its length, and nothing in Smith costs that without being written.
+A [`List`](../library/list.md) has `Discard` and not `Copy`. Copying a list costs time in proportion to its length, and nothing in Smith costs that without being written.
 
 ```
 fn both(xs: take List[u8]) -> (List[u8], List[u8]) ! alloc {
@@ -64,11 +65,9 @@ fn both(xs: take List[u8]) -> (List[u8], List[u8]) ! alloc {
 }
 ```
 
-`push` [takes](take.md) its list, so the list it gives back is the same memory with one more element, always, and not only where the compiler can see that it may be. `both` wants the old list too, so it writes `copy(xs)`. Without the `copy`, `xs` is used after it was given to `push`, and that is refused.
+`push` [takes](take.md) its list, so the list it gives back is the same memory with one more element, always, and not only where the compiler can see that it may be. `both` wants the old list too, so it writes `copy(xs)`. Without the `copy`, `xs` is used after it was given to `push`, and that is one error at the second use of `xs`, whose fix is to write `copy(xs)`. `copy` is a function of [`std.list`](../library/list.md) that carries `alloc`.
 
 Reading a list lends it and copies nothing: its `size`, an element, and passing it to a function that does not take it. A struct that holds a list has no `Copy` either, by the rule above, so the state of a program that is kept in a struct is moved and never duplicated. A `str` has `Copy`: a text cannot be changed, so two names for one text share it. So has a [`Slice`](../library/slice.md), which is what a list becomes when a program is done building it.
-
-The compiler does not build this yet. Today a list that is used after it is given away is copied.
 
 ## Discard
 
