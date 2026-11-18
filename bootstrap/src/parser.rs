@@ -39,7 +39,7 @@ pub struct File {
 
 /// A `use` line: the module's name, one part at a time, and the names listed
 /// from it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Use {
     /// Where `use` is.
     pub pos: Pos,
@@ -91,6 +91,8 @@ pub struct Field {
     pub pos: Pos,
     pub ty: Type,
     pub default: Option<Expr>,
+    /// Where `pub` is, when the field is written with it.
+    pub public: Option<Pos>,
 }
 
 /// A function definition.
@@ -603,6 +605,13 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             exports.extend(traits[before.3..].iter().map(|t| t.name.clone()));
         }
     }
+    if !library {
+        for field in structs.iter().flat_map(|s| &s.fields) {
+            if let Some(pos) = field.public {
+                p.errors.push(Error::unsupported(pos, "`pub`"));
+            }
+        }
+    }
     if p.errors.is_empty() {
         Ok(File {
             functions: share(functions),
@@ -1049,10 +1058,12 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         loop {
             self.skip_newlines();
+            let mut public = None;
             match self.tok() {
                 Tok::Punct("}") => break,
                 Tok::Keyword("pub") => {
-                    return Err(Error::unsupported(self.pos(), "`pub`"));
+                    public = Some(self.pos());
+                    self.bump();
                 }
                 _ => {}
             }
@@ -1073,6 +1084,7 @@ impl Parser<'_> {
                 pos,
                 ty,
                 default,
+                public,
             });
         }
         self.bump();
