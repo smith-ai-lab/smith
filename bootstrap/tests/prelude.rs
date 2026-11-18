@@ -32,6 +32,10 @@ pub const ONCE: &[Test] = &[
         an_impl_is_read_when_the_program_reaches_its_trait_and_not_otherwise,
     ),
     (
+        "the_impls_of_iterate_are_read_by_a_program_with_a_loop_over_a_value_and_by_no_other",
+        the_impls_of_iterate_are_read_by_a_program_with_a_loop_over_a_value_and_by_no_other,
+    ),
+    (
         "adding_a_trait_with_a_hundred_impls_changes_what_a_program_that_uses_none_of_them_reads",
         adding_a_trait_with_a_hundred_impls_changes_what_a_program_that_uses_none_of_them_reads,
     ),
@@ -129,4 +133,14 @@ fn adding_a_trait_with_a_hundred_impls_changes_what_a_program_that_uses_none_of_
         assert_eq!(with(&extended), with(prelude_text()), "{program}");
         assert_eq!(with(prelude_text()), read(program), "{program}");
     }
+}
+
+/// A `loop` over a value runs the `each` of its `Iterate`, so a program with
+/// one reads the `impl`s of `Iterate`, and the same program with a loop over a
+/// range reads none of them.
+fn the_impls_of_iterate_are_read_by_a_program_with_a_loop_over_a_value_and_by_no_other() {
+    let range = "fn main() ! console {\n  loop i in 0..3 { print(\"x\") }\n}\n";
+    assert_eq!(read(range), 0);
+    let value = "fn main() ! console, alloc {\n  xs: List[u8] = [1]\n  loop v in xs { print(\"x\") }\n}\n";
+    assert!(read(value) > 0, "{}", read(value));
 }
