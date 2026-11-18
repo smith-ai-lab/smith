@@ -5616,9 +5616,9 @@ impl<'a> Checker<'a> {
                             return None;
                         }
                         if assigned.contains(name) {
-                            self.errors.push(Error::unsupported(
+                            self.errors.push(Error::new(
                                 *pos,
-                                "assigning to a `var` twice in one pattern",
+                                format!("this pattern names `{name}` twice"),
                             ));
                             return None;
                         }

@@ -671,13 +671,17 @@ fn mistake(w: &mut Writing, ctx: &mut Ctx, kind: Kind) -> Stmt {
             )
         }
         Kind::NotBuilt => {
-            let (before, rest) = *w.g.pick(&[
-                ("w: ", "(str) = \"a\""),
-                ("w: ", "(str) -> str = \"a\""),
-                ("(", ".none, w) = (Pet.none, \"a\")"),
-                ("var twice = \"a\"\n  (twice, ", "twice) = (\"b\", \"c\")"),
+            let (before, rest, mentions) = *w.g.pick(&[
+                ("w: ", "(str) = \"a\"", NOT_BUILT),
+                ("w: ", "(str) -> str = \"a\"", NOT_BUILT),
+                ("(", ".none, w) = (Pet.none, \"a\")", NOT_BUILT),
+                (
+                    "var twice = \"a\"\n  (twice, ",
+                    "twice) = (\"b\", \"c\")",
+                    "names `twice` twice",
+                ),
             ]);
-            raw(before, rest, NOT_BUILT, None)
+            raw(before, rest, mentions, None)
         }
     }
 }
