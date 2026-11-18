@@ -199,6 +199,13 @@ impl Machine {
         };
         if w == 0xd65f_03c0 {
             self.pc = self.x[30];
+        } else if w & 0xffff_fc1f == 0xd61f_0000 {
+            // br xn
+            self.pc = self.get(rn);
+        } else if w & 0xffe0_fc00 == 0xb8a0_7800 {
+            // ldrsw xt, [xn, xm, lsl #2]
+            let value = self.read(self.get_sp(rn) + 4 * self.get(rm), 4);
+            self.set(rd, value as u32 as i32 as i64 as u64);
         } else if w == 0xd400_0001 {
             return self.system_call();
         } else if w & 0x7c00_0000 == 0x1400_0000 {

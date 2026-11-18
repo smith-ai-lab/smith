@@ -69,6 +69,13 @@ enum Fixup {
     /// `adrp` then `ldr`, which load a slot of the table of addresses,
     /// such as `__got`.
     Slot { at: usize, slot: usize },
+    /// A 32-bit signed number: how far the label is from the start of a
+    /// table, which is another label.
+    From {
+        at: usize,
+        label: usize,
+        table: usize,
+    },
 }
 
 /// Machine code with labels, each resolved once the code and its data are
@@ -78,7 +85,14 @@ pub struct Asm {
     code: Vec<u8>,
     labels: Vec<Option<usize>>,
     fixups: Vec<Fixup>,
+    /// The tables, each a label and the labels whose distances from it are
+    /// its entries, which are placed after the code, with the data.
+    tables: Vec<(usize, Vec<usize>)>,
 }
+
+/// Where the code, the labels, the places to fill, and the tables are, so
+/// that what is written after can be taken back.
+type Mark = (usize, usize, usize, usize);
 
 impl Asm {
     pub fn label(&mut self) -> usize {
@@ -267,6 +281,24 @@ impl Asm {
         self.word(0x9100_0000 | rd << 5 | rd);
     }
 
+    /// Goes to the label that entry `index` of the table at `table` says,
+    /// as `table_entries` places it, which is 4 bytes for each: x15 and x17
+    /// are changed.
+    pub fn jump_through(&mut self, index: u32, table: usize) {
+        self.address(X17, table);
+        // ldrsw x15, [x17, index, lsl #2]
+        self.word(0xb8a0_7800 | index << 16 | X17 << 5 | X15);
+        self.add(X17, X17, X15);
+        // br x17
+        self.word(0xd61f_0000 | X17 << 5);
+    }
+
+    /// The table at `table`, which is placed after the code: for each label,
+    /// how far it is from the start of the table.
+    pub fn table_entries(&mut self, table: usize, labels: Vec<usize>) {
+        self.tables.push((table, labels));
+    }
+
     /// `add xd, xn, xm`.
     pub fn add(&mut self, rd: u32, rn: u32, rm: u32) {
         self.word(0x8b00_0000 | rm << 16 | rn << 5 | rd);
@@ -294,27 +326,39 @@ impl Asm {
         self.code[at..at + 4].copy_from_slice(&word.to_le_bytes());
     }
 
-    /// The size of the code so far.
+    /// The size of the code so far, and of the tables that are placed after
+    /// it.
     pub fn len(&self) -> usize {
         self.code.len()
+            + self
+                .tables
+                .iter()
+                .map(|(_, labels)| 4 * labels.len())
+                .sum::<usize>()
     }
 
-    /// Where the code, the labels, and the places to fill are now, so that
-    /// what is written after can be taken back.
-    fn mark(&self) -> (usize, usize, usize) {
-        (self.code.len(), self.labels.len(), self.fixups.len())
+    /// Where the code, the labels, the places to fill, and the tables are
+    /// now.
+    fn mark(&self) -> Mark {
+        (
+            self.code.len(),
+            self.labels.len(),
+            self.fixups.len(),
+            self.tables.len(),
+        )
     }
 
     /// Takes back what was written after `mark`.
-    fn reset(&mut self, mark: (usize, usize, usize)) {
+    fn reset(&mut self, mark: Mark) {
         self.code.truncate(mark.0);
         self.labels.truncate(mark.1);
         self.fixups.truncate(mark.2);
+        self.tables.truncate(mark.3);
     }
 
     /// Whether every conditional branch written after `mark` reaches the
     /// label it goes to, which every label of the function is bound for.
-    fn reaches(&self, mark: (usize, usize, usize)) -> bool {
+    fn reaches(&self, mark: Mark) -> bool {
         self.fixups[mark.2..].iter().all(|f| match f {
             Fixup::Conditional { at, label } => {
                 (-(1 << 18)..1 << 18).contains(&(self.offset(*at, *label) / 4))
@@ -334,6 +378,14 @@ impl Asm {
         for (label, bytes) in data {
             self.bind(*label);
             self.code.extend_from_slice(bytes);
+        }
+        for (table, labels) in std::mem::take(&mut self.tables) {
+            self.bind(table);
+            for label in labels {
+                let at = self.code.len();
+                self.fixups.push(Fixup::From { at, label, table });
+                self.word(0);
+            }
         }
         let fixups = std::mem::take(&mut self.fixups);
         for fixup in fixups {
@@ -357,6 +409,11 @@ impl Asm {
                 Fixup::Slot { at, slot } => {
                     let target = slots_address + 8 * slot as u64;
                     self.page_and_low(at, code_address + at as u64, target, 3);
+                }
+                Fixup::From { at, label, table } => {
+                    let distance = self.place(label) as i64 - self.place(table) as i64;
+                    let distance = i32::try_from(distance).expect("in reach");
+                    self.code[at..at + 4].copy_from_slice(&distance.to_le_bytes());
                 }
             }
         }
@@ -1063,6 +1120,35 @@ impl<S: System> Writer<'_, S> {
                 let on = self.read(asm, X16, *on);
                 asm.cmp_imm(on, 0);
                 self.branch(asm, NE, jumps, next);
+            }
+            End::Switch { on, jumps } if jumps.len() >= super::branch::TABLE => {
+                // The number is the place of an entry of a table, which
+                // says where the code of the jump is: the block, when the
+                // jump moves nothing, and the moves then a jump to it when
+                // it does, which follows. The table is placed after the code.
+                let on = self.read(asm, X16, *on);
+                let table = asm.label();
+                asm.jump_through(on, table);
+                let moves_nothing =
+                    |jump: &Jump| moves::sequence(&self.jump_moves(jump)).is_empty();
+                let entries: Vec<usize> = (jumps.iter())
+                    .map(|jump| {
+                        if moves_nothing(jump) {
+                            self.labels[jump.block]
+                        } else {
+                            asm.label()
+                        }
+                    })
+                    .collect();
+                asm.table_entries(table, entries.clone());
+                let last = jumps.iter().rposition(|j| !moves_nothing(j));
+                for (i, jump) in jumps.iter().enumerate() {
+                    if !moves_nothing(jump) {
+                        asm.bind(entries[i]);
+                        let falls = if Some(i) == last { next } else { usize::MAX };
+                        self.jump(asm, jump, falls);
+                    }
+                }
             }
             End::Switch { on, jumps } => {
                 // Each jump but the last is chosen by comparing the number

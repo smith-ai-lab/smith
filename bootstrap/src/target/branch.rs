@@ -2,6 +2,10 @@
 
 use crate::scalar::{End, Function, Op};
 
+/// How many jumps a choice by a number must have to be made through a table
+/// of where each goes, and not by comparing the number with each place in turn.
+pub const TABLE: usize = 5;
+
 /// For each block, whether it ends with a choice between two jumps on the
 /// result of a comparison that is the last instruction of the block and that
 /// nothing else reads. A target does not make that comparison into a value:

@@ -52,6 +52,8 @@ enum Ref {
     Label(usize),
     /// A pointer slot outside the code, such as one the loader fills.
     Slot(usize),
+    /// How far a label is from the start of a table, which is another label.
+    From { label: usize, table: usize },
 }
 
 /// Where a read or a write of memory is.
@@ -72,6 +74,9 @@ pub struct Asm {
     /// Places holding a 32-bit offset, from the end of those four bytes, to
     /// what they refer to.
     fixups: Vec<(usize, Ref)>,
+    /// The tables, each a label and the labels whose distances from it are its
+    /// entries, which are placed after the code, with the data.
+    tables: Vec<(usize, Vec<usize>)>,
 }
 
 impl Asm {
@@ -84,9 +89,15 @@ impl Asm {
         self.labels[label] = Some(self.code.len());
     }
 
-    /// How many bytes of code there are so far.
+    /// How many bytes of code there are so far, and of the tables that are
+    /// placed after it.
     pub fn len(&self) -> usize {
         self.code.len()
+            + self
+                .tables
+                .iter()
+                .map(|(_, labels)| 4 * labels.len())
+                .sum::<usize>()
     }
 
     fn bytes(&mut self, bytes: &[u8]) {
@@ -461,6 +472,30 @@ impl Asm {
         self.offset_to(Ref::Label(label));
     }
 
+    /// Goes to the label that entry `index` of the table at `table` says, as
+    /// `table_entries` writes it, which is 4 bytes for each: `rcx` and `rdx`
+    /// are changed.
+    pub fn jump_through(&mut self, index: Reg, table: usize) {
+        self.address(RCX, table);
+        // movsxd rdx, [rcx + 4 * index]
+        self.bytes(&[
+            0x48 | (index.0 >> 3) << 1,
+            0x63,
+            0x14,
+            0x81 | (index.0 & 7) << 3,
+        ]);
+        // add rdx, rcx
+        self.bytes(&[0x48, 0x01, 0xca]);
+        // jmp rdx
+        self.bytes(&[0xff, 0xe2]);
+    }
+
+    /// The table at `table`, which is placed after the code: for each label,
+    /// how far it is from the start of the table.
+    pub fn table_entries(&mut self, table: usize, labels: Vec<usize>) {
+        self.tables.push((table, labels));
+    }
+
     /// `call [rip + slot]`, which calls through a pointer outside the code.
     pub fn call_slot(&mut self, slot: usize) {
         self.bytes(&[0xff, 0x15]);
@@ -534,12 +569,26 @@ impl Asm {
             self.bind(*label);
             self.code.extend_from_slice(bytes);
         }
+        for (table, labels) in std::mem::take(&mut self.tables) {
+            self.bind(table);
+            for label in labels {
+                self.fixups
+                    .push((self.code.len(), Ref::From { label, table }));
+                self.bytes(&[0; 4]);
+            }
+        }
         for (at, to) in &self.fixups {
-            let target = match to {
-                Ref::Label(label) => self.labels[*label].expect("every label is bound") as i64,
-                Ref::Slot(slot) => (slots_address + 8 * *slot as u64) as i64 - code_address as i64,
+            let place = |label: &usize| self.labels[*label].expect("every label is bound") as i64;
+            let offset = match to {
+                Ref::Label(label) => place(label) - (*at as i64 + 4),
+                Ref::Slot(slot) => {
+                    (slots_address + 8 * *slot as u64) as i64
+                        - code_address as i64
+                        - (*at as i64 + 4)
+                }
+                Ref::From { label, table } => place(label) - place(table),
             };
-            let offset = i32::try_from(target - (*at as i64 + 4)).expect("in reach");
+            let offset = i32::try_from(offset).expect("in reach");
             self.code[*at..*at + 4].copy_from_slice(&offset.to_le_bytes());
         }
         self.code
@@ -1299,6 +1348,35 @@ impl<S: System> Writer<'_, S> {
                 let on = self.read(asm, RAX, *on);
                 asm.cmp_imm8(on, 0);
                 self.branch(asm, NE, jumps, next);
+            }
+            End::Switch { on, jumps } if jumps.len() >= super::branch::TABLE => {
+                // The number is the place of an entry of a table, which
+                // says where the code of the jump is: the block, when the
+                // jump moves nothing, and the moves then a jump to it when
+                // it does, which follows. The table is placed after the code.
+                let on = self.read(asm, RAX, *on);
+                let table = asm.label();
+                asm.jump_through(on, table);
+                let moves_nothing =
+                    |jump: &crate::scalar::Jump| moves::sequence(&self.jump_moves(jump)).is_empty();
+                let entries: Vec<usize> = (jumps.iter())
+                    .map(|jump| {
+                        if moves_nothing(jump) {
+                            self.labels[jump.block]
+                        } else {
+                            asm.label()
+                        }
+                    })
+                    .collect();
+                asm.table_entries(table, entries.clone());
+                let last = jumps.iter().rposition(|j| !moves_nothing(j));
+                for (i, jump) in jumps.iter().enumerate() {
+                    if !moves_nothing(jump) {
+                        asm.bind(entries[i]);
+                        let falls = if Some(i) == last { next } else { usize::MAX };
+                        self.jump(asm, jump, falls);
+                    }
+                }
             }
             End::Switch { on, jumps } => {
                 // Each jump but the last is chosen by comparing the number
