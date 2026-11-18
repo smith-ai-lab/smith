@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// What the runtime says of bytes: whether they are valid UTF-8, and where the
+/// first character that is not begins.
+const VALID: [form::Type; 2] = [BYTE, form::Type::Int(form::Bits::B64)];
+
 impl<'a> Lowering<'a> {
     pub(super) fn text(&mut self, out: &mut Out<'a>, text: &[u8]) -> Vec<form::Value> {
         let at = match self.data.iter().position(|t| t == text) {
@@ -18,6 +22,62 @@ impl<'a> Lowering<'a> {
             form::Type::Int(form::Bits::B64),
         );
         vec![address, length]
+    }
+
+    /// Lowers an argument for a parameter of the type: a text is a list of
+    /// bytes whose room is its size, so that it is passed as one, with no call.
+    pub(super) fn passed(
+        &mut self,
+        out: &mut Out<'a>,
+        value: &'a Expr,
+        param: &Ty,
+        env: &[Ty],
+    ) -> Vec<form::Value> {
+        let (ty, mut values) = self.expr(out, value, env);
+        if text_as_bytes(&ty, param) {
+            values.push(values[1]);
+        }
+        values
+    }
+
+    /// Lowers `utf8(bytes)`: the text is the address and the size the bytes
+    /// have, read once, and the error holds the place the runtime found.
+    pub(super) fn utf8(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        call: &'a Call,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
+        let ty = self.typed.type_of(expr, env);
+        let Ty::Enum(e, args) = &ty else {
+            unreachable!("checked")
+        };
+        let bytes = self.expr(out, &call.args[0].value, env).1;
+        let read = (bytes[0], bytes[1]);
+        let seen = self.call_runtime(out, Runtime::Valid, vec![read.0, read.1], VALID.to_vec());
+        let layout = self.layout(*e, args);
+        let valid = out.int(form::Bits::B8, 1);
+        let ok = out.compare(form::Compare::Equal, seen[0], valid);
+        let case = out.int(form::Bits::B8, 1);
+        let case = out.binary(form::Binary::Sub, case, seen[0]);
+        // A place that both cases use holds the value of the case that is held.
+        let mut ok_values: Vec<Option<form::Value>> = vec![None; layout.places.len()];
+        let mut err_values = ok_values.clone();
+        for (value, &place) in [read.0, read.1].iter().zip(&layout.cases[0]) {
+            ok_values[place] = Some(*value);
+        }
+        err_values[layout.cases[1][0]] = Some(seen[1]);
+        let mut places = Vec::new();
+        for (k, ty) in layout.places.iter().enumerate() {
+            let zero = out.zero(*ty);
+            let then = ok_values[k].unwrap_or(zero);
+            let otherwise = err_values[k].unwrap_or(zero);
+            places.push(out.choose(ok, then, otherwise));
+        }
+        let mut values = vec![case];
+        values.extend(places);
+        (ty, values)
     }
 
     /// The types of the scalars of each element of a list of the type.
@@ -61,7 +121,10 @@ impl<'a> Lowering<'a> {
             Expr::Index { of, index, .. } => {
                 let (list, values) = self.expr(out, of, env);
                 let (at, number) = self.expr(out, index, env);
-                let scalars = self.element(&list);
+                let scalars = match list {
+                    Ty::Text => self.scalars(&Ty::Int(Int::U8)),
+                    _ => self.element(&list),
+                };
                 let (places, stride) = form::element(&scalars);
                 let place = match at {
                     Ty::Int(t) if bits_of(t) == form::Bits::B64 => number[0],
@@ -70,19 +133,16 @@ impl<'a> Lowering<'a> {
                 let width = out.int(form::Bits::B64, i128::from(stride));
                 let offset = out.binary(form::Binary::Mul, place, width);
                 let address = out.binary(form::Binary::Add, values[0], offset);
-                let Ty::List(of) = list else {
-                    unreachable!("checked")
+                let element = match list {
+                    Ty::List(of) => of[0].clone(),
+                    _ => Ty::Int(Int::U8),
                 };
-                (
-                    of[0].clone(),
-                    address,
-                    scalars.into_iter().zip(places).collect(),
-                )
+                (element, address, scalars.into_iter().zip(places).collect())
             }
             Expr::Field { of, name, .. } => {
                 let (ty, address, scalars) = self.element_at(out, of, env);
                 let (start, size, ty) = match ty {
-                    Ty::List(_) => (1, 1, Ty::Int(Int::U64)),
+                    Ty::List(_) | Ty::Text => (1, 1, Ty::Int(Int::U64)),
                     Ty::Struct(s, args) => {
                         let mut start = 0;
                         let mut found = None;
