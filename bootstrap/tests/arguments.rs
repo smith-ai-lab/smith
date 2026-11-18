@@ -526,11 +526,13 @@ fn every_executable_started_with_a_word_that_is_not_valid_utf8_ends_before_main(
 /// `smith` started in the folder with the arguments, which may be any bytes
 /// the system allows.
 fn smith_with(dir: &std::path::Path, args: &[std::ffi::OsString]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_smith"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap()
+    crate::clock::output_within(
+        std::process::Command::new(env!("CARGO_BIN_EXE_smith"))
+            .args(args)
+            .current_dir(dir),
+        true,
+    )
+    .unwrap()
 }
 
 fn smith_never_panics_on_an_argument_of_its_own_that_is_not_valid_utf8() {

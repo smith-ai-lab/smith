@@ -151,9 +151,7 @@ impl Setup {
     /// A `curl` that gives up part way through a download of a compiler.
     fn break_downloads(&self) {
         let real = String::from_utf8(
-            Command::new("sh")
-                .args(["-c", "command -v curl"])
-                .output()
+            crate::clock::output_within(Command::new("sh").args(["-c", "command -v curl"]), false)
                 .unwrap()
                 .stdout,
         )
@@ -175,10 +173,9 @@ impl Setup {
     }
 
     fn installed(&self) -> Option<String> {
-        let output = Command::new(self.bin().join("smith"))
-            .arg("--version")
-            .output()
-            .ok()?;
+        let output =
+            crate::clock::output_within(Command::new(self.bin().join("smith")).arg("--version"), false)
+                .ok()?;
         Some(String::from_utf8(output.stdout).unwrap().trim().to_string())
     }
 
@@ -189,8 +186,6 @@ impl Setup {
     /// Runs the installer as a file, or, given its text, piped into `sh` as
     /// the one-line install does.
     fn run_script(&self, release: &Path, on_path: bool, piped: Option<&[u8]>) -> Output {
-        use std::io::Write;
-        use std::process::Stdio;
         let mut path = format!(
             "{}:{}",
             self.tools.display(),
@@ -203,23 +198,13 @@ impl Setup {
         if piped.is_none() {
             command.arg(format!("{}/../install.sh", env!("CARGO_MANIFEST_DIR")));
         }
-        let mut child = command
+        command
             .env("HOME", &self.home)
             .env("PATH", path)
-            .env("SMITH_RELEASE_URL", format!("file://{}", release.display()))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut stdin = child.stdin.take().unwrap();
-        if let Some(text) = piped {
-            // The shell may stop reading before the end, as it does at a
-            // syntax error.
-            let _ = stdin.write_all(text);
-        }
-        drop(stdin);
-        child.wait_with_output().unwrap()
+            .env("SMITH_RELEASE_URL", format!("file://{}", release.display()));
+        // The shell may stop reading before the end, as it does at a syntax
+        // error, which a file to read from does not mind.
+        crate::clock::output_within_given(&mut command, piped.unwrap_or_default(), true).unwrap()
     }
 }
 

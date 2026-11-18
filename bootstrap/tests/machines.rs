@@ -123,12 +123,14 @@ fn needs(base: &str, head: &str) -> Vec<String> {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("base"), base).unwrap();
     std::fs::write(dir.join("head"), head).unwrap();
-    let output = Command::new("sh")
-        .arg(github().join("needs-machines.sh"))
-        .arg(dir.join("base"))
-        .arg(dir.join("head"))
-        .output()
-        .unwrap();
+    let output = crate::clock::output_within(
+        Command::new("sh")
+            .arg(github().join("needs-machines.sh"))
+            .arg(dir.join("base"))
+            .arg(dir.join("head")),
+        true,
+    )
+    .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(output.status.success());
     String::from_utf8(output.stdout)

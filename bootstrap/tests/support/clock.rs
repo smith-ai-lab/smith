@@ -111,6 +111,25 @@ pub fn output_within(
     command: &mut std::process::Command,
     with_stderr: bool,
 ) -> std::io::Result<std::process::Output> {
+    run(command, None, with_stderr)
+}
+
+/// `output_within` for a command that reads its standard input: the command
+/// is given `input` as a file to read, so that the test writes to no pipe and
+/// needs no thread, and a command that stops reading early blocks nothing.
+pub fn output_within_given(
+    command: &mut std::process::Command,
+    input: &[u8],
+    with_stderr: bool,
+) -> std::io::Result<std::process::Output> {
+    run(command, Some(input), with_stderr)
+}
+
+fn run(
+    command: &mut std::process::Command,
+    input: Option<&[u8]>,
+    with_stderr: bool,
+) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -119,15 +138,23 @@ pub fn output_within(
         std::process::id(),
         COUNT.fetch_add(1, Ordering::Relaxed)
     );
-    let (out, err) = (
+    let (out, err, inp) = (
         std::env::temp_dir().join(format!("{name}.out")),
         std::env::temp_dir().join(format!("{name}.err")),
+        std::env::temp_dir().join(format!("{name}.in")),
     );
     let begin = Instant::now();
     progressed();
-    command
-        .stdin(Stdio::null())
-        .stdout(std::fs::File::create(&out).unwrap());
+    match input {
+        Some(bytes) => {
+            std::fs::write(&inp, bytes).unwrap();
+            command.stdin(std::fs::File::open(&inp).unwrap());
+        }
+        None => {
+            command.stdin(Stdio::null());
+        }
+    }
+    command.stdout(std::fs::File::create(&out).unwrap());
     if with_stderr {
         command.stderr(std::fs::File::create(&err).unwrap());
     } else {
@@ -136,6 +163,9 @@ pub fn output_within(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
+            if input.is_some() {
+                std::fs::remove_file(&inp).unwrap();
+            }
             std::fs::remove_file(&out).unwrap();
             if with_stderr {
                 std::fs::remove_file(&err).unwrap();
@@ -165,6 +195,9 @@ pub fn output_within(
         },
     });
     std::fs::remove_file(&out).unwrap();
+    if input.is_some() {
+        std::fs::remove_file(&inp).unwrap();
+    }
     if with_stderr {
         std::fs::remove_file(&err).unwrap();
     }
