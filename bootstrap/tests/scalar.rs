@@ -541,7 +541,13 @@ fn an_instruction_on_numbers_used_at_a_wrong_size_is_refused() {
         ),
         (
             "a comparison of numbers of two sizes",
-            resized(|o| matches!(o, Op::Compare { .. }), operand, other),
+            // Of two different values: resizing a value that is both operands
+            // leaves them the size of each other.
+            resized(
+                |o| matches!(o, Op::Compare { a, b, .. } if a != b),
+                operand,
+                other,
+            ),
         ),
         (
             "a widening of a number that is not narrower",

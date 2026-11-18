@@ -7,7 +7,11 @@
 //! choice made on a known value. The answers are worked out by the functions
 //! the evaluator uses, so the two cannot disagree. A block that ends by
 //! choosing between blocks on a known value ends with a jump, and the blocks
-//! only it reached are left for `remove`.
+//! only it reached are left for `remove`. A block that ends by choosing on a
+//! comparison with its bit flipped chooses on the comparison, the other way
+//! round, so `a <= b` is the one comparison `b < a` that its branch reads.
+
+use std::collections::{HashMap, HashSet};
 
 use super::eval::{binary, bits_of, compare, mask, narrow, widen};
 use super::graph::{self, jumps};
@@ -49,6 +53,10 @@ fn folded(f: &Function) -> Function {
     // which a switch on a known value makes only for the arm it takes.
     let mut into: Vec<Vec<Vec<Value>>> = vec![Vec::new(); n];
     let mut walked = vec![false; n];
+    // The comparisons, and the values that are one of them with its bit
+    // flipped, by what they flip.
+    let mut compares: HashSet<Value> = HashSet::new();
+    let mut flips: HashMap<Value, Value> = HashMap::new();
     for &b in &order {
         if b != 0 && into[b].is_empty() {
             continue;
@@ -146,10 +154,25 @@ fn folded(f: &Function) -> Function {
                         op: Op::Constant(Constant::Int(n)),
                     });
                 }
-                None => instructions.push(Instruction {
-                    results: vec![result],
-                    op,
-                }),
+                None => {
+                    match &op {
+                        Op::Compare { .. } => {
+                            compares.insert(result);
+                        }
+                        Op::Binary {
+                            op: Binary::Xor,
+                            a,
+                            b,
+                        } if known[b.0] == Some(1) && compares.contains(a) => {
+                            flips.insert(result, *a);
+                        }
+                        _ => {}
+                    }
+                    instructions.push(Instruction {
+                        results: vec![result],
+                        op,
+                    });
+                }
             }
         }
         graph::rename_end(&mut block.end, &|v| sub[v.0]);
@@ -157,6 +180,14 @@ fn folded(f: &Function) -> Function {
             && let Some(n) = known[on.0]
         {
             block.end = End::Jump(jumps[n as usize].clone());
+        } else if let End::Switch { on, jumps } = &mut block.end
+            && let Some(&compare) = flips.get(on)
+            && jumps.len() == 2
+        {
+            // A choice on a comparison with its bit flipped is a choice on
+            // the comparison, with the blocks the other way round.
+            *on = compare;
+            jumps.swap(0, 1);
         }
         for j in jumps(&block.end) {
             if at[j.block] > at[b] {
