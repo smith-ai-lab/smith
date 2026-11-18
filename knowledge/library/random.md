@@ -42,7 +42,7 @@ x = sample(Normal(mean: 0.0, std: 1.0), key)
 - A distribution built from others, such as a mixture, is a struct with type parameters and its own `impl`.
 - A call of a trait's function is chosen when the program is built, so drawing through `Sample` costs what the arithmetic costs.
 
-Many draws are a [`for`](../language/for.md) over split keys, which runs in parallel like any other.
+Many draws are a [`for`](../language/random-arrays.md) over split keys, which runs in parallel like any other.
 
 ```
 fn samples[D, T, n: Nat](d: D, key: take Key) -> [n]T {

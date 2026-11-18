@@ -48,7 +48,13 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [indexing.md](indexing.md): `x[i]`, an index proven to be in range when the program is built, the `Index` trait with its `valid`, and assigning an element.
 - [ranges.md](ranges.md): `a..b`, which excludes `b`, and `x[a..b]`, `x[..k]`, and `x[k..]` as parts of an array.
 - [array-patterns.md](array-patterns.md): a pattern in brackets, which takes an array or a list apart with a pattern for each element.
-- [for.md](for.md): `for` as an unordered description of an array, reductions, the operators of linear algebra, `@`, and the rules for float arithmetic.
+- [for.md](for.md): `for` as a description of an array by the value at every index, and where each index gets its size.
+- [element-wise.md](element-wise.md): the operators on arrays that mean what they mean in linear algebra, no broadcasting, and `map`.
+- [reductions.md](reductions.md): `sum`, `max`, and `mean`, which reduce a view to a value, and a reduction inside a `for`.
+- [accumulation.md](accumulation.md): a `for` whose block accumulates into a `var` with `+=` or `*=`, why `=` is refused there, and an indexed accumulation.
+- [linear-algebra.md](linear-algebra.md): `@`, which means `matmul`, how its sizes are checked by the types, a batch as a `for`, and a linear layer.
+- [float-rules.md](float-rules.md): float code that is fast and repeatable, how a float reduction is regrouped, `sum_ordered`, and which products are fused.
+- [random-arrays.md](random-arrays.md): a random function that fills a whole array from one key, `split_n`, and `keys[i]` inside a `for`.
 - [loop.md](loop.md): `loop` over a range, which runs a block once for each number in order, the type of its counter, `break`, and what `arith` knows inside it.
 - [open-loop.md](open-loop.md): `loop` with no range, which runs until `break` and carries `diverge`, and `loop decreases`, which is proven to end.
 - [iterate.md](iterate.md): the `Iterate` trait, which makes a type loopable, and how `loop v in x` calls its `each`.

@@ -26,7 +26,7 @@ This compiles to a single loop with no buffers, because `zs` reads each `ys[i]` 
 
 ## An array that is stored
 
-The MLP of [`for`](for.md) shows the other case. Every output of the second layer reads every hidden value, so `hidden` is stored, and the `relu` fuses into the loop that fills it.
+The layers of [Linear algebra](linear-algebra.md) show the other case in an MLP. Every output of the second layer reads every hidden value, so `hidden` is stored, and the `relu` fuses into the loop that fills it.
 
 ```
 struct Mlp[i: Nat, h: Nat, o: Nat] {
