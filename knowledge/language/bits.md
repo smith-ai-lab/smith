@@ -107,6 +107,10 @@ fn main() ! console, alloc {
 
 This prints `29 0`. With both below 8, `reg * 8 + rm` is at most 63, so it fits a `u8`, and without the condition it is refused as any plain `*` is, under [Integer arithmetic](arithmetic.md).
 
+## What is known of a result
+
+What `bit_and`, `bit_or`, `bit_xor`, and the shifts give has a range that `arith` knows, so `bit_and(x, 31) + 200` fits a `u8`. [What arith proves](arith.md#what-it-starts-from) says what is known of each.
+
 ## The forms
 
 | Written | Is |
