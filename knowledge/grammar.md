@@ -112,7 +112,8 @@ lambda     = [ "fn" "(" ( IDENT | tuple_pat ) { "," ( IDENT | tuple_pat ) } ")" 
 type       = statement
            | IDENT [ "[" type_arg { "," type_arg } "]" ]
            | "[" size { "," size } "]" type
-           | "(" [ type { "," type } ] ")" [ "->" type [ effects ] ] ;
+           | "(" [ fn_arg { "," fn_arg } ] ")" [ "->" type [ effects ] ] ;
+fn_arg     = [ "take" ] type ;
 size       = expr ;
 statement  = operand CMP operand ;
 type_arg   = type | expr ;
