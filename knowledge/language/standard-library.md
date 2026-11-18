@@ -26,6 +26,6 @@ Its modules are described in [library/](../library/index.md), one page for each.
 
 ## What needs no import
 
-A name of the [prelude](prelude.md) is in scope with no `use`, so `print` is written without one, and the rest of the console is in [std.console](../library/console.md).
+A name of the [prelude](prelude.md) is in scope with no `use`. The prelude holds only what the syntax means, so everything else is imported, `print` and `console` among them, which are in [std.console](../library/console.md).
 
 Next: [Dependencies](dependencies.md)
