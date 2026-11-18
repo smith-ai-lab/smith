@@ -223,7 +223,7 @@ A `match` on whole numbers is one jump, however many literals it has.
 | Written | Is |
 | --- | --- |
 | `match v { p { e } }` | Runs the block of the first pattern `p` that `v` matches |
-| `.a { e }` | A case that holds nothing |
+| `.a { e }` | A case that holds nothing, or that holds `()`, as [Enums](enums.md#a-case-that-holds-) says |
 | `.a(p) { e }` | A case that holds a value that `p` matches |
 | `x { e }` | A bare name: matches anything, and is a new variable |
 | `(p, q) { e }` | A tuple whose parts `p` and `q` match |
