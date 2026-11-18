@@ -47,7 +47,7 @@ fn largest(c: Countdown) -> i32 {
 - A walk over a tree passes `body` along to its recursive calls.
 - `break` is allowed in a loop over a range or an array and in an open-ended loop. It is not allowed in a loop over a user type, because the body has no way to tell `each` to stop.
 - The two ends of a range are worked out once, when the loop starts. Inside the loop, `arith` knows that the counter is at least the first end and below the second, as they were then, and ties them to nothing a `var` that the loop assigns holds in a later round, or after an assignment in this one. So `loop i in 0..xs.size` does not make `xs[i]` compile in a block that assigns `xs`.
-- The two ends of a range have one type. An end that is a literal takes the type of the other. When both are literals, how the loop's name is used in its block decides their type, as for a literal bound to a name in [Numbers](numbers.md), and they are `i64` when nothing decides.
+- The two ends of a range have one type. An end that is a literal takes the type of the other. When both are literals, how the loop's name is used in its block decides their type, as for a literal bound to a name in [Literals](literals.md#where-the-type-comes-from), and they are `i64` when nothing decides.
 - A range `a..b` is a `Range` value, and going backward is a reversed range, `loop i in reversed(0..n)`.
 
 Next: [Contracts and proofs](contracts.md)
