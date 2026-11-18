@@ -329,6 +329,23 @@ impl<'a> Out<'a> {
         self.constant(form::Constant::Int(n), form::Type::Int(bits))
     }
 
+    /// The number `op` gives of `a` and `b` with the bits that do not fit left
+    /// off, and whether it did not fit, as a `bool`.
+    fn overflows(
+        &mut self,
+        op: form::Binary,
+        signed: bool,
+        a: form::Value,
+        b: form::Value,
+    ) -> (form::Value, form::Value) {
+        let ty = self.types[a.0];
+        let results = self.emit(
+            form::Op::Overflows { op, signed, a, b },
+            vec![ty, form::Type::Int(form::Bits::B8)],
+        );
+        (results[0], results[1])
+    }
+
     fn binary(&mut self, op: form::Binary, a: form::Value, b: form::Value) -> form::Value {
         let ty = self.types[a.0];
         self.emit(form::Op::Binary { op, a, b }, vec![ty])[0]

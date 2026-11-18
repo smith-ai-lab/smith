@@ -23,12 +23,12 @@ use crate::targets::{runnable, scalar_runs_as};
 
 pub const ONCE: &[Test] = &[
     (
-        "a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_with_no_call_and_no_jump",
-        a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_with_no_call_and_no_jump,
+        "a_saturating_function_costs_no_call_and_no_jump_and_the_instructions_extra_gives",
+        a_saturating_function_costs_no_call_and_no_jump_and_the_instructions_extra_gives,
     ),
     (
-        "a_checked_add_or_sub_of_an_unsigned_type_that_is_matched_at_once_is_what_an_if_on_the_wrapping_one_is",
-        a_checked_add_or_sub_of_an_unsigned_type_that_is_matched_at_once_is_what_an_if_on_the_wrapping_one_is,
+        "a_checked_function_that_is_matched_at_once_is_an_operation_and_a_jump_and_no_call",
+        a_checked_function_that_is_matched_at_once_is_an_operation_and_a_jump_and_no_call,
     ),
     (
         "the_saturating_and_checked_functions_answer_at_the_edges_of_every_type_in_the_evaluator_and_on_arm64",
@@ -41,14 +41,32 @@ pub const MACHINE: &[Test] = &[(
     the_saturating_and_checked_functions_answer_at_the_edges_of_every_type_in_every_executable,
 )];
 
-/// The types of the unsigned whole numbers, and `Nat`, which is lowered to
-/// the `u64` functions.
-const UNSIGNED: [&str; 5] = ["u8", "u16", "u32", "u64", "Nat"];
+/// The types of the whole numbers, and `Nat`, which is lowered to the `u64`
+/// functions.
+const TYPES: [&str; 7] = ["u8", "u32", "u64", "Nat", "i8", "i32", "i64"];
 
-/// What a use of `saturating_add` or `saturating_sub` may cost over the
-/// `wrapping_` function of the same operation: a comparison, the end that is
-/// chosen, and the choice.
-const EXTRA: usize = 3;
+/// What a use of a saturating function may cost, in instructions, over the
+/// `wrapping_` function of the same operation, on every chip. These are what
+/// the code is now, and the fewest the compiler gives: a change that makes one
+/// larger fails the test, and one that makes one smaller is written here.
+///
+/// A number of 64 bits, or an unsigned addition or subtraction of fewer, is
+/// worked out with a comparison, or by the flag of the operation, and chosen
+/// by it. A signed number's end is worked out from the sign of an operand,
+/// and a product needs the high half, or the numbers widened and looked at.
+fn extra(ty: &str, op: &str) -> usize {
+    match (ty, op) {
+        ("u64" | "Nat", "add") => 3,
+        ("u64" | "Nat", "sub") => 2,
+        ("u64" | "Nat", _) => 4,
+        ("u8" | "u16" | "u32", "mul") => 5,
+        ("u8" | "u16" | "u32", _) => 3,
+        ("i64", "sub") => 7,
+        ("i64", _) => 8,
+        (_, "mul") => 12,
+        _ => 11,
+    }
+}
 
 /// The type of the values that the program makes from a list, and what the
 /// wrapping function that stands beside a `Nat` is, which has none.
@@ -83,12 +101,12 @@ fn counted(source: &str) -> Vec<(Target, (usize, usize, usize))> {
 /// For each type and each operation, on every chip, with the function used
 /// twice so that it is not the one call that is replaced for being the only
 /// one: the function has no call and no jump that the program with the
-/// `wrapping_` function has not, and costs no more than `EXTRA` instructions
+/// `wrapping_` function has not, and costs no more than `extra` instructions
 /// beyond it for each use.
-fn a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_with_no_call_and_no_jump() {
+fn a_saturating_function_costs_no_call_and_no_jump_and_the_instructions_extra_gives() {
     let mut read = 0;
-    for ty in UNSIGNED {
-        for op in ["add", "sub"] {
+    for ty in TYPES {
+        for op in ["add", "sub", "mul"] {
             let program = |f: String, ty: &str| {
                 with_values(ty, &format!("  print(\"{{{f}(x, y)}}\")\n  print(\"{{{f}(y, x)}}\")\n"))
             };
@@ -103,7 +121,7 @@ fn a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_w
                     "`saturating_{op}` of `{ty}` makes a call or a jump on {target:?}"
                 );
                 assert!(
-                    s.0 <= w.0 + 2 * EXTRA,
+                    s.0 <= w.0 + 2 * extra(ty, op),
                     "`saturating_{op}` of `{ty}` is {} instructions, and `wrapping_{op}` is {}, on {target:?}",
                     s.0,
                     w.0
@@ -114,32 +132,51 @@ fn a_saturating_add_or_sub_of_an_unsigned_type_is_an_add_or_a_sub_and_a_choice_w
     assert!(read > 0, "no target is an ELF file");
 }
 
-/// A `checked_add` or `checked_sub` that is matched at once is the add or the
-/// subtraction and the jump that an `if` on the same comparison is: the same
-/// instructions, on every chip.
-fn a_checked_add_or_sub_of_an_unsigned_type_that_is_matched_at_once_is_what_an_if_on_the_wrapping_one_is() {
+/// How many instructions a `checked_` function that is matched at once may
+/// cost over an `if` on a comparison of the same operands, which is an
+/// operation and a jump, on every chip: none for an addition or a subtraction
+/// of any type, whose flag says whether it fitted, or for unsigned numbers of
+/// fewer than 64 bits whose comparison does. A product is looked at after the
+/// operation, or its high half is.
+fn checked_extra(ty: &str, op: &str) -> usize {
+    match (ty, op) {
+        ("u64" | "Nat", "mul") => 1,
+        ("u8" | "u16" | "u32", "mul") => 2,
+        _ => 0,
+    }
+}
+
+/// A `checked_` function that is matched at once is an operation and a jump,
+/// and no call: the calls and the jumps of an `if` on the same operands, and
+/// at most `checked_extra` instructions more, on every chip.
+fn a_checked_function_that_is_matched_at_once_is_an_operation_and_a_jump_and_no_call() {
     let mut read = 0;
-    for ty in UNSIGNED {
-        for op in ["add", "sub"] {
+    for ty in TYPES {
+        for op in ["add", "sub", "mul"] {
             let matched = with_values(
                 ty,
                 &format!(
                     "  match checked_{op}(x, y) {{\n    .some(v) {{ print(\"{{v}}\") }}\n    .none {{ print(\"none\") }}\n  }}\n"
                 ),
             );
-            let w = wrapping_type(ty);
             let written = with_values(
-                w,
-                match op {
-                    "add" => "  r = wrapping_add(x, y)\n  if r < x { print(\"none\") } else { print(\"{r}\") }\n",
-                    _ => "  r = wrapping_sub(x, y)\n  if x < y { print(\"none\") } else { print(\"{r}\") }\n",
-                },
+                wrapping_type(ty),
+                &format!(
+                    "  r = wrapping_{op}(x, y)\n  if x < y {{ print(\"none\") }} else {{ print(\"{{r}}\") }}\n"
+                ),
             );
             for ((target, m), (_, h)) in counted(&matched).iter().zip(&counted(&written)) {
                 read += 1;
                 assert_eq!(
-                    m, h,
-                    "`checked_{op}` of `{ty}` matched at once is not what an `if` is on {target:?}"
+                    (m.1, m.2),
+                    (h.1, h.2),
+                    "`checked_{op}` of `{ty}` matched at once has other calls or jumps than an `if` on {target:?}"
+                );
+                assert!(
+                    m.0 <= h.0 + checked_extra(ty, op),
+                    "`checked_{op}` of `{ty}` matched at once is {} instructions, and an `if` is {}, on {target:?}",
+                    m.0,
+                    h.0
                 );
             }
         }
