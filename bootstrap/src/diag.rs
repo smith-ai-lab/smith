@@ -28,6 +28,9 @@ pub struct Error {
     /// compiled: the name of a module of the standard library, or the path of
     /// the file of a module of a project.
     pub module: Option<String>,
+    /// Whether it says a part of the language is not built yet, which is no
+    /// mistake of the program.
+    pub unbuilt: bool,
 }
 
 impl Error {
@@ -37,6 +40,7 @@ impl Error {
             message: message.into(),
             fix: None,
             module: None,
+            unbuilt: false,
         }
     }
 
@@ -54,7 +58,10 @@ impl Error {
 
     /// An error for a part of the language the compiler does not build yet.
     pub fn unsupported(pos: Pos, feature: &str) -> Error {
-        Error::new(pos, format!("{feature} is not supported yet"))
+        Error {
+            unbuilt: true,
+            ..Error::new(pos, format!("{feature} is not supported yet"))
+        }
     }
 }
 

@@ -740,6 +740,9 @@ impl<'a> Defs<'a> {
     /// parameters of `scope`. Mistakes go in `errors`.
     fn resolve(&self, t: &Type, scope: &Scope, errors: &mut Vec<Error>) -> Ty {
         let name = t.name.as_str();
+        if t.unbuilt() {
+            return Ty::Unknown;
+        }
         if name.is_empty() {
             let items: Vec<Ty> = (t.args.iter())
                 .map(|a| self.resolve(a, scope, errors))
@@ -1252,6 +1255,7 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
             },
         },
         Expr::Break { .. } => "break".to_string(),
+        Expr::Unbuilt { .. } => "what is not built".to_string(),
         Expr::Return { value: None, .. } => "return".to_string(),
         Expr::Return { value: Some(v), .. } => format!("return {}", written_with(s, v)),
     }
@@ -1320,7 +1324,7 @@ pub(crate) fn check_with_source(
 }
 
 /// `check`, with the prelude given.
-fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
+fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Checked, Vec<Error>> {
     let mut resolver = Resolver::new(library);
     let defined: HashSet<String> = defined_names(&file).into_iter().map(String::from).collect();
     resolver.resolve(
@@ -1338,6 +1342,9 @@ fn check_with(file: File, library: &Library, prelude: &Prelude) -> Result<Checke
         refused,
         ..
     } = resolver;
+    // What the file uses that is not built is reported with its other
+    // errors, as the parser read past it.
+    errors.append(&mut file.unbuilt);
     placement(&file, &mut errors);
     for module in &read {
         placement(&module.file, &mut errors);
@@ -2200,7 +2207,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 return None;
             }
         };
-        let file = match crate::parser::parse_library(&tokens) {
+        let mut file = match crate::parser::parse_library(&tokens) {
             Ok(file) => file,
             Err(errors) => {
                 self.errors.extend(errors);
@@ -2208,6 +2215,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 return None;
             }
         };
+        self.errors.append(&mut file.unbuilt);
         let effects: Vec<String> = LIBRARY_EFFECTS_EXPORTED
             .iter()
             .filter(|(m, _)| format!("std.{m}") == name)
@@ -3108,7 +3116,11 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 walk(v, out);
             }
         }
-        Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } | Expr::Break { .. } => {}
+        Expr::Text { .. }
+        | Expr::Number { .. }
+        | Expr::Unbuilt { .. }
+        | Expr::Name { .. }
+        | Expr::Break { .. } => {}
     }
 }
 
@@ -3170,6 +3182,7 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
             Expr::Case { .. }
             | Expr::Text { .. }
             | Expr::Number { .. }
+            | Expr::Unbuilt { .. }
             | Expr::Name { .. }
             | Expr::Break { .. }
             | Expr::Return { value: None, .. } => {}
@@ -4953,6 +4966,7 @@ impl<'a> Checker<'a> {
     fn expr_of(&mut self, body: &mut Body<'a>, expr: &Expr, want: &Want) -> Ty {
         let defs = self.defs;
         match expr {
+            Expr::Unbuilt { .. } => Ty::Unknown,
             Expr::Text { .. } => Ty::Text,
             Expr::Number {
                 magnitude,

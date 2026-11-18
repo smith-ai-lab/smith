@@ -1083,8 +1083,8 @@ fn file_with_token_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
 }
 
 /// A file whose mistakes are all in its syntax, one in each statement or
-/// definition that holds one, at known places. Its `main` lacks `console`,
-/// which must not be reported.
+/// definition that holds one, at known places, and some of what is not built.
+/// Its `main` lacks `console`, which must not be reported.
 fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
     // Each is written as the text before the mistake, and the rest. A
     // statement or a definition with no mistake has no error to mention.
@@ -1159,9 +1159,10 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
                 source.push_str("}\n");
             }
         }
-        if expected.is_empty() {
-            // Every statement and definition came out right, so one more
-            // definition holds the mistake.
+        if (expected.iter()).all(|(_, what)| *what == "not supported yet") {
+            // No statement or definition holds a mistake of the syntax, and
+            // what is not built does not hide the check, so one more
+            // definition holds the mistake that does.
             expected.push((pos_after(&source), "definition"));
             source.push_str(")\n");
         }

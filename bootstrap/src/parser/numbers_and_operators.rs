@@ -68,7 +68,19 @@ impl Parser<'_> {
     /// current token.
     pub(super) fn number_literal(&mut self, text: String, pos: Pos) -> Result<Expr, Error> {
         self.bump();
-        number(text, false, pos)
+        self.read_past(number(text, false, pos), pos)
+    }
+
+    /// The number, or a float, which is not built, in the place of which an
+    /// `Expr::Unbuilt` is kept.
+    fn read_past(&mut self, number: Result<Expr, Error>, pos: Pos) -> Result<Expr, Error> {
+        match number {
+            Err(e) if e.unbuilt => {
+                self.unbuilt.push(e);
+                Ok(Expr::Unbuilt { pos })
+            }
+            other => other,
+        }
     }
 
     /// Whether the `-` at `pos`, the current token, is directly before a
@@ -89,7 +101,7 @@ impl Parser<'_> {
             unreachable!("a number")
         };
         self.bump();
-        number(text, true, pos)
+        self.read_past(number(text, true, pos), pos)
     }
 
     /// Parses operands joined by `+` and `-`, which group to the left.
