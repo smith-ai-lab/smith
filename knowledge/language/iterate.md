@@ -1,21 +1,26 @@
 ---
 type: specification
 title: Iterate
-description: A type becomes loopable by implementing Iterate, whose one function each walks the value and calls a lambda on every element, and which loop v in x calls.
+description: A type becomes loopable by implementing Iterate, whose one function each walks the value and calls a lambda on every element until the lambda says stop, and which loop v in x calls.
 status: planned
 ---
 
 # Iterate
 
-A type becomes loopable by implementing `Iterate`, a trait with one function, `each`, which walks a value and calls a lambda on every element.
+A type becomes loopable by implementing `Iterate`, a trait with one function, `each`, which walks a value and calls a lambda on every element, until the lambda says to stop.
 
 ```
+enum Flow {
+  go
+  stop
+}
+
 trait Iterate[C, out T] {
-  fn each(c: C, body: (T) -> ())
+  fn each(c: C, body: (T) -> Flow) -> Flow
 }
 ```
 
-`C` is the type that is walked, `T` is the type of its elements, and `body` is called once for each element. `T` is marked `out`, so it is determined by `C`, as [`out` parameters](out-parameters.md) says: once the type that is walked is known, so is the type of its elements.
+`C` is the type that is walked, `T` is the type of its elements, and `body` is called once for each element. `body` answers with a `Flow`: `.go` to be given the next element, and `.stop` to be given no more. `each` gives a `Flow` too: `.stop` when `body` stopped it, and `.go` when it walked to the end. `T` is marked `out`, so it is determined by `C`, as [`out` parameters](out-parameters.md) says: once the type that is walked is known, so is the type of its elements.
 
 ## Making a type loopable
 
@@ -27,23 +32,40 @@ struct Countdown {
 }
 
 impl Iterate[Countdown, i32] {
-  fn each(c: Countdown, body: (i32) -> ()) {
-    loop i in 0..c.from { body(c.from - i) }
+  fn each(c: Countdown, body: (i32) -> Flow) -> Flow {
+    loop i in 0..c.from { try body(c.from - i) }
+    .go
   }
 }
 ```
 
-`each` is a function like any other, so it is called with a lambda, as a function that takes a function is in [Lambdas](lambdas.md). This prints `3`, `2`, and `1`.
+`Flow` works with [`try`](try.md): `try body(v)` goes on to the next line when `body` gave `.go`, and leaves `each` with `.stop` when it gave `.stop`. So an `each` passes a stop along by writing `try` before each call of `body`, and ends with `.go`. The prelude gives `Flow` its `Try`:
+
+```
+impl Try[Flow, Flow, ()] {
+  fn then(c: Flow, body: (()) -> Flow) -> Flow {
+    match c {
+      .go { body(()) }
+      .stop { .stop }
+    }
+  }
+}
+```
+
+`each` is a function like any other, so it can be called with a lambda that gives a `Flow`, as a function that takes a function is in [Lambdas](lambdas.md). This prints `3` and `2`, and stops there.
 
 ```
 fn main() ! console, alloc {
-  each(Countdown(from: 3)) fn(v) { print("{v}") }
+  each(Countdown(from: 3)) fn(v) {
+    print("{v}")
+    if v == 2 { .stop } else { .go }
+  }
 }
 ```
 
 ## Looping over it
 
-`loop v in x { ... }` means `each(x) fn(v) { ... }`. A type that implements `Iterate` is looped over like a range, with the name the element.
+`loop v in x { ... }` calls `each(x)` with the block as its lambda, and the block answers `.go` when it reaches its end. A type that implements `Iterate` is looped over like a range, with the name the element.
 
 ```
 fn largest(c: Countdown) -> i32 {
@@ -53,7 +75,7 @@ fn largest(c: Countdown) -> i32 {
 }
 ```
 
-`largest(Countdown(from: 3))` is `3`. `loop v in x { ... }` is the form that is written to run a block for each element. `each(x) fn(v) { ... }` is what it means, and it is accepted because `each` is an ordinary function.
+`largest(Countdown(from: 3))` is `3`. `loop v in x { ... }` is the form that is written to run a block for each element. A call of `each` with a lambda is what it means, and it is accepted because `each` is an ordinary function.
 
 ## What the body may do
 
@@ -69,22 +91,9 @@ fn show(c: Countdown) ! alloc {
 
 This is refused, because `show` does not list `console`, which the `print` in the body needs.
 
-## `with` and `each`
-
-`each` is an ordinary function, so `with v = each(x)` works too. It is written only where the walk is the last thing a function does.
-
-```
-fn show(c: Countdown) ! console, alloc {
-  with v = each(c)
-  print("{v}")
-}
-```
-
-`show(Countdown(from: 3))` prints `3`, `2`, and `1`, as the loop does.
-
 ## A walk over a tree
 
-A walk over a tree passes `body` along to its recursive calls. The `each` of a tree calls itself on the left part, then on the value, then on the right part, and each call is handed the same `body`.
+A walk over a tree passes `body` along to its recursive calls. The `each` of a tree calls itself on the left part, then on the value, then on the right part, and each call is handed the same `body`. A `try` before each step but the last passes a stop up through every level, so the walk ends the moment one value says stop.
 
 ```
 enum Tree {
@@ -99,12 +108,12 @@ struct Branch {
 }
 
 impl Iterate[Tree, i32] {
-  fn each(t: Tree, body: (i32) -> ()) {
+  fn each(t: Tree, body: (i32) -> Flow) -> Flow {
     match t {
-      .leaf { }
+      .leaf { .go }
       .node(b) {
-        each(b.left, body)
-        body(b.value)
+        try each(b.left, body)
+        try body(b.value)
         each(b.right, body)
       }
     }
@@ -112,33 +121,48 @@ impl Iterate[Tree, i32] {
 }
 ```
 
-A `loop v in t` over a `Tree` runs its block once for each value, left to right.
+A `loop v in t` over a `Tree` runs its block once for each value, left to right. Nothing unwinds when it stops: each level of `each` returns `.stop` to the one that called it.
 
-## No `break`
+## `break` and `return`
 
-A loop over a user type has no `break`. The body is a lambda, and `each` has no way to be told to stop, so a `break` in it has no loop to end, and it is refused.
+A loop over a type that implements `Iterate` is ended by `break`, and left by [`return`](return.md), as a loop over a range is.
 
 ```
-fn first_big(c: Countdown) -> i32 {
+fn first_small(c: Countdown) -> i32 {
   var found = 0
   loop v in c {
-    if v < 3 { break }
-    found = v
+    if v < 3 {
+      found = v
+      break
+    }
   }
   found
 }
 ```
 
-This is refused, as a `break` in any lambda is. A loop over a range or an array, and an open-ended loop, have a `break`, as [`loop`](loop.md#ending-early-with-break) and [The open-ended loop](open-loop.md) show.
+`first_small(Countdown(from: 5))` is `2`: the block runs for `5`, `4`, `3`, and `2`, and the `break` at `2` ends the loop. In the lambda the loop gives `each`, a `break` is the answer `.stop`.
+
+```
+fn has_zero(t: Tree) -> bool {
+  loop v in t {
+    if v == 0 { return true }
+  }
+  false
+}
+```
+
+A `return` in the block keeps its value, answers `.stop`, and when `each` has returned, the function gives the value. So `has_zero` gives `true` at the first `0` and walks no further.
+
+A loop whose block has no `break` and no `return` always answers `.go`, which the compiler knows, so it costs what a loop that cannot be stopped would. A loop that can stop costs one test for each element.
 
 ## The forms
 
 | Written | Is |
 | --- | --- |
-| `impl Iterate[C, T] { fn each(c: C, body: (T) -> ()) { ... } }` | Makes `C` loopable, with elements of type `T` |
-| `loop v in x { e }` | The form that is written: the block run for each element of `x`, which means `each(x) fn(v) { e }` |
-| `each(x) fn(v) { e }` | What the loop means, accepted because `each` is an ordinary function |
-| `with v = each(x)` | Written only where the walk is the last thing a function does |
-| `break` in these | Refused: there is no loop to end |
+| `impl Iterate[C, T] { fn each(c: C, body: (T) -> Flow) -> Flow { ... } }` | Makes `C` loopable, with elements of type `T` |
+| `try body(v)` in an `each` | Calls the block, and leaves `each` with `.stop` when the block said stop |
+| `loop v in x { e }` | The form that is written: the block run for each element of `x`, by a call of `each` |
+| `each(x) fn(v) { ... .go }` | A call of `each` with a lambda that gives a `Flow`, accepted because `each` is an ordinary function |
+| `break`, `return` in the block | End the loop, and leave the function, as in any `loop` |
 
 Next: [What arith proves](arith.md)
