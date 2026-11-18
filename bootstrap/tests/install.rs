@@ -224,10 +224,7 @@ impl Setup {
 }
 
 fn write_tool(dir: &Path, name: &str, text: &str) {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join(name);
-    std::fs::write(&path, text).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&dir.join(name), text.as_bytes());
 }
 
 fn text(bytes: &[u8]) -> String {
