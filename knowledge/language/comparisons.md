@@ -56,7 +56,7 @@ fn same_age(a: Cat, b: Cat) -> bool { a.age == b.age }
 
 `same_age(tom, Cat(name: "Rex", age: 4))` is `true`, and `tom == Cat(name: "Rex", age: 4)` is `false`, as they are two cats. A type whose value can be written in more than one way, as a fraction can, keeps one way, so that the same value is always the same parts.
 
-This is what lets a [proof](statements.md) use one of two equal values where the other stood. It holds of the floats too: a float that is not a number equals itself, as the laws below say. Whether `0.0` and `-0.0` are the same value is not settled.
+This is what lets a [proof](statements.md) use one of two equal values where the other stood. It holds of the floats too: a float that is not a number equals itself, as the laws below say. And `0.0` and `-0.0` are two values, as dividing by one gives infinity and by the other its negative, so `0.0 == -0.0` is `false`.
 
 ## Less and greater
 
@@ -120,7 +120,7 @@ An `Ord` that a program writes owes a proof of each law. A law is a function of 
 
 An order that calls two different values `equal` is not an `Ord`. People put in order of their ages are sorted by a key, as `sort_by(people, age)`, and two people of one age are still two.
 
-A float that is not a number therefore equals itself and comes after every other float, and `is_nan` says whether a float is one.
+A float that is not a number therefore equals itself and comes after every other float, and `is_nan` says whether a float is one. `-0.0` comes just before `0.0`, as two values that are not equal cannot compare `equal`. Two floats that should be the same number after rounding are compared within a tolerance by a function of the library, not with `==`.
 
 ## The forms
 
