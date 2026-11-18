@@ -1,0 +1,41 @@
+struct Cat {
+  name: str
+  age: u8
+}
+
+enum Pet {
+  none
+  cat: Cat
+  fish: i64
+}
+
+struct Key {
+  secret: str
+}
+
+impl Hash[Key] {
+  fn hash(value: Key) -> u64 { 7 }
+}
+
+struct Ring {
+  key: Key
+  size: u16
+}
+
+fn main() ! console, alloc {
+  print("{hash("ada")}")
+  print("{hash("")}")
+  print("{hash(-1)}")
+  print("{hash(true)}")
+  print("{hash(false)}")
+  print("{hash(())}")
+  print("{hash(Cat(name: "tom", age: 3))}")
+  print("{hash((1, "x"))}")
+  print("{hash(Pet.cat(Cat(name: "tom", age: 3)))}")
+  print("{hash(Pet.fish(-9))}")
+  print("{hash(Pet.none)}")
+  words: List[str] = ["a", "b"]
+  print("{hash(words)}")
+  print("{hash(Key(secret: "x"))}")
+  print("{hash(Ring(key: Key(secret: "x"), size: 2))}")
+}

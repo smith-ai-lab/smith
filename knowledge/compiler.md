@@ -126,6 +126,16 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 | [Scalar form](#scalar-form) | Inlining, folding, sharing what is worked out twice, and the removal of dead code. The same for every chip |
 | Machine form | Instruction selection and register allocation, for one kind of chip |
 
+## Hashing
+
+The `Hash` a type is given is built from one function over 64 bits and a rule for each kind of type. It is lowered to the scalar form, so the evaluator and every target give the same number, and no run of a program changes it.
+
+- **The function is the finalizer of MurmurHash3 for 64 bits,** `mix`: xor with the value moved down 33 bits, multiply by `0xff51afd7ed558ccd`, the same xor-shift, multiply by `0xc4ceb9fe1a85ec53`, and the same xor-shift once more. It was chosen because it takes every 64-bit number to a different one, so no two numbers are lost, and moves each input bit to about half of the output bits, so the low bits of a hash, which a table reads, depend on every bit of the key. It costs three shifts, three xors, and two multiplies, with no table, and its two constants are all it holds.
+- **A whole number** is widened to 64 bits, by its sign when it has one, and mixed. **Text** is hashed over its bytes by FNV-1a, which costs one xor and one multiply for each byte and is the fastest hash of short keys that has no table, and the result, with the size, is mixed, since FNV-1a alone leaves its low bits weak.
+- **A struct or a tuple** starts from 0, and for each part takes `mix(h * 0x9e3779b97f4a7c15 + part)`, where `part` is the part's own `Hash`. **An enum** does the same from the number of its case and then, for a case that holds something, what it holds, so two cases that hold the same value hash differently. **A list** does the same over its elements, and then its size. A multiplier that is odd takes every `h` to a different number, so the order of the parts changes the hash.
+- **A type's own `impl`** replaces its given one wherever it is a part, so a struct that holds it is hashed with that.
+- A test draws 1000 different values of each kind of type, from numbers that differ by a drawn odd step, and checks that no more of them share the low 16 bits than four times what chance leaves, which is about 8.
+
 ## Backends
 
 | Target | Output |
