@@ -25,6 +25,7 @@ const FILES: &[(&str, bool)] = &[
     ("bootstrap/src/lib.rs", true),
     ("bootstrap/tests/main.rs", true),
     ("compiler/lexer.smith", true),
+    ("std/list.smith", true),
     ("compiler/parser/tokens.smith", true),
     (".github/workflows/ci.yml", true),
     (".gitattributes", true),
