@@ -140,7 +140,7 @@ impl<'a> Lowering<'a> {
             Expr::Field { of, name, .. } => {
                 let (ty, address, scalars) = self.element_at(out, of, env);
                 let (start, size, ty) = match ty {
-                    Ty::List(_) | Ty::Text => (1, 1, Ty::Int(Int::U64)),
+                    Ty::List(_) | Ty::Text => (1, 1, Ty::Int(Int::Nat)),
                     Ty::Struct(s, args) => {
                         let mut start = 0;
                         let mut found = None;

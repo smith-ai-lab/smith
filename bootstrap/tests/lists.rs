@@ -287,7 +287,7 @@ fn reach(g: &mut Gen) -> Reach {
 fn a_var_list_and_a_var_field_are_known_to_arith_until_they_are_assigned() {
     let list = |body: &str| {
         format!(
-            "fn run(f: fn()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  k: u64 = 1\n  if k < xs.size {{\n{body}\n  }}\n}}\n"
+            "fn run(f: fn()) {{ f() }}\n\nfn main() ! console, alloc {{\n  var xs: List[u8] = [1, 2, 3]\n  k: Nat = 1\n  if k < xs.size {{\n{body}\n  }}\n}}\n"
         )
     };
     let field = |body: &str| {
@@ -349,7 +349,7 @@ fn an_index_compiles_exactly_when_arith_proves_it_below_the_size() {
             ),
             2 => (
                 format!(
-                    "  xs: List[u8] = [{items}]\n  k: u64 = {}\n  if k < xs.size {{ print(\"{{xs[k]}}\") }}\n",
+                    "  xs: List[u8] = [{items}]\n  k: Nat = {}\n  if k < xs.size {{ print(\"{{xs[k]}}\") }}\n",
                     r.j
                 ),
                 true,
@@ -357,7 +357,7 @@ fn an_index_compiles_exactly_when_arith_proves_it_below_the_size() {
             ),
             3 => (
                 format!(
-                    "  xs: List[u8] = [{items}]\n  k: u64 = {}\n  print(\"{{xs[k]}}\")\n",
+                    "  xs: List[u8] = [{items}]\n  k: Nat = {}\n  print(\"{{xs[k]}}\")\n",
                     r.j
                 ),
                 r.j < r.n,
@@ -373,7 +373,7 @@ fn an_index_compiles_exactly_when_arith_proves_it_below_the_size() {
             ),
         };
         let source = format!(
-            "fn at(xs: List[u8], k: u64) -> u8\n  requires k < xs.size\n{{\n  xs[k]\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n"
+            "fn at(xs: List[u8], k: Nat) -> u8\n  requires k < xs.size\n{{\n  xs[k]\n}}\n\nfn main() ! console, alloc {{\n{body}}}\n"
         );
         let errors = refused(&source);
         assert_eq!(errors.is_empty(), proven, "{errors:?} for {source}");
@@ -1247,7 +1247,7 @@ fn reading_a_field_of_an_element_reads_only_the_scalars_of_that_field() {
             let element = Ty::Struct(0, fields.clone());
             let field = &fields[*at];
             let source = format!(
-                "{}fn get(xs: List[S0], i: u64) -> {} requires i < xs.size {{ xs[i].f{at} }}\n\nfn main() ! alloc {{\n  xs: List[S0] = [{}]\n  x = get(xs, 0)\n}}\n",
+                "{}fn get(xs: List[S0], i: Nat) -> {} requires i < xs.size {{ xs[i].f{at} }}\n\nfn main() ! alloc {{\n  xs: List[S0] = [{}]\n  x = get(xs, 0)\n}}\n",
                 Ty::source(&[&element]),
                 field.name(),
                 element.written(value),

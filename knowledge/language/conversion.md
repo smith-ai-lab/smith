@@ -4,7 +4,7 @@ title: Conversion
 description: The Convert trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
 status: partial
 built:
-  - "`convert` between whole number types, an `impl Convert` of a program's own, and the conversion an enum is given from the type of exactly one of its cases, the type that is expected picking which, with `without Convert` taking an enum's away"
+  - "`convert` between whole number types, from `u8`, `u16`, `u32`, and `u64` to a `Nat` and from a `Nat` to a `u64`, an `impl Convert` of a program's own, and the conversion an enum is given from the type of exactly one of its cases, the type that is expected picking which, with `without Convert` taking an enum's away"
   - "`narrow`, `wrapping_narrow`, `saturating_narrow`, and `checked_narrow` between whole number types, the type that is expected picking the result, `narrow` compiling when `arith` proves that the value fits, and an error that says to use `convert` when the second type holds every value of the first"
 ---
 

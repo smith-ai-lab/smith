@@ -145,7 +145,7 @@ const TEXT: &str = "str";
 /// The types the language and its library define that the compiler does
 /// not build yet.
 const TYPES_NOT_BUILT: &[&str] = &[
-    "usize", "f16", "bf16", "f32", "f64", "Nat", "Pos", "Fin", "Ptr", "Map",
+    "usize", "f16", "bf16", "f32", "f64", "Pos", "Fin", "Ptr", "Map",
 ];
 
 /// The names of the types `PRELUDE` defines.
@@ -441,6 +441,16 @@ impl Ty {
         match self {
             Ty::Flex(_) => Ty::Int(Int::I64),
             t => t.with_args(t.args().iter().map(Ty::concrete).collect()),
+        }
+    }
+
+    /// The type as the scalar form sees it, in which a `Nat` is a `u64`: both
+    /// are 64 bits, so a program that holds a count in a `Nat` is the program
+    /// that held it in a `u64`.
+    fn lowered(&self) -> Ty {
+        match self {
+            Ty::Int(Int::Nat) => Ty::Int(Int::U64),
+            t => t.with_args(t.args().iter().map(Ty::lowered).collect()),
         }
     }
 
@@ -5103,7 +5113,7 @@ impl<'a> Checker<'a> {
                     return self.case(body, Some(e), name, of.pos(), *pos, None, want);
                 }
                 match self.expr(body, of, &Want::Any) {
-                    Ty::List(_) | Ty::Text if name == "size" => Ty::Int(Int::U64),
+                    Ty::List(_) | Ty::Text if name == "size" => Ty::Int(Int::Nat),
                     Ty::List(_) => {
                         self.errors.push(Error::new(
                             *pos,
