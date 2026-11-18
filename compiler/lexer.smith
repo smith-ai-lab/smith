@@ -6,8 +6,8 @@
 use std.ascii (is_digit, is_hex_digit, is_letter)
 
 struct Pos {
-  line: u64
-  col: u64
+  line: Nat
+  col: Nat
 }
 
 // GAP 3 (#190): a str cannot be made from bytes, so text is kept as bytes.
@@ -202,11 +202,11 @@ fn valid_prefix(src: List[u8], i: Nat) -> n: Nat
 
 fn advance(pos: Pos, b: u8) -> Pos {
   if b == '\n' {
-    Pos(line: wrapping_add(pos.line, 1), col: 1)
+    Pos(line: saturating_add(pos.line, 1), col: 1)
   } else if is_continuation(b) {
     pos
   } else {
-    Pos(line: pos.line, col: wrapping_add(pos.col, 1))
+    Pos(line: pos.line, col: saturating_add(pos.col, 1))
   }
 }
 
@@ -226,7 +226,7 @@ fn text_errors(src: List[u8]) -> List[LexError] ! alloc {
         i = i + have
       } else {
         errors = push(errors, LexError(pos: pos, code: 2, why: 0, detail: []))
-        pos = Pos(line: pos.line, col: wrapping_add(pos.col, 1))
+        pos = Pos(line: pos.line, col: saturating_add(pos.col, 1))
         i = i + have
       }
     }
@@ -640,7 +640,7 @@ fn expression2(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
   outside = lx.tokens
   var next = lx
   next.tokens = []
-  var depth: u64 = 0
+  var depth: Nat = 0
   var closed = false
   loop round in 0..lx.src.size {
     at = next.pos
@@ -654,8 +654,8 @@ fn expression2(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
           closed = true
           break
         } else {
-          if c == '{' { depth = wrapping_add(depth, 1) }
-          if c == '}' { depth = wrapping_sub(depth, 1) }
+          if c == '{' { depth = saturating_add(depth, 1) }
+          if c == '}' { depth = saturating_sub(depth, 1) }
           next = token3(next, at, c)
         }
       }
@@ -774,7 +774,7 @@ fn expression1(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
   outside = lx.tokens
   var next = lx
   next.tokens = []
-  var depth: u64 = 0
+  var depth: Nat = 0
   var closed = false
   loop round in 0..lx.src.size {
     at = next.pos
@@ -788,8 +788,8 @@ fn expression1(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
           closed = true
           break
         } else {
-          if c == '{' { depth = wrapping_add(depth, 1) }
-          if c == '}' { depth = wrapping_sub(depth, 1) }
+          if c == '{' { depth = saturating_add(depth, 1) }
+          if c == '}' { depth = saturating_sub(depth, 1) }
           next = token2(next, at, c)
         }
       }
@@ -908,7 +908,7 @@ fn expression0(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
   outside = lx.tokens
   var next = lx
   next.tokens = []
-  var depth: u64 = 0
+  var depth: Nat = 0
   var closed = false
   loop round in 0..lx.src.size {
     at = next.pos
@@ -922,8 +922,8 @@ fn expression0(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
           closed = true
           break
         } else {
-          if c == '{' { depth = wrapping_add(depth, 1) }
-          if c == '}' { depth = wrapping_sub(depth, 1) }
+          if c == '{' { depth = saturating_add(depth, 1) }
+          if c == '}' { depth = saturating_sub(depth, 1) }
           next = token1(next, at, c)
         }
       }
