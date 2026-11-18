@@ -26,6 +26,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      # On Linux the compiler is linked statically, so that it needs nothing
+      # from the machine it runs on, as the programs it compiles need nothing.
+      # The runner's own C library supplies `libc.a`, so nothing is installed.
       - name: Build the optimized compiler
         shell: bash
         working-directory: bootstrap
@@ -33,14 +36,51 @@ jobs:
           SMITH_VERSION: ${{ inputs.version }}
         run: |
           set -eu
-          cargo build --release --locked
+          mkdir -p "$RUNNER_TEMP/out"
+          case "${{ inputs.target }}" in
+            linux_x64) triple=x86_64-unknown-linux-gnu ;;
+            linux_arm64) triple=aarch64-unknown-linux-gnu ;;
+            *) triple= ;;
+          esac
           case "${{ inputs.target }}" in
             windows_*) suffix=.exe ;;
             *) suffix= ;;
           esac
-          mkdir -p "$RUNNER_TEMP/out"
-          cp "target/release/smith$suffix" "$RUNNER_TEMP/out/smith-${{ inputs.target }}$suffix"
+          if [ -n "$triple" ]; then
+            RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --locked --target "$triple"
+            built="target/$triple/release/smith"
+          else
+            cargo build --release --locked
+            built="target/release/smith$suffix"
+          fi
+          cp "$built" "$RUNNER_TEMP/out/smith-${{ inputs.target }}$suffix"
           "$RUNNER_TEMP/out/smith-${{ inputs.target }}$suffix" --version
+      # Fails when the Linux executable needs a shared library, or does not
+      # run in a container that has no C library, and when it writes other
+      # bytes than the compiler linked dynamically does.
+      - name: Check that the Linux executable is static
+        if: startsWith(inputs.target, 'linux_')
+        shell: bash
+        run: |
+          set -eu
+          smith="$RUNNER_TEMP/out/smith-${{ inputs.target }}"
+          file "$smith" | tee "$RUNNER_TEMP/file"
+          grep -Eq 'statically linked|static-pie linked' "$RUNNER_TEMP/file"
+          if ldd "$smith" > "$RUNNER_TEMP/ldd" 2>&1; then :; fi
+          cat "$RUNNER_TEMP/ldd"
+          grep -Eq 'statically linked|not a dynamic executable' "$RUNNER_TEMP/ldd"
+          # An image with nothing in it, so no C library.
+          tar -cT /dev/null | docker import - empty
+          docker run --rm -v "$RUNNER_TEMP/out:/out:ro" empty "/out/smith-${{ inputs.target }}" --version
+          mkdir "$RUNNER_TEMP/static" "$RUNNER_TEMP/dynamic"
+          cp bootstrap/tests/cases/hello.smith "$RUNNER_TEMP/static/"
+          cp bootstrap/tests/cases/hello.smith "$RUNNER_TEMP/dynamic/"
+          docker run --rm -v "$RUNNER_TEMP/static:/work" -w /work \
+            -v "$RUNNER_TEMP/out:/out:ro" empty "/out/smith-${{ inputs.target }}" build hello.smith
+          docker run --rm -v "$RUNNER_TEMP/static:/work:ro" empty /work/hello | grep -qx 'hello world'
+          (cd bootstrap && cargo build --release --locked)
+          (cd "$RUNNER_TEMP/dynamic" && "$GITHUB_WORKSPACE/bootstrap/target/release/smith" build hello.smith)
+          cmp "$RUNNER_TEMP/static/hello" "$RUNNER_TEMP/dynamic/hello"
       - uses: actions/upload-artifact@v4
         with:
           name: smith-${{ inputs.target }}
