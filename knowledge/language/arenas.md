@@ -4,7 +4,8 @@ title: The alloc effect and arenas
 description: Data whose size is known only at run time, such as a growing list or a map, allocates through the alloc effect, and with arena() gives the rest of a block a fresh arena that is freed whole when the block ends.
 status: partial
 built:
-  - "the `alloc` effect, carried by every function that builds a text at run time, whose memory is kept until the program ends"
+  - "the `alloc` effect, carried by every function that builds a text at run time"
+  - "a function's temporaries released when it returns, and its result built in its caller's memory and never copied"
 ---
 
 # The alloc effect and arenas
