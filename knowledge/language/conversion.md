@@ -66,9 +66,9 @@ impl[A, B] Add[B, A, B]
 }
 ```
 
-So an `i32` plus an `i64` is an `i64`, and a `u32` plus an `i32` is a compile error, because neither holds every value of the other. The result must fit like any other, as [Literals and numbers](numbers.md) says. The other arithmetic operators, `Eq`, and `Ord` have the same two implementations, so an `i32` is compared with an `i64` too. They are written for every type and not for numbers alone, so `Feet` is added to `Meters` once `Meters` implements `Add`.
+So an `i32` plus an `i64` is an `i64`, and a `u32` plus an `i32` is a compile error, because neither holds every value of the other. The result must fit like any other, as [Integer arithmetic](arithmetic.md) says. The other arithmetic operators, `Eq`, and `Ord` have the same two implementations, so an `i32` is compared with an `i64` too. They are written for every type and not for numbers alone, so `Feet` is added to `Meters` once `Meters` implements `Add`.
 
-A whole number goes to a type that does not hold all of its values with `narrow`, which follows the pattern of [integer arithmetic](numbers.md). The plain form compiles only when `arith` proves that the value fits, and costs nothing. Where that cannot be proven, the author picks what happens by name.
+A whole number goes to a type that does not hold all of its values with `narrow`, which follows the pattern of [integer arithmetic](arithmetic.md). The plain form compiles only when `arith` proves that the value fits, and costs nothing. Where that cannot be proven, the author picks what happens by name.
 
 ```
 fn digit(n: u64) -> u8

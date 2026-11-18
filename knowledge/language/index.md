@@ -17,7 +17,10 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [enums.md](enums.md): enums that hold exactly one of their cases, each case holding a type or nothing, and how a case is built.
 - [match.md](match.md): `match`, which takes a value apart with a pattern and a block for each way it can be, patterns for cases, tuples, and literals, and the rules for covering every case.
 - [traits.md](traits.md): type parameters, traits over one or more types, `impl`, operators as trait functions, and `derive`.
-- [numbers.md](numbers.md): literals backed by traits, the numeric types, and integer arithmetic that never overflows silently.
+- [literals.md](literals.md): how a number, a character, a text, `true`, `false`, or an array is written, the trait that backs each, and how the type of a literal is decided.
+- [number-types.md](number-types.md): the whole number and float types, what each holds, and why a number has exactly one type.
+- [arithmetic.md](arithmetic.md): integer arithmetic that never overflows silently, a plain `+`, `-`, or `*` that compiles only when its result provably fits, and `wrapping_`, `saturating_`, and `checked_` where it cannot be proven.
+- [bits.md](bits.md): the functions that and, or, xor, and not the bits of a whole number and shift them, with a shift proven to stay inside the type.
 - [conversion.md](conversion.md): the `Convert` trait, which turns a value of one type into another where nothing is lost, how it lets two types meet in an operator, and narrowing a whole number.
 - [lambdas.md](lambdas.md): a function with no name, written where it is passed to a call.
 - [function-values.md](function-values.md): a function with a name used as a value, which can be passed, stored, and returned.

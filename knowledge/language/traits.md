@@ -69,4 +69,4 @@ fn sum3[A, B](x: A, y: B, z: B) -> B
 - `derive Add for Circle` generates an implementation field by field.
 - A trait states the defaults of its functions' parameters, and an `impl` does not repeat them.
 
-Next: [Literals and numbers](numbers.md)
+Next: [Literals](literals.md)
