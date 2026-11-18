@@ -154,7 +154,7 @@ fn main() ! console {
 fn before() -> str { "later" }
 ```
 
-This prints `later`. A function name is defined once, and so is a parameter name within its function.
+This prints `later`. A function name is defined once, and so is a parameter name within its function. A function cannot take a name the file already has, from another definition, from a `use`, or from [the prelude](prelude.md#a-name-means-one-thing).
 
 - A second `fn first` is refused: "there is already a function named `first`".
 - `fn pair(x: str, x: str)` is refused: "`x` is already defined in `pair`".
