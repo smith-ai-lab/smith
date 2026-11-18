@@ -88,11 +88,38 @@ fn lacking(defs: &Defs, scope: &Scope, which: usize, ty: &Ty) -> Option<usize> {
         .flatten()
 }
 
+/// Why a type has no `Discard`: `None` when it has it, and otherwise the type
+/// parameter that lacks it, if that is why.
+fn undiscardable(defs: &Defs, scope: &Scope, ty: &Ty) -> Option<Option<usize>> {
+    has((defs, scope), DISCARD, ty, &mut Vec::new()).err()
+}
+
+/// What follows `what is dropped, as nothing takes it`: which type cannot be
+/// dropped, and the fix.
+fn why_dropped(defs: &Defs, scope: &Scope, ty: &Ty, cause: Option<usize>) -> (String, String) {
+    match cause {
+        Some(p) => {
+            let param = &scope.names[p];
+            (
+                format!(", and `{param}` has no `Discard`"),
+                format!("write `{param}: Discard`"),
+            )
+        }
+        None => (
+            format!(
+                ", and a `{}` cannot be dropped, as it has no `Discard`",
+                defs.text(ty, scope)
+            ),
+            "give it to a function that takes it, or return it".to_string(),
+        ),
+    }
+}
+
 /// A name, and the fields after it that are read from it.
 type Path = (String, Vec<String>);
 
 /// A value the function owns and has not taken on some path, whose type has
-/// a type parameter that gives it no `Discard`.
+/// no `Discard`, because of a type parameter or a `without`.
 #[derive(Clone, Debug)]
 struct Held {
     name: String,
@@ -113,6 +140,8 @@ struct Moved {
 /// names it gives away that it did not.
 #[derive(Default)]
 struct Frame {
+    /// What was held where the lambda began, which its `return` does not drop.
+    outer: Vec<(String, Pos)>,
     own: HashSet<String>,
     gives: Vec<(String, Pos, Option<Ty>)>,
 }
@@ -265,11 +294,10 @@ impl<'a> Walk<'a> {
         (self.types.get(&addr(e))).is_none_or(|ty| copies(self.defs, self.scope, ty))
     }
 
-    /// Notes that a value was bound that must be used, if its type has a
-    /// type parameter that gives it no `Discard`. A value the walk knows
-    /// nothing more of, as one of a concrete type, may be dropped.
+    /// Notes that a value was bound that must be taken, if its type has no
+    /// `Discard`.
     fn own(&mut self, st: &mut State, name: &str, pos: Pos, ty: &Ty) {
-        if self.lent.contains_key(name) || lacking(self.defs, self.scope, DISCARD, ty).is_none() {
+        if self.lent.contains_key(name) || undiscardable(self.defs, self.scope, ty).is_none() {
             return;
         }
         if let Some(moved) = st {
@@ -284,29 +312,33 @@ impl<'a> Walk<'a> {
     }
 
     /// Reports each value that may be dropped where `st` is, as the function
-    /// ends there.
+    /// ends there, or as the lambda that returns does, which drops only what
+    /// it holds itself.
     fn dropped(&mut self, st: &State) {
         let Some(moved) = st else {
             return;
         };
+        let outer = self.inside.last().map(|f| f.outer.clone());
         for h in &moved.held {
-            let Some(p) = lacking(self.defs, self.scope, DISCARD, &h.ty) else {
+            if outer
+                .as_ref()
+                .is_some_and(|o| o.iter().any(|(n, p)| *n == h.name && *p == h.pos))
+            {
+                continue;
+            }
+            let Some(cause) = undiscardable(self.defs, self.scope, &h.ty) else {
                 continue;
             };
-            let param = self.scope.names[p].clone();
-            let message = format!(
-                "`{}` is dropped here, as nothing takes it, and `{param}` has no `Discard`",
-                h.name
-            );
+            let (why, fix) = why_dropped(self.defs, self.scope, &h.ty, cause);
+            let message = format!("`{}` is dropped here, as nothing takes it{why}", h.name);
             if let Some(error) = self.error(h.pos, message) {
-                error.fix = Some(format!("write `{param}: Discard`"));
+                error.fix = Some(fix);
             }
         }
     }
 
     /// Reports a value that nothing uses, as the result of a call that is
-    /// a statement of its own is, when its type has a type parameter that gives it
-    /// no `Discard`.
+    /// a statement of its own is, when its type has no `Discard`.
     fn temporary(&mut self, e: &Expr) {
         let made = matches!(
             e,
@@ -318,14 +350,13 @@ impl<'a> Walk<'a> {
         let Some(ty) = self.types.get(&addr(e)) else {
             return;
         };
-        let Some(p) = lacking(self.defs, self.scope, DISCARD, ty) else {
+        let Some(cause) = undiscardable(self.defs, self.scope, ty) else {
             return;
         };
-        let param = self.scope.names[p].clone();
-        let message =
-            format!("this value is dropped, as nothing takes it, and `{param}` has no `Discard`");
+        let (why, fix) = why_dropped(self.defs, self.scope, ty, cause);
+        let message = format!("this value is dropped, as nothing takes it{why}");
         if let Some(error) = self.error(e.pos(), message) {
-            error.fix = Some(format!("write `{param}: Discard`"));
+            error.fix = Some(fix);
         }
     }
 
@@ -373,7 +404,13 @@ impl<'a> Walk<'a> {
         let lent = self.lent.get(&path.0).cloned();
         // A value is taken where a value without `Copy` would be given away:
         // looking at it, lending it, and reading a part of it take nothing.
-        if !matches!(flow, Flow::Lend) && path.1.is_empty() {
+        // A part that has no `Discard` is taken with it.
+        let part_held = !path.1.is_empty()
+            && self
+                .types
+                .get(&addr(e))
+                .is_some_and(|ty| undiscardable(self.defs, self.scope, ty).is_some());
+        if !matches!(flow, Flow::Lend) && (path.1.is_empty() || part_held) {
             moved.held.retain(|h| h.name != path.0);
         }
         if let Some((_, at)) = moved.gone.iter().find(|(p, _)| overlap(p, &path)) {
@@ -594,6 +631,27 @@ impl<'a> Walk<'a> {
                     if let Some(moved) = st {
                         let path: Path =
                             (name.clone(), fields.iter().map(|f| f.0.clone()).collect());
+                        // The value a field held is dropped by the assignment,
+                        // unless it was taken.
+                        let kept = !moved.gone.iter().any(|(p, _)| overlap(p, &path));
+                        let old = self.types.get(&addr(value)).cloned();
+                        let cause = old.and_then(|ty| {
+                            let cause = undiscardable(self.defs, self.scope, &ty)?;
+                            Some((ty, cause))
+                        });
+                        if let (true, Some((ty, cause)), Some(at)) = (kept, cause, fields.last()) {
+                            let (why, fix) = why_dropped(self.defs, self.scope, &ty, cause);
+                            let message = format!(
+                                "`{}` is dropped here, as the assignment replaces it and nothing takes it{why}",
+                                written(&path)
+                            );
+                            if let Some(error) = self.error(at.1, message) {
+                                error.fix = Some(fix);
+                            }
+                        }
+                        let Some(moved) = st else {
+                            continue;
+                        };
                         moved
                             .gone
                             .retain(|(p, _)| !(path.0 == p.0 && p.1.starts_with(&path.1)));
@@ -622,17 +680,16 @@ impl<'a> Walk<'a> {
         if let Some(frame) = self.inside.last_mut() {
             frame.own.insert(name.to_string());
         }
-        if st.is_some() {
-            let old = st
-                .as_ref()
-                .and_then(|m| m.held.iter().find(|h| h.name == name).cloned());
-            if let Some(old) = old {
-                let mut dropping = Some(Moved {
-                    gone: Vec::new(),
-                    held: vec![old],
-                });
-                self.dropped(&dropping.take());
-            }
+        // Every value the name may hold is dropped, as paths that met may
+        // hold different ones.
+        let old: Vec<Held> = (st.as_ref())
+            .map(|m| m.held.iter().filter(|h| h.name == name).cloned().collect())
+            .unwrap_or_default();
+        if !old.is_empty() {
+            self.dropped(&Some(Moved {
+                gone: Vec::new(),
+                held: old,
+            }));
         }
         if let Some(moved) = st {
             moved.gone.retain(|(p, _)| p.0 != name);
@@ -764,7 +821,14 @@ impl<'a> Walk<'a> {
     /// lambda is called once, so it is passed to a parameter that takes its
     /// function. Its parameter owns what it is given when `takes` says so.
     fn lambda(&mut self, st: &mut State, l: &Lambda, takes: &[bool], kept: Kept) {
-        self.inside.push(Frame::default());
+        let outer = st
+            .as_ref()
+            .map(|m| m.held.iter().map(|h| (h.name.clone(), h.pos)).collect())
+            .unwrap_or_default();
+        self.inside.push(Frame {
+            outer,
+            ..Frame::default()
+        });
         for (i, param) in l.params.iter().enumerate() {
             let lent = (!takes.get(i).copied().unwrap_or(false)).then(|| "this lambda".to_string());
             self.bind(st, &param.0, lent);
@@ -795,16 +859,17 @@ impl<'a> Walk<'a> {
         // A function that is taken is called at most once, so it may not call
         // the lambda, and what the lambda gives away is dropped.
         let lacks = frame.gives.iter().find_map(|(name, _, ty)| {
-            let p = lacking(self.defs, self.scope, DISCARD, ty.as_ref()?)?;
-            Some((name.clone(), p))
+            let ty = ty.as_ref()?;
+            let cause = undiscardable(self.defs, self.scope, ty)?;
+            Some((name.clone(), ty.clone(), cause))
         });
-        if let Some((name, p)) = lacks {
-            let param = self.scope.names[p].clone();
+        if let Some((name, ty, cause)) = lacks {
+            let (why, fix) = why_dropped(self.defs, self.scope, &ty, cause);
             let message = format!(
-                "this lambda gives away `{name}`, and the function it is passed to may not call it, which drops `{name}`, and `{param}` has no `Discard`"
+                "this lambda gives away `{name}`, and the function it is passed to may not call it, which drops `{name}`{why}"
             );
             if let Some(error) = self.error(l.pos, message) {
-                error.fix = Some(format!("write `{param}: Discard`"));
+                error.fix = Some(fix);
             }
         }
         // A lambda inside a lambda that gives a name away is called once too.
