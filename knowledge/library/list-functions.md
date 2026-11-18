@@ -74,7 +74,7 @@ A part is found where it first begins, so `find("abab", "ab")` is `.some(0)`. A 
 `append` gives a list of the elements of `a` and then those of `b`. It needs no `Eq`, as it compares nothing, and it allocates, as [`push`](list.md) does.
 
 ```
-fn append[T](a: List[T], b: List[T]) -> List[T] ! alloc
+fn append[T](a: take List[T], b: List[T]) -> List[T] ! alloc
 ```
 
 ```
@@ -88,7 +88,7 @@ fn demo() ! alloc {
 
 `append([1, 2], [3])` is `[1, 2, 3]`. `append([], [3])` is `[3]`, and with an empty `b` the result has the elements of `a` alone.
 
-Nothing about `append` is known to the compiler. It is a function written with `push`, so `out = append(out, more)` grows `out` in place by the rule that holds of every function: a `var` that is given a new value is [updated in place](../language/arenas.md) when nothing else can read the old one.
+Nothing about `append` is known to the compiler. It is a function written with `push`, and it takes `a` as `push` takes its list, so `out = append(out, more)` grows `out` in place, as [a list is never copied unasked](../language/ownership.md#a-list-is-never-copied-unasked). `b` is lent, and its elements are copied into the room after `a`'s.
 
 ## The forms
 
