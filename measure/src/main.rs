@@ -1,6 +1,7 @@
-//! Times the two programs that decide how fast a Smith program is, a loop
-//! that pushes to a list and the lexer in `compiler/lexer.smith`, and the Rust
-//! lexer on the same inputs, and how fast the compiler builds. It prints one
+//! Times the programs that decide how fast a Smith program is, a loop that
+//! pushes to a list, the lexer in `compiler/lexer.smith`, and `std.json`
+//! writing a list of structs, each beside the same program in Rust, and how
+//! fast the compiler builds. It prints one
 //! line for each program, each implementation, and each size, with the time
 //! for each push or each byte, and for `build` the time of each stage of a
 //! build. Run it with `sh measure/run.sh`, which times the compiler in
@@ -9,6 +10,7 @@
 //! `run.sh` builds. Nothing here is a test.
 
 mod build;
+mod json;
 
 use std::hint::black_box;
 use std::io::Read;
@@ -58,6 +60,9 @@ fn main() {
     }
     if wants("build") {
         build::run(&smith, &work, &root);
+    }
+    if wants("json") {
+        json::run(&smith, &work);
     }
     std::fs::remove_dir_all(&work).ok();
 }
