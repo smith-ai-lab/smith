@@ -53,14 +53,25 @@ A pattern has as many names as the tuple has values, and each is defined with th
 
 This gives "this pattern takes apart a tuple of 3, and it matches a `(i32, i32)`". A pattern on a value that is not a tuple gives the same message with that type, so `(a, b) = count()` where `count` returns an `i32` gives "this pattern takes apart a tuple of 2, and it matches a `i32`". A value of the wrong type inside the tuple is refused where it is written: `fn pair() -> (i32, str) { (1, 2) }` gives "this is a number, where text is needed".
 
-A parameter is a single name with a type. A pattern cannot stand where a parameter does: `fn f((n, s): (i32, str))` is refused with "expected a parameter or `)`, found `(`". The tuple is taken apart on the first line of the function.
+## A pattern wherever a name is introduced
+
+A tuple's pattern may stand wherever a name is introduced, and not only on the left of a binding: as a parameter of a function, as a parameter of a [lambda](lambdas.md), and as the name of a [`loop`](loop.md).
 
 ```
-fn first(t: (i32, str)) -> i32 {
-  (n, s) = t
-  n
+fn first((n, s): (i32, str)) -> i32 { n }
+
+fn total(pairs: List[(str, i32)]) -> i32 {
+  var sum = 0
+  loop (name, count) in pairs { sum = wrapping_add(sum, count) }
+  sum
 }
 ```
+
+`first((7, "x"))` is `7`. In `total`, each element of `pairs` is taken apart as the loop meets it. A lambda does the same: `map(pairs) fn((name, count)) { count }`.
+
+Only a pattern that always matches may stand in these places: a name, and a tuple of such patterns. A pattern that names a case or a literal may not match, so it is written in a [`match`](match.md).
+
+A parameter written as a pattern has no name of its own, so its argument is given by position. `first(t: (7, "x"))` is refused, as `first` has no parameter named `t`. The compiler does not build a pattern in these places, so no words are quoted.
 
 ## A `var` in a pattern
 

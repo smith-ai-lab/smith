@@ -59,7 +59,9 @@ result     = [ IDENT ":" ] type ;
 generics   = "[" generic { "," generic } "]" ;
 generic    = [ "out" ] IDENT [ ":" type ] [ "=" type ] ;
 params     = param { "," param } [ "," ] ;
-param      = IDENT ":" [ "take" ] type [ "=" expr ] ;
+param      = ( IDENT | tuple_pat ) ":" [ "take" ] type [ "=" expr ] ;
+tuple_pat  = "(" bind_pat { "," bind_pat } ")" ;
+bind_pat   = IDENT | "var" IDENT | tuple_pat ;
 effects    = "!" IDENT { "," IDENT } ;
 contract   = ( "requires" | "ensures" ) expr | "decreases" expr { "," expr } ;
 
@@ -104,8 +106,8 @@ case       = "." IDENT [ "(" [ args ] ")" ] ;
 if         = "if" expr block [ "else" ( block | if ) ] ;
 match      = "match" expr "{" { pattern block } "}" ;
 for        = "for" IDENT { "," IDENT } block ;
-loop       = "loop" [ IDENT "in" expr | "decreases" expr { "," expr } ] block ;
-lambda     = [ "fn" "(" IDENT { "," IDENT } ")" ] block ;
+loop       = "loop" [ ( IDENT | tuple_pat ) "in" expr | "decreases" expr { "," expr } ] block ;
+lambda     = [ "fn" "(" ( IDENT | tuple_pat ) { "," ( IDENT | tuple_pat ) } ")" ] block ;
 
 type       = statement
            | IDENT [ "[" type_arg { "," type_arg } "]" ]
