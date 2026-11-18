@@ -43,7 +43,7 @@ A number outside the range is refused where it is written, with the range in the
 
 ## Comparing two numbers
 
-`==` and `!=` ask whether two numbers are equal, and `<`, `<=`, `>`, and `>=` how they stand. Each gives a `bool`, and is a trait function, as [Generics and traits](traits.md) says.
+`==` and `!=` ask whether two numbers are equal, and `<`, `<=`, `>`, and `>=` how they stand. Each gives a `bool`, and is a trait function, as [Comparisons](comparisons.md) says.
 
 ```
 fn main() ! console, alloc {

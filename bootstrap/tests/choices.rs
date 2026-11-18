@@ -16,7 +16,7 @@
 //! blocks of a `match`.
 //!
 //! The generator works out what the program prints from the values it
-//! built, as `knowledge/language/traits.md` and
+//! built, as `knowledge/language/comparisons.md` and
 //! `knowledge/language/if.md` say they compare and choose.
 
 use crate::generate::Gen;

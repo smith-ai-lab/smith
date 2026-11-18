@@ -15,7 +15,7 @@ trait Iterate[C, out T] {
 }
 ```
 
-`C` is the type that is walked, `T` is the type of its elements, and `body` is called once for each element. `T` is marked `out`, so it is determined by `C`, as [Traits](traits.md) says: once the type that is walked is known, so is the type of its elements.
+`C` is the type that is walked, `T` is the type of its elements, and `body` is called once for each element. `T` is marked `out`, so it is determined by `C`, as [`out` parameters](out-parameters.md) says: once the type that is walked is known, so is the type of its elements.
 
 ## Making a type loopable
 

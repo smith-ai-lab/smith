@@ -1,72 +1,136 @@
 ---
 type: specification
-title: Generics and traits
-description: Type parameters, traits over one or more types, impl, operators as trait functions, and derive.
+title: Traits
+description: A trait as a set of functions over one or more types, an impl that supplies them for particular types, how a call finds the impl, and the defaults of a trait's parameters.
 status: partial
-built: "type parameters, traits with `out` parameters, `impl`, bounds such as `T: Plus`, `requires Trait[...]` on a function or an `impl`, calls of trait functions with defaults, `==` and `!=` through the `Eq` every `str`, struct, enum, tuple, `bool`, `()`, and integer type is given, and `<`, `<=`, `>`, and `>=` through the `Ord` every integer type has"
+built: "`impl`, calls of trait functions with defaults"
 ---
 
-# Generics and traits
+# Traits
 
-Type parameters go in brackets after a name. A trait is a set of functions over one or more types, and an `impl` supplies them for particular types. A trait parameter marked `out` is determined by the others: once the two operand types of `add` are known, its result type is fixed. A type parameter may have a default, written with `=` as a function's parameter writes one. A default may name a parameter before it, and parameters with defaults come after those without. So `Add[Rect]` means `Add[Rect, Rect, Rect]`, and a bound such as `T: Add` means `Add[T]`.
+A trait is a set of functions over one or more types. An `impl` supplies those functions for particular types.
 
-```
-enum Option[T] {
-  some: T
-  none
-}
+## A trait and an impl
 
-trait Add[A, B = A, out C = A] {
-  fn add(a: A, b: B) -> C
-}
-
-impl Add[Rect] {
-  fn add(a: Rect, b: Rect) -> Rect { Rect(w: a.w + b.w, h: a.h + b.h) }
-}
-
-fn twice[T: Add](x: T) -> T { x + x }
-
-big = twice(unit)
-both = add(unit, unit)
-```
-
-A requirement about more than one type is written with `requires`, on a line after a function's signature or an `impl`'s head. It names an implementation that must exist for the types the function or the `impl` is used with, and inside, that implementation's functions can be called. `T: Add` is the short form of `requires Add[T]`.
+`Named` is a trait with one function, which takes a `T` and gives a `str`. `T` is a [type parameter](type-parameters.md) of the trait. Each `impl` names the types it is for in brackets, and writes the functions.
 
 ```
-fn sum3[A, B](x: A, y: B, z: B) -> B
-  requires Add[A, B, B]
-  requires Add[B]
-{
-  x + y + z
+struct Cat {
+  name: str
+}
+
+struct Bird {
+  name: str
+}
+
+trait Named[T] {
+  fn name_of(x: T) -> str
+}
+
+impl Named[Cat] {
+  fn name_of(x: Cat) -> str { x.name }
+}
+
+impl Named[Bird] {
+  fn name_of(x: Bird) -> str { "bird" }
 }
 ```
 
-- A trait function is called like any other function, as in `add(unit, unit)`. It is qualified, as in `Add.add`, only when two names clash.
-- Operators are trait functions: `a + b` means `Add.add(a, b)`. The arithmetic operators are `+`, `-`, `*`, `/`, and `^` for a power.
-- A trait has at most one implementation for each choice of its types that are not `out`, and calls are specialized at compile time, so traits cost nothing at run time. An `impl` with type parameters stands for every choice of them that its `requires` lines allow, and a use that two implementations fit is an error.
+A trait function is called like any other function. The call finds the `impl` from the types of its arguments, so `name_of(Cat(name: "Tom"))` is `"Tom"`, and `name_of(Bird(name: "Tweety"))` is `"bird"`.
 
-  The operands of an arithmetic operator may differ in type, so a number times an array, or a number times a struct of weights, is one more `impl` of `Mul`.
-- Comparisons are trait functions too. `a == b` means `Eq.eq(a, b)` and `a != b` means `not (a == b)`. `<`, `<=`, `>`, and `>=` come from `Ord`, whose one function says how two values stand. The two sides may differ in type where an implementation relates them, as two integer types are related under [Conversion](conversion.md). A comparison always gives one `bool`, on arrays too: `x == y` says whether two arrays are the same, and the comparison of each pair of elements is `for i { x[i] == y[i] }`.
+## When a call has no impl
 
-  ```
-  trait Eq[A, B = A] {
-    fn eq(a: A, b: B) -> bool
-  }
+A call of a trait function for types that have no `impl` is refused.
 
-  enum Order {
-    less
-    equal
-    greater
-  }
+```
+trait Named[T] {
+  fn name_of(x: T) -> str
+}
 
-  trait Ord[A, B = A] {
-    fn compare(a: A, b: B) -> Order
-  }
-  ```
-- Both traits keep their laws for every type, so code written over them is right for every type. Every value equals itself, every two values of a type with `Ord` can be ordered, and `compare` gives `equal` exactly when `==` is true. A float that is not a number therefore equals itself and comes after every other float, and `is_nan` says whether a float is one.
-- Text is ordered by its bytes. The `Ord` a type is given orders a struct by its fields in the order they are written, a tuple and an array by their elements in order, and an enum by the order of its cases and then by what a case holds.
-- `Eq` and `Ord` are given automatically, as [`Copy`](ownership.md) is: a struct, an enum, a tuple, or an array has each unless one of its parts lacks it, and `without Ord for T` takes one away. A type's own `impl` replaces the one it was given.
-- `derive Add for Circle` generates an implementation field by field.
-- A trait states the defaults of its functions' parameters, and an `impl` does not repeat them.
+fn main() ! console {
+  print(name_of(Cat(name: "Tom")))
+}
+```
 
-Next: [Literals](literals.md)
+The error is "there is no implementation of `Named` for `Cat`".
+
+## What an impl must write
+
+An `impl` writes every function of its trait. This one leaves out `shout`.
+
+```
+trait Named[T] {
+  fn name_of(x: T) -> str
+  fn shout(x: T) -> str
+}
+
+impl Named[Cat] {
+  fn name_of(x: Cat) -> str { x.name }
+}
+```
+
+It is refused: "this implementation of `Named` lacks `shout`".
+
+A trait has at most one `impl` for a choice of types. A second `impl Named[Cat]` is refused: "`Named` is already implemented for `Cat`".
+
+## When two traits share a name
+
+Each trait is its own set of functions, so two traits may have a function of the same name. A call that could mean either is refused, and it is written with the name of the trait, as `Named.label(c)`.
+
+```
+trait Named[T] {
+  fn label(x: T) -> str
+}
+
+trait Titled[T] {
+  fn label(x: T) -> str
+}
+
+impl Named[Cat] {
+  fn label(x: Cat) -> str { x.name }
+}
+
+impl Titled[Cat] {
+  fn label(x: Cat) -> str { "Mr" }
+}
+
+fn main() ! console {
+  c = Cat(name: "Tom")
+  print(Named.label(c))
+  print(Titled.label(c))
+}
+```
+
+This prints `Tom` and then `Mr`. Written as `label(c)`, the call is refused: "`label` is a function of `Named` and `Titled`", and the fix is to write `Named.label` or `Titled.label`. A trait function whose name is not shared is written plain.
+
+## Defaults of a trait's functions
+
+A trait may give a function's parameter a default, as [Functions](functions.md) shows for any function. A call may leave the argument out.
+
+```
+trait Named[T] {
+  fn name_of(x: T, title: str = "Dr") -> str
+}
+
+impl Named[Cat] {
+  fn name_of(x: Cat, title: str) -> str { title }
+}
+```
+
+`name_of(c)` is `"Dr"`, and `name_of(c, title: "Mr")` is `"Mr"`. The trait states the default and the `impl` does not repeat it. An `impl` that writes `title: str = "Dr"` is refused: "the defaults of `name_of` are stated in `Named`, and an implementation does not repeat them", and the fix is to remove the default of `title`.
+
+## What a trait costs
+
+Calls are specialized at compile time, so a trait costs nothing at run time.
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `trait T[A] { fn f(x: A) -> R }` | A set of functions over the type `A` |
+| `impl T[Cat] { fn f(x: Cat) -> R { e } }` | The functions of `T` for `Cat` |
+| `f(c)` | A call of a trait function, which finds the `impl` from the arguments |
+| `T.f(c)` | The same call, written with the trait, when two traits have an `f` |
+| `fn f(x: A, y: B = e) -> R` in a trait | A default that the `impl` does not repeat |
+
+Next: [Bounds and `requires`](bounds.md)
