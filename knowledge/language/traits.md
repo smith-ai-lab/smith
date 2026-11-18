@@ -72,6 +72,16 @@ impl Named[Cat] {
 
 It is refused: "this implementation of `Named` lacks `shout`".
 
+Each function is written with the trait's signature: the same parameters, under the same names and in the same order, with the `impl`'s types in place of the trait's. So a call that names an argument means the same for every type. This one renames `x`.
+
+```
+impl Named[Cat] {
+  fn name_of(cat: Cat) -> str { cat.name }
+}
+```
+
+It is refused: "`name_of` differs from its signature in `Named`", and the fix is to write `fn name_of(x: Cat) -> str`.
+
 A trait has at most one `impl` for a choice of types. A second `impl Named[Cat]` is refused: "`Named` is already implemented for `Cat`".
 
 ## When two traits share a name
