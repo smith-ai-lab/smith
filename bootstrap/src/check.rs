@@ -28,6 +28,7 @@
 //! is written, so it is lowered as if it were written there, and no copy of
 //! a function knows which of its arguments were left out.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
@@ -655,6 +656,10 @@ struct Signature {
     /// Whether each parameter has a default, so that a call may leave it
     /// out.
     defaults: Vec<bool>,
+    /// The type each type parameter takes when the arguments of a call do
+    /// not settle it, among the type parameters, for those that have a
+    /// default.
+    param_defaults: Vec<Option<Ty>>,
     gives: Ty,
     /// The effects it carries that a caller must have, which are those it
     /// lists that the compiler builds.
@@ -668,6 +673,7 @@ impl Signature {
             scope: Scope::default(),
             params: vec![("status".to_string(), Ty::Int(Int::U8))],
             defaults: vec![false],
+            param_defaults: Vec::new(),
             gives: Ty::Nothing,
             effects: Vec::new(),
         }
@@ -678,6 +684,7 @@ impl Signature {
             scope: Scope::default(),
             params: vec![("text".to_string(), Ty::Text)],
             defaults: vec![false],
+            param_defaults: Vec::new(),
             gives: Ty::Nothing,
             effects: vec!["console".to_string()],
         }
@@ -733,6 +740,9 @@ struct Defs<'a> {
     flow: usize,
     /// Each trait taken away from a struct or an enum by `without`.
     withouts: Vec<(usize, Def)>,
+    /// How many defaults of type parameters are being resolved inside one
+    /// another, so that a default that names its own type ends.
+    default_depth: Cell<u8>,
 }
 
 impl<'a> Defs<'a> {
@@ -775,18 +785,11 @@ impl<'a> Defs<'a> {
                 .iter()
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
-            let wanted = self.file.structs[s].generics.len();
-            if args.len() != wanted {
-                errors.push(Error::new(
-                    t.pos,
-                    format!(
-                        "`{name}` takes {}, and this gives {}",
-                        count(wanted, "type argument"),
-                        args.len()
-                    ),
-                ));
+            let Some(args) =
+                self.arguments_of(&self.file.structs[s].generics, args, name, t, errors)
+            else {
                 return Ty::Unknown;
-            }
+            };
             return if self.cyclic[s] {
                 Ty::Unknown
             } else {
@@ -799,18 +802,10 @@ impl<'a> Defs<'a> {
                 .iter()
                 .map(|a| self.resolve(a, scope, errors))
                 .collect();
-            let wanted = self.file.enums[e].generics.len();
-            if args.len() != wanted {
-                errors.push(Error::new(
-                    t.pos,
-                    format!(
-                        "`{name}` takes {}, and this gives {}",
-                        count(wanted, "type argument"),
-                        args.len()
-                    ),
-                ));
+            let Some(args) = self.arguments_of(&self.file.enums[e].generics, args, name, t, errors)
+            else {
                 return Ty::Unknown;
-            }
+            };
             return if self.cyclic_enums[e] {
                 Ty::Unknown
             } else {
@@ -872,6 +867,60 @@ impl<'a> Defs<'a> {
         }
     }
 
+    /// The types of a type's parameters, given the arguments written for
+    /// it: the defaults of the parameters left out are the rest. A count
+    /// the type does not take is reported, and gives `None`.
+    fn arguments_of(
+        &self,
+        generics: &[Generic],
+        mut args: Vec<Ty>,
+        name: &str,
+        t: &Type,
+        errors: &mut Vec<Error>,
+    ) -> Option<Vec<Ty>> {
+        let wanted = generics.len();
+        let needed = generics.iter().filter(|g| g.default.is_none()).count();
+        if args.len() < needed || args.len() > wanted {
+            let takes = if needed == wanted {
+                count(wanted, "type argument")
+            } else {
+                format!("{needed} to {}", count(wanted, "type argument"))
+            };
+            errors.push(Error::new(
+                t.pos,
+                format!("`{name}` takes {takes}, and this gives {}", args.len()),
+            ));
+            return None;
+        }
+        self.fill_defaults(generics, &mut args);
+        Some(args)
+    }
+
+    /// Adds the type of each parameter of `generics` that `args` does not
+    /// reach, from its default, with the parameters before it as `args` has
+    /// them.
+    fn fill_defaults(&self, generics: &[Generic], args: &mut Vec<Ty>) {
+        if args.len() >= generics.len() {
+            return;
+        }
+        let depth = self.default_depth.get();
+        let scope = self.scope(generics, &[]);
+        for g in &generics[args.len()..] {
+            let ty = match &g.default {
+                Some(d) if depth < 8 => {
+                    self.default_depth.set(depth + 1);
+                    let ty = self.quietly(d, &scope);
+                    self.default_depth.set(depth);
+                    let mut known = args.clone();
+                    known.resize(generics.len(), Ty::Unknown);
+                    ty.subst(&known)
+                }
+                _ => Ty::Unknown,
+            };
+            args.push(ty);
+        }
+    }
+
     /// The type, with nothing reported.
     fn quietly(&self, t: &Type, scope: &Scope) -> Ty {
         self.resolve(t, scope, &mut Vec::new())
@@ -919,6 +968,9 @@ impl<'a> Defs<'a> {
                 .map(|p| (p.name.clone(), self.quietly(&p.ty, &scope)))
                 .collect(),
             defaults: f.params.iter().map(|p| p.default.is_some()).collect(),
+            param_defaults: (f.generics.iter())
+                .map(|g| g.default.as_ref().map(|d| self.quietly(d, &scope)))
+                .collect(),
             gives: match &f.result {
                 Some(t) => self.quietly(t, &scope),
                 None => Ty::Nothing,
@@ -1581,6 +1633,7 @@ fn check_file(
             .position(|e| e.name == "Flow" && of_prelude(e.pos))
             .expect("the prelude defines it"),
         withouts: Vec::new(),
+        default_depth: Cell::new(0),
     };
     let mut done = Vec::new();
     for &d in &reached_types {
@@ -3529,6 +3582,15 @@ impl<'a> Typed<'a> {
                 .map(|t| t.unwrap_or(Ty::Unknown))
                 .collect::<Vec<Ty>>()
         };
+        // A type that nothing settled is its default, if it has one.
+        let defaulted = |mut sol: Vec<Ty>, defaults: Vec<Option<Ty>>| {
+            for (i, d) in defaults.iter().enumerate() {
+                if let (Ty::Unknown, Some(d)) = (&sol[i], d) {
+                    sol[i] = d.subst(&sol);
+                }
+            }
+            sol
+        };
         if self.value_calls.contains(&addr(call)) {
             return Callee::Value;
         }
@@ -3565,6 +3627,7 @@ impl<'a> Typed<'a> {
                 if let Some(&f) = defs.function_names.get(name) {
                     let sig = &defs.signatures[f];
                     let args = solve(&sig.params, sig.scope.names.len());
+                    let args = defaulted(args, sig.param_defaults.clone());
                     let gives = sig.gives.subst(&args);
                     let template = Template::Free(f);
                     return Callee::Run(Instance { template, args }, gives);
@@ -3583,6 +3646,13 @@ impl<'a> Typed<'a> {
         let sig = &defs.trait_sigs[k][fi];
         let types = solve(&sig.params, sig.scope.names.len());
         let types = self.result_types(call, sig, env, types);
+        let trait_defaults = (defs.file.traits[k].generics.iter().enumerate())
+            .map(|(i, g)| match (&g.default, defs.outs[k][i]) {
+                (Some(d), false) => Some(defs.quietly(d, &sig.scope)),
+                _ => None,
+            })
+            .collect();
+        let types = defaulted(types, trait_defaults);
         let (instance, all) = defs.chosen(k, fi, types);
         Callee::Run(instance, sig.gives.subst(&all))
     }
@@ -4179,6 +4249,34 @@ impl<'a> Checker<'a> {
                     g.pos,
                     format!("`{name}` is already the name of a type"),
                 ));
+            }
+            match &g.default {
+                Some(d) => {
+                    let scope = defs.scope(generics, &[]);
+                    for (n, at) in type_names(d) {
+                        if let Some(later) = generics[i..].iter().find(|h| h.name == n) {
+                            self.errors.push(Error::new(
+                                at,
+                                format!(
+                                    "the default of `{name}` names `{}`, which does not come before it",
+                                    later.name
+                                ),
+                            ));
+                        }
+                    }
+                    self.ty(d, &scope);
+                }
+                None => {
+                    if let Some(with) = generics[..i].iter().find(|h| h.default.is_some()) {
+                        self.errors.push(Error::new(
+                            g.pos,
+                            format!(
+                                "`{name}` has no default, and comes after `{}`, which has one",
+                                with.name
+                            ),
+                        ));
+                    }
+                }
             }
             if let Some(at) = g.out
                 && kind != Owner::Trait
@@ -6298,7 +6396,13 @@ impl<'a> Checker<'a> {
                 Want::Ty(t) => Some(t),
                 _ => None,
             };
-            let sol = self.arguments(body, call, sig, false, None, placed);
+            let mut sol = self.arguments(body, call, sig, false, None, placed);
+            for (i, d) in sig.param_defaults.iter().enumerate() {
+                if let (None, Some(d)) = (&sol[i], d) {
+                    let ty = d.solved(&sol);
+                    sol[i] = (!ty.unknown()).then_some(ty);
+                }
+            }
             if self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
                 return Ty::Unknown;
             }
@@ -6716,6 +6820,16 @@ impl<'a> Checker<'a> {
                 && !self.no_impl
             {
                 self.no_impl = self.completed(body, call, via, signature, &mut sol);
+            }
+            // A lambda's parameters take the default of a type that nothing
+            // before it settled.
+            if let (Some(i), Expr::Lambda(_)) = (param, &arg.value) {
+                for (p, d) in signature.param_defaults.iter().enumerate() {
+                    if let (None, Some(d), true) = (&sol[p], d, signature.params[i].1.mentions(p)) {
+                        let ty = d.solved(&sol);
+                        sol[p] = (!ty.unknown()).then_some(ty);
+                    }
+                }
             }
             let quiet = self.no_impl || matches!(via, Some((_, Want::Ty(Ty::Unknown))));
             let wanted = match param {

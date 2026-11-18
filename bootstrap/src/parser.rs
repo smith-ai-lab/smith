@@ -106,6 +106,8 @@ pub struct Generic {
     pub out: Option<Pos>,
     /// The trait after `:`, if there is one.
     pub bound: Option<Type>,
+    /// The type after `=`, which a use that leaves the parameter out gets.
+    pub default: Option<Type>,
 }
 
 /// A struct definition.
@@ -1333,11 +1335,18 @@ impl Parser<'_> {
             } else {
                 None
             };
+            let default = if self.tok() == &Tok::Punct("=") {
+                self.bump();
+                Some(self.ty()?)
+            } else {
+                None
+            };
             generics.push(Generic {
                 name,
                 pos,
                 out,
                 bound,
+                default,
             });
             self.skip_newlines();
             match self.tok() {

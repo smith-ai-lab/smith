@@ -303,11 +303,13 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
 pub(super) fn impl_info(defs: &Defs, im: &crate::parser::Impl) -> Option<ImplInfo> {
     let &of = defs.trait_names.get(im.name.as_str())?;
     let t = &defs.file.traits[of];
-    if im.args.len() != t.generics.len() {
+    let needed = t.generics.iter().filter(|g| g.default.is_none()).count();
+    if im.args.len() < needed || im.args.len() > t.generics.len() {
         return None;
     }
     let scope = defs.scope(&im.generics, &im.requires);
-    let args: Vec<Ty> = im.args.iter().map(|a| defs.quietly(a, &scope)).collect();
+    let mut args: Vec<Ty> = im.args.iter().map(|a| defs.quietly(a, &scope)).collect();
+    defs.fill_defaults(&t.generics, &mut args);
     if args.contains(&Ty::Unknown) {
         return None;
     }
@@ -939,14 +941,16 @@ impl<'a> Checker<'a> {
             self.ty(a, &scope);
         }
         defs.requirements(&im.requires, &scope, &mut self.errors);
-        if im.args.len() != t.generics.len() {
+        let needed = t.generics.iter().filter(|g| g.default.is_none()).count();
+        if im.args.len() < needed || im.args.len() > t.generics.len() {
+            let takes = if needed == t.generics.len() {
+                count(t.generics.len(), "type")
+            } else {
+                format!("{needed} to {}", count(t.generics.len(), "type"))
+            };
             self.errors.push(Error::new(
                 im.pos,
-                format!(
-                    "`{name}` takes {}, and this gives {}",
-                    count(t.generics.len(), "type"),
-                    im.args.len()
-                ),
+                format!("`{name}` takes {takes}, and this gives {}", im.args.len()),
             ));
             return;
         }
@@ -1117,6 +1121,13 @@ impl<'a> Checker<'a> {
                 if t.is_none() && !out {
                     *t = w;
                 }
+            }
+        }
+        // A type that nothing settles is its default, if it has one.
+        for (i, g) in defs.file.traits[k].generics.iter().enumerate() {
+            if let (None, Some(d)) = (&sol[i], &g.default) {
+                let ty = defs.quietly(d, &sig.scope).solved(&sol);
+                sol[i] = (!ty.unknown()).then_some(ty);
             }
         }
         // A type an argument names that is not known is that of a mistake

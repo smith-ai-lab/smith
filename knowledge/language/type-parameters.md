@@ -5,6 +5,7 @@ description: A name for a type that a function or a type leaves open, written in
 status: partial
 built:
   - "type parameters"
+  - "a default for a type parameter of a struct, an enum, a trait, and a function, which a use that leaves the parameter out gets, and a default that names a parameter after it, or a parameter with no default after one with a default, is refused"
 ---
 
 # Type parameters
