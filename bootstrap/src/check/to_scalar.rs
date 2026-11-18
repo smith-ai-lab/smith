@@ -102,6 +102,11 @@ struct Out<'a> {
     current: usize,
     /// The `loop`s being lowered, the innermost last.
     loops: Vec<Round>,
+    /// The functions and lambdas being lowered, the innermost last, each
+    /// with the blocks that leave it by a `return`, and the values they give.
+    returns: Vec<Vec<(usize, Vec<form::Value>)>>,
+    /// The blocks that follow a `return`, which nothing reaches.
+    dead: Vec<usize>,
 }
 
 /// A `loop` being lowered: the names its body assigns, which each round
@@ -141,6 +146,8 @@ impl<'a> Out<'a> {
             blocks: Vec::new(),
             current: 0,
             loops: Vec::new(),
+            returns: Vec::new(),
+            dead: Vec::new(),
         };
         out.new_block();
         out
@@ -544,11 +551,12 @@ impl<'a> Lowering<'a> {
             let values = out.params(&types);
             out.define(name, ty, values);
         }
-        let mut result = self.block(&mut out, &view.f.body, &instance.args);
+        let gives = view.gives.subst(&instance.args);
+        let mut result = self.leaving(&mut out, &view.f.body, &instance.args, (&gives, true));
         if view.gives == Ty::Nothing {
             result.clear();
         }
-        let results = self.scalars(&view.gives.subst(&instance.args));
+        let results = self.scalars(&gives);
         out.blocks[out.current].end = form::End::Return(result);
         form::Function {
             types: out.types,
@@ -807,6 +815,54 @@ impl<'a> Lowering<'a> {
             form::Constant::Int(case as u64),
             form::Type::Int(form::Bits::B8),
         )
+    }
+
+    /// Lowers the body of a function or of a lambda, which gives `gives`, and
+    /// gives the values it gives. A `return` in it ends its block with them
+    /// when `whole` says the body is the whole of a function, and otherwise
+    /// jumps to the block where what the body gives is known.
+    fn leaving(
+        &mut self,
+        out: &mut Out<'a>,
+        body: &'a [Stmt],
+        env: &[Ty],
+        (gives, whole): (&Ty, bool),
+    ) -> Vec<form::Value> {
+        out.returns.push(Vec::new());
+        let result = self.block(out, body, env);
+        let mut ends = out.returns.pop().expect("pushed");
+        if ends.is_empty() {
+            return result;
+        }
+        let types = self.scalars(gives);
+        for (_, args) in &mut ends {
+            args.truncate(types.len());
+        }
+        let reached = !out.dead.contains(&out.current);
+        if whole {
+            // What follows the last `return` ends with the values it gave, as
+            // it is reached by nothing and the end of a function takes some.
+            let last = ends.last().map(|(_, args)| args.clone());
+            for (block, args) in ends {
+                out.blocks[block].end = form::End::Return(args);
+            }
+            return if reached {
+                result
+            } else {
+                last.unwrap_or_default()
+            };
+        }
+        // What follows the last `return` is reached by nothing, and jumps with
+        // the values the `return` gave, as a jump has to give some.
+        let args = if reached {
+            result
+        } else {
+            ends.last()
+                .map(|(_, args)| args.clone())
+                .unwrap_or_default()
+        };
+        ends.push((out.current, args));
+        out.join(&types, ends)
     }
 
     /// Lowers the statements of a block, and gives the values of the last
@@ -1088,6 +1144,21 @@ impl<'a> Lowering<'a> {
                 self.round(out, l, env);
                 (Ty::Nothing, Vec::new())
             }
+            Expr::Return { value, .. } => {
+                let values = match value {
+                    Some(value) => self.expr(out, value, env).1,
+                    None => Vec::new(),
+                };
+                let from = out.current;
+                out.returns
+                    .last_mut()
+                    .expect("checked")
+                    .push((from, values));
+                // What follows a `return` is reached by nothing.
+                out.current = out.new_block();
+                out.dead.push(out.current);
+                (Ty::Nothing, Vec::new())
+            }
             Expr::Break { .. } => {
                 let round = out.loops.last().expect("checked");
                 let values = round
@@ -1257,7 +1328,7 @@ impl<'a> Lowering<'a> {
         let frame = args.into_iter().map(|a| a.expect("given")).collect();
         out.frames.push(frame);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
-        let mut result = self.block(out, &view.f.body, &instance.args);
+        let mut result = self.leaving(out, &view.f.body, &instance.args, (&gives, false));
         out.frames.pop();
         out.at = caller;
         if gives == Ty::Nothing {
@@ -1341,7 +1412,7 @@ impl<'a> Lowering<'a> {
                     arg.name = name.clone();
                     out.names_mut().push(arg);
                 }
-                let result = self.block(out, &lambda.body, &lambda_env);
+                let result = self.leaving(out, &lambda.body, &lambda_env, (gives, false));
                 out.names_mut().truncate(before);
                 out.at = caller;
                 result
@@ -1442,6 +1513,13 @@ impl<'a> Lowering<'a> {
             .map(|leaf| {
                 let mut args = leaf.gives;
                 args.truncate(types.len());
+                // A block that leaves by a `return` gives nothing, and what
+                // it jumps with is never read.
+                let current = std::mem::replace(&mut out.current, leaf.block);
+                while args.len() < types.len() {
+                    args.push(out.zero(types[args.len()]));
+                }
+                out.current = current;
                 for &(f, at) in &changed {
                     args.extend(leaf.names[f][at].clone());
                 }

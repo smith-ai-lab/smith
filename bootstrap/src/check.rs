@@ -1181,6 +1181,8 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
             },
         },
         Expr::Break { .. } => "break".to_string(),
+        Expr::Return { value: None, .. } => "return".to_string(),
+        Expr::Return { value: Some(v), .. } => format!("return {}", written_with(s, v)),
     }
 }
 
@@ -2292,6 +2294,11 @@ fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 }
             }
         }
+        Expr::Return { value, .. } => {
+            if let Some(v) = value {
+                walk(v, out);
+            }
+        }
         Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } | Expr::Break { .. } => {}
     }
 }
@@ -2347,11 +2354,13 @@ fn statements(body: &[Stmt]) -> Vec<&Stmt> {
                     }
                 }
             }
+            Expr::Return { value: Some(v), .. } => blocks(v, out),
             Expr::Case { .. }
             | Expr::Text { .. }
             | Expr::Number { .. }
             | Expr::Name { .. }
-            | Expr::Break { .. } => {}
+            | Expr::Break { .. }
+            | Expr::Return { value: None, .. } => {}
         }
     }
     let mut out = Vec::new();
@@ -3233,6 +3242,15 @@ struct Body<'a> {
     /// How many `loop`s the lambdas around the code being checked are inside,
     /// which a `break` cannot reach.
     outer_loops: usize,
+    /// The type a `return` in the code being checked gives: the result of
+    /// the function or the lambda it is written in, which a lambda whose
+    /// result is not yet known leaves unknown.
+    returns: Ty,
+    /// The type of the first `return` in a lambda whose result is not yet
+    /// known, which is then the result.
+    returned: Option<Ty>,
+    /// How many lambdas the code being checked is inside.
+    lambdas: usize,
 }
 
 /// The whole numbers a body binds to names with no type written.
@@ -3490,6 +3508,9 @@ impl<'a> Checker<'a> {
             contract: false,
             loops: 0,
             outer_loops: 0,
+            returns: Ty::Nothing,
+            returned: None,
+            lambdas: 0,
         };
         let gives = self.expr(&mut body, value, &Want::Ty(needed.clone()));
         self.expect(&body, value, &gives, needed);
@@ -3774,6 +3795,9 @@ impl<'a> Checker<'a> {
             contract: false,
             loops: 0,
             outer_loops: 0,
+            returns: view.gives.clone(),
+            returned: None,
+            lambdas: 0,
         };
         if let Template::Free(_) = template {
             for requirement in &f.requires {
@@ -3793,6 +3817,7 @@ impl<'a> Checker<'a> {
             None => Want::Unused,
         };
         match (self.block(&mut body, &f.body, &want), &view.result) {
+            _ if proof::ends_in_exit(&f.body) => {}
             (End::Empty | End::Binding(_), Some(_)) if view.gives == Ty::Nothing => {}
             (End::Empty, Some(t)) => self.errors.push(Error::new(
                 f.end,
@@ -3840,6 +3865,20 @@ impl<'a> Checker<'a> {
         let mut end = End::Empty;
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i + 1 == stmts.len();
+            let first_return = stmts
+                .iter()
+                .position(|s| matches!(s, Stmt::Expr(Expr::Return { .. })));
+            if first_return.is_some_and(|r| r + 1 == i) {
+                let at = match stmt {
+                    Stmt::Define { pos, .. } | Stmt::Assign { pos, .. } => *pos,
+                    Stmt::Destructure { pattern, .. } => pattern.pos(),
+                    Stmt::Expr(value) => value.pos(),
+                };
+                self.errors.push(Error::new(
+                    at,
+                    "this line never runs, as the `return` before it leaves the function or lambda",
+                ));
+            }
             end = match stmt {
                 Stmt::Define {
                     name, pos, value, ..
@@ -4091,6 +4130,56 @@ impl<'a> Checker<'a> {
         Some(ty)
     }
 
+    /// Checks a `return`: what it gives is the result of the function or the
+    /// lambda around it, and a `return` with no value is where that gives
+    /// nothing.
+    fn returning(&mut self, body: &mut Body<'a>, value: Option<&Expr>, pos: Pos) {
+        let defs = self.defs;
+        let needed = body.returns.clone();
+        match value {
+            None => {
+                if needed != Ty::Nothing && !needed.unknown() {
+                    let needed = defs.describe(&needed, body.scope);
+                    self.errors.push(
+                        Error::new(
+                            pos,
+                            format!("this `return` has no value, where {needed} is needed"),
+                        )
+                        .with_fix("write the value after `return`"),
+                    );
+                }
+            }
+            Some(value) => {
+                let want = match &needed {
+                    Ty::Nothing => Want::Unused,
+                    t if t.unknown() => Want::Any,
+                    t => Want::Ty(t.clone()),
+                };
+                let gives = self.expr(body, value, &want);
+                match (&needed, &body.returned) {
+                    (Ty::Nothing, _) => {
+                        if !matches!(gives, Ty::Nothing | Ty::Unknown) {
+                            let given = defs.describe(&gives, body.scope);
+                            self.errors.push(Error::new(
+                                value.pos(),
+                                format!("this `return` gives {given}, where nothing is needed"),
+                            ));
+                        }
+                    }
+                    (t, Some(first)) if t.unknown() => {
+                        let first = first.clone();
+                        self.expect(body, value, &gives, &first);
+                    }
+                    (t, None) if t.unknown() => body.returned = Some(gives),
+                    (t, _) => self.expect(body, value, &gives, t),
+                }
+                if body.lambdas == 0 && !body.tails.is_empty() {
+                    self.ensure(body, value);
+                }
+            }
+        }
+    }
+
     /// Checks an expression against what is wanted of it, and gives its
     /// type, which is recorded.
     fn expr(&mut self, body: &mut Body<'a>, expr: &Expr, want: &Want) -> Ty {
@@ -4227,6 +4316,10 @@ impl<'a> Checker<'a> {
                     };
                     self.errors.push(Error::new(*pos, message));
                 }
+                Ty::Nothing
+            }
+            Expr::Return { value, pos } => {
+                self.returning(body, value.as_deref(), *pos);
                 Ty::Nothing
             }
             Expr::Tuple { items, .. } => {
@@ -4593,8 +4686,19 @@ impl<'a> Checker<'a> {
             t if t.unknown() => Want::Any,
             t => Want::Ty(t.clone()),
         };
+        let outer_returns = std::mem::replace(&mut body.returns, result.clone());
+        let outer_returned = body.returned.take();
+        body.lambdas += 1;
         let end = self.block(body, &l.body, &want);
+        body.lambdas -= 1;
+        body.returns = outer_returns;
+        let returned = std::mem::replace(&mut body.returned, outer_returned);
+        let result = match returned {
+            Some(t) if result.unknown() => &t.clone(),
+            _ => result,
+        };
         let gives = match (end, result) {
+            _ if proof::ends_in_exit(&l.body) => result.clone(),
             (End::Value(gives, value), Ty::Nothing) => {
                 if !matches!(gives, Ty::Nothing | Ty::Unknown) {
                     self.expect(body, value, &gives, result);
@@ -4894,7 +4998,7 @@ impl<'a> Checker<'a> {
             patterns.push(pattern);
             body.define(binds);
             self.arm(body, arm, want, &mut first, "a `match`");
-            if proof::ends_in_break(&arm.body) {
+            if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
                 paths.push(self.leave_arm(body, &known, &assigned));
@@ -4952,7 +5056,9 @@ impl<'a> Checker<'a> {
         let end = self.block(body, &arm.body, &arm_want);
         if !matches!(want, Want::Unused) {
             let gives = self.arm_gives(body, arm, end, want, first, what);
-            first.get_or_insert(gives);
+            if !proof::ends_in_exit(&arm.body) {
+                first.get_or_insert(gives);
+            }
         }
     }
 
@@ -4975,7 +5081,7 @@ impl<'a> Checker<'a> {
             {
                 self.dropped(body, value, &gives);
             }
-            if proof::ends_in_break(&arm.body) {
+            if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
                 paths.push(self.leave_arm(body, &known, &assigned));
@@ -4994,7 +5100,7 @@ impl<'a> Checker<'a> {
         for (k, arm) in m.arms.iter().enumerate() {
             self.assume(body, &m.of, k == 0);
             self.arm(body, arm, want, &mut first, "an `if`");
-            if proof::ends_in_break(&arm.body) {
+            if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
                 paths.push(self.leave_arm(body, &known, &assigned));
@@ -5222,6 +5328,9 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let describe = |t: &Ty| defs.describe(t, body.scope);
+        if proof::ends_in_exit(&arm.body) {
+            return Ty::Unknown;
+        }
         let (gives, at) = match &end {
             End::Value(gives, value) => (gives.clone(), value.pos()),
             End::Empty => (Ty::Nothing, arm.end),

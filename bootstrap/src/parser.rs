@@ -281,6 +281,12 @@ pub enum Expr {
     Break {
         pos: Pos,
     },
+    /// `return e`, or `return` alone, which leaves the nearest function or
+    /// lambda with `e` as its value.
+    Return {
+        value: Option<Box<Expr>>,
+        pos: Pos,
+    },
 }
 
 /// A `loop`: over a range of whole numbers when it has one, and otherwise
@@ -437,7 +443,8 @@ impl Expr {
             | Expr::Case { pos, .. }
             | Expr::Tuple { pos, .. }
             | Expr::List { pos, .. }
-            | Expr::Break { pos } => *pos,
+            | Expr::Break { pos }
+            | Expr::Return { pos, .. } => *pos,
             Expr::Index { of, .. } => of.pos(),
             Expr::Loop(l) => l.pos,
             Expr::Call(call) => call.pos,
@@ -1453,7 +1460,8 @@ impl Parser<'_> {
             | Expr::Case { payload: None, .. }
             | Expr::Lambda(_)
             | Expr::Loop(_)
-            | Expr::Break { .. } => {}
+            | Expr::Break { .. }
+            | Expr::Return { .. } => {}
         }
     }
 
@@ -1840,6 +1848,14 @@ impl Parser<'_> {
             Tok::Keyword("break") => {
                 self.bump();
                 Ok(Stmt::Expr(Expr::Break { pos }))
+            }
+            Tok::Keyword("return") => {
+                self.bump();
+                let value = match self.tok() {
+                    Tok::Newline | Tok::Punct("}") | Tok::Eof => None,
+                    _ => Some(Box::new(self.expr()?)),
+                };
+                Ok(Stmt::Expr(Expr::Return { value, pos }))
             }
             tok if starts_expression(tok) => Ok(Stmt::Expr(self.expr()?)),
             tok => Err(self.expected("a statement", tok)),
