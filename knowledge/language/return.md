@@ -2,7 +2,12 @@
 type: specification
 title: return
 description: return leaves a function early with a value, from the nearest function or lambda around it, and nothing that was running around it is cut short.
-status: planned
+status: partial
+built:
+  - "`return e` and a bare `return` in a function and a lambda, from an `if`, a `match`, a `loop` over a range or open-ended, and the rest of a block after `try` or `with`; it gives the nearest function or lambda's value, costs a jump, and cuts nothing short"
+  - "a value of another type than the result is refused as the last expression is, a bare `return` where the result is not nothing and a value where it is nothing are refused, and the first line after a `return` in its block is refused with \"this line never runs, as the `return` before it leaves the function or lambda\""
+  - "`arith` knows after `if c { return e }` that `c` is false, as in an `else`, and a value without `Copy` is given away by a `return` and a lent value is not returned"
+  - "not a `return` in a `loop` over a type that implements `Iterate`, the formatter taking away a `return` on the last line, or the check that a value that must be used is used on the way a `return` leaves by"
 ---
 
 # `return`
