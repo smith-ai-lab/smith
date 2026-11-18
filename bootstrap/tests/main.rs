@@ -26,39 +26,16 @@
 //! result depends on the kind of machine they run on, and `--group=once`
 //! runs only the others. A run that includes the first group ends by
 //! naming the targets this machine could not run.
+//!
+//! Every `.rs` file in `tests/` but this one is a file of tests, found by
+//! `build.rs`, and each says which group its tests are in by declaring
+//! `pub const ONCE`, `MACHINE`, or `RUNS`, a list of `Test`. A file that
+//! declares none is a build error. What tests share and is itself no test
+//! is in `tests/support/`. A new file of tests is added to no list here.
 
-mod alloc;
-mod arguments;
-mod arith;
-mod bits;
-mod check;
-mod choices;
-mod cli;
-mod clock;
-mod contracts;
-mod enums;
-mod generate;
-mod hang;
-#[cfg(unix)]
-mod install;
-mod lambdas;
-mod lists;
-mod literals;
-mod loops;
-mod machines;
-mod numbers;
-mod programs;
-mod props;
-mod release;
-mod reprs;
-mod scalar;
-mod sha256;
-mod status;
-mod targets;
-mod text;
-mod traits;
-mod tries;
-mod tuples;
+// Every file of tests, and the function that gives the tests of each group,
+// are found by `build.rs`.
+include!(concat!(env!("OUT_DIR"), "/tests.rs"));
 
 use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
@@ -100,41 +77,20 @@ fn main() -> ExitCode {
         // The executables are the same for every commit, so that a change
         // that leaves them as they were needs no machine.
         generate::set_run_seed(0);
-        for (target, hash) in targets::fingerprint(&targets::machine(), smith::compile) {
+        for (target, hash) in targets::fingerprint(&machine_tests(), smith::compile) {
             println!("{} {hash}", target.name());
         }
         return ExitCode::SUCCESS;
     }
     let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let once = [
-        props::TESTS,
-        cli::ONCE,
-        check::ONCE,
-        release::ONCE,
-        machines::ONCE,
-        targets::ONCE,
-        scalar::ONCE,
-        alloc::ONCE,
-        arguments::ONCE,
-        status::ONCE,
-        arith::ONCE,
-        bits::ONCE,
-        contracts::ONCE,
-        lists::ONCE,
-        literals::ONCE,
-        loops::ONCE,
-        hang::ONCE,
-    ]
-    .concat();
-    // The installer is for macOS and Linux, and its tests run where a shell does.
-    #[cfg(unix)]
-    let once = [once, install::ONCE.to_vec()].concat();
-    let machine = targets::machine();
+    let once = once_tests();
+    let machine = machine_tests();
+    let hang = hang_tests();
     let groups: Vec<&[Test]> = match args.iter().find_map(|a| a.strip_prefix("--group=")) {
         None => vec![&once, &machine],
         Some("once") => vec![&once],
         Some("machine") => vec![&machine],
-        Some("hang") => vec![hang::RUNS],
+        Some("hang") => vec![&hang],
         Some(other) => {
             eprintln!("unknown group `{other}`; the groups are once and machine");
             return ExitCode::FAILURE;

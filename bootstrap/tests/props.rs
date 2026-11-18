@@ -23,7 +23,7 @@ use crate::traits;
 use crate::tries;
 use crate::tuples;
 
-pub const TESTS: &[Test] = &[
+pub const ONCE: &[Test] = &[
     (
         "the_shrinker_gives_the_smallest_failing_input",
         the_shrinker_gives_the_smallest_failing_input,
