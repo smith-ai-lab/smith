@@ -56,7 +56,7 @@ fn price(m: Money) ! console, alloc {
 
 A type that has no `Fmt` cannot be put in braces. If `Secret` has none, `"{Secret(key: 1)}"` is refused: "there is no implementation of `Fmt` for `Secret`".
 
-There are no format options inside the braces. A width or a number of decimal places is an ordinary function call, as in `"{fixed(x, 2)}"`.
+There are no format options inside the braces. A width or a number of decimal places is an ordinary function call, as in `"{fixed(x, 2)}"`. A whole number in another base is written with the functions of [Number bases](../library/fmt.md), as in `"U+{hex(code, width: 4)}"`.
 
 ## Writing a brace, a quote, and a break
 
