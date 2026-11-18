@@ -4,6 +4,7 @@
 mod check;
 pub mod diag;
 mod divide;
+mod hash;
 mod lexer;
 mod parser;
 pub mod scalar;
