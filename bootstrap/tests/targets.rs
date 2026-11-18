@@ -444,7 +444,7 @@ fn every_executable_of_a_program_with_choices_does_what_the_evaluator_says() {
     every_executable_agrees(68, 60, choices::program, |case| case.source.as_bytes());
 }
 
-const TYPES: [Type; 5] = [
+pub const TYPES: [Type; 5] = [
     Type::Int(Bits::B8),
     Type::Int(Bits::B16),
     Type::Int(Bits::B32),
@@ -454,7 +454,7 @@ const TYPES: [Type; 5] = [
 
 /// Starts values of the types, as `n`s say, from constants of the program
 /// whose texts are `swap` and `x`.
-fn starting(b: &mut Builder, types: &[Type], starts: &[u64]) -> Vec<Value> {
+pub fn starting(b: &mut Builder, types: &[Type], starts: &[u64]) -> Vec<Value> {
     types
         .iter()
         .zip(starts)
@@ -470,7 +470,7 @@ fn starting(b: &mut Builder, types: &[Type], starts: &[u64]) -> Vec<Value> {
 
 /// Writes the values, each as 8 bytes: an integer widened, and an address
 /// as the byte it points to.
-fn write_all(b: &mut Builder, types: &[Type], values: &[Value]) {
+pub fn write_all(b: &mut Builder, types: &[Type], values: &[Value]) {
     let total = b.int(Bits::B64, 8 * types.len() as u64);
     let buffer = b.allocate(total);
     for (i, (ty, v)) in types.iter().zip(values).enumerate() {
@@ -500,7 +500,7 @@ fn write_all(b: &mut Builder, types: &[Type], values: &[Value]) {
 /// round a loop `rounds` times, in which each value is given the one that
 /// was at the place `sources` says in the round before, all at once. It
 /// writes the values at the end, each as 8 bytes.
-fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> scalar::Program {
+pub fn rotating(types: &[Type], starts: &[u64], sources: &[usize], rounds: u64) -> scalar::Program {
     let int = |b: &mut Builder, n: u64| b.int(Bits::B64, n);
     let mut b = Builder::new();
     let mut first = vec![int(&mut b, 0)];
