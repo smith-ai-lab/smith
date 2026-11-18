@@ -5,7 +5,7 @@
 use super::*;
 
 /// The whole number types, which the compiler builds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Int {
     I8,
     I16,
