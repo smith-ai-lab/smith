@@ -79,6 +79,8 @@ fn calls(x: f32) -> f32 {
 }
 ```
 
+A lambda may give away a value of the function it is written in, as an argument of a `take` parameter. It can then be called once, and is passed only to a parameter that takes its function, as [A function that is called once](take.md#a-function-that-is-called-once) says.
+
 ## A lambda with no parameters
 
 A lambda that takes no parameters is the block alone, `{ e }`, with no `fn` and no parentheses.
