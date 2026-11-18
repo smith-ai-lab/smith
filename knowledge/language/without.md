@@ -5,6 +5,7 @@ description: A without statement takes away a trait a type would get automatical
 status: partial
 built:
   - "`without`, for `Fmt`, `Repr`, and `Eq`"
+  - "`without Copy` and `without Discard`, for a struct or an enum"
 ---
 
 # without

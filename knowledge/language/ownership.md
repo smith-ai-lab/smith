@@ -2,7 +2,12 @@
 type: specification
 title: Ownership
 description: The Copy and Discard traits, which say whether a value may be duplicated and whether it may be dropped unused, and the three kinds of value they make.
-status: planned
+status: partial
+built:
+  - "`Copy` and `Discard` given to a type exactly when each of its fields has them"
+  - "A value without `Copy` used again after it was given away on some path, which includes a later round of a loop, refused at the second use"
+  - "not a value without `Copy` given away inside a lambda that the lambda did not define or take, which is refused, as nothing says how often a lambda is called"
+  - "not a function's type parameter given a type without `Copy`, nor an implementation chosen for one, which are refused, as no bound says that a type parameter has `Copy`"
 ---
 
 # Ownership
