@@ -278,13 +278,10 @@ fn bump_char(lx: Lexer) -> Lexer {
 
 fn take_while_word(lx: Lexer) -> Lexer {
   var next = lx
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      match byte_at(next.src, next.at) {
-        .some(b) { if is_word_byte(b) { next = bump(next) } else { going = false } }
-        .none { going = false }
-      }
+    match byte_at(next.src, next.at) {
+      .some(b) { if is_word_byte(b) { next = bump(next) } else { break } }
+      .none { break }
     }
   }
   next
@@ -303,13 +300,10 @@ fn word(lx: Lexer, start: Pos) -> Lexer ! alloc {
 fn comment(lx: Lexer, start: Pos) -> Lexer ! alloc {
   checked = if lx.line_has_token { error_at(lx, start, 3, 0, []) } else { lx }
   var next = checked
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      match byte_at(next.src, next.at) {
-        .some(b) { if b == '\n' { going = false } else { next = bump(next) } }
-        .none { going = false }
-      }
+    match byte_at(next.src, next.at) {
+      .some(b) { if b == '\n' { break } else { next = bump(next) } }
+      .none { break }
     }
   }
   next
@@ -580,57 +574,54 @@ fn string2(lx: Lexer, start: Pos) -> Lexer ! alloc {
   var pieces: List[Token] = []
   var value: List[u8] = []
   var interpolated = false
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      at = next.pos
-      match byte_at(next.src, next.at) {
-        .none {
+    at = next.pos
+    match byte_at(next.src, next.at) {
+      .none {
+        next = error_at(next, start, 4, 0, [])
+        break
+      }
+      .some(c) {
+        if c == '\n' {
           next = error_at(next, start, 4, 0, [])
-          going = false
-        }
-        .some(c) {
-          if c == '\n' {
-            next = error_at(next, start, 4, 0, [])
-            going = false
-          } else if c == '"' {
-            next = bump(next)
-            going = false
-          } else if c == '{' {
-            next = bump(next)
-            interpolated = true
-            if value.size > 0 { pieces = push(pieces, Token(tok: .text(value), pos: start)) }
-            value = []
-            (after, tokens, closed) = expression2(next, start)
-            next = after
-            loop t in 0..tokens.size { pieces = push(pieces, tokens[t]) }
-            if not closed { going = false }
-          } else if c == '}' {
-            next = error_at(bump(next), at, 5, 0, [])
-          } else if c == '\\' {
-            next = bump(next)
-            match byte_at(next.src, next.at) {
-              .some(e) {
-                if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
-                  next = bump(next)
-                  decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
-                  value = push(value, decoded)
-                } else if e == '\n' {
-                  next = escape_error(next, at, 6)
-                  going = false
-                } else {
-                  next = bump_char(escape_error(next, at, 6))
-                }
-              }
-              .none {
+          break
+        } else if c == '"' {
+          next = bump(next)
+          break
+        } else if c == '{' {
+          next = bump(next)
+          interpolated = true
+          if value.size > 0 { pieces = push(pieces, Token(tok: .text(value), pos: start)) }
+          value = []
+          (after, tokens, closed) = expression2(next, start)
+          next = after
+          loop t in 0..tokens.size { pieces = push(pieces, tokens[t]) }
+          if not closed { break }
+        } else if c == '}' {
+          next = error_at(bump(next), at, 5, 0, [])
+        } else if c == '\\' {
+          next = bump(next)
+          match byte_at(next.src, next.at) {
+            .some(e) {
+              if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
+                next = bump(next)
+                decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
+                value = push(value, decoded)
+              } else if e == '\n' {
                 next = escape_error(next, at, 6)
-                going = false
+                break
+              } else {
+                next = bump_char(escape_error(next, at, 6))
               }
             }
-          } else {
-            next = bump(next)
-            value = push(value, c)
+            .none {
+              next = escape_error(next, at, 6)
+              break
+            }
           }
+        } else {
+          next = bump(next)
+          value = push(value, c)
         }
       }
     }
@@ -656,24 +647,21 @@ fn expression2(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
   next.tokens = []
   var depth: u64 = 0
   var closed = false
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      at = next.pos
-      match byte_at(next.src, next.at) {
-        .none { going = false }
-        .some(c) {
-          if c == '\n' {
-            going = false
-          } else if c == '}' and depth == 0 {
-            next = push_token(bump(next), .punct(15), at)
-            closed = true
-            going = false
-          } else {
-            if c == '{' { depth = wrapping_add(depth, 1) }
-            if c == '}' { depth = wrapping_sub(depth, 1) }
-            next = token3(next, at, c)
-          }
+    at = next.pos
+    match byte_at(next.src, next.at) {
+      .none { break }
+      .some(c) {
+        if c == '\n' {
+          break
+        } else if c == '}' and depth == 0 {
+          next = push_token(bump(next), .punct(15), at)
+          closed = true
+          break
+        } else {
+          if c == '{' { depth = wrapping_add(depth, 1) }
+          if c == '}' { depth = wrapping_sub(depth, 1) }
+          next = token3(next, at, c)
         }
       }
     }
@@ -720,57 +708,54 @@ fn string1(lx: Lexer, start: Pos) -> Lexer ! alloc {
   var pieces: List[Token] = []
   var value: List[u8] = []
   var interpolated = false
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      at = next.pos
-      match byte_at(next.src, next.at) {
-        .none {
+    at = next.pos
+    match byte_at(next.src, next.at) {
+      .none {
+        next = error_at(next, start, 4, 0, [])
+        break
+      }
+      .some(c) {
+        if c == '\n' {
           next = error_at(next, start, 4, 0, [])
-          going = false
-        }
-        .some(c) {
-          if c == '\n' {
-            next = error_at(next, start, 4, 0, [])
-            going = false
-          } else if c == '"' {
-            next = bump(next)
-            going = false
-          } else if c == '{' {
-            next = bump(next)
-            interpolated = true
-            if value.size > 0 { pieces = push(pieces, Token(tok: .text(value), pos: start)) }
-            value = []
-            (after, tokens, closed) = expression1(next, start)
-            next = after
-            loop t in 0..tokens.size { pieces = push(pieces, tokens[t]) }
-            if not closed { going = false }
-          } else if c == '}' {
-            next = error_at(bump(next), at, 5, 0, [])
-          } else if c == '\\' {
-            next = bump(next)
-            match byte_at(next.src, next.at) {
-              .some(e) {
-                if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
-                  next = bump(next)
-                  decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
-                  value = push(value, decoded)
-                } else if e == '\n' {
-                  next = escape_error(next, at, 6)
-                  going = false
-                } else {
-                  next = bump_char(escape_error(next, at, 6))
-                }
-              }
-              .none {
+          break
+        } else if c == '"' {
+          next = bump(next)
+          break
+        } else if c == '{' {
+          next = bump(next)
+          interpolated = true
+          if value.size > 0 { pieces = push(pieces, Token(tok: .text(value), pos: start)) }
+          value = []
+          (after, tokens, closed) = expression1(next, start)
+          next = after
+          loop t in 0..tokens.size { pieces = push(pieces, tokens[t]) }
+          if not closed { break }
+        } else if c == '}' {
+          next = error_at(bump(next), at, 5, 0, [])
+        } else if c == '\\' {
+          next = bump(next)
+          match byte_at(next.src, next.at) {
+            .some(e) {
+              if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
+                next = bump(next)
+                decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
+                value = push(value, decoded)
+              } else if e == '\n' {
                 next = escape_error(next, at, 6)
-                going = false
+                break
+              } else {
+                next = bump_char(escape_error(next, at, 6))
               }
             }
-          } else {
-            next = bump(next)
-            value = push(value, c)
+            .none {
+              next = escape_error(next, at, 6)
+              break
+            }
           }
+        } else {
+          next = bump(next)
+          value = push(value, c)
         }
       }
     }
@@ -796,24 +781,21 @@ fn expression1(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
   next.tokens = []
   var depth: u64 = 0
   var closed = false
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      at = next.pos
-      match byte_at(next.src, next.at) {
-        .none { going = false }
-        .some(c) {
-          if c == '\n' {
-            going = false
-          } else if c == '}' and depth == 0 {
-            next = push_token(bump(next), .punct(15), at)
-            closed = true
-            going = false
-          } else {
-            if c == '{' { depth = wrapping_add(depth, 1) }
-            if c == '}' { depth = wrapping_sub(depth, 1) }
-            next = token2(next, at, c)
-          }
+    at = next.pos
+    match byte_at(next.src, next.at) {
+      .none { break }
+      .some(c) {
+        if c == '\n' {
+          break
+        } else if c == '}' and depth == 0 {
+          next = push_token(bump(next), .punct(15), at)
+          closed = true
+          break
+        } else {
+          if c == '{' { depth = wrapping_add(depth, 1) }
+          if c == '}' { depth = wrapping_sub(depth, 1) }
+          next = token2(next, at, c)
         }
       }
     }
@@ -860,57 +842,54 @@ fn string0(lx: Lexer, start: Pos) -> Lexer ! alloc {
   var pieces: List[Token] = []
   var value: List[u8] = []
   var interpolated = false
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      at = next.pos
-      match byte_at(next.src, next.at) {
-        .none {
+    at = next.pos
+    match byte_at(next.src, next.at) {
+      .none {
+        next = error_at(next, start, 4, 0, [])
+        break
+      }
+      .some(c) {
+        if c == '\n' {
           next = error_at(next, start, 4, 0, [])
-          going = false
-        }
-        .some(c) {
-          if c == '\n' {
-            next = error_at(next, start, 4, 0, [])
-            going = false
-          } else if c == '"' {
-            next = bump(next)
-            going = false
-          } else if c == '{' {
-            next = bump(next)
-            interpolated = true
-            if value.size > 0 { pieces = push(pieces, Token(tok: .text(value), pos: start)) }
-            value = []
-            (after, tokens, closed) = expression0(next, start)
-            next = after
-            loop t in 0..tokens.size { pieces = push(pieces, tokens[t]) }
-            if not closed { going = false }
-          } else if c == '}' {
-            next = error_at(bump(next), at, 5, 0, [])
-          } else if c == '\\' {
-            next = bump(next)
-            match byte_at(next.src, next.at) {
-              .some(e) {
-                if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
-                  next = bump(next)
-                  decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
-                  value = push(value, decoded)
-                } else if e == '\n' {
-                  next = escape_error(next, at, 6)
-                  going = false
-                } else {
-                  next = bump_char(escape_error(next, at, 6))
-                }
-              }
-              .none {
+          break
+        } else if c == '"' {
+          next = bump(next)
+          break
+        } else if c == '{' {
+          next = bump(next)
+          interpolated = true
+          if value.size > 0 { pieces = push(pieces, Token(tok: .text(value), pos: start)) }
+          value = []
+          (after, tokens, closed) = expression0(next, start)
+          next = after
+          loop t in 0..tokens.size { pieces = push(pieces, tokens[t]) }
+          if not closed { break }
+        } else if c == '}' {
+          next = error_at(bump(next), at, 5, 0, [])
+        } else if c == '\\' {
+          next = bump(next)
+          match byte_at(next.src, next.at) {
+            .some(e) {
+              if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
+                next = bump(next)
+                decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
+                value = push(value, decoded)
+              } else if e == '\n' {
                 next = escape_error(next, at, 6)
-                going = false
+                break
+              } else {
+                next = bump_char(escape_error(next, at, 6))
               }
             }
-          } else {
-            next = bump(next)
-            value = push(value, c)
+            .none {
+              next = escape_error(next, at, 6)
+              break
+            }
           }
+        } else {
+          next = bump(next)
+          value = push(value, c)
         }
       }
     }
@@ -936,24 +915,21 @@ fn expression0(lx: Lexer, start: Pos) -> (Lexer, List[Token], bool) ! alloc {
   next.tokens = []
   var depth: u64 = 0
   var closed = false
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      at = next.pos
-      match byte_at(next.src, next.at) {
-        .none { going = false }
-        .some(c) {
-          if c == '\n' {
-            going = false
-          } else if c == '}' and depth == 0 {
-            next = push_token(bump(next), .punct(15), at)
-            closed = true
-            going = false
-          } else {
-            if c == '{' { depth = wrapping_add(depth, 1) }
-            if c == '}' { depth = wrapping_sub(depth, 1) }
-            next = token1(next, at, c)
-          }
+    at = next.pos
+    match byte_at(next.src, next.at) {
+      .none { break }
+      .some(c) {
+        if c == '\n' {
+          break
+        } else if c == '}' and depth == 0 {
+          next = push_token(bump(next), .punct(15), at)
+          closed = true
+          break
+        } else {
+          if c == '{' { depth = wrapping_add(depth, 1) }
+          if c == '}' { depth = wrapping_sub(depth, 1) }
+          next = token1(next, at, c)
         }
       }
     }
@@ -995,18 +971,15 @@ fn token0(lx: Lexer, start: Pos, c: u8) -> Lexer ! alloc {
 
 fn run(lx: Lexer) -> Lexer ! alloc {
   var next = lx
-  var going = true
   loop round in 0..lx.src.size {
-    if going {
-      match byte_at(next.src, next.at) {
-        .none { going = false }
-        .some(c) {
-          start = next.pos
-          if c == '\n' {
-            next = push_token(bump(next), .newline, start)
-          } else {
-            next = token0(next, start, c)
-          }
+    match byte_at(next.src, next.at) {
+      .none { break }
+      .some(c) {
+        start = next.pos
+        if c == '\n' {
+          next = push_token(bump(next), .newline, start)
+        } else {
+          next = token0(next, start, c)
         }
       }
     }
