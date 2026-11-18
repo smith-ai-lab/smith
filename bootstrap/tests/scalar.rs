@@ -1082,8 +1082,10 @@ fn an_enum_has_the_places_its_cases_share_by_type() {
 
 fn a_texts_bytes_are_read_and_written_as_8_bit_values() {
     let mut moved = 0;
+    // The runtime's copy moves a word at a time, as its own test says.
+    let copy = runtime::build(Runtime::Copy, &mut |_| 0);
     for (_, s) in taken() {
-        for f in &s.functions {
+        for f in s.functions.iter().filter(|f| **f != copy) {
             for block in &f.blocks {
                 for instruction in &block.instructions {
                     match &instruction.op {
@@ -1133,7 +1135,7 @@ fn a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refuse
                     Op::Store { value, .. } => *value,
                     _ => unreachable!(),
                 },
-                |_| LENGTH,
+                |t| if t == LENGTH { BYTE } else { LENGTH },
             ),
         ),
         (
@@ -1144,7 +1146,7 @@ fn a_read_or_a_write_that_is_not_through_an_address_or_not_of_its_type_is_refuse
                         for block in &mut f.blocks {
                             for instruction in &mut block.instructions {
                                 if let Op::Load { ty, .. } = &mut instruction.op {
-                                    *ty = LENGTH;
+                                    *ty = if *ty == LENGTH { BYTE } else { LENGTH };
                                     return true;
                                 }
                             }
@@ -1190,7 +1192,7 @@ fn a_program_ends_with_a_failing_status_when_the_system_refuses_memory() {
 
 /// A program that runs `main` after the function of the runtime and what it
 /// calls, which have the places from 1.
-fn with_runtime(
+pub fn with_runtime(
     kind: Runtime,
     data: Vec<Vec<u8>>,
     main: impl FnOnce(&mut Builder),

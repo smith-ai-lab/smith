@@ -10,6 +10,7 @@ use super::{Binary, Bits, Builder, Compare, Function, Type, Value};
 pub(super) const ADDRESS: Type = Type::Address;
 pub(super) const LENGTH: Type = Type::Int(Bits::B64);
 pub(super) const BYTE: Type = Type::Int(Bits::B8);
+const WORD: Type = Type::Int(Bits::B64);
 /// What a text is.
 const TEXT: [Type; 2] = [ADDRESS, LENGTH];
 
@@ -17,7 +18,9 @@ const TEXT: [Type; 2] = [ADDRESS, LENGTH];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Runtime {
     /// Takes an address to write to, an address to read from, and a count,
-    /// and copies that many bytes. It gives nothing.
+    /// and copies that many bytes, 8 at a time and then the fewer than 8
+    /// that are left, one at a time. The two places do not overlap. It gives
+    /// nothing.
     Copy,
     /// Takes that many texts, each as an address and a length, and gives a
     /// new text that is them one after another. Memory is asked of the
@@ -179,10 +182,57 @@ fn copy() -> Function {
     let mut f = Builder::new();
     let p = f.params(&[ADDRESS, ADDRESS, LENGTH]);
     let (to, from, count) = (p[0], p[1], p[2]);
-    repeat(&mut f, count, vec![], |f, i, _| {
-        let source = after(f, from, i);
+    // Two words in each round, which is 5 instructions for each 8 bytes: the
+    // comparison, one step of the place, and for each word an address for the
+    // read and one for the write, a load, and a store. A round that moved one
+    // word would take 6, as two addresses cannot be compared and each is
+    // found from the place. Every load and store may be at any address.
+    let wide = {
+        let mask = int(&mut f, !15);
+        f.binary(Binary::And, count, mask)
+    };
+    let (head, params) = f.block(&[LENGTH]);
+    let (inside, _) = f.block(&[]);
+    let (tail, _) = f.block(&[]);
+    let zero = int(&mut f, 0);
+    let eight = int(&mut f, 8);
+    let sixteen = int(&mut f, 16);
+    f.jump(head, vec![zero]);
+    f.at(head);
+    let finished = f.compare(Compare::Equal, params[0], wide);
+    f.switch(finished, vec![(inside, vec![]), (tail, vec![])]);
+    f.at(inside);
+    let (read, write) = (after(&mut f, from, params[0]), after(&mut f, to, params[0]));
+    let first = f.load(WORD, read);
+    f.store(write, first);
+    let (read, write) = (after(&mut f, read, eight), after(&mut f, write, eight));
+    let second = f.load(WORD, read);
+    f.store(write, second);
+    let next = f.binary(Binary::Add, params[0], sixteen);
+    f.jump(head, vec![next]);
+    // What is left is fewer than 16 bytes: a word when it has 8, and then
+    // the bytes, which are fewer than 8.
+    f.at(tail);
+    let (read, write) = (after(&mut f, from, wide), after(&mut f, to, wide));
+    let has_word = {
+        let bit = f.binary(Binary::And, count, eight);
+        f.compare(Compare::Equal, bit, zero)
+    };
+    let (word, _) = f.block(&[]);
+    let (bytes, rest) = f.block(&[ADDRESS, ADDRESS]);
+    f.switch(has_word, vec![(word, vec![]), (bytes, vec![write, read])]);
+    f.at(word);
+    let last = f.load(WORD, read);
+    f.store(write, last);
+    let (read, write) = (after(&mut f, read, eight), after(&mut f, write, eight));
+    f.jump(bytes, vec![write, read]);
+    f.at(bytes);
+    let seven = int(&mut f, 7);
+    let left = f.binary(Binary::And, count, seven);
+    repeat(&mut f, left, vec![], |f, i, _| {
+        let source = after(f, rest[1], i);
         let b = f.load(BYTE, source);
-        let target = after(f, to, i);
+        let target = after(f, rest[0], i);
         f.store(target, b);
         vec![]
     });
