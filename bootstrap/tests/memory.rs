@@ -162,14 +162,14 @@ fn taking_room_from_a_piece_that_has_it_calls_the_system_for_nothing() {
         .map(|(k, _)| k)
         .collect();
     assert_eq!(asking.len(), 1, "one block asks the system");
-    // The first block ends in a choice of two: the one that gives room, and the
-    // one that asks.
+    // The first block ends in a choice of two, and the first is the one that
+    // gives room.
     let scalar::End::Switch { jumps, .. } = &take.blocks[0].end else {
         panic!("the first block does not choose")
     };
-    let giving: Vec<usize> = jumps.iter().map(|j| j.block).filter(|k| *k != asking[0]).collect();
-    assert_eq!(giving.len(), 1);
-    let fast = &take.blocks[giving[0]];
+    assert_eq!(jumps.len(), 2);
+    assert_ne!(jumps[0].block, asking[0]);
+    let fast = &take.blocks[jumps[0].block];
     assert!(fast.instructions.iter().all(|i| !matches!(i.op, Op::System { .. } | Op::Call { .. })));
     // An add and a subtraction, which are all it does.
     assert!(fast.instructions.len() <= 2, "{:?}", fast.instructions);

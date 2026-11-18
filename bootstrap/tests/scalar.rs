@@ -1100,13 +1100,14 @@ fn a_texts_bytes_are_read_and_written_as_8_bit_values() {
     let mut moved = 0;
     // The runtime's copy moves a word at a time, as its own test says.
     let copy = runtime::build(Runtime::Copy, &mut |_| 0);
-    // The handler's function moves addresses and numbers the size of one.
+    // The handler's functions move addresses and numbers the size of one.
     let take = scalar::handler::take();
     for (_, s) in taken() {
+        let ready = (s.functions.iter().position(|f| *f == take)).map(scalar::handler::ready);
         for f in s
             .functions
             .iter()
-            .filter(|f| **f != copy && **f != take)
+            .filter(|f| **f != copy && **f != take && Some(*f) != ready.as_ref())
         {
             for block in &f.blocks {
                 for instruction in &block.instructions {
