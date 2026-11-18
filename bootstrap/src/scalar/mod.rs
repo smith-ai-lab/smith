@@ -31,7 +31,7 @@ mod words;
 pub use build::Builder;
 pub use common::common;
 pub use eval::{
-    Outcome, call, run, run_counting, run_measured, run_taking, run_with_command_line,
+    Outcome, call, run, run_copying, run_counting, run_measured, run_taking, run_with_command_line,
     run_with_command_line_and_errors, run_with_limit, run_with_words, run_with_words_and_errors,
 };
 pub use fold::fold;

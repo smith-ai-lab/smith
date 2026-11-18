@@ -48,6 +48,10 @@ struct Machine<'a> {
     /// bytes each call of it asked for.
     taking: Option<usize>,
     taken: Vec<usize>,
+    /// The place of the runtime's copy, when the program has it, and how many
+    /// bytes each call of it moved.
+    copying: Option<usize>,
+    copied: Vec<usize>,
     /// How many blocks the program may still enter.
     blocks: u64,
     /// How many instructions and ends of blocks have run.
@@ -84,7 +88,7 @@ pub fn run_with_limit(program: &Program, limit: usize) -> Outcome {
 /// Runs the program as `run_with_limit` does, and also gives how many bytes
 /// each request to the system for memory asked for, in order.
 pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
-    let (outcome, _, requests, _, _) = start(program, limit, Given::Words(&[]));
+    let (outcome, _, requests, _, _, _) = start(program, limit, Given::Words(&[]));
     (outcome, requests)
 }
 
@@ -93,14 +97,22 @@ pub fn run_counting(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
 /// they are rounded and taken from a piece. A program that has no handler asks
 /// for none.
 pub fn run_taking(program: &Program, limit: usize) -> (Outcome, Vec<usize>) {
-    let (outcome, _, _, taken, _) = start(program, limit, Given::Words(&[]));
+    let (outcome, _, _, taken, _, _) = start(program, limit, Given::Words(&[]));
     (outcome, taken)
+}
+
+/// Runs the program as `run_counting` does, and gives how many bytes each call
+/// of the runtime's copy moved, in order, which is what a list that grows moves
+/// into its new memory.
+pub fn run_copying(program: &Program, limit: usize) -> (Outcome, Vec<usize>, Vec<usize>) {
+    let (outcome, _, requests, _, _, copied) = start(program, limit, Given::Words(&[]));
+    (outcome, requests, copied)
 }
 
 /// Runs the program as `run` does, and also gives how many instructions ran,
 /// counting the end of each block entered as one.
 pub fn run_measured(program: &Program) -> (Outcome, u64) {
-    let (outcome, _, _, _, ran) = start(program, usize::MAX, Given::Words(&[]));
+    let (outcome, _, _, _, ran, _) = start(program, usize::MAX, Given::Words(&[]));
     (outcome, ran)
 }
 
@@ -113,7 +125,7 @@ pub fn run_with_words(program: &Program, words: &[Vec<u8>]) -> Outcome {
 /// Runs a program as `run_with_words` does, and also gives what it wrote to
 /// standard error.
 pub fn run_with_words_and_errors(program: &Program, words: &[Vec<u8>]) -> (Outcome, Vec<u8>) {
-    let (outcome, errors, _, _, _) = start(program, usize::MAX, Given::Words(words));
+    let (outcome, errors, _, _, _, _) = start(program, usize::MAX, Given::Words(words));
     (outcome, errors)
 }
 
@@ -126,14 +138,14 @@ pub fn run_with_command_line(program: &Program, line: &[u16]) -> Outcome {
 /// Runs a program as `run_with_command_line` does, and also gives what it
 /// wrote to standard error.
 pub fn run_with_command_line_and_errors(program: &Program, line: &[u16]) -> (Outcome, Vec<u8>) {
-    let (outcome, errors, _, _, _) = start(program, usize::MAX, Given::Line(line));
+    let (outcome, errors, _, _, _, _) = start(program, usize::MAX, Given::Line(line));
     (outcome, errors)
 }
 
 /// What a run gave: the outcome, what was written to standard error, each
-/// request for memory, each call of `take`, and how many instructions and
-/// block ends ran.
-type Run = (Outcome, Vec<u8>, Vec<usize>, Vec<usize>, u64);
+/// request for memory, each call of `take`, how many instructions and block
+/// ends ran, and each call of the runtime's copy.
+type Run = (Outcome, Vec<u8>, Vec<usize>, Vec<usize>, u64, Vec<usize>);
 
 fn start(program: &Program, limit: usize, given: Given) -> Run {
     let mut memory = Vec::new();
@@ -157,6 +169,8 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
         requests: Vec::new(),
         taking: (program.functions.iter()).position(|f| *f == super::handler::take()),
         taken: Vec::new(),
+        copying: (program.functions.iter()).position(|f| *f == super::runtime::copy()),
+        copied: Vec::new(),
         blocks: BLOCKS,
         ran: 0,
         depth: 0,
@@ -174,6 +188,7 @@ fn start(program: &Program, limit: usize, given: Given) -> Run {
         machine.requests,
         machine.taken,
         machine.ran,
+        machine.copied,
     )
 }
 
@@ -227,6 +242,8 @@ pub fn call(program: &Program, function: usize, args: &[u64]) -> Vec<u64> {
         requests: Vec::new(),
         taking: None,
         taken: Vec::new(),
+        copying: None,
+        copied: Vec::new(),
         blocks: BLOCKS,
         ran: 0,
         depth: 0,
@@ -400,6 +417,12 @@ impl Machine<'_> {
                     Op::Constant(Constant::Data(t)) => vec![Word::Address(self.starts[*t])],
                     Op::Call { function, args } => {
                         let args: Vec<Word> = args.iter().map(get).collect();
+                        if self.copying == Some(*function) {
+                            let Word::Int(count) = args[2] else {
+                                panic!("a copy of what is not a number of bytes")
+                            };
+                            self.copied.push(count as usize);
+                        }
                         if self.taking == Some(*function) {
                             let Word::Int(count) = args[2] else {
                                 panic!("a request for room that is not a number")
