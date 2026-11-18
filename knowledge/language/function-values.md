@@ -84,7 +84,7 @@ fn eight() -> f32 {
 
 `eight()` is `4.0`.
 
-Unlike a lambda, a function with a name can also be stored and returned, because it holds nothing that belongs to another function. A function stored in a field is called by reading the field and calling what it gives. Smith has no methods, so `a.b(c)` always means that.
+A function with a name can also be stored and returned, because it holds nothing that belongs to another function, and so can a [lambda that holds nothing lent](lambdas.md#where-a-lambda-may-go). A function stored in a field is called by reading the field and calling what it gives. Smith has no methods, so `a.b(c)` always means that.
 
 ```
 struct Pricing {

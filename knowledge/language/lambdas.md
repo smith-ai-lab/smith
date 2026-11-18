@@ -137,7 +137,7 @@ fn longer_side(wide: bool, w: f32, h: f32) -> f32 {
 
 Braces are the body of a construct or a lambda, and nothing else. Four rules follow.
 
-- **A lambda begins on the line where the call's arguments end.** On the next line it is not part of the call, and it is refused: "a lambda that stands alone is not an expression, as it is only passed to a call".
+- **A lambda begins on the line where the call's arguments end.** On the next line it is not part of the call, and a block there is refused, as a block that stands alone is not an expression.
 - **The last lambda goes after the call.** Written inside the parentheses, as in `twice(x, fn(v) { v * 0.5 })`, it means the same, and the formatter moves it after the call, so a program has one form.
 - **In the head of an `if`, a `match`, or a `loop`, `{` opens that construct's body.** So `if any { true } { ... }` is refused, since the first `{` is taken as the body of the `if`. A call that takes a lambda there is put in parentheses.
 
@@ -148,16 +148,42 @@ Braces are the body of a construct or a lambda, and nothing else. Four rules fol
     if (any { x > 0.0 }) { 1.0 } else { -1.0 }
   }
   ```
-- **A block that stands alone is not an expression.** `x = { 1.0 }` is refused: "a lambda cannot be bound to a name, as it is only passed to a call". A few lines that give a value are passed to a function, as to `do` above.
+- **A block that stands alone is not an expression.** `x = { 1.0 }` is refused. A few lines that give a value are passed to a function, as to `do` above.
 
-## What a lambda cannot do
+## Where a lambda may go
 
-A lambda is passed to a call, and that is all.
+A lambda is a value, so it goes where a value goes: it is passed to a call, bound to a name, stored in a field, and returned. One rule decides which lambdas may leave the function they are written in, and it is the rule for every value: [a lent value is not stored or returned](take.md#lending).
 
-- It cannot be bound to a name. `f = fn(v) { v * 0.5 }` is refused with the message above.
-- It cannot be stored in a field, and it cannot be returned.
+A lambda is lent the names around it that it reads or assigns. So a lambda that reads or assigns a name of its function holds something lent, and it is passed to a parameter of a function type and nowhere else. The function that receives it may call it, or pass it on to such a parameter of another function, and may not store or return it, whether its parameter lends the lambda or takes it. So the lambda never outlives the names it uses, and what it does happens inside the call it is written at.
 
-So a lambda never outlives the function it is written in. That is why it may assign that function's `var`s, and why it is always inlined: a lambda costs what its block costs, written where the function calls it. A function that must be kept is one with a name, under [Function values](function-values.md).
+```
+fn scaled(x: f32, rate: f32) -> f32 {
+  twice(x) fn(v) { v * rate }
+}
+```
+
+A lambda that uses no name around it, or only names it [takes](take.md#a-function-that-is-called-once), holds nothing lent, and may be kept. Here `halve` is bound, then passed.
+
+```
+fn quarter(x: f32) -> f32 {
+  halve = fn(v: f32) -> f32 { v * 0.5 }
+  twice(x, halve)
+}
+```
+
+A lambda that uses no name around it is a function with a name in all but the name, so it goes where a [function value](function-values.md) goes, as into a field whose type is a function type. A lambda that takes names holds them, and has a type of its own, so a field that holds it has a type parameter for it. A type parameter never stands for a lambda that holds something lent.
+
+```
+struct Step[F] {
+  run: F
+}
+```
+
+A lambda that is bound, stored, or returned is written with `fn`, also when it takes nothing: `fn() { 1.0 }`. The block alone is a lambda only as the argument of a call, so `x = { 1.0 }` is still refused, as a block that stands alone is not an expression.
+
+Binding, storing, and returning a lambda are not built, so the second and third examples are refused today, and no words are quoted.
+
+A lambda that is passed to a call is inlined: it costs what its block costs, written where the function calls it.
 
 Two keywords of later pages stop at a lambda. [`try`](try.md) inside a lambda returns from the lambda, and `break` does not reach a [`loop`](loop.md) outside it.
 

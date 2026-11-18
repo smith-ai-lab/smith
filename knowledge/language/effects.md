@@ -105,7 +105,7 @@ fn main() ! console {
 
 This prints `hi`, because `main` allows `console`. With `fn main() {` in its place the program is refused: "`print` needs the `console` effect, which `main` does not declare".
 
-A function that receives a lambda never lists the effects of the lambda, and no signature can say "whatever the lambda does". There are no effect variables. This is sound because a lambda passed to a call cannot be stored or returned, so it runs only inside the function it is written in.
+A function that receives a lambda never lists the effects of the lambda, and no signature can say "whatever the lambda does". There are no effect variables. This is sound because the function that receives a lambda can call it and pass it on, and cannot store or return it, so the lambda runs only inside the call it is written at. A [lambda that is kept](lambdas.md#where-a-lambda-may-go) is a function stored in a value, and states its effects as the next section says.
 
 ## A function stored in a value
 

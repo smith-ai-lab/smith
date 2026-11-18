@@ -62,7 +62,7 @@ fn two_readings() -> (u64, u64) {
 
 `two_readings` returns `(1, 2)` and carries no effect. Each `now()` runs the lambda that `fake_clock` supplied.
 
-- A handler keeps its state in a `var`. The lambda assigns `ticks`, a local of the function it is written in, which a lambda passed to a call may do because it cannot outlive that function.
+- A handler keeps its state in a `var`. The lambda assigns `ticks`, a local of the function it is written in, which a lambda may do because one that assigns a name around it is only passed to a call, and cannot outlive that function.
 - An operation is an ordinary call. Its lambda runs and returns a value to the code that asked, so a handler cannot stop that code or run it twice. Each `now()` above gets one value, and the code after it goes on.
 
 ## Handlers inside handlers
