@@ -192,11 +192,11 @@ fn compare_lexers(smith: &Path, work: &Path, root: &Path, lexer: &str) {
     }
 }
 
-fn size(exe: &Path) -> u64 {
+pub(crate) fn size(exe: &Path) -> u64 {
     std::fs::metadata(exe).map(|m| m.len()).unwrap_or(0)
 }
 
-fn per_byte(time: impl Into<Option<Duration>>, bytes: usize) -> String {
+pub(crate) fn per_byte(time: impl Into<Option<Duration>>, bytes: usize) -> String {
     match time.into() {
         Some(t) => format!("{:.1}", t.as_nanos() as f64 / bytes as f64),
         None => "gave up".to_string(),
@@ -228,7 +228,7 @@ fn least_with_stdin(exe: &Path, input: &Path) -> Option<Duration> {
 /// first of `command`, and the rest are its arguments, in the folder `work`,
 /// with `stdin` for its input. The count is the same on every run, which a time
 /// is not.
-fn instructions(command: &[&OsStr], stdin: Option<&Path>, work: &Path) -> Option<u64> {
+pub(crate) fn instructions(command: &[&OsStr], stdin: Option<&Path>, work: &Path) -> Option<u64> {
     let mut valgrind = Command::new("valgrind");
     valgrind
         .arg("--tool=callgrind")
