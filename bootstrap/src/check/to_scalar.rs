@@ -36,6 +36,75 @@ const BYTE: form::Type = form::Type::Int(form::Bits::B8);
 /// What a text is.
 const TEXT: [form::Type; 2] = [form::Type::Address, form::Type::Int(form::Bits::B64)];
 
+/// The names of what a `loop` over a value keeps of a `return` in its block,
+/// which no name written in a program can be.
+const KEPT_RAN: &str = "return@ran";
+const KEPT_VALUE: &str = "return@kept";
+
+/// Whether a `return` is written in a block, and not in a lambda in it,
+/// which leaves the lambda.
+fn has_return(body: &[Stmt]) -> bool {
+    stops(body, false, true)
+}
+
+/// Whether the block of a `loop` can answer `.stop`: it has a `break` that
+/// is not in a loop of its own, or a `return` that is not in a lambda.
+fn can_stop(body: &[Stmt]) -> bool {
+    stops(body, true, true)
+}
+
+/// Whether a block holds a `break` that ends the loop it is the block of, if
+/// `breaks` asks for one, or a `return` that leaves the function around it,
+/// if `returns` asks for one.
+fn stops(body: &[Stmt], breaks: bool, returns: bool) -> bool {
+    fn one(e: &Expr, breaks: bool, returns: bool) -> bool {
+        let any = |es: &mut dyn Iterator<Item = &Expr>, b: bool, r: bool| {
+            let mut found = false;
+            for e in es {
+                found = found || one(e, b, r);
+            }
+            found
+        };
+        match e {
+            Expr::Break { .. } => breaks,
+            Expr::Return { .. } => returns,
+            Expr::Call(call) => any(&mut call.args.iter().map(|a| &a.value), breaks, returns),
+            Expr::Field { of, .. } => one(of, breaks, returns),
+            Expr::Arith { left, right, .. } => {
+                one(left, breaks, returns) || one(right, breaks, returns)
+            }
+            Expr::Case { payload, .. } => payload.as_ref().is_some_and(|p| one(p, breaks, returns)),
+            Expr::Match(m) => {
+                one(&m.of, breaks, returns)
+                    || m.arms
+                        .iter()
+                        .any(|a| any(&mut values(&a.body), breaks, returns))
+            }
+            Expr::Tuple { items, .. } | Expr::List { items, .. } => {
+                any(&mut items.iter(), breaks, returns)
+            }
+            Expr::Index { of, index, .. } => {
+                one(of, breaks, returns) || one(index, breaks, returns)
+            }
+            // A `return` in a lambda leaves the lambda.
+            Expr::Lambda(l) => any(&mut values(&l.body), false, false),
+            // A `break` in a loop ends that loop.
+            Expr::Loop(l) => {
+                let heads = (l.range.iter().flat_map(|r| [&r.from, &r.to]))
+                    .chain(l.over.iter().map(|o| &o.value))
+                    .chain(l.decreases.iter());
+                heads.into_iter().any(|e| one(e, breaks, returns))
+                    || any(&mut values(&l.body), false, returns)
+            }
+            Expr::Interp { parts, .. } => parts
+                .iter()
+                .any(|p| matches!(p, Part::Expr(e) if one(e, breaks, returns))),
+            Expr::Text { .. } | Expr::Number { .. } | Expr::Name { .. } => false,
+        }
+    }
+    values(body).any(|e| one(e, breaks, returns))
+}
+
 /// The program that `start` runs, in the scalar form.
 pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
     // A `main` that takes the words it was started with is called by the
@@ -96,17 +165,61 @@ struct Out<'a> {
     loops: Vec<Round>,
     /// The functions and lambdas being lowered, the innermost last, each
     /// with the blocks that leave it by a `return`, and the values they give.
-    returns: Vec<Vec<(usize, Vec<form::Value>)>>,
+    returns: Vec<Returns>,
     /// The blocks that follow a `return`, which nothing reaches.
     dead: Vec<usize>,
 }
 
 /// A `loop` being lowered: the names its body assigns, which each round
 /// carries to the next, and the blocks that leave it, each with the values
-/// of those names there.
+/// of those names there. `body` is set for the block of a `loop` over a
+/// value, which is lowered as the function `each` is given, and a `break` of
+/// which answers `.stop`.
 struct Round {
     carried: Vec<(usize, usize)>,
     leaving: Vec<(usize, Vec<form::Value>)>,
+    body: bool,
+}
+
+/// A function or a lambda being lowered, with the type it gives, how many
+/// names each frame held that outlive it, and the blocks that leave it by a
+/// `return`. `kept` is set for the block of a `loop` over a value.
+struct Returns {
+    gives: Ty,
+    limits: Vec<usize>,
+    ends: Vec<Leaving>,
+    kept: Option<Kept>,
+    /// The address of the `loop` whose block this is.
+    of: Option<usize>,
+}
+
+/// A block that leaves a function or a lambda early: what it gives, and the
+/// values of the names that outlive it, by frame and place.
+struct Leaving {
+    block: usize,
+    args: Vec<form::Value>,
+    names: Vec<Vec<Vec<form::Value>>>,
+}
+
+/// Where the block of a `loop` over a value keeps what a `return` in it
+/// gives: whether one ran, and the value, as places in the frame of the
+/// function the `loop` is written in. The function gives the value once
+/// `each` is over.
+#[derive(Clone, Copy)]
+struct Kept {
+    frame: usize,
+    ran: usize,
+    value: usize,
+}
+
+/// What a body that is lowered to give values is: the statements of a
+/// function or a lambda, or the block of a `loop` over a value.
+#[derive(Clone, Copy)]
+enum Code<'a> {
+    Stmts(&'a [Stmt]),
+    /// The block of a `loop` over a value, which gives a `Flow` unless it
+    /// cannot answer `.stop` and nothing reads the `Flow`.
+    Each(&'a Loop, bool),
 }
 
 /// A name being lowered: what it gives, the values it stands for, and the
@@ -127,6 +240,10 @@ enum Func<'a> {
     Lambda(&'a Lambda, usize, Vec<Ty>),
     /// A copy of a function with a name.
     Named(Instance),
+    /// The block of a `loop` over a value, the frame it is written in, and
+    /// the types that stand for the type parameters of the definition it is
+    /// written in: the function `each` is given.
+    Each(&'a Loop, usize, Vec<Ty>),
 }
 
 impl<'a> Out<'a> {
@@ -544,7 +661,8 @@ impl<'a> Lowering<'a> {
             out.define(name, ty, values);
         }
         let gives = view.gives.subst(&instance.args);
-        let mut result = self.leaving(&mut out, &view.f.body, &instance.args, (&gives, true));
+        let code = Code::Stmts(&view.f.body);
+        let mut result = self.leaving(&mut out, code, &instance.args, (&gives, true), Vec::new());
         if view.gives == Ty::Nothing {
             result.clear();
         }
@@ -568,34 +686,66 @@ impl<'a> Lowering<'a> {
         )
     }
 
-    /// Lowers the body of a function or of a lambda, which gives `gives`, and
-    /// gives the values it gives. A `return` in it ends its block with them
-    /// when `whole` says the body is the whole of a function, and otherwise
-    /// jumps to the block where what the body gives is known.
+    /// Lowers the body of a function or of a lambda, or the block of a `loop`
+    /// over a value, which gives `gives`, and gives the values it gives. A
+    /// `return` in it ends its block with them when `whole` says the body is
+    /// the whole of a function, and otherwise jumps to the block where what
+    /// the body gives is known, which also knows what the names that
+    /// outlive the body, `limits` of each frame, are then.
     fn leaving(
         &mut self,
         out: &mut Out<'a>,
-        body: &'a [Stmt],
+        code: Code<'a>,
         env: &[Ty],
         (gives, whole): (&Ty, bool),
+        limits: Vec<usize>,
     ) -> Vec<form::Value> {
-        out.returns.push(Vec::new());
-        let result = self.block(out, body, env);
-        let mut ends = out.returns.pop().expect("pushed");
+        let kept = match code {
+            Code::Each(l, _) => self.kept_of(out, l),
+            Code::Stmts(_) => None,
+        };
+        out.returns.push(Returns {
+            gives: gives.clone(),
+            limits: limits.clone(),
+            ends: Vec::new(),
+            kept,
+            of: match code {
+                Code::Each(l, _) => Some(addr(l)),
+                Code::Stmts(_) => None,
+            },
+        });
+        let result = match code {
+            Code::Stmts(body) => self.block(out, body, env),
+            Code::Each(l, read) => {
+                out.loops.push(Round {
+                    carried: Vec::new(),
+                    leaving: Vec::new(),
+                    body: true,
+                });
+                self.block(out, &l.body, env);
+                out.loops.pop();
+                if read {
+                    vec![self.flow(out, false)]
+                } else {
+                    Vec::new()
+                }
+            }
+        };
+        let mut ends = out.returns.pop().expect("pushed").ends;
         if ends.is_empty() {
             return result;
         }
         let types = self.scalars(gives);
-        for (_, args) in &mut ends {
-            args.truncate(types.len());
+        for end in &mut ends {
+            end.args.truncate(types.len());
         }
         let reached = !out.dead.contains(&out.current);
         if whole {
             // What follows the last `return` ends with the values it gave, as
             // it is reached by nothing and the end of a function takes some.
-            let last = ends.last().map(|(_, args)| args.clone());
-            for (block, args) in ends {
-                out.blocks[block].end = form::End::Return(args);
+            let last = ends.last().map(|end| end.args.clone());
+            for end in ends {
+                out.blocks[end.block].end = form::End::Return(end.args);
             }
             return if reached {
                 result
@@ -605,15 +755,105 @@ impl<'a> Lowering<'a> {
         }
         // What follows the last `return` is reached by nothing, and jumps with
         // the values the `return` gave, as a jump has to give some.
-        let args = if reached {
-            result
-        } else {
-            ends.last()
-                .map(|(_, args)| args.clone())
-                .unwrap_or_default()
+        let (args, names) = match ends.last() {
+            Some(last) if !reached => (last.args.clone(), last.names.clone()),
+            _ => (result, self.names_now(out, &limits)),
         };
-        ends.push((out.current, args));
-        out.join(&types, ends)
+        ends.push(Leaving {
+            block: out.current,
+            args,
+            names,
+        });
+        self.join_returns(out, &types, ends, &limits)
+    }
+
+    /// The values of the names that outlive a body, `limits` of each frame.
+    fn names_now(&self, out: &Out<'a>, limits: &[usize]) -> Vec<Vec<Vec<form::Value>>> {
+        (limits.iter().enumerate())
+            .map(|(f, &n)| {
+                out.frames[f][..n]
+                    .iter()
+                    .map(|b| b.values.clone())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Ends the block being filled by leaving the function or the lambda
+    /// being lowered with `values`. What follows is reached by nothing.
+    fn leave(&mut self, out: &mut Out<'a>, values: Vec<form::Value>) {
+        let limits = out.returns.last().expect("checked").limits.clone();
+        let names = self.names_now(out, &limits);
+        let block = out.current;
+        let returns = out.returns.last_mut().expect("checked");
+        returns.ends.push(Leaving {
+            block,
+            args: values,
+            names,
+        });
+        out.current = out.new_block();
+        out.dead.push(out.current);
+    }
+
+    /// Makes a block where the blocks of `ends`, which give it values, meet,
+    /// and gives the values it takes. The names that outlive the body and
+    /// are not the same at every end are taken too, and have their values
+    /// there from then on.
+    fn join_returns(
+        &mut self,
+        out: &mut Out<'a>,
+        types: &[form::Type],
+        ends: Vec<Leaving>,
+        limits: &[usize],
+    ) -> Vec<form::Value> {
+        let mut changed = Vec::new();
+        for (f, &n) in limits.iter().enumerate() {
+            for at in 0..n {
+                if ends.iter().any(|e| e.names[f][at] != ends[0].names[f][at]) {
+                    changed.push((f, at));
+                }
+            }
+        }
+        let mut all = types.to_vec();
+        for &(f, at) in &changed {
+            all.extend(ends[0].names[f][at].iter().map(|v| out.types[v.0]));
+        }
+        let sizes: Vec<usize> = (changed.iter())
+            .map(|&(f, at)| ends[0].names[f][at].len())
+            .collect();
+        let ends = (ends.into_iter())
+            .map(|mut end| {
+                for &(f, at) in &changed {
+                    end.args.extend(end.names[f][at].clone());
+                }
+                (end.block, end.args)
+            })
+            .collect();
+        let params = out.join(&all, ends);
+        let mut at_param = types.len();
+        for ((f, at), size) in changed.into_iter().zip(sizes) {
+            out.frames[f][at].values = params[at_param..at_param + size].to_vec();
+            at_param += size;
+        }
+        params[..types.len()].to_vec()
+    }
+
+    /// `.go` or `.stop`, of the prelude's `Flow`.
+    fn flow(&self, out: &mut Out<'a>, stop: bool) -> form::Value {
+        let defs = self.typed.defs;
+        let name = if stop { "stop" } else { "go" };
+        let case = defs.case_of(defs.flow, name).expect("a case");
+        out.constant(form::Constant::Int(case as u64), BYTE)
+    }
+
+    /// Where the block of a `loop` over a value keeps what a `return` in it
+    /// gives, if it has one.
+    fn kept_of(&self, out: &Out<'a>, l: &Loop) -> Option<Kept> {
+        has_return(&l.body).then(|| Kept {
+            frame: out.at,
+            ran: out.find(KEPT_RAN).expect("kept"),
+            value: out.find(KEPT_VALUE).expect("kept"),
+        })
     }
 
     /// Lowers the statements of a block, and gives the values of the last
@@ -841,7 +1081,10 @@ impl<'a> Lowering<'a> {
             }
             Expr::Lambda(_) => unreachable!("checked"),
             Expr::Loop(l) => {
-                self.round(out, l, env);
+                match &l.over {
+                    Some(o) => self.each_loop(out, l, o, env),
+                    None => self.round(out, l, env),
+                }
                 (Ty::Nothing, Vec::new())
             }
             Expr::Return { value, .. } => {
@@ -849,17 +1092,27 @@ impl<'a> Lowering<'a> {
                     Some(value) => self.expr(out, value, env).1,
                     None => Vec::new(),
                 };
-                let from = out.current;
-                out.returns
-                    .last_mut()
-                    .expect("checked")
-                    .push((from, values));
-                // What follows a `return` is reached by nothing.
-                out.current = out.new_block();
-                out.dead.push(out.current);
+                match out.returns.last().and_then(|r| r.kept) {
+                    // The block of a `loop` over a value keeps what it gives
+                    // and answers `.stop`, and the function gives it once
+                    // `each` is over.
+                    Some(kept) => {
+                        let ran = self.truth(out, true);
+                        out.frames[kept.frame][kept.ran].values = vec![ran];
+                        out.frames[kept.frame][kept.value].values = values;
+                        let stop = self.flow(out, true);
+                        self.leave(out, vec![stop]);
+                    }
+                    None => self.leave(out, values),
+                }
                 (Ty::Nothing, Vec::new())
             }
             Expr::Break { .. } => {
+                if out.loops.last().expect("checked").body {
+                    let stop = self.flow(out, true);
+                    self.leave(out, vec![stop]);
+                    return (Ty::Nothing, Vec::new());
+                }
                 let round = out.loops.last().expect("checked");
                 let values = round
                     .carried
@@ -907,8 +1160,27 @@ impl<'a> Lowering<'a> {
             .map(|name| (out.at, name))
             .collect();
         for bound in out.frames.iter().flatten() {
-            if let Some(Func::Lambda(lambda, frame, _)) = &bound.func {
-                assigned.extend(names_of(&lambda.body).into_iter().map(|n| (*frame, n)));
+            match &bound.func {
+                Some(Func::Lambda(lambda, frame, _)) => {
+                    assigned.extend(names_of(&lambda.body).into_iter().map(|n| (*frame, n)));
+                }
+                // The block of a `loop` over a value assigns what it keeps
+                // of a `return` as well.
+                // The block of a `loop` over a value assigns what it keeps of
+                // a `return`, and the names it assigns itself, which a loop
+                // in the block that is being lowered does not carry for it,
+                // as the block is not called in itself.
+                Some(Func::Each(each, frame, _)) => {
+                    let lowering = out.returns.iter().any(|r| r.of == Some(addr(*each)));
+                    if !lowering {
+                        assigned.extend(names_of(&each.body).into_iter().map(|n| (*frame, n)));
+                    }
+                    if has_return(&each.body) {
+                        assigned.push((*frame, KEPT_RAN));
+                        assigned.push((*frame, KEPT_VALUE));
+                    }
+                }
+                _ => {}
             }
         }
         let mut carried = Vec::new();
@@ -924,12 +1196,8 @@ impl<'a> Lowering<'a> {
                 .flat_map(|&(f, at)| out.frames[f][at].values.clone())
                 .collect()
         };
-        // A loop over a list counts from 0 to the list's size, which is
-        // read once, before the first round, and reads each element from
-        // the address the list had then.
-        let mut element = None;
-        let range = match (&l.range, &l.over) {
-            (Some(r), _) => {
+        let range = match &l.range {
+            Some(r) => {
                 let Ty::Int(t) = self.typed.type_of(&r.from, env) else {
                     unreachable!("checked")
                 };
@@ -937,17 +1205,7 @@ impl<'a> Lowering<'a> {
                 let to = self.expr(out, &r.to, env).1[0];
                 Some((r.name.as_str(), t, from, to))
             }
-            (None, Some(o)) => {
-                let (list, values) = self.expr(out, &o.value, env);
-                let scalars = self.element(&list);
-                let Ty::List(of) = list else {
-                    unreachable!("checked")
-                };
-                element = Some((of[0].clone(), scalars, values[0]));
-                let from = out.int(form::Bits::B64, 0);
-                Some((o.name.as_str(), Int::U64, from, values[1]))
-            }
-            (None, None) => None,
+            None => None,
         };
         let start = held(out);
         let mut types: Vec<form::Type> = start.iter().map(|v| out.types[v.0]).collect();
@@ -970,6 +1228,7 @@ impl<'a> Lowering<'a> {
         let mut round = Round {
             carried: carried.clone(),
             leaving: Vec::new(),
+            body: false,
         };
         let names = out.names().len();
         if let Some((name, t, _, to)) = range {
@@ -989,18 +1248,7 @@ impl<'a> Lowering<'a> {
             };
             round.leaving.push((leave, held(out)));
             out.current = inside;
-            match element.take() {
-                None => out.define(name, Ty::Int(t), vec![params[0]]),
-                Some((ty, scalars, start)) => {
-                    let (places, stride) = form::element(&scalars);
-                    let width = out.int(form::Bits::B64, i128::from(stride));
-                    let offset = out.binary(form::Binary::Mul, params[0], width);
-                    let address = out.binary(form::Binary::Add, start, offset);
-                    let at: Vec<(form::Type, u64)> = scalars.into_iter().zip(places).collect();
-                    let values = self.load(out, address, &at);
-                    out.define(name, ty, values);
-                }
-            }
+            out.define(name, Ty::Int(t), vec![params[0]]);
         }
         out.loops.push(round);
         self.block(out, &l.body, env);
@@ -1051,15 +1299,94 @@ impl<'a> Lowering<'a> {
             args[at] = Some(self.argument(out, default, &params[at], &inner));
         }
         let frame = args.into_iter().map(|a| a.expect("given")).collect();
+        let limits = out.frames.iter().map(Vec::len).collect();
         out.frames.push(frame);
         let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
-        let mut result = self.leaving(out, &view.f.body, &instance.args, (&gives, false));
+        let code = Code::Stmts(&view.f.body);
+        let mut result = self.leaving(out, code, &instance.args, (&gives, false), limits);
         out.frames.pop();
         out.at = caller;
         if gives == Ty::Nothing {
             result.clear();
         }
         (gives, result)
+    }
+
+    /// Lowers a `loop` over a value: the `each` of its `Iterate`, in place,
+    /// given the block of the loop as the function it calls on each
+    /// element. A `return` in the block is kept, and the function gives it
+    /// once `each` is over.
+    fn each_loop(&mut self, out: &mut Out<'a>, l: &'a Loop, o: &'a Over, env: &[Ty]) {
+        let typed = self.typed;
+        let defs = typed.defs;
+        let instance = typed.each_of(o, env);
+        let view = defs.view(instance.template);
+        let params: Vec<(String, Ty)> = (view.params.iter())
+            .map(|(n, t)| (n.clone(), t.subst(&instance.args)))
+            .collect();
+        let flow = Ty::Enum(defs.flow, Vec::new());
+        let outer = out.names().len();
+        if has_return(&l.body) {
+            let gives = out.returns.last().expect("checked").gives.clone();
+            let ran = self.truth(out, false);
+            out.define(KEPT_RAN, Ty::Enum(defs.boolean, Vec::new()), vec![ran]);
+            let zeros = self
+                .scalars(&gives)
+                .into_iter()
+                .map(|t| out.zero(t))
+                .collect();
+            out.define(KEPT_VALUE, gives, zeros);
+        }
+        let walked = Bound {
+            name: params[0].0.clone(),
+            ty: params[0].1.clone(),
+            values: self.passed(out, &o.value, &params[0].1, env),
+            func: None,
+        };
+        let body = Bound {
+            name: params[1].0.clone(),
+            ty: params[1].1.clone(),
+            values: Vec::new(),
+            func: Some(Func::Each(l, out.at, env.to_vec())),
+        };
+        let limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
+        out.frames.push(vec![walked, body]);
+        let caller = std::mem::replace(&mut out.at, out.frames.len() - 1);
+        let code = Code::Stmts(&view.f.body);
+        let result = self.leaving(out, code, &instance.args, (&flow, false), limits);
+        out.frames.pop();
+        out.at = caller;
+        // A loop reads nothing of the `Flow` that `each` gives, so a constant
+        // that was only built to give it is not kept.
+        if let [value] = result[..] {
+            let last = out.blocks[out.current].instructions.last();
+            let built =
+                last.is_some_and(|i| i.results == [value] && matches!(i.op, form::Op::Constant(_)));
+            if built && value.0 + 1 == out.types.len() {
+                out.blocks[out.current].instructions.pop();
+                out.types.pop();
+            }
+        }
+        if out.names().len() > outer {
+            // The function gives what a `return` in the block kept, when
+            // one ran.
+            let ran = out.names()[outer].values[0];
+            let kept = out.names()[outer + 1].values.clone();
+            let [no, yes] = out.switch(ran, 2)[..] else {
+                unreachable!("two cases")
+            };
+            let limits = out.returns.last().expect("checked").limits.clone();
+            out.current = yes;
+            let names = self.names_now(out, &limits);
+            let returns = out.returns.last_mut().expect("checked");
+            returns.ends.push(Leaving {
+                block: yes,
+                args: kept,
+                names,
+            });
+            out.current = no;
+            out.names_mut().truncate(outer);
+        }
     }
 
     /// An argument for a parameter, as the name the parameter is then.
@@ -1103,6 +1430,18 @@ impl<'a> Lowering<'a> {
         call: &'a Call,
         env: &[Ty],
     ) -> (Ty, Vec<form::Value>) {
+        self.call_value_as(out, call, env, false)
+    }
+
+    /// `call_value`, where `quiet` says that nothing reads what the block of
+    /// a `loop` gives, which cannot be `.stop`.
+    fn call_value_as(
+        &mut self,
+        out: &mut Out<'a>,
+        call: &'a Call,
+        env: &[Ty],
+        quiet: bool,
+    ) -> (Ty, Vec<form::Value>) {
         let at = out.find(&call.callee).expect("checked");
         let local = &out.names()[at];
         let func = local.func.clone().expect("a function");
@@ -1133,11 +1472,30 @@ impl<'a> Lowering<'a> {
             Func::Lambda(lambda, frame, lambda_env) => {
                 let caller = std::mem::replace(&mut out.at, frame);
                 let before = out.names().len();
+                let mut limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
+                limits[frame] = before;
                 for ((name, _), mut arg) in lambda.params.iter().zip(args) {
                     arg.name = name.clone();
                     out.names_mut().push(arg);
                 }
-                let result = self.leaving(out, &lambda.body, &lambda_env, (gives, false));
+                let code = Code::Stmts(&lambda.body);
+                let result = self.leaving(out, code, &lambda_env, (gives, false), limits);
+                out.names_mut().truncate(before);
+                out.at = caller;
+                result
+            }
+            Func::Each(each, frame, each_env) => {
+                let caller = std::mem::replace(&mut out.at, frame);
+                let before = out.names().len();
+                let mut limits: Vec<usize> = out.frames.iter().map(Vec::len).collect();
+                limits[frame] = before;
+                let over = each.over.as_ref().expect("a loop over a value");
+                for mut arg in args {
+                    arg.name = over.name.clone();
+                    out.names_mut().push(arg);
+                }
+                let code = Code::Each(each, !quiet);
+                let result = self.leaving(out, code, &each_env, (gives, false), limits);
                 out.names_mut().truncate(before);
                 out.at = caller;
                 result
@@ -1199,6 +1557,9 @@ impl<'a> Lowering<'a> {
         ty: &Ty,
         env: &[Ty],
     ) -> Vec<form::Value> {
+        if let Some(values) = self.after_block(out, m, env) {
+            return values;
+        }
         let (of_ty, of) = self.expr(out, &m.of, env);
         let types = self.scalars(ty);
         let before: Vec<usize> = out.frames.iter().map(Vec::len).collect();
@@ -1259,6 +1620,42 @@ impl<'a> Lowering<'a> {
             at_param += size;
         }
         params[..types.len()].to_vec()
+    }
+
+    /// Lowers a `match` on what the block of a `loop` over a value gives,
+    /// when the block cannot answer `.stop`: it answers `.go`, which the
+    /// compiler knows, so no `Flow` is built or tested, and only the block
+    /// of `.go` is lowered, after the block of the loop.
+    fn after_block(
+        &mut self,
+        out: &mut Out<'a>,
+        m: &'a Match,
+        env: &[Ty],
+    ) -> Option<Vec<form::Value>> {
+        let Expr::Call(call) = &m.of else {
+            return None;
+        };
+        if !self.typed.value_calls.contains(&addr(call)) {
+            return None;
+        }
+        let Some(Func::Each(each, ..)) = out
+            .find(&call.callee)
+            .and_then(|at| out.names()[at].func.clone())
+        else {
+            return None;
+        };
+        let go = (m.arms.iter()).find(
+            |arm| matches!(&arm.pattern, Pattern::Case { name, inner: None, .. } if name == "go"),
+        );
+        let go = go.filter(|_| !can_stop(&each.body))?;
+        self.call_value_as(out, call, env, true);
+        // A name the block defines is not there after it.
+        let before: Vec<usize> = out.frames.iter().map(Vec::len).collect();
+        let values = self.block(out, &go.body, env);
+        for (frame, n) in out.frames.iter_mut().zip(before) {
+            frame.truncate(n);
+        }
+        Some(values)
     }
 
     /// Chooses between the blocks of the first of `rows` that matches the
