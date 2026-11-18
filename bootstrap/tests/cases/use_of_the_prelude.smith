@@ -1,0 +1,3 @@
+use std.prelude (Option)
+
+fn main() ! console { print("hello") }

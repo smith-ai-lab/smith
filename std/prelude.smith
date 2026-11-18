@@ -1,0 +1,538 @@
+enum Option[T] {
+  some: T
+  none
+}
+
+enum Result[T, E] {
+  ok: T
+  err: E
+}
+
+enum bool {
+  false
+  true
+}
+
+enum Order {
+  less
+  equal
+  greater
+}
+
+struct Utf8Error {
+  at: u64
+}
+
+trait Eq[T] {
+  fn eq(a: T, b: T) -> bool
+}
+
+trait Ord[T] {
+  fn compare(a: T, b: T) -> Order
+}
+
+trait Hash[T] {
+  fn hash(value: T) -> u64
+}
+
+trait Convert[A, B] {
+  fn convert(a: A) -> B
+}
+
+trait Fmt[T] {
+  fn fmt(value: T) -> str ! alloc
+}
+
+trait Repr[T] {
+  fn repr(value: T) -> str ! alloc
+}
+
+impl Fmt[str] {
+  fn fmt(value: str) -> str ! alloc { value }
+}
+
+trait Exit[T] {
+  fn exit(value: T) -> u8 ! console, alloc
+}
+
+impl Exit[()] {
+  fn exit(value: ()) -> u8 ! console, alloc { 0 }
+}
+
+impl[T: Exit, E: Fmt] Exit[Result[T, E]] {
+  fn exit(value: Result[T, E]) -> u8 ! console, alloc {
+    match value {
+      .ok(x) { Exit.exit(x) }
+      .err(e) {
+        __eprint(fmt(e))
+        1
+      }
+    }
+  }
+}
+
+trait Try[C, R, out T] {
+  fn then(c: C, body: (T) -> R) -> R
+}
+
+impl[T, U, E] Try[Result[T, E], Result[U, E], T] {
+  fn then(c: Result[T, E], body: (T) -> Result[U, E]) -> Result[U, E] {
+    match c {
+      .ok(x) { body(x) }
+      .err(e) { .err(e) }
+    }
+  }
+}
+
+impl[T, U] Try[Option[T], Option[U], T] {
+  fn then(c: Option[T], body: (T) -> Option[U]) -> Option[U] {
+    match c {
+      .some(x) { body(x) }
+      .none { .none }
+    }
+  }
+}
+
+trait Wrapping[T] {
+  fn wrapping_add(a: T, b: T) -> T
+  fn wrapping_sub(a: T, b: T) -> T
+  fn wrapping_mul(a: T, b: T) -> T
+}
+
+trait Saturating[T] {
+  fn saturating_add(a: T, b: T) -> T
+  fn saturating_sub(a: T, b: T) -> T
+  fn saturating_mul(a: T, b: T) -> T
+}
+
+trait Checked[T] {
+  fn checked_add(a: T, b: T) -> Option[T]
+  fn checked_sub(a: T, b: T) -> Option[T]
+  fn checked_mul(a: T, b: T) -> Option[T]
+}
+
+trait Bits[T] {
+  fn bit_and(a: T, b: T) -> T
+  fn bit_or(a: T, b: T) -> T
+  fn bit_xor(a: T, b: T) -> T
+  fn bit_not(a: T) -> T
+  fn shift_left(a: T, by: u8) -> T
+  fn shift_right(a: T, by: u8) -> T
+}
+
+
+impl Eq[i8] {
+  fn eq(a: i8, b: i8) -> bool { __equal(a, b) }
+}
+
+impl Ord[i8] {
+  fn compare(a: i8, b: i8) -> Order { __compare(a, b) }
+}
+
+impl Fmt[i8] {
+  fn fmt(value: i8) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[i8] {
+  fn repr(value: i8) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[i8] {
+  fn wrapping_add(a: i8, b: i8) -> i8 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: i8, b: i8) -> i8 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: i8, b: i8) -> i8 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[i8] {
+  fn saturating_add(a: i8, b: i8) -> i8 { __saturating_add(a, b) }
+  fn saturating_sub(a: i8, b: i8) -> i8 { __saturating_sub(a, b) }
+  fn saturating_mul(a: i8, b: i8) -> i8 { __saturating_mul(a, b) }
+}
+
+impl Checked[i8] {
+  fn checked_add(a: i8, b: i8) -> Option[i8] { __checked_add(a, b) }
+  fn checked_sub(a: i8, b: i8) -> Option[i8] { __checked_sub(a, b) }
+  fn checked_mul(a: i8, b: i8) -> Option[i8] { __checked_mul(a, b) }
+}
+
+impl Convert[i8, i16] {
+  fn convert(a: i8) -> i16 { __convert(a) }
+}
+
+impl Convert[i8, i32] {
+  fn convert(a: i8) -> i32 { __convert(a) }
+}
+
+impl Convert[i8, i64] {
+  fn convert(a: i8) -> i64 { __convert(a) }
+}
+
+impl Bits[i8] {
+  fn bit_and(a: i8, b: i8) -> i8 { __bit_and(a, b) }
+  fn bit_or(a: i8, b: i8) -> i8 { __bit_or(a, b) }
+  fn bit_xor(a: i8, b: i8) -> i8 { __bit_xor(a, b) }
+  fn bit_not(a: i8) -> i8 { __bit_not(a) }
+  fn shift_left(a: i8, by: u8) -> i8 { __shift_left(a, by) }
+  fn shift_right(a: i8, by: u8) -> i8 { __shift_right(a, by) }
+}
+
+impl Eq[i16] {
+  fn eq(a: i16, b: i16) -> bool { __equal(a, b) }
+}
+
+impl Ord[i16] {
+  fn compare(a: i16, b: i16) -> Order { __compare(a, b) }
+}
+
+impl Fmt[i16] {
+  fn fmt(value: i16) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[i16] {
+  fn repr(value: i16) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[i16] {
+  fn wrapping_add(a: i16, b: i16) -> i16 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: i16, b: i16) -> i16 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: i16, b: i16) -> i16 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[i16] {
+  fn saturating_add(a: i16, b: i16) -> i16 { __saturating_add(a, b) }
+  fn saturating_sub(a: i16, b: i16) -> i16 { __saturating_sub(a, b) }
+  fn saturating_mul(a: i16, b: i16) -> i16 { __saturating_mul(a, b) }
+}
+
+impl Checked[i16] {
+  fn checked_add(a: i16, b: i16) -> Option[i16] { __checked_add(a, b) }
+  fn checked_sub(a: i16, b: i16) -> Option[i16] { __checked_sub(a, b) }
+  fn checked_mul(a: i16, b: i16) -> Option[i16] { __checked_mul(a, b) }
+}
+
+impl Convert[i16, i32] {
+  fn convert(a: i16) -> i32 { __convert(a) }
+}
+
+impl Convert[i16, i64] {
+  fn convert(a: i16) -> i64 { __convert(a) }
+}
+
+impl Bits[i16] {
+  fn bit_and(a: i16, b: i16) -> i16 { __bit_and(a, b) }
+  fn bit_or(a: i16, b: i16) -> i16 { __bit_or(a, b) }
+  fn bit_xor(a: i16, b: i16) -> i16 { __bit_xor(a, b) }
+  fn bit_not(a: i16) -> i16 { __bit_not(a) }
+  fn shift_left(a: i16, by: u8) -> i16 { __shift_left(a, by) }
+  fn shift_right(a: i16, by: u8) -> i16 { __shift_right(a, by) }
+}
+
+impl Eq[i32] {
+  fn eq(a: i32, b: i32) -> bool { __equal(a, b) }
+}
+
+impl Ord[i32] {
+  fn compare(a: i32, b: i32) -> Order { __compare(a, b) }
+}
+
+impl Fmt[i32] {
+  fn fmt(value: i32) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[i32] {
+  fn repr(value: i32) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[i32] {
+  fn wrapping_add(a: i32, b: i32) -> i32 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: i32, b: i32) -> i32 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: i32, b: i32) -> i32 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[i32] {
+  fn saturating_add(a: i32, b: i32) -> i32 { __saturating_add(a, b) }
+  fn saturating_sub(a: i32, b: i32) -> i32 { __saturating_sub(a, b) }
+  fn saturating_mul(a: i32, b: i32) -> i32 { __saturating_mul(a, b) }
+}
+
+impl Checked[i32] {
+  fn checked_add(a: i32, b: i32) -> Option[i32] { __checked_add(a, b) }
+  fn checked_sub(a: i32, b: i32) -> Option[i32] { __checked_sub(a, b) }
+  fn checked_mul(a: i32, b: i32) -> Option[i32] { __checked_mul(a, b) }
+}
+
+impl Convert[i32, i64] {
+  fn convert(a: i32) -> i64 { __convert(a) }
+}
+
+impl Bits[i32] {
+  fn bit_and(a: i32, b: i32) -> i32 { __bit_and(a, b) }
+  fn bit_or(a: i32, b: i32) -> i32 { __bit_or(a, b) }
+  fn bit_xor(a: i32, b: i32) -> i32 { __bit_xor(a, b) }
+  fn bit_not(a: i32) -> i32 { __bit_not(a) }
+  fn shift_left(a: i32, by: u8) -> i32 { __shift_left(a, by) }
+  fn shift_right(a: i32, by: u8) -> i32 { __shift_right(a, by) }
+}
+
+impl Eq[i64] {
+  fn eq(a: i64, b: i64) -> bool { __equal(a, b) }
+}
+
+impl Ord[i64] {
+  fn compare(a: i64, b: i64) -> Order { __compare(a, b) }
+}
+
+impl Fmt[i64] {
+  fn fmt(value: i64) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[i64] {
+  fn repr(value: i64) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[i64] {
+  fn wrapping_add(a: i64, b: i64) -> i64 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: i64, b: i64) -> i64 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: i64, b: i64) -> i64 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[i64] {
+  fn saturating_add(a: i64, b: i64) -> i64 { __saturating_add(a, b) }
+  fn saturating_sub(a: i64, b: i64) -> i64 { __saturating_sub(a, b) }
+  fn saturating_mul(a: i64, b: i64) -> i64 { __saturating_mul(a, b) }
+}
+
+impl Checked[i64] {
+  fn checked_add(a: i64, b: i64) -> Option[i64] { __checked_add(a, b) }
+  fn checked_sub(a: i64, b: i64) -> Option[i64] { __checked_sub(a, b) }
+  fn checked_mul(a: i64, b: i64) -> Option[i64] { __checked_mul(a, b) }
+}
+
+impl Bits[i64] {
+  fn bit_and(a: i64, b: i64) -> i64 { __bit_and(a, b) }
+  fn bit_or(a: i64, b: i64) -> i64 { __bit_or(a, b) }
+  fn bit_xor(a: i64, b: i64) -> i64 { __bit_xor(a, b) }
+  fn bit_not(a: i64) -> i64 { __bit_not(a) }
+  fn shift_left(a: i64, by: u8) -> i64 { __shift_left(a, by) }
+  fn shift_right(a: i64, by: u8) -> i64 { __shift_right(a, by) }
+}
+
+impl Eq[u8] {
+  fn eq(a: u8, b: u8) -> bool { __equal(a, b) }
+}
+
+impl Ord[u8] {
+  fn compare(a: u8, b: u8) -> Order { __compare(a, b) }
+}
+
+impl Fmt[u8] {
+  fn fmt(value: u8) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[u8] {
+  fn repr(value: u8) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[u8] {
+  fn wrapping_add(a: u8, b: u8) -> u8 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: u8, b: u8) -> u8 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: u8, b: u8) -> u8 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[u8] {
+  fn saturating_add(a: u8, b: u8) -> u8 { __saturating_add(a, b) }
+  fn saturating_sub(a: u8, b: u8) -> u8 { __saturating_sub(a, b) }
+  fn saturating_mul(a: u8, b: u8) -> u8 { __saturating_mul(a, b) }
+}
+
+impl Checked[u8] {
+  fn checked_add(a: u8, b: u8) -> Option[u8] { __checked_add(a, b) }
+  fn checked_sub(a: u8, b: u8) -> Option[u8] { __checked_sub(a, b) }
+  fn checked_mul(a: u8, b: u8) -> Option[u8] { __checked_mul(a, b) }
+}
+
+impl Convert[u8, i16] {
+  fn convert(a: u8) -> i16 { __convert(a) }
+}
+
+impl Convert[u8, i32] {
+  fn convert(a: u8) -> i32 { __convert(a) }
+}
+
+impl Convert[u8, i64] {
+  fn convert(a: u8) -> i64 { __convert(a) }
+}
+
+impl Convert[u8, u16] {
+  fn convert(a: u8) -> u16 { __convert(a) }
+}
+
+impl Convert[u8, u32] {
+  fn convert(a: u8) -> u32 { __convert(a) }
+}
+
+impl Convert[u8, u64] {
+  fn convert(a: u8) -> u64 { __convert(a) }
+}
+
+impl Bits[u8] {
+  fn bit_and(a: u8, b: u8) -> u8 { __bit_and(a, b) }
+  fn bit_or(a: u8, b: u8) -> u8 { __bit_or(a, b) }
+  fn bit_xor(a: u8, b: u8) -> u8 { __bit_xor(a, b) }
+  fn bit_not(a: u8) -> u8 { __bit_not(a) }
+  fn shift_left(a: u8, by: u8) -> u8 { __shift_left(a, by) }
+  fn shift_right(a: u8, by: u8) -> u8 { __shift_right(a, by) }
+}
+
+impl Eq[u16] {
+  fn eq(a: u16, b: u16) -> bool { __equal(a, b) }
+}
+
+impl Ord[u16] {
+  fn compare(a: u16, b: u16) -> Order { __compare(a, b) }
+}
+
+impl Fmt[u16] {
+  fn fmt(value: u16) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[u16] {
+  fn repr(value: u16) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[u16] {
+  fn wrapping_add(a: u16, b: u16) -> u16 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: u16, b: u16) -> u16 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: u16, b: u16) -> u16 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[u16] {
+  fn saturating_add(a: u16, b: u16) -> u16 { __saturating_add(a, b) }
+  fn saturating_sub(a: u16, b: u16) -> u16 { __saturating_sub(a, b) }
+  fn saturating_mul(a: u16, b: u16) -> u16 { __saturating_mul(a, b) }
+}
+
+impl Checked[u16] {
+  fn checked_add(a: u16, b: u16) -> Option[u16] { __checked_add(a, b) }
+  fn checked_sub(a: u16, b: u16) -> Option[u16] { __checked_sub(a, b) }
+  fn checked_mul(a: u16, b: u16) -> Option[u16] { __checked_mul(a, b) }
+}
+
+impl Convert[u16, i32] {
+  fn convert(a: u16) -> i32 { __convert(a) }
+}
+
+impl Convert[u16, i64] {
+  fn convert(a: u16) -> i64 { __convert(a) }
+}
+
+impl Convert[u16, u32] {
+  fn convert(a: u16) -> u32 { __convert(a) }
+}
+
+impl Convert[u16, u64] {
+  fn convert(a: u16) -> u64 { __convert(a) }
+}
+
+impl Bits[u16] {
+  fn bit_and(a: u16, b: u16) -> u16 { __bit_and(a, b) }
+  fn bit_or(a: u16, b: u16) -> u16 { __bit_or(a, b) }
+  fn bit_xor(a: u16, b: u16) -> u16 { __bit_xor(a, b) }
+  fn bit_not(a: u16) -> u16 { __bit_not(a) }
+  fn shift_left(a: u16, by: u8) -> u16 { __shift_left(a, by) }
+  fn shift_right(a: u16, by: u8) -> u16 { __shift_right(a, by) }
+}
+
+impl Eq[u32] {
+  fn eq(a: u32, b: u32) -> bool { __equal(a, b) }
+}
+
+impl Ord[u32] {
+  fn compare(a: u32, b: u32) -> Order { __compare(a, b) }
+}
+
+impl Fmt[u32] {
+  fn fmt(value: u32) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[u32] {
+  fn repr(value: u32) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[u32] {
+  fn wrapping_add(a: u32, b: u32) -> u32 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: u32, b: u32) -> u32 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: u32, b: u32) -> u32 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[u32] {
+  fn saturating_add(a: u32, b: u32) -> u32 { __saturating_add(a, b) }
+  fn saturating_sub(a: u32, b: u32) -> u32 { __saturating_sub(a, b) }
+  fn saturating_mul(a: u32, b: u32) -> u32 { __saturating_mul(a, b) }
+}
+
+impl Checked[u32] {
+  fn checked_add(a: u32, b: u32) -> Option[u32] { __checked_add(a, b) }
+  fn checked_sub(a: u32, b: u32) -> Option[u32] { __checked_sub(a, b) }
+  fn checked_mul(a: u32, b: u32) -> Option[u32] { __checked_mul(a, b) }
+}
+
+impl Convert[u32, i64] {
+  fn convert(a: u32) -> i64 { __convert(a) }
+}
+
+impl Convert[u32, u64] {
+  fn convert(a: u32) -> u64 { __convert(a) }
+}
+
+impl Bits[u32] {
+  fn bit_and(a: u32, b: u32) -> u32 { __bit_and(a, b) }
+  fn bit_or(a: u32, b: u32) -> u32 { __bit_or(a, b) }
+  fn bit_xor(a: u32, b: u32) -> u32 { __bit_xor(a, b) }
+  fn bit_not(a: u32) -> u32 { __bit_not(a) }
+  fn shift_left(a: u32, by: u8) -> u32 { __shift_left(a, by) }
+  fn shift_right(a: u32, by: u8) -> u32 { __shift_right(a, by) }
+}
+
+impl Eq[u64] {
+  fn eq(a: u64, b: u64) -> bool { __equal(a, b) }
+}
+
+impl Ord[u64] {
+  fn compare(a: u64, b: u64) -> Order { __compare(a, b) }
+}
+
+impl Fmt[u64] {
+  fn fmt(value: u64) -> str ! alloc { __decimal(value) }
+}
+
+impl Repr[u64] {
+  fn repr(value: u64) -> str ! alloc { __decimal(value) }
+}
+
+impl Wrapping[u64] {
+  fn wrapping_add(a: u64, b: u64) -> u64 { __wrapping_add(a, b) }
+  fn wrapping_sub(a: u64, b: u64) -> u64 { __wrapping_sub(a, b) }
+  fn wrapping_mul(a: u64, b: u64) -> u64 { __wrapping_mul(a, b) }
+}
+
+impl Saturating[u64] {
+  fn saturating_add(a: u64, b: u64) -> u64 { __saturating_add(a, b) }
+  fn saturating_sub(a: u64, b: u64) -> u64 { __saturating_sub(a, b) }
+  fn saturating_mul(a: u64, b: u64) -> u64 { __saturating_mul(a, b) }
+}
+
+impl Checked[u64] {
+  fn checked_add(a: u64, b: u64) -> Option[u64] { __checked_add(a, b) }
+  fn checked_sub(a: u64, b: u64) -> Option[u64] { __checked_sub(a, b) }
+  fn checked_mul(a: u64, b: u64) -> Option[u64] { __checked_mul(a, b) }
+}
+
+impl Bits[u64] {
+  fn bit_and(a: u64, b: u64) -> u64 { __bit_and(a, b) }
+  fn bit_or(a: u64, b: u64) -> u64 { __bit_or(a, b) }
+  fn bit_xor(a: u64, b: u64) -> u64 { __bit_xor(a, b) }
+  fn bit_not(a: u64) -> u64 { __bit_not(a) }
+  fn shift_left(a: u64, by: u8) -> u64 { __shift_left(a, by) }
+  fn shift_right(a: u64, by: u8) -> u64 { __shift_right(a, by) }
+}
