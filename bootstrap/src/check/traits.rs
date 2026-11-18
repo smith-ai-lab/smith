@@ -318,6 +318,8 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
                 ));
                 continue;
             }
+            None if name == "Copy" => ownership::COPY,
+            None if name == "Discard" => ownership::DISCARD,
             None if TRAITS_NOT_BUILT.contains(&name) => {
                 errors.push(Error::unsupported(w.pos, &format!("`without {name}`")));
                 continue;
@@ -363,7 +365,7 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
             ));
             continue;
         }
-        let written = (defs.impls_of[k].iter())
+        let written = (defs.impls_of.get(k).into_iter().flatten())
             .filter_map(|&i| defs.impls[i].as_ref())
             .any(|info| head(&info.args[at]) == Some(d));
         if out.contains(&(k, d)) {
