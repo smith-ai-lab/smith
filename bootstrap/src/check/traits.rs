@@ -225,7 +225,8 @@ pub(super) fn withouts(defs: &Defs, errors: &mut Vec<Error>) -> Vec<(usize, Def)
                     defs.hash(),
                     defs.convert(),
                 ]
-                .contains(&k) =>
+                .contains(&k)
+                    || defs.serialize == Some(k) =>
             {
                 k
             }
@@ -744,6 +745,21 @@ impl<'a> Defs<'a> {
                 && self.holding(*e, args, &types[0]).len() == 1)
                 .then(Vec::new);
         }
+        if self.serialize == Some(k) {
+            let taken = |d: Def| self.withouts.contains(&(k, d));
+            return match &types[0] {
+                Ty::Text | Ty::Nothing | Ty::Int(_) => Some(Vec::new()),
+                Ty::List(of) => Some(vec![of[0].clone()]),
+                Ty::Struct(s, args) if !taken(Def::Struct(*s)) => {
+                    Some(self.fields[*s].iter().map(|t| t.subst(args)).collect())
+                }
+                Ty::Enum(e, args) if !taken(Def::Enum(*e)) => (self.cases[*e].iter().flatten())
+                    .map(|t| Some(t.subst(args)))
+                    .collect(),
+                Ty::Tuple(items) => Some(items.clone()),
+                _ => None,
+            };
+        }
         if k != self.fmt && k != self.repr && k != self.eq && k != self.ord() && k != self.hash() {
             return None;
         }
@@ -852,7 +868,7 @@ impl<'a> Defs<'a> {
             }
             By::Given => Instance {
                 template: Template::Given(k),
-                args: types,
+                args: types.into_iter().chain(own).collect(),
             },
             By::Bound => unreachable!("a copy has no type parameter"),
         };
@@ -862,6 +878,9 @@ impl<'a> Defs<'a> {
     /// The copies a copy of a given implementation runs: for `Fmt`, the
     /// `Repr` of its type, and for `Repr`, `Eq`, and `Ord`, that of each part.
     pub(super) fn given_calls(&self, k: usize, types: &[Ty]) -> Vec<Instance> {
+        if self.serialize == Some(k) {
+            return self.serialize_calls(&types[0], &types[1]);
+        }
         let run = |k: usize, t: &Ty| self.chosen(k, 0, vec![t.clone()], Vec::new()).0;
         if k == self.fmt {
             vec![run(self.repr, &types[0])]
@@ -869,6 +888,39 @@ impl<'a> Defs<'a> {
             let parts = self.given_parts(k, types).expect("given");
             parts.iter().map(|p| run(k, p)).collect()
         }
+    }
+
+    /// The copies a copy of the `Serialize` given to `t` runs for a writer of
+    /// type `w`: the `Serialize` of each part, and the functions of the
+    /// writer's `Writer` that the shape of `t` is written with.
+    fn serialize_calls(&self, t: &Ty, w: &Ty) -> Vec<Instance> {
+        let serialize = self
+            .serialize
+            .expect("a program that writes has the module");
+        let writer = self.writer.expect("a program that writes has the module");
+        let names: &[&str] = match t {
+            Ty::Int(i) if i.signed() => &["signed"],
+            Ty::Int(_) => &["unsigned"],
+            Ty::Text => &["text"],
+            Ty::Nothing => &["nothing"],
+            Ty::Tuple(_) => &["tuple", "end_tuple"],
+            Ty::Struct(..) => &["structure", "field", "end_structure"],
+            Ty::List(_) => &["sequence", "end_sequence"],
+            Ty::Enum(e, _) if *e == self.boolean => &["boolean"],
+            Ty::Enum(e, _) if *e == self.option => &["present", "absent"],
+            _ => &["case"],
+        };
+        let mut out: Vec<Instance> = names
+            .iter()
+            .filter_map(|name| trait_function(&self.file.traits[writer], name))
+            .map(|at| self.chosen(writer, at, vec![w.clone()], Vec::new()).0)
+            .collect();
+        let parts = self.given_parts(serialize, &[t.clone()]).expect("given");
+        out.extend(parts.iter().map(|p| {
+            self.chosen(serialize, 0, vec![p.clone()], vec![w.clone()])
+                .0
+        }));
+        out
     }
 
     /// The trait and the part of `t` that lacks it, for a type `t` that

@@ -747,6 +747,11 @@ struct Defs<'a> {
     /// traits.
     exit: usize,
     iterate: usize,
+    /// The standard library's `Serialize` and `Writer`, which `std.serialize`
+    /// defines, by their places in the file's traits, when the program has
+    /// that module.
+    serialize: Option<usize>,
+    writer: Option<usize>,
     /// The prelude's `bool`, `Order`, `Option`, and `Flow`, by their places in
     /// the file's enums.
     boolean: usize,
@@ -1639,6 +1644,8 @@ fn check_file(
         eq: prelude_trait(&file, "Eq"),
         exit: prelude_trait(&file, "Exit"),
         iterate: prelude_trait(&file, "Iterate"),
+        serialize: serialize_trait(&file, "write"),
+        writer: serialize_trait(&file, "structure"),
         boolean: (file.enums.iter())
             .position(|e| e.name == "bool" && of_prelude(e.pos))
             .expect("the prelude defines it"),
@@ -2072,6 +2079,19 @@ const STEP: usize = 1 << 32;
 /// The number of the first module of a project. Those of the standard library
 /// are numbered below it, so that a place says which kind of module it is in.
 const FIRST_PROJECT: usize = 1 << 16;
+
+/// The place of the trait of `std.serialize` that has a function named
+/// `function`, if the file has that module: `write` is `Serialize`'s and
+/// `structure` is `Writer`'s. However the program names the trait, it is the
+/// one the library defines, and a trait of the program's own is not it.
+fn serialize_trait(file: &File, function: &str) -> Option<usize> {
+    (file.traits.iter()).position(|t| {
+        of_std(t.pos)
+            && t.functions
+                .iter()
+                .any(|f| written_name(&f.name) == function)
+    })
+}
 
 /// Whether a definition is in a module of the library or of the project.
 fn of_library(pos: Pos) -> bool {
