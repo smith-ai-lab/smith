@@ -2,7 +2,11 @@
 type: specification
 title: Importing a module
 description: A use with no list brings in the module itself under its last path segment, as gives it another name, and a name two modules share is written with its module.
-status: planned
+status: partial
+built:
+  - "`use a.b`, which brings in the module of a project or of the library itself under its last segment, and `use a.b as c`, which brings it in as `c`, so that `b.name(x)` or `c.name(x)` calls a name of the module that the module writes with `pub`, a function or the construction of a struct, with the module's own names, as in the file that defines them, and an `impl` where it was; nothing is added to the executable by writing the module"
+  - "an error at its place for a module whose last segment is the last segment of another imported without `as`, for a name of a module that the file defines, lists, or the prelude holds, for a name written with a module that is not imported, and for a name the module keeps private or does not have; and a warning from `smith check` for a module imported and never written before a name"
+  - "not a type of a module written with the module, as in `transaction.Transaction`, nor a name the compiler builds written with its module, as in `list.push(xs, 1)`; nor `as` after a module together with a list"
 ---
 
 # Importing a module
