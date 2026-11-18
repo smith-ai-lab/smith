@@ -9,7 +9,7 @@ built:
   - "a slice given to a parameter of type `List[T]` that is not `take`, as a list and a text are, with no call and no copy, and refused where the parameter takes a list, with the fix `copy`; `copy(s)` gives a new `List`, carrying `alloc`"
   - "a slice written out of whole numbers where a `Slice` is expected, which is data in the executable with no `alloc` and no request for memory"
   - "no `push` on a slice, and no assignment to an element, which no list has yet either"
-  - "not a piece of a `List`, a slice written out of anything but whole numbers written out, `Eq`, `Fmt`, `Hash`, `Repr`, or `Serialize` of a slice, `utf8` of a slice, or a `str` made of one"
+  - "not a piece of a `List`, a slice written out of anything but whole numbers written out, `Eq`, `Fmt`, `Hash`, `Repr`, or `Serialize` of a slice, or a `str` made of one"
 ---
 
 # Slice

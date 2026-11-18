@@ -1,5 +1,5 @@
-fn text(bytes: List[u8]) -> str {
-  match utf8(bytes) {
+fn text(bytes: take List[u8]) -> str {
+  match utf8(freeze(bytes)) {
     .ok(t) { t }
     .err(e) { "" }
   }

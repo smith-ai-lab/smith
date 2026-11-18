@@ -217,7 +217,7 @@ impl Writer[Out] {
 
 pub fn to_json_as[T: Serialize](value: T, json: Json) -> str ! alloc {
   w = write(value, Out(settings: json, bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0))
-  match utf8(w.bytes) {
+  match utf8(freeze(w.bytes)) {
     .ok(t) { t }
     .err(e) { "" }
   }
