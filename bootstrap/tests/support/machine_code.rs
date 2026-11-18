@@ -111,7 +111,8 @@ fn modrm_len(file: &[u8], at: usize) -> usize {
 
 fn x86_64_instruction(file: &[u8], start: usize) -> Option<Instruction> {
     let mut at = start;
-    if file[at] == 0x66 {
+    let short = file[at] == 0x66;
+    if short {
         at += 1;
     }
     let wide = (0x40..0x50).contains(&file[at]) && file[at] & 8 != 0;
@@ -138,7 +139,7 @@ fn x86_64_instruction(file: &[u8], start: usize) -> Option<Instruction> {
                     });
                 }
                 0x90..=0x9f => (true, 0, Kind::SetCondition),
-                0x45 | 0x47 | 0xaf | 0xb6 | 0xb7 | 0xbe | 0xbf => (true, 0, Kind::Other),
+                0x40..=0x4f | 0xaf | 0xb6 | 0xb7 | 0xbe | 0xbf => (true, 0, Kind::Other),
                 _ => return None,
             }
         }
@@ -174,8 +175,13 @@ fn x86_64_instruction(file: &[u8], start: usize) -> Option<Instruction> {
         ),
         _ => return None,
     };
+    // A number of 4 bytes is 2 under the prefix for 16 bits.
+    let number = if short && number == 4 { 2 } else { number };
     let after_modrm = if modrm { at + modrm_len(file, at) } else { at };
     let immediate = match number {
+        2 => Some(i64::from(i16::from_le_bytes(
+            file[after_modrm..after_modrm + 2].try_into().unwrap(),
+        ))),
         1 => Some(i64::from(file[after_modrm] as i8)),
         4 => Some(i32_at(file, after_modrm)),
         _ => None,

@@ -308,9 +308,9 @@ impl Asm {
 
     /// `cmovne rd, rs`: copies `rs` when the last test found a value that is
     /// not 0.
-    fn cmovne(&mut self, rd: Reg, rs: Reg) {
+    fn cmov(&mut self, cond: u8, rd: Reg, rs: Reg) {
         self.writing(Some(rd), |a| {
-            a.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x45, Self::modrm(rd, rs)]);
+            a.bytes(&[Self::rex_w(rd, rs), 0x0f, 0x40 | cond, Self::modrm(rd, rs)]);
         });
     }
 
@@ -892,6 +892,7 @@ struct Writer<'a, S> {
     /// is the last instruction of the block and that nothing else reads. That
     /// comparison is not made into a value: the branch tests it.
     branches_on_compare: Vec<bool>,
+    before_choice: Vec<Vec<bool>>,
     /// The number each value that a constant integer gives is.
     constants: Vec<Option<u64>>,
     /// What rax, rcx, and rdx hold of the frame: the place, the bytes of it,
@@ -936,6 +937,7 @@ fn function<S: System>(
         .collect();
     let labels = f.blocks.iter().map(|_| asm.label()).collect();
     let branches_on_compare = super::branch::on_compare(f);
+    let before_choice = super::branch::before_choice(f);
     let w = Writer::<S> {
         program,
         f,
@@ -949,6 +951,7 @@ fn function<S: System>(
         saved,
         labels,
         branches_on_compare,
+        before_choice,
         constants,
         scratch: std::cell::RefCell::new([None; 3]),
         system: std::marker::PhantomData,
@@ -974,8 +977,14 @@ fn function<S: System>(
     for (b, block) in f.blocks.iter().enumerate() {
         asm.bind(w.labels[b]);
         let made = block.instructions.len() - usize::from(w.branches_on_compare[b]);
-        for instruction in &block.instructions[..made] {
-            w.instruction(asm, &instruction.results, &instruction.op);
+        for (i, instruction) in block.instructions[..made].iter().enumerate() {
+            if w.before_choice[b][i] {
+                continue;
+            }
+            match i.checked_sub(1).filter(|j| w.before_choice[b][*j]) {
+                Some(j) => w.choice(asm, &block.instructions[j].op, instruction),
+                None => w.instruction(asm, &instruction.results, &instruction.op),
+            }
         }
         w.end(asm, b);
     }
@@ -1206,6 +1215,35 @@ impl<S: System> Writer<'_, S> {
         }
     }
 
+    /// A choice on a comparison that nothing else reads: compares, and takes
+    /// `then` on the condition the comparison says. Moving a value does not
+    /// change what the comparison found.
+    fn choice(&self, asm: &mut Asm, compare: &Op, choose: &crate::scalar::Instruction) {
+        let (
+            Op::Compare { op, a, b },
+            Op::Choose {
+                then, otherwise, ..
+            },
+        ) = (compare, &choose.op)
+        else {
+            unreachable!()
+        };
+        let cond = self.compare(asm, op, *a, *b);
+        if let (Loc::Imm(n), Loc::Register(other)) = (self.at[then.0], self.at[otherwise.0]) {
+            // The number goes to the result, and the other value is taken
+            // when the condition does not hold.
+            let t = self.target(choose.results[0], &[other]);
+            asm.mov_imm(t, n);
+            asm.cmov(cond ^ 1, t, other);
+            return self.finish(asm, choose.results[0], t, true);
+        }
+        let then = self.read(asm, RCX, *then);
+        let t = self.target(choose.results[0], &[then]);
+        self.read_into(asm, t, *otherwise);
+        asm.cmov(cond, t, then);
+        self.finish(asm, choose.results[0], t, true);
+    }
+
     fn instruction(&self, asm: &mut Asm, results: &[Value], operation: &Op) {
         match operation {
             Op::Constant(_) if matches!(self.at[results[0].0], Loc::Imm(_)) => {}
@@ -1261,7 +1299,7 @@ impl<S: System> Writer<'_, S> {
                 let t = self.target(results[0], &[on, then]);
                 asm.test32(on);
                 self.read_into(asm, t, *otherwise);
-                asm.cmovne(t, then);
+                asm.cmov(NE, t, then);
                 self.finish(asm, results[0], t, true);
             }
             Op::Load { ty, address } => {
@@ -1449,6 +1487,13 @@ impl<S: System> Writer<'_, S> {
                 self.finish(asm, result, t, true);
             }
             _ => {
+                // An operation that gives the same either way round takes
+                // the register the result is in as its first value, so that
+                // the result needs no move.
+                let swap = !matches!(op, Binary::Sub)
+                    && matches!(self.at[b.0], Loc::Register(_))
+                    && self.at[b.0] == self.at[result.0];
+                let (a, b) = if swap { (b, a) } else { (a, b) };
                 let b = self.read(asm, RCX, b);
                 let t = self.target(result, &[b]);
                 self.read_into(asm, t, a);

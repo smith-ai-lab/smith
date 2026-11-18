@@ -32,6 +32,37 @@ pub fn on_compare(f: &Function) -> Vec<bool> {
         .collect()
 }
 
+/// For each instruction of each block, whether it is a comparison that the
+/// next instruction, a choice, reads, and nothing else reads. A target does
+/// not make that comparison into a value: it compares, and chooses on what the
+/// comparison found.
+pub fn before_choice(f: &Function) -> Vec<Vec<bool>> {
+    let mut reads = vec![0usize; f.types.len()];
+    for block in &f.blocks {
+        let operands = block.instructions.iter().flat_map(|i| i.op.operands());
+        for v in operands.chain(block.end.operands()) {
+            reads[v.0] += 1;
+        }
+    }
+    f.blocks
+        .iter()
+        .map(|block| {
+            let next = block.instructions.iter().skip(1).map(Some).chain([None]);
+            block
+                .instructions
+                .iter()
+                .zip(next)
+                .map(|(i, next)| match (&i.op, next.map(|n| &n.op)) {
+                    (Op::Compare { .. }, Some(Op::Choose { on, .. })) => {
+                        i.results == [*on] && reads[on.0] == 1
+                    }
+                    _ => false,
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// The number each value is, for a value that a constant integer gives.
 pub fn constants(f: &Function) -> Vec<Option<u64>> {
     let mut constants = vec![None; f.types.len()];
