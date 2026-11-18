@@ -53,10 +53,8 @@ pub const LE: u32 = 0xd;
 pub const EQ: u32 = 0x0;
 pub const NE: u32 = 0x1;
 pub const LT: u32 = 0xb;
-/// Unsigned higher or same.
-pub const HS: u32 = 0x2;
-/// Signed greater than or equal.
-pub const GE: u32 = 0xa;
+/// Unsigned lower.
+pub const LO: u32 = 0x3;
 /// Unsigned lower or same.
 pub const LS: u32 = 0x9;
 
@@ -104,29 +102,49 @@ impl Asm {
         self.word(0x1400_0000);
     }
 
+    /// Whether a conditional branch written now reaches the label, when the
+    /// label is already placed, which a conditional branch back to a place far
+    /// behind it, such as the code that ends the program on a failure, may
+    /// not. It is a branch of 19 bits of words, 1 MB either way.
+    fn near(&self, label: usize) -> bool {
+        self.labels[label].is_none_or(|place| {
+            (-(1 << 18)..1 << 18).contains(&((place as i64 - self.code.len() as i64) / 4))
+        })
+    }
+
+    /// A conditional branch that is `word` with the label's offset in it, over
+    /// an unconditional branch to the label when the label is out of reach,
+    /// in which case `inverse` is the word that branches when `word` does not.
+    fn conditional(&mut self, word: u32, inverse: u32, label: usize) {
+        if self.near(label) {
+            self.fixups.push(Fixup::Conditional {
+                at: self.code.len(),
+                label,
+            });
+            self.word(word);
+        } else {
+            let skip = self.label();
+            self.fixups.push(Fixup::Conditional {
+                at: self.code.len(),
+                label: skip,
+            });
+            self.word(inverse);
+            self.branch(label);
+            self.bind(skip);
+        }
+    }
+
     pub fn cond(&mut self, cond: u32, label: usize) {
-        self.fixups.push(Fixup::Conditional {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0x5400_0000 | cond);
+        self.conditional(0x5400_0000 | cond, 0x5400_0000 | (cond ^ 1), label);
     }
 
     pub fn cbz(&mut self, reg: u32, label: usize) {
-        self.fixups.push(Fixup::Conditional {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0xb400_0000 | reg);
+        self.conditional(0xb400_0000 | reg, 0xb500_0000 | reg, label);
     }
 
     /// `cbz wt, label`, which looks at the low 32 bits only.
     pub fn cbz_w(&mut self, reg: u32, label: usize) {
-        self.fixups.push(Fixup::Conditional {
-            at: self.code.len(),
-            label,
-        });
-        self.word(0x3400_0000 | reg);
+        self.conditional(0x3400_0000 | reg, 0x3500_0000 | reg, label);
     }
 
     /// An instruction on three registers, `xd`, `xn`, and `xm`, from the
@@ -281,6 +299,30 @@ impl Asm {
         self.code.len()
     }
 
+    /// Where the code, the labels, and the places to fill are now, so that
+    /// what is written after can be taken back.
+    fn mark(&self) -> (usize, usize, usize) {
+        (self.code.len(), self.labels.len(), self.fixups.len())
+    }
+
+    /// Takes back what was written after `mark`.
+    fn reset(&mut self, mark: (usize, usize, usize)) {
+        self.code.truncate(mark.0);
+        self.labels.truncate(mark.1);
+        self.fixups.truncate(mark.2);
+    }
+
+    /// Whether every conditional branch written after `mark` reaches the
+    /// label it goes to, which every label of the function is bound for.
+    fn reaches(&self, mark: (usize, usize, usize)) -> bool {
+        self.fixups[mark.2..].iter().all(|f| match f {
+            Fixup::Conditional { at, label } => {
+                (-(1 << 18)..1 << 18).contains(&(self.offset(*at, *label) / 4))
+            }
+            _ => true,
+        })
+    }
+
     /// The code at `code_address` with each piece of data placed after it
     /// under its label, and the table of addresses at `slots_address`.
     pub fn finish(
@@ -302,6 +344,10 @@ impl Asm {
                 }
                 Fixup::Conditional { at, label } => {
                     let words = self.offset(at, label) / 4;
+                    assert!(
+                        (-(1 << 18)..1 << 18).contains(&words),
+                        "a conditional branch that reaches 1 MB or more"
+                    );
                     self.patch(at, (words as u32 & 0x7_ffff) << 5);
                 }
                 Fixup::Address { at, label } => {
@@ -549,6 +595,14 @@ struct Writer<'a, S> {
     /// where it keeps what they held.
     saved: Vec<(u32, u32)>,
     labels: Vec<usize>,
+    /// Which blocks end with a choice between two jumps on a comparison that
+    /// is the last instruction of the block and that nothing else reads. That
+    /// comparison is not made into a value: the branch tests it.
+    branches_on_compare: Vec<bool>,
+    /// Whether a conditional branch goes over an unconditional one to reach
+    /// a block, as a function of more than 1 MB needs, in place of going
+    /// straight to it.
+    far: bool,
     system: std::marker::PhantomData<S>,
 }
 
@@ -570,55 +624,69 @@ fn function<S: System>(
         |places: &[u32]| -> Vec<Loc> { passing(places.iter().map(|o| total + S::RESERVED + o)) };
     let arrive = in_caller(&area.params);
     let leave = in_caller(&area.results);
-    let at = (allocation.homes.iter())
+    let at: Vec<Loc> = (allocation.homes.iter())
         .map(|home| match home {
             Home::Register(r) => Loc::Register(HOMES[*r]),
             Home::Frame(place) => Loc::Frame(below + place),
         })
         .collect();
-    let saved = (allocation.saved.iter().enumerate())
+    let saved: Vec<(u32, u32)> = (allocation.saved.iter().enumerate())
         .map(|(i, r)| (HOMES[*r], saved_from + 8 * i as u32))
         .collect();
-    let labels = f.blocks.iter().map(|_| asm.label()).collect();
-    let w = Writer::<S> {
-        program,
-        f,
-        texts,
-        functions,
-        fail,
-        frame: total,
-        at,
-        arrive,
-        leave,
-        saved,
-        labels,
-        system: std::marker::PhantomData,
-    };
-    if S::STACK_BY_PAGE && total > PAGE {
-        asm.reserve_stack_by_page(total);
-    } else {
-        asm.reserve_stack(total);
-    }
-    asm.store(Place::Frame(total - 16), X30, 8);
-    for (r, at) in &w.saved {
-        asm.store(Place::Frame(*at), *r, 8);
-    }
-    // The function's own parameters are in registers, and in the caller's
-    // frame when there are more than registers.
-    let moves: Vec<Move<Loc>> = (f.blocks[0].params.iter().zip(&w.arrive))
-        .map(|(p, from)| Move {
-            to: w.at[p.0],
-            from: *from,
-            width: w.width(*p),
-        })
-        .collect();
-    w.run(asm, &moves);
-    for (b, block) in f.blocks.iter().enumerate() {
-        asm.bind(w.labels[b]);
-        for instruction in &block.instructions {
-            w.instruction(asm, &instruction.results, &instruction.op);
+    let branches_on_compare = super::branch::on_compare(f);
+    // A choice branches straight to the block it goes to when that block is
+    // in reach of a conditional branch, which is 1 MB, and otherwise the
+    // function is written again with the branch over an unconditional one.
+    let mark = asm.mark();
+    for far in [false, true] {
+        let labels = f.blocks.iter().map(|_| asm.label()).collect();
+        let w = Writer::<S> {
+            program,
+            f,
+            texts,
+            functions,
+            fail,
+            frame: total,
+            at: at.clone(),
+            arrive: arrive.clone(),
+            leave: leave.clone(),
+            saved: saved.clone(),
+            labels,
+            branches_on_compare: branches_on_compare.clone(),
+            far,
+            system: std::marker::PhantomData,
+        };
+        if S::STACK_BY_PAGE && total > PAGE {
+            asm.reserve_stack_by_page(total);
+        } else {
+            asm.reserve_stack(total);
         }
-        w.end(asm, b);
+        asm.store(Place::Frame(total - 16), X30, 8);
+        for (r, at) in &w.saved {
+            asm.store(Place::Frame(*at), *r, 8);
+        }
+        // The function's own parameters are in registers, and in the caller's
+        // frame when there are more than registers.
+        let moves: Vec<Move<Loc>> = (f.blocks[0].params.iter().zip(&w.arrive))
+            .map(|(p, from)| Move {
+                to: w.at[p.0],
+                from: *from,
+                width: w.width(*p),
+            })
+            .collect();
+        w.run(asm, &moves);
+        for (b, block) in f.blocks.iter().enumerate() {
+            asm.bind(w.labels[b]);
+            let made = block.instructions.len() - usize::from(w.branches_on_compare[b]);
+            for instruction in &block.instructions[..made] {
+                w.instruction(asm, &instruction.results, &instruction.op);
+            }
+            w.end(asm, b);
+        }
+        if far || asm.reaches(mark) {
+            break;
+        }
+        asm.reset(mark);
     }
 }
 
@@ -747,24 +815,9 @@ impl<S: System> Writer<'_, S> {
             }
             Op::Binary { op, a, b } => self.binary(asm, results[0], *op, *a, *b),
             Op::Compare { op, a, b } => {
-                let (ra, rb) = if matches!(op, Compare::LessS) {
-                    (
-                        self.read_signed(asm, X16, *a),
-                        self.read_signed(asm, X17, *b),
-                    )
-                } else {
-                    (self.read(asm, X16, *a), self.read(asm, X17, *b))
-                };
-                asm.cmp(ra, rb);
+                let cond = self.compare(asm, op, *a, *b);
                 let t = self.target(results[0]);
-                asm.cset(
-                    t,
-                    match op {
-                        Compare::Equal => NE,
-                        Compare::LessU => HS,
-                        Compare::LessS => GE,
-                    },
-                );
+                asm.cset(t, cond ^ 1);
                 self.finish(asm, results[0], t, true);
             }
             Op::Widen { signed, value } => {
@@ -920,20 +973,76 @@ impl<S: System> Writer<'_, S> {
         self.finish(asm, result, t, extended);
     }
 
-    /// Makes the jump: gives the block its parameters as if all were copied
-    /// at once, and goes there, unless it is the next block.
-    fn jump(&self, asm: &mut Asm, jump: &Jump, next: usize) {
+    /// Compares the two values, and gives the condition code that holds when
+    /// the first is below, or the same as, the second, as the comparison says.
+    fn compare(&self, asm: &mut Asm, op: &Compare, a: Value, b: Value) -> u32 {
+        let (ra, rb) = if matches!(op, Compare::LessS) {
+            (self.read_signed(asm, X16, a), self.read_signed(asm, X17, b))
+        } else {
+            (self.read(asm, X16, a), self.read(asm, X17, b))
+        };
+        asm.cmp(ra, rb);
+        match op {
+            Compare::Equal => EQ,
+            Compare::LessU => LO,
+            Compare::LessS => LT,
+        }
+    }
+
+    /// The moves that give the block a jump goes to its parameters.
+    fn jump_moves(&self, jump: &Jump) -> Vec<Move<Loc>> {
         let target = &self.f.blocks[jump.block];
-        let moves: Vec<Move<Loc>> = (jump.args.iter().zip(&target.params))
+        (jump.args.iter().zip(&target.params))
             .map(|(from, to)| Move {
                 to: self.at[to.0],
                 from: self.at[from.0],
                 width: self.width(*to),
             })
-            .collect();
-        self.run(asm, &moves);
+            .collect()
+    }
+
+    /// Makes the jump: gives the block its parameters as if all were copied
+    /// at once, and goes there, unless it is the next block.
+    fn jump(&self, asm: &mut Asm, jump: &Jump, next: usize) {
+        self.run(asm, &self.jump_moves(jump));
         if jump.block != next {
             asm.branch(self.labels[jump.block]);
+        }
+    }
+
+    /// Goes to the label when the condition holds, over an unconditional
+    /// branch when the label may be out of reach.
+    fn go_if(&self, asm: &mut Asm, cond: u32, label: usize) {
+        if self.far {
+            let skip = asm.label();
+            asm.cond(cond ^ 1, skip);
+            asm.branch(label);
+            asm.bind(skip);
+        } else {
+            asm.cond(cond, label);
+        }
+    }
+
+    /// Makes the first jump, or the second when the flags say the condition
+    /// holds. A jump that gives its block nothing to move is the branch
+    /// itself, so the code is one branch and the code of the other jump.
+    fn branch(&self, asm: &mut Asm, cond: u32, jumps: &[Jump], next: usize) {
+        let [no, yes] = jumps else { unreachable!() };
+        let (moves_no, moves_yes) = (self.jump_moves(no), self.jump_moves(yes));
+        let free = |m: &[Move<Loc>]| moves::sequence(m).is_empty();
+        let (free_no, free_yes) = (free(&moves_no), free(&moves_yes));
+        if free_no && (!free_yes || yes.block == next) {
+            self.go_if(asm, cond ^ 1, self.labels[no.block]);
+            self.jump(asm, yes, next);
+        } else if free_yes {
+            self.go_if(asm, cond, self.labels[yes.block]);
+            self.jump(asm, no, next);
+        } else {
+            let skip = asm.label();
+            asm.cond(cond, skip);
+            self.jump(asm, no, usize::MAX);
+            asm.bind(skip);
+            self.jump(asm, yes, next);
         }
     }
 
@@ -941,6 +1050,20 @@ impl<S: System> Writer<'_, S> {
         let next = block + 1;
         match &self.f.blocks[block].end {
             End::Jump(jump) => self.jump(asm, jump, next),
+            End::Switch { on, jumps } if self.branches_on_compare[block] => {
+                let compare = self.f.blocks[block].instructions.last().unwrap();
+                let Op::Compare { op, a, b } = &compare.op else {
+                    unreachable!()
+                };
+                debug_assert_eq!(compare.results, [*on]);
+                let cond = self.compare(asm, op, *a, *b);
+                self.branch(asm, cond, jumps, next);
+            }
+            End::Switch { on, jumps } if jumps.len() == 2 => {
+                let on = self.read(asm, X16, *on);
+                asm.cmp_imm(on, 0);
+                self.branch(asm, NE, jumps, next);
+            }
             End::Switch { on, jumps } => {
                 // Each jump but the last is chosen by comparing the number
                 // with its place, and the last is made when none was.

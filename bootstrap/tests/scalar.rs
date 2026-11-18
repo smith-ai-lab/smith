@@ -140,8 +140,20 @@ pub const ONCE: &[Test] = &[
         the_passes_give_the_same_program_every_time_and_never_a_larger_one,
     ),
     (
+        "removal_makes_at_most_four_walks_and_leaves_no_work",
+        removal_makes_at_most_four_walks_and_leaves_no_work,
+    ),
+    (
+        "removal_makes_as_many_walks_over_ten_thousand_blocks_as_over_ten",
+        removal_makes_as_many_walks_over_ten_thousand_blocks_as_over_ten,
+    ),
+    (
         "the_passes_leave_no_block_that_holds_only_a_jump",
         the_passes_leave_no_block_that_holds_only_a_jump,
+    ),
+    (
+        "a_comparison_only_a_choice_reads_is_the_last_instruction_of_its_block",
+        a_comparison_only_a_choice_reads_is_the_last_instruction_of_its_block,
     ),
     (
         "sharing_leaves_no_instruction_that_does_what_an_earlier_one_does",
@@ -1669,6 +1681,110 @@ fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
     }
 }
 
+/// Removal makes the walks `knowledge/compiler.md` says, at most four over a
+/// function, and what it gives a program of the generators has no work left,
+/// as another removal finds none.
+fn removal_makes_at_most_four_walks_and_leaves_no_work() {
+    assert_eq!(scalar::WALKS, 4);
+    for (_, s) in taken() {
+        let shared = scalar::common(&scalar::fold(&scalar::inline(s)));
+        let (removed, walks) = scalar::remove_counting(&shared);
+        assert!(walks <= scalar::WALKS, "{walks} walks over {s:?}");
+        let (again, more) = scalar::remove_counting(&removed);
+        assert_eq!((&again, more), (&removed, 1), "{s:?}");
+    }
+}
+
+/// A function of about `blocks` blocks in a row that each pass a number on: some
+/// add to it, some only jump, some choose between two blocks that only jump on
+/// to the same block, on a comparison that nothing else reads, so that each
+/// such choice is a jump and its block is one that only jumps once the
+/// comparison goes, and some choose between two blocks that add different
+/// numbers. The last writes the number.
+fn blocks_in_a_row(g: &mut Gen, blocks: usize) -> scalar::Program {
+    let long = Type::Int(Bits::B64);
+    let mut b = Builder::new();
+    let row: Vec<(usize, Value)> = (0..blocks)
+        .map(|_| {
+            let (id, params) = b.block(&[long]);
+            (id, params[0])
+        })
+        .collect();
+    let start = b.int(Bits::B64, 1);
+    b.jump(row[0].0, vec![start]);
+    for (i, &(id, acc)) in row.iter().enumerate() {
+        b.at(id);
+        let Some(&(next, _)) = row.get(i + 1) else {
+            let eight = b.int(Bits::B64, 8);
+            let buffer = b.allocate(eight);
+            b.store(buffer, acc);
+            let write = Op::System {
+                call: System::Write(Stream::Stdout),
+                args: vec![buffer, eight],
+            };
+            b.emit(write, &[]);
+            b.ret(vec![]);
+            break;
+        };
+        match g.below(4) {
+            0 => {
+                let n = b.int(Bits::B64, 1 + g.below(5) as u64);
+                let sum = b.binary(scalar::Binary::Add, acc, n);
+                b.jump(next, vec![sum]);
+            }
+            1 => b.jump(next, vec![acc]),
+            kind => {
+                let n = b.int(Bits::B64, g.below(40) as u64);
+                let on = b.compare(scalar::Compare::LessU, acc, n);
+                let (left, l) = b.block(&[long]);
+                let (right, r) = b.block(&[long]);
+                b.switch(on, vec![(left, vec![acc]), (right, vec![acc])]);
+                for (arm, value) in [(left, l[0]), (right, r[0])] {
+                    b.at(arm);
+                    if kind == 3 {
+                        let n = b.int(Bits::B64, 1 + g.below(5) as u64);
+                        let sum = b.binary(scalar::Binary::Add, value, n);
+                        b.jump(next, vec![sum]);
+                    } else {
+                        b.jump(next, vec![value]);
+                    }
+                }
+            }
+        }
+    }
+    scalar::Program {
+        data: Vec::new(),
+        functions: vec![b.finish(&[])],
+        main: 0,
+    }
+}
+
+/// Removal makes no more walks over a function of ten thousand blocks than
+/// over one of ten, and each gives the same output, has no block that only
+/// jumps, and has no work left.
+fn removal_makes_as_many_walks_over_ten_thousand_blocks_as_over_ten() {
+    let mut most = 0;
+    for blocks in [10, 100, 1_000, 10_000] {
+        let program = generate::sample(2, blocks as u64, |g| blocks_in_a_row(g, blocks));
+        let (removed, walks) = scalar::remove_counting(&program);
+        assert!(walks <= scalar::WALKS, "{walks} walks over {blocks} blocks");
+        most = most.max(walks);
+        assert_eq!(scalar::run(&removed), scalar::run(&program), "{blocks} blocks");
+        let f = &removed.functions[0];
+        let jumps_only = (f.blocks.iter().enumerate())
+            .filter(|(b, block)| {
+                *b != 0 && block.instructions.is_empty() && matches!(block.end, End::Jump(_))
+            })
+            .count();
+        assert_eq!(jumps_only, 0, "{blocks} blocks");
+        if blocks <= 100 {
+            assert_eq!(scalar::check(&removed), Ok(()), "{blocks} blocks");
+        }
+        assert_eq!(scalar::remove(&removed), removed, "{blocks} blocks");
+    }
+    assert!(most < scalar::WALKS, "{most} walks for the most blocks");
+}
+
 /// How many jumps go to each block of the function.
 fn jumps_to(f: &scalar::Function) -> Vec<usize> {
     let mut count = vec![0; f.blocks.len()];
@@ -1698,6 +1814,35 @@ fn the_passes_leave_no_block_that_holds_only_a_jump() {
                     b == 0 && count[j.block] > 1,
                     "block {b} holds only a jump in {f:?}"
                 );
+            }
+        }
+    }
+}
+
+/// A comparison that only the choice that ends its block reads is the last
+/// instruction of the block, so that a target finds it where it is used.
+fn a_comparison_only_a_choice_reads_is_the_last_instruction_of_its_block() {
+    for (_, s) in taken() {
+        let after = scalar::passes(s);
+        for f in &after.functions {
+            let mut reads = vec![0usize; f.types.len()];
+            for block in &f.blocks {
+                let operands = block.instructions.iter().flat_map(|i| i.op.operands());
+                for v in operands.chain(block.end.operands()) {
+                    reads[v.0] += 1;
+                }
+            }
+            for block in &f.blocks {
+                let End::Switch { on, jumps } = &block.end else {
+                    continue;
+                };
+                let compares = block
+                    .instructions
+                    .iter()
+                    .position(|i| i.results == [*on] && matches!(i.op, Op::Compare { .. }));
+                if let (2, 1, Some(at)) = (jumps.len(), reads[on.0], compares) {
+                    assert_eq!(at, block.instructions.len() - 1, "{f:?}");
+                }
             }
         }
     }

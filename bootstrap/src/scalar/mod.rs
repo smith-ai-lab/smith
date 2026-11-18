@@ -18,6 +18,7 @@ mod fold;
 mod graph;
 pub mod handler;
 mod inline;
+mod remat;
 mod remove;
 pub mod runtime;
 mod wellformed;
@@ -31,7 +32,8 @@ pub use eval::{
 };
 pub use fold::fold;
 pub use inline::{BOUND, inline, size};
-pub use remove::remove;
+pub use remat::rematerialized;
+pub use remove::{WALKS, remove, remove_counting};
 pub use wellformed::{Malformed, Why, check};
 
 /// The passes over a program in the scalar form, in the order they run:
