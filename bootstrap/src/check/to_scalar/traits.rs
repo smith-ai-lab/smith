@@ -21,18 +21,6 @@ const BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const PRIME: u64 = 0x0000_0100_0000_01b3;
 
 impl<'a> Lowering<'a> {
-    /// The number `value` of type `from` as a number of type `to`, which
-    /// holds every value of `from`.
-    pub(super) fn widening(
-        &mut self,
-        out: &mut Out<'a>,
-        from: Int,
-        to: Int,
-        value: form::Value,
-    ) -> Vec<form::Value> {
-        vec![out.resize(from.signed(), value, bits_of(to))]
-    }
-
     /// The function of the implementation of trait `k` given to `ty`. `Fmt`
     /// gives what the type's `Repr` gives, `Repr` writes the type's value as
     /// the source that builds it, with each part written by its own `Repr`,

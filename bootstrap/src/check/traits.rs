@@ -22,103 +22,6 @@ pub(super) const TRAITS_NOT_BUILT: &[&str] = &[
     "FromArray",
 ];
 
-/// The functions of the three traits that name how arithmetic that may not
-/// fit goes on, and what an operation gives for each: the trait, the
-/// function's stem, and what it gives, written with `T` for the type.
-const ARITHMETIC: &[(&str, &str, &str)] = &[
-    ("Wrapping", "wrapping", "T"),
-    ("Saturating", "saturating", "T"),
-    ("Checked", "checked", "Option[T]"),
-];
-
-/// The operations of those traits.
-const OPERATIONS: &[&str] = &["add", "sub", "mul"];
-
-/// The functions of `Bits`: the name, the parameters written with `T` for
-/// the type, and the names of the parameters. A shift takes its amount as a
-/// `u8`.
-const BITS: &[(&str, &str, &str)] = &[
-    ("bit_and", "a: T, b: T", "a, b"),
-    ("bit_or", "a: T, b: T", "a, b"),
-    ("bit_xor", "a: T, b: T", "a, b"),
-    ("bit_not", "a: T", "a"),
-    ("shift_left", "a: T, by: u8", "a, by"),
-    ("shift_right", "a: T, by: u8", "a, by"),
-];
-
-/// The implementations of the prelude's traits for a whole number type,
-/// which call the functions the compiler builds. Only the prelude may call
-/// them, and their names start with two underscores.
-pub(super) fn integer_impls(t: Int) -> String {
-    let name = t.name();
-    let mut out = format!(
-        "impl Eq[{name}] {{
-  fn eq(a: {name}, b: {name}) -> bool {{ __equal(a, b) }}
-}}
-
-impl Ord[{name}] {{
-  fn compare(a: {name}, b: {name}) -> Order {{ __compare(a, b) }}
-}}
-
-impl Fmt[{name}] {{
-  fn fmt(value: {name}) -> str ! alloc {{ __decimal(value) }}
-}}
-
-impl Repr[{name}] {{
-  fn repr(value: {name}) -> str ! alloc {{ __decimal(value) }}
-}}
-"
-    );
-    for (tr, stem, gives) in ARITHMETIC {
-        let gives = gives.replace('T', name);
-        out.push_str(&format!("\nimpl {tr}[{name}] {{\n"));
-        for op in OPERATIONS {
-            out.push_str(&format!(
-                "  fn {stem}_{op}(a: {name}, b: {name}) -> {gives} {{ __{stem}_{op}(a, b) }}\n"
-            ));
-        }
-        out.push_str("}\n");
-    }
-    // It converts to each other type that holds every value of its own.
-    for to in Int::ALL {
-        if to != t && to.min() <= t.min() && t.max() <= to.max() {
-            out.push_str(&format!(
-                "\nimpl Convert[{name}, {to}] {{\n  fn convert(a: {name}) -> {to} {{ __convert(a) }}\n}}\n",
-                to = to.name()
-            ));
-        }
-    }
-    out.push_str(&format!("\nimpl Bits[{name}] {{\n"));
-    for (f, params, names) in BITS {
-        let params = params.replace('T', name);
-        out.push_str(&format!(
-            "  fn {f}({params}) -> {name} {{ __{f}({names}) }}\n"
-        ));
-    }
-    out.push_str("}\n");
-    out
-}
-
-/// The traits the language defines whose functions the prelude names for
-/// every whole number type.
-pub(super) fn integer_traits() -> String {
-    let mut out = String::new();
-    for (tr, stem, gives) in ARITHMETIC {
-        out.push_str(&format!("trait {tr}[T] {{\n"));
-        for op in OPERATIONS {
-            let gives = if *gives == "T" { "T" } else { "Option[T]" };
-            out.push_str(&format!("  fn {stem}_{op}(a: T, b: T) -> {gives}\n"));
-        }
-        out.push_str("}\n\n");
-    }
-    out.push_str("trait Bits[T] {\n");
-    for (f, params, _) in BITS {
-        out.push_str(&format!("  fn {f}({params}) -> T\n"));
-    }
-    out.push_str("}\n\n");
-    out
-}
-
 /// The names of the traits `PRELUDE` defines.
 pub(super) const PRELUDE_TRAITS: &[&str] = &[
     "Fmt",
@@ -1313,21 +1216,6 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             Found::Unknown => Ty::Unknown,
-        }
-    }
-
-    /// Checks `__convert(a)`, which the prelude's conversions between whole
-    /// numbers call, and which gives the type that is expected.
-    pub(super) fn convert_intrinsic(
-        &mut self,
-        body: &mut Body<'a>,
-        call: &Call,
-        want: &Want,
-    ) -> Ty {
-        self.expr(body, &call.args[0].value, &Want::Any);
-        match want {
-            Want::Ty(t) => t.clone(),
-            _ => Ty::Unknown,
         }
     }
 
