@@ -3387,10 +3387,12 @@ impl<'a> Checker<'a> {
                     g.pos,
                     format!("`{name}` is already a type parameter of {owner}"),
                 ));
-            } else if name == TEXT
-                || defs.struct_names.contains_key(name)
-                || defs.enum_names.contains_key(name)
-                || defs.trait_names.contains_key(name)
+            } else if !of_prelude(g.pos)
+                && !of_library(g.pos)
+                && (name == TEXT
+                    || defs.struct_names.contains_key(name)
+                    || defs.enum_names.contains_key(name)
+                    || defs.trait_names.contains_key(name))
             {
                 self.errors.push(Error::new(
                     g.pos,
