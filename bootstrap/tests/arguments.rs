@@ -489,7 +489,7 @@ fn invalid_word() -> std::ffi::OsString {
 
 /// Runs the executable, started with the words, from a file of its own, and
 /// gives everything it did, standard error too.
-fn output_of(bytes: &[u8], words: &[std::ffi::OsString]) -> std::process::Output {
+pub fn output_of(bytes: &[u8], words: &[std::ffi::OsString]) -> std::process::Output {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
