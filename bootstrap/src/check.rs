@@ -1229,10 +1229,26 @@ pub struct Checked {
 /// Checks the file, and lowers what `main` reaches to the scalar form. Every
 /// error is reported, except one that a mistake already reported would
 /// explain.
-pub fn check(file: File) -> Result<Checked, Vec<Error>> {
+pub fn check(file: File, library: &Library) -> Result<Checked, Vec<Error>> {
     let mut errors = Vec::new();
     let mut import_warnings = Vec::new();
-    imports(&file, &mut errors, &mut import_warnings);
+    let read = imports(&file, library, &mut errors, &mut import_warnings);
+    let modules: Vec<String> = read.iter().map(|m| m.name.clone()).collect();
+    let file = splice(file, read, &mut errors);
+    check_file(file, errors, import_warnings)
+        .map(|mut checked| {
+            checked.warnings = localize(checked.warnings, &modules);
+            checked
+        })
+        .map_err(|errors| localize(errors, &modules))
+}
+
+/// Checks the file, with the items of the modules it imports among its own.
+fn check_file(
+    file: File,
+    mut errors: Vec<Error>,
+    import_warnings: Vec<Error>,
+) -> Result<Checked, Vec<Error>> {
     let file = split_needs(with_prelude(file));
 
     // The first definition of a name holds it, and a later one is a
@@ -1657,30 +1673,134 @@ pub fn check(file: File) -> Result<Checked, Vec<Error>> {
     })
 }
 
-/// The names a module of the standard library exports: those its source
-/// writes with `pub`, and the effects the compiler holds for it.
-fn library_exports(module: &str) -> Option<Vec<String>> {
-    let source = library_source(module)?;
-    let mut tokens = crate::lexer::lex(source.as_bytes()).expect("the library lexes");
-    for t in &mut tokens {
-        t.pos.line = 0;
-    }
-    let file = crate::parser::parse_library(&tokens).expect("the library parses");
-    let mut names = file.exports;
-    for (m, effect) in LIBRARY_EFFECTS_EXPORTED {
-        if *m == module {
-            names.push(effect.to_string());
-        }
-    }
-    Some(names)
+/// The modules of a library, each with its name and its source. The standard
+/// library is the files of `std/`.
+pub struct Library<'a> {
+    modules: Vec<(&'a str, &'a str)>,
 }
 
-/// Checks the `use` lines of the file: each names a module of the standard
-/// library and lists names it exports, once each, none of which the file
-/// defines or the prelude holds, and no name comes from two modules. Only the
-/// modules the lines name are read. A name that is listed and never written
-/// in the file is a warning.
-fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
+impl<'a> Library<'a> {
+    /// The library of the modules, given as a name and a source each.
+    pub fn new(modules: &[(&'a str, &'a str)]) -> Library<'a> {
+        Library {
+            modules: modules.to_vec(),
+        }
+    }
+
+    /// The standard library, which the executable holds.
+    pub fn standard() -> Library<'static> {
+        Library {
+            modules: LIBRARY_MODULES
+                .iter()
+                .filter_map(|m| library_source(m).map(|s| (*m, s)))
+                .collect(),
+        }
+    }
+
+    fn source(&self, module: &str) -> Option<&'a str> {
+        self.modules
+            .iter()
+            .find(|(m, _)| *m == module)
+            .map(|(_, s)| *s)
+    }
+}
+
+/// The source of a module of the standard library, which errors in it show a
+/// line of.
+pub fn library_text(module: &str) -> &'static str {
+    library_source(module).unwrap_or("")
+}
+
+/// How far apart the lines of two modules are, so that a place in a module is
+/// told from one in the file or the prelude, and from one in another module,
+/// by its line alone. The prelude is at line 0, the file below the first step,
+/// and the module read `n`th is at `n * STEP` and the lines after it.
+const STEP: usize = 1 << 32;
+
+/// Whether a definition is in a module of the library.
+fn of_library(pos: Pos) -> bool {
+    pos.line >= STEP
+}
+
+/// The errors with a place in a module of the library given as that module
+/// and the place in its file. `modules` are in the order they were read.
+fn localize(errors: Vec<Error>, modules: &[String]) -> Vec<Error> {
+    errors
+        .into_iter()
+        .map(|mut e| {
+            if of_library(e.pos) {
+                e.module = Some(modules[e.pos.line / STEP - 1].clone());
+                e.pos.line %= STEP;
+            }
+            e
+        })
+        .collect()
+}
+
+/// A module of the library that a `use` names, read.
+struct Module {
+    name: String,
+    tokens: Vec<crate::lexer::Token>,
+    file: File,
+    /// The names a `use` may list: those its source writes with `pub`, and the
+    /// effects the compiler holds for it.
+    exports: Vec<String>,
+    /// The names the file lists from it.
+    imported: Vec<String>,
+}
+
+/// Reads the module with the name, or says what is wrong in it.
+fn read_module(library: &Library, name: &str) -> Option<Result<Module, Vec<Error>>> {
+    let source = library.source(name)?;
+    let wrong = |errors: Vec<Error>| {
+        errors
+            .into_iter()
+            .map(|e| e.in_module(name))
+            .collect::<Vec<_>>()
+    };
+    let tokens = match crate::lexer::lex(source.as_bytes()) {
+        Ok(tokens) => tokens,
+        Err(errors) => return Some(Err(wrong(errors))),
+    };
+    let file = match crate::parser::parse_library(&tokens) {
+        Ok(file) => file,
+        Err(errors) => return Some(Err(wrong(errors))),
+    };
+    let mut exports = file.exports.clone();
+    for (m, effect) in LIBRARY_EFFECTS_EXPORTED {
+        if *m == name {
+            exports.push(effect.to_string());
+        }
+    }
+    Some(Ok(Module {
+        name: name.to_string(),
+        tokens,
+        file,
+        exports,
+        imported: Vec::new(),
+    }))
+}
+
+/// The names a module of the library exports.
+fn library_exports(library: &Library, module: &str) -> Option<Vec<String>> {
+    match read_module(library, module)? {
+        Ok(module) => Some(module.exports),
+        Err(_) => Some(Vec::new()),
+    }
+}
+
+/// Checks the `use` lines of the file: each names a module of the library
+/// and lists names it exports, once each, none of which the file defines or
+/// the prelude holds, and no name comes from two modules. Only the modules
+/// the lines name are read. A name that is listed and never written in the
+/// file is a warning. The modules read are given, once each.
+fn imports(
+    file: &File,
+    library: &Library,
+    errors: &mut Vec<Error>,
+    warnings: &mut Vec<Error>,
+) -> Vec<Module> {
+    let mut read: Vec<Module> = Vec::new();
     let defined: HashSet<&str> = (file.functions.iter().map(|f| f.name.as_str()))
         .chain(file.structs.iter().map(|s| s.name.as_str()))
         .chain(file.enums.iter().map(|e| e.name.as_str()))
@@ -1694,14 +1814,15 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
         let written: Vec<&str> = u.module.iter().map(|(n, _)| n.as_str()).collect();
         let module = written.join(".");
         let at = u.module[0].1;
-        let exports = match written.as_slice() {
-            ["std", m] => library_exports(m),
+        let module_read = match written.as_slice() {
+            ["std", m] => read_module(library, m),
             _ => None,
         };
-        let Some(exports) = exports else {
-            let known: Vec<String> = LIBRARY_MODULES
+        let Some(module_read) = module_read else {
+            let known: Vec<String> = library
+                .modules
                 .iter()
-                .map(|m| format!("`std.{m}`"))
+                .map(|(m, _)| format!("`std.{m}`"))
                 .collect();
             errors.push(
                 Error::new(at, format!("there is no module `{module}`"))
@@ -1709,6 +1830,14 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
             );
             continue;
         };
+        let read_now = match module_read {
+            Ok(read_now) => read_now,
+            Err(found) => {
+                errors.extend(found);
+                continue;
+            }
+        };
+        let exports = read_now.exports.clone();
         if modules.contains(&module) {
             errors.push(
                 Error::new(
@@ -1722,6 +1851,7 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
             continue;
         }
         modules.push(module.clone());
+        let mut read_now = read_now;
         let mut listed: Vec<&str> = Vec::new();
         for (name, pos) in &u.names {
             let name = name.as_str();
@@ -1752,9 +1882,9 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
                 )
             } else if !exports.iter().any(|e| e == name) {
                 let mut error = Error::new(*pos, format!("`{module}` has no name `{name}`"));
-                let home = LIBRARY_MODULES
-                    .iter()
-                    .find(|m| library_exports(m).is_some_and(|e| e.iter().any(|e| e == name)));
+                let home = library.modules.iter().map(|(m, _)| *m).find(|m| {
+                    library_exports(library, m).is_some_and(|e| e.iter().any(|e| e == name))
+                });
                 if let Some(home) = home {
                     error = error.with_fix(format!("write `use std.{home} ({name})`"));
                 }
@@ -1774,6 +1904,7 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
             match error {
                 Some(error) => errors.push(error),
                 None => {
+                    read_now.imported.push(name.to_string());
                     taken.push((name.to_string(), module.clone()));
                     if !file.written.contains(name) {
                         warnings.push(
@@ -1787,7 +1918,131 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
                 }
             }
         }
+        read.push(read_now);
     }
+    read
+}
+
+/// Whether the compiler holds the item of a module already, and builds it
+/// itself: a function whose body is one call of a function the compiler
+/// builds with its parameters, in order, and a type or a trait the prelude defines. The module's source
+/// names these, and the compiler supplies them as it did before the bodies
+/// of a module were compiled.
+fn held_by_the_compiler(module: &File) -> HashSet<&str> {
+    let wrapper = |f: &&Function| {
+        matches!(&f.body[..], [Stmt::Expr(Expr::Call(c))]
+        if c.qualifier.is_none()
+            && c.callee.starts_with("__")
+            && c.args.len() == f.params.len()
+            && c.args.iter().zip(&f.params).all(|(a, p)| {
+                a.name.is_none()
+                    && !a.after
+                    && matches!(&a.value, Expr::Name { name, .. } if *name == p.name)
+            }))
+    };
+    (module
+        .functions
+        .iter()
+        .filter(wrapper)
+        .map(|f| f.name.as_str()))
+    .chain(
+        (module.structs.iter().map(|s| s.name.as_str()))
+            .chain(module.enums.iter().map(|e| e.name.as_str()))
+            .filter(|n| PRELUDE_TYPES.contains(n)),
+    )
+    .chain(
+        (module.traits.iter().map(|t| t.name.as_str()))
+            .filter(|n| PRELUDE_TRAITS.contains(n) || TRAITS_NOT_BUILT.contains(n)),
+    )
+    .collect()
+}
+
+/// The tokens with each name of `renamed` written as the module's own, and
+/// each place moved to the module's lines.
+fn own_tokens(
+    tokens: &[crate::lexer::Token],
+    module: &str,
+    renamed: &HashSet<&str>,
+    base: usize,
+) -> Vec<crate::lexer::Token> {
+    use crate::lexer::{Piece, Tok};
+    tokens
+        .iter()
+        .map(|t| {
+            let tok = match &t.tok {
+                Tok::Ident(name) if renamed.contains(name.as_str()) => {
+                    Tok::Ident(format!("{name}@std.{module}"))
+                }
+                Tok::Interp(pieces) => Tok::Interp(
+                    pieces
+                        .iter()
+                        .map(|p| match p {
+                            Piece::Expr(inner) => {
+                                Piece::Expr(own_tokens(inner, module, renamed, base))
+                            }
+                            text => text.clone(),
+                        })
+                        .collect(),
+                ),
+                other => other.clone(),
+            };
+            let mut pos = t.pos;
+            pos.line += base;
+            crate::lexer::Token { tok, pos }
+        })
+        .collect()
+}
+
+/// The file with the items of the modules it imports among its own. A name
+/// the file lists keeps its name. Every other name of the module is its own,
+/// written with the module after it, so that it is not the name of anything in
+/// the file or in another module, and the file cannot write it. Items are
+/// checked and compiled only when the program reaches them, as the file's are.
+fn splice(mut file: File, modules: Vec<Module>, errors: &mut Vec<Error>) -> File {
+    for (k, module) in modules.iter().enumerate() {
+        let held = held_by_the_compiler(&module.file);
+        let functions = module.file.functions.iter().map(|f| f.name.as_str());
+        let types = (module.file.structs.iter().map(|s| s.name.as_str()))
+            .chain(module.file.enums.iter().map(|e| e.name.as_str()))
+            .chain(module.file.traits.iter().map(|t| t.name.as_str()));
+        // The functions of a trait the module exports are written by
+        // the file as the module wrote them.
+        let exported: HashSet<&str> = (module.file.traits.iter())
+            .filter(|t| module.exports.contains(&t.name))
+            .flat_map(|t| t.functions.iter().map(|f| f.name.as_str()))
+            .chain(module.imported.iter().map(|n| n.as_str()))
+            .collect();
+        let own: HashSet<&str> = (functions.chain(types))
+            .chain(
+                module
+                    .file
+                    .traits
+                    .iter()
+                    .flat_map(|t| t.functions.iter().map(|f| f.name.as_str())),
+            )
+            .filter(|n| !held.contains(n) && !exported.contains(n) && !n.starts_with("__"))
+            .collect();
+        let tokens = own_tokens(&module.tokens, &module.name, &own, (k + 1) * STEP);
+        let found = match crate::parser::parse_library(&tokens) {
+            Ok(found) => found,
+            Err(found) => {
+                errors.extend(found);
+                continue;
+            }
+        };
+        let kept = |n: &str| !held.contains(n);
+        file.functions
+            .extend(found.functions.into_iter().filter(|f| kept(&f.name)));
+        file.structs
+            .extend(found.structs.into_iter().filter(|s| kept(&s.name)));
+        file.enums
+            .extend(found.enums.into_iter().filter(|e| kept(&e.name)));
+        file.traits
+            .extend(found.traits.into_iter().filter(|t| kept(&t.name)));
+        file.impls.extend(found.impls);
+        file.withouts.extend(found.withouts);
+    }
+    file
 }
 
 /// A warning for each definition `main` does not reach, at its name, and
@@ -1795,7 +2050,7 @@ fn imports(file: &File, errors: &mut Vec<Error>, warnings: &mut Vec<Error>) {
 fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     let mut out = Vec::new();
     let mut dead = |item: Item, pos: Pos, what: String| {
-        if !reached.contains(&item) && !of_prelude(pos) {
+        if !reached.contains(&item) && !of_prelude(pos) && !of_library(pos) {
             out.push(
                 Error::new(
                     pos,
@@ -1823,7 +2078,7 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
         dead(Item::Impl(i), im.pos, what);
     }
     let bodies = (file.functions.iter()).chain(file.impls.iter().flat_map(|im| &im.functions));
-    for f in bodies {
+    for f in bodies.filter(|f| !of_library(f.pos)) {
         unused_bindings(f, &mut out);
     }
     out
@@ -2428,7 +2683,9 @@ impl<'a> Defs<'a> {
 /// Whether a call is of a function the compiler builds, whose name starts
 /// with two underscores and which only the prelude calls.
 fn is_intrinsic(call: &Call) -> bool {
-    call.qualifier.is_none() && call.callee.starts_with("__") && of_prelude(call.pos)
+    call.qualifier.is_none()
+        && call.callee.starts_with("__")
+        && (of_prelude(call.pos) || of_library(call.pos))
 }
 
 /// Whether a call is of the function `name`, which the compiler builds for

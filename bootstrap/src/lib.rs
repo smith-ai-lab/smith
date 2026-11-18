@@ -65,6 +65,26 @@ fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<scalar::Program, 
     checked(source, timings).map(|checked| checked.program)
 }
 
+/// The source of a module of the standard library, for the errors that show a
+/// line of it.
+pub(crate) fn library_text(module: &str) -> &'static str {
+    check::library_text(module)
+}
+
+/// The program a source file describes, in the scalar form, when the modules
+/// that `use std.<name>` reads are those given, each by its name and its source,
+/// in place of the standard library.
+pub fn lower_in(
+    source: &[u8],
+    library: &[(&str, &str)],
+) -> Result<scalar::Program, Vec<diag::Error>> {
+    let tokens = lexer::lex(source).map_err(in_order)?;
+    let file = parser::parse(&tokens).map_err(in_order)?;
+    check::check(file, &check::Library::new(library))
+        .map(|checked| checked.program)
+        .map_err(in_order)
+}
+
 fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<diag::Error>> {
     let tokens = timings
         .stage("lex", || lexer::lex(source))
@@ -73,7 +93,7 @@ fn checked(source: &[u8], timings: &mut Timings) -> Result<check::Checked, Vec<d
         .stage("parse", || parser::parse(&tokens))
         .map_err(in_order)?;
     timings
-        .stage("check", || check::check(file))
+        .stage("check", || check::check(file, &check::Library::standard()))
         .map_err(in_order)
 }
 

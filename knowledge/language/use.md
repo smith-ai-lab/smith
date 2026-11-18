@@ -9,7 +9,7 @@ built:
   - "a warning from `smith check`, at the name, for a name that is imported and never used"
   - "only the modules a `use` names are read, and the same executable is built with and without an import"
   - "not a name used and not imported, which is still in scope as it was, so the examples of the other pages are still written without their `use` lines; nor `as`, a project's own modules, `pub` in a program, or importing a module by its name"
-  - "the library's own source is not compiled yet: the compiler holds the effect `console` as an export of `std.console`, as [the compiler's design](../compiler.md#bootstrap) says, because effect declarations are not built"
+  - "a function, struct, enum, trait, or `impl` of a module of the standard library whose source is Smith is compiled when a program reaches it, as one of the program's own file is, so the library can be written in Smith; the library's names that the compiler builds, as [the compiler's design](../compiler.md#bootstrap) says, are still supplied by it, because effect declarations are not built"
 ---
 
 # Importing with use
