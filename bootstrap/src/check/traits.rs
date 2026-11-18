@@ -1103,7 +1103,7 @@ impl<'a> Checker<'a> {
         let outer = std::mem::replace(&mut self.no_impl, false);
         let refused = self.refusals;
         let mistakes = self.errors.len();
-        let mut sol = self.arguments(body, call, sig, false, Some((k, want)));
+        let mut sol = self.arguments(body, call, sig, false, Some((k, want)), None);
         let reported = std::mem::replace(&mut self.no_impl, outer);
         if reported || self.refusals != refused || self.function_for_parameter(&sol, call.pos) {
             return Ty::Unknown;

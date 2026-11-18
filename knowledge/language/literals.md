@@ -4,7 +4,7 @@ title: Literals
 description: How a number, a character, a text, true, false, or an array is written in code, which trait gives each its value, and how the type of a literal is decided.
 status: partial
 built:
-  - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, including a literal given for a type parameter, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
+  - "string literals that become `str`, `bool` with `true` and `false`, whole number literals in decimal, hexadecimal, and binary, with a `-` before one, that become `i8` to `i64` and `u8` to `u64`, as a binding's uses decide or `i64` when nothing does, including a literal given for a type parameter, which the place of the call's result decides when it names the parameter, a literal operand taking the type of the other, and a character between single quotes, with the escapes `\'`, `\\`, `\n`, and `\t`, as a whole number, an error as a `u8` when it is not ASCII"
 ---
 
 # Literals
@@ -148,6 +148,22 @@ fn main() ! console, alloc {
 ```
 
 This prints `1`, with `A` and `B` both `i64`. When the function needs a trait of the type parameter, `i64` must have it, and if it does not the error names the trait and `i64`, as for any other `i64`.
+
+When the call's result names the type parameter, the place the result is put in decides it first. A literal given for it is the type that place needs, and a literal that type cannot hold is refused at the literal.
+
+```
+fn id[A](a: A) -> A { a }
+
+fn pair[A, B](a: A, b: B) -> (A, B) { (a, b) }
+
+fn main() ! console, alloc {
+  y: u8 = id(7)
+  (r, s): (u8, i32) = pair(3, 4)
+  print("{y} {r} {s}")
+}
+```
+
+This prints `7 3 4`. A place is a binding that states its type, an argument, an operand whose other side has the type, on either side of the operator, a field, or a returned value. It decides through calls given as arguments of calls, to any depth, as in `c: u8 = id(id(5))`. `y: u8 = id(300)` gives "`300` does not fit `u8`, which holds 0 to 255".
 
 ## A literal beside another value
 
