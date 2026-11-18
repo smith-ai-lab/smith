@@ -60,7 +60,7 @@ log(write: fn(text, level) { ... }, body: body)
 
 ## An effect of your own
 
-A program declares its own effects in the same way, so nothing about `time` is special. An effect is a name like any other: it is defined in one module and imported by name, as [Modules](modules.md) describes.
+A program declares its own effects in the same way, so nothing about `time` is special. An effect is a name like any other: it is defined in one module and imported by name, as [Importing with use](use.md) describes.
 
 ```
 pub effect log {

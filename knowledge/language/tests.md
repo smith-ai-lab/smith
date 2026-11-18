@@ -1,57 +1,78 @@
 ---
 type: specification
 title: Tests
-description: Tests found by convention, examples and properties driven by a Key, and how they run.
+description: Tests found by convention, a function named test_ that returns a Result, the expect check, and a test file as an ordinary module.
 status: planned
 ---
 
 # Tests
 
-Tests are found by convention. A file named `x_test.smith` holds tests for `x.smith`, and every function in it named `test_...` is a test. A test returns a `Result`, and several checks chain with `try`. `expect` is the one check. It receives its lambda as [code](code.md), so a failed comparison reports both of its sides. A test file is an ordinary module: it imports with `use` and sees only public names, so tests check behaviour through the interface, while contracts and proofs check the internals. Test files are left out of normal builds.
+Tests are found by convention. A file named `x_test.smith` holds tests for `x.smith`, and every function in it named `test_...` is a test.
 
 ```
-use model.tokenizer (decode, encode)
+use std.test (Failed, expect)
+
+fn test_one_and_one() -> Result[(), Failed] {
+  expect { 1 + 1 == 2 }
+}
+```
+
+Written in `x_test.smith`, `test_one_and_one` is a test of `x.smith`. A test that takes nothing is a single example, and it runs once.
+
+## A test returns a Result
+
+A test returns a `Result`, and `expect` is the one check. `expect { ... }` gives `.ok(())` when its condition holds, and a `Failed` when it does not.
+
+```
+use model.tokenizer (encode)
 use std.test (Failed, expect)
 
 fn test_empty() -> Result[(), Failed] {
   expect { len(encode("")) == 0 }
 }
+```
 
-fn test_round_trip(key: take Key) -> Result[(), Failed] {
-  text = random_text(key, max: 200)
-  expect { decode(encode(text)) == text }
+The test file for `model/tokenizer.smith` is `model/tokenizer_test.smith`, and `encode` is a function of that module.
+
+## What `expect` reports
+
+`expect` receives its lambda as [code](code.md), so a failed comparison reports both of its sides. A test that fails on `len(encode("")) == 0` says what `len(encode(""))` was and what `0` was.
+
+## Several checks
+
+Several checks chain with [`try`](try.md). A check that fails ends the test, and the last check is the test's result.
+
+```
+use model.tokenizer (decode, encode)
+use std.test (Failed, expect)
+
+fn test_tokens() -> Result[(), Failed] {
+  tokens = encode("hello")
+  try expect { len(tokens) <= len("hello") }
+  expect { decode(tokens) == "hello" }
 }
-
-fn test_tokens(text: str) -> Result[(), Failed] {
-  tokens = encode(text)
-  try expect { len(tokens) <= len(text) }
-  expect { decode(tokens) == text }
-}
 ```
 
-- A test that takes nothing is a single example and runs once.
-- A test that takes a `Key` is a property. It runs many times, building its inputs with ordinary random functions. Under `smith test` the key is backed by a recorded sequence of choices, so a failure is shrunk by replaying the test with smaller choices, and every shrunk input is one the test's own code built.
-- Typed parameters are shorthand: each is drawn from a split key with `random`, the one function of the `Random` trait.
+## A test file is an ordinary module
 
-  ```
-  trait Random[T] {
-    fn random(key: take Key) -> T
-  }
-  ```
-- Every number type, `bool`, and `str` has `Random`. A struct, an enum, or a tuple is given it automatically, as [`Copy`](ownership.md) is, unless one of its parts lacks it, so a type a program defines can be a test's parameter with nothing more written. `without Random for T` takes it away, and a type's own `impl` replaces the one it was given, which is how a test gets values of a particular shape.
-- The checker tries to prove a property first and runs it only when it cannot.
+A test file is an ordinary module: it imports with `use`, as [Importing with use](use.md) describes, and it sees only public names. A test checks behaviour through the interface, while [contracts](contracts.md) and proofs check the internals.
 
 ```
-smith test                           everything
-smith test model/gpt_test.smith      one file
-smith test --name round_trip         tests whose name matches
-smith test --seed 4127               replay a failing run
+use model.tokenizer (encode, split_words)
 ```
 
-- All tests run in one process, each as a task with its own arena, in parallel.
-- Running one test compiles only what that test reaches, so it stays fast in a large project.
-- A failure prints the smallest failing input and the seed.
-- A run ends with its slowest tests and how long each took.
-- A test declares its effects like any function. One that touches files gets an in-memory file system unless it says otherwise.
+If `split_words` is private to `model.tokenizer`, this `use` is refused, as [Public and private](pub.md) describes.
 
-Next: [A transformer](transformer.md)
+Test files are left out of normal builds, so `smith build` never compiles `x_test.smith`.
+
+## The forms
+
+| Written | Means |
+| --- | --- |
+| `x_test.smith` | The tests of `x.smith` |
+| `fn test_name() -> Result[(), Failed]` | A test: a single example that runs once |
+| `expect { e }` | The check: `.ok(())` when `e` holds, a `Failed` reporting both sides when it does not |
+| `try expect { e }` | A check that ends the test when it fails |
+| `fn test_name(key: take Key)` or `fn test_name(x: T)` | A property, as [Properties](properties.md) describes |
+
+Next: [Random values for tests](random.md)

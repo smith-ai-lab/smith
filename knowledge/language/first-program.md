@@ -28,7 +28,7 @@ fn main() ! console {
 }
 ```
 
-This prints `one`, then `two`. `print` is in scope in [every file](modules.md), and the rest of the console is in [std.console](../library/console.md).
+This prints `one`, then `two`. `print` is in scope in [every file](prelude.md), and the rest of the console is in [std.console](../library/console.md).
 
 ## `! console`
 
@@ -64,6 +64,6 @@ This prints `hi 5`. A string with an expression in it needs the `alloc` effect a
 smith run hello.smith
 ```
 
-With the first program above in `hello.smith`, this prints `hello world`. Both `smith run` and the other commands are in [Projects](projects.md).
+With the first program above in `hello.smith`, this prints `hello world`. Both `smith run` and the other commands are in [The command line](command-line.md).
 
 Next: [Functions](functions.md)
