@@ -84,8 +84,8 @@ pub const MACHINE: &[Test] = &[
         a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once,
     ),
     (
-        "a_function_with_a_frame_of_any_size_up_to_12_pages_does_what_the_evaluator_says",
-        a_function_with_a_frame_of_any_size_up_to_12_pages_does_what_the_evaluator_says,
+        "a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says",
+        a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says,
     ),
     (
         "a_call_gives_its_arguments_and_takes_its_results_as_if_all_were_copied_at_once",
@@ -565,13 +565,14 @@ fn a_jump_gives_a_block_its_parameters_as_if_all_were_copied_at_once() {
 /// A function holds as many values at once as it takes to need a frame of
 /// some pages, and writes them. A system that gives a program its stack one
 /// page at a time must have the frame reserved a page at a time, so that no
-/// page is passed over. The frame is 12 pages in the case that is always
+/// page is passed over. The frame is 6 pages in the case that is always
 /// run, and any size up to that in the others. A probe that skipped a page
-/// is caught by any frame of two pages or more, and 12 keeps the test under
-/// the limit, because the allocator takes time that grows faster than the
-/// number of values the function holds.
-fn a_function_with_a_frame_of_any_size_up_to_12_pages_does_what_the_evaluator_says() {
-    const MOST: usize = 12;
+/// is caught by any frame of two pages or more, and 6 keeps the test well
+/// under the limit, because the allocator takes time that grows faster than
+/// the number of values the function holds: 12 pages took about 230 ms to
+/// build, and 6 take a small part of that.
+fn a_function_with_a_frame_of_any_size_up_to_6_pages_does_what_the_evaluator_says() {
+    const MOST: usize = 6;
     let targets = runnable();
     let holding = |pages: usize| {
         // The registers hold some values, and each other value takes 8 bytes
