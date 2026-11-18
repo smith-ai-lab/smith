@@ -89,7 +89,7 @@ fn lacking(defs: &Defs, scope: &Scope, which: usize, ty: &Ty) -> Option<usize> {
 /// A name, and the fields after it that are read from it.
 type Path = (String, Vec<String>);
 
-/// A value the function owns and has not used on some path, whose type has
+/// A value the function owns and has not taken on some path, whose type has
 /// a type parameter that gives it no `Discard`.
 #[derive(Clone, Debug)]
 struct Held {
@@ -268,7 +268,7 @@ impl<'a> Walk<'a> {
             };
             let param = self.scope.names[p].clone();
             let message = format!(
-                "`{}` is dropped here, as nothing uses it, and `{param}` has no `Discard`",
+                "`{}` is dropped here, as nothing takes it, and `{param}` has no `Discard`",
                 h.name
             );
             if let Some(error) = self.error(h.pos, message) {
@@ -296,7 +296,7 @@ impl<'a> Walk<'a> {
         };
         let param = self.scope.names[p].clone();
         let message =
-            format!("this value is dropped, as nothing uses it, and `{param}` has no `Discard`");
+            format!("this value is dropped, as nothing takes it, and `{param}` has no `Discard`");
         if let Some(error) = self.error(e.pos(), message) {
             error.fix = Some(format!("write `{param}: Discard`"));
         }
@@ -344,7 +344,11 @@ impl<'a> Walk<'a> {
             return None;
         };
         let lent = self.lent.get(&path.0).cloned();
-        moved.held.retain(|h| h.name != path.0);
+        // A value is taken where a value without `Copy` would be given away:
+        // looking at it, lending it, and reading a part of it take nothing.
+        if !matches!(flow, Flow::Lend) && path.1.is_empty() {
+            moved.held.retain(|h| h.name != path.0);
+        }
         if let Some((_, at)) = moved.gone.iter().find(|(p, _)| overlap(p, &path)) {
             let message = format!(
                 "`{}` is used here, after it was given away at {}:{}",
@@ -765,6 +769,8 @@ impl<'a> Walk<'a> {
             }
             let flow = match (param, value_fn) {
                 _ if constructs => Flow::Stored,
+                // `push` takes its list and its item.
+                _ if super::lists_and_text::is_push(defs, call) => Flow::Taken(name),
                 (Some(p), _) if p.take => Flow::Taken(name),
                 (None, Some(f)) => {
                     let at = if arg.name.is_none() && !arg.after {

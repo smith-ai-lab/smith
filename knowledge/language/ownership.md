@@ -7,7 +7,7 @@ built:
   - "`Copy` and `Discard` given to a type exactly when each of its fields has them"
   - "A value without `Copy` used again after it was given away on some path, which includes a later round of a loop, refused at the second use"
   - "not a value without `Copy` given away inside a lambda that the lambda did not define or take, which is refused, as nothing says how often a lambda is called"
-  - "a type parameter has `Copy` and `Discard` only where a bound or a `requires` line asks, so a value of one is used at most once and must be used, and a call, or an implementation it chooses, is given only a type that has what the bounds ask"
+  - "a type parameter has `Copy` and `Discard` only where a bound or a `requires` line asks, so a value of one is used at most once and must be taken, and a call, or an implementation it chooses, is given only a type that has what the bounds ask"
 ---
 
 # Ownership
@@ -85,7 +85,7 @@ This is refused: `f` is a `File`, which cannot be dropped, and nothing closes it
 
 ## Copy and Discard in a generic function
 
-Nothing is known of a type parameter but what its bounds say, so `T` may be a type with neither trait. A value of type `T` is used at most once and must be used. A function that duplicates one says so in a bound, and so does one that drops one.
+Nothing is known of a type parameter but what its bounds say, so `T` may be a type with neither trait. A value of type `T` is used at most once and must be taken on every path: given to a function that takes it, returned, or stored. Looking at it, lending it, and reading a field of it take nothing. A function that duplicates one says so in a bound, and so does one that drops one.
 
 ```
 fn keep[T](a: take T) -> T { a }
@@ -95,7 +95,7 @@ fn pair[T: Copy](x: T) -> (T, T) { (x, x) }
 fn first[T: Discard](a: take T, b: take T) -> T { a }
 ```
 
-Without `T: Copy`, `(x, x)` is refused at the second `x`, as `T` may be a type that cannot be copied. Without `T: Discard`, `first` is refused at `b`, which nothing uses. Each error says which bound to write, and tooling proposes it. `requires Copy[T]` and `requires Discard[T]` say the same as the bounds, as [`requires`](bounds.md) says of any trait.
+Without `T: Copy`, `(x, x)` is refused at the second `x`, as `T` may be a type that cannot be copied. Without `T: Discard`, `first` is refused at `b`, which nothing takes, and so is a function that only lends `a` and ends. Each error says which bound to write, and tooling proposes it. `requires Copy[T]` and `requires Discard[T]` say the same as the bounds, as [`requires`](bounds.md) says of any trait.
 
 A function that only reads what it is lent needs neither, as `fn size_of[T](xs: List[T]) -> Nat { xs.size }` shows, and neither does one that gives a value on. A value that holds a type parameter, as a struct, a tuple, an enum, or a list does, has each trait exactly when what it holds has it.
 

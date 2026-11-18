@@ -237,6 +237,8 @@ fn pass[T](x: take T) -> T { x }
 enum Form {
     /// Lends it to a function with no bound.
     Look,
+    /// Lends a field of it, where it has one.
+    Part,
     /// Gives it to a function that takes it and asks for `Discard`.
     Eat,
     /// Lends it to a function that asks for `Copy`.
@@ -272,7 +274,14 @@ fn items(g: &mut Gen, depth: usize, next: &mut usize) -> Vec<Item> {
             3 => Item::Loop(items(g, depth - 1, next)),
             _ => {
                 *next += 1;
-                let form = *g.pick(&[Form::Look, Form::Eat, Form::Twin, Form::Store, Form::Pass]);
+                let form = *g.pick(&[
+                    Form::Look,
+                    Form::Part,
+                    Form::Eat,
+                    Form::Twin,
+                    Form::Store,
+                    Form::Pass,
+                ]);
                 Item::Act(Act { id: *next, form })
             }
         })
@@ -317,11 +326,13 @@ impl Model {
                     } else if matches!(a.form, Form::Eat | Form::Store | Form::Pass) && !self.copy {
                         st.gone = true;
                     }
-                    st.unused = false;
+                    if matches!(a.form, Form::Eat | Form::Store | Form::Pass) {
+                        st.unused = false;
+                    }
                     let asked = match a.form {
                         Form::Eat => !self.discard,
                         Form::Twin => !self.copy,
-                        Form::Look | Form::Store | Form::Pass => false,
+                        Form::Look | Form::Part | Form::Store | Form::Pass => false,
                     };
                     if a.form == Form::Pass && !self.discard {
                         self.unused.insert(a.id);
@@ -380,6 +391,7 @@ fn case(g: &mut Gen) -> Case {
 /// The program, and where each place that may be refused is.
 struct Written {
     source: String,
+    shape: Shape,
     /// The parameter, where a value that may be dropped is reported.
     param: Pos,
     /// Where each statement reads the value, and where its call is.
@@ -398,6 +410,8 @@ fn write_items(items: &[Item], out: &mut String, w: &mut Written, depth: usize, 
             Item::Act(a) => {
                 let (call, value) = match a.form {
                     Form::Look => ("lend(", "a)"),
+                    Form::Part if w.shape == Shape::Struct => ("lend(", "a.item)"),
+                    Form::Part => ("lend(", "a)"),
                     Form::Eat => ("eat(", "a)"),
                     Form::Twin => ("twin(", "a)"),
                     Form::Store => ("size_box(Box(item: ", "a))"),
@@ -462,6 +476,7 @@ fn write(c: &Case) -> Written {
     let n = count(&c.items);
     let mut w = Written {
         source: String::new(),
+        shape: c.shape,
         param: Pos { line: 0, col: 0 },
         reads: vec![Pos { line: 0, col: 0 }; n],
         calls: vec![Pos { line: 0, col: 0 }; n],
