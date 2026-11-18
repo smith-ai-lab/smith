@@ -177,4 +177,4 @@ In the head of an `if`, `{` opens the body. A call there that takes a lambda is 
 | `a and b` | `true` when both are, and `b` runs only when `a` holds |
 | `a or b` | `true` when either is, and `b` runs only when `a` does not hold |
 
-Next: [Structs and tuples](structs.md)
+Next: [Structs](structs.md)

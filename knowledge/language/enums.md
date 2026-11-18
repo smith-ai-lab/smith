@@ -1,18 +1,33 @@
 ---
 type: specification
-title: Enums and match
-description: Enums that hold one of their cases, and match to take a value apart.
+title: Enums
+description: Enums that hold exactly one of their cases, each case holding a type or nothing, and how a case is built.
 status: partial
-built: "enums whose cases hold a type or nothing, with type parameters, `match` as a statement and as an expression, patterns that name a case, a bare name, a tuple, and a whole number, a character, or a text, written inside a case and inside a tuple too, the first pattern that matches being taken, and an error for a case left out, for a `match` on whole numbers or text with no bare name at the end, and for a pattern the ones before it cover, with a `match` on whole numbers compiled to one jump"
+built: "enums whose cases hold a type or nothing, with type parameters, and cases built with a leading dot or in full"
 ---
 
-# Enums and `match`
+# Enums
 
-An enum holds exactly one of its cases. Each case names a type, written `name: Type` like a struct field, or is bare. `match` takes a value apart, with a pattern and a block for each way it can be. In a pattern a case is always written with a leading dot, and a bare name always introduces a new variable for what it matches.
+An enum is a value that is exactly one of its cases. Each case is a name, and holds either nothing or one value of a type.
+
+```
+enum Light {
+  red
+  yellow
+  green
+}
+```
+
+A `Light` is a `red`, a `yellow`, or a `green`, and these cases hold nothing. A case that holds something names its type, written `name: Type` as a [struct](structs.md)'s field is.
 
 ```
 struct Circle {
-  radius: f32
+  radius: i32
+}
+
+struct Rect {
+  w: i32
+  h: i32
 }
 
 enum Shape {
@@ -20,44 +35,91 @@ enum Shape {
   rect: Rect
   empty
 }
-
-fn shape_area(s: Shape) -> f32 {
-  match s {
-    .circle(c) { 3.14159 * c.radius * c.radius }
-    .rect(r) { rect_area(r) }
-    .empty { 0.0 }
-  }
-}
-
-fn unit_square() -> Shape { .rect(Rect(w: 1.0, h: 1.0)) }
 ```
 
-A case is built with a leading dot, as in `.rect(...)` or `.empty`, wherever the expected type is known. Otherwise it is written in full, as in `Shape.rect(...)`, which is allowed anywhere. Because a case names a type, the `Rect` inside a `Shape` can be passed on its own after a match.
+A `Shape` is a `circle` that holds a `Circle`, a `rect` that holds a `Rect`, or an `empty` that holds nothing. The cases of an enum are written one to a line, and `enum Shape { rect: Rect, empty }` is refused: "expected a line break or `}`, found `,`".
 
-- A case's pattern may hold another pattern, for what the case holds.
-- A literal is a pattern, which matches a value equal to it: a whole number, a character, or a text. It goes wherever a pattern goes, so inside a case and inside a tuple too. The first pattern that matches is the one taken.
+## Building a case
 
-  ```
-  fn describe(found: Option[u8]) -> str {
-    match found {
-      .some(0) { "the first one" }
-      .some(n) { "a later one" }
-      .none { "not there" }
-    }
-  }
+A case is built with a leading dot, followed by what it holds in parentheses, or by nothing when it holds nothing. The dot form works wherever the expected type is known: a function's result, a parameter, or a binding that states its type.
 
-  fn two(b: u8, next: u8) -> Token {
-    match (b, next) {
-      ('=', '=') { .equal_equal }
-      ('-', '>') { .arrow }
-      ('=', other) { .assign }
-      (first, second) { single(first) }
-    }
-  }
-  ```
+```
+fn unit_square() -> Shape { .rect(Rect(w: 1, h: 1)) }
 
-  No list of literals covers every number or every text, so such a `match` ends with a bare name. A `match` on whole numbers is one jump, however many literals it has.
-- The patterns of a `match` cover each case once: each case is written, or a bare name after them covers the rest. A case left out is an error, and so is a pattern that the ones before it already cover.
-- A `match` whose value is used is an expression, and its blocks give the same type. Used as a statement, nothing its blocks give is read.
+fn make(r: Rect) -> Shape { .rect(r) }
+```
 
-Next: [Generics and traits](traits.md)
+Where the expected type is not known, the case is written in full, with the name of the enum before the dot. This form is allowed anywhere.
+
+```
+fn main() ! console, alloc {
+  s = Shape.rect(Rect(w: 7, h: 1))
+  e = Shape.empty
+}
+```
+
+The dot form where the type is not known is refused.
+
+```
+fn main() ! console {
+  s = .empty
+}
+```
+
+This gives "the enum of `.empty` is not known here", with the fix "write the enum's name before the dot, or give the binding a type". So `s: Shape = .empty` is the other way to write it.
+
+Where the type is known, `.rect(r)` is the form that is written. `Shape.rect(r)` is accepted there and means the same.
+
+A case is built from what it holds, and from nothing else.
+
+```
+s = Shape.round(3)
+```
+
+This gives "`Shape` has no case named `round`".
+
+```
+s = Shape.rect("x")
+```
+
+This gives "this gives text, where a `Rect` is needed".
+
+```
+s = Shape.empty(1)
+```
+
+This gives "`.empty` holds nothing, so it takes no value".
+
+```
+s = Shape.rect
+```
+
+This gives "`.rect` holds a `Rect`, and none is given".
+
+## What a case holds
+
+A case holds a whole value of its type, so the `Rect` in a `.rect` is a `Rect` like any other, and [`match`](match.md) is how it is taken out. An enum is not a struct: it has no fields, and `s.rect` is refused with "the field `rect` is read from a `Shape`, which is not a struct".
+
+## Type parameters
+
+An enum may take type parameters in brackets after its name, and a case may hold one. `Option[T]` is such an enum, and is always in scope: its cases are `some`, which holds a `T`, and `none`.
+
+```
+fn lone(n: u8) -> Option[u8] { .some(n) }
+
+fn nothing() -> Option[u8] { .none }
+```
+
+[Generics and traits](traits.md) says how a program writes its own.
+
+## The forms
+
+| Written | Is |
+| --- | --- |
+| `enum E { a }` | An enum with a case `a` that holds nothing |
+| `enum E { a: T }` | A case `a` that holds a `T` |
+| `.a(e)` | The case `a` holding `e`, where the expected type is known |
+| `.a` | A case that holds nothing, where the expected type is known |
+| `E.a(e)` and `E.a` | The same, written in full, which is written where the expected type is not known, and accepted anywhere |
+
+Next: [Match](match.md)
