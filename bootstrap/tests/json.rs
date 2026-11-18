@@ -38,6 +38,10 @@ pub const ONCE: &[Test] = &[
         a_case_with_a_tag_is_written_in_the_three_forms_of_the_table,
     ),
     (
+        "a_tag_that_is_also_a_member_is_refused_wherever_it_is_met_and_nothing_else_is",
+        a_tag_that_is_also_a_member_is_refused_wherever_it_is_met_and_nothing_else_is,
+    ),
+    (
         "a_program_that_does_not_import_std_json_is_the_program_it_was",
         a_program_that_does_not_import_std_json_is_the_program_it_was,
     ),
@@ -53,7 +57,16 @@ fn prints(source: &str) -> Vec<u8> {
     scalar::run(&program).stdout
 }
 
-const IMPORT: &str = "use std.json (to_json, to_json_as, Json)\n\n";
+const IMPORT: &str = "use std.json (to_json, to_json_as, Json, Clash)
+
+fn show(r: Result[str, Clash]) ! console, alloc {
+  match r {
+    .ok(t) { print(t) }
+    .err(c) { print(\"err {c.of} {c.case} {c.member}\") }
+  }
+}
+
+";
 
 /// Source that turns bytes into a text, which a literal cannot do for a byte
 /// below a space other than a line break and a tab.
@@ -229,11 +242,15 @@ struct Settings {
     camel: bool,
 }
 
-const SETTINGS: [Settings; 4] = [
+const SETTINGS: [Settings; 7] = [
     Settings { tag: None, camel: false },
     Settings { tag: Some("type"), camel: false },
     Settings { tag: None, camel: true },
     Settings { tag: Some("type"), camel: true },
+    // Tags that are the name of a field as it is written, and `value`.
+    Settings { tag: Some("plain"), camel: false },
+    Settings { tag: Some("aBC"), camel: true },
+    Settings { tag: Some("value"), camel: false },
 ];
 
 impl Settings {
@@ -505,6 +522,29 @@ impl Val {
         }
     }
 
+    /// The first tag that is also a member, in the order of writing, as the
+    /// enum, the case, and the name that a `Clash` holds.
+    fn first_clash(&self, settings: Settings) -> Option<String> {
+        let name = |f: usize| if settings.camel { camel(FIELDS[f]) } else { FIELDS[f].to_string() };
+        match self {
+            Val::Option(Some(v)) => v.first_clash(settings),
+            Val::List(of) | Val::Tuple(of) => of.iter().find_map(|v| v.first_clash(settings)),
+            Val::Struct(_, of) => of.iter().find_map(|v| v.first_clash(settings)),
+            Val::Enum(e, c, Some(v)) => match (settings.tag, &**v) {
+                (Some(tag), Val::Struct(_, of)) => of.iter().enumerate().find_map(|(f, v)| {
+                    if name(f) == tag {
+                        Some(format!("E{e} c{c} {tag}"))
+                    } else {
+                        v.first_clash(settings)
+                    }
+                }),
+                (Some("value"), _) => Some(format!("E{e} c{c} value")),
+                _ => v.first_clash(settings),
+            },
+            _ => None,
+        }
+    }
+
     fn members(&self, of: &[Val], settings: Settings) -> Vec<(Vec<u8>, Tree)> {
         of.iter()
             .enumerate()
@@ -583,7 +623,7 @@ fn program(defs: &Defs, t: &Ty, v: &Val) -> String {
     let mut out = format!("{IMPORT}{TEXT}{}", defs.source());
     out.push_str(&format!("fn main() ! console, alloc {{\n  v: {} = {}\n", defs.name(t), v.source()));
     for settings in SETTINGS {
-        out.push_str(&format!("  print(to_json_as(v, {}))\n", settings.source()));
+        out.push_str(&format!("  show(to_json_as(v, {}))\n", settings.source()));
     }
     out.push_str("  print(to_json(v))\n}\n");
     out
@@ -627,11 +667,11 @@ fn main() ! console, alloc {{
   nested: Option[Option[u8]] = Option.some(Option.none)
   print(to_json(nested))
   mcp = Json(cases: .tag(\"type\"), names: .camel)
-  print(to_json_as(Shape.empty, mcp))
-  print(to_json_as(Shape.square(4), mcp))
-  print(to_json_as(Shape.circle(Circle(radius: 2)), mcp))
-  print(to_json_as(Content(input_schema: 1), mcp))
-  print(to_json_as(Point(x: 3, y: 4), Json(cases: .tag(\"type\"), names: .camel)))
+  show(to_json_as(Shape.empty, mcp))
+  show(to_json_as(Shape.square(4), mcp))
+  show(to_json_as(Shape.circle(Circle(radius: 2)), mcp))
+  show(to_json_as(Content(input_schema: 1), mcp))
+  show(to_json_as(Point(x: 3, y: 4), Json(cases: .tag(\"type\"), names: .camel)))
 }}
 "
     );
@@ -667,9 +707,14 @@ fn every_value_is_written_as_the_model_says_for_each_setting_and_is_json_that_re
         settings.push(SETTINGS[0]);
         assert_eq!(lines.len(), settings.len(), "{source}");
         for (line, settings) in lines.iter().zip(settings) {
-            let tree = v.tree(settings);
-            assert_eq!(*line, &model(&tree)[..], "{settings:?}\n{source}");
-            assert_eq!(read(line), Ok(tree), "{settings:?}\n{source}");
+            match v.first_clash(settings) {
+                Some(clash) => assert_eq!(*line, format!("err {clash}").as_bytes(), "{settings:?}\n{source}"),
+                None => {
+                    let tree = v.tree(settings);
+                    assert_eq!(*line, &model(&tree)[..], "{settings:?}\n{source}");
+                    assert_eq!(read(line), Ok(tree), "{settings:?}\n{source}");
+                }
+            }
         }
     });
 }
@@ -729,7 +774,7 @@ fn camel_of(names: &[&str]) -> Vec<String> {
     }
     source.push_str("fn main() ! console, alloc {\n  j = Json(cases: .key, names: .camel)\n");
     for (i, name) in names.iter().enumerate() {
-        source.push_str(&format!("  print(to_json_as(N{i}({}: 1), j))\n", name));
+        source.push_str(&format!("  show(to_json_as(N{i}({}: 1), j))\n", name));
     }
     source.push_str("}\n");
     let printed = prints(&source);
@@ -814,16 +859,16 @@ enum Shape2 {{
 
 fn main() ! console, alloc {{
   j = Json(cases: .tag(\"kind\"), names: .written)
-  print(to_json_as(Shape.empty, j))
-  print(to_json_as(Shape.circle(Circle(radius: 2)), j))
-  print(to_json_as(Shape.square(4), j))
-  print(to_json_as(Shape.pair((1, 2)), j))
-  print(to_json_as(Shape.maybe(Option.some(Circle(radius: 5))), j))
-  print(to_json_as(Shape.maybe(Option.none), j))
-  print(to_json_as(Shape.nested(Shape2.inner(Circle(radius: 6))), j))
-  print(to_json_as(Shape.nested(Shape2.nothing), j))
+  show(to_json_as(Shape.empty, j))
+  show(to_json_as(Shape.circle(Circle(radius: 2)), j))
+  show(to_json_as(Shape.square(4), j))
+  show(to_json_as(Shape.pair((1, 2)), j))
+  show(to_json_as(Shape.maybe(Option.some(Circle(radius: 5))), j))
+  show(to_json_as(Shape.maybe(Option.none), j))
+  show(to_json_as(Shape.nested(Shape2.inner(Circle(radius: 6))), j))
+  show(to_json_as(Shape.nested(Shape2.nothing), j))
   shapes: List[Shape] = [Shape.empty, Shape.square(1)]
-  print(to_json_as(shapes, j))
+  show(to_json_as(shapes, j))
 }}
 "
     );
@@ -838,6 +883,88 @@ fn main() ! console, alloc {{
         r#"{"kind":"nested","value":{"kind":"inner","radius":6}}"#,
         r#"{"kind":"nested","value":{"kind":"nothing"}}"#,
         r#"[{"kind":"empty"},{"kind":"square","value":1}]"#,
+    ];
+    let expected: String = expected.iter().map(|l| format!("{l}\n")).collect();
+    assert_eq!(printed, expected);
+}
+
+fn a_tag_that_is_also_a_member_is_refused_wherever_it_is_met_and_nothing_else_is() {
+    let source = format!(
+        "{IMPORT}struct Circle {{
+  type: str
+  radius: u64
+}}
+
+struct Plain {{
+  radius: u64
+}}
+
+struct Named {{
+  my_tag: u8
+}}
+
+struct Holder {{
+  inside: Shape
+}}
+
+enum Shape {{
+  circle: Circle
+  plain: Plain
+  square: u64
+  empty
+  inner: Wrap
+}}
+
+enum Wrap {{
+  circle: Circle
+}}
+
+fn main() ! console, alloc {{
+  t = Json(cases: .tag(\"type\"), names: .written)
+  v = Json(cases: .tag(\"value\"), names: .written)
+  c = Circle(type: \"round\", radius: 2)
+  show(to_json_as(Shape.circle(c), t))
+  show(to_json_as(Shape.plain(Plain(radius: 1)), t))
+  show(to_json_as(c, t))
+  show(to_json_as(Shape.inner(Wrap.circle(c)), t))
+  l1: List[Shape] = [Shape.empty, Shape.circle(c), Shape.square(1)]
+  show(to_json_as(l1, t))
+  show(to_json_as(Holder(inside: Shape.circle(c)), t))
+  show(to_json_as(Shape.square(4), v))
+  show(to_json_as(Shape.empty, v))
+  show(to_json_as(Shape.plain(Plain(radius: 1)), v))
+  l2: List[Shape] = [Shape.square(1), Shape.circle(c)]
+  show(to_json_as(l2, t))
+  l3: List[Shape] = [Shape.circle(c), Shape.square(1)]
+  show(to_json_as(l3, v))
+  show(to_json_as(Named(my_tag: 1), Json(cases: .tag(\"myTag\"), names: .camel)))
+  show(to_json_as(Holder2.of(Named(my_tag: 1)), Json(cases: .tag(\"myTag\"), names: .camel)))
+  show(to_json_as(Holder2.of(Named(my_tag: 1)), Json(cases: .tag(\"my_tag\"), names: .camel)))
+  print(to_json(Shape.circle(c)))
+}}
+
+enum Holder2 {{
+  of: Named
+}}
+"
+    );
+    let printed = String::from_utf8(prints(&source)).unwrap();
+    let expected = [
+        "err Shape circle type",
+        r#"{"type":"plain","radius":1}"#,
+        r#"{"type":"round","radius":2}"#,
+        "err Wrap circle type",
+        "err Shape circle type",
+        "err Shape circle type",
+        "err Shape square value",
+        r#"{"value":"empty"}"#,
+        r#"{"value":"plain","radius":1}"#,
+        "err Shape circle type",
+        "err Shape square value",
+        r#"{"myTag":1}"#,
+        "err Holder2 of myTag",
+        r#"{"my_tag":"of","myTag":1}"#,
+        r#"{"circle":{"type":"round","radius":2}}"#,
     ];
     let expected: String = expected.iter().map(|l| format!("{l}\n")).collect();
     assert_eq!(printed, expected);

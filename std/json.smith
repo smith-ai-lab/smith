@@ -10,6 +10,12 @@ pub enum Names {
   camel
 }
 
+pub struct Clash {
+  pub of: str
+  pub case: str
+  pub member: str
+}
+
 pub struct Json {
   pub cases: Cases
   pub names: Names
@@ -215,7 +221,162 @@ impl Writer[Out] {
   fn end_map(w: take Out) -> Out ! alloc { close(w, ']') }
 }
 
-pub fn to_json_as[T: Serialize](value: T, json: Json) -> str ! alloc {
+// Finds a tag that is also a member, which `Out` does not look for, so that
+// `to_json` pays nothing for it. It writes nothing and follows the depth of
+// the value as `Out` does.
+
+// A struct whose members are written beside a tag: the depth its members are
+// at, the case, and the struct below it.
+struct Beside {
+  depth: Nat
+  of: str
+  case: str
+  below: Nat
+}
+
+struct Check {
+  tag: str
+  camel: bool
+  depth: Nat
+  // Whether a case that holds a value has been written and the value is not
+  // yet begun, and which case it is.
+  held: bool
+  of: str
+  case: str
+  frames: List[Beside]
+  top: Nat
+  clash: Option[Clash]
+}
+
+fn refuse(to: take Check, of: str, case: str, member: str) -> Check ! alloc {
+  var w = to
+  match w.clash {
+    .none { w.clash = Option.some(Clash(of: of, case: case, member: member)) }
+    .some(c) { }
+  }
+  w
+}
+
+// A value that is not a struct, held by a case, is written under `value`.
+fn begin(to: take Check) -> Check ! alloc {
+  var w = to
+  if w.held {
+    w.held = false
+    if w.tag == "value" {
+      of = w.of
+      case = w.case
+      w = refuse(w, of, case, "value")
+    }
+  }
+  w
+}
+
+fn deeper(to: take Check) -> Check ! alloc {
+  var w = begin(to)
+  w.depth = saturating_add(w.depth, 1)
+  w
+}
+
+fn shallower(to: take Check) -> Check ! alloc {
+  var w = to
+  w.depth = saturating_sub(w.depth, 1)
+  w
+}
+
+fn same_bytes(bytes: List[u8], t: str) -> bool {
+  var same = bytes.size == t.size
+  if same {
+    loop i in 0..t.size {
+      if i < bytes.size and bytes[i] != t[i] { same = false }
+    }
+  }
+  same
+}
+
+// The name of a field as `Out` writes it.
+fn written_name(name: str, camel: bool) -> List[u8] ! alloc {
+  var w = Out(settings: Json(cases: .key, names: .camel), bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0)
+  if camel {
+    w = camel_case(w, name)
+  } else {
+    w = put_text(w, name)
+  }
+  w.bytes
+}
+
+impl Writer[Check] {
+  fn boolean(w: take Check, value: bool) -> Check ! alloc { begin(w) }
+  fn signed(w: take Check, value: i64) -> Check ! alloc { begin(w) }
+  fn unsigned(w: take Check, value: u64) -> Check ! alloc { begin(w) }
+  fn text(w: take Check, value: str) -> Check ! alloc { begin(w) }
+  fn nothing(w: take Check) -> Check ! alloc { begin(w) }
+  fn absent(w: take Check) -> Check ! alloc { begin(w) }
+  fn present(w: take Check) -> Check ! alloc { begin(w) }
+  fn sequence(w: take Check, size: Nat) -> Check ! alloc { deeper(w) }
+  fn end_sequence(w: take Check) -> Check ! alloc { shallower(w) }
+  fn tuple(w: take Check, size: Nat) -> Check ! alloc { deeper(w) }
+  fn end_tuple(w: take Check) -> Check ! alloc { shallower(w) }
+  fn map(w: take Check, size: Nat) -> Check ! alloc { deeper(w) }
+  fn end_map(w: take Check) -> Check ! alloc { shallower(w) }
+  fn structure(w: take Check, name: str, fields: Nat) -> Check ! alloc {
+    var v = w
+    if v.held {
+      v.held = false
+      v.frames = push(v.frames, Beside(depth: saturating_add(v.depth, 1), of: v.of, case: v.case, below: v.top))
+      v.top = v.frames.size
+      v.depth = saturating_add(v.depth, 1)
+      v
+    } else {
+      deeper(v)
+    }
+  }
+  fn field(w: take Check, name: str) -> Check ! alloc {
+    var v = w
+    m = v.top
+    if m > 0 and m <= v.frames.size {
+      frame = v.frames[m - 1]
+      if frame.depth == v.depth and same_bytes(written_name(name, v.camel), v.tag) {
+        tag = v.tag
+        v = refuse(v, frame.of, frame.case, tag)
+      }
+    }
+    v
+  }
+  fn end_structure(w: take Check) -> Check ! alloc {
+    var v = w
+    m = v.top
+    if m > 0 and m <= v.frames.size {
+      frame = v.frames[m - 1]
+      if frame.depth == v.depth { v.top = frame.below }
+    }
+    shallower(v)
+  }
+  fn case(w: take Check, of: str, name: str, holds: bool) -> Check ! alloc {
+    var v = begin(w)
+    if holds {
+      v.held = true
+      v.of = of
+      v.case = name
+    }
+    v
+  }
+}
+
+fn clash_in[T: Serialize](value: T, json: Json) -> Option[Clash] ! alloc {
+  match json.cases {
+    .key { Option.none }
+    .tag(t) {
+      camel = match json.names {
+        .written { false }
+        .camel { true }
+      }
+      w = write(value, Check(tag: t, camel: camel, depth: 0, held: false, of: "", case: "", frames: [], top: 0, clash: .none))
+      w.clash
+    }
+  }
+}
+
+fn render[T: Serialize](value: T, json: Json) -> str ! alloc {
   w = write(value, Out(settings: json, bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0))
   match utf8(w.bytes) {
     .ok(t) { t }
@@ -223,6 +384,13 @@ pub fn to_json_as[T: Serialize](value: T, json: Json) -> str ! alloc {
   }
 }
 
+pub fn to_json_as[T: Serialize](value: T, json: Json) -> Result[str, Clash] ! alloc {
+  match clash_in(value, json) {
+    .none { Result.ok(render(value, json)) }
+    .some(c) { Result.err(c) }
+  }
+}
+
 pub fn to_json[T: Serialize](value: T) -> str ! alloc {
-  to_json_as(value, Json(cases: .key, names: .written))
+  render(value, Json(cases: .key, names: .written))
 }
