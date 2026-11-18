@@ -315,10 +315,9 @@ impl<'a> Lowering<'a> {
     /// value that fits, and `checked` gives an `Option` that holds the
     /// result if it fits.
     ///
-    /// A type of fewer than 64 bits is worked out in 64, where the result is
-    /// exact, and it fits if it is between the limits of the type. For a
-    /// type of 64 bits the result wraps, and whether it fit is read from the
-    /// half of the product that did not stay, or from the signs.
+    /// The operation says whether its answer fitted, except for an addition or
+    /// a subtraction of an unsigned number of fewer than 64 bits, which a
+    /// comparison says.
     pub(super) fn arithmetic(
         &mut self,
         out: &mut Out<'a>,
@@ -339,12 +338,13 @@ impl<'a> Lowering<'a> {
         if kind == "wrapping" {
             return vec![out.binary(word, a, b)];
         }
-        if !t.signed() && op != "mul" {
+        if !t.signed() && op != "mul" && t.bits() < 64 {
             // The sum wraps and is below an operand exactly when it did not
-            // fit, and the second is the one that is a number written out
-            // more often, which a compare holds in itself, and a difference does not fit exactly when the operand
+            // fit, and a difference does not fit exactly when the operand
             // taken is the greater: one operation, one comparison, and one
-            // choice at every width.
+            // choice, which is shorter than widening the numbers to see
+            // whether they fit. The second is the operand that is a number
+            // written out more often, which a compare holds in itself.
             if kind == "saturating" && op == "sub" {
                 // The greater of the two, less the second: no number below
                 // 0 is made, so no comparison of the difference is needed.
@@ -364,91 +364,33 @@ impl<'a> Lowering<'a> {
             }
             return self.optional(out, bits, wrong, r);
         }
-        let (r, below, above) = if t.bits() < 64 {
-            let (x, y) = (out.widen(t.signed(), a), out.widen(t.signed(), b));
-            let r = out.binary(word, x, y);
-            let wide = form::Bits::B64;
-            let (least, greatest) = (out.int(wide, t.min()), out.int(wide, t.max()));
-            let no = out.int(form::Bits::B8, 0);
-            let (below, above) = if t.signed() {
-                (
-                    out.compare(LessS, r, least),
-                    out.compare(LessS, greatest, r),
-                )
-            } else if op == "sub" {
-                (out.compare(LessU, x, y), no)
+        // The operation says whether its answer fitted, and a target makes
+        // that the flag of the operation. The end that a saturating function
+        // stops at is worked out first, from the operands, so that nothing
+        // that changes the flags comes between the operation and the choice.
+        let end = (kind == "saturating").then(|| {
+            if !t.signed() {
+                return out.int(bits, if op == "sub" { 0 } else { t.max() });
+            }
+            // The end is the greatest value when the answer went above it,
+            // and the least when it went below, which the signs say: an
+            // addition goes below when the second is negative, a subtraction
+            // when it is not, and a product when the signs differ.
+            let sign = if op == "mul" {
+                out.binary(Xor, a, b)
             } else {
-                (no, out.compare(LessU, greatest, r))
+                b
             };
-            (out.narrow(r, bits), below, above)
-        } else {
-            let r = out.binary(word, a, b);
-            let zero = out.int(bits, 0);
-            let no = out.int(form::Bits::B8, 0);
-            let one = out.int(form::Bits::B8, 1);
-            let (below, above) = if !t.signed() {
-                match op {
-                    "add" => (no, out.compare(LessU, r, a)),
-                    "sub" => (out.compare(LessU, a, b), no),
-                    _ => {
-                        let high = out.binary(MulHighU, a, b);
-                        (no, out.compare(LessU, zero, high))
-                    }
-                }
-            } else {
-                // Which way an overflow went is decided by the sign of the
-                // second operand, or for a product by whether the signs of
-                // the operands differ.
-                let negative = match op {
-                    "mul" => {
-                        let signs = out.binary(Xor, a, b);
-                        out.compare(LessS, signs, zero)
-                    }
-                    _ => out.compare(LessS, b, zero),
-                };
-                let overflowed = match op {
-                    "add" => {
-                        let (x, y) = (out.binary(Xor, a, r), out.binary(Xor, b, r));
-                        let both = out.binary(And, x, y);
-                        out.compare(LessS, both, zero)
-                    }
-                    "sub" => {
-                        let (x, y) = (out.binary(Xor, a, b), out.binary(Xor, a, r));
-                        let both = out.binary(And, x, y);
-                        out.compare(LessS, both, zero)
-                    }
-                    _ => {
-                        let high = out.binary(MulHighS, a, b);
-                        let below_zero = out.compare(LessS, r, zero);
-                        let all = out.int(bits, -1);
-                        let sign = out.choose(below_zero, all, zero);
-                        let same = out.compare(Equal, high, sign);
-                        out.binary(Xor, same, one)
-                    }
-                };
-                let positive = out.binary(Xor, negative, one);
-                // An addition goes below when the operand added is negative,
-                // a subtraction when the operand taken is not, and a product
-                // when the operands' signs differ.
-                let (down, up) = match op {
-                    "sub" => (positive, negative),
-                    _ => (negative, positive),
-                };
-                (
-                    out.binary(And, overflowed, down),
-                    out.binary(And, overflowed, up),
-                )
-            };
-            (r, below, above)
-        };
-        if kind == "saturating" {
-            let (least, greatest) = (out.int(bits, t.min()), out.int(bits, t.max()));
-            let low = out.choose(below, least, r);
-            return vec![out.choose(above, greatest, low)];
+            let by = out.int(bits, i128::from(t.bits() - 1));
+            let all_or_none = out.binary(ShiftRightS, sign, by);
+            let limit = out.int(bits, if op == "sub" { t.min() } else { t.max() });
+            out.binary(Xor, all_or_none, limit)
+        });
+        let (r, overflowed) = out.overflows(word, t.signed(), a, b);
+        match end {
+            Some(end) => vec![out.choose(overflowed, end, r)],
+            None => self.optional(out, bits, overflowed, r),
         }
-        let one = out.int(form::Bits::B8, 1);
-        let wrong = out.choose(below, one, above);
-        self.optional(out, bits, wrong, r)
     }
 
     /// The `Option` that holds `r`, a number of `bits`, unless `wrong`, a
