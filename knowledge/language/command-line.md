@@ -93,6 +93,14 @@ smith run --target macos_arm64 hello.smith
 
 On a machine that is not a `macos_arm64` machine this prints "smith run runs only programs for this machine, and macos_arm64 is not its target".
 
+`smith check` and `smith test` take no `--target`. A program is checked the same for every target, as no type and no rule depends on the machine, so one `smith check` answers for all of them. And a test is run, which only the machine it is on can do, so a test of another target is `smith test` on that machine.
+
+```
+smith check --target macos_arm64 hello.smith
+```
+
+This prints "unknown flag `--target`" and then how the commands are used.
+
 ## Timings
 
 `--timings` prints how long each stage of the build took.
@@ -133,7 +141,7 @@ smith deploy --env staging   a task from project.smith
 | `smith build [file]` | Compiles `main.smith`, or the file, and writes the executable |
 | `smith run [file] [word...]` | Builds, then runs, with the words passed to the program |
 | `smith check [file]` | Reports errors, or else warnings, and writes no code |
-| `--target <name>` | Builds for that target, and `smith run` rejects one the machine cannot run |
+| `--target <name>` | On `build` and `run` only: builds for that target, and `smith run` rejects one the machine cannot run |
 | `--timings` | Prints how long each stage took |
 | `smith new`, `smith vendor`, `smith test`, a task | Described on the pages above |
 
