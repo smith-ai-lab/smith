@@ -105,6 +105,10 @@ pub const ONCE: &[Test] = &[
         a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_it,
     ),
     (
+        "a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_call_runs_no_round",
+        a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_call_runs_no_round,
+    ),
+    (
         "every_placed_mistake_about_lambdas_is_one_error_at_its_place",
         every_placed_mistake_about_lambdas_is_one_error_at_its_place,
     ),
@@ -464,6 +468,46 @@ fn a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_i
         };
         assert_eq!(scalar::run(&program), expected);
     });
+}
+
+/// Both functions have a `var k`, and the loop over no numbers runs none of
+/// the calls inside it, so the `k` of `outer` is what it was before the loop.
+fn a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_call_runs_no_round()
+{
+    let source = r#"fn inner(n: u32, body: (u32) -> ()) ! diverge {
+  var k: u32 = 0
+  loop {
+    if k == n { break }
+    body(1)
+    k = wrapping_add(k, 1)
+  }
+}
+
+fn outer(n: u32, body: (u32) -> ()) ! diverge {
+  var k: u32 = 0
+  loop {
+    if k == 1 { break }
+    loop i in 0..n {
+      inner(n, body)
+    }
+    k = wrapping_add(k, 1)
+  }
+}
+
+fn main() ! diverge, console, alloc {
+  var a: u32 = 0
+  outer(0) fn(x) {
+    a = wrapping_add(a, x)
+  }
+  print("{a}")
+}
+"#;
+    let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+    let expected = Outcome {
+        stdout: b"0\n".to_vec(),
+        status: 0,
+    };
+    assert_eq!(scalar::run(&program), expected);
 }
 
 fn every_placed_mistake_about_lambdas_is_one_error_at_its_place() {
