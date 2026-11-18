@@ -69,11 +69,24 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [arenas.md](arenas.md): the `alloc` effect, which data of a size known only at run time carries, and `with arena()`.
 - [recursion.md](recursion.md): a tail call as a loop, other recursion with its frames in an arena, and why the stack cannot overflow.
 - [recursive-types.md](recursive-types.md): a type that contains itself, which is how a tree is written, and a graph as a collection plus indices.
-- [code.md](code.md): functions that receive the checked code of an argument when the program is built and return code, which is how `expect` and `grad` are library functions.
-- [differentiation.md](differentiation.md): `grad`, a function over code that returns the gradient of a function, shown by training an MLP.
-- [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`.
-- [tasks.md](tasks.md): task groups with `spawn` and `join`, cancellation, async I/O that reads as sequential code, how a task ends, and events.
-- [foreign.md](foreign.md): foreign declarations with C signatures, and how system frameworks are reached for native applications.
+- [code.md](code.md): functions that receive the checked code of an argument when the program is built and return code that takes the place of the call, which is how `expect` is a library function.
+- [differentiation.md](differentiation.md): `grad`, a function over code that returns the gradient of a function with respect to its first parameter.
+- [differentiable.md](differentiable.md): the `Differentiable` trait, through which each primitive supplies its derivative rule and a function may supply its own backward pass.
+- [vector.md](vector.md): `derive Vector`, which gives a struct of float arrays addition, subtraction, and scaling by a number.
+- [training.md](training.md): a loss, its gradient, a step of gradient descent, and a loop of steps, shown by training an MLP.
+- [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`, what the scope may hold, and where the data lives.
+- [tasks.md](tasks.md): a task group opened with `tasks()`, children started with `spawn` and waited for with `join`, and the `spawn` effect.
+- [task-sharing.md](task-sharing.md): what a spawned lambda may use: an ordinary value is shared, a `var` is read as it was at the spawn, and a single-use value moves into the child.
+- [task-arenas.md](task-arenas.md): each child task's own arena, a result built in the parent's, and a server as one task per connection and one arena per request.
+- [task-handlers.md](task-handlers.md): a child runs under the handlers in force where it was spawned, and a handler's operations run one at a time.
+- [async.md](async.md): all I/O is async and reads as sequential code, suspending a task under an async handler and blocking under a blocking one.
+- [cancellation.md](cancellation.md): ending a group's block is the one way to cancel, and when a cancelled task ends.
+- [task-ending.md](task-ending.md): the three things that end a task before its work is done, and what is dropped and closed when one does.
+- [task-failures.md](task-failures.md): what `join` gives for a child that failed, `outcome`, which lets a task recover, and a child that is never joined.
+- [events.md](events.md): a native application as a task that waits for the next event, with no callbacks, and a window that lives as long as `main`.
+- [foreign.md](foreign.md): a foreign declaration with a C signature, called directly in the C calling convention, reaching the operating system and its libraries only.
+- [foreign-effect.md](foreign-effect.md): why `foreign` cannot be handled away, how a foreign call is kept behind an effect, and how `print` carries `console` alone.
+- [system-frameworks.md](system-frameworks.md): how AppKit and UIKit are reached through the Objective-C runtime's C functions, and how the OS calls back in.
 - [modules.md](modules.md): a file as a module, and how its path gives the module its name.
 - [pub.md](pub.md): everything in a module private unless marked `pub`, on an item or on a single field, and what that lets another module do with a struct.
 - [use.md](use.md): `use`, which brings the names of another module into a file from an explicit list, and what is said when a name is missing or unused.

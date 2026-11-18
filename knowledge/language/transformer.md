@@ -87,4 +87,4 @@ fn logits[v: Nat, t: Pos, d: Pos, h: Nat, l: Nat](m: Gpt[v, t, d, h, l], ids: [t
 }
 ```
 
-No line of this says where memory comes from or how loops run. The compiler stores each intermediate that is read repeatedly, fuses the rest, and compiles the contractions as blocked kernels. Training reuses [Differentiation](differentiation.md): a cross-entropy loss over `logits`, its `grad`, and a step function, inside `with device(gpu)`.
+No line of this says where memory comes from or how loops run. The compiler stores each intermediate that is read repeatedly, fuses the rest, and compiles the contractions as blocked kernels. Training follows [Training](training.md): a cross-entropy loss over `logits`, its `grad`, and a step function, inside `with device(gpu)`.
