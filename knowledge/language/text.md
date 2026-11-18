@@ -2,7 +2,11 @@
 type: specification
 title: Text and bytes
 description: A str as bytes known to be valid UTF-8, which are used as bytes with no call, made from bytes through utf8, and cut into pieces that share its memory.
-status: planned
+status: partial
+built:
+  - "`s.size` and `s[i]` of a `str`, with `arith` proving the index as it does for a `List`"
+  - "a `str` passed where a `List[u8]` is a parameter's type, with no call and no copy"
+  - "`utf8`, which copies nothing and gives `.err` with the place where the first character that is not valid begins; `Utf8Error` holds `at` as a `u64`, as `Nat` is not built"
 ---
 
 # Text and bytes
