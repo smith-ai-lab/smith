@@ -101,6 +101,19 @@ This gives "`.rect` holds a `Rect`, and none is given".
 
 A case holds a whole value of its type, so the `Rect` in a `.rect` is a `Rect` like any other, and [`match`](match.md) is how it is taken out. An enum is not a struct: it has no fields, and `s.rect` is refused with "the field `rect` is read from a `Shape`, which is not a struct".
 
+## A case that holds `()`
+
+A case that holds nothing and a case that holds [`()`](tuples.md) are one thing, as a function that says `-> ()` and one that says no return type are. `()` has one value, so holding it says nothing more than the case does.
+
+```
+enum Step[T] {
+  more: T
+  done
+}
+```
+
+A `Step[()]` has a `more` that holds `()`. It is built as `.more` and matched as `.more`, as `done` is. `.more(())` means the same, and the formatter writes `.more`, so a program has one form. A case that holds `()` written without it is not built, so no words are quoted for what the compiler says today.
+
 ## Type parameters
 
 An enum may take type parameters in brackets after its name, and a case may hold one. `Option[T]` is such an enum, and is always in scope: its cases are `some`, which holds a `T`, and `none`.
@@ -121,6 +134,7 @@ fn nothing() -> Option[u8] { .none }
 | `enum E { a: T }` | A case `a` that holds a `T` |
 | `.a(e)` | The case `a` holding `e`, where the expected type is known |
 | `.a` | A case that holds nothing, where the expected type is known |
+| `.a` where `a` holds `()` | The same: a case that holds `()` holds nothing |
 | `E.a(e)` and `E.a` | The same, written in full, which is written where the expected type is not known, and accepted anywhere |
 
 Next: [Match](match.md)
