@@ -149,7 +149,7 @@ Everything runs as native code, including compile-time code such as literal conv
 
 ## Standing alone
 
-A Smith executable carries everything it runs. All of its code is compiled from Smith source into the one file, in the same way that outside code is [vendored](language/projects.md) into the project and never fetched from a shared cache. The only thing the executable needs from the machine is the operating system's own stable boundary, and that boundary is the kernel wherever the kernel allows it.
+A Smith executable carries everything it runs. All of its code is compiled from Smith source into the one file, in the same way that outside code is [vendored](language/dependencies.md) into the project and never fetched from a shared cache. The only thing the executable needs from the machine is the operating system's own stable boundary, and that boundary is the kernel wherever the kernel allows it.
 
 | System | Boundary | Why |
 | --- | --- | --- |

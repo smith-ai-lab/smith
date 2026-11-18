@@ -22,7 +22,7 @@ without Fmt for Cat
 
 ## Taking away what a type is given
 
-`without` works for any trait that is derived automatically. The traits so far are `Copy` and `Discard` from [Ownership](ownership.md), `Fmt` and `Repr`, `Eq` and `Ord` from [Traits](traits.md), and `Random` from [Tests](tests.md).
+`without` works for any trait that is derived automatically. The traits so far are `Copy` and `Discard` from [Ownership](ownership.md), `Fmt` and `Repr`, `Eq` and `Ord` from [Traits](traits.md), and `Random` from [Random values for tests](random.md).
 
 ```
 struct Cat {

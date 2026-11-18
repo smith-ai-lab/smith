@@ -61,6 +61,6 @@ trait LogProb[D, T] {
 
 ## Distributions and tests
 
-[`Random`](../language/tests.md) and `Sample` do different work. `Random[T]` gives a value of a type that is good at finding mistakes, so it reaches for 0, the greatest value, and the empty text more often than chance would. `Sample` draws from exactly the distribution it is given. An implementation of `Random` is written with distributions.
+[`Random`](../language/random.md) and `Sample` do different work. `Random[T]` gives a value of a type that is good at finding mistakes, so it reaches for 0, the greatest value, and the empty text more often than chance would. `Sample` draws from exactly the distribution it is given. An implementation of `Random` is written with distributions.
 
 Every draw takes its randomness through `bits`. A failing test is made smaller by replaying it with smaller bits, so a value drawn from any distribution, one a program defines included, is made smaller with nothing written for it.

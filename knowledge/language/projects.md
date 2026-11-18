@@ -1,19 +1,77 @@
 ---
 type: specification
-title: Projects and packages
-description: How a folder becomes a project by convention, what smith new creates, the standard library, vendored dependencies, build steps and tasks in project.smith, and the command line.
+title: Projects
+description: A folder as a project, its root and entry, the names of its modules and its executable, project.smith, and what smith new creates.
 status: partial
-built: "`smith build`, `smith run`, and `smith check` on `main.smith` or a named file"
+built: "the entry, `main.smith` or a named file, and the name of the executable"
 ---
 
-# Projects and packages
+# Projects
 
-A project is a folder, and its layout says most of what a build needs to know. A folder that holds one file, `main.smith`, is a complete project: `smith run` builds it and runs it, and `smith test` runs its tests.
+A project is a folder, and its layout says most of what a build needs to know. A folder that holds one file, `main.smith`, is a complete project.
 
-- **The root** is the nearest folder, at or above where the command ran, that holds a `project.smith`. When there is none, it is the folder the command ran in.
-- **The entry** is `main.smith` at the root. `smith build` and `smith run` can name another file instead, as in `smith run hello.smith`, and that file's `main` is where the program starts.
-- **A module's name** is its path from the root, and the standard library lives under `std`.
-- **The executable** is named after the entry file without `.smith`, so `hello.smith` gives `hello`. When the entry is `main.smith` it takes the package's name, or the root folder's name when there is no `project.smith`. An executable for Windows ends in `.exe`, so there `hello.smith` gives `hello.exe`.
+```
+hello/
+  main.smith
+```
+
+```
+fn main() ! console {
+  print("hello world")
+}
+```
+
+Run in `hello/`, `smith run` builds the project and runs it, and prints `hello world`. `smith test` runs its tests, as [Running tests](running-tests.md) describes.
+
+## The root
+
+The root is the nearest folder, at or above where the command ran, that holds a `project.smith`. When there is none, it is the folder the command ran in.
+
+```
+serving/
+  project.smith
+  model/
+    gpt.smith
+```
+
+Run in `serving/model/`, a command finds `serving/project.smith` above it, so the root is `serving/`. In `hello/` above, no folder holds a `project.smith`, so the root is `hello/`.
+
+## The entry
+
+The entry is `main.smith` at the root, and its `main` is where the program starts. `smith build` and `smith run` can name another file instead, and that file's `main` is where the program starts.
+
+```
+fn main() ! console {
+  print("hello")
+}
+```
+
+With this in `hello.smith`, `smith run hello.smith` prints `hello`. In a folder with no `project.smith` and no `main.smith`, `smith run` with no file is refused: "main.smith: No such file or directory (os error 2)".
+
+## The names a project gives
+
+A module's name is its path from the root, as [Modules](modules.md) describes, and the standard library lives under `std`, as [The standard library](standard-library.md) describes.
+
+The executable is named after the entry file without `.smith`, so `hello.smith` gives `hello`. When the entry is `main.smith` it takes the package's name, or the root folder's name when there is no `project.smith`. An executable for Windows ends in `.exe`, so there `hello.smith` gives `hello.exe`.
+
+| Entry | Root | Executable |
+| --- | --- | --- |
+| `hello.smith` | any | `hello` |
+| `hello.smith`, for Windows | any | `hello.exe` |
+| `main.smith` | `hello/`, no `project.smith` | `hello` |
+| `main.smith` | `serving/`, whose `project.smith` names the package `serving` | `serving` |
+
+## project.smith
+
+`project.smith` marks the root and describes the package. A new one has nothing to list yet.
+
+```
+use std.project (Package)
+
+package = Package(name: "serving")
+```
+
+A loose file or folder needs no `project.smith`, which suits a small program written to try something, like `hello.smith` above. The file is needed once the project has a dependency, a build step, or a task, as [Dependencies](dependencies.md), [Build steps](build-steps.md), and [Project tasks](project-tasks.md) describe. `smith vendor add` creates it when it is missing.
 
 ## Starting a project
 
@@ -26,7 +84,7 @@ serving/
   main_test.smith
 ```
 
-`main.smith` prints a greeting from a public function, and `main_test.smith` holds a test of that function, as [Tests](tests.md) describes.
+`main.smith` prints a greeting from a public function.
 
 ```
 pub fn greeting() -> str { "hello world" }
@@ -36,103 +94,28 @@ fn main() ! console {
 }
 ```
 
-`project.smith` marks the root and describes the package. A new one has nothing to list yet.
+`main_test.smith` holds a test of that function, as [Tests](tests.md) describes.
 
 ```
-use std.project (Package)
+use main (greeting)
+use std.test (Failed, expect)
 
-package = Package(name: "serving")
-```
-
-A loose file or folder needs no `project.smith`, which suits a small program written to try something. The file is needed once the project has a dependency, a build step, or a task, all described below. `smith vendor add` creates it when it is missing.
-
-## The standard library
-
-The standard library is large, so that outside code is rarely needed. It covers arrays, differentiation, and neural network layers; tasks, networking, and an HTTP server; serialization through `derive`; files, time, random numbers, text, hashing, and compression; and the platform layer for windows and events. Its modules are described in [library/](../library/index.md).
-
-## Dependencies, build steps, and tasks
-
-Outside code is vendored: it is copied into the project as ordinary modules and imported like any other, as in `use vendor.toml.parse (parse)`. There is no registry and there are no version ranges. `project.smith` records where each vendored folder came from and its content hash.
-
-```
-use std.project (Generate, Package, Vendored)
-
-package = Package(
-  name: "site",
-  vendored: [
-    Vendored(path: "vendor/toml", source: "https://example.com/toml", hash: "b3:9f2c"),
-    Vendored(path: "vendor/sqlite", source: "https://example.com/sqlite", hash: "b3:41ae"),
-  ],
-  generate: [
-    Generate(run: route_table, inputs: "routes/", output: "generated/routes.smith"),
-  ],
-)
-
-fn route_table(dir: Dir) -> Source ! fs, alloc {
-  render_router(files(dir))
-}
-
-pub fn deploy(env: str) -> Result[(), DeployError] ! fs, net, alloc {
-  binary = try build(package, target: .linux_x64)
-  upload(binary, to: env)
+fn test_greeting() -> Result[(), Failed] {
+  expect { greeting() == "hello world" }
 }
 ```
 
-- Every dependency is listed by the project, including dependencies of dependencies. The build checks each folder against its hash and never touches the network.
-- A vendored function's effects are in its signature like any other, and a caller must declare them to call it. A parser with no effects is pure, whatever it contains.
-- Nothing runs because a dependency is present. Its code runs only when the project calls it.
-- A build step is a function listed under `generate`. The build runs it before compiling, on every build, so generated source cannot go stale. A step may read the project's files and nothing else, with no network and no clock. Its output is an ordinary source file, which is how file-based routing, embedded assets, and types generated from a schema file are done.
-- A task is a public function in `project.smith`, run by name, as in `smith deploy --env staging`. Its parameters are its command-line flags and its effects say what it may do. Running another program needs the `exec` effect.
-- There are no macros that rewrite code in place.
+`project.smith` is the one above.
 
-A project that has grown looks like this:
+## The forms
 
-```
-serving/
-  project.smith
-  main.smith
-  main_test.smith
-  model/
-    gpt.smith
-    gpt_test.smith
-  routes/
-    health.smith
-  generated/
-    routes.smith
-  vendor/
-    toml/
-      parse.smith
-```
+| Written | Means |
+| --- | --- |
+| A folder with `main.smith` | A complete project |
+| The nearest `project.smith` above | The root, or the folder the command ran in when there is none |
+| `smith run` | Builds and runs the `main` of `main.smith` at the root |
+| `smith run hello.smith` | Builds and runs the `main` of that file |
+| `project.smith` | Marks the root and describes the package, and is needed for a dependency, a build step, or a task |
+| `smith new serving` | Creates `project.smith`, `main.smith`, and `main_test.smith` in `serving/` |
 
-## The command line
-
-The command line is small, and every public function in `project.smith` is also a command.
-
-```
-smith new serving            create a project
-smith check                  check everything and report warnings, no code generated
-smith build                  compile main.smith, or the file named
-smith run                    build it and run it
-smith test                   run the tests
-smith fmt                    format every file
-smith vendor add <url>       fetch, hash, and add an entry
-smith vendor update <path>   re-fetch one folder and update its hash
-smith hole                   what a hole needs
-smith find                   definitions matching a signature
-smith deps                   what a definition uses, and what uses it
-smith cost                   allocation and operation counts
-
-smith deploy --env staging   a task from project.smith
-```
-
-- `smith build` writes the executable to the folder the command ran in, and replaces a file already there.
-- `--target` chooses what to build for, as in `smith build --target macos_arm64`. Its values are the [target names](../compiler.md#backends). Without it, the target is the machine the compiler is running on, and it is an error if that machine is not a target.
-- `smith run` runs only what the machine it is on can run, so it rejects any other target.
-- `--timings` prints how long each stage of the build took.
-- A task's parameters are named flags. A `bool` is a bare flag, a parameter with a default or of type `Option` may be left out, and there are no positional arguments.
-- A `Result` error prints its message and exits non-zero.
-- Built-in command names are reserved, so a task named `build` is a compile error.
-- `smith build`, `smith run`, and `smith test` fail only on errors. `smith check` also reports warnings, such as dead code, unused variables, and unused imports, and fails if there are any. What each command compiles, and what the reporting commands print, is described in [compiler.md](../compiler.md#structure).
-- `smith vendor add` shows a dependency's own vendored list, and writes entries only for what is approved.
-
-Next: [Tests](tests.md)
+Next: [The command line](command-line.md)

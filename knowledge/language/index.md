@@ -74,7 +74,20 @@ The files are a tour. Read them in the order below: each one uses only what the 
 - [devices.md](devices.md): running the same source on a GPU with `with device(gpu)`.
 - [tasks.md](tasks.md): task groups with `spawn` and `join`, cancellation, async I/O that reads as sequential code, how a task ends, and events.
 - [foreign.md](foreign.md): foreign declarations with C signatures, and how system frameworks are reached for native applications.
-- [modules.md](modules.md): one file as one module, `pub`, and explicit imports with `use`.
-- [projects.md](projects.md): how a folder becomes a project by convention, what `smith new` creates, the standard library, vendored dependencies, build steps and tasks in `project.smith`, and the command line.
-- [tests.md](tests.md): tests found by convention, examples and properties driven by a `Key`, and how they run.
+- [modules.md](modules.md): a file as a module, and how its path gives the module its name.
+- [pub.md](pub.md): everything in a module private unless marked `pub`, on an item or on a single field, and what that lets another module do with a struct.
+- [use.md](use.md): `use`, which brings the names of another module into a file from an explicit list, and what is said when a name is missing or unused.
+- [prelude.md](prelude.md): the names that are in scope in every file without a `use`, and what a file imports for everything else.
+- [qualified-names.md](qualified-names.md): a `use` with no list, which brings in the module itself under its last path segment, `as`, and a name two modules share.
+- [impl-placement.md](impl-placement.md): an `impl`, which is not imported, is visible everywhere, and lives in the module that defines the trait or the type.
+- [projects.md](projects.md): a folder as a project, its root and entry, the names of its modules and its executable, `project.smith`, and what `smith new` creates.
+- [command-line.md](command-line.md): the `smith` commands, how `build`, `run`, and `check` take a file and a target, and what each prints when it fails.
+- [standard-library.md](standard-library.md): what the standard library covers, which is why outside code is rarely needed, and how its modules are imported from `std`.
+- [dependencies.md](dependencies.md): outside code vendored into the project as ordinary modules, listed with its source and hash in `project.smith`, and checked by the build without the network.
+- [build-steps.md](build-steps.md): a function listed under `generate` in `project.smith`, which the build runs before compiling to write an ordinary source file.
+- [project-tasks.md](project-tasks.md): a public function in `project.smith`, run by name, whose parameters are its command-line flags and whose effects say what it may do.
+- [tests.md](tests.md): tests found by convention, a function named `test_` that returns a `Result`, the `expect` check, and a test file as an ordinary module.
+- [random.md](random.md): the `Random` trait, which gives a value of a type that is good at finding mistakes, who has it without writing it, and how to take it away or replace it.
+- [properties.md](properties.md): a test that takes a `Key`, or typed parameters, which runs many times on random inputs, is shrunk to the smallest failure, and is proved first when the checker can.
+- [running-tests.md](running-tests.md): `smith test`, which runs every test or the ones chosen, in parallel, and what a failure and a run print.
 - [transformer.md](transformer.md): a decoder-only transformer in under a hundred lines, built from everything before it.

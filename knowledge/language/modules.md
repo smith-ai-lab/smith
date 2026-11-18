@@ -1,57 +1,39 @@
 ---
 type: specification
 title: Modules
-description: One file as one module, pub, and explicit imports with use.
+description: A file as a module, and how its path gives the module its name.
 status: planned
 ---
 
 # Modules
 
-One file is one module, named by its path, so `db/transaction.smith` is the module `db.transaction`. Everything in a module is private unless marked `pub`, on an item or on a single field.
+A module is one file, and its name is its path. The file `db/transaction.smith` is the module `db.transaction`.
 
 ```
-pub struct Rect {
-  pub w: f32
-  pub h: f32
-}
+db/
+  transaction.smith
+```
 
-pub struct Transaction {
+```
+struct Transaction {
   id: u64
 }
 
-pub fn begin(db: Db) -> Transaction ! net
-pub fn commit(t: take Transaction) -> Result[(), DbError] ! net
-
-fn next_id(db: Db) -> u64 ! net
+fn begin(db: Db) -> Transaction ! net
 ```
 
-- A struct can be built or taken apart only by code that can see all of its fields, and a field can be assigned only by code that can see it. Any module can build a `Rect`. Other modules can hold a `Transaction` and pass it on, but cannot forge one or dispose of one, which is what makes `without` and proof fields trustworthy.
-- A private definition can be used only inside its own module.
+These lines, written in `db/transaction.smith`, are the module `db.transaction`. It holds a struct and a function. Another module reaches them by that name, as [Importing with use](use.md) describes.
 
-Another module's names are brought in by an explicit list. There is no way to import everything.
+## The name of a module
 
-```
-use db.transaction (Transaction, begin, commit)
+The name is the path with each `/` written as `.` and `.smith` left off, counted from the project's root, as [Projects](projects.md) describes. A folder adds one segment to the name of every module below it.
 
-fn transfer(db: Db) -> Result[(), DbError] ! net {
-  t = begin(db)
-  commit(t)
-}
-```
+| Path | Module |
+| --- | --- |
+| `db/transaction.smith` | `db.transaction` |
+| `model/gpt.smith` | `model.gpt` |
+| `vendor/toml/parse.smith` | `vendor.toml.parse` |
 
-- A small prelude is in scope everywhere: `Option`, `Result`, `Order`, the `Try`, `Fmt`, `Repr`, and `Random` traits, the numeric types and `bool`, the operator traits with `Eq` and `Ord`, the effects `console`, `fs`, `net`, `time`, and `ui`, `print`, and the array functions such as `sum` and `map`.
-- When two modules export the same name, the modules are imported and the name is qualified, as in `transaction.begin(db)`.
-- The formatter sorts the list. A missing import is an error that names the module to import from, and an unused one is a warning from `smith check`.
-- An `impl` is not imported. It is visible everywhere, and it must live in the module that defines the trait or the type, which keeps one implementation per type checkable.
+A module's definitions can be used by other modules only when they are marked `pub`, as [Public and private](pub.md) describes.
 
-A `use` with no list brings in the module itself, under its last path segment, and `as` gives it another name when two last segments clash. All `use` lines sit at the top of the file, one per module, and nothing is re-exported.
-
-```
-use db.transaction
-use ui.animation as anim
-
-t = transaction.begin(db)
-a = anim.begin(view)
-```
-
-Next: [Projects and packages](projects.md)
+Next: [Public and private](pub.md)
