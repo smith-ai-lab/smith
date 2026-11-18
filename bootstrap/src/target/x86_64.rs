@@ -1229,7 +1229,9 @@ impl<S: System> Writer<'_, S> {
             unreachable!()
         };
         let cond = self.compare(asm, op, *a, *b);
-        if let (Loc::Imm(n), Loc::Register(other)) = (self.at[then.0], self.at[otherwise.0]) {
+        if let (Loc::Imm(n), Loc::Register(other)) = (self.at[then.0], self.at[otherwise.0])
+            && self.at[choose.results[0].0] != Loc::Register(other)
+        {
             // The number goes to the result, and the other value is taken
             // when the condition does not hold.
             let t = self.target(choose.results[0], &[other]);

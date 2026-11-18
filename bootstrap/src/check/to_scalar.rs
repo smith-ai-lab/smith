@@ -1099,6 +1099,18 @@ impl<'a> Lowering<'a> {
                 Callee::Narrow(narrowing) => self.narrow_call(out, expr, call, narrowing, env),
                 Callee::Value => self.call_value(out, call, env),
                 Callee::Intrinsic => self.intrinsic_call(out, expr, call, env),
+                Callee::Run(instance, _)
+                    if !matches!(instance.template, Template::Given(_))
+                        && numbers_and_operators::number_function(
+                            defs.view(instance.template).f,
+                        )
+                        .is_some() =>
+                {
+                    let f = defs.view(instance.template).f;
+                    let named = numbers_and_operators::number_function(f).expect("checked");
+                    let places = params_of(&defs.params(instance.template), &call.args);
+                    self.number_call(out, expr, call, named, &places, env)
+                }
                 Callee::Run(instance, gives)
                     if (defs.params(instance.template).iter())
                         .any(|(_, t)| t.subst(&instance.args).holds_fn()) =>

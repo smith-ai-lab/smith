@@ -385,7 +385,7 @@ struct S {
 
 fn bump(s: S) -> S {
   var t = s
-  t.a = wrapping_mul(wrapping_add(s.a, s.b), 717171)
+  t.a = wrapping_mul(wrapping_add(wrapping_add(s.a, s.b), s.c), 717171)
   t
 }
 
@@ -398,9 +398,9 @@ fn main() ! console, alloc {
   print(\"{y.a} {y.b} {y.c}\")
 }
 ",
-    prints: &["2151513 2 3", "21515130 20 30"],
+    prints: &["4303026 2 3", "43030260 20 30"],
     mark: 717171,
-    params: 2,
+    params: 3,
     results: 1,
 };
 
