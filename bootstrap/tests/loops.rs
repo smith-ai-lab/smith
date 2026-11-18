@@ -4,7 +4,7 @@
 //! Every generator works out the answer with the arithmetic of Rust on 128
 //! bits, or by counting, so it shares nothing with the compiler.
 
-use smith::scalar::{self, End, Op, Outcome, System};
+use smith::scalar::{self, Op, Outcome, System};
 use smith::{check, lower};
 
 use crate::Test;
@@ -604,10 +604,7 @@ fn a_loop_over_a_range_is_one_counter_and_one_comparison_each_time_round() {
             .functions
             .iter()
             .flat_map(|f| f.blocks.iter().enumerate()))
-        .any(|(at, block)| match &block.end {
-            End::Jump(j) => j.block <= at,
-            _ => false,
-        });
+        .any(|(at, block)| block.end.successors().iter().any(|&to| to <= at));
         assert!(loops, "no loop in {source}");
     }
 }

@@ -109,7 +109,7 @@ This prints "unknown flag `--target`" and then how the commands are used.
 smith build --timings hello.smith
 ```
 
-This prints a line for each stage, `lex`, `parse`, `check`, `inline`, `trim`, `fold`, `common`, `remove`, `emit`, and `write`, with its time, and a `total`.
+This prints a line for each stage, `lex`, `parse`, `check`, `inline`, `trim`, `thread`, `fold`, `common`, `remove`, `emit`, and `write`, with its time, and a `total`.
 
 ## The other commands
 
