@@ -20,6 +20,12 @@ pub fn compile(source: &[u8], target: Target) -> Result<Vec<u8>, Vec<diag::Error
     compile_timed(source, target, &mut Timings::new())
 }
 
+/// The tokens of a source file in the plain form that the lexer written in
+/// Smith, in `compiler/`, prints, or the errors of the lexer.
+pub fn lex_plain(source: &[u8]) -> Result<String, Vec<diag::Error>> {
+    lexer::lex(source).map(|tokens| lexer::plain(&tokens))
+}
+
 /// The program a source file describes, in the scalar form. Its errors are
 /// those `compile` reports before a target is involved.
 pub fn lower(source: &[u8]) -> Result<scalar::Program, Vec<diag::Error>> {
