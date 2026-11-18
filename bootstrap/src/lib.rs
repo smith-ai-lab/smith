@@ -9,6 +9,7 @@ mod parser;
 pub mod scalar;
 pub mod target;
 pub mod timings;
+pub mod work;
 
 use target::Target;
 use timings::Timings;

@@ -1390,13 +1390,30 @@ fn written_with(s: &dyn Fn(&str) -> Option<String>, e: &Expr) -> String {
 }
 
 /// A definition of the file, by its place among those of its kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+// Equality is the derived one, with a count of its calls, so it agrees with `Hash`.
+#[allow(clippy::derived_hash_with_manual_eq)]
+#[derive(Clone, Copy, Debug, Eq, Hash)]
 enum Item {
     Fn(usize),
     Struct(usize),
     Enum(usize),
     Trait(usize),
     Impl(usize),
+}
+
+impl PartialEq for Item {
+    fn eq(&self, other: &Item) -> bool {
+        crate::work::item();
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && match (self, other) {
+                (Item::Fn(a), Item::Fn(b))
+                | (Item::Struct(a), Item::Struct(b))
+                | (Item::Enum(a), Item::Enum(b))
+                | (Item::Trait(a), Item::Trait(b))
+                | (Item::Impl(a), Item::Impl(b)) => a == b,
+                _ => false,
+            }
+    }
 }
 
 /// The kinds of definition that claim a name.
@@ -3456,10 +3473,19 @@ enum Template {
 }
 
 /// A copy of a function, for a choice of its type parameters.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+// Equality is the derived one, with a count of its calls, so it agrees with `Hash`.
+#[allow(clippy::derived_hash_with_manual_eq)]
+#[derive(Clone, Debug, Eq, Hash)]
 struct Instance {
     template: Template,
     args: Vec<Ty>,
+}
+
+impl PartialEq for Instance {
+    fn eq(&self, other: &Instance) -> bool {
+        crate::work::instance();
+        self.template == other.template && self.args == other.args
+    }
 }
 
 /// A function with a body, as its body sees it: its signature is the
@@ -7167,8 +7193,8 @@ impl<'a> Checker<'a> {
     ///
     /// The calls in a default that a call leaves out are calls of the
     /// function the call is written in, as the default is filled in there.
-    fn recursion(&mut self, f: usize, path: &mut HashSet<usize>, done: &mut HashSet<usize>) {
-        path.insert(f);
+    fn recursion(&mut self, f: usize, path: &mut HashSet<Item>, done: &mut HashSet<Item>) {
+        path.insert(Item::Fn(f));
         let defs = self.defs;
         let mut all = Vec::new();
         let mut cycles = Vec::new();
@@ -7196,16 +7222,16 @@ impl<'a> Checker<'a> {
             });
         let reached: Vec<(Pos, usize)> = called.chain(passed).collect();
         for (pos, callee) in reached {
-            if path.contains(&callee) {
+            if path.contains(&Item::Fn(callee)) {
                 self.errors.push(Error::unsupported(
                     pos,
                     "a function that calls itself, directly or through others,",
                 ));
-            } else if !done.contains(&callee) {
+            } else if !done.contains(&Item::Fn(callee)) {
                 self.recursion(callee, path, done);
             }
         }
-        path.remove(&f);
-        done.insert(f);
+        path.remove(&Item::Fn(f));
+        done.insert(Item::Fn(f));
     }
 }
