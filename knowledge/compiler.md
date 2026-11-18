@@ -69,7 +69,7 @@ The compiler is lazy. It starts from the roots and does only the work they reach
 | `smith test` | Every test |
 | `smith check` | `main`, every test, and a library's public items |
 
-- `smith run prog.smith one two` gives the program the words after the file's name, `one` and `two`, as the words it was started with, whatever they look like, so a flag among them is the program's and not the compiler's. A flag before the file's name is the compiler's. `smith build` takes no words.
+- `smith run prog.smith one two` gives the program the words after the file's name, `one` and `two`, as the words it was started with, whatever they look like, so a flag among them is the program's and not the compiler's. A flag before the file's name is the compiler's. `smith build` takes no words. The words are given as the system gives them, whatever bytes they hold, so a word that is not valid UTF-8 ends the program as it ends the executable, with the same output and status. An argument of the compiler's own, such as the file's name, that is not valid UTF-8 is an error in the usual form, and `smith` never ends in a panic over its arguments.
 - Checking a body needs only the signatures of what it calls. Running it needs those bodies too, all the way down.
 - Code that no root reaches is not compiled, so it can hold an error while a single test runs. That lets a new design be tried with one test before every caller is updated. The error surfaces when a command whose roots reach it is run.
 - `grad(f)` needs the body of `f` and of everything it calls. Its type depends only on the signature of `f`, so checking stays local, and whether `f` can be differentiated is decided when the code is built.

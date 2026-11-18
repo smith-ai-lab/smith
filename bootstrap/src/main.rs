@@ -1,6 +1,7 @@
 //! The `smith` command: `build`, `run`, and `check`, over the compiler in
 //! `lib.rs`.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -21,7 +22,7 @@ const VERSION: &str = match option_env!("SMITH_VERSION") {
 };
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match command(&args) {
         Ok(code) => code,
         Err(message) => {
@@ -38,14 +39,26 @@ struct Request {
     timings: bool,
     /// What follows the file's name in `smith run`, which are the words the
     /// program is started with.
-    words: Vec<String>,
+    words: Vec<OsString>,
 }
 
-fn command(args: &[String]) -> Result<ExitCode, String> {
+/// An argument of the compiler's own, which is text. The words a program is
+/// started with are not, and are never read as text here.
+fn text(arg: &OsStr) -> Result<&str, String> {
+    arg.to_str().ok_or_else(|| {
+        format!(
+            "the argument `{}` is not valid UTF-8",
+            arg.to_string_lossy()
+        )
+    })
+}
+
+fn command(args: &[OsString]) -> Result<ExitCode, String> {
     let Some((name, rest)) = args.split_first() else {
         return Err(USAGE.to_string());
     };
-    match name.as_str() {
+    let name = text(name)?;
+    match name {
         "--version" if rest.is_empty() => {
             println!("smith {VERSION}");
             Ok(ExitCode::SUCCESS)
@@ -76,17 +89,19 @@ fn command(args: &[String]) -> Result<ExitCode, String> {
 
 /// What a command line asks for. When `with_words`, every word after the
 /// file's name is for the program and no flag is read among them.
-fn request(args: &[String], with_words: bool) -> Result<Request, String> {
+fn request(args: &[OsString], with_words: bool) -> Result<Request, String> {
     let mut target = None;
     let mut entry = None;
     let mut timings = false;
     let mut words = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
+        let arg = text(arg)?;
         if arg == "--target" {
             let Some(name) = args.next() else {
                 return Err("--target needs a target name".to_string());
             };
+            let name = text(name)?;
             target = Some(Target::from_name(name).ok_or_else(|| {
                 let names: Vec<_> = Target::ALL.iter().map(|t| t.name()).collect();
                 format!(
@@ -127,10 +142,11 @@ fn request(args: &[String], with_words: bool) -> Result<Request, String> {
 /// Checks the entry, `main.smith` unless a file is named, and reports its
 /// errors, or else its warnings, writing no file. It fails if there are
 /// any. With `--timings` it then prints how long each stage took.
-fn check(args: &[String]) -> Result<ExitCode, String> {
+fn check(args: &[OsString]) -> Result<ExitCode, String> {
     let mut entry = None;
     let mut timings = false;
     for arg in args {
+        let arg = text(arg)?;
         if arg == "--timings" {
             timings = true;
         } else if arg.starts_with("--") {
@@ -227,7 +243,7 @@ fn write_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Runs a built executable with the words it is started with, and exits as it
 /// does.
-fn run(executable: &Path, words: &[String]) -> Result<ExitCode, String> {
+fn run(executable: &Path, words: &[OsString]) -> Result<ExitCode, String> {
     let status = std::process::Command::new(executable)
         .args(words)
         .status()

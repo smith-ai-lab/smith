@@ -48,6 +48,10 @@ pub const ONCE: &[Test] = &[
         "a_main_with_no_parameter_reads_and_asks_for_nothing_for_the_words",
         a_main_with_no_parameter_reads_and_asks_for_nothing_for_the_words,
     ),
+    (
+        "smith_never_panics_on_an_argument_of_its_own_that_is_not_valid_utf8",
+        smith_never_panics_on_an_argument_of_its_own_that_is_not_valid_utf8,
+    ),
 ];
 
 pub const MACHINE: &[Test] = &[
@@ -66,6 +70,10 @@ pub const MACHINE: &[Test] = &[
     (
         "run_gives_the_program_the_words_after_the_files_name",
         run_gives_the_program_the_words_after_the_files_name,
+    ),
+    (
+        "run_does_what_the_executable_does_for_a_word_that_is_not_valid_utf8",
+        run_does_what_the_executable_does_for_a_word_that_is_not_valid_utf8,
     ),
 ];
 
@@ -528,4 +536,70 @@ fn every_executable_started_with_a_word_that_is_not_valid_utf8_ends_before_main(
         assert_eq!(output.stdout, said.0.stdout, "{shown}");
         assert_eq!(output.stderr, said.1, "{shown}");
     }
+}
+
+/// `smith` started in the folder with the arguments, which may be any bytes
+/// the system allows.
+fn smith_with(dir: &std::path::Path, args: &[std::ffi::OsString]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_smith"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+fn smith_never_panics_on_an_argument_of_its_own_that_is_not_valid_utf8() {
+    let dir = folder("invalid_arguments");
+    std::fs::write(dir.join("prog.smith"), EACH).unwrap();
+    let invalid = invalid_word();
+    let cases: Vec<Vec<std::ffi::OsString>> = vec![
+        vec!["build".into(), invalid.clone()],
+        vec!["run".into(), invalid.clone()],
+        vec!["check".into(), invalid.clone()],
+        vec!["build".into(), "--target".into(), invalid.clone()],
+        vec![
+            "build".into(),
+            "--flag".into(),
+            "prog.smith".into(),
+            invalid.clone(),
+        ],
+        vec![invalid.clone()],
+    ];
+    for args in cases {
+        let ran = smith_with(&dir, &args);
+        let shown = format!("{args:?}: {ran:?}");
+        assert_eq!(ran.status.code(), Some(1), "{shown}");
+        assert!(ran.stdout.is_empty(), "{shown}");
+        let errors = String::from_utf8_lossy(&ran.stderr);
+        assert!(!errors.contains("panicked"), "{shown}");
+    }
+    // A file's name that is not valid is an error in the usual form.
+    let ran = smith_with(&dir, &["build".into(), invalid]);
+    assert!(
+        stderr(&ran).contains("is not valid UTF-8"),
+        "{}",
+        stderr(&ran)
+    );
+}
+
+fn run_does_what_the_executable_does_for_a_word_that_is_not_valid_utf8() {
+    if fingerprinting() {
+        return targets::record_for_every_target(EACH.as_bytes());
+    }
+    let Some(host) = Target::host().filter(|host| runnable().contains(host)) else {
+        return;
+    };
+    let dir = folder("run_invalid_word");
+    std::fs::write(dir.join("prog.smith"), EACH).unwrap();
+    let words: [std::ffi::OsString; 3] = ["fine".into(), invalid_word(), "later".into()];
+    let bytes = build(EACH.as_bytes(), host).unwrap_or_else(|e| panic!("{e:?}"));
+    let built = output_of(&bytes, &words);
+    let mut args: Vec<std::ffi::OsString> = vec!["run".into(), "prog.smith".into()];
+    args.extend(words);
+    let ran = smith_with(&dir, &args);
+    assert_eq!(ran.status.code(), built.status.code(), "{ran:?}");
+    assert_eq!(ran.stdout, built.stdout);
+    assert_eq!(ran.stderr, built.stderr);
+    assert_eq!(ran.stderr, refused(2).1);
+    assert_eq!(ran.status.code(), Some(1));
 }
