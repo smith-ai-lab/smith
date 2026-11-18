@@ -3044,6 +3044,7 @@ fn placement(file: &File, errors: &mut Vec<Error>) {
 /// for each binding whose name is never read, at the name.
 fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     let mut out = Vec::new();
+    let reached: HashSet<Item> = reached.iter().copied().collect();
     let mut dead = |item: Item, pos: Pos, what: String| {
         if !reached.contains(&item) && !of_prelude(pos) && !of_library(pos) {
             out.push(
