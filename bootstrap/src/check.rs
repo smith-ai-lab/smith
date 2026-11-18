@@ -41,6 +41,7 @@ mod to_scalar;
 mod traits;
 
 use crate::diag::{Error, Pos};
+use crate::hash::{Map, Set};
 use crate::parser::{
     Arg, ArithOp, Arm, Call, Enum, Expr, File, Form, Function, Generic, Impl, Lambda, Loop, Match,
     Over, Part, Pattern, Qualified, Range, Stmt, Struct, Trait, Type, Use,
@@ -255,8 +256,8 @@ impl Prelude<'_> {
     /// for, which are those of a trait reached and those for a type reached,
     /// without the ones already `loaded`.
     fn wanted(&self, file: &File, reached: &[Item], loaded: &[usize]) -> Vec<usize> {
-        let mut traits: HashSet<&str> = HashSet::new();
-        let mut types: HashSet<&str> = HashSet::new();
+        let mut traits: Set<&str> = Set::default();
+        let mut types: Set<&str> = Set::default();
         for item in reached {
             match *item {
                 Item::Trait(k) => {
@@ -731,13 +732,13 @@ impl Signature {
 /// any body is checked.
 struct Defs<'a> {
     file: &'a File,
-    function_names: HashMap<&'a str, usize>,
-    struct_names: HashMap<&'a str, usize>,
-    enum_names: HashMap<&'a str, usize>,
-    trait_names: HashMap<&'a str, usize>,
+    function_names: Map<&'a str, usize>,
+    struct_names: Map<&'a str, usize>,
+    enum_names: Map<&'a str, usize>,
+    trait_names: Map<&'a str, usize>,
     /// The functions of traits with each name, as the trait and the
     /// function's place in it.
-    trait_fns: HashMap<&'a str, Vec<(usize, usize)>>,
+    trait_fns: Map<&'a str, Vec<(usize, usize)>>,
     /// Whether each struct contains itself, directly or through others, as
     /// already reported. A type that names one is not known.
     cyclic: Vec<bool>,
@@ -1581,11 +1582,11 @@ fn check_file(
         }
     }
     defined.sort_by_key(|(pos, _, _)| *pos);
-    let mut function_names: HashMap<&str, usize> = HashMap::new();
-    let mut struct_names: HashMap<&str, usize> = HashMap::new();
-    let mut enum_names: HashMap<&str, usize> = HashMap::new();
-    let mut trait_names: HashMap<&str, usize> = HashMap::new();
-    let mut trait_fns: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    let mut function_names: Map<&str, usize> = Map::default();
+    let mut struct_names: Map<&str, usize> = Map::default();
+    let mut enum_names: Map<&str, usize> = Map::default();
+    let mut trait_names: Map<&str, usize> = Map::default();
+    let mut trait_fns: Map<&str, Vec<(usize, usize)>> = Map::default();
     for (pos, name, claim) in defined {
         let is_type = matches!(claim, Claim::Struct(_) | Claim::Enum(_) | Claim::Trait(_));
         let prelude = |what: &str| {
@@ -1811,9 +1812,9 @@ fn check_file(
         defs: &defs,
         errors,
         types: HashMap::new(),
-        value_calls: HashSet::new(),
+        value_calls: Set::default(),
         narrowed: HashSet::new(),
-        fn_values: HashMap::new(),
+        fn_values: Map::default(),
         no_impl: false,
         refusals: 0,
         deciding: None,
@@ -1843,7 +1844,7 @@ fn check_file(
             Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {}
         }
     }
-    checker.recursion(start_at, &mut HashSet::new(), &mut HashSet::new());
+    checker.recursion(start_at, &mut Set::default(), &mut Set::default());
     if !checker.errors.is_empty() {
         // What the function that starts the program says is wrong follows from
         // what `main` says, which is at a place the reader can see.
@@ -1866,8 +1867,8 @@ fn check_file(
     typed.copies(
         &start,
         Pos::START,
-        &mut HashMap::new(),
-        &mut HashSet::new(),
+        &mut Map::default(),
+        &mut Set::default(),
         &mut errors,
     );
     if !errors.is_empty() {
@@ -1894,22 +1895,22 @@ fn check_file(
 
 /// What a name stands for in a file: the item that first defines it.
 struct Names<'a> {
-    functions: HashMap<&'a str, usize>,
-    structs: HashMap<&'a str, usize>,
-    enums: HashMap<&'a str, usize>,
-    traits: HashMap<&'a str, usize>,
-    trait_fns: HashMap<&'a str, Vec<(usize, usize)>>,
+    functions: Map<&'a str, usize>,
+    structs: Map<&'a str, usize>,
+    enums: Map<&'a str, usize>,
+    traits: Map<&'a str, usize>,
+    trait_fns: Map<&'a str, Vec<(usize, usize)>>,
 }
 
 impl<'a> Names<'a> {
     /// The names of the items of the file, with no mistake reported.
     fn of(file: &'a File) -> Names<'a> {
         let mut names = Names {
-            functions: HashMap::new(),
-            structs: HashMap::new(),
-            enums: HashMap::new(),
-            traits: HashMap::new(),
-            trait_fns: HashMap::new(),
+            functions: Map::default(),
+            structs: Map::default(),
+            enums: Map::default(),
+            traits: Map::default(),
+            trait_fns: Map::default(),
         };
         for (i, f) in file.functions.iter().enumerate() {
             names.functions.entry(f.name.as_str()).or_insert(i);
@@ -1939,11 +1940,11 @@ impl<'a> Names<'a> {
 /// choosing the prelude's `impl`s does: `by <= 30` there needs `Ord`.
 fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<Item> {
     let mut reached: Vec<Item> = vec![Item::Fn(start_at)];
-    let mut seen: HashSet<Item> = HashSet::from([Item::Fn(start_at)]);
+    let mut seen: Set<Item> = Set::from_iter([Item::Fn(start_at)]);
     // The `impl`s that name a type in their arguments, and those of a trait,
     // each in order, so that an item finds its own without a walk of all.
-    let mut for_type: HashMap<&str, Vec<usize>> = HashMap::new();
-    let mut of_trait: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut for_type: Map<&str, Vec<usize>> = Map::default();
+    let mut of_trait: Map<&str, Vec<usize>> = Map::default();
     for (i, im) in file.impls.iter().enumerate() {
         of_trait.entry(im.name.as_str()).or_default().push(i);
         let mut named: Vec<&str> = im
@@ -3061,7 +3062,7 @@ fn placement(file: &File, errors: &mut Vec<Error>) {
 /// for each binding whose name is never read, at the name.
 fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
     let mut out = Vec::new();
-    let reached: HashSet<Item> = reached.iter().copied().collect();
+    let reached: Set<Item> = reached.iter().copied().collect();
     let mut dead = |item: Item, pos: Pos, what: String| {
         if !reached.contains(&item) && !of_prelude(pos) && !of_library(pos) {
             out.push(
@@ -3728,10 +3729,10 @@ struct Typed<'a> {
     defs: &'a Defs<'a>,
     types: HashMap<usize, Ty>,
     /// The calls of a name that holds a function, by their addresses.
-    value_calls: HashSet<usize>,
+    value_calls: Set<usize>,
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
-    fn_values: HashMap<usize, usize>,
+    fn_values: Map<usize, usize>,
 }
 
 impl<'a> Typed<'a> {
@@ -3950,8 +3951,8 @@ impl<'a> Typed<'a> {
         &self,
         instance: &Instance,
         at: Pos,
-        path: &mut HashMap<Template, Vec<Instance>>,
-        done: &mut HashSet<Instance>,
+        path: &mut Map<Template, Vec<Instance>>,
+        done: &mut Set<Instance>,
         errors: &mut Vec<Error>,
     ) {
         path.entry(instance.template)
@@ -3998,13 +3999,13 @@ struct Checker<'a> {
     /// The type of each expression checked, by its address.
     types: HashMap<usize, Ty>,
     /// The calls of a name that holds a function, by their addresses.
-    value_calls: HashSet<usize>,
+    value_calls: Set<usize>,
     /// The calls of `narrow`, by their addresses, which give the number
     /// they are given, as `arith` knows.
     narrowed: HashSet<usize>,
     /// The names of functions passed as values, by their addresses, with
     /// the function each names.
-    fn_values: HashMap<usize, usize>,
+    fn_values: Map<usize, usize>,
     /// Whether the call of a trait's function being checked has types no
     /// implementation is for, which is already reported.
     no_impl: bool,
@@ -7193,7 +7194,7 @@ impl<'a> Checker<'a> {
     ///
     /// The calls in a default that a call leaves out are calls of the
     /// function the call is written in, as the default is filled in there.
-    fn recursion(&mut self, f: usize, path: &mut HashSet<Item>, done: &mut HashSet<Item>) {
+    fn recursion(&mut self, f: usize, path: &mut Set<Item>, done: &mut Set<Item>) {
         path.insert(Item::Fn(f));
         let defs = self.defs;
         let mut all = Vec::new();

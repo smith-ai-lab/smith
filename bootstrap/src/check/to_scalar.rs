@@ -123,7 +123,7 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
     let mut lowering = Lowering {
         typed,
         bodies: Vec::new(),
-        copies: HashMap::new(),
+        copies: Map::default(),
         runtimes: Vec::new(),
         data: Vec::new(),
     };
@@ -161,7 +161,7 @@ struct Lowering<'a> {
     bodies: Vec<Body>,
     /// The place of each copy among `bodies`, so that a copy is found by
     /// its hash and not by a walk of all that are placed.
-    copies: HashMap<Instance, usize>,
+    copies: Map<Instance, usize>,
     /// The place of each function of the runtime, which are few: a kind of
     /// them has no hash, as it is defined where the runtime is.
     runtimes: Vec<(Runtime, usize)>,
