@@ -43,10 +43,27 @@ The two traits make three kinds of value.
 | Kind | Traits | Examples |
 | --- | --- | --- |
 | Ordinary | `Copy` and `Discard` | Numbers, arrays, most structs |
-| Used at most once | `Discard` only | A random `Key` |
+| Used at most once | `Discard` only | A random `Key`, a `List` |
 | Used exactly once | Neither | A raw file handle, a transaction |
 
 A value that is used at most once may be dropped unused and may not be used twice. [`take`](take.md) is how that is checked. A value that is used exactly once may be neither, and is checked as [Values used exactly once](resources.md) says. A type gets the third kind by taking its traits away, as [`without`](without.md) says.
+
+## A list is never copied unasked
+
+A [`List`](../library/list.md) has `Discard` and not `Copy`, as the library takes its `Copy` away with `without Copy for List`. Copying a list costs time in proportion to its length, and nothing in Smith costs that without being written.
+
+```
+fn both(xs: take List[u8]) -> (List[u8], List[u8]) ! alloc {
+  ys = push(copy(xs), 1)
+  (xs, ys)
+}
+```
+
+`push` [takes](take.md) its list, so the list it gives back is the same memory with one more element, always, and not only where the compiler can see that it may be. `both` wants the old list too, so it writes `copy(xs)`. Without the `copy`, `xs` is used after it was given to `push`, and that is refused.
+
+Reading a list lends it and copies nothing: its `size`, an element, and passing it to a function that does not take it. A struct that holds a list has no `Copy` either, by the rule above, so the state of a program that is kept in a struct is moved and never duplicated. A `str` has `Copy`: a text cannot be changed, so two names for one text share it.
+
+The compiler does not build this yet. Today a list that is used after it is given away is copied.
 
 ## Discard
 
