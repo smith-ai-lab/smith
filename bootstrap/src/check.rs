@@ -29,6 +29,7 @@
 //! a function knows which of its arguments were left out.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 
 mod arith;
 mod lists_and_text;
@@ -272,8 +273,16 @@ fn of_prelude(pos: Pos) -> bool {
     pos.line == 0
 }
 
-/// The file with the definitions of `PRELUDE` before its own.
-fn with_prelude(mut file: File) -> File {
+/// The definitions of the prelude that are the same for every program, read at
+/// line 0. They are lexed and parsed once in a process, and not once for each
+/// program the process checks.
+fn prelude_items() -> &'static File {
+    static ITEMS: OnceLock<File> = OnceLock::new();
+    ITEMS.get_or_init(|| split_needs(prelude_file(&prelude_source())))
+}
+
+/// The prelude's source without the function that starts the program.
+fn prelude_source() -> String {
     let mut source = String::from(PRELUDE_ENUMS);
     source.push_str(traits::PRELUDE);
     source.push('\n');
@@ -282,17 +291,28 @@ fn with_prelude(mut file: File) -> File {
         source.push('\n');
         source.push_str(&traits::integer_impls(t));
     }
-    source.push_str(&start_function(&file));
+    source
+}
+
+/// The definitions in the source of the prelude, at line 0, which no file has.
+fn prelude_file(source: &str) -> File {
     let mut tokens = crate::lexer::lex(source.as_bytes()).expect("the prelude lexes");
     for t in &mut tokens {
         t.pos.line = 0;
     }
-    let prelude = crate::parser::parse(&tokens).expect("the prelude parses");
-    file.enums.splice(0..0, prelude.enums);
-    file.structs.splice(0..0, prelude.structs);
-    file.traits.splice(0..0, prelude.traits);
-    file.impls.splice(0..0, prelude.impls);
-    file.functions.splice(0..0, prelude.functions);
+    crate::parser::parse(&tokens).expect("the prelude parses")
+}
+
+/// The file with the definitions of `PRELUDE` before its own.
+fn with_prelude(mut file: File) -> File {
+    let items = prelude_items();
+    let start = prelude_file(&start_function(&file));
+    file.enums.splice(0..0, items.enums.iter().cloned());
+    file.structs.splice(0..0, items.structs.iter().cloned());
+    file.traits.splice(0..0, items.traits.iter().cloned());
+    file.impls.splice(0..0, items.impls.iter().cloned());
+    file.functions
+        .splice(0..0, items.functions.iter().cloned().chain(start.functions));
     file
 }
 
@@ -1227,6 +1247,9 @@ enum Claim {
 pub struct Checked {
     pub program: crate::scalar::Program,
     pub warnings: Vec<Error>,
+    /// How many functions and implementations of the prelude the program
+    /// reaches, which are the ones the checker checks.
+    pub prelude_reached: (usize, usize),
 }
 
 /// Checks the file, and lowers what `main` reaches to the scalar form. Every
@@ -1666,8 +1689,14 @@ fn check_file(
     }
 
     let program = to_scalar::lower(&typed, start);
+    let prelude_reached = reached.iter().fold((0, 0), |(f, i), item| match *item {
+        Item::Fn(k) if of_prelude(file.functions[k].pos) => (f + 1, i),
+        Item::Impl(k) if of_prelude(file.impls[k].pos) => (f, i + 1),
+        _ => (f, i),
+    });
     Ok(Checked {
         program,
+        prelude_reached,
         warnings: {
             let mut all = warnings(&file, &reached);
             all.extend(import_warnings);
@@ -1932,7 +1961,7 @@ fn imports(
 /// names these, and the compiler supplies them as it did before the bodies
 /// of a module were compiled.
 fn held_by_the_compiler(module: &File) -> HashSet<&str> {
-    let wrapper = |f: &&Function| {
+    let wrapper = |f: &&Arc<Function>| {
         matches!(&f.body[..], [Stmt::Expr(Expr::Call(c))]
         if c.qualifier.is_none()
             && c.callee.starts_with("__")
@@ -2080,7 +2109,8 @@ fn warnings(file: &File, reached: &[Item]) -> Vec<Error> {
         let what = format!("the implementation `{}[{}]`", im.name, args.join(", "));
         dead(Item::Impl(i), im.pos, what);
     }
-    let bodies = (file.functions.iter()).chain(file.impls.iter().flat_map(|im| &im.functions));
+    let bodies =
+        (file.functions.iter().map(|f| &**f)).chain(file.impls.iter().flat_map(|im| &im.functions));
     for f in bodies.filter(|f| !of_library(f.pos)) {
         unused_bindings(f, &mut out);
     }

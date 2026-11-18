@@ -143,7 +143,9 @@ pub(super) fn prelude_trait(file: &File, name: &str) -> usize {
 
 /// Moves the `requires` lines that name a trait from the contracts of each
 /// function to what it needs. Parsing does not know what a name refers to,
-/// so a line that is `Name[...]` is one that names a trait here.
+/// so a line that is `Name[...]` is one that names a trait here. A function
+/// that the file shares with another, as the prelude's, was split where it
+/// was read, and is left as it is.
 pub(super) fn split_needs(mut file: File) -> File {
     let traits: Vec<String> = file.traits.iter().map(|t| t.name.clone()).collect();
     let names_trait = |e: &Expr| {
@@ -152,6 +154,9 @@ pub(super) fn split_needs(mut file: File) -> File {
                 if traits.contains(name) || TRAITS_NOT_BUILT.contains(&name.as_str())))
     };
     for f in &mut file.functions {
+        let Some(f) = std::sync::Arc::get_mut(f) else {
+            continue;
+        };
         let (needs, requires) = std::mem::take(&mut f.requires)
             .into_iter()
             .partition(|e| names_trait(e));

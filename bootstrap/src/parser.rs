@@ -4,6 +4,7 @@
 //! not supported yet.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::diag::{Error, Pos};
 use crate::lexer::{Piece, Tok, Token};
@@ -17,11 +18,13 @@ pub use traits::{Impl, Trait, Without};
 /// The definitions of a file, each kind in the order they are written.
 #[derive(Debug, PartialEq, Eq)]
 pub struct File {
-    pub functions: Vec<Function>,
-    pub structs: Vec<Struct>,
-    pub enums: Vec<Enum>,
-    pub traits: Vec<Trait>,
-    pub impls: Vec<Impl>,
+    // Each item is shared, so that the prelude's, which is parsed once in a
+    // process, is not copied into each file that is checked.
+    pub functions: Vec<Arc<Function>>,
+    pub structs: Vec<Arc<Struct>>,
+    pub enums: Vec<Arc<Enum>>,
+    pub traits: Vec<Arc<Trait>>,
+    pub impls: Vec<Arc<Impl>>,
     pub withouts: Vec<Without>,
     /// The `use` lines, which come before every other item.
     pub uses: Vec<Use>,
@@ -607,11 +610,11 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
     }
     if p.errors.is_empty() {
         Ok(File {
-            functions,
-            structs,
-            enums,
-            traits,
-            impls,
+            functions: share(functions),
+            structs: share(structs),
+            enums: share(enums),
+            traits: share(traits),
+            impls: share(impls),
             withouts,
             written: if uses.is_empty() {
                 HashSet::new()
@@ -2692,4 +2695,9 @@ impl Parser<'_> {
             after: false,
         })
     }
+}
+
+/// The items shared, as a `File` holds them.
+fn share<T>(items: Vec<T>) -> Vec<Arc<T>> {
+    items.into_iter().map(Arc::new).collect()
 }
