@@ -64,7 +64,7 @@ A proof is written once. The compiler checks proofs and never searches for one, 
 
 ## Two values that are the same
 
-`a == b` is the statement that `a` and `b` are the same value. `==` means nothing looser, as a program does not write `Eq`, which [Comparisons](comparisons.md) says. So a proof of `a == b` lets one stand where the other stood, in any statement and in any code. The floats are the one exception, and no proof takes two floats for each other on the strength of `==`.
+`a == b` is the statement that `a` and `b` are the same value. `==` means nothing looser, as a program does not write `Eq`, which [Comparisons](comparisons.md) says. So a proof of `a == b` lets one stand where the other stood, in any statement and in any code.
 
 ## The forms
 
