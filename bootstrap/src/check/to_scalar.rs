@@ -120,15 +120,17 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
     // A `main` that takes the words it was started with is called by the
     // runtime's `Start`, which the system's start-up code calls.
     let takes = !typed.defs.view(start.template).params.is_empty();
-    let mut bodies = vec![Body::Copy(start)];
-    if takes {
-        bodies.push(Body::Runtime(Runtime::Start { main: 0 }));
-    }
     let mut lowering = Lowering {
         typed,
-        bodies,
+        bodies: Vec::new(),
+        copies: HashMap::new(),
+        runtimes: Vec::new(),
         data: Vec::new(),
     };
+    lowering.add(Body::Copy(start));
+    if takes {
+        lowering.add(Body::Runtime(Runtime::Start { main: 0 }));
+    }
     let mut functions = Vec::new();
     while functions.len() < lowering.bodies.len() {
         let body = lowering.bodies[functions.len()].clone();
@@ -157,6 +159,12 @@ struct Lowering<'a> {
     /// The functions, each at its place in the program, in the order they
     /// are first called.
     bodies: Vec<Body>,
+    /// The place of each copy among `bodies`, so that a copy is found by
+    /// its hash and not by a walk of all that are placed.
+    copies: HashMap<Instance, usize>,
+    /// The place of each function of the runtime, which are few: a kind of
+    /// them has no hash, as it is defined where the runtime is.
+    runtimes: Vec<(Runtime, usize)>,
     data: Vec<Vec<u8>>,
 }
 
@@ -772,13 +780,26 @@ impl<'a> Lowering<'a> {
             }),
             runtime => runtime,
         };
-        match self.bodies.iter().position(|b| *b == body) {
-            Some(at) => at,
-            None => {
-                self.bodies.push(body);
-                self.bodies.len() - 1
+        let found = match &body {
+            Body::Copy(instance) => self.copies.get(instance).copied(),
+            Body::Runtime(kind) => (self.runtimes.iter())
+                .find(|(k, _)| k == kind)
+                .map(|&(_, at)| at),
+        };
+        found.unwrap_or_else(|| self.add(body))
+    }
+
+    /// Puts a body at the end of the program's functions.
+    fn add(&mut self, body: Body) -> usize {
+        let at = self.bodies.len();
+        match &body {
+            Body::Copy(instance) => {
+                self.copies.insert(instance.clone(), at);
             }
+            Body::Runtime(kind) => self.runtimes.push((kind.clone(), at)),
         }
+        self.bodies.push(body);
+        at
     }
 
     /// Calls the function of the runtime, which gives the values it gives.
