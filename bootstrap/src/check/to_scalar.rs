@@ -1115,29 +1115,35 @@ impl<'a> Lowering<'a> {
     /// leave meet in one, which gives the names their values after the
     /// `loop`.
     fn round(&mut self, out: &mut Out<'a>, l: &'a Loop, env: &[Ty]) {
-        // A lambda written outside the `loop` may be called inside it, so
-        // what the lambdas in any frame assign is carried too.
-        let lambdas = (out.frames.iter().flatten())
-            .filter_map(|bound| match &bound.func {
-                Some(Func::Lambda(lambda, ..)) => Some(lambda.body.as_slice()),
-                _ => None,
-            })
-            .flat_map(statements);
-        let assigned: Vec<&str> = statements(&l.body)
-            .into_iter()
-            .chain(lambdas)
-            .flat_map(|stmt| match stmt {
-                Stmt::Define { name, .. } | Stmt::Assign { name, .. } => vec![name.as_str()],
-                Stmt::Destructure { pattern, .. } => {
-                    pattern_names(pattern).into_iter().map(|(n, _)| n).collect()
-                }
-                Stmt::Expr(_) => Vec::new(),
-            })
+        // A name is a `var` of the frame it is written in, so a name that
+        // the body assigns is of this frame, and one that a lambda assigns
+        // is of the frame the lambda is written in. A lambda written outside
+        // the `loop` may be called inside it, so what the lambdas in any
+        // frame assign is carried too.
+        let names_of = |body: &'a [Stmt]| -> Vec<&'a str> {
+            statements(body)
+                .into_iter()
+                .flat_map(|stmt| match stmt {
+                    Stmt::Define { name, .. } | Stmt::Assign { name, .. } => vec![name.as_str()],
+                    Stmt::Destructure { pattern, .. } => {
+                        pattern_names(pattern).into_iter().map(|(n, _)| n).collect()
+                    }
+                    Stmt::Expr(_) => Vec::new(),
+                })
+                .collect()
+        };
+        let mut assigned: Vec<(usize, &str)> = (names_of(&l.body).into_iter())
+            .map(|name| (out.at, name))
             .collect();
+        for bound in out.frames.iter().flatten() {
+            if let Some(Func::Lambda(lambda, frame, _)) = &bound.func {
+                assigned.extend(names_of(&lambda.body).into_iter().map(|n| (*frame, n)));
+            }
+        }
         let mut carried = Vec::new();
         for (f, frame) in out.frames.iter().enumerate() {
             for (at, bound) in frame.iter().enumerate() {
-                if !bound.values.is_empty() && assigned.contains(&bound.name.as_str()) {
+                if !bound.values.is_empty() && assigned.contains(&(f, bound.name.as_str())) {
                     carried.push((f, at));
                 }
             }
