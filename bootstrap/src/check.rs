@@ -154,6 +154,7 @@ const PRELUDE_TYPES: &[&str] = &[
     "Result",
     "bool",
     "Order",
+    "Flow",
     "Utf8Error",
     "i8",
     "i16",
@@ -683,13 +684,16 @@ struct Defs<'a> {
     fmt: usize,
     repr: usize,
     eq: usize,
-    /// The prelude's `Exit`, by its place in the file's traits.
+    /// The prelude's `Exit` and `Iterate`, by their places in the file's
+    /// traits.
     exit: usize,
-    /// The prelude's `bool`, `Order`, and `Option`, by their places in the
-    /// file's enums.
+    iterate: usize,
+    /// The prelude's `bool`, `Order`, `Option`, and `Flow`, by their places in
+    /// the file's enums.
     boolean: usize,
     order: usize,
     option: usize,
+    flow: usize,
     /// Each trait taken away from a struct or an enum by `without`.
     withouts: Vec<(usize, Def)>,
 }
@@ -1423,7 +1427,11 @@ fn check_file(
         } else {
             match claim {
                 Claim::Fn(i) => {
-                    if let Some(&(k, _)) = trait_fns.get(name).and_then(|f| f.first()) {
+                    // A function of the prelude's trait that no call needs a
+                    // trait for is not a name the program may not use.
+                    let taken = (trait_fns.get(name).and_then(|f| f.first()))
+                        .filter(|(k, _)| !of_prelude(file.traits[*k].pos));
+                    if let Some(&(k, _)) = taken {
                         errors.push(Error::new(
                             pos,
                             format!(
@@ -1506,6 +1514,7 @@ fn check_file(
         repr: prelude_trait(&file, "Repr"),
         eq: prelude_trait(&file, "Eq"),
         exit: prelude_trait(&file, "Exit"),
+        iterate: prelude_trait(&file, "Iterate"),
         boolean: (file.enums.iter())
             .position(|e| e.name == "bool" && of_prelude(e.pos))
             .expect("the prelude defines it"),
@@ -1514,6 +1523,9 @@ fn check_file(
             .expect("the prelude defines it"),
         option: (file.enums.iter())
             .position(|e| e.name == "Option" && of_prelude(e.pos))
+            .expect("the prelude defines it"),
+        flow: (file.enums.iter())
+            .position(|e| e.name == "Flow" && of_prelude(e.pos))
             .expect("the prelude defines it"),
         withouts: Vec::new(),
     };
@@ -1745,6 +1757,10 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                 {
                     found.push(Item::Fn(f));
                 }
+                // A `loop` over a value runs the `each` of its `Iterate`.
+                if matches!(e, Expr::Loop(l) if l.over.is_some()) {
+                    type_name("Iterate", found);
+                }
             }
             for call in calls(values) {
                 if let Some((q, _)) = &call.qualifier {
@@ -1754,6 +1770,8 @@ fn reach(file: &File, names: &Names, start_at: usize, contracts: bool) -> Vec<It
                 let name = call.callee.as_str();
                 if let Some(&f) = names.functions.get(name) {
                     found.push(Item::Fn(f));
+                    type_name(name, found);
+                    continue;
                 }
                 type_name(name, found);
                 for &(k, _) in names.trait_fns.get(name).into_iter().flatten() {
@@ -3264,6 +3282,14 @@ impl<'a> Typed<'a> {
         Callee::Run(instance, sig.gives.subst(&all))
     }
 
+    /// The copy of the `each` that a `loop` over a value runs, where `env`
+    /// stands for the type parameters of the definition it is written in.
+    fn each_of(&self, o: &Over, env: &[Ty]) -> Instance {
+        let walked = as_read(&self.type_of(&o.value, env), &Ty::List(vec![Ty::Unknown]));
+        let defs = self.defs;
+        defs.chosen(defs.iterate, 0, vec![walked, Ty::Unknown]).0
+    }
+
     /// The types that stand for the type parameters of the defaults a call
     /// leaves out: those of the function, of the trait, or of the struct
     /// they are written in.
@@ -3341,6 +3367,11 @@ impl<'a> Typed<'a> {
                 let template = Template::Free(f);
                 let args = Vec::new();
                 out.push((e.pos(), Instance { template, args }));
+            }
+            if let Expr::Loop(l) = e
+                && let Some(o) = &l.over
+            {
+                out.push((l.pos, self.each_of(o, &instance.args)));
             }
             let Expr::Call(call) = e else {
                 continue;
@@ -5322,19 +5353,38 @@ impl<'a> Checker<'a> {
         Ty::Nothing
     }
 
-    /// Checks the value a `loop` runs over, which is a list, and gives the
-    /// type of its elements. The list is worked out once, when the loop
-    /// starts, so assigning a `var` it was read from changes nothing about
-    /// which elements the loop gives.
+    /// Checks the value a `loop` runs over, which is of a type that
+    /// implements `Iterate`, and gives the type of its elements. A text is
+    /// read as its bytes. The value is worked out once, when the loop starts,
+    /// so assigning a `var` it was read from changes nothing about which
+    /// elements the loop gives.
     fn element_type(&mut self, body: &mut Body<'a>, o: &Over) -> Ty {
-        match self.expr(body, &o.value, &Want::Any) {
-            Ty::List(of) => of[0].clone(),
-            Ty::Unknown => Ty::Unknown,
-            other => {
-                let given = self.defs.describe(&other, body.scope);
+        let defs = self.defs;
+        let given = self.expr(body, &o.value, &Want::Any);
+        if given.unknown() {
+            return Ty::Unknown;
+        }
+        let walked = as_read(&given, &Ty::List(vec![Ty::Unknown]));
+        match defs.find(
+            defs.iterate,
+            &[walked.clone(), Ty::Unknown],
+            body.scope,
+            &mut Vec::new(),
+        ) {
+            Found::Yes(all, _) => all[1].clone(),
+            Found::Unknown => Ty::Unknown,
+            Found::Two(a, b) => {
+                self.errors.push(defs.ambiguous(o.value.pos(), a, b));
+                Ty::Unknown
+            }
+            Found::No => {
                 self.errors.push(Error::new(
                     o.value.pos(),
-                    format!("a `loop` runs over a range or a list, and this is {given}"),
+                    format!(
+                        "there is no implementation of `Iterate` for {}, so a `loop` cannot \
+                         run over it",
+                        defs.describe(&given, body.scope)
+                    ),
                 ));
                 Ty::Unknown
             }

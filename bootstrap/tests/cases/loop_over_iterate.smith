@@ -1,0 +1,74 @@
+struct Pair {
+  a: i32
+  b: i32
+}
+
+impl Iterate[Pair, i32] {
+  fn each(c: Pair, body: (i32) -> Flow) -> Flow {
+    try body(c.a)
+    body(c.b)
+  }
+}
+
+struct Countdown {
+  from: i32
+}
+
+impl Iterate[Countdown, i32] {
+  fn each(c: Countdown, body: (i32) -> Flow) -> Flow {
+    loop i in 0..c.from {
+      match body(c.from - i) {
+        .stop { return .stop }
+        .go { }
+      }
+    }
+    .go
+  }
+}
+
+fn largest(c: Countdown) -> i32 {
+  var top = 0
+  loop v in c { if v > top { top = v } }
+  top
+}
+
+fn first_small(c: Countdown) -> i32 {
+  var found = 0
+  loop v in c {
+    if v < 3 {
+      found = v
+      break
+    }
+  }
+  found
+}
+
+fn find(c: Countdown, wanted: i32) -> bool {
+  loop v in c {
+    if v == wanted { return true }
+  }
+  false
+}
+
+fn count_bytes(s: str) -> u64 {
+  var n: u64 = 0
+  loop b in s { n = wrapping_add(n, 1) }
+  n
+}
+
+fn main() ! console, alloc {
+  loop v in Pair(a: 1, b: 2) { print("{v}") }
+  print("{largest(Countdown(from: 3))}")
+  print("{first_small(Countdown(from: 5))}")
+  print("{find(Countdown(from: 4), 2)} {find(Countdown(from: 4), 9)}")
+  loop b in "hi" { print("{b}") }
+  print("{count_bytes("héllo")}")
+  r = each(Countdown(from: 3)) fn(v) {
+    print("{v}")
+    if v == 2 { .stop } else { .go }
+  }
+  match r {
+    .stop { print("stopped") }
+    .go { print("walked") }
+  }
+}

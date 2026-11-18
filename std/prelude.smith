@@ -19,6 +19,11 @@ enum Order {
   greater
 }
 
+enum Flow {
+  go
+  stop
+}
+
 struct Utf8Error {
   at: u64
 }
@@ -90,6 +95,31 @@ impl[T, U] Try[Option[T], Option[U], T] {
       .some(x) { body(x) }
       .none { .none }
     }
+  }
+}
+
+impl Try[Flow, Flow, ()] {
+  fn then(c: Flow, body: (()) -> Flow) -> Flow {
+    match c {
+      .go { body(()) }
+      .stop { .stop }
+    }
+  }
+}
+
+trait Iterate[C, out T] {
+  fn each(c: C, body: (T) -> Flow) -> Flow
+}
+
+impl[T] Iterate[List[T], T] {
+  fn each(c: List[T], body: (T) -> Flow) -> Flow {
+    loop i in 0..c.size {
+      match body(c[i]) {
+        .stop { return .stop }
+        .go { }
+      }
+    }
+    .go
   }
 }
 
