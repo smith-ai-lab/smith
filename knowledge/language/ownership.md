@@ -6,7 +6,7 @@ status: partial
 built:
   - "`Copy` and `Discard` given to a type exactly when each of its fields has them"
   - "A value without `Copy` used again after it was given away on some path, which includes a later round of a loop, refused at the second use"
-  - "not a value without `Copy` given away inside a lambda that the lambda did not define or take, which is refused, as nothing says how often a lambda is called"
+  - "a value without `Copy` that a lambda gives away is spent in the function it is written in from the call the lambda is passed to, when that call takes its function"
   - "a type parameter has `Copy` and `Discard` only where a bound or a `requires` line asks, so a value of one is used at most once and must be taken, and a call, or an implementation it chooses, is given only a type that has what the bounds ask"
 ---
 

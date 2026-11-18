@@ -120,6 +120,21 @@ on_ok(parse_int(a)) fn(x) {
 
 If `parse_int(a)` is an `.err`, `on_ok` gives that `.err` without calling the lambda, so `y` is never parsed. [`try`](try.md) is not another way to write this: it leaves the function, and the lines after it are no lambda.
 
+## A block that gives a value away
+
+A function that takes its function calls it once, so the block it is given may give away a value of the function around it. `run` takes its function, and the block under `with` gives `b` away.
+
+```
+fn run[T](xs: take List[u8], body: take fn(take List[u8]) -> T) -> T { body(xs) }
+
+fn both(a: take List[u8], b: take List[u8]) -> (List[u8], List[u8]) {
+  with xs = run(a)
+  (xs, b)
+}
+```
+
+An opener that lends its function, as `on_ok` does, is refused this block, as [A function that is called once](take.md#a-function-that-is-called-once) says.
+
 ## The last parameter
 
 `with` always fills a call's last parameter, so a final lambda parameter may come after parameters that have defaults, and a call can leave those out.
