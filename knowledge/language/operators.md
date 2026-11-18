@@ -9,6 +9,37 @@ status: planned
 
 An operator is a call of a trait function. `a + b` means `Add.add(a, b)`, so a type has `+` when it has an `impl` of `Add`. The arithmetic operators are `+`, `-`, `*`, `/`, and `^` for a power.
 
+## The trait behind each operator
+
+Each arithmetic operator has one trait, and the trait has one function.
+
+| Written | Means | Trait |
+| --- | --- | --- |
+| `a + b` | `add(a, b)` | `Add` |
+| `a - b` | `sub(a, b)` | `Sub` |
+| `a * b` | `mul(a, b)` | `Mul` |
+| `a / b` | `div(a, b)` | `Div` |
+| `a ^ b` | `pow(a, b)` | `Pow` |
+| `-a` | `neg(a)` | `Neg` |
+
+The five that take two operands have one shape: the types of the two operands, and the type of the result, which they fix.
+
+```
+trait Add[A, B = A, out C = A] {
+  fn add(a: A, b: B) -> C
+}
+```
+
+`Sub`, `Mul`, `Div`, and `Pow` are the same with their own function. `Neg` takes one operand:
+
+```
+trait Neg[A, out C = A] {
+  fn neg(a: A) -> C
+}
+```
+
+`-a` has a trait of its own and is not zero less `a`, as a type may be turned around without having a zero.
+
 ## An operator on a type of your own
 
 `Rect` has `+` once `Add` is implemented for it. `Add[Rect]` means `Add[Rect, Rect, Rect]`, as [`out` parameters](out-parameters.md) says.
@@ -70,7 +101,8 @@ This is the `impl` written out field by field, and it is the short way to write 
 | Written | Is |
 | --- | --- |
 | `a + b` | `Add.add(a, b)` |
-| `+`, `-`, `*`, `/`, `^` | The arithmetic operators, each a trait function |
+| `a - b`, `a * b`, `a / b`, `a ^ b` | `Sub.sub`, `Mul.mul`, `Div.div`, `Pow.pow`, each shaped as `Add` is |
+| `-a` | `Neg.neg(a)` |
 | `impl Add[Rect] { ... }` | `+` for two `Rect`s |
 | `impl Mul[f32, Weights, Weights] { ... }` | `*` for a number and a `Weights` |
 | `derive Add for Circle` | An `Add` that works field by field |

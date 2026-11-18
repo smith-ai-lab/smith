@@ -71,6 +71,17 @@ trait Ord[A, B = A] {
 }
 ```
 
+Each of the four is one answer of `compare`, or all but one:
+
+| Written | Is true when `compare(a, b)` is |
+| --- | --- |
+| `a < b` | `.less` |
+| `a <= b` | not `.greater` |
+| `a > b` | `.greater` |
+| `a >= b` | not `.less` |
+
+So a type writes `compare` once and has all four, and they cannot disagree with each other. `!=` is the same for `Eq`: it has no function of its own and is always the opposite of `==`.
+
 A whole number has `Ord`, so it is compared with `<`.
 
 ```
@@ -99,7 +110,10 @@ A float that is not a number therefore equals itself and comes after every other
 | --- | --- |
 | `a == b` | `Eq.eq(a, b)` |
 | `a != b` | `not (a == b)` |
-| `a < b`, `a <= b`, `a > b`, `a >= b` | How two values stand, from `Ord.compare(a, b)` |
+| `a < b` | `Ord.compare(a, b)` is `.less` |
+| `a <= b` | `Ord.compare(a, b)` is not `.greater` |
+| `a > b` | `Ord.compare(a, b)` is `.greater` |
+| `a >= b` | `Ord.compare(a, b)` is not `.less` |
 | `x == y` on arrays | One `bool`, true when the arrays are the same |
 
 Next: [Traits a type is given](automatic-traits.md)
