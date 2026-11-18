@@ -5,7 +5,7 @@ description: The whole number and float types and Nat, what each holds, why a nu
 status: partial
 built:
   - "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
-  - "`Nat`, written for a parameter, a result, a field, and inside another type, the type of the `size` of a `List` and of a `str` and of a `loop` variable over `0..xs.size`, a literal where one is needed, an error where a `Nat` meets a `u64` or any other type in an operator or is bound to one, `convert` from `u8`, `u16`, `u32`, and `u64` to a `Nat` and from a `Nat` to a `u64`, and neither a wrapping function nor a bit operation"
+  - "`Nat`, written for a parameter, a result, a field, and inside another type, the type of the `size` of a `List` and of a `str` and of a `loop` variable over `0..xs.size`, a literal where one is needed, an error where a `Nat` meets a `u64` or any other type in an operator or is bound to one, `convert` from `u8`, `u16`, `u32`, and `u64` to a `Nat` and from a `Nat` to a `u64`, the saturating and the checked functions, and neither a wrapping function nor a bit operation"
 ---
 
 # Number types
@@ -57,7 +57,7 @@ A count that has no bound `arith` can prove is added to with `saturating_add`, w
 fn next_line(line: Nat) -> Nat { saturating_add(line, 1) }
 ```
 
-`saturating_add` and `checked_add` on a `Nat` are not built, so this is refused today, and no words are quoted.
+`next_line` of the greatest `Nat` is the greatest `Nat`, and `checked_add` of the greatest `Nat` and 1 is `.none`.
 
 - A whole number literal is a `Nat` where one is needed, as it is any whole number type.
 - `Nat` and `u64` hold the same numbers, so each [converts](conversion.md) to the other, and the conversion is written. A `u8`, a `u16`, and a `u32` convert to a `Nat` as they do to any type that holds every value of theirs.

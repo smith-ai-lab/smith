@@ -36,4 +36,4 @@ Each row is a family of names, one for each way of not fitting.
 
 `narrow` is the plain form of the last row: it compiles only when `arith` proves that the value fits, as [Conversion](../language/conversion.md) says. What each function gives is on those two pages.
 
-The functions on bits are in [`std.bits`](bits.md).
+A `Nat` has the saturating and the checked functions of the table, which give what a `u64` gives, and none of the wrapping ones. The functions on bits are in [`std.bits`](bits.md).

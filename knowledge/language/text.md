@@ -24,10 +24,10 @@ struct str {
 So everything a `Slice` is, a text is: it has `Copy`, any number of names share it, and a piece of it shares its memory. And a `str` is used wherever bytes are read, with no call and no copy: its `size` is how many bytes it has, `s[i]` is a byte, and a function that takes a `List[u8]` to read is given a text as it is given a slice.
 
 ```
-fn count_spaces(s: str) -> u64 {
-  var n: u64 = 0
+fn count_spaces(s: str) -> Nat {
+  var n: Nat = 0
   loop i in 0..s.size {
-    if s[i] == ' ' { n = wrapping_add(n, 1) }
+    if s[i] == ' ' { n = saturating_add(n, 1) }
   }
   n
 }
