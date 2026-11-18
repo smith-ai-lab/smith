@@ -276,13 +276,40 @@ impl Asm {
         self.word(0x5280_0000 | (value as u32) << 5 | rd);
     }
 
-    /// `movz` then a `movk` for each further nonzero half-word.
+    /// The number in the register, whole: a `movz` and a `movk` for each
+    /// further half-word that is not 0, or a `movn` and a `movk` for each
+    /// that is not all ones when more of them are all ones than are 0, and
+    /// one `movn` of `wd` for a number below 2^32 whose bits are the inverse
+    /// of 16.
     pub fn mov64(&mut self, rd: u32, value: u64) {
-        self.word(0xd280_0000 | ((value & 0xffff) as u32) << 5 | rd);
-        for hw in 1..4u32 {
-            let part = ((value >> (16 * hw)) & 0xffff) as u32;
-            if part != 0 {
-                self.word(0xf280_0000 | hw << 21 | part << 5 | rd);
+        let part = |hw: u32| ((value >> (16 * hw)) & 0xffff) as u32;
+        if value >> 32 == 0 && value >> 16 != 0 && !(value as u32) >> 16 == 0 {
+            // A 32-bit write leaves the half above it 0.
+            self.word(0x1280_0000 | (!(value as u32) & 0xffff) << 5 | rd);
+            return;
+        }
+        let zeros = (0..4).filter(|&hw| part(hw) == 0).count();
+        let ones = (0..4).filter(|&hw| part(hw) == 0xffff).count();
+        let (base, fill, first) = if ones > zeros {
+            // A `movn` writes the inverse of its half-word, with every other
+            // half-word all ones, so those that are all ones need no `movk`.
+            (
+                0x9280_0000u32,
+                0xffffu32,
+                (0..4).find(|&hw| part(hw) != 0xffff).unwrap_or(0),
+            )
+        } else {
+            (0xd280_0000, 0, 0)
+        };
+        let written = if base == 0x9280_0000 {
+            !part(first) & 0xffff
+        } else {
+            part(first)
+        };
+        self.word(base | first << 21 | written << 5 | rd);
+        for hw in 0..4u32 {
+            if hw != first && part(hw) != fill {
+                self.word(0xf280_0000 | hw << 21 | part(hw) << 5 | rd);
             }
         }
     }
@@ -675,6 +702,7 @@ struct Writer<'a, S> {
     /// is the last instruction of the block and that nothing else reads. That
     /// comparison is not made into a value: the branch tests it.
     branches_on_compare: Vec<bool>,
+    before_choice: Vec<Vec<bool>>,
     /// Whether a conditional branch goes over an unconditional one to reach
     /// a block, as a function of more than 1 MB needs, in place of going
     /// straight to it.
@@ -716,6 +744,7 @@ fn function<S: System>(
         .map(|(i, r)| (HOMES[*r], saved_from + 8 * i as u32))
         .collect();
     let branches_on_compare = super::branch::on_compare(f);
+    let before_choice = super::branch::before_choice(f);
     // A choice branches straight to the block it goes to when that block is
     // in reach of a conditional branch, which is 1 MB, and otherwise the
     // function is written again with the branch over an unconditional one.
@@ -735,6 +764,7 @@ fn function<S: System>(
             saved: saved.clone(),
             labels,
             branches_on_compare: branches_on_compare.clone(),
+            before_choice: before_choice.clone(),
             far,
             constants: constants.clone(),
             system: std::marker::PhantomData,
@@ -761,8 +791,14 @@ fn function<S: System>(
         for (b, block) in f.blocks.iter().enumerate() {
             asm.bind(w.labels[b]);
             let made = block.instructions.len() - usize::from(w.branches_on_compare[b]);
-            for instruction in &block.instructions[..made] {
-                w.instruction(asm, &instruction.results, &instruction.op);
+            for (i, instruction) in block.instructions[..made].iter().enumerate() {
+                if w.before_choice[b][i] {
+                    continue;
+                }
+                match i.checked_sub(1).filter(|j| w.before_choice[b][*j]) {
+                    Some(j) => w.choice(asm, &block.instructions[j].op, instruction),
+                    None => w.instruction(asm, &instruction.results, &instruction.op),
+                }
             }
             w.end(asm, b);
         }
@@ -944,6 +980,27 @@ impl<S: System> Writer<'_, S> {
             Loc::Register(h) => asm.zero_extend(h, r, width),
             Loc::Imm(_) => unreachable!("an instruction gives no result that is a number held"),
         }
+    }
+
+    /// A choice on a comparison that nothing else reads: compares, and takes
+    /// `then` on the condition the comparison says. Moving a value does not
+    /// change what the comparison found.
+    fn choice(&self, asm: &mut Asm, compare: &Op, choose: &crate::scalar::Instruction) {
+        let (
+            Op::Compare { op, a, b },
+            Op::Choose {
+                then, otherwise, ..
+            },
+        ) = (compare, &choose.op)
+        else {
+            unreachable!()
+        };
+        let cond = self.compare(asm, op, *a, *b);
+        let then = self.read(asm, X16, *then);
+        let otherwise = self.read(asm, X17, *otherwise);
+        let t = self.target(choose.results[0]);
+        asm.csel(t, then, otherwise, cond);
+        self.finish(asm, choose.results[0], t, true);
     }
 
     fn instruction(&self, asm: &mut Asm, results: &[Value], op: &Op) {
