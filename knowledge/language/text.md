@@ -11,7 +11,16 @@ built:
 
 # Text and bytes
 
-A `str` is a [`List`](../library/list.md) of bytes kept together with a proof that they are valid UTF-8, in the way [A struct that holds a proof](proof-fields.md) describes. So a `str` is used wherever bytes are expected, with no call and no copy: its `size` is how many bytes it has, and `s[i]` is a byte.
+A `str` is bytes that cannot change, kept together with a proof that they are valid UTF-8. It is an ordinary struct, of a [`Slice`](../library/slice.md) and a proof, in the way [A struct that holds a proof](proof-fields.md) describes.
+
+```
+struct str {
+  bytes: Slice[u8]
+  valid: is_utf8(bytes)
+}
+```
+
+So everything a `Slice` is, a text is: it has `Copy`, any number of names share it, and a piece of it shares its memory. And a `str` is used wherever bytes are read, with no call and no copy: its `size` is how many bytes it has, `s[i]` is a byte, and a function that takes a `List[u8]` to read is given a text as it is given a slice.
 
 ```
 fn count_spaces(s: str) -> u64 {
@@ -23,17 +32,17 @@ fn count_spaces(s: str) -> u64 {
 }
 ```
 
-Bytes become text through `utf8`, which reads them once. It gives the text, which is the same bytes and no copy of them, or the place of the first byte that is not valid.
+Bytes become text through `utf8`, which reads them once. It gives the text, which is the same bytes and no copy of them, or the place of the first byte that is not valid. It takes a `Slice`, so the bytes are the caller's still when they are not valid, and bytes a program built in a `List` are frozen first, as `utf8(freeze(out))`.
 
 ```
 struct Utf8Error {
   at: Nat
 }
 
-fn utf8(bytes: List[u8]) -> Result[str, Utf8Error]
+fn utf8(bytes: Slice[u8]) -> Result[str, Utf8Error]
 ```
 
-`utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of a list whose first byte is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`.
+`utf8` of the bytes of `"hi"` is `.ok("hi")`. `utf8` of bytes whose first is 255, which no UTF-8 text holds, is `.err(Utf8Error(at: 0))`. The compiler does not build `Slice` yet, so the `utf8` it builds takes a `List[u8]`.
 
 A piece of a text is a text. `s[a..b]` is the bytes from `a` up to `b` as a `str`, which shares the memory of `s`, so nothing is copied. Text implements [`Index`](indexing.md) for a range, and its `valid` asks two things: that the range lies inside the text, and that both of its ends fall between characters and not inside one.
 
