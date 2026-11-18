@@ -16,7 +16,12 @@ pub enum Part {
 /// The expression in braces in a string, from its tokens, which end with
 /// the `}` that closes it, as the call of `Fmt.fmt` that turns it into
 /// text.
-fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Error> {
+fn interpolated(
+    tokens: &[Token],
+    hoisted: &mut Vec<Hoisted>,
+    modules: &[(String, String)],
+    qualified: &mut Vec<Qualified>,
+) -> Result<Expr, Error> {
     let mut p = Parser {
         tokens,
         at: 0,
@@ -24,12 +29,15 @@ fn interpolated(tokens: &[Token], hoisted: &mut Vec<Hoisted>) -> Result<Expr, Er
         no_lambda: false,
         hoisted: Vec::new(),
         binds: Vec::new(),
+        modules: modules.to_vec(),
+        qualified: Vec::new(),
     };
     let value = p.expr()?;
     if p.at + 1 != tokens.len() {
         return Err(p.expected("`}` to close the expression in the string", p.tok()));
     }
     hoisted.append(&mut p.hoisted);
+    qualified.append(&mut p.qualified);
     let pos = value.pos();
     Ok(Expr::Call(Call {
         qualifier: Some(("Fmt".to_string(), pos)),
@@ -55,7 +63,12 @@ impl Parser<'_> {
                 Piece::Text(text) => parts.push(Part::Text(text.clone())),
                 Piece::Expr(tokens) => {
                     let mark = self.hoisted.len();
-                    let e = interpolated(tokens, &mut self.hoisted)?;
+                    let e = interpolated(
+                        tokens,
+                        &mut self.hoisted,
+                        &self.modules,
+                        &mut self.qualified,
+                    )?;
                     if self.hoisted.len() > mark {
                         let mut at = mark;
                         for part in &mut parts {

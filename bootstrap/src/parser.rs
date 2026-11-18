@@ -35,6 +35,24 @@ pub struct File {
     pub exports: Vec<String>,
     /// Every name written after the `use` lines, when there are any.
     pub written: HashSet<String>,
+    /// Every name written with the name of an imported module before it, as
+    /// in `transaction.begin(db)`.
+    pub qualified: Vec<Qualified>,
+    /// For the modules of a program, the traits each can name, by the number
+    /// of its place and the names the traits have among the file's items. The
+    /// checker reads it to find a call that two of them could mean.
+    pub scopes: Vec<(usize, Vec<String>)>,
+}
+
+/// A name written with the name of an imported module before it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Qualified {
+    /// The module, as its `use` names it.
+    pub module: String,
+    /// The name the module is written as, and where it is.
+    pub written: (String, Pos),
+    /// The name of the module's, and where it is.
+    pub name: (String, Pos),
 }
 
 /// A `use` line: the module's name, one part at a time, and the names listed
@@ -44,7 +62,35 @@ pub struct Use {
     /// Where `use` is.
     pub pos: Pos,
     pub module: Vec<(String, Pos)>,
-    pub names: Vec<(String, Pos)>,
+    /// The name the module is imported as, when it is imported itself, and
+    /// where `as` gives another.
+    pub alias: Option<(String, Pos)>,
+    /// Whether the module's names are listed. A `use` with no list brings in
+    /// the module itself.
+    pub listed: bool,
+    pub names: Vec<Listed>,
+}
+
+/// A name a `use` lists, and the name `as` gives it in the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    pub name: String,
+    pub pos: Pos,
+    pub alias: Option<(String, Pos)>,
+}
+
+impl Use {
+    /// The name that stands for the module in the file that imports it: its
+    /// last segment, or the name `as` gives.
+    pub fn called(&self) -> (&str, Pos) {
+        match &self.alias {
+            Some((name, pos)) => (name, *pos),
+            None => {
+                let (name, pos) = self.module.last().expect("a module has a name");
+                (name, *pos)
+            }
+        }
+    }
 }
 
 /// A type parameter, as in `[T: Named]` or `[A, out B]`.
@@ -538,6 +584,8 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
         no_lambda: false,
         hoisted: Vec::new(),
         binds: Vec::new(),
+        modules: Vec::new(),
+        qualified: Vec::new(),
     };
     let mut uses = Vec::new();
     let mut exports = Vec::new();
@@ -573,6 +621,11 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
                     );
                 }
                 Ok(u) => {
+                    if !u.listed {
+                        let (name, _) = u.called();
+                        let module: Vec<&str> = u.module.iter().map(|(n, _)| n.as_str()).collect();
+                        p.modules.push((name.to_string(), module.join(".")));
+                    }
                     uses.push(u);
                     after_uses = p.at;
                 }
@@ -658,6 +711,8 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             },
             uses,
             exports,
+            qualified: p.qualified,
+            scopes: Vec::new(),
         })
     } else {
         Err(p.errors)
@@ -830,6 +885,11 @@ struct Parser<'a> {
     /// signature was read last that are written as patterns, in order. They
     /// open its body.
     binds: Vec<Stmt>,
+    /// The modules a `use` imported itself, each by the name it is written as
+    /// and the name the `use` gives it.
+    modules: Vec<(String, String)>,
+    /// The names written with the name of one of those before them.
+    qualified: Vec<Qualified>,
 }
 
 /// The operand of a `try` and the name that stands for the value it
@@ -1036,36 +1096,57 @@ impl Parser<'_> {
             self.bump();
             module.push(self.ident("a name after `.`")?);
         }
+        let mut alias = None;
         if self.tok() == &Tok::Keyword("as") {
-            return Err(Error::unsupported(self.pos(), "`as`"));
+            self.bump();
+            alias = Some(self.ident("a name for the module")?);
         }
-        if self.tok() != &Tok::Punct("(") {
-            return Err(Error::unsupported(pos, "importing a module by its name"));
-        }
-        self.bump();
         let mut names = Vec::new();
-        loop {
-            self.skip_newlines();
-            if self.tok() == &Tok::Punct(")") {
-                break;
-            }
-            names.push(self.ident("a name to import or `)`")?);
-            if self.tok() == &Tok::Keyword("as") {
-                return Err(Error::unsupported(self.pos(), "`as`"));
-            }
-            self.skip_newlines();
-            match self.tok() {
-                Tok::Punct(",") => self.bump(),
-                Tok::Punct(")") => {}
-                tok => return Err(self.expected("`,` or `)`", tok)),
-            }
+        let listed = self.tok() == &Tok::Punct("(");
+        if listed && alias.is_some() {
+            return Err(Error::unsupported(
+                self.pos(),
+                "a list of names after a module's `as`",
+            ));
         }
-        self.bump();
+        if listed {
+            self.bump();
+            loop {
+                self.skip_newlines();
+                if self.tok() == &Tok::Punct(")") {
+                    break;
+                }
+                let (name, at) = self.ident("a name to import or `)`")?;
+                let mut alias = None;
+                if self.tok() == &Tok::Keyword("as") {
+                    self.bump();
+                    alias = Some(self.ident("the name to give it")?);
+                }
+                names.push(Listed {
+                    name,
+                    pos: at,
+                    alias,
+                });
+                self.skip_newlines();
+                match self.tok() {
+                    Tok::Punct(",") => self.bump(),
+                    Tok::Punct(")") => {}
+                    tok => return Err(self.expected("`,` or `)`", tok)),
+                }
+            }
+            self.bump();
+        }
         match self.tok() {
             Tok::Newline | Tok::Eof => {}
             tok => return Err(self.expected("a line break", tok)),
         }
-        Ok(Use { pos, module, names })
+        Ok(Use {
+            pos,
+            module,
+            alias,
+            listed,
+            names,
+        })
     }
 
     /// The error for a definition other than a function.
@@ -2290,6 +2371,27 @@ impl Parser<'_> {
             self.bump();
             let (name, pos) = self.ident("a field's name")?;
             expr = match expr {
+                Expr::Name {
+                    name: qualifier,
+                    pos: at,
+                } if self.modules.iter().any(|(q, _)| *q == qualifier) => {
+                    let module = (self.modules.iter())
+                        .find(|(q, _)| *q == qualifier)
+                        .map(|(_, m)| m.clone())
+                        .unwrap_or_default();
+                    self.qualified.push(Qualified {
+                        module: module.clone(),
+                        written: (qualifier, at),
+                        name: (name.clone(), pos),
+                    });
+                    let mut expr = self.call_or_name(None, format!("{name}@{module}"), pos)?;
+                    match &mut expr {
+                        Expr::Call(call) => call.pos = at,
+                        Expr::Name { pos, .. } => *pos = at,
+                        _ => {}
+                    }
+                    expr
+                }
                 Expr::Name {
                     name: qualifier,
                     pos: at,
