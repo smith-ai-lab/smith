@@ -13,6 +13,7 @@
 
 mod build;
 mod common;
+mod escape;
 mod eval;
 mod fold;
 mod graph;
