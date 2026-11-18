@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Number types
-description: The whole number and float types, what each holds, why a number has exactly one type, and what the operators do with two of them.
+description: The whole number and float types and Nat, what each holds, why a number has exactly one type, and what the operators do with two of them.
 status: partial
 built:
   - "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
@@ -37,6 +37,28 @@ An `i` type is signed and holds negative numbers too. A `u` type is unsigned and
 | `i64` | -9223372036854775808 to 9223372036854775807 |
 
 A number outside the range is refused where it is written, with the range in the message, as [Literals](literals.md) shows. What the arithmetic of two numbers in range does when the result is outside it is the subject of [Integer arithmetic](arithmetic.md).
+
+## A count is a `Nat`
+
+`Nat` is the type of a count: the size of a list, of a text, and of an array, a place in one, and how many times something happened. It holds 0 and up, in 64 bits.
+
+```
+fn longer(a: List[u8], b: List[u8]) -> Nat {
+  if a.size > b.size { a.size } else { b.size }
+}
+```
+
+`Nat` is a type of its own, and not another name for `u64`. A `u64` is a word of the machine: it has the [wrapping functions](../library/int.md) and the [bit operations](bits.md), which mean nothing for a count, and a `Nat` has neither. So a hash or a mask is not used as a place in a list by accident.
+
+- A whole number literal is a `Nat` where one is needed, as it is any whole number type.
+- `Nat` and `u64` hold the same numbers, so each [converts](conversion.md) to the other, and the conversion is written.
+- An operator between a `Nat` and a `u64` is refused, as between any two number types.
+
+```
+fn width(xs: List[u8]) -> u64 { xs.size }
+```
+
+This is refused, since `xs.size` is a `Nat` and the result is a `u64`. `Nat` is not built, so a size is a `u64` today, and no words are quoted.
 
 ## Floats
 
@@ -92,6 +114,7 @@ fn widen(small: u8) -> u32 { convert(small) }
 | --- | --- |
 | `u8`, `u16`, `u32`, `u64` | An unsigned whole number of 8, 16, 32, or 64 bits |
 | `i8`, `i16`, `i32`, `i64` | A signed whole number of 8, 16, 32, or 64 bits |
+| `Nat` | A count, 0 and up, in 64 bits: a type of its own |
 | `f16`, `bf16`, `f32`, `f64` | A float of 16, 16, 32, or 64 bits |
 | `a + b` with two types | Refused, unless one converts to the other |
 | `a == b`, `a < b`, and the rest | A `bool`, for two numbers of one type |
