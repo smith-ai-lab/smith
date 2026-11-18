@@ -1,4 +1,4 @@
-//! The fourth pass over the scalar form: what nothing uses is removed, and the
+//! The fifth pass over the scalar form: what nothing uses is removed, and the
 //! jumps that only lead on are skipped.
 //!
 //! A walk takes these steps for a function, in this order: a jump to a block
@@ -78,7 +78,7 @@ fn walk(f: &mut Function, first: bool) -> bool {
     drop_unreached(f);
     let copy = graph::copies(f);
     graph::rename(f, &|v| copy[v.0]);
-    let removed = drop_unused(f);
+    let removed = drop_unused(f, true);
     // What goes can leave a block that holds only a jump, and a choice
     // between jumps that are the same, and that can leave a comparison that
     // nothing reads.
@@ -86,14 +86,14 @@ fn walk(f: &mut Function, first: bool) -> bool {
     if removed && (collapse(f) | copy_small_blocks(f)) {
         changed = true;
         drop_unreached(f);
-        drop_unused(f);
+        drop_unused(f, true);
     }
     join(f);
     changed
 }
 
 /// Takes away the blocks that nothing reaches.
-fn drop_unreached(f: &mut Function) {
+pub(super) fn drop_unreached(f: &mut Function) {
     let mut reached = vec![false; f.blocks.len()];
     for b in graph::reverse_postorder(f) {
         reached[b] = true;
@@ -431,7 +431,7 @@ fn essential(op: &Op) -> bool {
 /// parameter that nothing uses. A value is used by what a live instruction
 /// reads, by a return, by a switch, and by a jump that gives it to a
 /// parameter that is used.
-fn drop_unused(f: &mut Function) -> bool {
+pub(super) fn drop_unused(f: &mut Function, entry_live: bool) -> bool {
     let before = (f.blocks.iter())
         .map(|b| b.instructions.len() + b.params.len())
         .sum::<usize>();
@@ -463,8 +463,10 @@ fn drop_unused(f: &mut Function) -> bool {
             work.push(v);
         }
     };
-    for p in &f.blocks[0].params {
-        mark(*p, &mut work);
+    if entry_live {
+        for p in &f.blocks[0].params {
+            mark(*p, &mut work);
+        }
     }
     for block in &f.blocks {
         for instruction in block.instructions.iter().filter(|i| essential(&i.op)) {
@@ -494,7 +496,11 @@ fn drop_unused(f: &mut Function) -> bool {
         }
     }
     let kept: Vec<Vec<bool>> = (f.blocks.iter().enumerate())
-        .map(|(b, block)| (block.params.iter()).map(|p| b == 0 || live[p.0]).collect())
+        .map(|(b, block)| {
+            (block.params.iter())
+                .map(|p| (b == 0 && entry_live) || live[p.0])
+                .collect()
+        })
         .collect();
     for block in &mut f.blocks {
         block

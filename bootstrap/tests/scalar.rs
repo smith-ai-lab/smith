@@ -1487,19 +1487,20 @@ fn inlining_replaces_calls_of_small_functions_and_of_functions_called_once() {
 
 /// The program after each pass, in order, so that each is checked on what
 /// the one before it gave.
-fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 4] {
+fn after_each_pass(p: &scalar::Program) -> [scalar::Program; 5] {
     let inlined = scalar::inline(p);
-    let folded = scalar::fold(&inlined);
+    let trimmed = scalar::trim(&inlined);
+    let folded = scalar::fold(&trimmed);
     let shared = scalar::common(&folded);
     let removed = scalar::remove(&shared);
-    [inlined, folded, shared, removed]
+    [inlined, trimmed, folded, shared, removed]
 }
 
 fn the_passes_give_a_well_formed_program_that_does_what_it_did() {
     let limits = [0, 1, 7, 40, 200, 4096, usize::MAX];
     for (l, s) in taken() {
-        let [inlined, folded, shared, removed] = after_each_pass(s);
-        for after in [&folded, &shared, &removed] {
+        let [inlined, trimmed, folded, shared, removed] = after_each_pass(s);
+        for after in [&trimmed, &folded, &shared, &removed] {
             if let Err(malformed) = scalar::check(after) {
                 panic!("{malformed:?} in {after:?}");
             }
@@ -1672,8 +1673,9 @@ fn removal_leaves_nothing_that_nothing_uses() {
 fn the_passes_give_the_same_program_every_time_and_never_a_larger_one() {
     let size = |p: &scalar::Program| -> usize { p.functions.iter().map(scalar::size).sum() };
     for (_, s) in taken() {
-        let [inlined, folded, shared, removed] = after_each_pass(s);
-        assert_eq!(folded, scalar::fold(&inlined));
+        let [inlined, trimmed, folded, shared, removed] = after_each_pass(s);
+        assert_eq!(trimmed, scalar::trim(&inlined));
+        assert_eq!(folded, scalar::fold(&trimmed));
         assert_eq!(shared, scalar::common(&folded));
         assert_eq!(removed, scalar::remove(&shared));
         assert!(size(&shared) <= size(&folded), "{shared:?}");

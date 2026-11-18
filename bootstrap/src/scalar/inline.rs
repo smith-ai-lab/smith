@@ -97,7 +97,7 @@ fn callees_first(program: &Program) -> Vec<usize> {
 }
 
 /// The function of each call in the function, in order.
-fn calls(f: &Function) -> Vec<usize> {
+pub(super) fn calls(f: &Function) -> Vec<usize> {
     (f.blocks.iter())
         .flat_map(|b| &b.instructions)
         .filter_map(|i| match i.op {

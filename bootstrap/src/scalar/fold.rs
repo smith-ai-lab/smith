@@ -1,4 +1,4 @@
-//! The second pass over the scalar form: an instruction whose inputs are all
+//! The third pass over the scalar form: an instruction whose inputs are all
 //! known is replaced by its answer.
 //!
 //! One walk over each function, each block after the blocks that jump to it

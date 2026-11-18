@@ -22,6 +22,7 @@ mod inline;
 mod remat;
 mod remove;
 pub mod runtime;
+mod trim;
 mod wellformed;
 mod words;
 
@@ -35,13 +36,15 @@ pub use fold::fold;
 pub use inline::{BOUND, inline, size};
 pub use remat::rematerialized;
 pub use remove::{WALKS, remove, remove_counting};
+pub use trim::trim;
 pub use wellformed::{Malformed, Why, check};
 
 /// The passes over a program in the scalar form, in the order they run:
-/// inlining, folding of constants, the replacing of what is worked out
+/// inlining, the taking away of what a function is passed and gives back and
+/// does not need, folding of constants, the replacing of what is worked out
 /// twice, and the removal of what nothing uses.
 pub fn passes(program: &Program) -> Program {
-    remove(&common(&fold(&inline(program))))
+    remove(&common(&fold(&trim(&inline(program)))))
 }
 
 /// How many bits an integer has.
