@@ -44,7 +44,7 @@ To differentiate with respect to something else, `f` is wrapped in a lambda that
 
 ## What grad reads
 
-`grad` works on the typed core form of `f`, where every [`for`](for.md) is still visible, so a function written with `for` is differentiated through it.
+`grad` is an ordinary function that matches on the [core term](code.md#what-code-is) of `f`, where every [`for`](for.md) is still one node, so a function written with `for` is differentiated through it. It follows each call into the function that is called, as the name in a call holds that function's body. Values never change, so there is no assignment for it to follow.
 
 ```
 fn sum_squares(v: [3]f32) -> f32 { sum(for k { v[k] ^ 2 }) }
