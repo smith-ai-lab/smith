@@ -32,6 +32,7 @@ use std::collections::{HashMap, HashSet};
 
 mod arith;
 mod lists_and_text;
+mod ownership;
 mod proof;
 mod to_scalar;
 mod traits;
@@ -3727,6 +3728,15 @@ impl<'a> Checker<'a> {
             decided.insert(*pos, decision);
         }
         self.run_body(template, Numbers::Decided(decided));
+        if self.errors.len() == errors {
+            let view = self.defs.view(template);
+            ownership::check(
+                self.defs,
+                &self.types,
+                (view.f, view.scope),
+                &mut self.errors,
+            );
+        }
     }
 
     /// One look at the body of a function, which gives the places of the
