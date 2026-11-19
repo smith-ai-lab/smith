@@ -1,8 +1,7 @@
-use std.bits (i32)
 use std.console (console, print)
 
 fn main() ! console, alloc {
-  a: i32 = 1
-  b: Byte = 2
+  a: Nat = 1
+  b: Int = 2
   print("{a + b}")
 }
