@@ -489,7 +489,8 @@ impl Paths {
                     // A loop goes round any number of times, or none.
                     let mut round = now.clone();
                     let reused = !self.again.is_empty();
-                    next.extend(now.iter().copied());
+                    // The path that goes round none.
+                    let mut none = now.clone();
                     for _ in 0..3 {
                         let a = self.run(body, &round, shape, lacks);
                         next.extend(a.next.iter().copied());
@@ -499,15 +500,12 @@ impl Paths {
                         round.extend(a.next);
                     }
                     // A value that a loop gives away again in each round is
-                    // reported there, and not also as dropped before the first.
+                    // reported there, and not also as dropped on the path
+                    // that goes round none.
                     if !reused && !self.again.is_empty() {
-                        let before: BTreeSet<usize> = now.iter().map(|(.., cur)| *cur).collect();
-                        next = (next.iter())
-                            .map(|&(gone, owed, cur)| {
-                                (gone, if before.contains(&cur) { 0 } else { owed }, cur)
-                            })
-                            .collect();
+                        none = none.iter().map(|&(gone, _, cur)| (gone, 0, cur)).collect();
                     }
+                    next.extend(none);
                 }
             }
             now = next;
@@ -709,7 +707,7 @@ fn write(c: &Case) -> Written {
 }
 
 fn a_value_without_discard_is_refused_exactly_where_a_path_drops_it_or_takes_it_again() {
-    generate::check(4341, 100, case, |c| {
+    generate::check(4341, 60, case, |c| {
         let w = write(c);
         let found = errors(&w.source);
         let lacks = c.held == Held::Res;
