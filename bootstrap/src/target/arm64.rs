@@ -3,7 +3,7 @@
 //! form becomes them. It reads the scalar form and nothing else.
 
 use super::alloc::{self, Home, Registers};
-use super::frame::{self, PAGE, call_area, round_up, size};
+use super::frame::{self, PAGE, Passed, call_area, round_up, size};
 use super::indexed::{self, Folded};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
@@ -691,15 +691,15 @@ enum Loc {
     Imm(u64),
 }
 
-/// Where the values of a call go, in order: in the registers that carry them
-/// as many as there are, and then in the places in the frame.
-fn passing(frame: impl Iterator<Item = u32>) -> Vec<Loc> {
-    let mut places: Vec<Loc> = HOMES[..REGISTERS.passed]
-        .iter()
-        .map(|r| Loc::Register(*r))
-        .collect();
-    places.extend(frame.map(Loc::Frame));
-    places
+/// Where the values of a call go, in order: in the registers that carry them,
+/// and in the places in the frame, which start at `base`.
+fn passing(places: &[Passed], base: u32) -> Vec<Loc> {
+    (places.iter())
+        .map(|p| match p {
+            Passed::Register(k) => Loc::Register(HOMES[*k]),
+            Passed::Frame(at) => Loc::Frame(base + at),
+        })
+        .collect()
 }
 
 /// A function being written, and where each value is.
@@ -755,13 +755,12 @@ fn function<S: System>(
     });
     let held = held(f, &constants, Some(&folded));
     let allocation = alloc::allocate(f, REGISTERS, &held);
-    let below = S::RESERVED + frame::outgoing(program, f, REGISTERS.passed);
+    let below = S::RESERVED + frame::outgoing(program, f, [REGISTERS.passed, 0]);
     let saved_from = round_up(below + allocation.frame, 8);
     // The address the function returns to is kept above its values.
     let total = round_up(saved_from + 8 * allocation.saved.len() as u32, 16) + 16;
-    let area = call_area(f, REGISTERS.passed);
-    let in_caller =
-        |places: &[u32]| -> Vec<Loc> { passing(places.iter().map(|o| total + S::RESERVED + o)) };
+    let area = call_area(f, [REGISTERS.passed, 0]);
+    let in_caller = |places: &[Passed]| -> Vec<Loc> { passing(places, total + S::RESERVED) };
     let arrive = in_caller(&area.params);
     let leave = in_caller(&area.results);
     let at: Vec<Loc> = (allocation.homes.iter().enumerate())
@@ -1178,8 +1177,8 @@ impl<S: System> Writer<'_, S> {
                 }
             }
             Op::Call { function, args } => {
-                let area = call_area(&self.program.functions[*function], REGISTERS.passed);
-                let at_bottom = |places: &[u32]| passing(places.iter().map(|o| S::RESERVED + o));
+                let area = call_area(&self.program.functions[*function], [REGISTERS.passed, 0]);
+                let at_bottom = |places: &[Passed]| passing(places, S::RESERVED);
                 let params = at_bottom(&area.params);
                 let moves: Vec<Move<Loc>> = (args.iter().zip(&params))
                     .map(|(arg, to)| Move {

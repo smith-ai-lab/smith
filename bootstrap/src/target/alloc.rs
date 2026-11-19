@@ -35,7 +35,7 @@
 //! every register the chip says a call may change.
 
 use super::frame::lay_out;
-use crate::scalar::{End, Function, Jump, Op, Value};
+use crate::scalar::{End, Function, Jump, Op, Type, Value};
 
 /// The registers a chip offers the allocator, by number. The registers from 0
 /// below `changed` are those a call may change, and the `preserved` after them
@@ -58,6 +58,63 @@ impl Registers {
     pub fn is_preserved(self, register: usize) -> bool {
         register >= self.changed
     }
+}
+
+/// The registers a chip offers, of each kind: the registers of integers and
+/// addresses, and the registers of floats. A register is named by one number
+/// for the whole chip: the registers of integers are the numbers from 0, and
+/// those of floats follow them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kinds {
+    pub ints: Registers,
+    pub floats: Registers,
+}
+
+/// The registers the allocator may still give out of those a chip offers, by
+/// kind, which are fewer for a kind when no value of it is alive across a call:
+/// the numbers of the registers stay what the chip says.
+#[derive(Clone, Copy)]
+struct Offer {
+    ints: Registers,
+    floats: Registers,
+    /// The number of the first register of floats.
+    float_base: usize,
+}
+
+impl Offer {
+    fn new(kinds: Kinds) -> Offer {
+        Offer {
+            ints: kinds.ints,
+            floats: kinds.floats,
+            float_base: kinds.ints.count(),
+        }
+    }
+
+    fn of(self, kind: usize) -> Registers {
+        [self.ints, self.floats][kind]
+    }
+
+    fn first(self, kind: usize) -> usize {
+        if kind == 0 { 0 } else { self.float_base }
+    }
+
+    fn count(self) -> usize {
+        self.float_base + self.floats.count()
+    }
+
+    fn is_preserved(self, register: usize) -> bool {
+        if register < self.float_base {
+            self.ints.is_preserved(register)
+        } else {
+            self.floats.is_preserved(register - self.float_base)
+        }
+    }
+}
+
+/// The kind of register a value of the type is held in: 0 for an integer or an
+/// address, 1 for a float.
+pub fn kind(ty: Type) -> usize {
+    usize::from(matches!(ty, Type::Float(_)))
 }
 
 /// Where a value lives, for the whole of its life.
@@ -91,6 +148,25 @@ const NONE: usize = usize::MAX;
 /// the chip holds in the instruction that reads each, which are given none
 /// and take no register or place in the frame.
 pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Allocation {
+    let none = Registers {
+        changed: 0,
+        preserved: 0,
+        passed: 0,
+    };
+    let kinds = Kinds {
+        ints: registers,
+        floats: none,
+    };
+    allocate_kinds(f, kinds, homeless)
+}
+
+/// Gives each value of the function a home as `allocate` does, in a register of
+/// its kind: a float in one of the chip's registers of floats, and anything
+/// else in one of the registers of integers. The register a value is passed in,
+/// or arrives in, is the one that is the number of its kind among the values
+/// passed, so the k-th float passed is in the k-th register of floats that
+/// carries one.
+pub fn allocate_kinds(f: &Function, kinds: Kinds, homeless: &[bool]) -> Allocation {
     let blocks = f.blocks.len();
     let values = f.types.len();
     // Where each block starts, counting a place for its parameters, one for
@@ -107,8 +183,8 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
     // The first parameter each value is given to by a jump.
     let mut fed_to = vec![NONE; values];
     let mut operands: Vec<Value> = Vec::new();
-    // The register a call passes a value in, or takes it from, or a function
-    // gives it back in, for the first it is found in.
+    // The number of the register a call passes a value in, or takes it from, or
+    // a function gives it back in, for the first it is found in.
     let mut passed_in = vec![NONE; values];
     for (b, block) in f.blocks.iter().enumerate() {
         for p in &block.params {
@@ -137,20 +213,12 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
         }
         for instruction in &block.instructions {
             if let Op::Call { args, .. } = &instruction.op {
-                for (i, v) in args.iter().chain(&instruction.results).enumerate() {
-                    let i = if i < args.len() { i } else { i - args.len() };
-                    if i < registers.passed && passed_in[v.0] == NONE {
-                        passed_in[v.0] = i;
-                    }
-                }
+                note_passed(f, Offer::new(kinds), args, &mut passed_in);
+                note_passed(f, Offer::new(kinds), &instruction.results, &mut passed_in);
             }
         }
         if let End::Return(values) = &block.end {
-            for (i, v) in values.iter().enumerate().take(registers.passed) {
-                if passed_in[v.0] == NONE {
-                    passed_in[v.0] = i;
-                }
-            }
+            note_passed(f, Offer::new(kinds), values, &mut passed_in);
         }
         let jumps: &[Jump] = match &block.end {
             End::Jump(jump) => std::slice::from_ref(jump),
@@ -249,6 +317,7 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
         }
     }
 
+    let kinds_of: Vec<u8> = f.types.iter().map(|ty| kind(*ty) as u8).collect();
     let facts = Facts {
         base: &base,
         live_in: &live_in,
@@ -260,18 +329,39 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
     // a call does not change, which it would have to save, so it is offered
     // none.
     let has_a_call = (f.blocks.iter()).any(|b| b.instructions.iter().any(|i| i.op.is_call()));
-    let registers = if has_a_call && any_across_a_call(f, &facts, homeless) {
-        registers
+    let across = if has_a_call {
+        across_a_call(f, &kinds_of, &facts, homeless)
     } else {
-        Registers {
-            preserved: 0,
-            ..registers
+        [false; 2]
+    };
+    let offer = Offer::new(kinds);
+    let offered = |kind: usize| {
+        if across[kind] {
+            offer.of(kind)
+        } else {
+            Registers {
+                preserved: 0,
+                ..offer.of(kind)
+            }
         }
     };
-    let count = registers.count();
+    let kinds = Offer {
+        ints: offered(0),
+        floats: offered(1),
+        ..Offer::new(kinds)
+    };
+    let count = kinds.count();
     let mut spilled = vec![false; values];
     let mut crosses = vec![false; values];
-    spill(f, registers, &facts, &mut spilled, &mut crosses, homeless);
+    spill(
+        f,
+        kinds,
+        &kinds_of,
+        &facts,
+        &mut spilled,
+        &mut crosses,
+        homeless,
+    );
 
     // Colouring.
     let mut register = vec![NONE; values];
@@ -294,13 +384,14 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
             }
         }
         let block = &f.blocks[b];
+        let arrival = if b == 0 {
+            arrivals(f, kinds, block)
+        } else {
+            Vec::new()
+        };
         for (i, p) in block.params.iter().enumerate() {
             // Only the function's own parameters arrive in registers.
-            let arrives = if b == 0 && i < registers.passed {
-                Some(i)
-            } else {
-                None
-            };
+            let arrives = if b == 0 { arrival[i] } else { None };
             let near = if arrives.is_some() {
                 Near::none()
             } else {
@@ -319,12 +410,12 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
                 Near::of(given, &register, &spilled, passed_in[p.0])
             };
             colour(
-                registers,
+                kinds,
                 &mut holder,
                 &mut register,
                 &mut spilled,
                 &crosses,
-                *p,
+                (*p, kind(f.types[p.0])),
                 arrives,
                 near.registers(),
             );
@@ -342,12 +433,12 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
                     Near::of(fed.into_iter(), &register, &spilled, passed_in[r.0])
                 };
                 colour(
-                    registers,
+                    kinds,
                     &mut holder,
                     &mut register,
                     &mut spilled,
                     &crosses,
-                    *r,
+                    (*r, kind(f.types[r.0])),
                     None,
                     near.registers(),
                 );
@@ -374,7 +465,7 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
     let mut saved: Vec<usize> = homes
         .iter()
         .filter_map(|h| match h {
-            Home::Register(r) if registers.is_preserved(*r) => Some(*r),
+            Home::Register(r) if kinds.is_preserved(*r) => Some(*r),
             _ => None,
         })
         .collect();
@@ -397,16 +488,30 @@ struct Facts<'a> {
 }
 
 /// The values held in registers that are alive at one point.
-struct Held {
+struct Held<'a> {
     values: Vec<Value>,
     at: Vec<usize>,
+    /// The kind of register each value is held in.
+    kind: &'a [u8],
+    /// How many of the values are of each kind.
+    counts: [usize; 2],
 }
 
-impl Held {
+impl<'a> Held<'a> {
+    fn new(kind: &'a [u8], values: usize) -> Held<'a> {
+        Held {
+            values: Vec::new(),
+            at: vec![NONE; values],
+            kind,
+            counts: [0; 2],
+        }
+    }
+
     fn add(&mut self, v: Value) {
         if self.at[v.0] == NONE {
             self.at[v.0] = self.values.len();
             self.values.push(v);
+            self.counts[usize::from(self.kind[v.0])] += 1;
         }
     }
 
@@ -418,6 +523,7 @@ impl Held {
                 self.at[moved.0] = at;
             }
             self.at[v.0] = NONE;
+            self.counts[usize::from(self.kind[v.0])] -= 1;
         }
     }
 
@@ -425,18 +531,16 @@ impl Held {
         for v in self.values.drain(..) {
             self.at[v.0] = NONE;
         }
+        self.counts = [0; 2];
     }
 }
 
-/// Whether any value is alive across a call: alive before it and after it,
-/// and not read last by it.
-fn any_across_a_call(f: &Function, facts: &Facts, homeless: &[bool]) -> bool {
+/// For each kind of register, whether any value held in one is alive across a
+/// call: alive before it and after it, and not read last by it.
+fn across_a_call(f: &Function, kinds_of: &[u8], facts: &Facts, homeless: &[bool]) -> [bool; 2] {
     let values = f.types.len();
-    let mut crosses = false;
-    let mut alive = Held {
-        values: Vec::new(),
-        at: vec![NONE; values],
-    };
+    let mut crosses = [false; 2];
+    let mut alive = Held::new(kinds_of, values);
     // Whether a value is read last at the place being looked at.
     let mut last_here = vec![NONE; values];
     for (b, block) in f.blocks.iter().enumerate() {
@@ -453,7 +557,9 @@ fn any_across_a_call(f: &Function, facts: &Facts, homeless: &[bool]) -> bool {
                 for v in &facts.dying[at] {
                     last_here[v.0] = at;
                 }
-                crosses |= alive.values.iter().any(|v| last_here[v.0] != at);
+                for v in alive.values.iter().filter(|v| last_here[v.0] != at) {
+                    crosses[usize::from(kinds_of[v.0])] = true;
+                }
             }
             for v in &facts.dying[at] {
                 alive.remove(*v);
@@ -469,22 +575,51 @@ fn any_across_a_call(f: &Function, facts: &Facts, homeless: &[bool]) -> bool {
     crosses
 }
 
+/// Notes, for the values a call or a return passes in order, the number of the
+/// register each is passed in, for those that go in one: the k-th of a kind in
+/// the k-th register of the kind, while the chip has one.
+fn note_passed(f: &Function, kinds: Offer, values: &[Value], passed_in: &mut [usize]) {
+    let mut seen = [0usize; 2];
+    for v in values {
+        let kind = kind(f.types[v.0]);
+        let k = seen[kind];
+        seen[kind] += 1;
+        if k < kinds.of(kind).passed && passed_in[v.0] == NONE {
+            passed_in[v.0] = kinds.first(kind) + k;
+        }
+    }
+}
+
+/// For each parameter of the function's first block, the number of the
+/// register it arrives in, if it arrives in one.
+fn arrivals(f: &Function, kinds: Offer, block: &crate::scalar::Block) -> Vec<Option<usize>> {
+    let mut seen = [0usize; 2];
+    block
+        .params
+        .iter()
+        .map(|p| {
+            let kind = kind(f.types[p.0]);
+            let k = seen[kind];
+            seen[kind] += 1;
+            (k < kinds.of(kind).passed).then(|| kinds.first(kind) + k)
+        })
+        .collect()
+}
+
 /// Sends values to the frame until, at every point, no more are held in
 /// registers than the chip offers, and no more are held across a call in
 /// registers than a call leaves alone.
 fn spill(
     f: &Function,
-    registers: Registers,
+    kinds: Offer,
+    kinds_of: &[u8],
     facts: &Facts,
     spilled: &mut [bool],
     crosses: &mut [bool],
     homeless: &[bool],
 ) {
     let values = f.types.len();
-    let mut held = Held {
-        values: Vec::new(),
-        at: vec![NONE; values],
-    };
+    let mut held = Held::new(kinds_of, values);
     // Whether a value is read last at the place being looked at.
     let mut last_here = vec![NONE; values];
     // The one whose last use is furthest away, of the values.
@@ -505,10 +640,24 @@ fn spill(
             }
         }
         let squeeze = |held: &mut Held, spilled: &mut [bool]| {
-            while held.values.len() > registers.count() {
-                let v = held.values[furthest(&held.values)];
-                spilled[v.0] = true;
-                held.remove(v);
+            for kind_of in 0..2 {
+                if held.counts[kind_of] <= kinds.of(kind_of).count() {
+                    continue;
+                }
+                let of_kind = |held: &Held| -> Vec<Value> {
+                    (held.values.iter().copied())
+                        .filter(|v| kind(f.types[v.0]) == kind_of)
+                        .collect()
+                };
+                loop {
+                    let values = of_kind(held);
+                    if values.len() <= kinds.of(kind_of).count() {
+                        break;
+                    }
+                    let v = values[furthest(&values)];
+                    spilled[v.0] = true;
+                    held.remove(v);
+                }
             }
         };
         for p in &block.params {
@@ -526,16 +675,21 @@ fn spill(
                 for v in &facts.dying[at] {
                     last_here[v.0] = at;
                 }
-                let mut across: Vec<Value> = (held.values.iter().copied())
+                let across: Vec<Value> = (held.values.iter().copied())
                     .filter(|v| last_here[v.0] != at)
                     .collect();
                 for v in &across {
                     crosses[v.0] = true;
                 }
-                while across.len() > registers.preserved {
-                    let v = across.swap_remove(furthest(&across));
-                    spilled[v.0] = true;
-                    held.remove(v);
+                for kind_of in 0..2 {
+                    let mut of_kind: Vec<Value> = (across.iter().copied())
+                        .filter(|v| usize::from(kinds_of[v.0]) == kind_of)
+                        .collect();
+                    while of_kind.len() > kinds.of(kind_of).preserved {
+                        let v = of_kind.swap_remove(furthest(&of_kind));
+                        spilled[v.0] = true;
+                        held.remove(v);
+                    }
                 }
             }
             for v in &facts.dying[at] {
@@ -624,24 +778,27 @@ impl Near {
 /// the frame when there is none.
 #[allow(clippy::too_many_arguments)]
 fn colour(
-    registers: Registers,
+    kinds: Offer,
     holder: &mut [usize],
     register: &mut [usize],
     spilled: &mut [bool],
     crosses: &[bool],
-    v: Value,
+    (v, of_kind): (Value, usize),
     arrives: Option<usize>,
     near: &[usize],
 ) {
     if spilled[v.0] {
         return;
     }
-    let from = if crosses[v.0] { registers.changed } else { 0 };
-    let free = |r: usize| r >= from && r < registers.count() && holder[r] == NONE;
+    let offered = kinds.of(of_kind);
+    let first = kinds.first(of_kind);
+    let from = first + if crosses[v.0] { offered.changed } else { 0 };
+    let to = first + offered.count();
+    let free = |r: usize| r >= from && r < to && holder[r] == NONE;
     let wanted = arrives
         .filter(|&r| free(r))
         .or_else(|| near.iter().copied().find(|&r| free(r)));
-    match wanted.or_else(|| (from..registers.count()).find(|&r| holder[r] == NONE)) {
+    match wanted.or_else(|| (from..to).find(|&r| holder[r] == NONE)) {
         Some(r) => {
             holder[r] = v.0;
             register[v.0] = r;

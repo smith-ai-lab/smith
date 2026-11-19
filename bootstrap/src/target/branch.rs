@@ -1,6 +1,6 @@
 //! What every target shares about a branch on a comparison.
 
-use crate::scalar::{End, Function, Instruction, Op};
+use crate::scalar::{End, Function, Instruction, Op, Type};
 
 /// How many jumps a choice by a number must have to be made through a table
 /// of where each goes, and not by comparing the number with each place in turn.
@@ -59,8 +59,13 @@ pub fn before_choice(f: &Function) -> Vec<Vec<bool>> {
                 .instructions
                 .iter()
                 .zip(next)
-                .map(|(i, next)| match next.map(|n| &n.op) {
-                    Some(Op::Choose { on, .. }) => flag(i) == Some(*on) && reads[on.0] == 1,
+                .map(|(i, next)| match next.map(|n| (&n.op, n.results.first())) {
+                    // A choice between floats is not made on the flags.
+                    Some((Op::Choose { on, .. }, Some(chosen))) => {
+                        flag(i) == Some(*on)
+                            && reads[on.0] == 1
+                            && !matches!(f.types[chosen.0], Type::Float(_))
+                    }
                     _ => false,
                 })
                 .collect()
