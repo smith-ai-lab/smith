@@ -1,13 +1,13 @@
 ---
 type: specification
 title: Integer arithmetic
-description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, narrow and clamp where nothing proves it or the value is a float, and the functions that wrap.
+description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, narrow and clamp where nothing proves it or the value is a float, a range of up to 128 bits, and the functions that wrap.
 status: partial
 built:
   - "a plain `+`, `-`, or `*` on `u8` to `i64`, which compiles when `arith` proves that the result fits the type of its operands, and an error that says what could not be proven"
   - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
   - "a value that enters a narrower range, at a binding, a `var`, an argument, and a result, which compiles when a condition or a `requires` shows that it fits, and an error that says what could not be proven"
-  - "not the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float"
+  - "not the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float, or a range of 65 to 128 bits, which is refused as a wider one is"
 ---
 
 # Integer arithmetic
@@ -177,7 +177,18 @@ fn level_down(x: f64) -> Byte { clamp(floor(x)) }
 
 ## More than 64 bits
 
-A result whose range needs more than 64 bits has no type that holds it, so it is refused until it is narrowed. It is narrowed where it enters a range of 64 bits or fewer, with the proof that it fits, or by `narrow` or `clamp`.
+A range of up to 128 bits is a range like any other. So the result of an operator is never lost for want of room in 64 bits: the product of two `Nat`s is the whole product, and a sum with a carry is the whole sum.
+
+```
+fn times(a: Nat, b: Nat) -> (Nat, Nat) {
+  p = a * b
+  (p / 18446744073709551616, p % 18446744073709551616)
+}
+```
+
+`p` is a `0..340282366920938463426481119284349108226`, which holds the product of any two `Nat`s. Divided by 2 to the 64 it is below 2 to the 64, and so is what is left over, so each is a `Nat` with nothing to prove. `times(18446744073709551615, 2)` is `(1, 18446744073709551614)`: the high half and the low half of the product. The multiplication is the one instruction a processor has for it, and the two halves are the two words it gives.
+
+A wide result enters a range of 64 bits as any value enters a narrower range: where it is shown to fit, or by `narrow` or `clamp`.
 
 ```
 fn doubled(n: Nat) -> Nat { n * 2 }
@@ -194,6 +205,10 @@ fn doubled(n: Nat) -> Nat
 ```
 
 `doubled(21)` is `42`.
+
+Only what is wide costs more. A range of more than 64 bits is kept in two words, and a program that has none is the program it was. Adding, subtracting, and comparing two wide numbers are two instructions each, and a product whose result is wide is one. Dividing a wide number by a number that is not a power of two is a function of many instructions, on every processor, and is slow beside every other operator.
+
+A result whose range needs more than 128 bits has no type that holds it, and is refused until it is narrowed. A number of more bits than that, as a key of a signature is, is a type of the library, made of `Nat`s and worked on with the operators above.
 
 ## Dividing
 
@@ -264,7 +279,8 @@ This is refused, as `a` and `b` are of two ranges. The fix is to bind the narrow
 | `a + b`, `a - b`, `a * b` | The exact range of the result, which cannot fail |
 | `a / b`, `a % b` | The exact range, with the range of `b` excluding zero |
 | A value where a narrower range is expected | Compiles when it is shown to fit, refused otherwise |
-| A result of more than 64 bits | Refused until it is narrowed |
+| A result of 65 to 128 bits | A range, kept in two words |
+| A result of more than 128 bits | Refused until it is narrowed |
 | `narrow(x)` | `.some(x)` when `x` is in the range expected, `.none` when it is not |
 | `clamp(x)` | The value of the range expected that is nearest `x` |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | The low bits, for a range that fills a size |

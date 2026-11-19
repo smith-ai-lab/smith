@@ -155,11 +155,11 @@ The lexer and parser are hand-written: recursive descent for declarations and a 
 
 ### How a whole number is kept
 
-This is planned. Today the compiler keeps a whole number as itself, in the smallest of `u8` to `i64` that holds every value of its range, signed when the range has a negative value, so a range is the size it is kept at and no smaller.
+This is planned. Today the compiler keeps a whole number as itself, in the smallest of `u8` to `i64` that holds every value of its range, signed when the range has a negative value, so a range is the size it is kept at and no smaller. A range that needs more than 64 bits is refused.
 
 A whole number is a range, and how it is kept is the compiler's choice, which no program can observe. The choice has three parts.
 
-- **The size is the smallest of 8, 16, 32, and 64 bits that holds the number of its values.** The number of values of `a..b` is `b - a`, whatever `a` and `b` are.
+- **The size is the smallest of 8, 16, 32, 64, and 128 bits that holds the number of its values.** The number of values of `a..b` is `b - a`, whatever `a` and `b` are. A range of 128 bits is two integers of 64 in the scalar form, the low one first, so the form has no wider integer: a sum is an add and an add with the carry, a product of two integers of 64 bits is the instruction that gives both halves, and dividing by a power of two takes a half or shifts across the two.
 - **The form is as itself when that size holds its values as they are,** signed when the range has a negative value, **and as the distance from its least value otherwise.**
 - **A bound that is not a constant,** as the `n` of `0..n`, is kept at the size of the type of `n`.
 
@@ -171,6 +171,7 @@ A whole number is a range, and how it is kept is the compiler's choice, which no
 | `1900..2100` | 1 byte | The distance from 1900 |
 | `0..256`, the `Byte` | 1 byte | Itself |
 | `0..18446744073709551616`, the `Nat` | 8 bytes | Itself |
+| `0..340282366920938463463374607431768211456` | 16 bytes | Itself, in two words |
 | `-9223372036854775808..9223372036854775808`, the `Int` | 8 bytes | Itself, signed |
 
 Kept as a distance, copying, comparing, matching, and adding cost nothing, and subtracting, multiplying, dividing, and passing to a range with another base cost one addition of a constant. A range that fills a size exactly is always kept as itself, so a foreign declaration, which is written with those ranges, passes its values as they are.
