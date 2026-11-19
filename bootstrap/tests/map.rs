@@ -63,6 +63,10 @@ pub const ONCE: &[Test] = &[
         every_function_of_the_source_that_runs_is_the_name_of_an_at_line,
     ),
     (
+        "a_function_with_no_at_line_holds_no_place_but_its_own",
+        a_function_with_no_at_line_holds_no_place_but_its_own,
+    ),
+    (
         "the_bytes_of_a_function_built_in_place_in_a_loop_are_no_more_than_it_compiled_alone",
         the_bytes_of_a_function_built_in_place_in_a_loop_are_no_more_than_it_compiled_alone,
     ),
@@ -620,6 +624,47 @@ fn every_function_of_the_source_that_runs_is_the_name_of_an_at_line() {
             }
         }
     });
+}
+
+/// What the map says of a function it gives no `at` line is that all of its
+/// code is its own, so the code of a piece of the runtime that is built in it
+/// cannot be left without its name.
+fn a_function_with_no_at_line_holds_no_place_but_its_own() {
+    // A text that is appended to, in a function of its own, which holds the
+    // code of `<append>` and no line.
+    let text = "use std.console (console, print)\nuse std.text (Text, append, finish, text)\n\nfn put_text(to: take Text, s: str) -> Text ! alloc {\n  append(to, s)\n}\n\nfn main() ! alloc, console {\n  var w = text()\n  w = put_text(w, \"hi\")\n  w = put_text(w, \"there\")\n  w = put_text(w, \"you\")\n  w = put_text(w, \"all\")\n  print(finish(w))\n}\n";
+    holds_only_its_own(text.as_bytes());
+    generate::check(9207, 10, programs::program, |case| {
+        if case.mistake.is_none() {
+            holds_only_its_own(&case.source);
+        }
+    });
+}
+
+fn holds_only_its_own(source: &[u8]) {
+    let program = passed(source);
+    let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    for target in buildable() {
+        let (_, parts) = target.emit_parts(&program);
+        let map = smith::target::map(&names, &parts);
+        for (line, at) in functions(&map) {
+            // A part the target adds that is not a function of the program is
+            // no function here.
+            let Some(f) = program.functions.iter().find(|f| f.name == parse(line).3) else {
+                continue;
+            };
+            if !at.is_empty() || f.name.is_empty() {
+                continue;
+            }
+            let own = scalar::Place::of(&f.name);
+            let held: std::collections::HashSet<&str> = (f.blocks.iter())
+                .flat_map(|b| &b.instructions)
+                .filter(|i| !i.at.is_none() && i.at != own)
+                .map(|i| scalar::names::name(i.at.function))
+                .collect();
+            assert!(held.is_empty(), "{line} has no at line and holds the code of {held:?} for {}", target.name());
+        }
+    }
 }
 
 fn the_bytes_of_a_function_built_in_place_in_a_loop_are_no_more_than_it_compiled_alone() {
