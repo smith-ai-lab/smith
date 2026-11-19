@@ -55,7 +55,7 @@ fn main() ! messages, net, alloc {
 
 No tool is stored in a value. A tool may have any effects, and they are required of the function its name is written in, as [the effects of a function that is passed](../language/effects.md#a-lambdas-effects) are: a server with a tool that carries `net` has a `main` that carries `net`, so the first line of `main` says everything the server can reach. Which tool a message calls is settled when the program is built, and a call of a tool is a direct call.
 
-`tool` is a [function over code](../language/code.md), which is how it reads the name, the comments, and the parameters of the function it is given. `tool` carries an effect that `mcp` handles, which is how a line with no value to pass along reaches the message being answered.
+`tool` takes a function that has [`Function`](../language/traits.md#an-impl-for-a-function), which every function with a name is given, and that is how it has the function's name, its comment, and its parameters with theirs: it reads the arguments struct from the message with [`Deserialize`](deserialize.md), calls the function, and describes the struct with [`Describe`](describe.md) for a client that lists the tools. `tool` reads no code. `tool` carries an effect that `mcp` handles, which is how a line with no value to pass along reaches the message being answered.
 
 ## Where the messages come from
 

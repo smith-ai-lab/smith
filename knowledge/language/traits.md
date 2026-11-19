@@ -138,10 +138,41 @@ The function is still called and passed as it always is. Only where a type is ex
 A trait that is implemented for functions can speak of what a function takes and gives. Every function is given `Function`, as a struct is given `Eq`:
 
 ```
-trait Function[F, out Args, out R]
+trait Function[F, out Args, out R] {
+  fn name() -> str
+  fn about() -> str
+  fn call(f: F, args: take Args) -> R
+}
 ```
 
-`Args` is the types of the function's parameters as one tuple, and `R` is the type of its result. For `fn scale(x: f32, by: f32) -> f32`, `Args` is `(f32, f32)` and `R` is `f32`. A function of one parameter has that parameter's type as its `Args`, and a function of none has `()`. So one trait is declared for functions of every number of parameters, with a tuple standing for them, and nothing about how a function is called changes: `scale(3.0, 2.0)` is written as it always was.
+`R` is the type of the function's result. `Args` is a struct whose fields are the function's parameters: the same names, in the same order, with the same types, the same defaults, and the same comments. For
+
+```
+// Makes a length longer or shorter.
+fn scale(
+  // The length.
+  x: f32,
+  // How many times as long.
+  by: f32 = 2.0,
+) -> f32 { x * by }
+```
+
+`Args` is a struct with a field `x` and a field `by`, whose default is `2.0`, and `R` is `f32`. A function of no parameters has a struct of no fields. So one trait is declared for functions of every number of parameters, and nothing about how a function is called changes: `scale(3.0, 2.0)` is written as it always was.
+
+- `name()` is the name the function was given, `"scale"`, and `about()` is the comment on it, `"Makes a length longer or shorter."`, or the empty text where it has none.
+- `call(f, args)` calls the function with the fields of `args` as its arguments, so `call(scale, args)` with `x` of `3.0` and `by` of `2.0` is `6.0`.
+
+`Args` is a struct like any other, so it is given what a struct is given: it is read from a format by [`Deserialize`](../library/deserialize.md), with a field that has a default left out, and it describes itself, each field with its comment, by [`Describe`](../library/describe.md). That is how a library calls a function it was given with arguments it read, and tells whoever asks what the function takes, with no part of the function written twice. A function that takes a function with a name bounds it by `Function`.
+
+```
+fn told[F: Function](f: F) -> str ! alloc { "{name()}: {about()}" }
+```
+
+`told(scale)` is `"scale: Makes a length longer or shorter."`. A lambda has no name and no comment, and no `Function`, so `told(fn(x) { x })` is refused. The compiler does not build `Function`, so no words are quoted.
+
+What a function does outside itself is still its own: the effects of a function are required of the function that names it, as a value or as a type, as [the effects of a function that is passed](effects.md#a-lambdas-effects) are, and `call` adds none.
+
+This is the half of a function that a trait can say: what it is called, what it takes, and what it gives. The other half, what it does, is its code, which only a [function over code](code.md) reads.
 
 ## Defaults of a trait's functions
 
