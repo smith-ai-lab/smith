@@ -36,7 +36,7 @@ A tool is a function with a name. Each parameter is a member of the object a cli
 
 **The description is the comment.** The comment on the function describes the tool, the comment on a parameter describes that member, and the comment on a field of a struct describes the field. A comment belongs to what follows it, as [Functions](../language/functions.md#comments) says, so there is one place to say what a thing is, for a reader of the code and for the model that calls the tool. A comment reaches the executable only for a function given to `tool` and the types it takes and gives.
 
-**The result says how a tool fails.** A tool gives `T` or `Result[T, E]`. `.ok(v)` is the result `v`, and `.err(e)` is a result marked as an error that holds `e`, which the model reads and may act on. An input that does not fit the parameters never reaches the function: the library answers that the parameters are invalid, with the path and the problem of the [`ReadError`](deserialize.md). A call of a tool the server has not is answered by the library too.
+**The result says how a tool fails.** A tool gives `T` or `Result[T, E]`. `.ok(v)` is the result `v`, and `.err(e)` is a result marked as an error that holds `e`, which the model reads and may act on. An input that does not fit the parameters never reaches the function: the library answers that the parameters are invalid, with the path and the problem of the [`ReadError`](deserialize.md). A call of a tool the server has not is answered by the library too, with the failure -32602, as an input that does not fit is.
 
 ## The tools of a server
 
@@ -52,6 +52,8 @@ fn main() ! messages, net, alloc {
 ```
 
 `mcp` takes the name and the version of the server, and what else the protocol lets a server say of itself as arguments with defaults, so a server that says no more writes no more.
+
+The server speaks the version of the protocol dated 2026-07-28, which has no handshake and keeps nothing between two requests. A client that sends `server/discover` is told the versions the server speaks, the capabilities its lines imply, and the instructions `mcp` was given, if any, and every result carries the server's name and version. A request that names a version the server does not speak is answered with the failure -32022 and the versions it does, and a client of an earlier version that begins with `initialize` is answered the same way.
 
 No tool is stored in a value. A tool may have any effects, and they are required of the function its name is written in, as [the effects of a function that is passed](../language/effects.md#a-lambdas-effects) are: a server with a tool that carries `net` has a `main` that carries `net`, so the first line of `main` says everything the server can reach. Which tool a message calls is settled when the program is built, and a call of a tool is a direct call.
 
@@ -78,9 +80,9 @@ fn main() ! messages, store, alloc {
 }
 ```
 
-A client that reads `notes://note/7` is given what `note(7)` gives. A part of the pattern that begins with `:` is a parameter of the function, by its name, read as the parameter's type, as a part of a path is for a [route](http.md#where-a-parameter-comes-from). A pattern with no such part is one resource, and one with any is every resource that fits it, which a client is told of as a template.
+A client that reads `notes://note/7` is given what `note(7)` gives. A part of the pattern that begins with `:` is a parameter of the function, by its name, read as the parameter's type, as a part of a path is for a [route](http.md#where-a-parameter-comes-from). A pattern with no such part is one resource, and one with any is every resource that fits it, which a client is told of as a template with the part in braces, `notes://note/{id}`.
 
-The description is the comment, as for a tool. What the function gives has [`Serialize`](serialize.md) and is written as JSON, or is a `str` and is written as it is. `.err(e)` of a `Result` is answered as a resource that could not be read, and an address that fits no pattern, or whose part does not read as its parameter's type, is answered by the library and never reaches a function.
+The description is the comment, as for a tool. What the function gives has [`Serialize`](serialize.md) and is written as JSON, or is a `str` and is written as it is. `.err(e)` of a `Result` is answered as a resource that is not there, the failure -32602 with the address, and an address that fits no pattern, or whose part does not read as its parameter's type, is answered by the library and never reaches a function.
 
 ## A prompt
 
@@ -108,7 +110,7 @@ fn main() ! messages, store, alloc {
 
 A client that lists the prompts is told of `summarise`, with its comment and its two blanks, of which `sentences` may be left out. A client that asks for it with `id` as 7 is given the text, as one message from the user. The parameters are read as a tool's are, and the comment on each describes its blank.
 
-`resource` and `prompt` are lines beside `tool`, are bounded by [`Function`](../language/traits.md#an-impl-for-a-function) as it is, and read no code. A server offers what its lines say, so one with no `resource` line tells a client it has no resources.
+`resource` and `prompt` are lines beside `tool`, are bounded by [`Function`](../language/traits.md#an-impl-for-a-function) as it is, and read no code. A server offers what its lines say, so one with no `resource` line tells a client it has no resources, and a request to list or read one is answered that the method is not found, -32601.
 
 ## Who may call
 

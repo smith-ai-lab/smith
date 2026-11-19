@@ -37,14 +37,14 @@ The server of messages at `/mcp` is reached only with a token that `https://logi
 `oauth` is written with [`with`](../language/with.md) and guards the routes after it, as `bearer` does. It does three things.
 
 - **It says where to get a token.** It answers `/.well-known/oauth-protected-resource`, with the document of RFC 9728 that names the audience as the resource and the issuer as its authorization server, so a client that knows nothing of the server finds where to ask.
-- **It turns away a request with no token that is right.** Such a request is answered 401, with a `WWW-Authenticate` header that gives the address of that document. A token is right when [`verify`](jwt.md) gives its claims for the key, the issuer, and the audience. A token for another audience is not right, so one meant for another server is not taken.
+- **It turns away a request with no token that is right.** Such a request is answered 401, with the header `WWW-Authenticate: Bearer resource_metadata="<address>"`, which gives the address of that document, and with `error="invalid_token"` in it when a token was sent and is not right. A token is right when [`verify`](jwt.md) gives its claims for the key, the issuer, and the audience. A token for another audience is not right, so one meant for another server is not taken.
 - **It answers `identity`.** For a request it lets in, [`caller()`](http.md#who-may-call) is the subject and the scopes of the token.
 
 `oauth` reads no code and knows nothing of what it guards: it guards an HTML page as it guards a server of messages.
 
 ## Scopes
 
-`needs` guards the routes after it with a scope, and answers 403, with the scope that is missing, to a caller whose token has not got it.
+`needs` guards the routes after it with a scope, and answers 403 to a caller whose token has not got it, with the header `WWW-Authenticate: Bearer error="insufficient_scope", scope="<the scope that is missing>"` and the address of the document.
 
 ```
 use std.oauth (needs, oauth)
