@@ -322,7 +322,9 @@ fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() 
         assert_eq!(warnings(&with), warnings(source), "for\n{with}");
         let used = names_used(&bare);
         if used.is_empty() {
-            assert_eq!(&bare, source);
+            // A program that writes no name of the library has no `use` line, and
+            // may begin with a blank line, which `without_uses` takes off.
+            assert_eq!(bare, source.trim_start_matches('\n'));
             return;
         }
         let errors = check(bare.as_bytes()).expect_err("names that are not imported");
