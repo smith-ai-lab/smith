@@ -29,8 +29,12 @@ pub const ONCE: &[Test] = &[
         a_head_longer_than_the_limit_is_refused_at_the_limit_however_the_bytes_go_on,
     ),
     (
-        "a_version_other_than_http_1_1_is_refused",
-        a_version_other_than_http_1_1_is_refused,
+        "a_version_other_than_http_1_0_and_1_1_is_refused",
+        a_version_other_than_http_1_0_and_1_1_is_refused,
+    ),
+    (
+        "a_request_of_http_1_0_needs_no_host_and_refuses_a_transfer_encoding",
+        a_request_of_http_1_0_needs_no_host_and_refuses_a_transfer_encoding,
     ),
     (
         "a_request_needs_exactly_one_host_and_a_valid_one",
@@ -75,6 +79,8 @@ struct Head {
     /// the status and the reason of a response.
     parts: (String, String),
     request: bool,
+    /// A request of HTTP/1.0.
+    old: bool,
 }
 
 fn word(g: &mut Gen, letters: &[char], most: usize) -> String {
@@ -87,10 +93,12 @@ fn blanks(g: &mut Gen) -> String {
 
 fn head(g: &mut Gen) -> Head {
     let request = g.one_in(2);
+    let old = request && g.one_in(3);
     let (first, parts) = if request {
         let method = (*g.pick(&["GET", "POST", "PUT", "DELETE", "x-Custom"])).to_string();
         let target = format!("/{}", word(g, &['a', 'b', '0', '/', '?', '=', '&', '%'], 6));
-        (format!("{method} {target} HTTP/1.1"), (method, target))
+        let version = if old { "1.0" } else { "1.1" };
+        (format!("{method} {target} HTTP/{version}"), (method, target))
     } else {
         let status = 100 + g.below(500);
         let reason = if g.one_in(3) {
@@ -117,12 +125,13 @@ fn head(g: &mut Gen) -> Head {
         })
         .collect();
     let mut headers: Vec<(String, String, String, String)> = headers;
-    if request {
+    // A request of HTTP/1.1 has a host, and one of HTTP/1.0 may have one.
+    if request && (!old || g.one_in(2)) {
         let host = (*g.pick(&["example.com", "a.b:8080", "[::1]:80", "h%41", "", "x_y!$&'()*+,;=~"])).to_string();
         let at = g.below(headers.len() + 1);
         headers.insert(at, ("host".into(), "Host".into(), host, "\u{0} ".into()));
     }
-    Head { first, headers, parts, request }
+    Head { first, headers, parts, request, old }
 }
 
 /// The bytes of a head: each line ends with a carriage return and a line feed.
@@ -143,7 +152,7 @@ fn list(bytes: &[u8]) -> String {
     format!("[{}]", items.join(", "))
 }
 
-const SHOW: &str = "fn show_request(b: take List[Byte]) ! console, alloc {\n  match request_head(freeze(b)) {\n    .complete((h, used)) {\n      print(\"request {h.method} {h.target} {used}\")\n      loop kv in h.headers {\n        match kv {\n          (n, v) { print(\"{n}|{v}|\") }\n        }\n      }\n    }\n    .incomplete { print(\"incomplete\") }\n    .refused(why) { print(\"refused\") }\n  }\n}\n\nfn show_response(b: take List[Byte]) ! console, alloc {\n  match response_head(freeze(b)) {\n    .complete((h, used)) {\n      print(\"response {h.status} {h.reason}| {used}\")\n      loop kv in h.headers {\n        match kv {\n          (n, v) { print(\"{n}|{v}|\") }\n        }\n      }\n    }\n    .incomplete { print(\"incomplete\") }\n    .refused(why) { print(\"refused\") }\n  }\n}\n\n";
+const SHOW: &str = "fn show_request(b: take List[Byte]) ! console, alloc {\n  match request_head(freeze(b)) {\n    .complete((h, used)) {\n      ver = match h.version {\n        .http10 { \"1.0\" }\n        .http11 { \"1.1\" }\n      }\n      print(\"request {h.method} {h.target} {ver} {used}\")\n      loop kv in h.headers {\n        match kv {\n          (n, v) { print(\"{n}|{v}|\") }\n        }\n      }\n    }\n    .incomplete { print(\"incomplete\") }\n    .refused(why) { print(\"refused\") }\n  }\n}\n\nfn show_response(b: take List[Byte]) ! console, alloc {\n  match response_head(freeze(b)) {\n    .complete((h, used)) {\n      print(\"response {h.status} {h.reason}| {used}\")\n      loop kv in h.headers {\n        match kv {\n          (n, v) { print(\"{n}|{v}|\") }\n        }\n      }\n    }\n    .incomplete { print(\"incomplete\") }\n    .refused(why) { print(\"refused\") }\n  }\n}\n\n";
 
 /// A program that runs each of `calls` and prints what each gives.
 fn program(imports: &str, helpers: &str, calls: &[String]) -> String {
@@ -172,7 +181,7 @@ fn read_program(calls: &[String]) -> String {
 fn expected(h: &Head) -> Vec<String> {
     let used = written(h).len();
     let mut lines = vec![if h.request {
-        format!("request {} {} {used}", h.parts.0, h.parts.1)
+        format!("request {} {} {} {used}", h.parts.0, h.parts.1, if h.old { "1.0" } else { "1.1" })
     } else {
         format!("response {} {}| {used}", h.parts.0, h.parts.1)
     }];
@@ -249,7 +258,13 @@ fn fault(g: &mut Gen, h: &Head) -> Vec<u8> {
     }
     let mut ends: Vec<&[u8]> = vec![CRLF; lines.len()];
     let at = 1 + g.below(lines.len() - 1);
-    match g.below(if h.request { 11 } else { 8 }) {
+    let kind = g.below(if h.request { 11 } else { 8 });
+    // A request of HTTP/1.0 needs no host, so taking it away is no fault, and with
+    // none there is none to repeat or spoil: those get a transfer-encoding put in,
+    // which a request of HTTP/1.0 refuses.
+    let hostless = h.old && !h.headers.iter().any(|(n, ..)| n == "host");
+    let kind = if h.old && (kind == 8 || (hostless && (9..=10).contains(&kind))) { 11 } else { kind };
+    match kind {
         // A line that ends with a line feed alone.
         0 => ends[at] = b"\n",
         // A carriage return that no line feed follows.
@@ -288,12 +303,17 @@ fn fault(g: &mut Gen, h: &Head) -> Vec<u8> {
         // A request with two hosts.
         9 => lines.insert(at, format!("{}: example.com", g.pick(&["host", "HOST"])).into_bytes()),
         // A request with a host that is not one.
-        _ => {
+        10 => {
             let bad = *g.pick(&["a b", "a/b", "u@h", "h%zz", "h?q", "h#f", "a\\b", "h%4", "<h>"]);
             for line in lines.iter_mut().filter(|l| l.to_ascii_lowercase().starts_with(b"host:")) {
                 *line = format!("host: {bad}").into_bytes();
             }
         }
+        // A request of HTTP/1.0 with a transfer-encoding.
+        _ => lines.insert(
+            at,
+            format!("{}: {}", g.pick(&["transfer-encoding", "Transfer-Encoding"]), g.pick(&["chunked", "gzip, chunked", "x"])).into_bytes(),
+        ),
     }
     ends.resize(lines.len(), CRLF);
     let mut bytes = Vec::new();
@@ -613,7 +633,7 @@ fn a_target_of_each_of_the_four_forms_is_read_as_it_is_written() {
     let mut expected = Vec::new();
     for t in targets {
         let used = request_with(&[&format!("OPTIONS {t} HTTP/1.1"), "host: example.com"]).len();
-        expected.push(format!("request OPTIONS {t} {used}"));
+        expected.push(format!("request OPTIONS {t} 1.1 {used}"));
         expected.push("host|example.com|".to_string());
     }
     assert_eq!(printed(&read_program(&calls)), expected);
@@ -679,16 +699,21 @@ fn an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response() {
     );
 }
 
-fn a_version_other_than_http_1_1_is_refused() {
+fn a_version_other_than_http_1_0_and_1_1_is_refused() {
     let calls: Vec<String> = [
-        "GET / HTTP/1.0",
         "GET / HTTP/2.0",
+        "GET / HTTP/1.2",
+        "GET / HTTP/0.9",
         "GET / HTTP/1.11",
+        "GET / HTTP/1.01",
         "GET / http/1.1",
+        "GET / http/1.0",
         "GET / HTTP/1.1 ",
+        "GET / HTTP/1.0 ",
         "GET /  HTTP/1.1",
-        "GET / HTTP/1.0\r\ntransfer-encoding: chunked",
-        "GET / HTTP/1.0\r\nhost: h\r\ntransfer-encoding: chunked",
+        "GET / HTTP/1",
+        "GET / HTTP/1.",
+        "GET /",
     ]
     .iter()
     .map(|start| {
@@ -703,4 +728,43 @@ fn a_version_other_than_http_1_1_is_refused() {
     )
     .collect();
     assert_eq!(printed(&read_program(&calls)), vec!["refused"; calls.len()]);
+}
+
+fn a_request_of_http_1_0_needs_no_host_and_refuses_a_transfer_encoding() {
+    let start = "GET /x HTTP/1.0";
+    // What each head reads as: the lines it is, and the lines printed, or refused.
+    let cases: Vec<(Vec<&str>, Option<usize>)> = vec![
+        (vec![start], Some(0)),
+        (vec![start, "host: example.com"], Some(1)),
+        (vec![start, "content-length: 3"], Some(1)),
+        (vec![start, "connection: keep-alive", "x: y"], Some(2)),
+        (vec![start, "host: a", "host: a"], None),
+        (vec![start, "host: a b"], None),
+        (vec![start, "transfer-encoding: chunked"], None),
+        (vec![start, "host: h", "Transfer-Encoding: gzip, chunked"], None),
+        (vec![start, "transfer-encoding: x"], None),
+        (vec![start, "content-length: 3", "transfer-encoding: chunked"], None),
+        (vec![start, "content-length: 3", "content-length: 3"], None),
+        (vec!["GET /x HTTP/1.1", "host: h", "transfer-encoding: chunked"], Some(2)),
+        (vec!["GET /x HTTP/1.1"], None),
+    ];
+    let calls: Vec<String> = cases
+        .iter()
+        .map(|(lines, _)| format!("show_request({})", list(&request_with(lines))))
+        .collect();
+    let mut want = Vec::new();
+    for (lines, read) in &cases {
+        match read {
+            Some(headers) => {
+                let version = if lines[0].ends_with("1.0") { "1.0" } else { "1.1" };
+                want.push(format!("request GET /x {version} {}", request_with(lines).len()));
+                want.extend(lines[1..1 + headers].iter().map(|l| {
+                    let (name, value) = l.split_once(": ").unwrap();
+                    format!("{}|{value}|", name.to_ascii_lowercase())
+                }));
+            }
+            None => want.push("refused".to_string()),
+        }
+    }
+    assert_eq!(printed(&read_program(&calls)), want);
 }
