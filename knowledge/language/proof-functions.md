@@ -10,17 +10,17 @@ status: planned
 A proof is a value like any other. It is passed to a function, returned from one, and held in a field, as [a struct that holds a proof](proof-fields.md) shows. Every proof starts from `arith` or from a [`check`](check.md) that passed, and it is erased before code generation.
 
 ```
-fn keep(a: Nat, p: a > 0) -> a > 0 { p }
+fn keep(at: Nat, size: Nat, p: at <= size) -> at <= size { p }
 
-fn positive(a: Nat) -> Option[Pos] {
-  match check(a > 0) {
-    .some(p) { .some(Pos(value: a, above: keep(a, p))) }
+fn cursor[size: Nat](at: Nat) -> Option[Cursor[size]] {
+  match check(at <= size) {
+    .some(p) { .some(Cursor(at: at, inside: keep(at, size, p))) }
     .none { .none }
   }
 }
 ```
 
-`keep` takes a proof that `a > 0` and gives it back. The parameter `p` is a proof, so the caller owes one, and here it comes from the `check`.
+`keep` takes a proof that `at <= size` and gives it back. The parameter `p` is a proof, so the caller owes one, and here it comes from the `check`. `Cursor` is the struct of [A struct that holds a proof](proof-fields.md), and the proof `keep` gives is the one its field `inside` needs.
 
 ## What a proof may not do
 

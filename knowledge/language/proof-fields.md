@@ -1,44 +1,50 @@
 ---
 type: specification
 title: A struct that holds a proof
-description: A statement about values is a type, a struct holds a proof as a field, Pos is defined that way, an index that travels is a range, and a fact that must hold in every round of a loop is kept in a type.
+description: A statement about values is a type, a struct holds a proof as a field where a fact joins two values, a fact about one number is its range, an index that travels is a range, and a fact that must hold in every round of a loop is kept in a type.
 status: planned
 ---
 
 # A struct that holds a proof
 
-A statement about values, such as `n > 0`, is a type, and a value of that type is a proof of the statement. A struct can hold a proof as a field, whose type is the statement it proves.
+A statement about values, such as `at <= size`, is a type, and a value of that type is a proof of the statement. A struct can hold a proof as a field, whose type is the statement it proves.
 
 ```
-struct Pos {
-  value: Nat
-  above: value > 0
+struct Cursor[size: Nat] {
+  at: Nat
+  inside: at <= size
 }
 ```
 
-A `Pos` is a `Nat` together with the proof that it is above zero. The proof is erased before code generation, as every proof is.
+A `Cursor` is a place in a text of `size` bytes together with the proof that it is not past the end. The proof is erased before code generation, as every proof is, so a `Cursor` is one `Nat` when the program runs.
+
+A fact about one number alone needs no struct, as its range says it: a number above zero is a [`Pos`](number-types.md), and a number below `n` is a `0..n`. A struct holds a proof where the fact joins two values, as `at` and `size` here, or is more than a range can say.
 
 ## Making one
 
 The field for the proof is left out of a construction. `arith` builds it from what is known, or the construction is refused.
 
 ```
-fn four() -> Pos { Pos(value: 4) }
+fn first() -> Cursor[10] { Cursor(at: 4) }
 ```
 
-`four()` is a `Pos`, since `4 > 0`. `Pos(value: 0)` is refused, since `0 > 0` cannot be proven. A value that is known only when the program runs needs a [`check`](check.md) to give the proof.
+`first()` is a `Cursor[10]`, since `4 <= 10`. `Cursor(at: 11)` is refused there, since `11 <= 10` cannot be proven. A value that is known only when the program runs needs a [`check`](check.md) to give the proof.
 
-## Using it as what it holds
+## A fact that must hold in every round
 
-A struct with exactly one field that is not a proof can be used wherever that field's type is expected, since when the program runs it is that value and nothing more. So a `Pos` is used as a `Nat`, and the fact that it is above zero goes with it into `arith`.
+A `var`'s type never changes, so a fact that must hold each time round a `loop` is stated in a type. A `Cursor` is such a type: a `var` of it is never past the end, whatever the loop does to it.
 
 ```
-fn double(p: Pos) -> Nat { p + p }
+fn step[size: Nat](c: Cursor[size]) -> Cursor[size] {
+  if c.at < size { Cursor(at: c.at + 1) } else { c }
+}
 ```
 
-It goes one way only: making a `Pos` from a `Nat` needs the proof, so `Pos(value: n)` with an `n` that may be zero is refused.
+Inside the `if`, `c.at < size` gives `c.at + 1 <= size`, which is the proof the new `Cursor` needs, and it shows that `c.at + 1` fits. Outside the `if`, `Cursor(at: c.at + 1)` is refused.
 
-A size declared `[n: Pos]` is above zero wherever it is used, so a function over it needs no `requires n > 0`.
+## A size that is not zero
+
+A size declared `[n: Pos]` is above zero wherever it is used, as `Pos` is the range from 1, so a function over it needs no `requires n > 0`.
 
 ```
 fn average[n: Pos](x: [n]f32) -> f32 { sum(x) / float(n) }
@@ -70,23 +76,6 @@ fn read[n: Nat](xs: [n]f32, c: Cell[n]) -> f32 { xs[c.at] }
 
 A `0..n` is used as a `Nat` wherever one is expected, as a range goes where a wider one is, and `arith` has `value < n` of it. [`check`](check.md) shows how outside data becomes one.
 
-## A fact that must hold in every round
-
-A `var`'s type never changes, so a fact that must hold each time round a `loop` is stated in a type. A place in a source text that is never past its end is such a type.
-
-```
-struct Cursor[size: Nat] {
-  at: Nat
-  inside: at <= size
-}
-
-fn step[size: Nat](c: Cursor[size]) -> Cursor[size] {
-  if c.at < size { Cursor(at: c.at + 1) } else { c }
-}
-```
-
-When the field for the proof is left out of a construction, `arith` builds it, or the construction is refused. Inside the `if`, `c.at < size` gives `c.at + 1 <= size`, which is the proof the new `Cursor` needs, and it shows that `c.at + 1` fits. Outside the `if`, `Cursor(at: c.at + 1)` is refused.
-
 ## Sizes that are proven
 
 Index arithmetic is allowed wherever the sizes make it provable, so no index is ever checked when the program runs. A convolution states its input's size in terms of its output's, and `arith` proves that `i + k` is in range.
@@ -111,9 +100,8 @@ Everyday code uses helpers that carry these proofs. `pad(x, 1, 1, 0.0)` adds a b
 | Written | Is |
 | --- | --- |
 | `name: statement` in a struct | A field that is a proof of the statement |
-| `Pos(value: e)` | A `Pos`, with its proof built by `arith` |
-| `[n: Pos]` | A size known to be above zero |
+| `Cursor(at: e)` | A `Cursor`, with its proof built by `arith` |
+| `[n: Pos]` | A size that is not zero, as `Pos` is the range from 1 |
 | `0..n` | A number proven below `n` |
-| `p` where a `Nat` is expected | The `value` of a `Pos` |
 
 Next: [check](check.md)

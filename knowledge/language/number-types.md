@@ -1,9 +1,10 @@
 ---
 type: specification
 title: Number types
-description: Every whole number is a range written a..b, the floats, the names Int, Nat, and Byte, and how two numbers meet.
+description: Every whole number is a range written a..b, the floats, the names Int, Nat, Pos, and Byte, and how two numbers meet.
 status: partial
 built:
+  - "not `Pos`, which no file can write yet"
   - "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
   - "`Int`, `Nat`, and `Byte`, in every file with no import, the same types as `i64`, `u64`, and `u8`, `Nat` the type of the `size` of a `List` and of a `str` and of a `loop` variable over `0..xs.size`, and `use std.bits (u8, u16, u32, u64, i8, i16, i32, i64)`, or any of them, the names of sizes, which a file that writes one with no import is refused"
   - "`a..b` written as a type, with whole numbers for its bounds, held by a parameter, a result, a field, a list, an `Option`, and a tuple, an empty range as a type, a range of more than 64 bits refused, a literal that must be in the range, and `==`, `<`, and the rest between two of one range, and the text of one. A range is one type of its bounds, so one range meets another only where their bounds are the same, and a range whose second bound is below its first refused"
@@ -77,6 +78,7 @@ A range is a type, and a name for one is only a way to write it. The prelude has
 | --- | --- | --- |
 | `Int` | `-9223372036854775808..9223372036854775808`, the 64-bit signed range | A number |
 | `Nat` | `0..18446744073709551616`, the 64-bit range from 0 | A count or a size |
+| `Pos` | `1..18446744073709551616`, the 64-bit range from 1 | A count or a size that is not zero |
 | `Byte` | `0..256` | A byte |
 
 ```
@@ -137,7 +139,7 @@ How many bytes a range takes, and in what form, is the compiler's choice, and a 
 | Written | Is |
 | --- | --- |
 | `a..b` | The whole numbers from `a` up to but not including `b` |
-| `Int`, `Nat`, `Byte` | The 64-bit signed range, the 64-bit range from 0, and `0..256`, with no import |
+| `Int`, `Nat`, `Pos`, `Byte` | The 64-bit signed range, the 64-bit range from 0, the 64-bit range from 1, and `0..256`, with no import |
 | `u8` to `u64`, `i8` to `i64` | The ranges that fill 8 to 64 bits, imported from `std.bits` |
 | `f16`, `bf16`, `f32`, `f64` | A float of 16, 16, 32, or 64 bits |
 | A range where a wider one is expected | Accepted, with nothing written |
