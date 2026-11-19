@@ -209,6 +209,7 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
         results: f.results.clone(),
         blocks,
         cold: f.cold,
+        name: f.name.clone(),
     }
 }
 

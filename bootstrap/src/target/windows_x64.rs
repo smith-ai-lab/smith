@@ -2,6 +2,7 @@
 //! kernel through `KERNEL32.dll`, which the system's loader links. The
 //! executable is written by `pe`.
 
+use super::Part;
 use super::pe::{
     self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
     Machine, PAGE_READWRITE, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, VIRTUAL_ALLOC, WRITE_FILE,
@@ -29,13 +30,16 @@ const WRITTEN: i8 = 40;
 const RBX_AT: u32 = 48;
 
 /// The executable for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
-    let (asm, data) = x86_64::code::<Windows>(program);
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
+    let (asm, data, parts) = x86_64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
     let imports = pe::imports(program.allocates(), program.takes_arguments());
-    pe::executable(&MACHINE, size, imports, |code, iat| {
+    let mut at = 0;
+    let executable = pe::executable(&MACHINE, size, imports, |code, iat| {
+        at = code;
         asm.finish(&data, code, iat)
-    })
+    });
+    (executable, super::shifted(parts, at))
 }
 
 struct Windows;

@@ -6,6 +6,7 @@ status: partial
 built:
   - "`smith build`, `smith run`, and `smith check` on `main.smith` or a named file"
   - "`smith build --target wasm`, which writes a module and the file of JavaScript that loads it"
+  - "`smith build --map`, which writes `<name>.map` beside the executable with a `fn` line for each function of its code"
 ---
 
 # The command line

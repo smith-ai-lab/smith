@@ -1641,8 +1641,9 @@ fn check_reading(
         .map(|(name, _)| name)
         .collect();
     written.extend((file.qualified.iter()).map(|q| format!("{}@{}", q.name.0, q.module)));
-    let (file, items, mut lazy) = splice(file, read, &mut errors);
+    let (mut file, items, mut lazy) = splice(file, read, &mut errors);
     lazy.written = written;
+    file.modules = module_names(&labels, library);
     let checked = check_file(file, items, lazy, errors, warnings, prelude, whole);
     if unimported.is_empty() {
         return checked
@@ -2656,6 +2657,24 @@ fn private_field(def: &crate::parser::Struct, field: &str, at: Pos) -> Error {
             "`{field}` is the module's own, and the module gives no function for it"
         )),
     }
+}
+
+/// The name of each module the places of a file say, by its number, as the map
+/// of an executable writes it: `std.console`, `db.transaction`, and for the
+/// file that is built, which is number 0, the module its path gives it, or
+/// `main` when it has none.
+fn module_names(labels: &[(usize, String)], library: &Library) -> Vec<(usize, String)> {
+    let entry = library.project.as_ref().and_then(|p| p.entry);
+    let mut names = vec![(0, entry.unwrap_or("main").to_string())];
+    for (number, label) in labels {
+        let name = if *number < FIRST_PROJECT {
+            format!("std.{label}")
+        } else {
+            label.trim_end_matches(".smith").replace('/', ".")
+        };
+        names.push((*number, name));
+    }
+    names
 }
 
 /// The errors with a place in a module, given as that module and the place

@@ -2,6 +2,7 @@
 //! `libSystem`, and that carries the ad hoc code signature Apple silicon
 //! requires. The executable is written by `macho`.
 
+use super::Part;
 use super::arm64::{self, Asm, EQ, LE, LT, Place, System, X0, X1, X2, X3, X4, X5, X19, X20};
 use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
 use crate::scalar::{Program, Stream};
@@ -14,13 +15,16 @@ const MACHINE: Machine = Machine {
 };
 
 /// The executable for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
-    let (asm, data) = arm64::code::<Macos>(program);
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
+    let (asm, data, parts) = arm64::code::<Macos>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
     let imports = macho::imports(program.allocates());
-    macho::executable(&MACHINE, size as u64, imports, |code, got| {
+    let mut at = 0;
+    let executable = macho::executable(&MACHINE, size as u64, imports, |code, got| {
+        at = code;
         asm.finish(&data, code, got)
-    })
+    });
+    (executable, super::shifted(parts, at))
 }
 
 struct Macos;

@@ -162,6 +162,17 @@ impl Asm {
         self.labels.len() - 1
     }
 
+    /// Where the label is bound, in the code.
+    pub fn label_offset(&self, label: usize) -> usize {
+        self.labels[label].expect("a label that is bound")
+    }
+
+    /// How many bytes of code there are so far, not counting the tables placed
+    /// after it.
+    pub fn code_len(&self) -> usize {
+        self.code.len()
+    }
+
     pub fn bind(&mut self, label: usize) {
         self.labels[label] = Some(self.code.len());
         // Another path may come here.
@@ -1063,7 +1074,7 @@ pub trait System {
 /// use, the places of the calls it makes, the values that have no register,
 /// and the registers it must put back. A function finds its parameters in
 /// its caller's frame, and puts what it gives back just after them.
-pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
+pub fn code<S: System>(program: &Program) -> super::Laid<'_, Asm> {
     let mut asm = Asm::default();
     let texts: Vec<usize> = program.data.iter().map(|_| asm.label()).collect();
     let functions: Vec<usize> = program.functions.iter().map(|_| asm.label()).collect();
@@ -1082,16 +1093,21 @@ pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     S::exit(&mut asm, 0);
     asm.bind(fail);
     S::exit(&mut asm, 1);
+    let mut frames = Vec::new();
     for (f, &label) in program.functions.iter().zip(&functions) {
         asm.bind(label);
-        function::<S>(&mut asm, program, f, &texts, &functions, fail);
+        frames.push(function::<S>(
+            &mut asm, program, f, &texts, &functions, fail,
+        ));
     }
+    let offsets: Vec<usize> = functions.iter().map(|&l| asm.label_offset(l)).collect();
+    let parts = super::parts(&offsets, &frames, asm.code_len());
     let data = texts
         .into_iter()
         .zip(program.data.iter().map(Vec::as_slice))
         .chain(lines)
         .collect();
-    (asm, data)
+    (asm, data, parts)
 }
 
 /// Where a value is held, in the code.
@@ -1163,7 +1179,7 @@ fn function<S: System>(
     texts: &[usize],
     functions: &[usize],
     fail: usize,
-) {
+) -> u32 {
     let f = &crate::scalar::rematerialized(f);
     let constants = super::branch::constants(f);
     let held = held(f, &constants);
@@ -1255,6 +1271,7 @@ fn function<S: System>(
         }
         w.end(asm, b);
     }
+    total
 }
 
 /// The number an instruction holds in itself in place of its second operand,

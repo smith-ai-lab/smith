@@ -12,6 +12,7 @@
 use super::wasm_code::*;
 use super::wasm_module::{Body, Export, Global, Module, Signature};
 use super::wasm_structure::{self as structure, Shape};
+use super::{Named, Part};
 use crate::scalar::{
     Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Program,
     Stream, System, Type, Value,
@@ -75,7 +76,7 @@ fn needs_high(f: &Function, i: &Instruction) -> bool {
 }
 
 /// The module for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
     let imports = imports_of(program);
     let mut module = Module::default();
     let mut print = None;
@@ -163,7 +164,24 @@ pub fn emit(program: &Program) -> Vec<u8> {
     if !image.bytes.is_empty() {
         module.data.push((DATA_START, image.bytes));
     }
-    module.finish()
+    let (bytes, bodies) = module.finish();
+    // The bodies are in the order the functions were defined: the program's,
+    // then the helpers of the module, then the four that the module always has.
+    let pieces = (helpers.iter().map(|_| ()).enumerate())
+        .map(|(k, ())| ["<high_unsigned>", "<high_signed>"][k])
+        .chain(["<allocate>", "<exit>", "<start>", "<status>"]);
+    let named = (0..program.functions.len())
+        .map(Named::Function)
+        .chain(pieces.map(Named::Piece));
+    let parts = (named.zip(bodies))
+        .map(|(named, (at, size))| Part {
+            named,
+            address: at as u64,
+            size: size as u64,
+            frame: 0,
+        })
+        .collect();
+    (bytes, parts)
 }
 
 /// What is in memory when the program starts.

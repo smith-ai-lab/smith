@@ -30,6 +30,83 @@ pub use wasm_structure::is_structured;
 
 use crate::scalar::{Program, Type};
 
+/// What a part of the code of an executable is: a function of the program, by
+/// its place, or a piece the compiler adds, by its name in angle brackets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Named {
+    Function(usize),
+    Piece(&'static str),
+}
+
+/// A part of the code of an executable: where it is, as the address the
+/// executable asks to be loaded at, or for a module the place of the byte in
+/// the file, how many bytes it takes, and how many bytes of frame it takes of
+/// the stack when it runs. The parts of an executable are in the order of their
+/// addresses and cover its code, with no gap and no overlap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Part {
+    pub named: Named,
+    pub address: u64,
+    pub size: u64,
+    pub frame: u32,
+}
+
+/// What a target lays out for a program: the code, the data it reads each under
+/// its label, and the parts of the code.
+type Laid<'a, A> = (A, Vec<(usize, &'a [u8])>, Vec<Part>);
+
+/// The parts of the code of a machine code executable, as places in the code,
+/// from where each function begins, how large its frame is, and where the code
+/// ends. What comes before the first function is the start of the executable.
+fn parts(offsets: &[usize], frames: &[u32], end: usize) -> Vec<Part> {
+    let first = offsets.first().copied().unwrap_or(end);
+    let mut parts = vec![Part {
+        named: Named::Piece("<start>"),
+        address: 0,
+        size: first as u64,
+        frame: 0,
+    }];
+    for (k, (&at, &frame)) in offsets.iter().zip(frames).enumerate() {
+        let to = offsets.get(k + 1).copied().unwrap_or(end);
+        parts.push(Part {
+            named: Named::Function(k),
+            address: at as u64,
+            size: (to - at) as u64,
+            frame,
+        });
+    }
+    parts
+}
+
+/// The parts with each address that was a place in the code moved to where the
+/// code is loaded.
+fn shifted(mut parts: Vec<Part>, base: u64) -> Vec<Part> {
+    for part in &mut parts {
+        part.address += base;
+    }
+    parts
+}
+
+/// The map of an executable, one `fn` line for each part of its code: the
+/// address, the size, the frame, and the name, each word after a space.
+pub fn map(names: &[String], parts: &[Part]) -> String {
+    let mut text = String::new();
+    for part in parts {
+        let name = match &part.named {
+            Named::Piece(piece) => piece.to_string(),
+            Named::Function(k) => match names[*k].as_str() {
+                "" => format!("<function{k}>"),
+                name => name.to_string(),
+            },
+        };
+        text.push_str(&format!(
+            "fn {:#x} {} {} {name}\n",
+            part.address, part.size, part.frame
+        ));
+    }
+    text
+}
+
 /// Declares the `Target` enum along with `Target::ALL`, its list of cases,
 /// and each case's name, so that a case cannot be added without joining
 /// the list.
@@ -109,6 +186,12 @@ impl Target {
     /// target that does not build them, with one message that names the first
     /// function that has one.
     pub fn emit(self, program: &Program) -> Vec<u8> {
+        self.emit_parts(program).0
+    }
+
+    /// The executable for the program, and the parts of its code, which the
+    /// map of the executable is made of.
+    pub fn emit_parts(self, program: &Program) -> (Vec<u8>, Vec<Part>) {
         if !self.builds_vectors()
             && let Some(function) = (program.functions.iter())
                 .position(|f| f.types.iter().any(|ty| matches!(ty, Type::Vector(_))))

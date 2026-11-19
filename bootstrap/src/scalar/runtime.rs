@@ -108,9 +108,42 @@ pub enum Runtime {
     Check,
 }
 
+impl Runtime {
+    /// What the map of an executable calls the function: the piece it is, in
+    /// angle brackets, with no type or size in it.
+    fn name(&self) -> &'static str {
+        match self {
+            Runtime::Copy => "<copy>",
+            Runtime::Join(_) => "<join>",
+            Runtime::Escape => "<escape>",
+            Runtime::Equal => "<equal>",
+            Runtime::Digits => "<digits>",
+            Runtime::Decimal { .. } => "<decimal>",
+            Runtime::Push(_) => "<push>",
+            Runtime::Grow(_) => "<grow>",
+            Runtime::Reserve(_) => "<reserve>",
+            Runtime::Append(_) => "<append>",
+            Runtime::Start { .. } => "<start_words>",
+            Runtime::Arguments => "<arguments>",
+            Runtime::Words => "<words>",
+            Runtime::Line => "<line>",
+            Runtime::Measure => "<measure>",
+            Runtime::Fill => "<fill>",
+            Runtime::Utf8 => "<utf8>",
+            Runtime::Valid => "<valid>",
+            Runtime::Check => "<check>",
+        }
+    }
+}
+
 /// The function of the runtime, where `place` gives the place in the
 /// program of each function it calls.
 pub fn build(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function {
+    let name = kind.name();
+    built(kind, place).named(name)
+}
+
+fn built(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function {
     match kind {
         Runtime::Copy => copy(),
         Runtime::Join(parts) => join(parts, place(Runtime::Copy)),

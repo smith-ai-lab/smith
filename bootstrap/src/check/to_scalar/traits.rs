@@ -66,6 +66,7 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
             cold: false,
+            name: String::new(),
         }
     }
 
@@ -86,6 +87,7 @@ impl<'a> Lowering<'a> {
             results: writer,
             blocks: out.blocks,
             cold: false,
+            name: String::new(),
         }
     }
 
@@ -860,6 +862,7 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
             cold: false,
+            name: String::new(),
         }
     }
 

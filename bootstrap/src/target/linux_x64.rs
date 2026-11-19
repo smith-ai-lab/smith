@@ -2,6 +2,7 @@
 //! directly through system calls, written by the shared ELF writer with
 //! the shared x86-64 instructions.
 
+use super::Part;
 use super::elf::{self, Machine};
 use super::x86_64::{self, Asm, LE, Place, R8, R9, R10, RAX, RDI, RDX, RSI, Reg, S, System, Z};
 use crate::scalar::{Program, Stream};
@@ -14,10 +15,11 @@ const PROT_READ_WRITE: u32 = 0x1 | 0x2;
 const MAP_PRIVATE_ANONYMOUS: u32 = 0x02 | 0x20;
 
 /// The executable for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
-    let (asm, data) = x86_64::code::<Linux>(program);
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
+    let (asm, data, parts) = x86_64::code::<Linux>(program);
     // Nothing refers to a slot, and every offset is relative.
-    elf::executable(Machine::X86_64, &asm.finish(&data, 0, 0))
+    let executable = elf::executable(Machine::X86_64, &asm.finish(&data, 0, 0));
+    (executable, super::shifted(parts, elf::CODE_ADDRESS))
 }
 
 struct Linux;

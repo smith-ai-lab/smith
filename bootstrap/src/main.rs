@@ -11,7 +11,7 @@ use smith::diag;
 use smith::target::Target;
 use smith::timings::Timings;
 
-const USAGE: &str = "usage: smith build [--target <target>] [--timings] [<file>.smith]
+const USAGE: &str = "usage: smith build [--target <target>] [--timings] [--map] [<file>.smith]
        smith run [--target <target>] [--timings] [<file>.smith [<word>...]]
        smith check [--timings] [<file>.smith]
        smith --version";
@@ -39,6 +39,8 @@ struct Request {
     target: Target,
     entry: PathBuf,
     timings: bool,
+    /// Whether `smith build` writes the map of the executable beside it.
+    map: bool,
     /// What follows the file's name in `smith run`, which are the words the
     /// program is started with.
     words: Vec<OsString>,
@@ -95,6 +97,7 @@ fn request(args: &[OsString], with_words: bool) -> Result<Request, String> {
     let mut target = None;
     let mut entry = None;
     let mut timings = false;
+    let mut map = false;
     let mut words = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -113,6 +116,8 @@ fn request(args: &[OsString], with_words: bool) -> Result<Request, String> {
             })?);
         } else if arg == "--timings" {
             timings = true;
+        } else if arg == "--map" && !with_words {
+            map = true;
         } else if arg.starts_with("--") {
             return Err(format!("unknown flag `{arg}`\n{USAGE}"));
         } else if entry.is_some() {
@@ -137,6 +142,7 @@ fn request(args: &[OsString], with_words: bool) -> Result<Request, String> {
         target,
         entry: entry.unwrap_or_else(|| PathBuf::from("main.smith")),
         timings,
+        map,
         words,
     })
 }
@@ -332,13 +338,18 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
     let entry = &request.entry;
     let (stem, source) = read_entry(entry)?;
     let files = Files::in_current_folder(entry)?;
-    let built =
-        smith::compile_project_files_timed(&source, &files.project(), request.target, timings)
-            .map_err(|errors| {
-                let file = entry.to_string_lossy();
-                let text = files.render(&file, &source, &errors);
-                text.strip_suffix('\n').unwrap_or(&text).to_string()
-            })?;
+    let built = smith::compile_project_files_timed(
+        &source,
+        &files.project(),
+        request.target,
+        request.map,
+        timings,
+    )
+    .map_err(|errors| {
+        let file = entry.to_string_lossy();
+        let text = files.render(&file, &source, &errors);
+        text.strip_suffix('\n').unwrap_or(&text).to_string()
+    })?;
     let cwd = files.root.clone();
     let name = if stem == "main" {
         cwd.file_name().unwrap_or(stem)
@@ -351,6 +362,9 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
             write_executable(&output, &built.executable, request.target.is_machine_code())?;
             for (extension, bytes) in &built.beside {
                 write_executable(&output.with_extension(extension), bytes, false)?;
+            }
+            if let Some(map) = built.map_text() {
+                write_executable(&output.with_extension("map"), map.as_bytes(), false)?;
             }
             Ok(())
         })
