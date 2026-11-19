@@ -96,7 +96,7 @@ A function of a route is a plain function. It names nothing of HTTP unless it gi
 
 ## A server of messages at a path
 
-`at` puts what follows it at a path. The block it is given asks for messages through the effect `messages`, as an [MCP](mcp.md) server does, and `at` answers that effect from the requests to its path.
+`at` puts what follows it at a path. The block it is given asks for messages through the effect `messages`, as an [MCP](mcp.md) server does, and `at` answers that effect from the requests to its path. A request to the path that is not a POST is answered 405, and a message that needs no answer is answered 202 with no body.
 
 ```
 fn main() ! http, store, alloc {

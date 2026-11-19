@@ -120,7 +120,7 @@ fn invalid_params(why: str) -> Failure ! alloc
 fn internal_error() -> Failure
 ```
 
-Each gives the `Failure` with the code the standard gives it, -32700, -32600, -32601, -32602, and -32603. The codes from -32768 to -32000 are the standard's, and a protocol built on it chooses its own outside them.
+Each gives the `Failure` with the code the standard gives it, -32700, -32600, -32601, -32602, and -32603. The codes from -32768 to -32000 are the standard's, except -32000 to -32099, which it leaves to whoever builds on it; the Model Context Protocol takes -32020 to -32099 of them. A protocol chooses any other code outside the standard's.
 
 ## The forms
 
