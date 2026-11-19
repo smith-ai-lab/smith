@@ -72,15 +72,12 @@ type Laid<'a, A> = (A, Vec<(usize, &'a [u8])>, Vec<Part>);
 /// runtime or the function that no line wrote, as the code before the first
 /// instruction is, which is the function's own, named `piece`. The code of an instruction whose
 /// place says nothing, as a constant that a pass makes, is part of the run before
-/// it. A function none of whose instructions has a line of the source, as the
-/// runtime's own, has no runs.
+/// it. A function whose code is all of one place, which is its own, as the
+/// runtime's is, has no runs.
 fn runs(marks: &[(usize, Place)], from: usize, to: usize, piece: Place) -> Vec<Run> {
     let first = marks.partition_point(|(at, _)| *at < from);
     let last = marks.partition_point(|(at, _)| *at < to);
     let marks = &marks[first..last];
-    if !marks.iter().any(|(_, place)| place.is_source()) {
-        return Vec::new();
-    }
     let mut runs: Vec<(usize, Place)> = Vec::new();
     for &(at, place) in marks {
         if place.is_none() || runs.last().is_some_and(|(_, p)| *p == place) {
@@ -90,6 +87,9 @@ fn runs(marks: &[(usize, Place)], from: usize, to: usize, piece: Place) -> Vec<R
             runs.pop();
         }
         runs.push((at, place));
+    }
+    if runs.is_empty() {
+        return Vec::new();
     }
     // The code before the first instruction, which no line wrote, is the
     // function's own, and a function with no name has it in its first run.
@@ -102,6 +102,10 @@ fn runs(marks: &[(usize, Place)], from: usize, to: usize, piece: Place) -> Vec<R
         }
     } else {
         runs[0].0 = from;
+    }
+    // One run that is the function's own says nothing that its line does not.
+    if runs.len() == 1 && runs[0].1 == piece {
+        return Vec::new();
     }
     (0..runs.len())
         .map(|k| {
