@@ -28,7 +28,7 @@ So a statement is a type, and what is built from statements is built as data is.
 | P or Q | An enum with a case for each | One case, holding its proof |
 | P gives Q | A function type from P to Q | A function that makes a proof of Q from one of P |
 | For every `x`, P | A function type whose result names its parameter | A function that takes `x` and gives the proof for it |
-| There is an `x` with P | A struct that holds `x` and the proof | The value and its proof, as [`Fin`](proof-fields.md) is |
+| There is an `x` with P | A struct that holds `x` and the proof | The value and its proof, as [`Pos`](proof-fields.md) is |
 | Never | An enum with no case | Nothing: there is no value of it |
 
 ## A statement about every one
@@ -42,7 +42,7 @@ struct Sorted {
 }
 ```
 
-A `Sorted` is a list together with a proof that it is in order. The proof is a function: given any two places `i` and `j`, and a proof that `i` comes before `j` inside the list, it gives a proof that the element at `i` is not above the one at `j`. A function that takes a `Sorted` knows its list is in order, as a function that takes a [`Fin`](proof-fields.md) knows its number is below the size.
+A `Sorted` is a list together with a proof that it is in order. The proof is a function: given any two places `i` and `j`, and a proof that `i` comes before `j` inside the list, it gives a proof that the element at `i` is not above the one at `j`. A function that takes a `Sorted` knows its list is in order, as a function that takes a [`Pos`](proof-fields.md) knows its number is above zero.
 
 ## A proof by induction
 
