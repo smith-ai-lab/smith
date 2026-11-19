@@ -80,6 +80,7 @@ Whatever answers `store` keeps two promises, and one that cannot is not allowed 
 `together` groups the writes of a block. It is written with [`with`](../language/with.md).
 
 ```
+use std.int (clamp)
 use std.store (StoreError, load, save, store, together)
 
 fn move_points(from: str, to: str, n: Nat) -> Result[(), StoreError] ! store, alloc {
@@ -89,8 +90,10 @@ fn move_points(from: str, to: str, n: Nat) -> Result[(), StoreError] ! store, al
   match (a, b) {
     (.some(x), .some(y)) {
       if x >= n {
-        try save(from, x - n)
-        save(to, y + n)
+        left: Nat = x - n
+        more: Nat = clamp(y + n)
+        try save(from, left)
+        save(to, more)
       } else {
         .err(.failed("too few points"))
       }
