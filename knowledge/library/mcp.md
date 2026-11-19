@@ -116,6 +116,8 @@ A client that lists the prompts is told of `summarise`, with its comment and its
 
 ## Where the messages come from
 
+Each message is a message of JSON-RPC 2.0, read and written by [`std.jsonrpc`](jsonrpc.md), and `std.mcp` reads the parameters of each method into its own types.
+
 `mcp` asks for each message and gives each answer through the effect `messages`, and does not know where they come from. What answers `messages` is the deployment and not the program:
 
 - A server a client starts on the same machine reads each message from the standard input and writes each answer to the standard output.
