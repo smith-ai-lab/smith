@@ -18,7 +18,11 @@ use super::eval::{
     float_mask, float_negate, float_resize, int_from_float, mask, narrow, widen,
 };
 use super::graph::{self, jumps};
-use super::{Binary, Constant, End, Function, Instruction, Op, Program, Type, Value};
+use super::vector::{
+    lane_of, lane_type, vector_binary, vector_choose, vector_compare, vector_first_set,
+    vector_float_binary, vector_float_compare, vector_splat, vector_sum, with_lane,
+};
+use super::{Binary, Constant, End, Function, Instruction, Lane, Op, Program, Type, Value};
 
 /// The program with every instruction whose inputs are all constants
 /// replaced by a constant, and every choice on a constant made.
@@ -49,6 +53,9 @@ fn folded(f: &Function) -> Function {
         }
     }
     let mut known: Vec<Option<u64>> = vec![None; f.types.len()];
+    // The bits of each value that is a vector of constants, which a function with
+    // no vector never fills.
+    let mut vector_known: Known = Known(HashMap::new());
     // What each value is read as from here on, once it is known to be
     // another value.
     let mut sub: Vec<Value> = (0..f.types.len()).map(Value).collect();
@@ -95,7 +102,97 @@ fn folded(f: &Function) -> Function {
                 continue;
             };
             let ty = f.types[result.0];
+            // A vector is worked out as a float is: only an instruction whose
+            // inputs are all constants is replaced, by the bits that the code
+            // of the evaluator gives.
+            let vector_answer: Option<u128> = match &op {
+                Op::Constant(c @ Constant::Vector(..)) => {
+                    vector_known.0.extend(c.vector_bits().map(|n| (result, n)));
+                    None
+                }
+                Op::VectorBinary { op, a, b } => match (vector_known.of(a), vector_known.of(b)) {
+                    (Some(x), Some(y)) => {
+                        let Lane::Int(bits) = lane_type(ty) else {
+                            unreachable!("lanes that are not integers")
+                        };
+                        Some(vector_binary(*op, bits, x, y))
+                    }
+                    _ => None,
+                },
+                Op::VectorFloatBinary { op, a, b } => {
+                    match (vector_known.of(a), vector_known.of(b)) {
+                        (Some(x), Some(y)) => {
+                            let Lane::Float(bits) = lane_type(ty) else {
+                                unreachable!("lanes that are not floats")
+                            };
+                            Some(vector_float_binary(*op, bits, x, y))
+                        }
+                        _ => None,
+                    }
+                }
+                Op::VectorCompare { op, signed, a, b } => {
+                    match (vector_known.of(a), vector_known.of(b)) {
+                        (Some(x), Some(y)) => {
+                            let Lane::Int(bits) = lane_type(f.types[a.0]) else {
+                                unreachable!("lanes that are not integers")
+                            };
+                            Some(vector_compare(*op, *signed, bits, x, y))
+                        }
+                        _ => None,
+                    }
+                }
+                Op::VectorFloatCompare { op, a, b } => {
+                    match (vector_known.of(a), vector_known.of(b)) {
+                        (Some(x), Some(y)) => {
+                            let Lane::Float(bits) = lane_type(f.types[a.0]) else {
+                                unreachable!("lanes that are not floats")
+                            };
+                            Some(vector_float_compare(*op, bits, x, y))
+                        }
+                        _ => None,
+                    }
+                }
+                Op::VectorChoose {
+                    mask,
+                    then,
+                    otherwise,
+                } => match (
+                    vector_known.of(mask),
+                    vector_known.of(then),
+                    vector_known.of(otherwise),
+                ) {
+                    (Some(m), Some(t), Some(o)) => Some(vector_choose(m, t, o)),
+                    _ => None,
+                },
+                Op::VectorSplat(value) => known[value.0].map(|n| vector_splat(lane_type(ty), n)),
+                Op::VectorInsert {
+                    vector,
+                    lane,
+                    value,
+                } => match (vector_known.of(vector), known[value.0]) {
+                    (Some(v), Some(n)) => Some(with_lane(lane_type(ty), v, u32::from(*lane), n)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(n) = vector_answer {
+                vector_known.0.insert(result, n);
+                instructions.push(Instruction {
+                    results: vec![result],
+                    op: Op::Constant(Constant::vector(n)),
+                });
+                continue;
+            }
             let answer = match &op {
+                Op::VectorExtract { vector, lane } => vector_known
+                    .of(vector)
+                    .map(|v| lane_of(lane_type(f.types[vector.0]), v, u32::from(*lane))),
+                Op::VectorSum(vector) => vector_known
+                    .of(vector)
+                    .map(|v| vector_sum(lane_type(f.types[vector.0]), v)),
+                Op::VectorFirstSet(mask) => vector_known
+                    .of(mask)
+                    .map(|v| vector_first_set(lane_type(f.types[mask.0]), v)),
                 Op::Constant(Constant::Int(n)) => {
                     known[result.0] = Some(n & mask(bits_of(ty)));
                     None
@@ -241,6 +338,15 @@ fn folded(f: &Function) -> Function {
         }
     }
     f
+}
+
+/// The bits of the values that are vectors of constants.
+struct Known(HashMap<Value, u128>);
+
+impl Known {
+    fn of(&self, v: &Value) -> Option<u128> {
+        self.0.get(v).copied()
+    }
 }
 
 fn graph_renamed(op: &Op, sub: &[Value]) -> Op {

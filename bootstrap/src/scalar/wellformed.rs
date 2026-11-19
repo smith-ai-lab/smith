@@ -2,7 +2,10 @@
 //! defined once, is used only where its definition reaches, and is used at
 //! its type, and every jump gives a block the parameters it takes.
 
-use super::{Binary, Bits, Constant, End, Function, Jump, Op, Program, System, Type, Value};
+use super::{
+    Binary, Bits, Constant, End, FloatBinary, Function, Jump, Lane, Op, Program, System, Type,
+    Value,
+};
 
 /// Why a function is not well formed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +100,7 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                     let fits = match c {
                         Constant::Int(_) => matches!(f.types[result.0], Type::Int(_)),
                         Constant::Float(_) => matches!(f.types[result.0], Type::Float(_)),
+                        Constant::Vector(..) => matches!(f.types[result.0], Type::Vector(_)),
                         Constant::Null => f.types[result.0] == Type::Address,
                         Constant::Data(t) => {
                             if *t >= program.data.len() {
@@ -140,7 +144,7 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         }
                         // The only arithmetic on an address moves it by a
                         // number of bytes.
-                        Type::Float(_) => return Err(Why::WrongType(result)),
+                        Type::Float(_) | Type::Vector(_) => return Err(Why::WrongType(result)),
                         Type::Address => {
                             if !matches!(
                                 instruction.op,
@@ -257,6 +261,137 @@ fn function_of(program: &Program, f: &Function) -> Result<(), Why> {
                         return Err(Why::WrongType(result));
                     }
                     used(value, i, ty)?;
+                }
+                Op::VectorBinary { op, a, b } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    let allowed = matches!(
+                        op,
+                        Binary::Add
+                            | Binary::Sub
+                            | Binary::Mul
+                            | Binary::And
+                            | Binary::Or
+                            | Binary::Xor
+                    );
+                    if !allowed || !matches!(ty, Type::Vector(Lane::Int(_))) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::VectorFloatBinary { op, a, b } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    let allowed =
+                        matches!(op, FloatBinary::Add | FloatBinary::Sub | FloatBinary::Mul);
+                    if !allowed || !matches!(ty, Type::Vector(Lane::Float(_))) {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::VectorCompare { a, b, .. } | Op::VectorFloatCompare { a, b, .. } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types.get(a.0).copied().ok_or(Why::Missing)?;
+                    let of_integers = matches!(instruction.op, Op::VectorCompare { .. });
+                    let lane = match ty {
+                        Type::Vector(lane @ Lane::Int(_)) if of_integers => lane,
+                        Type::Vector(lane @ Lane::Float(_)) if !of_integers => lane,
+                        _ => return Err(Why::WrongType(*a)),
+                    };
+                    if f.types[result.0] != lane.mask() {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(a, i, ty)?;
+                    used(b, i, ty)?;
+                }
+                Op::VectorChoose {
+                    mask,
+                    then,
+                    otherwise,
+                } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    let Type::Vector(lane) = ty else {
+                        return Err(Why::WrongType(result));
+                    };
+                    used(mask, i, lane.mask())?;
+                    used(then, i, ty)?;
+                    used(otherwise, i, ty)?;
+                }
+                Op::VectorSplat(value) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let Type::Vector(lane) = f.types[result.0] else {
+                        return Err(Why::WrongType(result));
+                    };
+                    used(value, i, lane.scalar())?;
+                }
+                Op::VectorExtract { vector, lane: at } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types.get(vector.0).copied().ok_or(Why::Missing)?;
+                    let Type::Vector(lane) = ty else {
+                        return Err(Why::WrongType(*vector));
+                    };
+                    if f.types[result.0] != lane.scalar() || u32::from(*at) >= lane.count() {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(vector, i, ty)?;
+                }
+                Op::VectorInsert {
+                    vector,
+                    lane: at,
+                    value,
+                } => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types[result.0];
+                    let Type::Vector(lane) = ty else {
+                        return Err(Why::WrongType(result));
+                    };
+                    if u32::from(*at) >= lane.count() {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(vector, i, ty)?;
+                    used(value, i, lane.scalar())?;
+                }
+                Op::VectorSum(vector) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types.get(vector.0).copied().ok_or(Why::Missing)?;
+                    let Type::Vector(lane) = ty else {
+                        return Err(Why::WrongType(*vector));
+                    };
+                    if f.types[result.0] != lane.scalar() {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(vector, i, ty)?;
+                }
+                Op::VectorFirstSet(mask) => {
+                    let [result] = instruction.results[..] else {
+                        return Err(Why::WrongCount);
+                    };
+                    let ty = f.types.get(mask.0).copied().ok_or(Why::Missing)?;
+                    if !matches!(ty, Type::Vector(Lane::Int(_)))
+                        || f.types[result.0] != Type::Int(Bits::B64)
+                    {
+                        return Err(Why::WrongType(result));
+                    }
+                    used(mask, i, ty)?;
                 }
                 Op::Widen { value, .. } | Op::Narrow(value) => {
                     let [result] = instruction.results[..] else {

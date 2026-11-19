@@ -48,6 +48,7 @@ fn size(ty: Type) -> u32 {
     match ty {
         Type::Int(bits) => bits.count() / 8,
         Type::Float(bits) => bits.count() / 8,
+        Type::Vector(_) => 16,
         Type::Address => 8,
     }
 }
@@ -546,6 +547,7 @@ fn value_of(b: &mut Builder, ty: Type, n: u64) -> Value {
     match ty {
         Type::Int(bits) => b.int(bits, n),
         Type::Float(bits) => b.float(bits, n),
+        Type::Vector(lane) => b.vector(lane, u128::from(n)),
         Type::Address => b.null(),
     }
 }

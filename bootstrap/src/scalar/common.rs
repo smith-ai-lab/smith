@@ -46,6 +46,16 @@ fn pure(op: &Op) -> bool {
             | Op::FloatFromInt { .. }
             | Op::IntFromFloat { .. }
             | Op::FloatResize(_)
+            | Op::VectorBinary { .. }
+            | Op::VectorFloatBinary { .. }
+            | Op::VectorCompare { .. }
+            | Op::VectorFloatCompare { .. }
+            | Op::VectorChoose { .. }
+            | Op::VectorSplat(_)
+            | Op::VectorExtract { .. }
+            | Op::VectorInsert { .. }
+            | Op::VectorSum(_)
+            | Op::VectorFirstSet(_)
             | Op::Widen { .. }
             | Op::Narrow(_)
             | Op::Choose { .. }

@@ -309,7 +309,11 @@ fn each_read(op: &Op, mut f: impl FnMut(Value)) {
         | Op::Compare { a, b, .. }
         | Op::Overflows { a, b, .. }
         | Op::FloatBinary { a, b, .. }
-        | Op::FloatCompare { a, b, .. } => {
+        | Op::FloatCompare { a, b, .. }
+        | Op::VectorBinary { a, b, .. }
+        | Op::VectorFloatBinary { a, b, .. }
+        | Op::VectorCompare { a, b, .. }
+        | Op::VectorFloatCompare { a, b, .. } => {
             f(*a);
             f(*b);
         }
@@ -318,15 +322,28 @@ fn each_read(op: &Op, mut f: impl FnMut(Value)) {
         | Op::FloatNegate(value)
         | Op::FloatFromInt { value, .. }
         | Op::IntFromFloat { value, .. }
-        | Op::FloatResize(value) => f(*value),
+        | Op::FloatResize(value)
+        | Op::VectorSplat(value)
+        | Op::VectorSum(value)
+        | Op::VectorFirstSet(value)
+        | Op::VectorExtract { vector: value, .. } => f(*value),
         Op::Choose {
             on,
+            then,
+            otherwise,
+        }
+        | Op::VectorChoose {
+            mask: on,
             then,
             otherwise,
         } => {
             f(*on);
             f(*then);
             f(*otherwise);
+        }
+        Op::VectorInsert { vector, value, .. } => {
+            f(*vector);
+            f(*value);
         }
         Op::Load { address, .. } => f(*address),
         Op::Store { address, value, .. } => {

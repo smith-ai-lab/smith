@@ -213,18 +213,32 @@ fn operands(op: &mut Op) -> Vec<&mut Value> {
         | Op::Compare { a, b, .. }
         | Op::Overflows { a, b, .. }
         | Op::FloatBinary { a, b, .. }
-        | Op::FloatCompare { a, b, .. } => vec![a, b],
+        | Op::FloatCompare { a, b, .. }
+        | Op::VectorBinary { a, b, .. }
+        | Op::VectorFloatBinary { a, b, .. }
+        | Op::VectorCompare { a, b, .. }
+        | Op::VectorFloatCompare { a, b, .. } => vec![a, b],
         Op::Widen { value, .. }
         | Op::Narrow(value)
         | Op::FloatNegate(value)
         | Op::FloatFromInt { value, .. }
         | Op::IntFromFloat { value, .. }
-        | Op::FloatResize(value) => vec![value],
+        | Op::FloatResize(value)
+        | Op::VectorSplat(value)
+        | Op::VectorSum(value)
+        | Op::VectorFirstSet(value)
+        | Op::VectorExtract { vector: value, .. } => vec![value],
         Op::Choose {
             on,
             then,
             otherwise,
+        }
+        | Op::VectorChoose {
+            mask: on,
+            then,
+            otherwise,
         } => vec![on, then, otherwise],
+        Op::VectorInsert { vector, value, .. } => vec![vector, value],
         Op::Load { address, .. } => vec![address],
         Op::Store { address, value, .. } => vec![address, value],
         Op::Call { args, .. } | Op::System { args, .. } => args.iter_mut().collect(),
@@ -893,7 +907,9 @@ fn a_value_used_at_another_type_is_refused() {
                         if let Op::Constant(c) = &instruction.op {
                             let r = instruction.results[0];
                             f.types[r.0] = match c {
-                                Constant::Int(_) | Constant::Float(_) => Type::Address,
+                                Constant::Int(_) | Constant::Float(_) | Constant::Vector(..) => {
+                                    Type::Address
+                                }
                                 Constant::Null | Constant::Data(_) => Type::Int(Bits::B8),
                             };
                             return true;

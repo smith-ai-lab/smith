@@ -764,6 +764,7 @@ impl Lowering<'_> {
         match self.f.types[v.0] {
             Type::Int(bits) => bits,
             Type::Float(_) => unreachable!("wasm does not build floats yet"),
+            Type::Vector(_) => unreachable!("Target::emit refuses a function with a vector"),
             Type::Address => panic!("an address where an integer is needed"),
         }
     }
@@ -832,11 +833,26 @@ impl Lowering<'_> {
             | Op::FloatFromInt { .. }
             | Op::IntFromFloat { .. }
             | Op::FloatResize(_) => unreachable!("wasm does not build floats yet"),
+            Op::VectorBinary { .. }
+            | Op::VectorFloatBinary { .. }
+            | Op::VectorCompare { .. }
+            | Op::VectorFloatCompare { .. }
+            | Op::VectorChoose { .. }
+            | Op::VectorSplat(_)
+            | Op::VectorExtract { .. }
+            | Op::VectorInsert { .. }
+            | Op::VectorSum(_)
+            | Op::VectorFirstSet(_) => {
+                unreachable!("Target::emit refuses a function with a vector")
+            }
             Op::Constant(constant) => {
                 let ty = f.types[results[0].0];
                 match (constant, ty) {
                     (Constant::Float(_), _) | (Constant::Int(_), Type::Float(_)) => {
                         unreachable!("wasm does not build floats yet")
+                    }
+                    (Constant::Vector(..), _) | (_, Type::Vector(_)) => {
+                        unreachable!("Target::emit refuses a function with a vector")
                     }
                     (Constant::Int(n), Type::Int(Bits::B64)) => self.code.i64_const(*n as i64),
                     (Constant::Int(n), Type::Int(bits)) => {
@@ -859,6 +875,9 @@ impl Lowering<'_> {
             Op::Binary { op, a, b } => {
                 match f.types[results[0].0] {
                     Type::Float(_) => unreachable!("wasm does not build floats yet"),
+                    Type::Vector(_) => {
+                        unreachable!("Target::emit refuses a function with a vector")
+                    }
                     Type::Address => {
                         self.get(*a);
                         self.get_wrapped(*b);
@@ -921,6 +940,9 @@ impl Lowering<'_> {
                     Type::Int(Bits::B32) => self.code.memory(I32_LOAD),
                     Type::Int(Bits::B64) => self.code.memory(I64_LOAD),
                     Type::Float(_) => unreachable!("wasm does not build floats yet"),
+                    Type::Vector(_) => {
+                        unreachable!("Target::emit refuses a function with a vector")
+                    }
                     Type::Address => {
                         self.code.memory(I64_LOAD);
                         self.code.op(I32_WRAP_I64);
@@ -937,6 +959,9 @@ impl Lowering<'_> {
                     Type::Int(Bits::B32) => self.code.memory(I32_STORE),
                     Type::Int(Bits::B64) => self.code.memory(I64_STORE),
                     Type::Float(_) => unreachable!("wasm does not build floats yet"),
+                    Type::Vector(_) => {
+                        unreachable!("Target::emit refuses a function with a vector")
+                    }
                     Type::Address => {
                         self.code.op(I64_EXTEND_I32_U);
                         self.code.memory(I64_STORE);
