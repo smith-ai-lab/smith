@@ -54,8 +54,8 @@ pub const ONCE: &[Test] = &[
         a_range_from_a_name_is_at_least_it_at_every_call,
     ),
     (
-        "a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_refused",
-        a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_refused,
+        "a_bound_that_is_not_a_parameter_or_is_written_where_a_name_is_not_a_bound_is_refused",
+        a_bound_that_is_not_a_parameter_or_is_written_where_a_name_is_not_a_bound_is_refused,
     ),
     (
         "the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them",
@@ -72,6 +72,10 @@ pub const ONCE: &[Test] = &[
     (
         "a_range_is_taken_in_every_place_a_type_is_needed",
         a_range_is_taken_in_every_place_a_type_is_needed,
+    ),
+    (
+        "a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known",
+        a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known,
     ),
     (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
@@ -464,22 +468,28 @@ fn a_range_from_a_name_is_at_least_it_at_every_call() {
 }
 
 /// A bound that is a name is a parameter of the function, other than the
-/// parameter itself, and a whole number. Names are not built in a result, a
-/// binding, a field, or inside another type.
-fn a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_refused() {
+/// parameter itself, and a whole number. A name is not a bound in a field, a
+/// `var`, or inside another type, and each is refused with the reason.
+fn a_bound_that_is_not_a_parameter_or_is_written_where_a_name_is_not_a_bound_is_refused() {
     for (bad, call, mentions) in [
         ("fn f(n: Nat, i: 0..m) -> Nat { i }", "f(1, 0)", "`m`"),
         ("fn f(i: 0..i) -> Nat { 0 }", "f(0)", "`i`"),
         ("fn f(n: str, i: 0..n) -> Nat { 0 }", "f(\"a\", 0)", "whole numbers"),
-        ("fn f(n: Nat) -> 0..n { 0 }", "f(1)", "not supported"),
-        ("fn f(n: Nat) -> Nat {\n  x: 0..n = 0\n  0\n}", "f(1)", "not supported"),
-        ("fn f(n: Nat, xs: List[0..n]) -> Nat { 0 }", "f(1, [0])", "not supported"),
-        ("struct S {\n  a: 0..n\n}\n\nfn f(s: S) -> Nat { 0 }", "f(S(a: 0))", "not supported"),
+        ("fn f(n: Nat) -> 0..n { 0 }", "f(1)", "`result < n`"),
+        ("fn f(n: Nat) -> r: 0..m { 0 }", "f(1)", "`m` is not a parameter"),
+        ("fn f(n: Nat) -> r: 0..r { 0 }", "f(1)", "`r` is not a parameter"),
+        ("fn f(n: Nat) -> Nat {\n  x: 0..n = 0\n  0\n}", "f(1)", "`0 < n`"),
+        ("fn f(n: Nat) -> Nat {\n  x: 0..m = 0\n  0\n}", "f(1)", "there is no name `m`"),
+        ("fn f(n: Nat) -> Nat {\n  m = \"a\"\n  x: 0..m = 0\n  0\n}", "f(1)", "not a whole number"),
+        ("fn f(n: Nat) -> Nat {\n  var m: Nat = 3\n  x: 0..m = 0\n  0\n}", "f(1)", "`m` is a `var`"),
+        ("fn f(n: Nat) -> Nat {\n  var x: 0..n = 0\n  0\n}", "f(1)", "a name is not a bound in the type of a `var`"),
+        ("fn f(n: Nat, xs: List[0..n]) -> Nat { 0 }", "f(1, [0])", "a name is not a bound in a type inside another type"),
+        ("struct S {\n  a: 0..n\n}\n\nfn f(s: S) -> Nat { 0 }", "f(S(a: 0))", "a name is not a bound in the type of a field"),
     ] {
         let source = with_header(format!(
             "{bad}\n\nfn main() ! console, alloc {{\n  print(\"{{{call}}}\")\n}}\n"
         ));
-        let errors = check(source.as_bytes()).expect_err("a bound that is not built");
+        let errors = check(source.as_bytes()).expect_err("a bound that is refused");
         assert!(errors.iter().any(|e| e.message.contains(mentions)), "{errors:?} for\n{source}");
     }
 }
@@ -667,6 +677,50 @@ fn a_range_is_taken_in_every_place_a_type_is_needed() {
                 ));
                 assert_eq!(stdout(&wider), format!("{low}\n"), "for\n{wider}");
             }
+        },
+    );
+}
+
+/// A name is a bound in the type of a result and of a binding. A result of
+/// `0..n` or `m..b` is proven where it is given and known where it is taken,
+/// and a binding of `0..n` is shown below `n` where it is written and is below
+/// `n` wherever it is used, so an index of a list of `n` needs no proof.
+fn a_name_is_a_bound_in_a_result_and_in_a_binding_and_what_it_says_is_known() {
+    generate::check(
+        4007,
+        30,
+        |g: &mut Gen| (g.below(900) as i128 + 3, g.below(5)),
+        |&(top, pick)| {
+            let n = 1 + (pick as i128 * (top - 2)) / 4;
+            // A result below a parameter, taken where the bound that follows from
+            // it is needed, with nothing written.
+            let result = with_header(format!(
+                "fn last(n: 1..{top}) -> 0..n {{ n - 1 }}\n\nfn takes(x: 0..{}) -> Nat {{ x }}\n\nfn use_it(n: 1..{top}) -> Nat {{ takes(last(n)) }}\n\nfn main() ! console, alloc {{\n  print(\"{{use_it({n})}}\")\n}}\n",
+                top - 1
+            ));
+            assert_eq!(stdout(&result), format!("{}\n", n - 1), "for\n{result}");
+            // A result at least a parameter.
+            let above = with_header(format!(
+                "fn from(m: 0..{top}) -> m..{top} {{ m }}\n\nfn main() ! console, alloc {{\n  print(\"{{from({n})}}\")\n}}\n",
+            ));
+            assert_eq!(stdout(&above), format!("{n}\n"), "for\n{above}");
+            // A result that is not shown to be below the name is refused.
+            let wrong = result.replace("{ n - 1 }", "{ n }");
+            let errors = check(wrong.as_bytes()).expect_err("a result that may not be below n");
+            assert!(errors.iter().any(|e| e.message.contains("`result < n`")), "{errors:?}");
+            // A binding below the size of a list indexes it with nothing proven.
+            let size = n.min(8) as usize;
+            let items: Vec<String> = (0..size).map(|i| (i * 7).to_string()).collect();
+            let binding = with_header(format!(
+                "fn last_of(xs: List[Nat]) -> Nat\n  requires xs.size > 0\n{{\n  n = xs.size\n  i: 0..n = n - 1\n  xs[i]\n}}\n\nfn main() ! console, alloc {{\n  xs: List[Nat] = [{}]\n  print(\"{{last_of(xs)}}\")\n}}\n",
+                items.join(", ")
+            ));
+            if size > 0 {
+                assert_eq!(stdout(&binding), format!("{}\n", (size - 1) * 7), "for\n{binding}");
+            }
+            let past = binding.replace("i: 0..n = n - 1", "i: 0..n = n");
+            let errors = check(past.as_bytes()).expect_err("a binding that may not be below n");
+            assert!(errors.iter().any(|e| e.message.contains("`n < n`")), "{errors:?}");
         },
     );
 }

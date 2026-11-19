@@ -6603,7 +6603,37 @@ impl<'a> Checker<'a> {
                             }
                         }
                         _ => {
+                            let mut named = Vec::new();
                             let bound = match ty {
+                                Some(t)
+                                    if t.range.as_ref().is_some_and(|(a, b)| {
+                                        matches!(a, Bound::Name(_)) || matches!(b, Bound::Name(_))
+                                    }) =>
+                                {
+                                    let needed = match self.named_range(body, t) {
+                                        Some((needed, bounds)) => {
+                                            named = bounds;
+                                            needed
+                                        }
+                                        None => Ty::Unknown,
+                                    };
+                                    let gives = self.expr(body, value, &Want::Ty(needed.clone()));
+                                    // What is not shown of the names is said once, not
+                                    // again of the range that holds every number the
+                                    // range can have.
+                                    let before = self.errors.len();
+                                    for (bound, end) in &named {
+                                        self.bounded(body, value, (bound, *end), t.pos);
+                                    }
+                                    let taken = match (&gives, &needed) {
+                                        (Ty::Int(g), Ty::Int(n)) if self.errors.len() > before => {
+                                            g.hull(*n).map_or(needed.clone(), Ty::Int)
+                                        }
+                                        _ => needed.clone(),
+                                    };
+                                    self.expect(body, value, &gives, &taken);
+                                    needed
+                                }
                                 Some(t) => {
                                     let needed = self.ty(t, body.scope);
                                     let gives = self.expr(body, value, &Want::Ty(needed.clone()));
@@ -6628,6 +6658,7 @@ impl<'a> Checker<'a> {
                                     self.track_var(body, value);
                                 } else {
                                     self.assume_binding(body, value);
+                                    self.note_bounds(body, &named);
                                 }
                             }
                         }

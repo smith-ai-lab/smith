@@ -1,0 +1,4 @@
+name_bound_var.smith:5:10: a name is not a bound in the type of a `var`, which can change
+  5 |   var i: 0..n = 0
+    |          ^
+  fix: write the bound as a number, or bind the value with `=`

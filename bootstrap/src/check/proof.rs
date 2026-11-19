@@ -1127,6 +1127,93 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Reports a value given to a binding whose range has `name` for a bound,
+    /// where `arith` does not show that it is below the name, when the name is
+    /// the end of the range, or at least the name, when it is the first bound.
+    pub(super) fn bounded(
+        &mut self,
+        body: &mut Body<'a>,
+        value: &Expr,
+        (name, end): (&str, bool),
+        pos: Pos,
+    ) {
+        if !Self::decided(body) || body.contract {
+            return;
+        }
+        let bound = Expr::Name {
+            name: name.to_string(),
+            pos,
+        };
+        let mut facts = std::mem::take(&mut body.facts);
+        let mut builder = self.builder(body, &mut facts, true);
+        let (given, held) = (builder.lin(value), builder.lin(&bound));
+        let overflow = builder.overflow;
+        let goal = match (given, held) {
+            (Some(given), Some(held)) if !overflow => {
+                // `value < name` is `name - value - 1 >= 0`, and `name <= value`
+                // is `value - name >= 0`.
+                if end {
+                    self.sum(body, &mut facts, &held, &given, -1)
+                } else {
+                    self.sum(body, &mut facts, &given, &held, 0)
+                }
+            }
+            _ => None,
+        };
+        let used = background(&facts, goal.iter());
+        body.facts = facts;
+        if goal.as_ref().is_some_and(|g| proves(&used, g)) {
+            return;
+        }
+        let written = written_expr(value);
+        let (text, range) = if end {
+            (format!("{written} < {name}"), "below")
+        } else {
+            (format!("{name} <= {written}"), "at least")
+        };
+        self.errors.push(
+            Error::new(
+                value.pos(),
+                format!("cannot prove that `{text}`, so `{written}` may not be {range} `{name}`"),
+            )
+            .with_fix("check the value first, or state it in a `requires`"),
+        );
+    }
+
+    /// Notes that the name defined last is below the name that is the end of
+    /// its range, and at least the one that is its first bound.
+    pub(super) fn note_bounds(&mut self, body: &mut Body<'a>, named: &[(String, bool)]) {
+        let Some((me, Ty::Int(_))) = body.names.last().cloned() else {
+            return;
+        };
+        if !Self::decided(body) || body.vars.contains(&me) {
+            return;
+        }
+        let pos = Pos::START;
+        let own = Expr::Name { name: me, pos };
+        for (name, end) in named {
+            let bound = Expr::Name {
+                name: name.clone(),
+                pos,
+            };
+            let mut facts = std::mem::take(&mut body.facts);
+            let mut builder = self.builder(body, &mut facts, false);
+            let (mine, theirs) = (builder.lin(&own), builder.lin(&bound));
+            let overflow = builder.overflow;
+            if let (Some(mine), Some(theirs), false) = (mine, theirs, overflow) {
+                let said = if *end {
+                    self.sum(body, &mut facts, &theirs, &mine, -1)
+                } else {
+                    self.sum(body, &mut facts, &mine, &theirs, 0)
+                };
+                if let Some(said) = said {
+                    facts.known.push(said);
+                }
+            }
+            body.facts = facts;
+        }
+    }
+
     /// Reports a value of range `from` that enters the narrower range `to`
     /// where `arith` does not show that it fits.
     pub(super) fn enters(&mut self, body: &mut Body<'a>, value: &Expr, (from, to): (Int, Int)) {

@@ -23,6 +23,7 @@ fn interpolated(
 ) -> Result<Expr, Error> {
     let mut p = Parser {
         bound_names_allowed: false,
+        no_names: None,
         name_bound_ok: false,
         tokens,
         at: 0,
