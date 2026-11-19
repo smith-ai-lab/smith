@@ -225,7 +225,10 @@ fn a_range_of_more_than_64_bits_is_refused() {
 /// `i + 1` of a range `0..n` compiles into the same range exactly when `i` is
 /// known to be below the greatest number, as for the sizes.
 fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
-    generate::check(4005, 20, |g: &mut Gen| g.below(1000) as i128 + 2, |n| {
+    // `0..n` fills a size when `n` is 256, 65536, 4294967296, or 2^64, and then the
+    // functions that wrap, saturate, and check take it, so the fix names them.
+    const SIZES: [i128; 4] = [1 << 8, 1 << 16, 1 << 32, 1 << 64];
+    let case = |n: i128| {
         let proven = with_header(format!(
             "fn next(i: 0..{n}) -> 0..{n}\n  requires i < {}\n{{\n  i + 1\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{next({})}}\")\n}}\n",
             n - 1,
@@ -237,17 +240,23 @@ fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
         ));
         let errors = check(unproven.as_bytes()).expect_err("a sum that may not fit");
         assert!(errors.iter().all(|e| e.message.contains("i + 1")), "{errors:?}");
-        // No function that wraps, saturates, or checks takes a range that fills no
-        // size, so the fix names none, and it names them for a range that does.
-        let fixes = |e: &[smith::diag::Error]| e.iter().filter_map(|e| e.fix.clone()).collect::<Vec<_>>();
-        assert!(!fixes(&errors).is_empty(), "{errors:?}");
-        assert!(fixes(&errors).iter().all(|f| !f.contains("wrapping_")), "{errors:?}");
-        let sized = with_header(
-            "fn next(i: Byte) -> Byte { i + 1 }\n\nfn main() ! console, alloc {\n  print(\"{next(0)}\")\n}\n".to_string(),
-        );
-        let errors = check(sized.as_bytes()).expect_err("a sum that may not fit");
-        assert!(fixes(&errors).iter().all(|f| f.contains("wrapping_add")), "{errors:?}");
-    });
+        let fixes: Vec<String> = errors.iter().filter_map(|e| e.fix.clone()).collect();
+        assert!(!fixes.is_empty(), "{errors:?} for\n{unproven}");
+        let names = SIZES.contains(&n);
+        assert!(fixes.iter().all(|f| f.contains("wrapping_add") == names), "{fixes:?} for\n{unproven}");
+    };
+    // Both kinds are tried on every run: a range that fills a size and one that does
+    // not, whatever the seed draws.
+    for n in SIZES.into_iter().chain([2, 3, 255, 257, 65537]) {
+        case(n);
+    }
+    generate::check(4005, 20, |g: &mut Gen| g.below(1000) as i128 + 2, |n| case(*n));
+    let sized = with_header(
+        "fn next(i: Byte) -> Byte { i + 1 }\n\nfn main() ! console, alloc {\n  print(\"{next(0)}\")\n}\n".to_string(),
+    );
+    let errors = check(sized.as_bytes()).expect_err("a sum that may not fit");
+    let fixes: Vec<String> = errors.iter().filter_map(|e| e.fix.clone()).collect();
+    assert!(fixes.iter().all(|f| f.contains("wrapping_add")), "{errors:?}");
 }
 
 /// A range inside another: the other's bounds, a number of the first, and the
