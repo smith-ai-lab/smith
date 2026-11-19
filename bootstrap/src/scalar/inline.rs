@@ -2,8 +2,8 @@
 //! the function's own instructions.
 //!
 //! A call is replaced when the function is called from one place only, or
-//! when the function is no larger than `BOUND`. Nothing measured from a run
-//! is used. Functions are taken callees first, so each is already as small
+//! when the function is no larger than `BOUND`, or when it calls nothing and
+//! is no larger than `LEAF_BOUND`. Nothing measured from a run is used. Functions are taken callees first, so each is already as small
 //! as it will be when a call of it is looked at, and a copy of it is never
 //! looked at again. The pass is one walk over the program it gives, and
 //! gives the same program every time.
@@ -13,6 +13,11 @@ use super::{Block, End, Function, Instruction, Jump, Op, Program, Value};
 /// The most a function may hold, as `size` counts, for a call of it to be
 /// replaced when it is called from more than one place.
 pub const BOUND: usize = 4;
+
+/// The most a function that calls nothing may hold, as `size` counts, for a
+/// call of it to be replaced. A copy of it holds no call, so what the later
+/// stages make of the copy does not grow with the calls it makes.
+pub const LEAF_BOUND: usize = 40;
 
 /// How large a function is: its instructions, and one for how each block
 /// ends.
@@ -96,6 +101,13 @@ fn callees_first(program: &Program) -> Vec<usize> {
     order
 }
 
+/// Whether a call of the function is replaced when it is called from more
+/// than one place.
+fn is_small(f: &Function) -> bool {
+    let size = size(f);
+    size <= BOUND || (size <= LEAF_BOUND && calls(f).is_empty())
+}
+
 /// The function of each call in the function, in order.
 pub(super) fn calls(f: &Function) -> Vec<usize> {
     (f.blocks.iter())
@@ -133,7 +145,7 @@ fn inlined(f: &Function, done: &[Option<Function>], sites: &[usize]) -> Function
                 continue;
             };
             let callee = done[*function].as_ref().unwrap();
-            if sites[*function] != 1 && size(callee) > BOUND {
+            if sites[*function] != 1 && !is_small(callee) {
                 blocks[at].instructions.push(instruction.clone());
                 continue;
             }

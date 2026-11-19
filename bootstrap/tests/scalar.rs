@@ -124,6 +124,10 @@ pub const ONCE: &[Test] = &[
         inlining_replaces_calls_of_small_functions_and_of_functions_called_once,
     ),
     (
+        "inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound",
+        inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound,
+    ),
+    (
         "the_passes_give_a_well_formed_program_that_does_what_it_did",
         the_passes_give_a_well_formed_program_that_does_what_it_did,
     ),
@@ -1420,8 +1424,9 @@ fn inlining_leaves_no_call_the_rule_replaces_and_no_function_nothing_calls() {
         for &(_, callee) in &calls {
             let sites = calls.iter().filter(|(_, c)| *c == callee).count();
             let size = scalar::size(&after.functions[callee]);
+            let leaf = !calls.iter().any(|(holder, _)| *holder == callee);
             assert!(
-                sites > 1 && size > scalar::BOUND,
+                sites > 1 && size > scalar::BOUND && (size > scalar::LEAF_BOUND || !leaf),
                 "a call of a function with {sites} calls and a size of {size} is left"
             );
         }
@@ -1444,7 +1449,7 @@ fn inlining_gives_the_same_program_every_time_and_grows_it_by_a_bounded_amount()
         // gives, with nothing repeated until it stops changing.
         let calls = calls_of(s).len();
         assert!(
-            size(&after) <= size(s) + calls * scalar::BOUND,
+            size(&after) <= size(s) + calls * scalar::LEAF_BOUND,
             "{} from {}",
             size(&after),
             size(s)
@@ -1480,20 +1485,69 @@ fn caller_of(callee_size: usize, calls: usize) -> scalar::Program {
 
 fn inlining_replaces_calls_of_small_functions_and_of_functions_called_once() {
     // A function that is called once is replaced however large.
-    let big = scalar::BOUND * 10;
+    let big = scalar::LEAF_BOUND * 10;
     let once = scalar::inline(&caller_of(big, 1));
     assert!(calls_of(&once).is_empty());
     assert_eq!(once.functions.len(), 1);
-    // One that is called more often is replaced only when it is small.
-    // A function of size n holds n - 1 instructions and one end.
-    let small = scalar::inline(&caller_of(scalar::BOUND, 3));
+    // One that is called more often is replaced only when it is small, and
+    // one that calls nothing is small up to a larger size. A function of
+    // size n holds n - 1 instructions and one end.
+    let small = scalar::inline(&caller_of(scalar::LEAF_BOUND, 3));
     assert!(calls_of(&small).is_empty());
     assert_eq!(small.functions.len(), 1);
-    let large = scalar::inline(&caller_of(scalar::BOUND + 1, 3));
+    let large = scalar::inline(&caller_of(scalar::LEAF_BOUND + 1, 3));
     assert_eq!(calls_of(&large).len(), 3);
     assert_eq!(large.functions.len(), 2);
     for p in [once, small, large] {
         scalar::check(&p).unwrap();
+    }
+}
+
+/// A function that still holds a call after its callees are inlined is
+/// replaced only up to the size `BOUND` gives, and one that holds none up to
+/// the larger `LEAF_BOUND`.
+fn inlining_replaces_a_call_of_a_function_that_holds_a_call_only_up_to_the_bound() {
+    let int = Type::Int(Bits::B64);
+    // `leaf` is too large to be replaced and is called twice by `middle`.
+    let mut g = Builder::new();
+    let [p] = g.params(&[int])[..] else { panic!() };
+    let mut last = p;
+    for _ in 1..=scalar::LEAF_BOUND {
+        last = g.binary(scalar::Binary::Add, last, p);
+    }
+    g.ret(vec![last]);
+    let leaf = g.finish(&[int]);
+    assert!(scalar::size(&leaf) > scalar::LEAF_BOUND);
+    for extra in 0..=scalar::BOUND {
+        let mut f = Builder::new();
+        let [p] = f.params(&[int])[..] else { panic!() };
+        let mut last = f.call(2, vec![p], &[int])[0];
+        last = f.call(2, vec![last], &[int])[0];
+        for _ in 0..extra {
+            last = f.binary(scalar::Binary::Add, last, p);
+        }
+        f.ret(vec![last]);
+        let middle = f.finish(&[int]);
+        let size = scalar::size(&middle);
+        let mut m = Builder::new();
+        let one = m.int(Bits::B64, 1);
+        for _ in 0..3 {
+            m.call(1, vec![one], &[int]);
+        }
+        m.ret(Vec::new());
+        let program = scalar::Program {
+            data: Vec::new(),
+            functions: vec![m.finish(&[]), middle, leaf.clone()],
+            main: 0,
+        };
+        scalar::check(&program).unwrap();
+        let after = scalar::inline(&program);
+        scalar::check(&after).unwrap();
+        let from_main = calls_of(&after).iter().filter(|(holder, _)| *holder == after.main).count();
+        // Replaced, `main` calls `leaf` twice for each of its three calls
+        // of `middle`, and not replaced, it calls `middle` three times.
+        let want = if size <= scalar::BOUND { 6 } else { 3 };
+        assert_eq!(from_main, want, "with a size of {size}");
     }
 }
 
@@ -1864,7 +1918,8 @@ fn the_passes_leave_no_block_that_holds_only_a_jump() {
 
 /// A function that writes `A` once or twice, as many times as the value that
 /// the two blocks it jumps to give one block that only jumps on, and that a
-/// loop after it reads. Too large to be inlined, and called with 0 and 1.
+/// loop after it reads. Too large to be inlined, for it ends in more
+/// writes of no bytes than the bound allows, which nothing removes, and called with 0 and 1.
 fn a_function_that_joins_two_values_for_a_loop() -> scalar::Program {
     let long = Type::Int(Bits::B64);
     let mut f = Builder::new();
@@ -1898,6 +1953,13 @@ fn a_function_that_joins_two_values_for_a_loop() -> scalar::Program {
     let next = f.binary(scalar::Binary::Add, rounds[0], one);
     f.switch(done, vec![(round, vec![next]), (end, Vec::new())]);
     f.at(end);
+    for _ in 0..scalar::LEAF_BOUND {
+        let write = Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![text, zero],
+        };
+        f.emit(write, &[]);
+    }
     f.ret(Vec::new());
     let function = f.finish(&[]);
     let mut m = Builder::new();

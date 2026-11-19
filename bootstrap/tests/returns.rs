@@ -596,10 +596,14 @@ fn a_return_costs_a_jump_and_a_last_return_is_the_value_it_gives() {
                 .cloned()
                 .collect();
             // The function is larger than what a pass inlines, as it was when a
-            // `wrapping_` function was a call and not an instruction.
-            let padding = "acc = wrapping_mul(wrapping_add(acc, x), 7)\nacc = wrapping_mul(wrapping_add(acc, 5), 11)\n";
+            // `wrapping_` function was a call and not an instruction. Its
+            // statements are read by nothing, so no pass removes them first.
+            let mut padding = String::from("var padding = x\n");
+            for _ in 0..scalar::LEAF_BOUND {
+                padding += "padding = wrapping_add(padding, x)\n";
+            }
             let with = |end: String| {
-                program(&format!("var acc: i64 = 0\n{padding}{}{end}\n", write(&lines, "x")))
+                program(&format!("{padding}var acc: i64 = 0\n{}{end}\n", write(&lines, "x")))
             };
             let by_return = with(format!("return {}", last.write("x")));
             let by_value = with(last.write("x"));
