@@ -1969,6 +1969,7 @@ fn check_file(
         defs: &defs,
         errors,
         types: HashMap::new(),
+        widened: HashMap::new(),
         value_calls: Set::default(),
         narrowed: HashSet::new(),
         fn_values: Map::default(),
@@ -2020,6 +2021,7 @@ fn check_file(
     let typed = Typed {
         defs: &defs,
         types: checker.types,
+        widened: checker.widened,
         value_calls: checker.value_calls,
         fn_values: checker.fn_values,
     };
@@ -5038,6 +5040,9 @@ fn addr<T>(node: &T) -> usize {
 struct Typed<'a> {
     defs: &'a Defs<'a>,
     types: HashMap<usize, Ty>,
+    /// The expressions that give a range where a wider one is needed, by
+    /// their addresses, with the wider range each is taken as.
+    widened: HashMap<usize, Int>,
     /// The calls of a name that holds a function, by their addresses.
     value_calls: Set<usize>,
     /// The names of functions passed as values, by their addresses, with
@@ -5324,6 +5329,9 @@ struct Checker<'a> {
     errors: Vec<Error>,
     /// The type of each expression checked, by its address.
     types: HashMap<usize, Ty>,
+    /// The expressions that give a range where a wider one is needed, by
+    /// their addresses, with the wider range each is taken as.
+    widened: HashMap<usize, Int>,
     /// The calls of a name that holds a function, by their addresses.
     value_calls: Set<usize>,
     /// The calls of `narrow`, by their addresses, which give the number
@@ -6029,6 +6037,12 @@ impl<'a> Checker<'a> {
                 let needed = defs.describe(needed, body.scope);
                 self.errors.push(self.nothing_where(value, &needed));
             }
+            // A range is taken where a wider one is needed, with nothing written.
+            (Ty::Int(g), Ty::Int(n)) if n.holds(*g) => {
+                if g != n {
+                    self.widened.insert(addr(value), *n);
+                }
+            }
             (given, needed) if given != needed => {
                 let message = self.mismatch(
                     body,
@@ -6060,6 +6074,12 @@ impl<'a> Checker<'a> {
             (Ty::Nothing, pattern) if !matches!(pattern, Ty::Nothing | Ty::Param(_)) => {
                 let needed = defs.describe_pattern(pattern, sol, vars, body.scope);
                 self.errors.push(self.nothing_where(value, &needed));
+            }
+            // A range is taken where a wider one is needed, with nothing written.
+            (Ty::Int(g), Ty::Int(n)) if n.holds(*g) => {
+                if g != n {
+                    self.widened.insert(addr(value), *n);
+                }
             }
             (given, pattern) => {
                 use_at(value.pos());
@@ -7109,6 +7129,7 @@ impl<'a> Checker<'a> {
         let mut patterns: Vec<Option<Pat>> = Vec::new();
         let mut first: Option<Ty> = None;
         let mut later = Vec::new();
+        let mut ends = Vec::new();
         for arm in &m.arms {
             let mut binds = Vec::new();
             let pattern = self.pattern(body, &arm.pattern, &of, &mut binds, None);
@@ -7127,7 +7148,13 @@ impl<'a> Checker<'a> {
             }
             patterns.push(pattern);
             body.define(binds);
-            self.arm(body, arm, want, (&mut first, &mut later), "a `match`");
+            self.arm(
+                body,
+                arm,
+                want,
+                (&mut first, &mut later, &mut ends),
+                "a `match`",
+            );
             if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
@@ -7179,7 +7206,7 @@ impl<'a> Checker<'a> {
         body: &mut Body<'a>,
         arm: &'e Arm,
         want: &Want,
-        (first, later): (&mut Option<Ty>, &mut Vec<&'e Expr>),
+        (first, later, ends): (&mut Option<Ty>, &mut Vec<&'e Expr>, &mut Vec<(usize, Int)>),
         what: &str,
     ) {
         if let (Want::Any, None, Some((Stmt::Expr(tail), rest))) =
@@ -7194,10 +7221,38 @@ impl<'a> Checker<'a> {
         let arm_want = match (want, &*first) {
             (Want::Unused, _) => Want::Unused,
             (Want::Ty(t), _) => Want::Ty(t.clone()),
+            // A block that gives a range may give another, so only a number
+            // written out waits for the type of the first.
+            (Want::Any, Some(Ty::Int(_))) if !matches!(arm.body.last(), Some(Stmt::Expr(e)) if flexible(e)) => {
+                Want::Any
+            }
             (Want::Any, Some(t)) => Want::Ty(t.clone()),
             (Want::Any, None) => Want::Any,
         };
         let end = self.block(body, &arm.body, &arm_want);
+        // With no type needed, the blocks that give ranges give the smallest
+        // range that holds them all, and each is taken as it.
+        if let (Want::Any, End::Value(Ty::Int(g), value), false) =
+            (want, &end, proof::ends_in_exit(&arm.body))
+        {
+            let held = match &*first {
+                None => Some(*g),
+                Some(Ty::Int(f)) => f.hull(*g),
+                Some(_) => None,
+            };
+            if let Some(h) = held {
+                ends.push((addr(*value), *g));
+                for (at, int) in ends.iter() {
+                    if *int == h {
+                        self.widened.remove(at);
+                    } else {
+                        self.widened.insert(*at, h);
+                    }
+                }
+                *first = Some(Ty::Int(h));
+                return;
+            }
+        }
         if !matches!(want, Want::Unused) {
             let gives = self.arm_gives(body, arm, end, want, first, what);
             if !proof::ends_in_exit(&arm.body) {
@@ -7255,9 +7310,16 @@ impl<'a> Checker<'a> {
         }
         let mut first = None;
         let mut later = Vec::new();
+        let mut ends = Vec::new();
         for (k, arm) in m.arms.iter().enumerate() {
             self.assume(body, &m.of, k == 0);
-            self.arm(body, arm, want, (&mut first, &mut later), "an `if`");
+            self.arm(
+                body,
+                arm,
+                want,
+                (&mut first, &mut later, &mut ends),
+                "an `if`",
+            );
             if proof::ends_in_exit(&arm.body) {
                 excluded = true;
             } else {
@@ -7545,6 +7607,13 @@ impl<'a> Checker<'a> {
             return gives;
         };
         if agrees(needed, &gives) {
+            return gives;
+        }
+        // A range is taken where a wider one is wanted, with nothing written.
+        if let (Want::Ty(Ty::Int(n)), Ty::Int(g), End::Value(_, value)) = (want, &gives, &end)
+            && n.holds(*g)
+        {
+            self.widened.insert(addr(*value), *n);
             return gives;
         }
         let gives_what = match (&end, &gives) {

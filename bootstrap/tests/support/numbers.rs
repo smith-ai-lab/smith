@@ -732,11 +732,20 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
     let literal = value(g, ty);
     let literal = spelled(g, literal);
     let (before, after, mentions): (String, String, String) = match kind {
-        0 => (
-            format!("x = 5\n  id_{}(x)\n  id_{}(", ty.name, other.name),
-            "x)".into(),
-            format!("where a `{}` is needed", other.name),
-        ),
+        0 => {
+            // A type that does not hold every value of the type the number was
+            // given, as a type that does takes it.
+            let apart: Vec<Int> = (INTS.iter())
+                .filter(|t| !t.holds_all(ty))
+                .copied()
+                .collect();
+            let other = *g.pick(&apart);
+            (
+                format!("x = 5\n  id_{}(x)\n  id_{}(", ty.name, other.name),
+                "x)".into(),
+                format!("where a `{}` is needed", other.name),
+            )
+        }
         1 => (
             format!("small: {} = ", ty.name),
             too_far.to_string(),
