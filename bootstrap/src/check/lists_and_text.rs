@@ -128,7 +128,10 @@ impl<'a> Checker<'a> {
                     self.errors.push(
                         Error::new(
                             end.pos(),
-                            format!("an end of a range is a `Nat`, and this is a `{}`", t.name()),
+                            format!(
+                                "an end of a range is a `Nat`, and this is a `{}`",
+                                self.defs.spelling(t)
+                            ),
                         )
                         .with_fix("use `convert`"),
                     );
@@ -307,7 +310,10 @@ impl<'a> Checker<'a> {
                 self.errors.push(
                     Error::new(
                         index.pos(),
-                        format!("an index is a `Nat`, and this is a `{}`", t.name()),
+                        format!(
+                            "an index is a `Nat`, and this is a `{}`",
+                            self.defs.spelling(*t)
+                        ),
                     )
                     .with_fix("use `convert`"),
                 );

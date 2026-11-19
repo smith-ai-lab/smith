@@ -2,7 +2,10 @@
 type: specification
 title: Bit functions
 description: The functions of std.bits, which work on the bits of a range that fills a size through the Bits trait, and the names of those sizes.
-status: planned
+status: partial
+built:
+  - "`use std.bits (u8, u16, u32, u64, i8, i16, i32, i64)`, or any of them, brings the types of those names, which are in scope with no import too until a file must import them, and `Bits` with its six functions"
+  - "not `as` on a name of a size"
 ---
 
 # Bit functions
