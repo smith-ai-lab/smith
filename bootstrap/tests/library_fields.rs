@@ -89,14 +89,16 @@ fn hidden() -> &'static [Hidden] {
     })
 }
 
-/// A value of a type a field has, written as a literal.
-fn literal(ty: &str) -> &'static str {
+/// A value of a type a field has, written as a literal, when a program can
+/// write one. A struct of the library that holds another struct of it is
+/// built by no program, so its fields are read and not given.
+fn literal(ty: &str) -> Option<&'static str> {
     match ty {
-        "str" => "\"a\"",
-        "Nat" => "0",
-        "bool" => "true",
-        "List[Byte]" => "[]",
-        other => panic!("the test writes no value of `{other}`, so it needs one"),
+        "str" => Some("\"a\""),
+        "Nat" => Some("0"),
+        "bool" => Some("true"),
+        "List[Byte]" => Some("[]"),
+        _ => None,
     }
 }
 
@@ -118,7 +120,7 @@ fn case(g: &mut generate::Gen) -> Case {
     Case {
         which,
         field: private[g.below(private.len())],
-        build: g.one_in(2),
+        build: all[which].fields.iter().all(|(_, _, t)| literal(t).is_some()) && g.one_in(2),
         pad: g.below(4),
     }
 }
@@ -130,9 +132,26 @@ fn around(h: &Hidden, takes: bool) -> (String, String) {
     let (names, takes_main) = match h.name.as_str() {
         "RawJson" => (
             "RawJson, raw_json",
-            "fn main() ! alloc {\n  match raw_json(\"[]\") {\n    .ok(x) { f(x) }\n    .err(e) { }\n  }\n}\n",
+            "fn main() ! alloc {
+  match raw_json(\"[]\") {
+    .ok(x) { f(x) }
+    .err(e) { }
+  }
+}
+",
         ),
-        "Text" => ("Text, text", "fn main() {\n  f(text())\n}\n"),
+        "Text" => ("Text, text", "fn main() {
+  f(text())
+}
+"),
+        "Decoder" => ("Decoder, decoder", "fn main() ! alloc {
+  f(decoder())
+}
+"),
+        "Encoder" => ("Encoder, encoder", "fn main() ! alloc {
+  f(encoder())
+}
+"),
         other => panic!("the test makes no `{other}`, so it needs a way to"),
     };
     let main = if takes {
@@ -153,7 +172,7 @@ fn library_fields_a_private_field_is_refused_when_built_or_read_at_its_place() {
             let given: Vec<String> = h
                 .fields
                 .iter()
-                .map(|(_, f, t)| format!("{f}: {}", literal(t)))
+                .map(|(_, f, t)| format!("{f}: {}", literal(t).expect("a literal")))
                 .collect();
             let start = format!("{before}fn f() -> {} {{\n  ", h.name);
             let source = format!("{start}{}({})\n}}\n\n{main}", h.name, given.join(", "));
