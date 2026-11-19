@@ -874,7 +874,7 @@ impl<'a> Defs<'a> {
                     errors.push(Error::new(
                         t.pos,
                         format!(
-                            "`{}` needs more than 64 bits, which no type holds",
+                            "`{}` needs more than 64 bits, which is not built yet",
                             t.written()
                         ),
                     ));
