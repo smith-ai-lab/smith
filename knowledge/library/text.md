@@ -2,7 +2,10 @@
 type: specification
 title: Text functions
 description: The functions of std.text that cut a text in two or take a prefix off it, which give back pieces that share its memory, and Text, a text that grows and becomes a str with nothing read again.
-status: planned
+status: partial
+built:
+  - "`Text` of `std.text`, with `text`, `append`, `append_ascii`, and `finish`, whose field is private, so that no other module builds one, reads its bytes, or changes them; `finish` gives the `str` of its bytes with none read again"
+  - "not `strip_prefix` or `split_once`"
 ---
 
 # Text functions
