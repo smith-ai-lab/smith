@@ -1,6 +1,6 @@
 use std.bits (bit_and, shift_right, u64)
 use std.int (wrapping_add, wrapping_narrow)
-use std.list (push)
+use std.list (freeze, push)
 use std.utf8 (utf8)
 
 fn text(bytes: take List[Byte]) -> str {

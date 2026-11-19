@@ -79,6 +79,7 @@ const KNOWN: &[(&str, &str)] = &[
     ("std.deserialize", "Reader"),
     ("std.deserialize", "read"),
     ("std.int", "wrapping_add"),
+    ("std.list", "freeze"),
     ("std.serialize", "Serialize"),
     ("std.serialize", "Writer"),
     ("std.serialize", "write"),

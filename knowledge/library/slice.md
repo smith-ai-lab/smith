@@ -5,6 +5,7 @@ description: Slice, a run of elements that cannot change and so is shared freely
 status: partial
 built:
   - "`Slice[T]`, a type written like `List[T]`, which has `Copy` and `Discard`, so it is bound, stored in a struct, a tuple, or an enum, passed, and returned freely, and `freeze(xs)`, which takes a list and gives its memory as a `Slice` with nothing copied: the address and the size, and no instruction"
+  - "`Slice` in every file with no import, as a piece of a list written `x[a..b]` means it, and `freeze`, a function of `std.list` that a file imports, which is refused with no import"
   - "`s[a..b]`, `s[..k]`, and `s[k..]` on a `Slice`, a `Slice` that shares the memory of `s`, which compiles when `arith` proves `a <= b` and `b <= s.size`, and has `b - a` elements, with `size`, an index, and `loop` on a slice as on a list"
   - "a slice given to a parameter of type `List[T]` that is not `take`, as a list and a text are, with no call and no copy, and refused where the parameter takes a list, with the fix `copy`; `copy(s)` gives a new `List`, carrying `alloc`"
   - "a slice written out of whole numbers where a `Slice` is expected, which is data in the executable with no `alloc` and no request for memory"
@@ -19,7 +20,7 @@ A `Slice[T]` is a run of elements that cannot change. A [`List`](list.md) is wha
 ```
 use std.bits (u64)
 use std.int (wrapping_mul)
-use std.list (push)
+use std.list (freeze, push)
 
 fn evens(n: u64) -> Slice[u64] ! alloc {
   var built: List[u64] = []
@@ -28,11 +29,13 @@ fn evens(n: u64) -> Slice[u64] ! alloc {
 }
 ```
 
-`evens(3)` is the slice `[0, 2, 4]`. `freeze` takes the list and gives the same memory back as a `Slice`, so nothing is copied, and `built` is gone, so nothing can grow it or assign into it afterwards.
+`evens(3)` is the slice `[0, 2, 4]`. `Slice` is in every file, as a piece of a list written `x[a..b]` means it, and `freeze` is a function of [`std.list`](list.md), imported as `push` is. `freeze` takes the list and gives the same memory back as a `Slice`, so nothing is copied, and `built` is gone, so nothing can grow it or assign into it afterwards.
 
 ```
 fn freeze[T](list: take List[T]) -> Slice[T]
 ```
+
+It is imported with `use std.list (freeze)`.
 
 ## A slice written out
 

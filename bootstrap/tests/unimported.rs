@@ -36,6 +36,10 @@ pub const ONCE: &[Test] = &[
         "the_names_of_sizes_are_imported_and_int_byte_and_nat_are_not",
         the_names_of_sizes_are_imported_and_int_byte_and_nat_are_not,
     ),
+    (
+        "slice_is_in_every_file_and_freeze_is_imported_from_std_list",
+        slice_is_in_every_file_and_freeze_is_imported_from_std_list,
+    ),
 ];
 
 /// A name outside the prelude and the module of `std` that holds it, written
@@ -230,4 +234,22 @@ fn the_names_of_sizes_are_imported_and_int_byte_and_nat_are_not() {
     }
     let program = "fn f(a: Int, b: Byte, c: Nat) -> Int { a }\n\nfn main() { }\n";
     assert!(missing(program).is_empty());
+}
+
+/// `Slice` is in the prelude, as a piece of a list written `x[a..b]` means it,
+/// so a file writes it with no import and is refused for importing it, and
+/// `freeze`, which no syntax means, is imported from `std.list`.
+fn slice_is_in_every_file_and_freeze_is_imported_from_std_list() {
+    let program = "fn f(s: Slice[Byte]) -> Nat { s.size }\n\nfn main() { }\n";
+    assert!(missing(program).is_empty());
+    let said = match smith::check(b"use std.list (Slice)\n\nfn main() { }\n") {
+        Ok(_) => String::new(),
+        Err(e) => format!("{e:?}"),
+    };
+    assert!(said.contains("is in the prelude"), "{said}");
+    let call = "fn f(xs: take List[Byte]) -> Slice[Byte] { freeze(xs) }\n\nfn main() { }\n";
+    let said = missing(call);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(mentions(&said[0], "freeze", "list"), "{:?}", said[0]);
+    assert!(missing(&format!("use std.list (freeze)\n\n{call}")).is_empty());
 }

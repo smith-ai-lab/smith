@@ -27,7 +27,7 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 | In the prelude | The syntax that means it |
 | --- | --- |
 | `Int`, `Nat`, `Byte`, the float types, `bool`, `str` | A literal, the size of an array, and a byte of a text |
-| `List` | A list written in brackets, as `[1, 2, 3]` |
+| `List`, `Slice` | A list written in brackets, as `[1, 2, 3]`, and the piece of one written `x[a..b]`, which is a `Slice`, as a `str` is |
 | `Option`, `Result`, `Flow` with its two types, and `Try` with its `split` | `try` |
 | `Order`, `Eq`, and `Ord`, with `eq` and `compare` | `==`, `!=`, `<`, `<=`, `>`, and `>=` |
 | `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Pow`, and `Neg`, with their functions | The arithmetic operators |
@@ -53,7 +53,7 @@ fn lines_of(path: str) -> Result[List[Byte], FsError] ! fs, alloc {
 }
 ```
 
-`push` grows a list, and no syntax means it, so it is imported. So are the functions of [`std.int`](../library/int.md), the names of sizes, `u8` to `i64`, and the functions of `Bits`, from [`std.bits`](../library/bits.md), `utf8`, `Map`, and the array functions such as `sum` and `map`. An effect the standard library declares is imported as any effect is, by its name, with each operation the file calls: `fs` and `read_all` above, and `console` and `print` in the first program.
+`push` grows a list, and no syntax means it, so it is imported. So are `freeze`, `push`, and `copy` of [`std.list`](../library/list.md), and the functions of [`std.int`](../library/int.md), the names of sizes, `u8` to `i64`, and the functions of `Bits`, from [`std.bits`](../library/bits.md), `utf8`, `Map`, and the array functions such as `sum` and `map`. An effect the standard library declares is imported as any effect is, by its name, with each operation the file calls: `fs` and `read_all` above, and `console` and `print` in the first program.
 
 A name used and not imported is refused, and the error names the module to import it from, as [Importing with use](use.md#a-name-that-is-missing) says.
 

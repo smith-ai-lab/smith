@@ -80,7 +80,7 @@ fn expected(lines: &[String]) -> Vec<u8> {
 /// piece of a list, which is the next issue; `out` of the page's `evens` is a
 /// word of the language, so the list is called `built`.
 fn the_slice_examples_of_the_page_give_what_the_page_says() {
-    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\nuse std.list (push)\n\nfn evens(n: u64) -> Slice[u64] ! alloc {\n  var built: List[u64] = []\n  loop i in 0..n { built = push(built, wrapping_mul(i, 2)) }\n  freeze(built)\n}\n\nstruct Halves {\n  left: Slice[u64]\n  right: Slice[u64]\n}\n\nfn halves(s: Slice[u64], mid: Nat) -> Halves\n  requires mid <= s.size\n{\n  Halves(left: s[..mid], right: s[mid..])\n}\n\nfn total(xs: List[u64]) -> u64 {\n  var t: u64 = 0\n  loop i in 0..xs.size { t = wrapping_add(t, xs[i]) }\n  t\n}\n\nfn demo(building: List[u64], done: Slice[u64]) -> u64 {\n  wrapping_add(total(building), total(done))\n}\n\nfn main() ! console, alloc {\n  e = evens(3)\n  if 3 <= e.size { print(\"{total(e)} {e.size} {e[2]}\") }\n  f = evens(5)\n  if 3 <= f.size {\n    h = halves(f, 3)\n    print(\"{h.left.size} {total(h.left)} {h.right.size} {total(h.right)}\")\n  }\n  building: List[u64] = [10, 20]\n  print(\"{demo(building, f)}\")\n}\n";
+    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\nuse std.list (freeze, push)\n\nfn evens(n: u64) -> Slice[u64] ! alloc {\n  var built: List[u64] = []\n  loop i in 0..n { built = push(built, wrapping_mul(i, 2)) }\n  freeze(built)\n}\n\nstruct Halves {\n  left: Slice[u64]\n  right: Slice[u64]\n}\n\nfn halves(s: Slice[u64], mid: Nat) -> Halves\n  requires mid <= s.size\n{\n  Halves(left: s[..mid], right: s[mid..])\n}\n\nfn total(xs: List[u64]) -> u64 {\n  var t: u64 = 0\n  loop i in 0..xs.size { t = wrapping_add(t, xs[i]) }\n  t\n}\n\nfn demo(building: List[u64], done: Slice[u64]) -> u64 {\n  wrapping_add(total(building), total(done))\n}\n\nfn main() ! console, alloc {\n  e = evens(3)\n  if 3 <= e.size { print(\"{total(e)} {e.size} {e[2]}\") }\n  f = evens(5)\n  if 3 <= f.size {\n    h = halves(f, 3)\n    print(\"{h.left.size} {total(h.left)} {h.right.size} {total(h.right)}\")\n  }\n  building: List[u64] = [10, 20]\n  print(\"{demo(building, f)}\")\n}\n";
     let out = scalar::run(&lowered(source));
     assert_eq!(out.stdout, b"6 3 4\n3 6 2 14\n50\n".to_vec());
 }
@@ -172,7 +172,7 @@ fn frozen_source(f: &Frozen) -> String {
         &[
             ("std.bits", &["u64"]),
             ("std.console", &["console", "print"]),
-            ("std.list", &["push"]),
+            ("std.list", &["freeze", "push"]),
         ],
         t,
     );
@@ -300,7 +300,7 @@ fn freeze_asks_for_no_memory_moves_no_byte_and_runs_no_instruction_more() {
                 &[
                     ("std.console", &["console", "print"]),
                     ("std.int", &["wrapping_add"]),
-                    ("std.list", &["push"]),
+                    ("std.list", &["freeze", "push"]),
                 ],
                 t,
             );
@@ -339,7 +339,7 @@ fn main() ! console, alloc {{
 fn a_list_given_to_freeze_is_given_away_and_a_use_of_it_afterwards_is_one_error() {
     let program = |second: &str| {
         format!(
-            "fn keep(xs: take List[Byte]) -> (Slice[Byte], Nat) {{\n  s = freeze(xs)\n  (s, {second})\n}}\n\nfn main() ! alloc {{\n  xs: List[Byte] = [1, 2]\n  r = keep(xs)\n}}\n"
+            "use std.list (freeze)\n\nfn keep(xs: take List[Byte]) -> (Slice[Byte], Nat) {{\n  s = freeze(xs)\n  (s, {second})\n}}\n\nfn main() ! alloc {{\n  xs: List[Byte] = [1, 2]\n  r = keep(xs)\n}}\n"
         )
     };
     assert!(check(program("s.size").as_bytes()).is_ok());
@@ -364,7 +364,7 @@ fn a_slice_has_copy_and_is_bound_stored_and_returned_freely() {
             let t = ELEMS[*elem].0;
             let written: Vec<String> = items.iter().map(u64::to_string).collect();
             let uses = header(
-                &[("std.console", &["console", "print"]), ("std.list", &["push"])],
+                &[("std.console", &["console", "print"]), ("std.list", &["freeze", "push"])],
                 t,
             );
             let source = format!(

@@ -7,3 +7,7 @@ pub fn copy[T: Copy](list: List[T]) -> List[T] ! alloc {
   loop x in list { made = push(made, x) }
   made
 }
+
+pub fn freeze[T](list: take List[T]) -> Slice[T] {
+  __freeze(list)
+}
