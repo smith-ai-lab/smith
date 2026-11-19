@@ -1,0 +1,13 @@
+# RFC 7468, sections 2, 3, and 5.1: each sentence that holds MUST, MUST NOT,
+# or SHALL, and what holds it in `pem` of `std.x509`. A line is
+#   <section> | <first words of the sentence> | test <name>
+# or
+#   <section> | <first words of the sentence> | reason <why pem has nothing to do with it>
+# `tests/pem_standard.rs` fails for a sentence that is in no line.
+2 | text portion".) Data before the encapsulation boundaries | test the_certificates_that_rfc_7468_gives_as_examples_are_read_to_their_bytes
+2 | Furthermore, parsers SHOULD ignore whitespace | test a_file_that_is_not_pem_of_certificates_is_an_error_and_pem_reads_what_the_model_reads
+2 | Generators MUST put the same label | reason binds a generator; pem writes nothing, and a label that does not match is an error when it is read
+2 | Parsers MUST handle non-conforming data gracefully | test a_file_that_is_not_pem_of_certificates_is_an_error_and_pem_reads_what_the_model_reads
+2 | Generators MUST wrap the base64-encoded lines | reason binds a generator; pem reads lines of any size, as pem_reads_a_file_of_several_certificates_to_the_bytes_of_each shows for 64, 76, and 1000
+5.1 | The encoded data MUST be a BER | reason binds the writer of the certificate; pem gives the bytes, and certificate refuses what is not DER
+5.1 | Generators conforming to this document MUST | reason binds a generator; pem writes nothing, and it reads no other label than CERTIFICATE
