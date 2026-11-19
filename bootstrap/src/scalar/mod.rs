@@ -620,7 +620,7 @@ impl Op {
 pub struct Instruction {
     pub results: Vec<Value>,
     pub op: Op,
-    pub at: Place,
+    pub at: At,
 }
 
 impl PartialEq for Instruction {
@@ -638,7 +638,7 @@ impl Eq for Instruction {}
 /// the name of the piece it is, in angle brackets, as its function. A place that
 /// is all zeros says nothing of where the code comes from, as for the constants a
 /// pass makes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Place {
     pub file: u32,
     pub function: u32,
@@ -672,6 +672,109 @@ impl Place {
             function: names::intern(name),
             ..Place::NONE
         }
+    }
+}
+
+/// A place of an instruction, as the number the table of places gives it, so
+/// that an instruction holds 4 bytes of it. The same place is always the same
+/// number, and the number 0 is the place that says nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct At(u32);
+
+impl At {
+    /// No place.
+    pub const NONE: At = At(0);
+
+    /// The number of the place, which the table keeps once.
+    pub fn new(place: Place) -> At {
+        if place.is_none() {
+            return At::NONE;
+        }
+        places::intern(place)
+    }
+
+    /// The place of the code of the piece of the runtime, or the function, with
+    /// the name, which no line of the source wrote.
+    pub fn of(name: &str) -> At {
+        At::new(Place::of(name))
+    }
+
+    /// The place the number stands for.
+    pub fn place(self) -> Place {
+        places::place(self)
+    }
+
+    /// Whether it says nothing of where the code comes from.
+    pub fn is_none(self) -> bool {
+        self == At::NONE
+    }
+
+    /// Whether a line of the source wrote the code.
+    pub fn is_source(self) -> bool {
+        self.place().is_source()
+    }
+}
+
+/// The places that instructions hold, which are kept once for the process.
+mod places {
+    use super::{At, Place};
+    use std::collections::HashMap;
+    use std::hash::{BuildHasherDefault, Hasher};
+    use std::sync::Mutex;
+
+    /// A hash of the four numbers of a place, which are small and few: a
+    /// multiply and a rotate for each, where a place is looked up for each
+    /// expression of the source.
+    #[derive(Default)]
+    pub struct Mix(u64);
+
+    impl Hasher for Mix {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            for b in bytes {
+                self.write_u64(u64::from(*b));
+            }
+        }
+        fn write_u32(&mut self, n: u32) {
+            self.write_u64(u64::from(n));
+        }
+        fn write_u64(&mut self, n: u64) {
+            self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+    }
+
+    struct Table {
+        places: Vec<Place>,
+        numbers: HashMap<Place, u32, BuildHasherDefault<Mix>>,
+    }
+
+    static TABLE: Mutex<Option<Table>> = Mutex::new(None);
+
+    fn held<T>(use_table: impl FnOnce(&mut Table) -> T) -> T {
+        let mut table = TABLE.lock().expect("the places are not left held");
+        let table = table.get_or_insert_with(|| Table {
+            places: vec![Place::NONE],
+            numbers: HashMap::default(),
+        });
+        use_table(table)
+    }
+
+    pub fn intern(place: Place) -> At {
+        held(|t| {
+            if let Some(&n) = t.numbers.get(&place) {
+                return At(n);
+            }
+            t.places.push(place);
+            let n = t.places.len() as u32 - 1;
+            t.numbers.insert(place, n);
+            At(n)
+        })
+    }
+
+    pub fn place(at: At) -> Place {
+        held(|t| t.places[at.0 as usize])
     }
 }
 
@@ -804,7 +907,7 @@ impl Function {
     /// has no place is the code of the piece the name says.
     pub fn named(mut self, name: impl Into<String>) -> Function {
         self.name = name.into();
-        let piece = Place::of(&self.name);
+        let piece = At::of(&self.name);
         for i in self.blocks.iter_mut().flat_map(|b| &mut b.instructions) {
             if i.at.is_none() {
                 i.at = piece;

@@ -17,7 +17,7 @@ pub struct Body {
     pub code: Vec<u8>,
     /// Where in `code` the code of an instruction with a new place begins, with
     /// that place, for the map.
-    pub places: Vec<(usize, crate::scalar::Place)>,
+    pub places: Vec<(usize, crate::scalar::At)>,
 }
 
 /// What an export names.
@@ -38,7 +38,7 @@ pub struct Global {
 pub struct Placed {
     pub at: usize,
     pub size: usize,
-    pub places: Vec<(usize, crate::scalar::Place)>,
+    pub places: Vec<(usize, crate::scalar::At)>,
 }
 
 #[derive(Default)]

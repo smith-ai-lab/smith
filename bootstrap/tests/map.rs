@@ -416,7 +416,7 @@ fn places_of(program: &Program) -> std::collections::HashSet<(u32, u32, u32, u32
         .iter()
         .flat_map(|f| &f.blocks)
         .flat_map(|b| &b.instructions)
-        .map(|i| (i.at.file, i.at.function, i.at.line, i.at.col))
+        .map(|i| { let p = i.at.place(); (p.file, p.function, p.line, p.col) })
         .collect()
 }
 
@@ -452,15 +452,15 @@ fn no_pass_makes_a_place_the_program_did_not_have() {
 }
 
 fn an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first() {
-    use smith::scalar::{Binary, Bits, Builder, Fused, Op, Place, Type};
-    let at = |line| Place { file: 1, function: 1, line, col: 1 };
+    use smith::scalar::{Binary, Bits, Builder, Fused, Op, Place, Type, At};
+    let at = |line| At::new(Place { file: 1, function: 1, line, col: 1 });
     let places = |program: &Program| -> Vec<(String, u32)> {
         program
             .functions
             .iter()
             .flat_map(|f| &f.blocks)
             .flat_map(|b| &b.instructions)
-            .map(|i| (format!("{:?}", i.op), i.at.line))
+            .map(|i| (format!("{:?}", i.op), i.at.place().line))
             .collect()
     };
     // A sum of two constants is a constant, and is where the sum was.
@@ -497,7 +497,7 @@ fn an_instruction_a_pass_makes_in_place_of_others_holds_the_place_of_the_first()
         .iter()
         .find(|i| matches!(i.op, Op::FloatFused { op: Fused::MulAdd, .. }))
         .expect("a fused instruction");
-    assert_eq!(found.at.line, 3);
+    assert_eq!(found.at.place().line, 3);
 }
 
 const TOTAL: &str = r#"use std.console (console, print)

@@ -672,7 +672,7 @@ fn a_widening_or_a_narrowing_to_the_size_it_has_is_refused() {
                     let instruction = scalar::Instruction {
                         results: vec![result],
                         op,
-                        at: scalar::Place::NONE,
+                        at: scalar::At::NONE,
                     };
                     f.blocks[b].instructions.insert(i + 1, instruction);
                     return true;

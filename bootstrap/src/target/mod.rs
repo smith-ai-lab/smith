@@ -28,7 +28,7 @@ mod x86_64;
 /// the jump.
 pub use wasm_structure::is_structured;
 
-use crate::scalar::{Place, Program, Type};
+use crate::scalar::{At, Place, Program, Type};
 
 /// What a part of the code of an executable is: a function of the program, by
 /// its place, or a piece the compiler adds, by its name in angle brackets.
@@ -74,14 +74,14 @@ type Laid<'a, A> = (A, Vec<(usize, &'a [u8])>, Vec<Part>);
 /// place says nothing, as a constant that a pass makes, is part of the run before
 /// it. A function none of whose instructions has a line of the source, as the
 /// runtime's own, has no runs.
-fn runs(marks: &[(usize, Place)], from: usize, to: usize, piece: Place) -> Vec<Run> {
+fn runs(marks: &[(usize, At)], from: usize, to: usize, piece: At) -> Vec<Run> {
     let first = marks.partition_point(|(at, _)| *at < from);
     let last = marks.partition_point(|(at, _)| *at < to);
     let marks = &marks[first..last];
     if !marks.iter().any(|(_, place)| place.is_source()) {
         return Vec::new();
     }
-    let mut runs: Vec<(usize, Place)> = Vec::new();
+    let mut runs: Vec<(usize, At)> = Vec::new();
     for &(at, place) in marks {
         if place.is_none() || runs.last().is_some_and(|(_, p)| *p == place) {
             continue;
@@ -109,7 +109,7 @@ fn runs(marks: &[(usize, Place)], from: usize, to: usize, piece: Place) -> Vec<R
             Run {
                 address: runs[k].0 as u64,
                 size: (end - runs[k].0) as u64,
-                place: runs[k].1,
+                place: runs[k].1.place(),
             }
         })
         .collect()
@@ -123,8 +123,8 @@ fn parts(
     offsets: &[usize],
     frames: &[u32],
     end: usize,
-    marks: &[(usize, Place)],
-    pieces: &[Place],
+    marks: &[(usize, At)],
+    pieces: &[At],
 ) -> Vec<Part> {
     let first = offsets.first().copied().unwrap_or(end);
     let mut parts = vec![Part {

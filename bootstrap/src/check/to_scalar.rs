@@ -131,7 +131,7 @@ pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
         copies: Map::default(),
         runtimes: Vec::new(),
         data: Vec::new(),
-        files: Map::default(),
+        files: Vec::new(),
     };
     lowering.add(Body::Copy(start));
     if takes {
@@ -173,7 +173,7 @@ struct Lowering<'a> {
     runtimes: Vec<(Runtime, usize)>,
     data: Vec<Vec<u8>>,
     /// The number of the name of the file of each module, once it is asked for.
-    files: Map<usize, u32>,
+    files: Vec<u32>,
 }
 
 /// A function being lowered.
@@ -196,7 +196,7 @@ struct Out<'a> {
     dead: Vec<usize>,
     /// The place in the source of what is being lowered, which each
     /// instruction made holds.
-    place: form::Place,
+    place: form::At,
     /// The number of the name of the function the code being lowered is written
     /// in, and of the name of its file's module, for the places made.
     written: u32,
@@ -289,7 +289,7 @@ impl<'a> Out<'a> {
             loops: Vec::new(),
             returns: Vec::new(),
             dead: Vec::new(),
-            place: form::Place::NONE,
+            place: form::At::NONE,
             written: 0,
         };
         out.new_block();
@@ -845,7 +845,7 @@ impl<'a> Lowering<'a> {
         let name = self.name_of(instance);
         let mut out = Out::new();
         out.written = form::names::intern(&name);
-        out.place = form::Place::of(&name);
+        out.place = form::At::of(&name);
         for (name, ty) in &view.params {
             let ty = ty.subst(&instance.args);
             let types = self.scalars(&ty);
@@ -1193,7 +1193,7 @@ impl<'a> Lowering<'a> {
 
     /// The place in the source a position is, in the function being lowered.
     /// The code of the prelude has none.
-    fn place_of(&mut self, out: &Out<'a>, pos: Pos) -> form::Place {
+    fn place_of(&mut self, out: &Out<'a>, pos: Pos) -> form::At {
         // The code of the prelude has no line to name: what it makes is placed
         // where the call or the loop that it is lowered for is.
         if of_prelude(pos) {
@@ -1201,18 +1201,22 @@ impl<'a> Lowering<'a> {
         }
         let module = module_of(pos);
         let defs = self.typed.defs;
-        let file = *self.files.entry(module).or_insert_with(|| {
+        if self.files.len() <= module {
+            self.files.resize(module + 1, 0);
+        }
+        if self.files[module] == 0 {
             let name = (defs.file.modules.iter())
                 .find(|(n, _)| *n == module)
                 .map_or("main", |(_, name)| name.as_str());
-            form::names::intern(&format!("{}.smith", name.replace('.', "/")))
-        });
-        form::Place {
+            self.files[module] = form::names::intern(&format!("{}.smith", name.replace('.', "/")));
+        }
+        let file = self.files[module];
+        form::At::new(form::Place {
             file,
             function: out.written,
             line: (pos.line % STEP) as u32,
             col: pos.col as u32,
-        }
+        })
     }
 
     /// The values an expression gives as it is written, and their type.

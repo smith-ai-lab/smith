@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::graph;
-use super::{Block, End, Function, Instruction, Op, Place, Type, Value};
+use super::{At, Block, End, Function, Instruction, Op, Type, Value};
 
 /// The function with each constant made in every block that reads it, in
 /// place of one made where it is defined and kept in a register or in the
@@ -68,7 +68,7 @@ pub fn rematerialized(f: &Function) -> Function {
                     made_here.push(Instruction {
                         results: vec![fresh],
                         op: op.clone(),
-                        at: Place::NONE,
+                        at: At::NONE,
                     });
                     here.insert(v, fresh);
                 }
@@ -103,7 +103,7 @@ pub fn rematerialized(f: &Function) -> Function {
                 first.push(Instruction {
                     results: vec![fresh],
                     op: op.clone(),
-                    at: Place::NONE,
+                    at: At::NONE,
                 });
                 fresh
             });

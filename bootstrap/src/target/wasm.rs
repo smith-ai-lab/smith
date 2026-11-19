@@ -14,7 +14,7 @@ use super::wasm_module::{Body, Export, Global, Module, Signature};
 use super::wasm_structure::{self as structure, Shape};
 use super::{Named, Part};
 use crate::scalar::{
-    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Place, Program,
+    At, Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Program,
     Stream, System, Type, Value,
 };
 
@@ -184,8 +184,8 @@ pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
                 body.at,
                 body.at + body.size,
                 match &named {
-                    Named::Function(k) => Place::of(&program.functions[*k].name),
-                    Named::Piece(_) => Place::NONE,
+                    Named::Function(k) => At::of(&program.functions[*k].name),
+                    Named::Piece(_) => At::NONE,
                 },
             ),
         })
@@ -533,7 +533,7 @@ struct Lowering<'a> {
     code: Code,
     /// Where in `code` the code of an instruction with a new place begins, with
     /// that place.
-    places: Vec<(usize, Place)>,
+    places: Vec<(usize, At)>,
     /// The local of each value.
     local: Vec<u32>,
     /// The local that holds the number of the block to run, when the function
@@ -593,7 +593,7 @@ impl Lowering<'_> {
 
     /// Notes that the code written from here on is for an instruction that is
     /// written at `at`, when that is not the place of the code before it.
-    fn note_place(&mut self, at: Place) {
+    fn note_place(&mut self, at: At) {
         if self.places.last().is_none_or(|(_, last)| *last != at) {
             self.places.push((self.code.bytes.len(), at));
         }

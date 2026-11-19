@@ -23,7 +23,7 @@ use super::vector::{
     vector_float_binary, vector_float_compare, vector_float_fused, vector_splat, vector_sum,
     with_lane,
 };
-use super::{Binary, Constant, End, Function, Instruction, Lane, Op, Place, Program, Type, Value};
+use super::{At, Binary, Constant, End, Function, Instruction, Lane, Op, Program, Type, Value};
 
 /// The program with every instruction whose inputs are all constants
 /// replaced by a constant, and every choice on a constant made.
@@ -89,7 +89,7 @@ fn folded(f: &Function) -> Function {
                     instructions.push(Instruction {
                         results: vec![q],
                         op: Op::Constant(Constant::Int(c)),
-                        at: Place::NONE,
+                        at: At::NONE,
                     });
                 }
             }

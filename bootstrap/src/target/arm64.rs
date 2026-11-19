@@ -7,8 +7,8 @@ use super::frame::{self, PAGE, Passed, call_area, round_up, size};
 use super::indexed::{self, Folded};
 use super::moves::{self, Move, Step};
 use crate::scalar::{
-    Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Fused, Jump, Op,
-    Place as Written, Program, Stream, System as Call, Type, Value,
+    At as Written, Binary, Compare, Constant, End, FloatBinary, FloatCompare, Function, Fused,
+    Jump, Op, Program, Stream, System as Call, Type, Value,
 };
 
 mod vector;

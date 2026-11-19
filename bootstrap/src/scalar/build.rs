@@ -1,8 +1,8 @@
 //! Builds a function of the scalar form one instruction at a time.
 
 use super::{
-    Binary, Bits, Block, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare, Function,
-    Fused, Instruction, Jump, Op, Place, System, Type, Value,
+    At, Binary, Bits, Block, Compare, Constant, End, FloatBinary, FloatBits, FloatCompare,
+    Function, Fused, Instruction, Jump, Op, System, Type, Value,
 };
 
 /// A function being built. Its first block is where it starts.
@@ -70,7 +70,7 @@ impl Builder {
         self.blocks[self.current].instructions.push(Instruction {
             results: results.clone(),
             op,
-            at: Place::NONE,
+            at: At::NONE,
         });
         results
     }
