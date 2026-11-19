@@ -1,0 +1,211 @@
+use std.bits (bit_and, shift_right)
+use std.int (wrapping_add, wrapping_mul)
+use std.list (push)
+use std.utf8 (utf8)
+
+pub struct Value {
+  pub tag: Tag
+  pub bytes: Slice[Byte]
+}
+
+pub enum Tag {
+  boolean
+  integer
+  bits
+  octets
+  null
+  object
+  utf8
+  sequence
+  set
+  printable
+  ia5
+  utc_time
+  general_time
+  context: (0..31, bool)
+  other: Nat
+}
+
+// The length that begins at `at`, and where the contents it measures begin.
+fn length(bytes: Slice[Byte], at: Nat) -> Result[(Nat, Nat), str] {
+  if at >= bytes.size { return .err("the bytes end before the length") }
+  first = bytes[at]
+  short: Nat = first
+  if first < 128 { return .ok((short, at + 1)) }
+  if first == 128 { return .err("a length with no end") }
+  count: Nat = first - 128
+  if count > 8 { return .err("a length of more bytes than there are") }
+  if count >= bytes.size - at { return .err("the bytes end inside the length") }
+  if bytes[at + 1] == 0 { return .err("a length that could be shorter") }
+  var n: Nat = 0
+  loop i in 0..count {
+    b: Nat = bytes[at + 1 + i]
+    if n >= 72057594037927936 {
+      return .err("a length of more bytes than there are")
+    } else {
+      n = wrapping_add(wrapping_mul(n, 256), b)
+    }
+  }
+  if n < 128 { return .err("a length that could be shorter") }
+  .ok((n, at + 1 + count))
+}
+
+// What the identifier byte says a value is.
+fn tag_of(id: Byte) -> Result[Tag, str] {
+  number = bit_and(id, 31)
+  constructed = bit_and(id, 32) != 0
+  class = shift_right(id, 6)
+  if number < 31 {
+    if class == 2 {
+      n: 0..31 = number
+      return .ok(.context((n, constructed)))
+    }
+  } else {
+    return .err("a tag of more than one byte")
+  }
+  if class != 0 { return .ok(.other(id)) }
+  if number == 16 or number == 17 {
+    if not constructed { return .err("a sequence or a set that is not built of parts") }
+    if number == 16 { return .ok(.sequence) }
+    return .ok(.set)
+  }
+  if constructed { return .ok(.other(id)) }
+  if number == 1 { .ok(.boolean) } else if number == 2 { .ok(.integer) } else if number == 3 { .ok(.bits) } else if number == 4 { .ok(.octets) } else if number == 5 { .ok(.null) } else if number == 6 { .ok(.object) } else if number == 12 { .ok(.utf8) } else if number == 19 { .ok(.printable) } else if number == 22 { .ok(.ia5) } else if number == 23 { .ok(.utc_time) } else if number == 24 { .ok(.general_time) } else { .ok(.other(id)) }
+}
+
+// What the contents of a value must be for its tag, as DER writes it.
+fn contents_ok(tag: Tag, c: Slice[Byte]) -> Result[(), str] {
+  match tag {
+    .boolean {
+      if c.size != 1 { return .err("a boolean that is not one byte") }
+      if c[0] != 0 and c[0] != 255 { return .err("a boolean that is neither 0 nor 255") }
+      .ok(())
+    }
+    .integer {
+      if c.size == 0 { return .err("an integer of no bytes") }
+      if c.size > 1 {
+        if c[0] == 0 and c[1] < 128 { return .err("an integer with a byte at the front that it does not need") }
+        if c[0] == 255 and c[1] >= 128 { return .err("an integer with a byte at the front that it does not need") }
+      }
+      .ok(())
+    }
+    .null {
+      if c.size != 0 { return .err("a null that holds bytes") }
+      .ok(())
+    }
+    .object {
+      if c.size == 0 { return .err("an object identifier of no bytes") }
+      .ok(())
+    }
+    _ { .ok(()) }
+  }
+}
+
+// The value at the front of the bytes, and how many bytes it takes in all.
+fn read(bytes: Slice[Byte]) -> Result[(Value, Nat), str] {
+  if bytes.size == 0 { return .err("no bytes where a value is") }
+  tag = try tag_of(bytes[0])
+  (len, start) = try length(bytes, 1)
+  if start > bytes.size { return .err("the bytes end inside the length") }
+  if len > bytes.size - start { return .err("the bytes end inside a value") }
+  end = start + len
+  contents = bytes[start..end]
+  try contents_ok(tag, contents)
+  .ok((Value(tag: tag, bytes: contents), end))
+}
+
+pub fn value(bytes: Slice[Byte]) -> Result[(Value, Slice[Byte]), str] {
+  (v, end) = try read(bytes)
+  if end > bytes.size { return .err("the bytes end inside a value") }
+  .ok((v, bytes[end..]))
+}
+
+fn holds_parts(tag: Tag) -> bool {
+  match tag {
+    .sequence { true }
+    .set { true }
+    .context((n, c)) { c }
+    _ { false }
+  }
+}
+
+pub fn children(of: Value) -> Result[List[Value], str] ! alloc {
+  if not holds_parts(of.tag) { return .err("a value that holds no parts") }
+  var parts: List[Value] = []
+  var rest = of.bytes
+  loop i in 0..of.bytes.size {
+    if rest.size == 0 { break }
+    (v, end) = try read(rest)
+    if end > rest.size { return .err("the bytes end inside a value") }
+    parts = push(parts, v)
+    rest = rest[end..]
+  }
+  .ok(parts)
+}
+
+pub fn whole(of: Value) -> Result[Slice[Byte], str] {
+  match of.tag {
+    .integer {
+      c = of.bytes
+      if c.size == 0 { return .err("an integer of no bytes") }
+      if c[0] >= 128 { return .err("an integer that is below zero") }
+      if c.size > 1 and c[0] == 0 { return .ok(c[1..]) }
+      .ok(c)
+    }
+    _ { .err("a value that is not an integer") }
+  }
+}
+
+pub fn text(of: Value) -> Result[str, str] {
+  match of.tag {
+    .utf8 { text_of(of.bytes) }
+    .printable { ascii_of(of.bytes) }
+    .ia5 { ascii_of(of.bytes) }
+    _ { .err("a value that is not a text") }
+  }
+}
+
+fn text_of(bytes: Slice[Byte]) -> Result[str, str] {
+  match utf8(bytes) {
+    .ok(t) { .ok(t) }
+    .err(e) { .err("a text that is not valid UTF-8") }
+  }
+}
+
+fn ascii_of(bytes: Slice[Byte]) -> Result[str, str] {
+  loop i in 0..bytes.size {
+    if bytes[i] >= 128 { return .err("a text with a byte that is not ASCII") }
+  }
+  text_of(bytes)
+}
+
+pub fn object(of: Value) -> Result[List[Nat], str] ! alloc {
+  match of.tag {
+    .object {
+      c = of.bytes
+      var arcs: List[Nat] = []
+      var n: Nat = 0
+      var fresh = true
+      loop i in 0..c.size {
+        b: Nat = c[i]
+        if fresh and b == 128 { return .err("a number with a byte at the front that it does not need") }
+        if n >= 72057594037927936 { return .err("a number too great") }
+        n = wrapping_add(wrapping_mul(n, 128), bit_and(b, 127))
+        if b < 128 {
+          if arcs.size == 0 {
+            if n < 40 { arcs = push(push(arcs, 0), n) } else if n < 80 { arcs = push(push(arcs, 1), n - 40) } else { arcs = push(push(arcs, 2), n - 80) }
+          } else {
+            arcs = push(arcs, n)
+          }
+          n = 0
+          fresh = true
+        } else {
+          fresh = false
+        }
+      }
+      if not fresh { return .err("a number that does not end") }
+      .ok(arcs)
+    }
+    _ { .err("a value that is not an object identifier") }
+  }
+}
