@@ -9,6 +9,7 @@ use smith::{compile, lower};
 use crate::Test;
 use crate::aarch64;
 use crate::generate::{self, Gen};
+use crate::growth;
 use crate::machine_code::{self, Machine};
 
 pub const ONCE: &[Test] = &[
@@ -131,6 +132,7 @@ fn a_push_loop_asks_for_memory_once_for_each_doubling_of_the_list() {
     generate::check(5111, 25, sizes, |n| {
         let program = lower(program_of(*n).as_bytes()).unwrap();
         let (ran, taken) = scalar::run_taking(&program, usize::MAX);
+        let taken = growth::rooms(&taken);
         assert_eq!(ran.stdout, format!("{n}\n").into_bytes());
         // The requests of the list come first, and then the one of the text
         // the program prints.

@@ -9,6 +9,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::growth;
 use crate::numbers::{INTS, Int, value};
 
 pub const ONCE: &[Test] = &[
@@ -593,6 +594,7 @@ fn building_a_list_by_pushing_asks_for_memory_a_logarithmic_number_of_times() {
         let source = pushed(elem, n);
         let program = lower(source.as_bytes()).expect("compiles");
         let (outcome, requests) = scalar::run_taking(&program, usize::MAX);
+        let requests = growth::rooms(&requests);
         assert_eq!(outcome.status, 0, "for {source}");
         assert!(
             requests.len() <= 1 + ceil_log2(n),
@@ -609,6 +611,7 @@ fn a_list_has_room_for_at_most_twice_its_elements_each_at_the_size_of_its_type()
         let source = pushed(elem, n);
         let program = lower(source.as_bytes()).expect("compiles");
         let (_, requests) = scalar::run_taking(&program, usize::MAX);
+        let requests = growth::rooms(&requests);
         let room = *requests.last().expect("memory was asked for");
         assert!(room >= n * elem.width(), "{room} bytes for {source}");
         assert!(room <= 2 * n * elem.width(), "{room} bytes for {source}");
@@ -1123,7 +1126,7 @@ fn requests(source: &str) -> usize {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let (outcome, requests) = scalar::run_taking(&program, usize::MAX);
     assert_eq!(outcome.status, 0, "for {source}");
-    requests.len()
+    growth::rooms(&requests).len()
 }
 
 /// A push to a list held inside another value, or a list that a function
@@ -1193,6 +1196,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
     let mixed = "struct M {\n  a: u8\n  b: u32\n  c: u8\n}\n\nfn main() ! alloc {\n  var xs: List[M] = []\n  loop i in 0..3 { xs = push(xs, M(a: 1, b: 2, c: 3)) }\n}\n";
     let program = lower(mixed.as_bytes()).expect("compiles");
     let (_, asked) = scalar::run_taking(&program, usize::MAX);
+    let asked = growth::rooms(&asked);
     // `a` at 0, `b` at 4, `c` at 8, which ends at 9, and 12 is a whole number
     // of 4, so the last list has room for 4 elements of 12 bytes.
     assert_eq!(asked.last(), Some(&48), "{asked:?}");
@@ -1217,6 +1221,7 @@ fn an_element_takes_its_scalars_at_their_sizes_and_a_whole_number_of_its_largest
             );
             let program = lower(source.as_bytes()).expect("compiles");
             let (_, asked) = scalar::run_taking(&program, usize::MAX);
+            let asked = growth::rooms(&asked);
             let room = *asked.last().expect("memory was asked for");
             let stride = t.stride();
             assert_eq!(room % stride, 0, "{room} bytes for {source}");

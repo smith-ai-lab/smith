@@ -93,7 +93,7 @@ fn temporaries_larger_than_a_piece_are_found_again_by_the_next_call() {
     assert_eq!(many, first);
     let one_square: u64 = (0..4000u64).map(|i| i * i).sum();
     assert_eq!(stdout, format!("{}\n", 6 * one_square).into_bytes());
-    assert!(many > 2, "{many} requests do not need a second piece");
+    assert!(many >= 2, "{many} requests do not need a second piece");
 }
 
 /// A list a function returns, through the functions that return it, is

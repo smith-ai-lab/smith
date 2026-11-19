@@ -525,12 +525,14 @@ fn push(scalars: &[Type], grow: usize) -> Function {
 
 /// Gives a list whose memory has room for twice as many elements of the
 /// width as it holds, or for one when it holds none, with its elements in
-/// it, and how many it has room for.
+/// it, and how many it has room for. When the list's memory is the last that
+/// was taken from the stack the request is made in, the room it lacks is
+/// taken after it, and nothing is copied.
 fn grow(stride: u64, copy: usize) -> Function {
     let mut f = Builder::new();
     f.cold();
     let p = f.params(&[ADDRESS, LENGTH, LENGTH]);
-    let (address, size) = (p[0], p[1]);
+    let (address, size, room) = (p[0], p[1], p[2]);
     let width = int(&mut f, stride);
     let one = int(&mut f, 1);
     let zero = int(&mut f, 0);
@@ -538,11 +540,56 @@ fn grow(stride: u64, copy: usize) -> Function {
     let twice = f.binary(Binary::Add, size, size);
     let places_of_room = f.choose(none, one, twice);
     let asked = f.binary(Binary::Mul, places_of_room, width);
+    let held = f.binary(Binary::Mul, room, width);
+    let (plain, _) = f.block(&[]);
+    let (peek, _) = f.block(&[]);
+    let (extend, _) = f.block(&[]);
+    let (done, _) = f.block(&[]);
+    // Two places cannot be compared, so they are compared as numbers, which
+    // takes the last 16 bytes of the list's memory for a moment. A list of
+    // fewer is copied, which costs nothing.
+    let sixteen = int(&mut f, 16);
+    let roomy = f.compare(Compare::LessU, sixteen, held);
+    f.switch(roomy, vec![(plain, vec![]), (peek, vec![])]);
+    f.at(peek);
+    let end = after(&mut f, address, held);
+    let top = f.allocate(zero);
+    let last = same_place(&mut f, address, held, top, end);
+    f.switch(last, vec![(plain, vec![]), (extend, vec![])]);
+    f.at(extend);
+    let extra = f.binary(Binary::Sub, asked, held);
+    let flag = int(&mut f, super::handler::TRY);
+    let tried = f.binary(Binary::Or, extra, flag);
+    let more = f.allocate(tried);
+    let joined = same_place(&mut f, address, held, more, end);
+    f.switch(joined, vec![(plain, vec![]), (done, vec![])]);
+    f.at(done);
+    // Where the memory taken is the end of the list, the list is as it was.
+    let base = f.choose(joined, address, more);
+    f.ret(vec![base, places_of_room]);
+    f.at(plain);
     let data = f.allocate(asked);
     let used = f.binary(Binary::Mul, size, width);
     f.call(copy, vec![data, address, used], &[]);
     f.ret(vec![data, places_of_room]);
     f.finish(&[ADDRESS, LENGTH])
+}
+
+/// Whether two addresses are the same, given a list's memory of `held` bytes,
+/// at least 16, whose last two words are held and put back.
+fn same_place(f: &mut Builder, address: Value, held: Value, a: Value, b: Value) -> Value {
+    let sixteen = int(f, 16);
+    let eight = int(f, 8);
+    let back = f.binary(Binary::Sub, held, sixteen);
+    let first = after(f, address, back);
+    let second = after(f, first, eight);
+    let (kept_a, kept_b) = (f.load(WORD, first), f.load(WORD, second));
+    f.store(first, a);
+    f.store(second, b);
+    let (x, y) = (f.load(WORD, first), f.load(WORD, second));
+    f.store(first, kept_a);
+    f.store(second, kept_b);
+    f.compare(Compare::Equal, x, y)
 }
 
 /// Writes the scalars of an element, each at its place, from the address.
