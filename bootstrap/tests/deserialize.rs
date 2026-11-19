@@ -366,6 +366,12 @@ fn peek(r: Rd) -> Shape {
     out.push_str(&simple("text", "str", ".text(v)", "v"));
     out.push_str(&simple("nothing", "()", ".nothing", "()"));
     out.push_str(
+        "  fn raw(r: take Rd) -> (Rd, Result[Slice[u8], ReadError]) ! alloc {
+    (note(r, \"raw\"), Result.err(wrong(r, \"raw\")))
+  }
+",
+    );
+    out.push_str(
         "  fn present(r: take Rd) -> (Rd, Result[bool, ReadError]) ! alloc {
     match peek(r) {
       .present { (step(r, \"present\"), Result.ok(true)) }

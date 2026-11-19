@@ -1,4 +1,5 @@
 use std.serialize (Serialize, Writer, write)
+use std.deserialize (Deserialize, Reader, ReadError, Problem, read, raw, fail)
 
 pub enum Cases {
   key
@@ -16,9 +17,15 @@ pub struct Clash {
   pub member: str
 }
 
+pub enum Unknown {
+  ignore
+  refuse
+}
+
 pub struct Json {
   pub cases: Cases
   pub names: Names
+  pub unknown: Unknown = .ignore
 }
 
 // A case whose value is being written, and which is closed when the value
@@ -248,7 +255,7 @@ struct Check {
   clash: Option[Clash]
 }
 
-fn refuse(to: take Check, of: str, case: str, member: str) -> Check ! alloc {
+fn note_clash(to: take Check, of: str, case: str, member: str) -> Check ! alloc {
   var w = to
   match w.clash {
     .none { w.clash = Option.some(Clash(of: of, case: case, member: member)) }
@@ -265,7 +272,7 @@ fn begin(to: take Check) -> Check ! alloc {
     if w.tag == "value" {
       of = w.of
       case = w.case
-      w = refuse(w, of, case, "value")
+      w = note_clash(w, of, case, "value")
     }
   }
   w
@@ -337,7 +344,7 @@ impl Writer[Check] {
       frame = v.frames[m - 1]
       if frame.depth == v.depth and same_bytes(written_name(name, v.camel), v.tag) {
         tag = v.tag
-        v = refuse(v, frame.of, frame.case, tag)
+        v = note_clash(v, frame.of, frame.case, tag)
       }
     }
     v
@@ -393,4 +400,1123 @@ pub fn to_json_as[T: Serialize](value: T, json: Json) -> Result[str, Clash] ! al
 
 pub fn to_json[T: Serialize](value: T) -> str ! alloc {
   render(value, Json(cases: .key, names: .written))
+}
+
+// Reading.
+//
+// Everything below the reader walks the bytes of the input with a position
+// and gives the position it ended at, so that a read that succeeds works acc
+// nothing of its path, its line, or its column.
+
+// What is wrong, and the byte it is at.
+struct Bad {
+  at: Nat
+  problem: Problem
+}
+
+fn is_space(b: u8) -> bool { b == ' ' or b == '\n' or b == 13 or b == '\t' }
+
+fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }
+
+// The byte at `at`, which is 0 beyond the end, and no JSON has a 0.
+fn byte(b: Slice[u8], at: Nat) -> u8 {
+  if at < b.size { b[at] } else { 0 }
+}
+
+fn skip_space(b: Slice[u8], from: Nat) -> Nat {
+  loop i in from..b.size {
+    if not is_space(b[i]) { return i }
+  }
+  b.size
+}
+
+// The last byte before `at` that is not a space, or 0.
+fn last_before(b: Slice[u8], at: Nat) -> u8 {
+  var i = at
+  loop k in 0..at {
+    if i == 0 { return 0 }
+    i = i - 1
+    if i < b.size and not is_space(b[i]) { return b[i] }
+  }
+  0
+}
+
+fn malformed(at: Nat) -> Bad { Bad(at: at, problem: .malformed) }
+
+// How the input describes the value that starts at `at`, or `.none` where
+// no value starts.
+fn found(b: Slice[u8], at: Nat) -> Option[str] {
+  c = byte(b, at)
+  if c == '"' { Option.some("a text") } else if c == '-' or is_digit(c) { Option.some("a number") } else if c == 't' or c == 'f' { Option.some("a boolean") } else if c == 'n' { Option.some("null") } else if c == '[' { Option.some("a list") } else if c == '{' { Option.some("an object") } else { Option.none }
+}
+
+// The error for a value of another kind than the one wanted.
+fn wrong(b: Slice[u8], at: Nat, wanted: str) -> Bad {
+  match found(b, at) {
+    .some(f) { Bad(at: at, problem: .shape((wanted, f))) }
+    .none { malformed(at) }
+  }
+}
+
+// The end of the word `w` that is at `at`.
+fn word(b: Slice[u8], at: Nat, w: str) -> Result[Nat, Bad] {
+  var ok = saturating_add(at, w.size) <= b.size
+  if ok {
+    loop i in 0..w.size {
+      j = saturating_add(at, i)
+      if j < b.size and b[j] != w[i] { ok = false }
+    }
+  }
+  if ok { Result.ok(saturating_add(at, w.size)) } else { Result.err(malformed(at)) }
+}
+
+// A number as the input holds it.
+struct Num {
+  end: Nat
+  negative: bool
+  from: Nat
+  whole: bool
+}
+
+// The number that starts at `at`, which is checked against the grammar of
+// JSON: a `-`, a `0` or a digit other than `0` and digits, a fraction, and an
+// exponent. `from` is where its digits start.
+fn number(b: Slice[u8], at: Nat) -> Result[Num, Bad] {
+  var i = at
+  negative = byte(b, i) == '-'
+  if negative { i = saturating_add(i, 1) }
+  from = i
+  c = byte(b, i)
+  if not is_digit(c) { return Result.err(malformed(i)) }
+  if c == '0' {
+    i = saturating_add(i, 1)
+  } else {
+    loop k in 0..b.size {
+      if is_digit(byte(b, i)) { i = saturating_add(i, 1) } else { break }
+    }
+  }
+  var whole = true
+  if byte(b, i) == '.' {
+    whole = false
+    i = saturating_add(i, 1)
+    if not is_digit(byte(b, i)) { return Result.err(malformed(i)) }
+    loop k in 0..b.size {
+      if is_digit(byte(b, i)) { i = saturating_add(i, 1) } else { break }
+    }
+  }
+  e = byte(b, i)
+  if e == 'e' or e == 'E' {
+    whole = false
+    i = saturating_add(i, 1)
+    s = byte(b, i)
+    if s == '+' or s == '-' { i = saturating_add(i, 1) }
+    if not is_digit(byte(b, i)) { return Result.err(malformed(i)) }
+    loop k in 0..b.size {
+      if is_digit(byte(b, i)) { i = saturating_add(i, 1) } else { break }
+    }
+  }
+  Result.ok(Num(end: i, negative: negative, from: from, whole: whole))
+}
+
+// The value of the digits of a whole number, or `.none` when it is more than a
+// `u64` holds.
+fn magnitude(b: Slice[u8], from: Nat, end: Nat) -> Option[u64] {
+  var m: u64 = 0
+  loop i in from..end {
+    if i < b.size {
+      d: u64 = convert(wrapping_sub(b[i], '0'))
+      match checked_mul(m, 10) {
+        .some(t) {
+          match checked_add(t, d) {
+            .some(v) { m = v }
+            .none { return Option.none }
+          }
+        }
+        .none { return Option.none }
+      }
+    }
+  }
+  Option.some(m)
+}
+
+fn hex_value(c: u8) -> Option[u32] {
+  if is_digit(c) { Option.some(convert(wrapping_sub(c, '0'))) } else if c >= 'a' and c <= 'f' { Option.some(convert(wrapping_sub(c, 87))) } else if c >= 'A' and c <= 'F' { Option.some(convert(wrapping_sub(c, 55))) } else { Option.none }
+}
+
+// The four hexadecimal digits at `at`.
+fn hex4(b: Slice[u8], at: Nat) -> Option[u32] {
+  var v: u32 = 0
+  loop i in 0..4 {
+    match hex_value(byte(b, saturating_add(at, i))) {
+      .some(d) { v = wrapping_add(wrapping_mul(v, 16), d) }
+      .none { return Option.none }
+    }
+  }
+  Option.some(v)
+}
+
+// A string that starts at `at` with `"`: where it ends, after the closing
+// `"`, and whether it holds an escape. Each escape is one JSON has, a `\u` is
+// a character or the two halves of one, and no byte below a space is bare.
+struct Quoted {
+  end: Nat
+  escaped: bool
+}
+
+fn quoted(b: Slice[u8], at: Nat) -> Result[Quoted, Bad] {
+  var i = saturating_add(at, 1)
+  var escaped = false
+  loop k in 0..b.size {
+    if i >= b.size { return Result.err(malformed(i)) }
+    c = b[i]
+    if c == '"' { return Result.ok(Quoted(end: saturating_add(i, 1), escaped: escaped)) }
+    if c < 32 { return Result.err(malformed(i)) }
+    if c == '\\' {
+      escaped = true
+      e = byte(b, saturating_add(i, 1))
+      if e == 'u' {
+        match hex4(b, saturating_add(i, 2)) {
+          .some(v) {
+            if v >= 55296 and v < 56320 {
+              if byte(b, saturating_add(i, 6)) == '\\' and byte(b, saturating_add(i, 7)) == 'u' {
+                match hex4(b, saturating_add(i, 8)) {
+                  .some(w) {
+                    if w >= 56320 and w < 57344 { i = saturating_add(i, 12) } else { return Result.err(malformed(i)) }
+                  }
+                  .none { return Result.err(malformed(i)) }
+                }
+              } else {
+                return Result.err(malformed(i))
+              }
+            } else if v >= 56320 and v < 57344 {
+              return Result.err(malformed(i))
+            } else {
+              i = saturating_add(i, 6)
+            }
+          }
+          .none { return Result.err(malformed(i)) }
+        }
+      } else if e == '"' or e == '\\' or e == '/' or e == 'b' or e == 'f' or e == 'n' or e == 'r' or e == 't' {
+        i = saturating_add(i, 2)
+      } else {
+        return Result.err(malformed(i))
+      }
+    } else {
+      i = saturating_add(i, 1)
+    }
+  }
+  Result.err(malformed(i))
+}
+
+// A container that is open: the byte that opened it, the container below it,
+// as a place in the list that holds them from 1, and the member of that
+// container which this one is the value of, as the place of its key or its
+// number in an array.
+struct Frame {
+  kind: u8
+  below: Nat
+  key: Nat
+  index: Nat
+}
+
+// Where a walk ended: after the value it walked, or at the byte that
+// `target` said to stop at, with the containers that are open there and the
+// member of the innermost, and whether that member is its own or the place
+// is in the container itself, as a `]` or a byte after a value is.
+struct Walk {
+  end: Nat
+  frames: List[Frame]
+  top: Nat
+  key: Nat
+  index: Nat
+  inside: bool
+  bad: Option[Bad]
+}
+
+fn walked(end: Nat, frames: take List[Frame], top: Nat, key: Nat, index: Nat, inside: bool) -> Result[Walk, Bad] {
+  Result.ok(Walk(end: end, frames: frames, top: top, key: key, index: index, inside: inside, bad: Option.none))
+}
+
+// Where a walk met what is not JSON: at the member it was in.
+fn broke(e: Bad, frames: take List[Frame], top: Nat, key: Nat, index: Nat) -> Result[Walk, Bad] {
+  Result.ok(Walk(end: e.at, frames: frames, top: top, key: key, index: index, inside: false, bad: Option.some(e)))
+}
+
+fn frame_at(frames: List[Frame], at: Nat) -> Frame {
+  if at >= 1 and at <= frames.size { frames[at - 1] } else { Frame(kind: 0, below: 0, key: 0, index: 0) }
+}
+
+// Walks the value that starts at `start`, which is checked to be one whole
+// JSON value, and stops at the first place that is `target` or beyond, where
+// it says which containers are open. The containers are kept as the byte that
+// opened each, so a value that holds none asks for no memory.
+fn walk(b: Slice[u8], start: Nat, target: Nat) -> Result[Walk, Bad] ! alloc {
+  var frames: List[Frame] = []
+  var top: Nat = 0
+  var key: Nat = 0
+  var index: Nat = 0
+  var at = start
+  // Whether a value is wanted at `at`, or one has just ended.
+  var wanted = true
+  loop k in 0..saturating_add(b.size, 2) {
+    if wanted {
+      at = skip_space(b, at)
+      c = byte(b, at)
+      if at >= target { return walked(at, frames, top, key, index, c == ']' or c == '}') }
+      if c == '[' or c == '{' {
+        frames = push(frames, Frame(kind: c, below: top, key: key, index: index))
+        top = frames.size
+        key = 0
+        index = 0
+        at = skip_space(b, saturating_add(at, 1))
+        close = if c == '[' { ']' } else { '}' }
+        if byte(b, at) == close {
+          if at >= target { return walked(at, frames, top, key, index, true) }
+          f = frame_at(frames, top)
+          top = f.below
+          key = f.key
+          index = f.index
+          at = saturating_add(at, 1)
+          wanted = false
+        } else if c == '{' {
+          if at >= target { return walked(at, frames, top, at, index, byte(b, at) != '"') }
+          key = at
+          match member(b, at) {
+            .ok(next) { at = next }
+            .err(e) { return broke(e, frames, top, key, index) }
+          }
+        }
+      } else if c == '"' {
+        match quoted(b, at) {
+          .ok(q) { at = q.end }
+          .err(e) { return broke(e, frames, top, key, index) }
+        }
+        wanted = false
+      } else if c == '-' or is_digit(c) {
+        match number(b, at) {
+          .ok(n) { at = n.end }
+          .err(e) { return broke(e, frames, top, key, index) }
+        }
+        wanted = false
+      } else if c == 't' {
+        match word(b, at, "true") {
+          .ok(next) { at = next }
+          .err(e) { return broke(e, frames, top, key, index) }
+        }
+        wanted = false
+      } else if c == 'f' {
+        match word(b, at, "false") {
+          .ok(next) { at = next }
+          .err(e) { return broke(e, frames, top, key, index) }
+        }
+        wanted = false
+      } else if c == 'n' {
+        match word(b, at, "null") {
+          .ok(next) { at = next }
+          .err(e) { return broke(e, frames, top, key, index) }
+        }
+        wanted = false
+      } else {
+        return broke(malformed(at), frames, top, key, index)
+      }
+    } else {
+      if top == 0 or top > frames.size { return walked(at, frames, top, key, index, true) }
+      at = skip_space(b, at)
+      c = byte(b, at)
+      if at >= target { return walked(at, frames, top, key, index, true) }
+      f = frame_at(frames, top)
+      if c == ',' {
+        at = skip_space(b, saturating_add(at, 1))
+        if f.kind == '{' {
+          if at >= target { return walked(at, frames, top, at, index, byte(b, at) != '"') }
+          key = at
+          match member(b, at) {
+            .ok(next) { at = next }
+            .err(e) { return broke(e, frames, top, key, index) }
+          }
+        } else {
+          index = saturating_add(index, 1)
+        }
+        wanted = true
+      } else if (c == ']' and f.kind == '[') or (c == '}' and f.kind == '{') {
+        top = f.below
+        key = f.key
+        index = f.index
+        at = saturating_add(at, 1)
+      } else {
+        return broke(malformed(at), frames, top, key, index)
+      }
+    }
+  }
+  broke(malformed(at), frames, top, key, index)
+}
+
+// The end of the value that starts at `start`, which is checked to be one
+// whole JSON value.
+fn scan(b: Slice[u8], start: Nat) -> Result[Nat, Bad] ! alloc {
+  match walk(b, start, saturating_add(b.size, 1)) {
+    .ok(w) {
+      match w.bad {
+        .some(e) { Result.err(e) }
+        .none { Result.ok(w.end) }
+      }
+    }
+    .err(e) { Result.err(e) }
+  }
+}
+
+// The `:` after the name of a member that starts at `at`, passed: where the
+// member's value is to start.
+fn member(b: Slice[u8], at: Nat) -> Result[Nat, Bad] {
+  if byte(b, at) != '"' { return Result.err(malformed(at)) }
+  match quoted(b, at) {
+    .ok(q) {
+      colon = skip_space(b, q.end)
+      if byte(b, colon) == ':' { Result.ok(saturating_add(colon, 1)) } else { Result.err(malformed(colon)) }
+    }
+    .err(e) { Result.err(e) }
+  }
+}
+
+// A character of the number `code`, as bytes.
+fn put_char(to: take List[u8], code: u32) -> List[u8] ! alloc {
+  var acc = to
+  if code < 128 {
+    acc = push(acc, wrapping_narrow(code))
+  } else if code < 2048 {
+    acc = push(acc, wrapping_narrow(bit_or(192, shift_right(code, 6))))
+    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(code, 63))))
+  } else if code < 65536 {
+    acc = push(acc, wrapping_narrow(bit_or(224, shift_right(code, 12))))
+    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(shift_right(code, 6), 63))))
+    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(code, 63))))
+  } else {
+    acc = push(acc, wrapping_narrow(bit_or(240, shift_right(code, 18))))
+    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(shift_right(code, 12), 63))))
+    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(shift_right(code, 6), 63))))
+    acc = push(acc, wrapping_narrow(bit_or(128, bit_and(code, 63))))
+  }
+  acc
+}
+
+// Takes the bytes of a string that `quoted` checked from `at` to `end`, with
+// its escapes undone, and with each upper case letter made a `_` and the
+// letter in lower case when `camel` says it is the name of a field.
+fn unescape(b: Slice[u8], at: Nat, end: Nat, camel: bool) -> List[u8] ! alloc {
+  var acc: List[u8] = []
+  var i = saturating_add(at, 1)
+  loop k in 0..b.size {
+    if saturating_add(i, 1) >= end { break }
+    c = byte(b, i)
+    var made: u8 = c
+    var step: Nat = 1
+    var code: u32 = 0
+    var is_code = false
+    if c == '\\' {
+      e = byte(b, saturating_add(i, 1))
+      step = 2
+      if e == 'n' { made = '\n' } else if e == 't' { made = '\t' } else if e == 'r' { made = 13 } else if e == 'b' { made = 8 } else if e == 'f' { made = 12 } else if e == 'u' {
+        step = 6
+        is_code = true
+        match hex4(b, saturating_add(i, 2)) {
+          .some(v) { code = v }
+          .none { }
+        }
+        if code >= 55296 and code < 56320 {
+          match hex4(b, saturating_add(i, 8)) {
+            .some(w) { code = wrapping_add(wrapping_add(65536, wrapping_mul(wrapping_sub(code, 55296), 1024)), wrapping_sub(w, 56320)) }
+            .none { }
+          }
+          step = 12
+        }
+      } else { made = e }
+    }
+    if is_code and code < 128 {
+      made = wrapping_narrow(code)
+      is_code = false
+    }
+    if is_code {
+      acc = put_char(acc, code)
+    } else if camel and made >= 'A' and made <= 'Z' {
+      acc = push(push(acc, '_'), saturating_add(made, 32))
+    } else {
+      acc = push(acc, made)
+    }
+    i = saturating_add(i, step)
+  }
+  acc
+}
+
+// The text that the string at `at`, which ends at `end`, stands for. A string
+// with nothing to undo is a piece of the input, so nothing is copied for it.
+fn text_at(b: Slice[u8], q: Quoted, at: Nat, camel: bool) -> str ! alloc {
+  var upper = false
+  if camel {
+    loop i in at..q.end {
+      if i < b.size and b[i] >= 'A' and b[i] <= 'Z' { upper = true }
+    }
+  }
+  lo = saturating_add(at, 1)
+  hi = saturating_sub(q.end, 1)
+  if not q.escaped and not upper and lo <= hi and hi <= b.size {
+    match utf8(b[lo..hi]) {
+      .ok(t) { return t }
+      .err(e) { return "" }
+    }
+  }
+  match utf8(freeze(unescape(b, at, q.end, camel))) {
+    .ok(t) { t }
+    .err(e) { "" }
+  }
+}
+
+// The path to the place `at`, which is the way to the value there from the
+// top, as `tools[2].timeout`.
+fn path_at(b: Slice[u8], at: Nat) -> str ! alloc {
+  match walk(b, skip_space(b, 0), at) {
+    .ok(w) { render_path(b, w) }
+    .err(e) { "" }
+  }
+}
+
+fn put_member(b: Slice[u8], to: take List[u8], kind: u8, key: Nat, index: Nat) -> List[u8] ! alloc {
+  var acc = to
+  if kind == '{' {
+    match quoted(b, key) {
+      .ok(q) {
+        if acc.size > 0 { acc = push(acc, '.') }
+        name = unescape(b, key, q.end, false)
+        loop i in 0..name.size { acc = push(acc, name[i]) }
+      }
+      .err(e) { }
+    }
+  } else {
+    acc = push(acc, '[')
+    digits = "{index}"
+    loop i in 0..digits.size { acc = push(acc, digits[i]) }
+    acc = push(acc, ']')
+  }
+  acc
+}
+
+fn render_path(b: Slice[u8], w: Walk) -> str ! alloc {
+  // The open containers, innermost first.
+  var chain: List[Nat] = []
+  var t = w.top
+  loop k in 0..w.frames.size {
+    if t == 0 or t > w.frames.size { break }
+    chain = push(chain, t)
+    t = frame_at(w.frames, t).below
+  }
+  var acc: List[u8] = []
+  loop j in 0..chain.size {
+    f = frame_at(w.frames, chain[chain.size - 1 - j])
+    if f.below != 0 and f.below <= w.frames.size {
+      acc = put_member(b, acc, frame_at(w.frames, f.below).kind, f.key, f.index)
+    }
+  }
+  if w.top != 0 and w.top <= w.frames.size and not w.inside {
+    acc = put_member(b, acc, frame_at(w.frames, w.top).kind, w.key, w.index)
+  }
+  match utf8(freeze(acc)) {
+    .ok(text) { text }
+    .err(e) { "" }
+  }
+}
+
+// The line and the column of the byte `at`, each counted from 1, the column in
+// bytes.
+fn place(b: Slice[u8], at: Nat) -> (Nat, Nat) {
+  var line: Nat = 1
+  var row: Nat = 0
+  loop i in 0..b.size {
+    if i >= at { break }
+    if b[i] == '\n' {
+      line = saturating_add(line, 1)
+      row = saturating_add(i, 1)
+    }
+  }
+  (line, saturating_add(saturating_sub(at, row), 1))
+}
+
+fn read_error(b: Slice[u8], bad: Bad) -> ReadError ! alloc {
+  (line, column) = place(b, bad.at)
+  ReadError(path: path_at(b, bad.at), problem: bad.problem, line: line, column: column)
+}
+
+// The reader of JSON text. The bytes of each case that is open, and whether
+// closing it takes a `}`, are the bits of `forms`, and `cases` says how many
+// there are. A case written with a tag is `pending` from its name until what it
+// holds is begun.
+struct In {
+  bytes: Slice[u8]
+  at: Nat
+  mark: Nat
+  json: Json
+  forms: u64
+  cases: Nat
+  pending: bool
+}
+
+fn failed_bool(r: take In, bad: Bad) -> (In, Result[bool, ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+fn failed_i64(r: take In, bad: Bad) -> (In, Result[i64, ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+fn failed_u64(r: take In, bad: Bad) -> (In, Result[u64, ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+fn failed_str(r: take In, bad: Bad) -> (In, Result[str, ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+fn failed_bytes(r: take In, bad: Bad) -> (In, Result[Slice[u8], ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+fn failed_unit(r: take In, bad: Bad) -> (In, Result[(), ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+fn failed_name(r: take In, bad: Bad) -> (In, Result[Option[str], ReadError]) ! alloc {
+  (r, Result.err(read_error(r.bytes, bad)))
+}
+
+
+fn ends_value(c: u8) -> bool {
+  c == '"' or is_digit(c) or c == 'e' or c == 'l' or c == ']' or c == '}'
+}
+
+// Where the value that is asked for starts, past what comes before it: the
+// `,` between two elements of a tuple, and the `"value":` of a case that holds
+// a value and is written with a tag.
+fn value_start(r: In) -> Result[Nat, Bad] ! alloc {
+  b = r.bytes
+  a = skip_space(b, r.at)
+  c = byte(b, a)
+  if r.pending {
+    if c != ',' {
+      if c == '}' { return Result.err(Bad(at: a, problem: .missing("value"))) }
+      return Result.err(malformed(a))
+    }
+    k = skip_space(b, saturating_add(a, 1))
+    match quoted(b, k) {
+      .ok(q) {
+        if text_at(b, q, k, false) != "value" {
+          return Result.err(Bad(at: k, problem: .missing("value")))
+        }
+        colon = skip_space(b, q.end)
+        if byte(b, colon) != ':' { return Result.err(malformed(colon)) }
+        Result.ok(skip_space(b, saturating_add(colon, 1)))
+      }
+      .err(e) { Result.err(Bad(at: k, problem: .missing("value"))) }
+    }
+  } else if ends_value(last_before(b, a)) {
+    if c == ',' {
+      Result.ok(skip_space(b, saturating_add(a, 1)))
+    } else if c == ']' {
+      Result.err(Bad(at: a, problem: .shape(("a value", "the end of the list"))))
+    } else {
+      Result.err(malformed(a))
+    }
+  } else {
+    Result.ok(a)
+  }
+}
+
+fn moved(r: take In, at: Nat, mark: Nat) -> In {
+  var w = r
+  w.at = at
+  w.mark = mark
+  w.pending = false
+  w
+}
+
+fn range_of(a: Nat, of: str) -> Bad { Bad(at: a, problem: .range(of)) }
+
+fn not_whole(a: Nat) -> Bad {
+  Bad(at: a, problem: .shape(("a whole number", "a number that is not whole")))
+}
+
+// The number at `a` as a whole number, with its sign apart from its size.
+struct Whole {
+  end: Nat
+  negative: bool
+  size: u64
+}
+
+fn whole(b: Slice[u8], a: Nat, of: str) -> Result[Whole, Bad] {
+  c = byte(b, a)
+  if c != '-' and not is_digit(c) { return Result.err(wrong(b, a, "a whole number")) }
+  match number(b, a) {
+    .err(e) { Result.err(e) }
+    .ok(n) {
+      if not n.whole { return Result.err(not_whole(a)) }
+      match magnitude(b, n.from, n.end) {
+        .some(m) { Result.ok(Whole(end: n.end, negative: n.negative, size: m)) }
+        .none { Result.err(Bad(at: a, problem: .range(of))) }
+      }
+    }
+  }
+}
+
+fn literal(r: take In, a: Nat, w: str, wanted: str) -> (In, Result[(), ReadError]) ! alloc {
+  match word(r.bytes, a, w) {
+    .ok(e) { (moved(r, e, a), Result.ok(())) }
+    .err(e) { failed_unit(moved(r, r.at, a), wrong(r.bytes, a, wanted)) }
+  }
+}
+
+fn pushed(r: take In, form: u64) -> Result[In, Bad] {
+  var w = r
+  if w.cases >= 64 { return Result.err(malformed(w.mark)) }
+  w.forms = bit_or(shift_left(w.forms, 1), form)
+  w.cases = saturating_add(w.cases, 1)
+  Result.ok(w)
+}
+
+impl Reader[In] {
+  fn boolean(r: take In) -> (In, Result[bool, ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_bool(r, e) }
+      .ok(a) {
+        c = byte(r.bytes, a)
+        if c == 't' {
+          match word(r.bytes, a, "true") {
+            .ok(e) { (moved(r, e, a), Result.ok(true)) }
+            .err(e) { failed_bool(moved(r, r.at, a), e) }
+          }
+        } else if c == 'f' {
+          match word(r.bytes, a, "false") {
+            .ok(e) { (moved(r, e, a), Result.ok(false)) }
+            .err(e) { failed_bool(moved(r, r.at, a), e) }
+          }
+        } else {
+          failed_bool(moved(r, r.at, a), wrong(r.bytes, a, "a boolean"))
+        }
+      }
+    }
+  }
+  fn signed(r: take In) -> (In, Result[i64, ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_i64(r, e) }
+      .ok(a) {
+        match whole(r.bytes, a, "i64") {
+          .err(e) { failed_i64(moved(r, r.at, a), e) }
+          .ok(n) {
+            w = moved(r, n.end, a)
+            if n.negative {
+              if n.size <= 9223372036854775807 {
+                v: i64 = narrow(n.size)
+                (w, Result.ok(0 - v))
+              } else if n.size == 9223372036854775808 {
+                (w, Result.ok(wrapping_sub(0 - 9223372036854775807, 1)))
+              } else {
+                failed_i64(w, range_of(a, "i64"))
+              }
+            } else if n.size <= 9223372036854775807 {
+              (w, Result.ok(narrow(n.size)))
+            } else {
+              failed_i64(w, range_of(a, "i64"))
+            }
+          }
+        }
+      }
+    }
+  }
+  fn unsigned(r: take In) -> (In, Result[u64, ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_u64(r, e) }
+      .ok(a) {
+        match whole(r.bytes, a, "u64") {
+          .err(e) { failed_u64(moved(r, r.at, a), e) }
+          .ok(n) {
+            w = moved(r, n.end, a)
+            if n.negative and n.size != 0 {
+              failed_u64(w, range_of(a, "u64"))
+            } else {
+              (w, Result.ok(n.size))
+            }
+          }
+        }
+      }
+    }
+  }
+  fn text(r: take In) -> (In, Result[str, ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_str(r, e) }
+      .ok(a) {
+        if byte(r.bytes, a) != '"' {
+          failed_str(moved(r, r.at, a), wrong(r.bytes, a, "a text"))
+        } else {
+          match quoted(r.bytes, a) {
+            .ok(q) { (moved(r, q.end, a), Result.ok(text_at(r.bytes, q, a, false))) }
+            .err(e) { failed_str(moved(r, r.at, a), e) }
+          }
+        }
+      }
+    }
+  }
+  fn nothing(r: take In) -> (In, Result[(), ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_unit(r, e) }
+      .ok(a) { literal(r, a, "null", "null") }
+    }
+  }
+  fn present(r: take In) -> (In, Result[bool, ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_bool(r, e) }
+      .ok(a) {
+        if byte(r.bytes, a) == 'n' {
+          match word(r.bytes, a, "null") {
+            .ok(e) { (moved(r, e, a), Result.ok(false)) }
+            .err(e) { failed_bool(moved(r, r.at, a), e) }
+          }
+        } else {
+          (moved(r, a, a), Result.ok(true))
+        }
+      }
+    }
+  }
+  fn sequence(r: take In) -> (In, Result[(), ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_unit(r, e) }
+      .ok(a) {
+        if byte(r.bytes, a) == '[' {
+          (moved(r, saturating_add(a, 1), a), Result.ok(()))
+        } else {
+          failed_unit(moved(r, r.at, a), wrong(r.bytes, a, "a list"))
+        }
+      }
+    }
+  }
+  fn more(r: take In) -> (In, Result[bool, ReadError]) ! alloc {
+    b = r.bytes
+    a = skip_space(b, r.at)
+    c = byte(b, a)
+    if last_before(b, a) == '[' {
+      if c == ']' { (moved(r, saturating_add(a, 1), a), Result.ok(false)) } else { (moved(r, a, a), Result.ok(true)) }
+    } else if c == ']' {
+      (moved(r, saturating_add(a, 1), a), Result.ok(false))
+    } else if c == ',' {
+      (moved(r, saturating_add(a, 1), a), Result.ok(true))
+    } else {
+      failed_bool(moved(r, r.at, a), malformed(a))
+    }
+  }
+  fn tuple(r: take In, size: Nat) -> (In, Result[(), ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_unit(r, e) }
+      .ok(a) {
+        if byte(r.bytes, a) == '[' {
+          (moved(r, saturating_add(a, 1), a), Result.ok(()))
+        } else {
+          failed_unit(moved(r, r.at, a), wrong(r.bytes, a, "a list"))
+        }
+      }
+    }
+  }
+  fn end_tuple(r: take In) -> (In, Result[(), ReadError]) ! alloc {
+    a = skip_space(r.bytes, r.at)
+    c = byte(r.bytes, a)
+    if c == ']' {
+      (moved(r, saturating_add(a, 1), a), Result.ok(()))
+    } else if c == ',' {
+      failed_unit(moved(r, r.at, a), Bad(at: a, problem: .shape(("the end of the list", "a value"))))
+    } else {
+      failed_unit(moved(r, r.at, a), malformed(a))
+    }
+  }
+  fn structure(r: take In, name: str) -> (In, Result[(), ReadError]) ! alloc {
+    if r.pending {
+      var w = moved(r, r.at, r.mark)
+      w.forms = bit_and(w.forms, 18446744073709551614)
+      (w, Result.ok(()))
+    } else {
+      match value_start(r) {
+        .err(e) { failed_unit(r, e) }
+        .ok(a) {
+          if byte(r.bytes, a) == '{' {
+            (moved(r, saturating_add(a, 1), a), Result.ok(()))
+          } else {
+            failed_unit(moved(r, r.at, a), wrong(r.bytes, a, "an object"))
+          }
+        }
+      }
+    }
+  }
+  fn field(r: take In) -> (In, Result[Option[str], ReadError]) ! alloc {
+    b = r.bytes
+    var a = skip_space(b, r.at)
+    c = byte(b, a)
+    if c == '}' { return (moved(r, saturating_add(a, 1), a), Result.ok(Option.none)) }
+    if last_before(b, a) != '{' and true {
+      if c != ',' {
+        return failed_name(moved(r, r.at, a), malformed(a))
+      }
+      a = skip_space(b, saturating_add(a, 1))
+    }
+    if byte(b, a) != '"' { return failed_name(moved(r, r.at, a), malformed(a)) }
+    match quoted(b, a) {
+      .err(e) { failed_name(moved(r, r.at, a), e) }
+      .ok(q) {
+        colon = skip_space(b, q.end)
+        if byte(b, colon) != ':' {
+          failed_name(moved(r, r.at, a), malformed(colon))
+        } else {
+          camel = match r.json.names {
+            .written { false }
+            .camel { true }
+          }
+          (moved(r, saturating_add(colon, 1), a), Result.ok(Option.some(text_at(b, q, a, camel))))
+        }
+      }
+    }
+  }
+  fn unknown(r: take In, name: str) -> (In, Result[(), ReadError]) ! alloc {
+    match r.json.unknown {
+      .refuse { failed_unit(r, Bad(at: r.mark, problem: .unknown(name))) }
+      .ignore {
+        a = skip_space(r.bytes, r.at)
+        match scan(r.bytes, a) {
+          .err(e) { failed_unit(moved(r, r.at, a), e) }
+          .ok(e) {
+            match again(r.bytes, e, name, r.json.names) {
+              .some(bad) { failed_unit(moved(r, e, r.mark), bad) }
+              .none { (moved(r, e, r.mark), Result.ok(())) }
+            }
+          }
+        }
+      }
+    }
+  }
+  fn case(r: take In, of: str) -> (In, Result[str, ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_str(r, e) }
+      .ok(a) {
+        b = r.bytes
+        c = byte(b, a)
+        match r.json.cases {
+          .key {
+            if c == '"' {
+              match quoted(b, a) {
+                .err(e) { failed_str(moved(r, r.at, a), e) }
+                .ok(q) {
+                  match pushed(moved(r, q.end, a), 0) {
+                    .ok(w) { (w, Result.ok(text_at(b, q, a, false))) }
+                    .err(e) { failed_str(moved(r, r.at, a), e) }
+                  }
+                }
+              }
+            } else if c == '{' {
+              k = skip_space(b, saturating_add(a, 1))
+              match member(b, k) {
+                .err(e) { failed_str(moved(r, r.at, a), e) }
+                .ok(v) {
+                  match quoted(b, k) {
+                    .err(e) { failed_str(moved(r, r.at, a), e) }
+                    .ok(q) {
+                      match pushed(moved(r, v, k), 1) {
+                        .ok(w) { (w, Result.ok(text_at(b, q, k, false))) }
+                        .err(e) { failed_str(moved(r, r.at, a), e) }
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              failed_str(moved(r, r.at, a), wrong(b, a, "a case"))
+            }
+          }
+          .tag(t) {
+            if c != '{' {
+              failed_str(moved(r, r.at, a), wrong(b, a, "an object"))
+            } else {
+              k = skip_space(b, saturating_add(a, 1))
+              match member(b, k) {
+                .err(e) { failed_str(moved(r, r.at, a), e) }
+                .ok(v) {
+                  match quoted(b, k) {
+                    .err(e) { failed_str(moved(r, r.at, a), e) }
+                    .ok(q) {
+                      if text_at(b, q, k, false) != t {
+                        failed_str(moved(r, r.at, a), Bad(at: a, problem: .missing(t)))
+                      } else {
+                        n = skip_space(b, v)
+                        if byte(b, n) != '"' {
+                          failed_str(moved(r, r.at, n), wrong(b, n, "a text"))
+                        } else {
+                          match quoted(b, n) {
+                            .err(e) { failed_str(moved(r, r.at, n), e) }
+                            .ok(name) {
+                              match pushed(moved(r, name.end, n), 1) {
+                                .ok(w) {
+                                  var held = w
+                                  held.pending = true
+                                  (held, Result.ok(text_at(b, name, n, false)))
+                                }
+                                .err(e) { failed_str(moved(r, r.at, n), e) }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  fn end_case(r: take In) -> (In, Result[(), ReadError]) ! alloc {
+    var w = r
+    closes = bit_and(w.forms, 1) == 1
+    w.forms = shift_right(w.forms, 1)
+    w.cases = saturating_sub(w.cases, 1)
+    w.pending = false
+    if closes {
+      a = skip_space(w.bytes, w.at)
+      if byte(w.bytes, a) == '}' {
+        w.at = saturating_add(a, 1)
+        w.mark = a
+        (w, Result.ok(()))
+      } else {
+        failed_unit(moved(w, w.at, a), malformed(a))
+      }
+    } else {
+      (w, Result.ok(()))
+    }
+  }
+  fn raw(r: take In) -> (In, Result[Slice[u8], ReadError]) ! alloc {
+    match value_start(r) {
+      .err(e) { failed_bytes(r, e) }
+      .ok(a) {
+        match scan(r.bytes, a) {
+          .err(e) { failed_bytes(moved(r, r.at, a), e) }
+          .ok(e) {
+            if a <= e and e <= r.bytes.size {
+              (moved(r, e, a), Result.ok(r.bytes[a..e]))
+            } else {
+              failed_bytes(moved(r, r.at, a), malformed(a))
+            }
+          }
+        }
+      }
+    }
+  }
+  fn fail(r: take In, problem: Problem) -> (In, ReadError) ! alloc {
+    (r, read_error(r.bytes, Bad(at: r.mark, problem: problem)))
+  }
+}
+
+// Looks in the members of the object from `from`, after the value of a member
+// named `name`, for another of that name, and gives it as `twice` at its name.
+fn again(b: Slice[u8], from: Nat, name: str, names: Names) -> Option[Bad] ! alloc {
+  camel = match names {
+    .written { false }
+    .camel { true }
+  }
+  var at = from
+  loop k in 0..b.size {
+    at = skip_space(b, at)
+    if byte(b, at) != ',' { return Option.none }
+    at = skip_space(b, saturating_add(at, 1))
+    match quoted(b, at) {
+      .err(e) { return Option.none }
+      .ok(q) {
+        if text_at(b, q, at, camel) == name {
+          return Option.some(Bad(at: at, problem: .twice(name)))
+        }
+        match member(b, at) {
+          .err(e) { return Option.none }
+          .ok(v) {
+            match scan(b, skip_space(b, v)) {
+              .err(e) { return Option.none }
+              .ok(e) { at = e }
+            }
+          }
+        }
+      }
+    }
+  }
+  Option.none
+}
+
+pub trait FromJson[T] {
+  fn from_json_as(text: str, json: Json) -> Result[T, ReadError] ! alloc
+  fn from_json(text: str) -> Result[T, ReadError] ! alloc
+}
+
+impl[T] FromJson[T]
+  requires Deserialize[T]
+  requires Discard[T]
+{
+  fn from_json_as(text: str, json: Json) -> Result[T, ReadError] ! alloc {
+    bytes = text.bytes
+    r = In(bytes: bytes, at: 0, mark: 0, json: json, forms: 0, cases: 0, pending: false)
+    (w, result): (In, Result[T, ReadError]) = read(r)
+    match result {
+      .err(e) { Result.err(e) }
+      .ok(v) {
+        a = skip_space(bytes, w.at)
+        if a < bytes.size {
+          Result.err(read_error(bytes, malformed(a)))
+        } else {
+          Result.ok(v)
+        }
+      }
+    }
+  }
+  fn from_json(text: str) -> Result[T, ReadError] ! alloc {
+    from_json_as(text, Json(cases: .key, names: .written))
+  }
+}
+
+// A part of the text that is not taken apart: one whole JSON value, as the
+// input holds it.
+pub struct RawJson {
+  pub text: str
+}
+
+without Serialize for RawJson
+
+impl Deserialize[RawJson] {
+  fn read[R: Reader](from: take R) -> (R, Result[RawJson, ReadError]) ! alloc {
+    (r, got) = raw(from)
+    match got {
+      .err(e) { (r, Result.err(e)) }
+      .ok(bytes) {
+        match utf8(bytes) {
+          .ok(t) { (r, Result.ok(RawJson(text: t))) }
+          .err(u) {
+            (w, e) = fail(r, .malformed)
+            (w, Result.err(e))
+          }
+        }
+      }
+    }
+  }
+}
+
+// What the error says, as `1:57: tools[2].timeout: expected a whole number,
+// found a text`: the line and the column, the path when there is one, and the
+// problem.
+pub fn describe(e: ReadError) -> str ! alloc {
+  what = match e.problem {
+    .malformed { "not valid JSON" }
+    .missing(n) { "missing `{n}`" }
+    .shape((wanted, found)) { "expected {wanted}, found {found}" }
+    .range(of) { "a number that does not fit {of}" }
+    .case(n) { "`{n}` is not a case" }
+    .unknown(n) { "unknown `{n}`" }
+    .twice(n) { "`{n}` is given twice" }
+  }
+  if e.path.size == 0 { "{e.line}:{e.column}: {what}" } else { "{e.line}:{e.column}: {e.path}: {what}" }
 }

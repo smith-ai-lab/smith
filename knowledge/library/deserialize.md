@@ -7,6 +7,7 @@ built:
   - "`std.deserialize`, with `Deserialize`, `Reader`, `ReadError`, and `Problem`, which a program imports with `use` and which the prelude does not hold"
   - "`Deserialize`, which a whole number, `bool`, `str`, `()`, and every struct, enum, tuple, list, or `Option` is given unless a part lacks it, which `without Deserialize for T` takes away, and which a type's own `impl` replaces, built part by part from a `Reader` with nothing built between"
   - "a field left out is `.none` for an `Option`, its default when it has one, and otherwise the reader's `fail` with `missing` and the field's name; a field given twice is `twice`; a number outside its type is `range` with the type's name; a name that is no case is `case`"
+  - "`raw` of a `Reader`, which gives the bytes of the next value as a piece of the input, and `std.json`, which has a `Reader` written in Smith and reads with it"
   - "not a float, `Slice`, an array, or `Map`, which wait for their shapes"
 ---
 
@@ -20,12 +21,12 @@ struct Point {
   y: i64
 }
 
-fn parse(text: str) -> Result[Point, JsonError] ! alloc {
+fn parse(text: str) -> Result[Point, ReadError] ! alloc {
   from_json(text)
 }
 ```
 
-`parse("{\"x\":3,\"y\":4}")` is `.ok(Point(x: 3, y: 4))`. `Point` has `Deserialize` without a line written for it, the type that is read is the one the place of the result needs, and `from_json` is a function of `std.json`. `Deserialize`, `Reader`, `ReadError`, and `Problem` are in `std.deserialize`, which a program imports with `use std.deserialize (Deserialize, Reader, ReadError, Problem, read)`, and the prelude holds none of them. `std.json` has no `from_json` yet, so no words are quoted for it.
+`parse("{\"x\":3,\"y\":4}")` is `.ok(Point(x: 3, y: 4))`. `Point` has `Deserialize` without a line written for it, the type that is read is the one the place of the result needs, and `from_json` is a function of `std.json`. `Deserialize`, `Reader`, `ReadError`, and `Problem` are in `std.deserialize`, which a program imports with `use std.deserialize (Deserialize, Reader, ReadError, Problem, read)`, and the prelude holds none of them. The words of `from_json` are in [JSON](json.md#reading).
 
 ## The trait
 
@@ -60,6 +61,7 @@ trait Reader[R] {
   fn unknown(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
   fn case(r: take R, of: str) -> (R, Result[str, ReadError]) ! alloc
   fn end_case(r: take R) -> (R, Result[(), ReadError]) ! alloc
+  fn raw(r: take R) -> (R, Result[Slice[u8], ReadError]) ! alloc
   fn fail(r: take R, problem: Problem) -> (R, ReadError) ! alloc
 }
 ```
@@ -68,6 +70,7 @@ trait Reader[R] {
 - `sequence` opens a sequence, and `more` says before each element whether there is another. The sequence is closed when `more` gives `false`.
 - `structure` opens a struct. `field` then gives the name of the field the input holds next, written as the type writes its fields, and the type reads the value of the field of that name. It gives `.none` when the struct has ended. For a name the type has no field of, the type calls `unknown`, and the reader passes over the value or refuses it, as the format says.
 - `case` gives the name of the case the input holds. What that case holds is read next, and `end_case` closes it, for a case that holds nothing too.
+- `raw` gives the bytes of the next value as the format holds them, as a piece of the input that shares its memory, and moves past the value. It gives bytes and not a text, so that a format that is not text has it too. A type that is a part of the input that is read later reads itself with it, as [`RawJson`](json.md#a-part-of-the-text-that-is-read-later) does.
 - `fail` makes the error for what the type itself finds wrong, as a field that is missing, and the reader puts the path and the place in it.
 
 A reader gives names and is given none, so a type holds no table of its fields: it compares the name it is given with each of its own.
