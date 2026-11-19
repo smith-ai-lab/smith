@@ -5,12 +5,13 @@ description: The names that are in scope in every file without a use, and what a
 status: partial
 built:
   - "every name below, `Int` and `Byte` among them, in scope in every file with no import"
+  - "not `Pos`"
   - "a name of the standard library outside the table, such as `print`, `console`, `push`, `narrow`, a `wrapping_` function, or the name of a size, is refused where a file uses it with no `use`, and the error names the module to import it from"
 ---
 
 # The prelude
 
-A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, or, for `Int`, `Nat`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience.
+A small set of names is in scope in every file with no `use`. It is called the prelude, and it is as small as it can be: a name is in it only when the syntax of the language means that name, or, for `Int`, `Nat`, `Pos`, and `Byte`, when it says what a number is for. There is no other way in, and so no name is in it for convenience.
 
 ```
 use std.console (console, print)
@@ -26,7 +27,7 @@ No syntax means `print`, or the `console` effect it needs, so a program that pri
 
 | In the prelude | The syntax that means it |
 | --- | --- |
-| `Int`, `Nat`, `Byte`, the float types, `bool`, `str` | A literal, the size of an array, and a byte of a text |
+| `Int`, `Nat`, `Pos`, `Byte`, the float types, `bool`, `str` | A literal, the size of an array, and a byte of a text |
 | `List`, `Slice` | A list written in brackets, as `[1, 2, 3]`, and the piece of one written `x[a..b]`, which is a `Slice`, as a `str` is |
 | `Option`, `Result`, `Flow` with its two types, and `Try` with its `split` | `try` |
 | `Order`, `Eq`, and `Ord`, with `eq` and `compare` | `==`, `!=`, `<`, `<=`, `>`, and `>=` |

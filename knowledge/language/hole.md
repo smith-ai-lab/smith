@@ -25,12 +25,12 @@ The compiler reports for `body` the type `u8`, the effects the function declares
 A hole is also written where a proof is needed, and the report names the statement that is wanted.
 
 ```
-fn positive(raw: Nat) -> Pos {
-  Pos(value: raw, above: hole(inside))
+fn start[size: Nat](raw: Nat) -> Cursor[size] {
+  Cursor(at: raw, inside: hole(inside))
 }
 ```
 
-The report for `inside` is the statement `raw > 0`, which a [`check`](check.md) would give.
+`Cursor` is the struct of [A struct that holds a proof](proof-fields.md), whose field `inside` is a proof of `at <= size`. The report for `inside` is the statement `raw <= size`, which a [`check`](check.md) would give.
 
 ## A hole is not built
 
