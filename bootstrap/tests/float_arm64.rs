@@ -32,14 +32,14 @@ pub const ONCE: &[Test] = &[
 /// Runs the program and its passes for each target that is an executable for
 /// arm64, and checks that each does what the evaluator says.
 fn check(program: &Program) {
+    // The form as it is made: a product that one sum uses is fused.
+    let program = &scalar::fuse(program);
     assert_eq!(scalar::check(program), Ok(()));
+    let said = scalar::run(program);
     let passed = scalar::passes(program);
     let mut ran = 0;
     for target in Target::ALL.iter().filter(|t| t.builds_floats()) {
-        // The passed form fuses a product that a sum uses, so what it gives is
-        // what the evaluator says of that form.
         for p in [program, &passed] {
-            let said = scalar::run(p);
             let bytes = target.emit(p);
             if aarch64::is_executable(&bytes) {
                 let got = aarch64::run(&bytes);

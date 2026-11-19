@@ -1,6 +1,7 @@
-//! A product whose only use is one sum or difference is one instruction with
-//! one rounding, for floats and for each lane of a vector of floats, in the
-//! scalar form after the passes and in every executable.
+//! A product whose only use, in its function, is one sum or difference is one
+//! instruction with one rounding, for floats and for each lane of a vector of
+//! floats. `scalar::fuse` decides it where a form is made, and no pass makes a
+//! fused instruction or takes one apart.
 
 use smith::scalar::{
     self, Builder, FloatBinary, FloatBits, Fused, Lane, Op, Program, Type, Value,
@@ -24,6 +25,10 @@ pub const ONCE: &[Test] = &[
     (
         "a_product_that_is_used_twice_or_by_anything_but_one_sum_or_difference_is_not_fused",
         a_product_that_is_used_twice_or_by_anything_but_one_sum_or_difference_is_not_fused,
+    ),
+    (
+        "a_product_in_one_function_and_its_sum_in_another_is_not_fused_whether_or_not_the_call_is_inlined",
+        a_product_in_one_function_and_its_sum_in_another_is_not_fused_whether_or_not_the_call_is_inlined,
     ),
 ];
 
@@ -67,26 +72,11 @@ fn sum(b: &mut Builder, ty: Type, op: FloatBinary, x: Value, y: Value) -> Value 
 
 /// A function of three parameters that gives what a product of the first two
 /// and the third make: the product first or second in the sum or the
-/// difference, written in the block of its parameters or after a jump.
-fn shape(ty: Type, op: FloatBinary, product_first: bool, after_jump: bool) -> Builder {
+/// difference.
+fn shape(ty: Type, op: FloatBinary, product_first: bool) -> Builder {
     let mut b = Builder::new();
     let v = b.params(&[ty, ty, ty]);
     let p = product(&mut b, ty, v[0], v[1]);
-    let p = if after_jump {
-        let (next, params) = b.block(&[ty, ty]);
-        b.jump(next, vec![p, v[2]]);
-        b.at(next);
-        let (p, c) = (params[0], params[1]);
-        let r = if product_first {
-            sum(&mut b, ty, op, p, c)
-        } else {
-            sum(&mut b, ty, op, c, p)
-        };
-        b.ret(vec![r]);
-        return b;
-    } else {
-        p
-    };
     let r = if product_first {
         sum(&mut b, ty, op, p, v[2])
     } else {
@@ -193,7 +183,7 @@ fn a_fused_instruction_rounds_once_where_a_product_and_a_sum_round_twice() {
         b.ret(vec![r]);
         assert_eq!(gives(&program(ty, b, &args)), spread(ty, exact));
         // Two roundings of the same numbers give zero.
-        let twice = shape(ty, FloatBinary::Add, true, false);
+        let twice = shape(ty, FloatBinary::Add, true);
         assert_eq!(gives(&program(ty, twice, &args)), 0);
     }
 }
@@ -202,28 +192,33 @@ fn a_product_whose_only_use_is_one_sum_or_difference_is_one_fused_instruction_an
     for ty in types() {
         for op in [FloatBinary::Add, FloatBinary::Sub] {
             for product_first in [true, false] {
-                for after_jump in [false, true] {
-                    let bits = bits_of(ty);
-                    let args = [
-                        spread(ty, ff::edges(bits)[2]),
-                        spread(ty, ff::edges(bits)[5]),
-                        spread(ty, ff::edges(bits)[3]),
-                    ];
-                    let unfused = program(ty, shape(ty, op, product_first, after_jump), &args);
-                    let passed = scalar::passes(&unfused);
-                    let what = format!("{ty:?} {op:?} {product_first} {after_jump}");
-                    assert_eq!(scalar::check(&passed), Ok(()), "{what}");
-                    assert_eq!(products(&passed), 0, "{what}");
-                    assert_eq!(sums(&passed), 0, "{what}");
-                    let kind = match (op, product_first) {
-                        (FloatBinary::Add, _) => Fused::MulAdd,
-                        (_, true) => Fused::MulSub,
-                        (_, false) => Fused::NegMulAdd,
-                    };
-                    assert_eq!(fused(&passed), vec![kind], "{what}");
-                    // The values are exact, so the one rounding agrees with two.
-                    assert_eq!(gives(&passed), gives(&unfused), "{what}");
-                }
+                let bits = bits_of(ty);
+                let args = [
+                    spread(ty, ff::edges(bits)[2]),
+                    spread(ty, ff::edges(bits)[5]),
+                    spread(ty, ff::edges(bits)[3]),
+                ];
+                let unfused = program(ty, shape(ty, op, product_first), &args);
+                let made = scalar::fuse(&unfused);
+                let what = format!("{ty:?} {op:?} {product_first}");
+                assert_eq!(scalar::check(&made), Ok(()), "{what}");
+                let kind = match (op, product_first) {
+                    (FloatBinary::Add, _) => Fused::MulAdd,
+                    (_, true) => Fused::MulSub,
+                    (_, false) => Fused::NegMulAdd,
+                };
+                // After the passes the form holds the one fused instruction and no
+                // product or sum, and gives what it gave.
+                let passed = scalar::passes(&made);
+                assert_eq!(fused(&passed), vec![kind], "{what}");
+                assert_eq!(products(&passed), 0, "{what}");
+                assert_eq!(sums(&passed), 0, "{what}");
+                assert_eq!(gives(&passed), gives(&made), "{what}");
+                // No pass makes one: the form that was not fused stays as it is.
+                let kept = scalar::passes(&unfused);
+                assert!(fused(&kept).is_empty(), "{what}");
+                assert_eq!(products(&kept), 1, "{what}");
+                assert_eq!(gives(&kept), gives(&unfused), "{what}");
             }
         }
     }
@@ -267,10 +262,53 @@ fn a_product_that_is_used_twice_or_by_anything_but_one_sum_or_difference_is_not_
             let v = b.params(&[ty, ty, ty]);
             let r = make(&mut b, ty, &v);
             b.ret(vec![r]);
-            let passed = scalar::passes(&program(ty, b, &args));
+            let made = scalar::fuse(&program(ty, b, &args));
+            let passed = scalar::passes(&made);
             assert_eq!(scalar::check(&passed), Ok(()), "{what}");
+            assert_eq!(fused(&made).len(), 0, "{what} of {ty:?}");
             assert_eq!(fused(&passed).len(), 0, "{what} of {ty:?}");
             assert!(products(&passed) >= 1, "{what} of {ty:?}");
+        }
+    }
+}
+
+fn a_product_in_one_function_and_its_sum_in_another_is_not_fused_whether_or_not_the_call_is_inlined() {
+    for ty in types() {
+        let bits = bits_of(ty);
+        // The numbers of the first test, where one rounding and two differ.
+        let k = if bits == FloatBits::F32 { 12 } else { 27 };
+        let x = one_plus(bits, k);
+        let negative = one_plus(bits, k - 1) | (1 << (bits.count() - 1));
+        let args = [spread(ty, x), spread(ty, x), spread(ty, negative)];
+        for cold in [false, true] {
+            let mut b = Builder::new();
+            let v = b.params(&[ty, ty]);
+            let p = product(&mut b, ty, v[0], v[1]);
+            b.ret(vec![p]);
+            let mut multiply = b.finish(&[ty]);
+            // A function that is cold is never replaced by its instructions.
+            multiply.cold = cold;
+            let mut b = Builder::new();
+            let v = b.params(&[ty, ty, ty]);
+            let p = b.call(0, vec![v[0], v[1]], &[ty])[0];
+            let r = sum(&mut b, ty, FloatBinary::Add, p, v[2]);
+            b.ret(vec![r]);
+            let add = b.finish(&[ty]);
+            let params = [(ty, args[0]), (ty, args[1]), (ty, args[2])];
+            let made = scalar::fuse(&vf::observed(vec![multiply, add], 1, &params, true));
+            let passed = scalar::passes(&made);
+            let what = format!("{ty:?}, cold {cold}");
+            assert_eq!(scalar::check(&passed), Ok(()), "{what}");
+            assert!(fused(&made).is_empty(), "{what}");
+            assert!(fused(&passed).is_empty(), "{what}");
+            // A function that is not cold is inlined, and one that is stays a call.
+            let calls = instructions(&passed)
+                .filter(|op| matches!(op, Op::Call { function: 0, .. }))
+                .count();
+            assert_eq!(calls == 0, !cold, "{what}: {calls} calls of the product");
+            // Two roundings of these numbers give zero.
+            assert_eq!(gives(&made), 0, "{what}");
+            assert_eq!(gives(&passed), 0, "{what}");
         }
     }
 }
@@ -279,7 +317,7 @@ fn a_product_that_is_used_twice_or_by_anything_but_one_sum_or_difference_is_not_
 type Reader = fn(&mut Builder, Type, &[Value]) -> Value;
 
 /// A fused shape and its three arguments, for any type and any edge.
-fn generated(g: &mut Gen) -> (Type, FloatBinary, bool, bool, [u128; 3]) {
+fn generated(g: &mut Gen) -> (Type, FloatBinary, bool, [u128; 3]) {
     let all = types();
     let ty = all[g.below(all.len())];
     let op = [FloatBinary::Add, FloatBinary::Sub][g.below(2)];
@@ -287,25 +325,22 @@ fn generated(g: &mut Gen) -> (Type, FloatBinary, bool, bool, [u128; 3]) {
         Type::Vector(lane) => vf::vector_value(g, lane),
         _ => u128::from(ff::float(g, bits_of(ty))),
     });
-    (ty, op, g.below(2) == 0, g.below(2) == 0, args)
+    (ty, op, g.below(2) == 0, args)
 }
 
 fn every_executable_of_a_fused_product_gives_what_the_evaluator_gives() {
-    generate::check(6171, 60, generated, |(ty, op, first, after_jump, args)| {
-        let passed = canonically(*ty, *op, *first, *after_jump, args);
-        assert!(!fused(&passed).is_empty());
-        assert_eq!(scalar::check(&passed), Ok(()));
-        let said = scalar::run(&passed);
+    generate::check(6171, 60, generated, |(ty, op, first, args)| {
+        let f = shape(*ty, *op, *first).finish(&[*ty]);
+        let args: Vec<(Type, u128)> = [*ty, *ty, *ty].into_iter().zip(args.iter().copied()).collect();
+        // A result that is not a number is written as the one the evaluator gives.
+        let made = scalar::fuse(&vf::observed_canonically(vec![f], 0, &args, true));
+        assert!(!fused(&made).is_empty());
+        assert_eq!(scalar::check(&made), Ok(()));
+        let said = scalar::run(&made);
+        let passed = scalar::passes(&made);
         for target in runnable() {
+            scalar_runs_as(&made, target, &said);
             scalar_runs_as(&passed, target, &said);
         }
     });
-}
-
-/// The program `shape` makes, with a result that is not a number written as the
-/// one the evaluator gives, and passed.
-fn canonically(ty: Type, op: FloatBinary, first: bool, after_jump: bool, args: &[u128; 3]) -> Program {
-    let f = shape(ty, op, first, after_jump).finish(&[ty]);
-    let args: Vec<(Type, u128)> = [ty, ty, ty].into_iter().zip(args.iter().copied()).collect();
-    scalar::passes(&vf::observed_canonically(vec![f], 0, &args, true))
 }

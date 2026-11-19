@@ -48,11 +48,12 @@ pub use wellformed::{Malformed, Why, check};
 /// The passes over a program in the scalar form, in the order they run:
 /// inlining, the taking away of what a function is passed and gives back and
 /// does not need, the sending of a jump past a block
-/// that only chooses, the fusing of a product with the one sum or difference
-/// that uses it, folding of constants, the replacing of what is worked out
-/// twice, and the removal of what nothing uses.
+/// that only chooses, folding of constants, the replacing of what is worked out
+/// twice, and the removal of what nothing uses. None of them makes a fused
+/// instruction or takes one apart: `fuse` does that, once, to a form as it is
+/// made.
 pub fn passes(program: &Program) -> Program {
-    remove(&common(&fold(&fuse(&thread(&trim(&inline(program)))))))
+    remove(&common(&fold(&thread(&trim(&inline(program))))))
 }
 
 /// How many bits an integer has.

@@ -344,6 +344,10 @@ fn the_passes_rewrite_no_float_that_is_not_known() {
             b.float_binary(FloatBinary::Mul, p, v[2])
         }),
         of_three(|b, v| {
+            let p = b.float_binary(FloatBinary::Mul, v[0], v[1]);
+            b.float_binary(FloatBinary::Add, p, v[2])
+        }),
+        of_three(|b, v| {
             let n = b.float_negate(v[0]);
             b.float_negate(n)
         }),
@@ -381,6 +385,9 @@ fn the_passes_rewrite_no_float_that_is_not_known() {
 
 fn every_pass_keeps_what_a_generated_function_of_floats_and_whole_numbers_gives() {
     generate::check(5134, 60, ff::program, |program| {
+        // The form as it is made: a product that one sum uses is fused, and no
+        // pass makes or takes apart a fused instruction.
+        let program = &scalar::fuse(program);
         assert_eq!(scalar::check(program), Ok(()));
         let want = scalar::run(program);
         let mut p = program.clone();
@@ -397,9 +404,7 @@ fn every_pass_keeps_what_a_generated_function_of_floats_and_whole_numbers_gives(
             assert_eq!(scalar::check(&p), Ok(()), "not well formed after {name}");
             assert_eq!(scalar::run(&p), want, "the pass {name} changed what it gives");
         }
-        // A product that a sum uses is fused, which gives other bits than two
-        // roundings do, so the passes are held to the form being well formed.
-        assert_eq!(scalar::check(&scalar::passes(program)), Ok(()));
+        assert_eq!(scalar::run(&scalar::passes(program)), want);
     });
 }
 
