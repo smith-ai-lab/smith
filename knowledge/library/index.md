@@ -18,11 +18,11 @@ The modules of the standard library, one file each, named for the module. A modu
 - [describe.md](describe.md): `Describe`, by which a type says what it is made of with no value in hand, each part with its comment, and `Describer`, which a format for descriptions has.
 - [json.md](json.md): `std.json`, which writes a value that has `Serialize` as JSON text and reads JSON text into a value that has `Deserialize`, the settings for how a case and a field's name look, and `RawJson`.
 - [http.md](http.md): `std.http`, with which a program answers HTTP requests with plain functions, and `at`, which puts a server of messages at a path.
-- [fetch.md](fetch.md): the `fetch` effect, by which a program sends an HTTP request to another server, and what answers it natively and in a WebAssembly module.
 - [html.md](html.md): `std.html`, with which a page is written as calls of plain functions that write it as they run, with every text escaped.
 - [mcp.md](mcp.md): `std.mcp`, with which a program is a Model Context Protocol server whose tools are plain functions described by their comments and parameters.
 - [secret.md](secret.md): `Secret[T]`, a value the time a program takes must not depend on, which cannot steer a branch or be an index.
 - [random.md](random.md): random bits from a key, distributions as ordinary structs with the `Sample` and `LogProb` traits, and how a program adds its own.
 - [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
 - [store.md](store.md): the `store` effect, which keeps bytes under keys past the end of the program, and `save` and `load`, which keep any value that has `Serialize`.
+- [fetch.md](fetch.md): the `fetch` effect, by which a program sends an HTTP request to another server, and what answers it natively and in a WebAssembly module.
 - [console.md](console.md): the `console` effect, for a program's standard input, output, and error.
