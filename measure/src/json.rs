@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::build::{instructions, per_byte, size};
+use crate::profile;
 use crate::{RUNS, least, smith_time};
 
 /// How many structs are written.
@@ -190,6 +191,14 @@ fn write(smith: &Path, work: &Path) {
             n as f64 / bytes as f64
         );
     }
+    profile::print(
+        smith,
+        work,
+        "json",
+        ("json-whole", "json-base"),
+        reps,
+        bytes,
+    );
 }
 
 /// The least of `RUNS` builds of the Smith program.
@@ -507,4 +516,12 @@ fn read(smith: &Path, work: &Path) {
             n as f64 / bytes as f64
         );
     }
+    profile::print(
+        smith,
+        work,
+        "jsonread",
+        ("jsonread-whole", "jsonread-base"),
+        reps,
+        bytes,
+    );
 }
