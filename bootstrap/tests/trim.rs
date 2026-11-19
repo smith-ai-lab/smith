@@ -179,7 +179,7 @@ impl Chain {
         }
         s.push_str("}\n");
         for l in 0..self.changed.len() {
-            s.push_str(&format!("\nfn g{l}(s: S) -> S {{\n  var t = s\n"));
+            s.push_str(&format!("\nfn g{l}(s: S) -> S {{\n{}  var t = s\n", pad("s.f0")));
             s.push_str(&format!(
                 "  var e = wrapping_add(wrapping_mul(s.f0, {}), 1)\n",
                 mark(l)
@@ -215,6 +215,17 @@ impl Chain {
         s.push_str("}\n");
         s
     }
+}
+
+/// Lines that read `value` more often than a function can be called from
+/// two places and still be inlined, and make nothing that is used. A function
+/// that starts with them is not inlined, and reads no more than it did.
+fn pad(value: &str) -> String {
+    let mut lines = format!("  var padding = {value}\n");
+    for _ in 0..scalar::LEAF_BOUND {
+        lines += &format!("  padding = wrapping_add(padding, {value})\n");
+    }
+    lines
 }
 
 fn built(source: &str) -> Program {
@@ -291,13 +302,16 @@ struct Written {
     mark: u64,
     params: usize,
     results: usize,
+    /// A parameter that the function reads on every path, which `{pad}` in
+    /// the source reads again to make the function larger than the bound.
+    read: &'static str,
 }
 
 const READ_ON_ONE_PATH: Written = Written {
     source: "use std.int (wrapping_add, wrapping_mul)
 
 fn pick(a: i64, b: i64, c: i64) -> i64 {
-  var r = wrapping_mul(wrapping_add(c, 1), 424242)
+{pad}  var r = wrapping_mul(wrapping_add(c, 1), 424242)
   if a > 0 { r = wrapping_add(r, b) }
   r
 }
@@ -312,6 +326,7 @@ fn main() ! console, alloc {
     mark: 424242,
     params: 3,
     results: 1,
+    read: "c",
 };
 
 const DIFFERS_ON_ONE_RETURN: Written = Written {
@@ -323,7 +338,7 @@ struct P {
 }
 
 fn step(p: P) -> P {
-  if p.x > 5 { p } else { P(x: wrapping_mul(wrapping_add(p.x, 1), 515151), y: p.y) }
+{pad}  if p.x > 5 { p } else { P(x: wrapping_mul(wrapping_add(p.x, 1), 515151), y: p.y) }
 }
 
 fn main() ! console, alloc {
@@ -339,6 +354,7 @@ fn main() ! console, alloc {
     mark: 515151,
     params: 1,
     results: 1,
+    read: "p.x",
 };
 
 const LOOP_OVER_A_VAR: Written = Written {
@@ -351,7 +367,7 @@ struct S {
 }
 
 fn step(s: S) -> S {
-  var t = s
+{pad}  var t = s
   t.a = wrapping_add(s.a, s.b)
   t.b = wrapping_mul(wrapping_add(s.b, 1), 616161)
   t
@@ -372,6 +388,7 @@ fn main() ! console, alloc {
     mark: 616161,
     params: 2,
     results: 2,
+    read: "s.a",
 };
 
 const TWO_PLACES: Written = Written {
@@ -384,7 +401,7 @@ struct S {
 }
 
 fn bump(s: S) -> S {
-  var t = s
+{pad}  var t = s
   t.a = wrapping_mul(wrapping_add(wrapping_add(s.a, s.b), s.c), 717171)
   t
 }
@@ -402,6 +419,7 @@ fn main() ! console, alloc {
     mark: 717171,
     params: 3,
     results: 1,
+    read: "s.a",
 };
 
 /// A function that allocates on one path only, and gives back what it made.
@@ -437,6 +455,7 @@ fn main() ! console, alloc {
     mark: 8888,
     params: 0,
     results: 0,
+    read: "n",
 };
 
 const SWAPPED: Written = Written {
@@ -449,7 +468,7 @@ struct T {
 }
 
 fn swap(t: T) -> T {
-  T(x: t.y, y: t.x, z: wrapping_mul(wrapping_add(t.z, 3), 818181))
+{pad}  T(x: t.y, y: t.x, z: wrapping_mul(wrapping_add(t.z, 3), 818181))
 }
 
 fn main() ! console, alloc {
@@ -463,6 +482,7 @@ fn main() ! console, alloc {
     mark: 818181,
     params: 1,
     results: 1,
+    read: "t.z",
 };
 
 const TWICE: Written = Written {
@@ -475,7 +495,7 @@ struct T {
 }
 
 fn twice(t: T) -> T {
-  T(x: t.x, y: t.x, z: wrapping_mul(wrapping_add(t.z, 3), 929292))
+{pad}  T(x: t.x, y: t.x, z: wrapping_mul(wrapping_add(t.z, 3), 929292))
 }
 
 fn main() ! console, alloc {
@@ -489,6 +509,7 @@ fn main() ! console, alloc {
     mark: 929292,
     params: 1,
     results: 1,
+    read: "t.z",
 };
 
 /// Every program a person wrote above.
@@ -506,7 +527,8 @@ const WRITTEN: &[&Written] = &[
 /// function it holds is still a function after the passes, takes and gives
 /// what the pass leaves it.
 fn written_prints_what_it_must(w: &Written) {
-    let program = built(w.source);
+    let source = w.source.replace("{pad}", &pad(w.read));
+    let program = built(&source);
     let said = scalar::run(&program);
     let printed = String::from_utf8(said.stdout.clone()).expect("text");
     let printed: Vec<&str> = printed.lines().collect();
@@ -552,9 +574,10 @@ fn a_function_that_gives_back_one_parameter_twice_gives_the_caller_it_twice() {
 fn every_executable_of_the_programs_that_trim_must_not_break_prints_what_the_evaluator_says() {
     let targets = runnable();
     for w in WRITTEN {
-        let said = scalar::run(&built(w.source));
+        let source = w.source.replace("{pad}", &pad(w.read));
+        let said = scalar::run(&built(&source));
         for &target in &targets {
-            runs_as(w.source.as_bytes(), target, &said);
+            runs_as(source.as_bytes(), target, &said);
         }
     }
 }

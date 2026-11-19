@@ -35,7 +35,7 @@ pub use eval::{
     run_with_command_line_and_errors, run_with_limit, run_with_words, run_with_words_and_errors,
 };
 pub use fold::fold;
-pub use inline::{BOUND, inline, size};
+pub use inline::{BOUND, LEAF_BOUND, inline, size};
 pub use remat::rematerialized;
 pub use remove::{WALKS, remove, remove_counting};
 pub use thread::thread;
