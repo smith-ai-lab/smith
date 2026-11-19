@@ -1,6 +1,6 @@
 //! Times the programs that decide how fast a Smith program is, a loop that
 //! pushes to a list, the lexer in `compiler/lexer.smith`, and `std.json`
-//! writing a list of structs, each beside the same program in Rust, and how
+//! writing a list of structs and reading the text, each beside the same program in Rust, and how
 //! fast the compiler builds. It prints one
 //! line for each program, each implementation, and each size, with the time
 //! for each push or each byte, and for `build` the time of each stage of a
