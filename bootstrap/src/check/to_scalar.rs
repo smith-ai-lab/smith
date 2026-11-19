@@ -115,6 +115,11 @@ fn stops(body: &[Stmt], breaks: bool, returns: bool) -> bool {
     values(body).any(|e| one(e, breaks, returns))
 }
 
+/// A name for the map of an executable, which is one word.
+fn spaceless(name: String) -> String {
+    name.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 /// The program that `start` runs, in the scalar form.
 pub(super) fn lower(typed: &Typed, start: Instance) -> form::Program {
     // A `main` that takes the words it was started with is called by the
@@ -818,7 +823,11 @@ impl<'a> Lowering<'a> {
     fn function(&mut self, instance: &Instance) -> form::Function {
         let defs = self.typed.defs;
         if let Template::Given(k) = instance.template {
-            return self.given(k, &instance.args);
+            let name = self.given_name(k);
+            let ty = defs.text(&instance.args[0], &Scope::default());
+            return self
+                .given(k, &instance.args)
+                .named(spaceless(format!("<{name}[{ty}]>")));
         }
         let view = defs.view(instance.template);
         let mut out = Out::new();
@@ -841,6 +850,73 @@ impl<'a> Lowering<'a> {
             results,
             blocks: out.blocks,
             cold: false,
+            name: self.name_of(instance),
+        }
+    }
+
+    /// What the map of an executable calls the copy of a function: its module
+    /// and its name as written, and the types it is made for in brackets.
+    fn name_of(&self, instance: &Instance) -> String {
+        let defs = self.typed.defs;
+        // The types it is made for: those the implementation is for, and then
+        // the function's own.
+        let (pos, name, types) = match instance.template {
+            Template::Free(f) => (
+                defs.file.functions[f].pos,
+                &defs.file.functions[f].name,
+                instance.args.clone(),
+            ),
+            Template::Impl(i, fi) => {
+                let info = defs.impls[i]
+                    .as_ref()
+                    .expect("an implementation that is known");
+                let f = &defs.file.impls[i].functions[info.fns[fi].expect("implemented")];
+                let own = instance.args.iter().skip(info.scope.names.len());
+                let types = (info.args.iter())
+                    .map(|ty| ty.subst(&instance.args))
+                    .chain(own.cloned())
+                    .collect();
+                (f.pos, &f.name, types)
+            }
+            Template::Given(_) => unreachable!("a given implementation is named by its kind"),
+        };
+        let module = if of_prelude(pos) {
+            "prelude"
+        } else {
+            let number = module_of(pos);
+            (defs.file.modules.iter())
+                .find(|(n, _)| *n == number)
+                .map_or("main", |(_, label)| label.as_str())
+        };
+        let mut text = format!("{module}.{}", written_name(name));
+        if !types.is_empty() {
+            let args: Vec<String> = (types.iter())
+                .map(|ty| defs.text(ty, &Scope::default()))
+                .collect();
+            text.push_str(&format!("[{}]", args.join(",")));
+        }
+        spaceless(text)
+    }
+
+    /// What a given implementation is, as the map of an executable names it.
+    fn given_name(&self, k: usize) -> &'static str {
+        let defs = self.typed.defs;
+        if defs.serialize == Some(k) {
+            "serialize"
+        } else if defs.deserialize == Some(k) {
+            "deserialize"
+        } else if k == defs.convert() {
+            "convert"
+        } else if k == defs.fmt {
+            "fmt"
+        } else if k == defs.repr {
+            "repr"
+        } else if k == defs.ord() {
+            "ord"
+        } else if k == defs.hash() {
+            "hash"
+        } else {
+            "eq"
         }
     }
 

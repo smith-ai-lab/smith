@@ -2,6 +2,7 @@
 //! `libSystem`. The executable is written by `macho`, and its instructions
 //! by `x86_64`.
 
+use super::Part;
 use super::macho::{self, EINTR, ERROR, EXIT, MMAP, MMAP_REQUEST, Machine, WRITE};
 use super::x86_64::{
     self, Asm, L, LE, Place, R8, R9, R12, RAX, RBX, RCX, RDI, RDX, RSI, Reg, S, System, Z,
@@ -16,13 +17,16 @@ const MACHINE: Machine = Machine {
 };
 
 /// The executable for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
-    let (asm, data) = x86_64::code::<Macos>(program);
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
+    let (asm, data, parts) = x86_64::code::<Macos>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
     let imports = macho::imports(program.allocates());
-    macho::executable(&MACHINE, size as u64, imports, |code, got| {
+    let mut at = 0;
+    let executable = macho::executable(&MACHINE, size as u64, imports, |code, got| {
+        at = code;
         asm.finish(&data, code, got)
-    })
+    });
+    (executable, super::shifted(parts, at))
 }
 
 struct Macos;

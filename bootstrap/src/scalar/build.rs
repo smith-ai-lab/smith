@@ -332,6 +332,7 @@ impl Builder {
             results: results.to_vec(),
             blocks: self.blocks,
             cold: self.cold,
+            name: String::new(),
         }
     }
 }

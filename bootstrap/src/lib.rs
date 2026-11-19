@@ -134,7 +134,8 @@ pub fn compile_project_timed(
     target: Target,
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
-    compile_project_files_timed(source, project, target, timings).map(|built| built.executable)
+    compile_project_files_timed(source, project, target, false, timings)
+        .map(|built| built.executable)
 }
 
 /// What a build gives: the executable, and the files that are written beside
@@ -142,17 +143,31 @@ pub fn compile_project_timed(
 pub struct Built {
     pub executable: Vec<u8>,
     pub beside: Vec<(&'static str, Vec<u8>)>,
+    /// The parts of the code of the executable and the name of each function, when
+    /// a map was asked for. The text of the map is made by `map_text`, where it
+    /// is written.
+    pub map: Option<(Vec<target::Part>, Vec<String>)>,
 }
 
-/// `compile_project_timed`, with the files that go beside the executable.
+impl Built {
+    /// The text of the map of the executable, when one was asked for.
+    pub fn map_text(&self) -> Option<String> {
+        let (parts, names) = self.map.as_ref()?;
+        Some(target::map(names, parts))
+    }
+}
+
+/// `compile_project_timed`, with the files that go beside the executable, and
+/// with the map of the executable among them when `map` says so.
 pub fn compile_project_files_timed(
     source: &[u8],
     project: &Project,
     target: Target,
+    map: bool,
     timings: &mut Timings,
 ) -> Result<Built, Vec<diag::Error>> {
     let program = checked_in(source, &project.library(), timings)?.program;
-    Ok(emit(program, target, timings))
+    Ok(emit(program, target, map, timings))
 }
 
 /// The program a source file describes, in the scalar form, when the modules
@@ -181,19 +196,30 @@ pub fn compile_timed(
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
     let program = lower_timed(source, timings)?;
-    Ok(emit(program, target, timings).executable)
+    Ok(emit(program, target, false, timings).executable)
 }
 
-fn emit(program: scalar::Program, target: Target, timings: &mut Timings) -> Built {
+fn emit(program: scalar::Program, target: Target, map: bool, timings: &mut Timings) -> Built {
     let program = timings.stage("inline", || scalar::inline(&program));
     let program = timings.stage("trim", || scalar::trim(&program));
     let program = timings.stage("thread", || scalar::thread(&program));
     let program = timings.stage("fold", || scalar::fold(&program));
     let program = timings.stage("common", || scalar::common(&program));
     let program = timings.stage("remove", || scalar::remove(&program));
-    timings.stage("emit", || Built {
-        executable: target.emit(&program),
-        beside: target.beside(&program),
+    timings.stage("emit", || {
+        let (executable, parts) = target.emit_parts(&program);
+        let beside = target.beside(&program);
+        // The names are kept for the text of the map, which is made where it
+        // is written.
+        let map = map.then(|| {
+            let names = program.functions.into_iter().map(|f| f.name).collect();
+            (parts, names)
+        });
+        Built {
+            executable,
+            beside,
+            map,
+        }
     })
 }
 

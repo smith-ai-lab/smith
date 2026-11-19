@@ -3,6 +3,7 @@
 //! instructions are the arm64 ones the other arm64 targets use, and its
 //! file is written by the PE writer `windows_x64` uses.
 
+use super::Part;
 use super::arm64::{self, Asm, LS, Place, System, X0, X1, X2, X3, X4, X19, X20, X21};
 use super::pe::{
     self, EXIT_PROCESS, GET_COMMAND_LINE, GET_STD_HANDLE, MEM_COMMIT_RESERVE, MOST_PER_WRITE,
@@ -31,13 +32,16 @@ const WRITTEN: u32 = 0;
 const SAVED: u32 = 8;
 
 /// The executable for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
-    let (asm, data) = arm64::code::<Windows>(program);
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
+    let (asm, data, parts) = arm64::code::<Windows>(program);
     let size = asm.len() + data.iter().map(|(_, d)| d.len()).sum::<usize>();
     let imports = pe::imports(program.allocates(), program.takes_arguments());
-    pe::executable(&MACHINE, size, imports, |code, iat| {
+    let mut at = 0;
+    let executable = pe::executable(&MACHINE, size, imports, |code, iat| {
+        at = code;
         asm.finish(&data, code, iat)
-    })
+    });
+    (executable, super::shifted(parts, at))
 }
 
 struct Windows;

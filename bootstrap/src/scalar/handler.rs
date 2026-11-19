@@ -119,18 +119,15 @@ pub fn install(program: Program) -> Program {
             }
         })
         .collect();
-    functions.push(take());
-    functions.push(ready(at_take));
+    functions.push(take().named("<stack_take>"));
+    functions.push(ready(at_take).named("<stack_ready>"));
     let mut data = program.data;
     // What a stack that has no piece reads at its end: a piece that holds
     // nothing and has none after it.
     data.push(vec![0; TRAILER as usize]);
-    functions.push(entry(
-        &main,
-        program.main,
-        uses[program.main],
-        data.len() - 1,
-    ));
+    functions.push(
+        entry(&main, program.main, uses[program.main], data.len() - 1).named("<stack_entry>"),
+    );
     Program {
         data,
         main: at_take + 2,

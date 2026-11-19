@@ -3,6 +3,7 @@
 //! `macos_arm64` uses, and its file is written by the ELF writer
 //! `linux_x64` uses.
 
+use super::Part;
 use super::arm64::{self, Asm, EQ, LE, LT, Place, System, X0, X1, X2, X3, X4, X5, X8, X19, X20};
 use super::elf::{self, CODE_ADDRESS, Machine};
 use crate::scalar::{Program, Stream};
@@ -15,10 +16,11 @@ const SYS_EXIT_GROUP: u16 = 94;
 const EINTR: u32 = 4;
 
 /// The executable for the program.
-pub fn emit(program: &Program) -> Vec<u8> {
-    let (asm, data) = arm64::code::<Linux>(program);
+pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
+    let (asm, data, parts) = arm64::code::<Linux>(program);
     // Nothing is called through a table of addresses, so there is none.
-    elf::executable(Machine::Aarch64, &asm.finish(&data, CODE_ADDRESS, 0))
+    let executable = elf::executable(Machine::Aarch64, &asm.finish(&data, CODE_ADDRESS, 0));
+    (executable, super::shifted(parts, CODE_ADDRESS))
 }
 
 struct Linux;

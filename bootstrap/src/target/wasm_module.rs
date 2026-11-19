@@ -75,8 +75,10 @@ impl Module {
         self.exports.push((name.to_string(), what));
     }
 
-    /// The bytes of the module.
-    pub fn finish(&self) -> Vec<u8> {
+    /// The bytes of the module, and where each function's body is in them, as
+    /// the place of its first byte and how many bytes it takes, with the number
+    /// that says how long it is.
+    pub fn finish(&self) -> (Vec<u8>, Vec<(usize, usize)>) {
         let mut out = b"\0asm\x01\0\0\0".to_vec();
         section(&mut out, 1, self.signatures.len(), |s| {
             for signature in &self.signatures {
@@ -125,7 +127,8 @@ impl Module {
                 }
             }
         });
-        section(&mut out, 10, self.bodies.len(), |s| {
+        let mut bodies = Vec::new();
+        let start = section(&mut out, 10, self.bodies.len(), |s| {
             for body in &self.bodies {
                 let mut b = Vec::new();
                 unsigned(&mut b, body.locals.len() as u64);
@@ -134,10 +137,16 @@ impl Module {
                     b.push(kind.byte());
                 }
                 b.extend(&body.code);
+                let at = s.len();
                 unsigned(s, b.len() as u64);
                 s.extend(b);
+                bodies.push((at, s.len() - at));
             }
         });
+        let bodies = bodies
+            .into_iter()
+            .map(|(at, len)| (start + at, len))
+            .collect();
         section(&mut out, 11, self.data.len(), |s| {
             for (at, bytes) in &self.data {
                 s.push(0x00);
@@ -148,7 +157,7 @@ impl Module {
                 s.extend(bytes);
             }
         });
-        out
+        (out, bodies)
     }
 }
 
@@ -163,14 +172,18 @@ fn name(out: &mut Vec<u8>, text: &str) {
 }
 
 /// Writes a section of `count` items, which `items` writes, unless it has none.
-fn section(out: &mut Vec<u8>, id: u8, count: usize, items: impl FnOnce(&mut Vec<u8>)) {
+/// It gives the place in `out` where the items of the section begin, as the
+/// count that comes first is at that place.
+fn section(out: &mut Vec<u8>, id: u8, count: usize, items: impl FnOnce(&mut Vec<u8>)) -> usize {
     if count == 0 {
-        return;
+        return out.len();
     }
     let mut body = Vec::new();
     unsigned(&mut body, count as u64);
     items(&mut body);
     out.push(id);
     unsigned(out, body.len() as u64);
+    let start = out.len();
     out.extend(body);
+    start
 }

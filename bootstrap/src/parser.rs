@@ -22,6 +22,11 @@ pub use traits::{Impl, Trait, Without};
 /// The definitions of a file, each kind in the order they are written.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct File {
+    /// The module each number of a place says, by that number, as the map of an
+    /// executable names them: the module of the standard library, the file of a
+    /// project's module with its path as a module's name, and the file that is
+    /// built, which is number 0. Empty until the checker reads the modules.
+    pub modules: Vec<(usize, String)>,
     // Each item is shared, so that the prelude's, which is parsed once in a
     // process, is not copied into each file that is checked.
     pub functions: Vec<Arc<Function>>,
@@ -818,6 +823,7 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
             qualified: p.qualified,
             scopes: Vec::new(),
             unbuilt: p.unbuilt,
+            modules: Vec::new(),
         })
     } else {
         // What is not built is reported with the mistakes of the syntax, as

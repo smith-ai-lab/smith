@@ -682,8 +682,9 @@ pub struct Block {
 }
 
 /// A function. Its first block is where it starts, and the parameters of
-/// that block are the function's own.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// that block are the function's own. Two functions are equal when they do the
+/// same: the name is for the map of an executable and is not compared.
+#[derive(Clone, Debug)]
 pub struct Function {
     /// The type of each value, by its place.
     pub types: Vec<Type>,
@@ -695,6 +696,30 @@ pub struct Function {
     /// instructions then stay out of the code of a loop that calls it, and
     /// so do the values it needs.
     pub cold: bool,
+    /// What the map of an executable calls the function: its module and its
+    /// name as written, with the types it is made for in brackets after them,
+    /// or a name in angle brackets for what no function was written for. It is
+    /// empty for a function that has none, which the map calls `<function N>`.
+    pub name: String,
+}
+
+impl PartialEq for Function {
+    fn eq(&self, other: &Function) -> bool {
+        self.types == other.types
+            && self.results == other.results
+            && self.blocks == other.blocks
+            && self.cold == other.cold
+    }
+}
+
+impl Eq for Function {}
+
+impl Function {
+    /// The function, called `name` in the map of an executable.
+    pub fn named(mut self, name: impl Into<String>) -> Function {
+        self.name = name.into();
+        self
+    }
 }
 
 /// A program: it runs the function `main`, which gives back nothing, and then
