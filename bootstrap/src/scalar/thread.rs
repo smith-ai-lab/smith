@@ -21,7 +21,7 @@
 //! takes it away when none is left.
 
 use super::eval::{binary, bits_of, compare, mask, narrow, widen};
-use super::{Constant, End, Function, Instruction, Jump, Op, Program, Type, Value};
+use super::{Constant, End, Function, Instruction, Jump, Op, Place, Program, Type, Value};
 
 /// The program with each jump that goes into a block that only chooses sent
 /// on to the block the choice takes.
@@ -154,6 +154,7 @@ fn localize(f: &mut Function, reached: &[bool]) {
             instructions.push(Instruction {
                 results: vec![q],
                 op: Op::Constant(c),
+                at: Place::NONE,
             });
             q
         };
@@ -637,6 +638,7 @@ fn make(
                 extra.push(Instruction {
                     results: vec![q],
                     op: Op::Constant(Constant::Int(c)),
+                    at: Place::NONE,
                 });
                 q
             }

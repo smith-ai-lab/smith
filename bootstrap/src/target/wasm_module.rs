@@ -15,6 +15,9 @@ pub struct Body {
     /// The type of each local after the parameters, in runs.
     pub locals: Vec<(u32, Kind)>,
     pub code: Vec<u8>,
+    /// Where in `code` the code of an instruction with a new place begins, with
+    /// that place, for the map.
+    pub places: Vec<(usize, crate::scalar::Place)>,
 }
 
 /// What an export names.
@@ -27,6 +30,15 @@ pub enum Export {
 /// A global of 32 bits that the module may change.
 pub struct Global {
     pub initial: i32,
+}
+
+/// Where a function's body is in a module: its first byte, how many bytes it
+/// takes, and where in the file the code of each of its instructions that has a
+/// new place begins.
+pub struct Placed {
+    pub at: usize,
+    pub size: usize,
+    pub places: Vec<(usize, crate::scalar::Place)>,
 }
 
 #[derive(Default)]
@@ -76,9 +88,9 @@ impl Module {
     }
 
     /// The bytes of the module, and where each function's body is in them, as
-    /// the place of its first byte and how many bytes it takes, with the number
-    /// that says how long it is.
-    pub fn finish(&self) -> (Vec<u8>, Vec<(usize, usize)>) {
+    /// the place of its first byte, how many bytes it takes, and the places in
+    /// the file of the code of its instructions that have a new place.
+    pub fn finish(&self) -> (Vec<u8>, Vec<Placed>) {
         let mut out = b"\0asm\x01\0\0\0".to_vec();
         section(&mut out, 1, self.signatures.len(), |s| {
             for signature in &self.signatures {
@@ -136,16 +148,23 @@ impl Module {
                     unsigned(&mut b, u64::from(*count));
                     b.push(kind.byte());
                 }
+                let before_code = b.len();
                 b.extend(&body.code);
                 let at = s.len();
                 unsigned(s, b.len() as u64);
+                let code = s.len() + before_code;
                 s.extend(b);
-                bodies.push((at, s.len() - at));
+                bodies.push((at, s.len() - at, code, &body.places));
             }
         });
-        let bodies = bodies
-            .into_iter()
-            .map(|(at, len)| (start + at, len))
+        let bodies = (bodies.into_iter())
+            .map(|(at, size, code, places)| Placed {
+                at: start + at,
+                size,
+                places: (places.iter())
+                    .map(|(offset, place)| (start + code + offset, *place))
+                    .collect(),
+            })
             .collect();
         section(&mut out, 11, self.data.len(), |s| {
             for (at, bytes) in &self.data {

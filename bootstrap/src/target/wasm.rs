@@ -14,7 +14,7 @@ use super::wasm_module::{Body, Export, Global, Module, Signature};
 use super::wasm_structure::{self as structure, Shape};
 use super::{Named, Part};
 use crate::scalar::{
-    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Program,
+    Binary, Bits, Builder, Compare, Constant, End, Function, Instruction, Jump, Op, Place, Program,
     Stream, System, Type, Value,
 };
 
@@ -174,11 +174,12 @@ pub fn emit(program: &Program) -> (Vec<u8>, Vec<Part>) {
         .map(Named::Function)
         .chain(pieces.map(Named::Piece));
     let parts = (named.zip(bodies))
-        .map(|(named, (at, size))| Part {
+        .map(|(named, body)| Part {
             named,
-            address: at as u64,
-            size: size as u64,
+            address: body.at as u64,
+            size: body.size as u64,
             frame: 0,
+            at: super::runs(&body.places, body.at, body.at + body.size),
         })
         .collect();
     (bytes, parts)
@@ -357,6 +358,7 @@ fn allocate() -> Body {
     Body {
         locals: vec![(2, Kind::I64)],
         code: code.bytes,
+        places: Vec::new(),
     }
 }
 
@@ -373,6 +375,7 @@ fn exit() -> Body {
     Body {
         locals: vec![],
         code: code.bytes,
+        places: Vec::new(),
     }
 }
 
@@ -391,6 +394,7 @@ fn start(program: &Program, image: &Image, main: u32) -> Body {
     Body {
         locals: vec![],
         code: code.bytes,
+        places: Vec::new(),
     }
 }
 
@@ -402,6 +406,7 @@ fn status() -> Body {
     Body {
         locals: vec![],
         code: code.bytes,
+        places: Vec::new(),
     }
 }
 
@@ -470,6 +475,7 @@ fn lower(f: &Function, context: &Context) -> (Signature, Body) {
         f,
         context,
         code: Code::default(),
+        places: Vec::new(),
         local,
         pc,
         block: 0,
@@ -486,6 +492,7 @@ fn lower(f: &Function, context: &Context) -> (Signature, Body) {
         Body {
             locals,
             code: lowering.code.bytes,
+            places: lowering.places,
         },
     )
 }
@@ -516,6 +523,9 @@ struct Lowering<'a> {
     f: &'a Function,
     context: &'a Context<'a>,
     code: Code,
+    /// Where in `code` the code of an instruction with a new place begins, with
+    /// that place.
+    places: Vec<(usize, Place)>,
     /// The local of each value.
     local: Vec<u32>,
     /// The local that holds the number of the block to run, when the function
@@ -573,11 +583,20 @@ impl Lowering<'_> {
         }
     }
 
+    /// Notes that the code written from here on is for an instruction that is
+    /// written at `at`, when that is not the place of the code before it.
+    fn note_place(&mut self, at: Place) {
+        if self.places.last().is_none_or(|(_, last)| *last != at) {
+            self.places.push((self.code.bytes.len(), at));
+        }
+    }
+
     /// The instructions of a block, and how it ends.
     fn node(&mut self, x: usize) {
         let f = self.f;
         let block = &f.blocks[x];
         for instruction in &block.instructions {
+            self.note_place(instruction.at);
             self.instruction(instruction);
         }
         match &block.end {
@@ -712,6 +731,7 @@ impl Lowering<'_> {
         let f = self.f;
         let block = &f.blocks[self.block];
         for instruction in &block.instructions {
+            self.note_place(instruction.at);
             self.instruction(instruction);
         }
         match &block.end {

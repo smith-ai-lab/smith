@@ -240,9 +240,11 @@ fn copy_small_blocks(f: &mut Function) -> bool {
                         fresh
                     })
                     .collect();
-                f.blocks[p]
-                    .instructions
-                    .push(super::Instruction { results, op });
+                f.blocks[p].instructions.push(super::Instruction {
+                    results,
+                    op,
+                    at: i.at,
+                });
             }
             let mut end = end.clone();
             graph::rename_end(&mut end, &|v| seen(&name, v));

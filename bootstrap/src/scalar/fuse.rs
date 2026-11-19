@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use super::{FloatBinary, Function, Fused, Op, Program, Value};
+use super::{FloatBinary, Function, Fused, Op, Place, Program, Value};
 
 /// The program with every product that has one use, in its function, as the
 /// operand of a sum or a difference, fused with it. It is applied to a form
@@ -39,6 +39,7 @@ struct Product {
     a: Value,
     b: Value,
     vector: bool,
+    at: Place,
 }
 
 fn fused(f: &Function) -> Function {
@@ -68,6 +69,7 @@ fn fused(f: &Function) -> Function {
                             a,
                             b,
                             vector: false,
+                            at: i.at,
                         },
                     );
                 }
@@ -76,7 +78,15 @@ fn fused(f: &Function) -> Function {
                     a,
                     b,
                 } if uses[i.results[0].0] == 1 => {
-                    products.insert(i.results[0], Product { a, b, vector: true });
+                    products.insert(
+                        i.results[0],
+                        Product {
+                            a,
+                            b,
+                            vector: true,
+                            at: i.at,
+                        },
+                    );
                 }
                 Op::FloatBinary {
                     op: op @ (FloatBinary::Add | FloatBinary::Sub),
@@ -99,7 +109,9 @@ fn fused(f: &Function) -> Function {
                         }
                         _ => None,
                     };
-                    if let Some((op, Product { a, b, .. }, c)) = found {
+                    if let Some((op, Product { a, b, at, .. }, c)) = found {
+                        // It takes the place of the first of the two it makes one of.
+                        i.at = at;
                         i.op = if vector {
                             Op::VectorFloatFused { op, a, b, c }
                         } else {

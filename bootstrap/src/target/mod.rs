@@ -28,7 +28,7 @@ mod x86_64;
 /// the jump.
 pub use wasm_structure::is_structured;
 
-use crate::scalar::{Program, Type};
+use crate::scalar::{Place, Program, Type};
 
 /// What a part of the code of an executable is: a function of the program, by
 /// its place, or a piece the compiler adds, by its name in angle brackets.
@@ -38,33 +38,81 @@ pub enum Named {
     Piece(&'static str),
 }
 
+/// A run of the code of a function that was built from one place in the source:
+/// where it is, how many bytes it takes, and the place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Run {
+    pub address: u64,
+    pub size: u64,
+    pub place: Place,
+}
+
 /// A part of the code of an executable: where it is, as the address the
 /// executable asks to be loaded at, or for a module the place of the byte in
 /// the file, how many bytes it takes, and how many bytes of frame it takes of
 /// the stack when it runs. The parts of an executable are in the order of their
-/// addresses and cover its code, with no gap and no overlap.
+/// addresses and cover its code, with no gap and no overlap. `at` is the runs
+/// of a function that has places, which cover it the same way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Part {
     pub named: Named,
     pub address: u64,
     pub size: u64,
     pub frame: u32,
+    pub at: Vec<Run>,
 }
 
 /// What a target lays out for a program: the code, the data it reads each under
 /// its label, and the parts of the code.
 type Laid<'a, A> = (A, Vec<(usize, &'a [u8])>, Vec<Part>);
 
+/// The runs of the code from `from` to `to`, given where the code of each
+/// instruction that has a new place begins. A run is the code of the
+/// instructions that have one place, and the code of those that have none is
+/// part of the run before it, or of the first run when none comes before. A
+/// function none of whose instructions has a place has no runs.
+fn runs(marks: &[(usize, Place)], from: usize, to: usize) -> Vec<Run> {
+    let first = marks.partition_point(|(at, _)| *at < from);
+    let last = marks.partition_point(|(at, _)| *at < to);
+    let mut runs: Vec<(usize, Place)> = Vec::new();
+    for &(at, place) in &marks[first..last] {
+        if place.is_none() || runs.last().is_some_and(|(_, p)| *p == place) {
+            continue;
+        }
+        if runs.last().is_some_and(|(start, _)| *start == at) {
+            runs.pop();
+        }
+        runs.push((at, place));
+    }
+    let Some(&(_, head)) = runs.first() else {
+        return Vec::new();
+    };
+    // The first run begins where the function does.
+    runs[0] = (from, head);
+    (0..runs.len())
+        .map(|k| {
+            let end = runs.get(k + 1).map_or(to, |(at, _)| *at);
+            Run {
+                address: runs[k].0 as u64,
+                size: (end - runs[k].0) as u64,
+                place: runs[k].1,
+            }
+        })
+        .collect()
+}
+
 /// The parts of the code of a machine code executable, as places in the code,
-/// from where each function begins, how large its frame is, and where the code
-/// ends. What comes before the first function is the start of the executable.
-fn parts(offsets: &[usize], frames: &[u32], end: usize) -> Vec<Part> {
+/// from where each function begins, how large its frame is, where the code
+/// ends, and where the code of each instruction that has a new place begins.
+/// What comes before the first function is the start of the executable.
+fn parts(offsets: &[usize], frames: &[u32], end: usize, marks: &[(usize, Place)]) -> Vec<Part> {
     let first = offsets.first().copied().unwrap_or(end);
     let mut parts = vec![Part {
         named: Named::Piece("<start>"),
         address: 0,
         size: first as u64,
         frame: 0,
+        at: Vec::new(),
     }];
     for (k, (&at, &frame)) in offsets.iter().zip(frames).enumerate() {
         let to = offsets.get(k + 1).copied().unwrap_or(end);
@@ -73,6 +121,7 @@ fn parts(offsets: &[usize], frames: &[u32], end: usize) -> Vec<Part> {
             address: at as u64,
             size: (to - at) as u64,
             frame,
+            at: runs(marks, at, to),
         });
     }
     parts
@@ -83,12 +132,18 @@ fn parts(offsets: &[usize], frames: &[u32], end: usize) -> Vec<Part> {
 fn shifted(mut parts: Vec<Part>, base: u64) -> Vec<Part> {
     for part in &mut parts {
         part.address += base;
+        for run in &mut part.at {
+            run.address += base;
+        }
     }
     parts
 }
 
 /// The map of an executable, one `fn` line for each part of its code: the
-/// address, the size, the frame, and the name, each word after a space.
+/// address, the size, the frame, and the name, each word after a space. After a
+/// function's line come its `at` lines, one for each run of its code: the
+/// address, the size, the file, the line, and the column, and the name of the
+/// function the place is written in.
 pub fn map(names: &[String], parts: &[Part]) -> String {
     let mut text = String::new();
     for part in parts {
@@ -103,6 +158,18 @@ pub fn map(names: &[String], parts: &[Part]) -> String {
             "fn {:#x} {} {} {name}\n",
             part.address, part.size, part.frame
         ));
+        for run in &part.at {
+            let place = run.place;
+            text.push_str(&format!(
+                "at {:#x} {} {}:{}:{} {}\n",
+                run.address,
+                run.size,
+                crate::scalar::names::name(place.file),
+                place.line,
+                place.col,
+                crate::scalar::names::name(place.function),
+            ));
+        }
     }
     text
 }
