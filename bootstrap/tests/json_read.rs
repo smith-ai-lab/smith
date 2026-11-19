@@ -66,8 +66,8 @@ pub const ONCE: &[Test] = &[
         raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json,
     ),
     (
-        "a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is",
-        a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is,
+        "a_rawjson_built_by_hand_from_text_that_is_not_json_is_refused",
+        a_rawjson_built_by_hand_from_text_that_is_not_json_is_refused,
     ),
     (
         "a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_it",
@@ -1820,7 +1820,7 @@ fn main() ! console, alloc {{\n"
     });
 }
 
-fn a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is() {
+fn a_rawjson_built_by_hand_from_text_that_is_not_json_is_refused() {
     // The text that adds a member to an object that holds it, if it were
     // written as it is.
     let text = "] not json \", \"admin\": true";
@@ -1829,11 +1829,9 @@ fn a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is() 
         text_source(text.as_bytes())
     );
     let source = with_import(&["RawJson", "to_json"], source);
-    // A program that builds one by hand is refused where the compiler keeps
-    // a field that is not `pub` private to the library, and where it does not,
-    // the text is written as a text.
-    if let Ok(program) = lower(source.as_bytes()) {
-        let printed = String::from_utf8(scalar::run(&program).stdout).unwrap();
-        assert_eq!(printed, "{\"name\":\"f\",\"arguments\":\"] not json \\\", \\\"admin\\\": true\"}\n", "{source}");
-    }
+    let Err(errors) = lower(source.as_bytes()) else {
+        panic!("built:\n{source}");
+    };
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("RawJson"), "{}", errors[0]);
 }

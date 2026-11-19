@@ -107,11 +107,11 @@ So an input that holds only `name` gives a `Tool` with no description and a time
 A `ReadError` says where in the value the trouble is and what it is.
 
 ```
-struct ReadError {
-  path: str
-  problem: Problem
-  line: Nat
-  column: Nat
+pub struct ReadError {
+  pub path: str
+  pub problem: Problem
+  pub line: Nat
+  pub column: Nat
 }
 
 enum Problem {
