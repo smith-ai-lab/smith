@@ -423,7 +423,10 @@ impl Machine {
             ((w >> 16) & 31) as usize,
             ((w >> 10) & 31) as usize,
         );
-        let (negate_product, negate_addend) = (w >> 15 & 1 == 1, w >> 21 & 1 == 1);
+        // The bit 21 negates the addend, and the product is negated when the bit 15
+        // and the bit 21 differ: `fnmadd` has the first only, and `fnmsub` both.
+        let (o0, o1) = (w >> 15 & 1 == 1, w >> 21 & 1 == 1);
+        let (negate_product, negate_addend) = (o0 != o1, o1);
         let (n, m, c) = (self.f[rn] as u64, self.f[rm] as u64, self.f[ra] as u64);
         // `fmadd` is `a + n * m`, `fmsub` `a - n * m`, `fnmadd` `-a - n * m`, and
         // `fnmsub` `-a + n * m`.
