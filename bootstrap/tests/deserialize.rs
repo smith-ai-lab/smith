@@ -751,7 +751,11 @@ fn case(g: &mut Gen, parts: Parts, own_impl: bool, log: bool, writes: bool) -> C
     value(g, &defs, &top, "", &mut made);
     let write: &[&str] = if writes { &["write"] } else { &[] };
     let head = with_import(
-        &[("std.deserialize", &["read"]), ("std.serialize", write)],
+        &[
+            ("std.deserialize", &["read"]),
+            ("std.list", &["freeze"]),
+            ("std.serialize", write),
+        ],
         &format!(
             "{}{}{}fn main() ! console, alloc {{\n  xs: List[Shape] = [{}]\n  (r, v): (Rd, Result[{}, ReadError]) = ",
             reader(),

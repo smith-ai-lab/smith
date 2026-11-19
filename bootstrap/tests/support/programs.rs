@@ -2118,7 +2118,7 @@ const STD_NAMES: &[(&str, &[&str])] = &[
             "wrapping_add", "wrapping_mul", "wrapping_narrow", "wrapping_sub",
         ],
     ),
-    ("std.list", &["copy", "push"]),
+    ("std.list", &["copy", "freeze", "push"]),
     ("std.utf8", &["Utf8Error", "utf8"]),
 ];
 

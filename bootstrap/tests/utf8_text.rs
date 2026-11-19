@@ -150,7 +150,7 @@ fn utf8_gives_the_text_of_valid_bytes_and_the_first_place_that_is_not() {
     generate::check(302, 150, bytes, |case| {
         let items: Vec<String> = case.bytes.iter().map(u8::to_string).collect();
         let source = format!(
-            "use std.console (console, print)\nuse std.utf8 (utf8)\n\nfn main() ! console, alloc {{\n  b: List[Byte] = [{}]\n  match utf8(freeze(b)) {{\n    .ok(t) {{\n      print(\"ok {{t.size}}\")\n      loop i in 0..t.size {{ print(\"{{t[i]}}\") }}\n    }}\n    .err(e) {{ print(\"err {{e.at}}\") }}\n  }}\n}}\n",
+            "use std.console (console, print)\nuse std.list (freeze)\nuse std.utf8 (utf8)\n\nfn main() ! console, alloc {{\n  b: List[Byte] = [{}]\n  match utf8(freeze(b)) {{\n    .ok(t) {{\n      print(\"ok {{t.size}}\")\n      loop i in 0..t.size {{ print(\"{{t[i]}}\") }}\n    }}\n    .err(e) {{ print(\"err {{e.at}}\") }}\n  }}\n}}\n",
             items.join(", ")
         );
         let lines = match case.broken {
@@ -166,7 +166,7 @@ fn utf8_gives_the_text_of_valid_bytes_and_the_first_place_that_is_not() {
 }
 
 fn the_examples_of_the_page_on_text_hold() {
-    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.utf8 (Utf8Error, utf8)\n\nfn count_spaces(s: str) -> u64 {\n  var n: u64 = 0\n  loop i in 0..s.size {\n    if s[i] == ' ' { n = wrapping_add(n, 1) }\n  }\n  n\n}\n\nfn show(r: Result[str, Utf8Error]) ! console, alloc {\n  match r {\n    .ok(t) { print(\"ok {t}\") }\n    .err(e) { print(\"err {e.at}\") }\n  }\n}\n\nfn main() ! console, alloc {\n  print(\"{count_spaces(\"a b c\")}\")\n  print(\"{\"é\".size}\")\n  show(utf8(\"hi\"))\n  b: List[Byte] = [255, 104]\n  show(utf8(freeze(b)))\n}\n";
+    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.list (freeze)\nuse std.utf8 (Utf8Error, utf8)\n\nfn count_spaces(s: str) -> u64 {\n  var n: u64 = 0\n  loop i in 0..s.size {\n    if s[i] == ' ' { n = wrapping_add(n, 1) }\n  }\n  n\n}\n\nfn show(r: Result[str, Utf8Error]) ! console, alloc {\n  match r {\n    .ok(t) { print(\"ok {t}\") }\n    .err(e) { print(\"err {e.at}\") }\n  }\n}\n\nfn main() ! console, alloc {\n  print(\"{count_spaces(\"a b c\")}\")\n  print(\"{\"é\".size}\")\n  show(utf8(\"hi\"))\n  b: List[Byte] = [255, 104]\n  show(utf8(freeze(b)))\n}\n";
     prints(
         source,
         ["2", "2", "ok hi", "err 0"].map(String::from).to_vec(),
@@ -262,6 +262,6 @@ fn utf8_copies_nothing() {
             .count()
     };
     let without = "use std.console (console, print)\n\nfn main() ! console, alloc {\n  b: List[Byte] = [104, 105]\n  print(\"ok\")\n}\n";
-    let with = "use std.console (console, print)\nuse std.utf8 (utf8)\n\nfn main() ! console, alloc {\n  b: List[Byte] = [104, 105]\n  match utf8(freeze(b)) {\n    .ok(t) { print(\"ok\") }\n    .err(e) { print(\"err\") }\n  }\n}\n";
+    let with = "use std.console (console, print)\nuse std.list (freeze)\nuse std.utf8 (utf8)\n\nfn main() ! console, alloc {\n  b: List[Byte] = [104, 105]\n  match utf8(freeze(b)) {\n    .ok(t) { print(\"ok\") }\n    .err(e) { print(\"err\") }\n  }\n}\n";
     assert_eq!(allocations(with), allocations(without));
 }

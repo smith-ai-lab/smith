@@ -56,7 +56,7 @@ struct List[T] {
 fn push[T](list: take List[T], item: take T) -> List[T] ! alloc
 ```
 
-A list is what a program builds, and [`freeze`](slice.md) turns one that is done into a `Slice`, which is shared freely. A list is never copied unless `copy` is written: `push` takes the list it is given, and a list used after it is given away is refused, as [Ownership](../language/ownership.md#a-list-is-never-copied-unasked) says.
+A list is what a program builds, and [`freeze`](slice.md), a function of `std.list` as `push` and `copy` are, turns one that is done into a `Slice`, which is shared freely. A list is never copied unless `copy` is written: `push` takes the list it is given, and a list used after it is given away is refused, as [Ownership](../language/ownership.md#a-list-is-never-copied-unasked) says.
 
 ```
 fn copy[T: Copy](list: List[T]) -> List[T] ! alloc

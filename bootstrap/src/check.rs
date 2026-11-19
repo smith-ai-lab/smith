@@ -74,6 +74,7 @@ const PRELUDE_LISTED: &[&str] = &[
     "str",
     "Nat",
     "List",
+    "Slice",
     "Option",
     "Result",
     "Try",

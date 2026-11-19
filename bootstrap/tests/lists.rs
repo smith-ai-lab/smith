@@ -131,6 +131,9 @@ pub fn header(imports: &[(&str, &[&str])], text: &str) -> String {
         if ["i8", "i16", "i32", "u16", "u32", "u64"].contains(&word) {
             modules.entry("std.bits".to_string()).or_default().push(word.to_string());
         }
+        if word == "freeze" {
+            modules.entry("std.list".to_string()).or_default().push(word.to_string());
+        }
     }
     let mut out = String::new();
     for (module, mut names) in modules {

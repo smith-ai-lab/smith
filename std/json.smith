@@ -1,7 +1,7 @@
 use std.bits (bit_and, bit_not, bit_or, shift_left, shift_right, u32, u64)
 use std.deserialize (Deserialize, Problem, ReadError, Reader, fail, read)
 use std.int (checked_add, checked_mul, narrow, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
-use std.list (push)
+use std.list (freeze, push)
 use std.serialize (Serialize, Writer, write)
 use std.utf8 (utf8)
 
