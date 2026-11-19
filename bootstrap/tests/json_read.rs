@@ -33,6 +33,10 @@ pub const ONCE: &[Test] = &[
         a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path,
     ),
     (
+        "the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is",
+        the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is,
+    ),
+    (
         "a_member_that_is_added_is_ignored_or_refused_as_the_setting_says",
         a_member_that_is_added_is_ignored_or_refused_as_the_setting_says,
     ),
@@ -397,9 +401,11 @@ struct Member {
     field: Option<(&'static str, bool)>,
 }
 
-/// An object that holds the fields of a struct.
+/// An object that holds the fields of a struct, or a case that is written with
+/// a tag.
 #[derive(Clone, Debug)]
 struct Obj {
+    start: usize,
     end: usize,
     path: String,
     members: Vec<Member>,
@@ -443,6 +449,14 @@ fn quoted(bytes: &[u8], escape: bool, out: &mut Vec<u8>) {
         }
     }
     out.push(b'"');
+}
+
+impl Obj {
+    /// Whether the object holds the fields of a struct, so that a member can be
+    /// added to it, and each of its members is a field or the tag.
+    fn has_fields(&self) -> bool {
+        self.members.iter().any(|m| m.field.is_some())
+    }
 }
 
 impl<'a> Written<'a> {
@@ -549,7 +563,7 @@ impl<'a> Written<'a> {
                 let mut members = Vec::new();
                 self.members(*s, vals, path, &mut members);
                 self.close('}');
-                self.objs.push(Obj { end: self.bytes.len(), path: path.to_string(), members });
+                self.objs.push(Obj { start, end: self.bytes.len(), path: path.to_string(), members });
             }
             (Val::Enum(_, c, held), _) => {
                 let name = format!("c{c}");
@@ -599,9 +613,7 @@ impl<'a> Written<'a> {
                             }
                         }
                         self.close('}');
-                        if matches!(held.as_deref(), Some(Val::Struct(..))) {
-                            self.objs.push(Obj { end: self.bytes.len(), path: path.to_string(), members });
-                        }
+                        self.objs.push(Obj { start, end: self.bytes.len(), path: path.to_string(), members });
                     }
                 }
             }
@@ -776,7 +788,10 @@ fn every_example_of_the_reading_part_of_the_page_gives_what_the_page_says() {
         ok("Point", r#"{"x":1,"y":3,"z":0}"#, keep, "\"{v.x}\"", "1"),
         bad("Point", r#"{"x":1,"y":3,"z":0,"z":1}"#, keep, "\"z\":1", "z", "`z` is given twice"),
         bad("Shape", r#"{"triangle":1}"#, keep, "\"triangle\"", "triangle", "`triangle` is not a case"),
-        bad("Shape", r#"{"radius":2,"type":"circle"}"#, mcp, "{", "", "missing `type`"),
+        ok("Shape", r#"{"radius":2,"type":"circle"}"#, mcp, "\"{v == Shape.circle(Circle(radius: 2))}\"", "true"),
+        ok("Shape", r#"{"value":4,"type":"square"}"#, mcp, "\"{v == Shape.square(4)}\"", "true"),
+        bad("Shape", r#"{"radius":2}"#, mcp, "}", "", "missing `type`"),
+        bad("Content", r#"{"input_schema":1}"#, mcp, "}", "", "missing `input_schema`"),
         bad("Point", r#"{"x":1,"y":3} x"#, keep, " x", "", "not valid JSON").after(1),
     ];
     let mut source = format!(
@@ -884,6 +899,33 @@ fn spaces_line_breaks_escapes_and_signs_do_not_change_the_value_that_is_read() {
     });
 }
 
+// The members of an object are in any order.
+
+fn the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is() {
+    generate::check(6007, 8, |g: &mut Gen| {
+        let (defs, t, v, settings) = made(g);
+        let w = write(&defs, &t, &v, settings, COMPACT);
+        let mut cases = vec![];
+        for o in w.objs.iter().take(4) {
+            // The members of the object, in an order that the generator draws.
+            let mut order: Vec<usize> = (0..o.members.len()).collect();
+            for i in (1..order.len()).rev() {
+                order.swap(i, g.below(i + 1));
+            }
+            let members: Vec<&[u8]> =
+                order.iter().map(|i| &w.bytes[o.members[*i].key_start..o.members[*i].end]).collect();
+            let body = [&b"{"[..], &members.join(&b","[..]), &b"}"[..]].concat();
+            let text = spliced(&w.bytes, o.start, o.end, &body);
+            cases.push(Case { text, refuse: false, expected: "ok true".into() });
+        }
+        (defs, t, v, settings, cases)
+    }, |(defs, t, v, settings, cases)| {
+        if !cases.is_empty() {
+            run_cases(defs, t, v, *settings, cases)
+        }
+    });
+}
+
 // A text broken in one place.
 
 /// What a reader says it wanted of a value of the type, when the value there
@@ -966,8 +1008,9 @@ fn broken(g: &mut Gen, w: &Written, settings: Settings) -> Vec<Case> {
         add(t, n.end - 1, &n.path, "malformed");
     }
     // A member repeated, and a member removed.
-    if !w.objs.is_empty() {
-        let o = g.pick(&w.objs);
+    let with_fields: Vec<&Obj> = w.objs.iter().filter(|o| o.has_fields()).collect();
+    if !with_fields.is_empty() {
+        let o = *g.pick(&with_fields);
         let fields: Vec<&Member> = o.members.iter().filter(|m| m.field.is_some()).collect();
         let m = *g.pick(&fields);
         let (declared, _) = m.field.unwrap();
@@ -992,6 +1035,22 @@ fn broken(g: &mut Gen, w: &Written, settings: Settings) -> Vec<Case> {
             add(t, o.end - 1 - (end - start), &o.path, &format!("missing {declared}"));
         }
     }
+    // The tag taken out of an object, which has none then.
+    if let Some(tag) = settings.tag {
+        let tagged: Vec<&Obj> = (w.objs.iter())
+            .filter(|o| o.members[0].field.is_none() && o.members[0].key == tag)
+            .collect();
+        if !tagged.is_empty() {
+            let o = *g.pick(&tagged);
+            let (start, end) = if o.members.len() > 1 {
+                (o.members[0].key_start, o.members[1].key_start)
+            } else {
+                (o.members[0].key_start, o.members[0].end)
+            };
+            let t = spliced(text, start, end, b"");
+            add(t, o.end - 1 - (end - start), &o.path, &format!("missing {tag}"));
+        }
+    }
     cases
 }
 
@@ -1011,13 +1070,33 @@ fn a_member_that_is_added_is_ignored_or_refused_as_the_setting_says() {
         let (defs, t, v, settings) = made(g);
         let w = write(&defs, &t, &v, settings, COMPACT);
         let mut cases = Vec::new();
-        for o in w.objs.iter().take(3) {
+        for o in w.objs.iter().filter(|o| o.has_fields()).take(3) {
             let member = [&b",\"zz\":"[..], g.pick(&added)].concat();
             let text = spliced(&w.bytes, o.end - 1, o.end - 1, &member);
             let at = o.end;
             let expected = error(&text, at, &join(&o.path, "zz"), "unknown zz");
             cases.push(Case { text: text.clone(), refuse: false, expected: "ok true".into() });
             cases.push(Case { text, refuse: true, expected });
+            // A name that is not the name that is written is a member that
+            // the type has no field of.
+            if settings.camel {
+                let renamed: Vec<&Member> = (o.members.iter())
+                    .filter(|m| m.field.is_some_and(|(declared, _)| declared != m.key))
+                    .collect();
+                if !renamed.is_empty() {
+                    let m = *g.pick(&renamed);
+                    let (declared, _) = m.field.unwrap();
+                    let name = if g.one_in(2) {
+                        declared.to_string()
+                    } else {
+                        declared.replace("_a", "_A").replace("_b", "_B").replace("_c", "_C").replace("_n", "_N")
+                    };
+                    let key = format!("\"{}\"", m.key);
+                    let text = spliced(&w.bytes, m.key_start, m.key_start + key.len(), format!("\"{name}\"").as_bytes());
+                    let expected = error(&text, m.key_start, &join(&o.path, &name), &format!("unknown {name}"));
+                    cases.push(Case { text, refuse: true, expected });
+                }
+            }
         }
         (defs, t, v, settings, cases)
     }, |(defs, t, v, settings, cases)| {

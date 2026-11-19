@@ -800,9 +800,8 @@ fn put_char(to: take List[u8], code: u32) -> List[u8] ! alloc {
 }
 
 // Takes the bytes of a string that `quoted` checked from `at` to `end`, with
-// its escapes undone, and with each upper case letter made a `_` and the
-// letter in lower case when `camel` says it is the name of a field.
-fn unescape(b: Slice[u8], at: Nat, end: Nat, camel: bool) -> List[u8] ! alloc {
+// its escapes undone.
+fn unescape(b: Slice[u8], at: Nat, end: Nat) -> List[u8] ! alloc {
   var acc: List[u8] = []
   var i = saturating_add(at, 1)
   loop k in 0..b.size {
@@ -837,8 +836,6 @@ fn unescape(b: Slice[u8], at: Nat, end: Nat, camel: bool) -> List[u8] ! alloc {
     }
     if is_code {
       acc = put_char(acc, code)
-    } else if camel and made >= 'A' and made <= 'Z' {
-      acc = push(push(acc, '_'), saturating_add(made, 32))
     } else {
       acc = push(acc, made)
     }
@@ -849,22 +846,71 @@ fn unescape(b: Slice[u8], at: Nat, end: Nat, camel: bool) -> List[u8] ! alloc {
 
 // The text that the string at `at`, which ends at `end`, stands for. A string
 // with nothing to undo is a piece of the input, so nothing is copied for it.
-fn text_at(b: Slice[u8], q: Quoted, at: Nat, camel: bool) -> str ! alloc {
-  var upper = false
-  if camel {
-    loop i in at..q.end {
-      if i < b.size and b[i] >= 'A' and b[i] <= 'Z' { upper = true }
-    }
-  }
+fn text_at(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
   lo = saturating_add(at, 1)
   hi = saturating_sub(q.end, 1)
-  if not q.escaped and not upper and lo <= hi and hi <= b.size {
+  if not q.escaped and lo <= hi and hi <= b.size {
     match utf8(b[lo..hi]) {
       .ok(t) { return t }
       .err(e) { return "" }
     }
   }
-  match utf8(freeze(unescape(b, at, q.end, camel))) {
+  match utf8(freeze(unescape(b, at, q.end))) {
+    .ok(t) { t }
+    .err(e) { "" }
+  }
+}
+
+// The byte before or after the one at `i`, or 0.
+fn byte_of(name: List[u8], i: Nat, before: bool) -> u8 {
+  at = if before { saturating_sub(i, 1) } else { saturating_add(i, 1) }
+  if at < name.size and (i > 0 or not before) { name[at] } else { 0 }
+}
+
+// Whether a name is one that `Names.camel` writes, and whether it has an upper
+// case letter: a `_` that is followed by a lower case letter and does not follow
+// a `_` is taken out when a name is written, and an upper case letter is the
+// letter after one, so a name that has either is not written.
+fn written_camel(name: List[u8]) -> (bool, bool) {
+  var ok = true
+  var upper = false
+  loop i in 0..name.size {
+    c = name[i]
+    previous = byte_of(name, i, true)
+    next = byte_of(name, i, false)
+    if c >= 'A' and c <= 'Z' {
+      upper = true
+      if previous == '_' { ok = false }
+    }
+    if c == '_' and previous != '_' and next >= 'a' and next <= 'z' { ok = false }
+  }
+  (ok, upper)
+}
+
+// The name of the field that the member at `at` is, under `Names.camel`: the
+// field that is written as the member's name, with each upper case letter read
+// as a `_` and the letter in lower case. A member that is not a name that is
+// written is given with a space before it, which is no name of a field.
+fn field_name(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
+  lo = saturating_add(at, 1)
+  hi = saturating_sub(q.end, 1)
+  if not q.escaped and lo <= hi and hi <= b.size {
+    (ok, upper) = written_camel(b[lo..hi])
+    if ok and not upper { return text_at(b, q, at) }
+  }
+  raw = unescape(b, at, q.end)
+  (ok, upper) = written_camel(raw)
+  var acc: List[u8] = []
+  if not ok { acc = push(acc, ' ') }
+  loop i in 0..raw.size {
+    c = raw[i]
+    if ok and c >= 'A' and c <= 'Z' {
+      acc = push(push(acc, '_'), saturating_add(c, 32))
+    } else {
+      acc = push(acc, c)
+    }
+  }
+  match utf8(freeze(acc)) {
     .ok(t) { t }
     .err(e) { "" }
   }
@@ -885,7 +931,7 @@ fn put_member(b: Slice[u8], to: take List[u8], kind: u8, key: Nat, index: Nat) -
     match quoted(b, key) {
       .ok(q) {
         if acc.size > 0 { acc = push(acc, '.') }
-        name = unescape(b, key, q.end, false)
+        name = unescape(b, key, q.end)
         loop i in 0..name.size { acc = push(acc, name[i]) }
       }
       .err(e) { }
@@ -944,6 +990,35 @@ fn read_error(b: Slice[u8], bad: Bad) -> ReadError ! alloc {
   ReadError(path: path_at(b, bad.at), problem: bad.problem, line: line, column: column)
 }
 
+// The place of the name of the tag in the object of the innermost case that is
+// open and is written with one, which is no place when none is. The places of
+// the cases that are open are `t0` to `t3`, the first of the outermost, and
+// `top` says how many there are.
+fn tag_at(r: In) -> Nat {
+  match r.top {
+    1 { r.t0 }
+    2 { r.t1 }
+    3 { r.t2 }
+    4 { r.t3 }
+    _ { 18446744073709551615 }
+  }
+}
+
+// The reader with the tag of a case that is open at `at`. A case in the value
+// of 4 cases that are open, which are written with a tag, is not read.
+fn tagged(r: take In, at: Nat) -> Result[In, Bad] {
+  var w = r
+  match w.top {
+    0 { w.t0 = at }
+    1 { w.t1 = at }
+    2 { w.t2 = at }
+    3 { w.t3 = at }
+    _ { return Result.err(malformed(at)) }
+  }
+  w.top = saturating_add(w.top, 1)
+  Result.ok(w)
+}
+
 // The reader of JSON text. The bytes of each case that is open, and whether
 // closing it takes a `}`, are the bits of `forms`, and `cases` says how many
 // there are. A case written with a tag is `pending` from its name until what it
@@ -956,6 +1031,11 @@ struct In {
   forms: u64
   cases: Nat
   pending: bool
+  t0: Nat
+  t1: Nat
+  t2: Nat
+  t3: Nat
+  top: Nat
 }
 
 fn failed_bool(r: take In, bad: Bad) -> (In, Result[bool, ReadError]) ! alloc {
@@ -999,22 +1079,39 @@ fn value_start(r: In) -> Result[Nat, Bad] ! alloc {
   a = skip_space(b, r.at)
   c = byte(b, a)
   if r.pending {
-    if c != ',' {
-      if c == '}' { return Result.err(Bad(at: a, problem: .missing("value"))) }
-      return Result.err(malformed(a))
-    }
-    k = skip_space(b, saturating_add(a, 1))
-    match quoted(b, k) {
-      .ok(q) {
-        if text_at(b, q, k, false) != "value" {
-          return Result.err(Bad(at: k, problem: .missing("value")))
-        }
-        colon = skip_space(b, q.end)
-        if byte(b, colon) != ':' { return Result.err(malformed(colon)) }
-        Result.ok(skip_space(b, saturating_add(colon, 1)))
+    // The members of the object of a case, after its `{`, of which the tag is
+    // one: the other is `value`.
+    tag = tag_at(r)
+    var at = a
+    var first = true
+    loop k in 0..saturating_add(b.size, 1) {
+      if byte(b, at) == '}' { return Result.err(Bad(at: at, problem: .missing("value"))) }
+      if not first {
+        if byte(b, at) != ',' { return Result.err(malformed(at)) }
+        at = skip_space(b, saturating_add(at, 1))
       }
-      .err(e) { Result.err(Bad(at: k, problem: .missing("value"))) }
+      first = false
+      match member(b, at) {
+        .err(e) { return Result.err(e) }
+        .ok(v) {
+          if at == tag {
+            match scan(b, skip_space(b, v)) {
+              .err(e) { return Result.err(e) }
+              .ok(e) { at = skip_space(b, e) }
+            }
+          } else {
+            match quoted(b, at) {
+              .err(e) { return Result.err(e) }
+              .ok(q) {
+                if text_at(b, q, at) == "value" { return Result.ok(skip_space(b, v)) }
+                return Result.err(malformed(at))
+              }
+            }
+          }
+        }
+      }
     }
+    Result.err(malformed(at))
   } else if ends_value(last_before(b, a)) {
     if c == ',' {
       Result.ok(skip_space(b, saturating_add(a, 1)))
@@ -1077,6 +1174,52 @@ fn pushed(r: take In, form: u64) -> Result[In, Bad] {
   w.forms = bit_or(shift_left(w.forms, 1), form)
   w.cases = saturating_add(w.cases, 1)
   Result.ok(w)
+}
+
+// Where the tag of the case is in the object that opens at `open`.
+struct Found {
+  key: Nat
+  name_at: Nat
+  name: Quoted
+}
+
+// Looks for the member named `tag` among the members of the object that opens
+// at `open`, in any place, passing over the others. It gives the `missing` of
+// the tag at the `}` that ends an object that has none.
+fn find_tag(b: Slice[u8], open: Nat, tag: str) -> Result[Found, Bad] ! alloc {
+  var at = skip_space(b, saturating_add(open, 1))
+  var first = true
+  loop k in 0..saturating_add(b.size, 1) {
+    if byte(b, at) == '}' { return Result.err(Bad(at: at, problem: .missing(tag))) }
+    if not first {
+      if byte(b, at) != ',' { return Result.err(malformed(at)) }
+      at = skip_space(b, saturating_add(at, 1))
+    }
+    first = false
+    match member(b, at) {
+      .err(e) { return Result.err(e) }
+      .ok(v) {
+        match quoted(b, at) {
+          .err(e) { return Result.err(e) }
+          .ok(q) {
+            n = skip_space(b, v)
+            if text_at(b, q, at) == tag {
+              if byte(b, n) != '"' { return Result.err(wrong(b, n, "a text")) }
+              match quoted(b, n) {
+                .err(e) { return Result.err(e) }
+                .ok(name) { return Result.ok(Found(key: at, name_at: n, name: name)) }
+              }
+            }
+            match scan(b, n) {
+              .err(e) { return Result.err(e) }
+              .ok(e) { at = skip_space(b, e) }
+            }
+          }
+        }
+      }
+    }
+  }
+  Result.err(malformed(at))
 }
 
 impl Reader[In] {
@@ -1154,7 +1297,7 @@ impl Reader[In] {
           failed_str(moved(r, r.at, a), wrong(r.bytes, a, "a text"))
         } else {
           match quoted(r.bytes, a) {
-            .ok(q) { (moved(r, q.end, a), Result.ok(text_at(r.bytes, q, a, false))) }
+            .ok(q) { (moved(r, q.end, a), Result.ok(text_at(r.bytes, q, a))) }
             .err(e) { failed_str(moved(r, r.at, a), e) }
           }
         }
@@ -1251,41 +1394,55 @@ impl Reader[In] {
   }
   fn field(r: take In) -> (In, Result[Option[str], ReadError]) ! alloc {
     b = r.bytes
-    var a = skip_space(b, r.at)
-    c = byte(b, a)
-    if c == '}' { return (moved(r, saturating_add(a, 1), a), Result.ok(Option.none)) }
-    if last_before(b, a) != '{' and true {
-      if c != ',' {
-        return failed_name(moved(r, r.at, a), malformed(a))
+    tag = tag_at(r)
+    var at = r.at
+    loop k in 0..saturating_add(b.size, 1) {
+      var a = skip_space(b, at)
+      c = byte(b, a)
+      if c == '}' { return (moved(r, saturating_add(a, 1), a), Result.ok(Option.none)) }
+      if last_before(b, a) != '{' {
+        if c != ',' { return failed_name(moved(r, r.at, a), malformed(a)) }
+        a = skip_space(b, saturating_add(a, 1))
       }
-      a = skip_space(b, saturating_add(a, 1))
-    }
-    if byte(b, a) != '"' { return failed_name(moved(r, r.at, a), malformed(a)) }
-    match quoted(b, a) {
-      .err(e) { failed_name(moved(r, r.at, a), e) }
-      .ok(q) {
-        colon = skip_space(b, q.end)
-        if byte(b, colon) != ':' {
-          failed_name(moved(r, r.at, a), malformed(colon))
-        } else {
-          camel = match r.json.names {
-            .written { false }
-            .camel { true }
+      if byte(b, a) != '"' { return failed_name(moved(r, r.at, a), malformed(a)) }
+      match quoted(b, a) {
+        .err(e) { return failed_name(moved(r, r.at, a), e) }
+        .ok(q) {
+          colon = skip_space(b, q.end)
+          if byte(b, colon) != ':' { return failed_name(moved(r, r.at, a), malformed(colon)) }
+          if a == tag {
+            // The tag of the case is not a field of what the case holds.
+            match scan(b, skip_space(b, saturating_add(colon, 1))) {
+              .err(e) { return failed_name(moved(r, r.at, a), e) }
+              .ok(e) { at = e }
+            }
+          } else {
+            name = match r.json.names {
+              .written { text_at(b, q, a) }
+              .camel { field_name(b, q, a) }
+            }
+            return (moved(r, saturating_add(colon, 1), a), Result.ok(Option.some(name)))
           }
-          (moved(r, saturating_add(colon, 1), a), Result.ok(Option.some(text_at(b, q, a, camel))))
         }
       }
     }
+    failed_name(moved(r, r.at, at), malformed(at))
   }
   fn unknown(r: take In, name: str) -> (In, Result[(), ReadError]) ! alloc {
+    // The member as the text has it, which is not `name` when that was made
+    // from it.
+    given = match quoted(r.bytes, r.mark) {
+      .ok(q) { text_at(r.bytes, q, r.mark) }
+      .err(e) { name }
+    }
     match r.json.unknown {
-      .refuse { failed_unit(r, Bad(at: r.mark, problem: .unknown(name))) }
+      .refuse { failed_unit(r, Bad(at: r.mark, problem: .unknown(given))) }
       .ignore {
         a = skip_space(r.bytes, r.at)
         match scan(r.bytes, a) {
           .err(e) { failed_unit(moved(r, r.at, a), e) }
           .ok(e) {
-            match again(r.bytes, e, name, r.json.names) {
+            match again(r.bytes, e, given) {
               .some(bad) { failed_unit(moved(r, e, r.mark), bad) }
               .none { (moved(r, e, r.mark), Result.ok(())) }
             }
@@ -1307,7 +1464,7 @@ impl Reader[In] {
                 .err(e) { failed_str(moved(r, r.at, a), e) }
                 .ok(q) {
                   match pushed(moved(r, q.end, a), 0) {
-                    .ok(w) { (w, Result.ok(text_at(b, q, a, false))) }
+                    .ok(w) { (w, Result.ok(text_at(b, q, a))) }
                     .err(e) { failed_str(moved(r, r.at, a), e) }
                   }
                 }
@@ -1321,7 +1478,7 @@ impl Reader[In] {
                     .err(e) { failed_str(moved(r, r.at, a), e) }
                     .ok(q) {
                       match pushed(moved(r, v, k), 1) {
-                        .ok(w) { (w, Result.ok(text_at(b, q, k, false))) }
+                        .ok(w) { (w, Result.ok(text_at(b, q, k))) }
                         .err(e) { failed_str(moved(r, r.at, a), e) }
                       }
                     }
@@ -1336,33 +1493,18 @@ impl Reader[In] {
             if c != '{' {
               failed_str(moved(r, r.at, a), wrong(b, a, "an object"))
             } else {
-              k = skip_space(b, saturating_add(a, 1))
-              match member(b, k) {
+              match find_tag(b, a, t) {
                 .err(e) { failed_str(moved(r, r.at, a), e) }
-                .ok(v) {
-                  match quoted(b, k) {
+                .ok(f) {
+                  match pushed(moved(r, saturating_add(a, 1), f.name_at), 1) {
                     .err(e) { failed_str(moved(r, r.at, a), e) }
-                    .ok(q) {
-                      if text_at(b, q, k, false) != t {
-                        failed_str(moved(r, r.at, a), Bad(at: a, problem: .missing(t)))
-                      } else {
-                        n = skip_space(b, v)
-                        if byte(b, n) != '"' {
-                          failed_str(moved(r, r.at, n), wrong(b, n, "a text"))
-                        } else {
-                          match quoted(b, n) {
-                            .err(e) { failed_str(moved(r, r.at, n), e) }
-                            .ok(name) {
-                              match pushed(moved(r, name.end, n), 1) {
-                                .ok(w) {
-                                  var held = w
-                                  held.pending = true
-                                  (held, Result.ok(text_at(b, name, n, false)))
-                                }
-                                .err(e) { failed_str(moved(r, r.at, n), e) }
-                              }
-                            }
-                          }
+                    .ok(w) {
+                      match tagged(w, f.key) {
+                        .err(e) { failed_str(moved(r, r.at, a), e) }
+                        .ok(held) {
+                          var open = held
+                          open.pending = true
+                          (open, Result.ok(text_at(b, f.name, f.name_at)))
                         }
                       }
                     }
@@ -1378,20 +1520,53 @@ impl Reader[In] {
   fn end_case(r: take In) -> (In, Result[(), ReadError]) ! alloc {
     var w = r
     closes = bit_and(w.forms, 1) == 1
+    empty = w.pending
+    tag = tag_at(w)
     w.forms = shift_right(w.forms, 1)
     w.cases = saturating_sub(w.cases, 1)
     w.pending = false
-    if closes {
-      a = skip_space(w.bytes, w.at)
-      if byte(w.bytes, a) == '}' {
-        w.at = saturating_add(a, 1)
-        w.mark = a
-        (w, Result.ok(()))
-      } else {
-        failed_unit(moved(w, w.at, a), malformed(a))
+    var at = skip_space(w.bytes, w.at)
+    match w.json.cases {
+      .key { }
+      .tag(t) { w.top = saturating_sub(w.top, 1) }
+    }
+    if not closes { return (w, Result.ok(())) }
+    match w.json.cases {
+      .key { }
+      .tag(t) {
+        // What is left of the object: the tag, when it is not before the
+        // value, and the end.
+        if empty and at == tag {
+          match member(w.bytes, at) {
+            .err(e) { return failed_unit(moved(w, w.at, at), e) }
+            .ok(v) {
+              match scan(w.bytes, skip_space(w.bytes, v)) {
+                .err(e) { return failed_unit(moved(w, w.at, at), e) }
+                .ok(e) { at = skip_space(w.bytes, e) }
+              }
+            }
+          }
+        } else if not empty and byte(w.bytes, at) == ',' {
+          at = skip_space(w.bytes, saturating_add(at, 1))
+          if at != tag { return failed_unit(moved(w, w.at, at), malformed(at)) }
+          match member(w.bytes, at) {
+            .err(e) { return failed_unit(moved(w, w.at, at), e) }
+            .ok(v) {
+              match scan(w.bytes, skip_space(w.bytes, v)) {
+                .err(e) { return failed_unit(moved(w, w.at, at), e) }
+                .ok(e) { at = skip_space(w.bytes, e) }
+              }
+            }
+          }
+        }
       }
-    } else {
+    }
+    if byte(w.bytes, at) == '}' {
+      w.at = saturating_add(at, 1)
+      w.mark = at
       (w, Result.ok(()))
+    } else {
+      failed_unit(moved(w, w.at, at), malformed(at))
     }
   }
   fn raw(r: take In) -> (In, Result[Slice[u8], ReadError]) ! alloc {
@@ -1418,11 +1593,7 @@ impl Reader[In] {
 
 // Looks in the members of the object from `from`, after the value of a member
 // named `name`, for another of that name, and gives it as `twice` at its name.
-fn again(b: Slice[u8], from: Nat, name: str, names: Names) -> Option[Bad] ! alloc {
-  camel = match names {
-    .written { false }
-    .camel { true }
-  }
+fn again(b: Slice[u8], from: Nat, name: str) -> Option[Bad] ! alloc {
   var at = from
   loop k in 0..b.size {
     at = skip_space(b, at)
@@ -1431,7 +1602,7 @@ fn again(b: Slice[u8], from: Nat, name: str, names: Names) -> Option[Bad] ! allo
     match quoted(b, at) {
       .err(e) { return Option.none }
       .ok(q) {
-        if text_at(b, q, at, camel) == name {
+        if text_at(b, q, at) == name {
           return Option.some(Bad(at: at, problem: .twice(name)))
         }
         match member(b, at) {
@@ -1460,7 +1631,7 @@ impl[T] FromJson[T]
 {
   fn from_json_as(text: str, json: Json) -> Result[T, ReadError] ! alloc {
     bytes = text.bytes
-    r = In(bytes: bytes, at: 0, mark: 0, json: json, forms: 0, cases: 0, pending: false)
+    r = In(bytes: bytes, at: 0, mark: 0, json: json, forms: 0, cases: 0, pending: false, t0: 0, t1: 0, t2: 0, t3: 0, top: 0)
     (w, result): (In, Result[T, ReadError]) = read(r)
     match result {
       .err(e) { Result.err(e) }
