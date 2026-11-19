@@ -1,0 +1,374 @@
+use std.bits (u64)
+use std.der (Value, bits, children, object, text, value, whole)
+use std.int (wrapping_add, wrapping_mul)
+use std.list (push)
+
+pub struct Certificate {
+  pub signed: Slice[Byte]
+  pub algorithm: List[Nat]
+  pub signature: Slice[Byte]
+  pub serial: Slice[Byte]
+  pub issuer: Slice[Byte]
+  pub subject: Slice[Byte]
+  pub not_before: u64
+  pub not_after: u64
+  pub key_algorithm: List[Nat]
+  pub key: Slice[Byte]
+  pub names: List[str]
+  pub authority: Option[bool]
+  pub path_length: Option[Nat]
+}
+
+// A value, the bytes it is written in with its tag and length, and the bytes
+// after it.
+fn next_value(bytes: Slice[Byte]) -> Result[(Value, Slice[Byte], Slice[Byte]), str] {
+  (v, rest) = try value(bytes)
+  if rest.size > bytes.size { return .err("the bytes end inside a value") }
+  .ok((v, bytes[..bytes.size - rest.size], rest))
+}
+
+fn is_sequence(v: Value) -> bool {
+  match v.tag {
+    .sequence { true }
+    _ { false }
+  }
+}
+
+fn is_integer(v: Value) -> bool {
+  match v.tag {
+    .integer { true }
+    _ { false }
+  }
+}
+
+fn is_boolean(v: Value) -> bool {
+  match v.tag {
+    .boolean { true }
+    _ { false }
+  }
+}
+
+fn is_octets(v: Value) -> bool {
+  match v.tag {
+    .octets { true }
+    _ { false }
+  }
+}
+
+// A boolean that is true: DER leaves out one that is false, where the value
+// that stands for it is the default.
+fn true_boolean(v: Value) -> bool {
+  match v.tag {
+    .boolean { v.bytes.size == 1 and v.bytes[0] == 255 }
+    _ { false }
+  }
+}
+
+// The bytes of a bit string that has no bits left over.
+fn whole_bits(v: Value) -> Result[Slice[Byte], str] {
+  (bytes, left) = try bits(v)
+  if left != 0 { return .err("a bit string with bits left over") }
+  .ok(bytes)
+}
+
+// The parts of a sequence, which there must be at least `least` of and at most
+// `most`.
+fn parts(v: Value, least: Nat, most: Nat) -> Result[List[Value], str] ! alloc {
+  if not is_sequence(v) { return .err("a value that is not a sequence") }
+  xs = try children(v)
+  if xs.size < least or xs.size > most { return .err("a sequence of the wrong number of parts") }
+  .ok(xs)
+}
+
+fn algorithm_of(v: Value) -> Result[List[Nat], str] ! alloc {
+  xs = try parts(v, 1, 2)
+  if xs.size == 0 { return .err("an algorithm with no identifier") }
+  object(xs[0])
+}
+
+// Whether two object identifiers are one.
+fn same(a: List[Nat], b: List[Nat]) -> bool {
+  if a.size != b.size { return false }
+  loop i in 0..a.size {
+    if a[i] != b[i] { return false }
+  }
+  true
+}
+
+// Two digits at `at`, as a number.
+fn two(b: Slice[Byte], at: Nat) -> Option[Nat] {
+  if at >= b.size { return .none }
+  if b.size - at < 2 { return .none }
+  hi: Nat = b[at]
+  lo: Nat = b[at + 1]
+  if hi < 48 or hi > 57 or lo < 48 or lo > 57 { return .none }
+  .some((hi - 48) * 10 + (lo - 48))
+}
+
+// Every number of a time is far below the greatest `Nat`, so a sum of them
+// is taken with `wrapping_add` and never wraps.
+
+// The days from 1970 up to the first day of `year`, and whether `year` is a
+// leap year. Division is not built, so the years are counted with a counter of
+// each of the three periods that decide a leap year.
+fn years(year: Nat) -> (Nat, bool) {
+  var days: Nat = 0
+  var c4: Nat = 2
+  var c100: Nat = 70
+  var c400: Nat = 370
+  loop i in 1970..year {
+    if c4 == 0 and (c100 != 0 or c400 == 0) { days = wrapping_add(days, 366) } else { days = wrapping_add(days, 365) }
+    if c4 == 3 { c4 = 0 } else { c4 = wrapping_add(c4, 1) }
+    if c100 == 99 { c100 = 0 } else { c100 = wrapping_add(c100, 1) }
+    if c400 == 399 { c400 = 0 } else { c400 = wrapping_add(c400, 1) }
+  }
+  (days, c4 == 0 and (c100 != 0 or c400 == 0))
+}
+
+fn days_in(leap: bool, month: Nat) -> Nat {
+  if month == 2 {
+    if leap { 29 } else { 28 }
+  } else if month == 4 or month == 6 or month == 9 or month == 11 {
+    30
+  } else {
+    31
+  }
+}
+
+// The seconds since 1970 of a time written `YYMMDDHHMMSSZ`, or with a year of
+// four digits.
+fn seconds(v: Value) -> Result[u64, str] {
+  b = v.bytes
+  var year: Nat = 0
+  var at: Nat = 0
+  match v.tag {
+    .utc_time {
+      if b.size != 13 { return .err("a time that is not written as DER writes it") }
+      yy = match two(b, 0) {
+        .some(n) { n }
+        .none { return .err("a time with a character that is not a digit") }
+      }
+      if yy >= 50 { year = wrapping_add(1900, yy) } else { year = wrapping_add(2000, yy) }
+      at = 2
+    }
+    .general_time {
+      if b.size != 15 { return .err("a time that is not written as DER writes it") }
+      hi = match two(b, 0) {
+        .some(n) { n }
+        .none { return .err("a time with a character that is not a digit") }
+      }
+      lo = match two(b, 2) {
+        .some(n) { n }
+        .none { return .err("a time with a character that is not a digit") }
+      }
+      year = wrapping_add(wrapping_mul(hi, 100), lo)
+      at = 4
+    }
+    _ { return .err("a value that is not a time") }
+  }
+  if year < 1970 or year > 9999 { return .err("a year that is not from 1970 to 9999") }
+  month = match two(b, at) {
+    .some(n) { n }
+    .none { return .err("a time with a character that is not a digit") }
+  }
+  day = match two(b, at + 2) {
+    .some(n) { n }
+    .none { return .err("a time with a character that is not a digit") }
+  }
+  hour = match two(b, at + 4) {
+    .some(n) { n }
+    .none { return .err("a time with a character that is not a digit") }
+  }
+  minute = match two(b, at + 6) {
+    .some(n) { n }
+    .none { return .err("a time with a character that is not a digit") }
+  }
+  second = match two(b, at + 8) {
+    .some(n) { n }
+    .none { return .err("a time with a character that is not a digit") }
+  }
+  if at + 10 >= b.size { return .err("a time with no Z") }
+  if b[at + 10] != 'Z' { return .err("a time that is not in UTC") }
+  if month < 1 or month > 12 { return .err("a month that is not from 1 to 12") }
+  (before, is_leap) = years(year)
+  if day < 1 or day > days_in(is_leap, month) { return .err("a day that the month does not have") }
+  if hour > 23 or minute > 59 or second > 59 { return .err("a time of day that is not one") }
+  var days: Nat = before
+  loop m in 1..month {
+    days = wrapping_add(days, days_in(is_leap, m))
+  }
+  days = wrapping_add(days, day - 1)
+  .ok(wrapping_add(wrapping_mul(days, 86400), hour * 3600 + minute * 60 + second))
+}
+
+// The identifier of an extension is `2.5.29.<n>`.
+fn is_id_ce(arcs: List[Nat], n: Nat) -> bool {
+  arcs.size == 4 and arcs[0] == 2 and arcs[1] == 5 and arcs[2] == 29 and arcs[3] == n
+}
+
+fn dns_names(v: Value, names: take List[str]) -> Result[List[str], str] ! alloc {
+  var found = names
+  xs = try children(v)
+  if xs.size == 0 { return .err("a subject alternative name of no names") }
+  loop i in 0..xs.size {
+    match xs[i].tag {
+      .context((n, built)) {
+        if n == 2 and not built {
+          found = push(found, try text(Value(tag: .ia5, bytes: xs[i].bytes)))
+        }
+      }
+      _ { return .err("a name of a kind that RFC 5280 does not give") }
+    }
+  }
+  .ok(found)
+}
+
+// What an extension that says whether a certificate may sign others holds.
+fn basic_constraints(v: Value) -> Result[(bool, Option[Nat]), str] ! alloc {
+  xs = try children(v)
+  if xs.size > 2 { return .err("basic constraints of more than two parts") }
+  var authority = false
+  var path: Option[Nat] = .none
+  var at: Nat = 0
+  if xs.size > at {
+    if is_boolean(xs[at]) {
+      if not true_boolean(xs[at]) { return .err("a boolean that DER would not write: false is left out") }
+      authority = true
+      at = at + 1
+    }
+  }
+  if xs.size > at {
+    if not is_integer(xs[at]) { return .err("basic constraints with a part that is not a length") }
+    digits = try whole(xs[at])
+    if digits.size > 4 { return .err("a path length that is too great") }
+    var n: Nat = 0
+    loop i in 0..digits.size {
+      b: Nat = digits[i]
+      n = wrapping_add(wrapping_mul(n, 256), b)
+    }
+    path = .some(n)
+  }
+  .ok((authority, path))
+}
+
+struct Found {
+  names: List[str]
+  authority: Option[bool]
+  path_length: Option[Nat]
+}
+
+// The extensions, which are the parts of a sequence of them.
+fn extensions(list: Value) -> Result[Found, str] ! alloc {
+  xs = try parts(list, 1, 1000000)
+  var names: List[str] = []
+  var authority: Option[bool] = .none
+  var path_length: Option[Nat] = .none
+  var seen: List[List[Nat]] = []
+  loop i in 0..xs.size {
+    ext = try parts(xs[i], 2, 3)
+    if ext.size < 2 { return .err("an extension of too few parts") }
+    id = try object(ext[0])
+    loop j in 0..seen.size {
+      if same(seen[j], id) { return .err("an extension that is written twice") }
+    }
+    critical = ext.size == 3
+    if critical {
+      if not true_boolean(ext[1]) { return .err("an extension with a part that is not a boolean, or is a false one that DER would not write") }
+    }
+    last = ext.size - 1
+    if not is_octets(ext[last]) { return .err("an extension whose value is not bytes") }
+    (inner, after) = try value(ext[last].bytes)
+    if after.size > 0 { return .err("bytes left after the value of an extension") }
+    if is_id_ce(id, 17) {
+      names = try dns_names(inner, names)
+    } else if is_id_ce(id, 19) {
+      (a, p) = try basic_constraints(inner)
+      authority = .some(a)
+      path_length = p
+    } else if is_id_ce(id, 15) {
+      try bits(inner)
+    } else if is_id_ce(id, 37) {
+      uses = try parts(inner, 1, 1000000)
+      loop j in 0..uses.size { try object(uses[j]) }
+    } else if critical {
+      return .err("an extension marked critical that is not read")
+    }
+    seen = push(seen, id)
+  }
+  .ok(Found(names: names, authority: authority, path_length: path_length))
+}
+
+// The two times of a validity.
+fn validity(v: Value) -> Result[(u64, u64), str] ! alloc {
+  xs = try parts(v, 2, 2)
+  if xs.size < 2 { return .err("a validity of too few parts") }
+  .ok((try seconds(xs[0]), try seconds(xs[1])))
+}
+
+pub fn certificate(bytes: Slice[Byte]) -> Result[Certificate, str] ! alloc {
+  (outer, whole_outer, after) = try next_value(bytes)
+  if after.size > 0 { return .err("bytes left after the certificate") }
+  if not is_sequence(outer) { return .err("a certificate that is not a sequence") }
+  (tbs, signed, r1) = try next_value(outer.bytes)
+  (algorithm, algorithm_bytes, r2) = try next_value(r1)
+  (signature, signature_value, r3) = try next_value(r2)
+  if r3.size > 0 { return .err("bytes left in the certificate") }
+  if not is_sequence(tbs) { return .err("a signed part that is not a sequence") }
+  outer_algorithm = try algorithm_of(algorithm)
+  signature_bytes = try whole_bits(signature)
+
+  (version, version_bytes, t1) = try next_value(tbs.bytes)
+  match version.tag {
+    .context((n, built)) {
+      if n != 0 or not built { return .err("a certificate with no version 3") }
+    }
+    _ { return .err("a certificate with no version 3") }
+  }
+  numbers = try children(version)
+  if numbers.size != 1 { return .err("a version that is not one number") }
+  number = try whole(numbers[0])
+  if number.size != 1 or number[0] != 2 { return .err("a certificate that is not of version 3") }
+
+  (serial_value, serial_bytes, t2) = try next_value(t1)
+  serial = try whole(serial_value)
+  if serial.size == 1 and serial[0] == 0 { return .err("a serial number that is not above zero") }
+  (inner_algorithm, inner_bytes, t3) = try next_value(t2)
+  inner_oid = try algorithm_of(inner_algorithm)
+  (issuer_value, issuer, t4) = try next_value(t3)
+  if not is_sequence(issuer_value) { return .err("a name that is not a sequence") }
+  (validity_value, validity_bytes, t5) = try next_value(t4)
+  (before, after_time) = try validity(validity_value)
+  (subject_value, subject, t6) = try next_value(t5)
+  if not is_sequence(subject_value) { return .err("a name that is not a sequence") }
+  (info, info_bytes, t7) = try next_value(t6)
+  info_parts = try parts(info, 2, 2)
+  if info_parts.size < 2 { return .err("a key of too few parts") }
+  key_algorithm = try algorithm_of(info_parts[0])
+  key = try whole_bits(info_parts[1])
+
+  var names: List[str] = []
+  var authority: Option[bool] = .none
+  var path_length: Option[Nat] = .none
+  var rest = t7
+  loop i in 0..t7.size {
+    if rest.size == 0 { break }
+    (field, field_bytes, more) = try next_value(rest)
+    rest = more
+    match field.tag {
+      .context((n, built)) {
+        if n == 3 and built {
+          wrapper = try children(field)
+          if wrapper.size != 1 { return .err("extensions that are not one sequence") }
+          found = try extensions(wrapper[0])
+          names = found.names
+          authority = found.authority
+          path_length = found.path_length
+        } else if n != 1 and n != 2 {
+          return .err("a part of a certificate that is not read")
+        }
+      }
+      _ { return .err("a part of a certificate that is not read") }
+    }
+  }
+  .ok(Certificate(signed: signed, algorithm: outer_algorithm, signature: signature_bytes, serial: serial, issuer: issuer, subject: subject, not_before: before, not_after: after_time, key_algorithm: key_algorithm, key: key, names: names, authority: authority, path_length: path_length))
+}
