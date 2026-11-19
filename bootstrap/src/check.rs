@@ -3499,10 +3499,82 @@ fn renamed_tokens(
     let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
     // How many tokens after this one a name written through its module takes.
     let mut skip = 0usize;
+    // Whether an `enum` was read and its `{` is not, and how many braces
+    // deep inside the body of an enum the tokens are, which is 0 outside it.
+    let mut enum_next = false;
+    let mut enum_depth = 0usize;
+    // The parameters of a function whose body is being read, with how many
+    // braces deep the body is, one entry for each function that holds the
+    // tokens, and the parameters of the one whose signature is being read, and
+    // whether its parameters have ended.
+    let mut bodies: Vec<(Vec<String>, usize)> = Vec::new();
+    let mut signed: Option<Vec<String>> = None;
+    let mut parameters_ended = false;
+    let mut brace = 0usize;
     for (i, t) in tokens.iter().enumerate() {
         if skip > 0 {
             skip -= 1;
             continue;
+        }
+        // A case that holds nothing is written alone on its line in the body of
+        // its enum, where it is the name the enum gives it, whatever another
+        // item of the module is called, as it is after a `.` where it is used.
+        let case_defined = enum_depth == 1
+            && matches!(
+                out.last(),
+                Some(Token {
+                    tok: Tok::Punct("{") | Tok::Newline,
+                    ..
+                })
+            );
+        match &t.tok {
+            Tok::Keyword("enum") => enum_next = true,
+            Tok::Punct("{") if enum_next => {
+                enum_next = false;
+                enum_depth = 1;
+            }
+            Tok::Punct("{") if enum_depth > 0 => enum_depth += 1,
+            Tok::Punct("}") if enum_depth > 0 => enum_depth -= 1,
+            _ => {}
+        }
+        // A parameter is its own name in its function, whatever an item of the
+        // module is called, as it is where a call names it.
+        let declared = params == 1
+            && signed.is_some()
+            && matches!(&t.tok, Tok::Ident(_))
+            && matches!(
+                tokens.get(i + 1),
+                Some(Token {
+                    tok: Tok::Punct(":"),
+                    ..
+                })
+            );
+        match &t.tok {
+            Tok::Keyword("fn") => {
+                signed = Some(Vec::new());
+                parameters_ended = false;
+            }
+            Tok::Keyword("struct" | "enum" | "trait" | "impl") => signed = None,
+            Tok::Ident(name) if declared => {
+                if let Some(names) = &mut signed {
+                    names.push(name.clone());
+                }
+            }
+            Tok::Punct(")") if params == 1 && signed.is_some() => parameters_ended = true,
+            Tok::Punct("{") => {
+                brace += 1;
+                if parameters_ended && let Some(names) = signed.take() {
+                    bodies.push((names, brace));
+                }
+            }
+            Tok::Punct("}") => {
+                while bodies.last().is_some_and(|(_, depth)| *depth == brace) {
+                    bodies.pop();
+                }
+                brace = brace.saturating_sub(1);
+                signed = None;
+            }
+            _ => {}
         }
         match &t.tok {
             Tok::Keyword("fn") => signature = true,
@@ -3544,12 +3616,18 @@ fn renamed_tokens(
                     ) if !after_dot => through.get(name).and_then(|names| names.get(member)),
                     _ => None,
                 };
+                let is_parameter = declared
+                    || bodies
+                        .iter()
+                        .any(|(names, _)| names.iter().any(|n| n == name));
                 match rename(name) {
                     _ if member.is_some() => {
                         skip = 2;
                         Tok::Ident(member.cloned().unwrap_or_default())
                     }
-                    Some(to) if !after_dot && !labelled => Tok::Ident(to),
+                    Some(to) if !after_dot && !labelled && !case_defined && !is_parameter => {
+                        Tok::Ident(to)
+                    }
                     _ => t.tok.clone(),
                 }
             }
