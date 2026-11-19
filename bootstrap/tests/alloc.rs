@@ -47,6 +47,7 @@ pub const ONCE: &[Test] = &[
 fn size(ty: Type) -> u32 {
     match ty {
         Type::Int(bits) => bits.count() / 8,
+        Type::Float(bits) => bits.count() / 8,
         Type::Address => 8,
     }
 }
@@ -544,6 +545,7 @@ fn function(g: &mut Gen) -> Function {
 fn value_of(b: &mut Builder, ty: Type, n: u64) -> Value {
     match ty {
         Type::Int(bits) => b.int(bits, n),
+        Type::Float(bits) => b.float(bits, n),
         Type::Address => b.null(),
     }
 }

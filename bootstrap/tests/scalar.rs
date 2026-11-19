@@ -209,10 +209,17 @@ pub const ONCE: &[Test] = &[
 fn operands(op: &mut Op) -> Vec<&mut Value> {
     match op {
         Op::Constant(_) => Vec::new(),
-        Op::Binary { a, b, .. } | Op::Compare { a, b, .. } | Op::Overflows { a, b, .. } => {
-            vec![a, b]
-        }
-        Op::Widen { value, .. } | Op::Narrow(value) => vec![value],
+        Op::Binary { a, b, .. }
+        | Op::Compare { a, b, .. }
+        | Op::Overflows { a, b, .. }
+        | Op::FloatBinary { a, b, .. }
+        | Op::FloatCompare { a, b, .. } => vec![a, b],
+        Op::Widen { value, .. }
+        | Op::Narrow(value)
+        | Op::FloatNegate(value)
+        | Op::FloatFromInt { value, .. }
+        | Op::IntFromFloat { value, .. }
+        | Op::FloatResize(value) => vec![value],
         Op::Choose {
             on,
             then,
@@ -885,7 +892,7 @@ fn a_value_used_at_another_type_is_refused() {
                         if let Op::Constant(c) = &instruction.op {
                             let r = instruction.results[0];
                             f.types[r.0] = match c {
-                                Constant::Int(_) => Type::Address,
+                                Constant::Int(_) | Constant::Float(_) => Type::Address,
                                 Constant::Null | Constant::Data(_) => Type::Int(Bits::B8),
                             };
                             return true;
