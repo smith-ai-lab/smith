@@ -63,6 +63,10 @@ pub const ONCE: &[Test] = &[
         every_function_of_the_source_that_runs_is_the_name_of_an_at_line,
     ),
     (
+        "the_exit_of_a_function_is_a_run_of_its_own_named_for_the_function",
+        the_exit_of_a_function_is_a_run_of_its_own_named_for_the_function,
+    ),
+    (
         "a_function_with_no_at_line_holds_no_place_but_its_own",
         a_function_with_no_at_line_holds_no_place_but_its_own,
     ),
@@ -629,16 +633,39 @@ fn every_function_of_the_source_that_runs_is_the_name_of_an_at_line() {
 /// What the map says of a function it gives no `at` line is that all of its
 /// code is its own, so the code of a piece of the runtime that is built in it
 /// cannot be left without its name.
+/// A text that is appended to in a function of its own, which holds the code
+/// of `<append>`.
+const APPENDED: &str = "use std.console (console, print)\nuse std.text (Text, append, finish, text)\n\nfn put_text(to: take Text, s: str) -> Text ! alloc {\n  append(to, s)\n}\n\nfn main() ! alloc, console {\n  var w = text()\n  w = put_text(w, \"hi\")\n  w = put_text(w, \"there\")\n  w = put_text(w, \"you\")\n  w = put_text(w, \"all\")\n  print(finish(w))\n}\n";
+
 fn a_function_with_no_at_line_holds_no_place_but_its_own() {
     // A text that is appended to, in a function of its own, which holds the
     // code of `<append>` and no line.
-    let text = "use std.console (console, print)\nuse std.text (Text, append, finish, text)\n\nfn put_text(to: take Text, s: str) -> Text ! alloc {\n  append(to, s)\n}\n\nfn main() ! alloc, console {\n  var w = text()\n  w = put_text(w, \"hi\")\n  w = put_text(w, \"there\")\n  w = put_text(w, \"you\")\n  w = put_text(w, \"all\")\n  print(finish(w))\n}\n";
+    let text = APPENDED;
     holds_only_its_own(text.as_bytes());
     generate::check(9207, 10, programs::program, |case| {
         if case.mistake.is_none() {
             holds_only_its_own(&case.source);
         }
     });
+}
+
+/// The code that ends a function, which a target writes and no instruction of
+/// the form holds, is not counted in the run of the instruction before it.
+fn the_exit_of_a_function_is_a_run_of_its_own_named_for_the_function() {
+    let program = passed(APPENDED.as_bytes());
+    let names: Vec<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    for target in buildable() {
+        let (_, parts) = target.emit_parts(&program);
+        let map = smith::target::map(&names, &parts);
+        let (_, at) = functions(&map)
+            .into_iter()
+            .find(|(line, _)| parse(line).3 == "main.put_text")
+            .expect("the function is in the map");
+        let runs: Vec<_> = at.iter().map(|r| parse_at(r)).collect();
+        let (.., last) = runs.last().expect("the function has runs");
+        assert_eq!(*last, "main.put_text", "{map} for {}", target.name());
+        assert!(runs.iter().any(|r| r.5 == "<append>"), "{map} for {}", target.name());
+    }
 }
 
 fn holds_only_its_own(source: &[u8]) {
