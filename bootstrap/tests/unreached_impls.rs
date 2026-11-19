@@ -162,12 +162,12 @@ fn case(g: &mut Gen) -> Case {
     let own = g.one_in(2);
     let mistake = g.one_in(2);
     let made = own && g.one_in(2);
-    let ty = if own { "Unused" } else { "Clash" };
+    let ty = if own { "Unused" } else { "Utf8Error" };
     let body = if mistake { "x.missing + 1" } else { "\"s\"" };
     let uses = if made { "\n  print(show(Unused(n: 2)))" } else { "" };
     let source = format!(
         "use std.console (console, print)
-use std.json (Clash)
+use std.utf8 (Utf8Error)
 
 trait Show[T] {{
   fn show(x: T) -> str
