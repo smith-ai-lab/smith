@@ -1,7 +1,7 @@
 ---
 type: specification
 title: HTTP server
-description: std.http, with which a program answers HTTP requests with plain functions, each given its parameters from the path, the query, and the body, and at, which puts a server of messages at a path.
+description: std.http, with which a program answers HTTP requests with plain functions, each given its parameters from the path, the query, and the body, Respond, by which what a function gives becomes the response, and at, which puts a server of messages at a path.
 status: planned
 ---
 
@@ -46,7 +46,31 @@ A request whose parts do not fit the parameters never reaches the function. The 
 
 ## What a function gives
 
-What a function gives has [`Serialize`](serialize.md), and is the body of a response of status 200, as JSON. A function that gives `()` answers 204 with no body.
+What a function gives says what the response is, through the trait `Respond`.
+
+```
+trait Respond[T] {
+  fn respond(value: T) -> Response ! alloc
+}
+```
+
+| A function gives | The response is |
+| --- | --- |
+| A struct, an enum, a list, a number, or any type with [`Serialize`](serialize.md) | Status 200, with the value as JSON |
+| An [`Html`](html.md) | Status 200, with the page |
+| `Text("...")` | Status 200, with the text as it is |
+| `Redirect(to: "/login")` | A redirect to that place |
+| `()` | Status 204, with no body |
+
+`Respond` is given to every type that has `Serialize`, as JSON, in the way `Serialize` is given to a type whose parts have it. A type's own `impl` takes the place of the one it is given, which is how `Html`, `Text`, `Redirect`, and `()` answer as they do, and how a type of a program's own answers as it likes: a type that holds a picture writes an `impl` that gives its bytes and says what they are. Nothing of the library's types is special.
+
+```
+fn user(id: Nat) -> Result[User, NotFound] ! store
+
+fn notes_page(user: User) -> Html ! store
+
+fn logout() -> Redirect ! store
+```
 
 A function that can fail gives a `Result[T, E]`, and the type of the error says its status, through the trait `Status`.
 
@@ -64,7 +88,7 @@ impl Status[Taken] {
 }
 ```
 
-`.err(e)` is a response of status `status(e)` whose body is `e` as JSON. An error that is an enum says the status of each case with a `match`. A route whose function gives an error with no `Status` is refused when the program is built, so no failure is answered with a status nobody chose. The library has `NotFound`, `BadRequest`, and `Unauthorized`, with 404, 400, and 401.
+`.ok(v)` is the response of `v`, by `Respond`. `.err(e)` is a response of status `status(e)` whose body is `e` as JSON. An error that is an enum says the status of each case with a `match`. A route whose function gives an error with no `Status` is refused when the program is built, so no failure is answered with a status nobody chose. The library has `NotFound`, `BadRequest`, and `Unauthorized`, with 404, 400, and 401.
 
 A function of a route is a plain function. It names nothing of HTTP unless it gives one of the library's errors, so it is called from other code and tested as any function is, and the same function may be a tool of an [MCP](mcp.md) server.
 
@@ -100,5 +124,7 @@ fn main() ! http, store, alloc {
 | `fn f(new: NewUser)` | A parameter read from the body, as JSON |
 | `fn f(text: str, limit: u64 = 20)` | Parameters read from the query |
 | `-> T`, `-> ()` | Status 200 with `T` as JSON, and 204 |
+| `-> Html`, `-> Text`, `-> Redirect` | A page, a text, and a redirect |
+| `impl Respond[T]` | How a type of the program's own answers |
 | `-> Result[T, E]` | `.err(e)` is the status `Status` gives for `e`, with `e` as JSON |
 | `at("/mcp") { ... }` | What asks for messages, put at a path |
