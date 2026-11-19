@@ -1,0 +1,111 @@
+name: git-ops
+
+# The few changes to the repository that a session of an agent cannot make
+# through its own access. It is started by hand, with one operation named from
+# the list below and nothing else, so each use is a run with its inputs in the
+# history of Actions. It never pushes, never merges, and never touches main.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: What to do
+        required: true
+        type: choice
+        options:
+          - delete-branch
+          - enqueue
+          - dequeue
+      branch:
+        description: "delete-branch: the branch to delete"
+        required: false
+        type: string
+      pull_request:
+        description: "enqueue, dequeue: the number of the pull request"
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  run:
+    name: ${{ inputs.operation }} ${{ inputs.branch }}${{ inputs.pull_request }}
+    runs-on: ubuntu-latest
+    permissions:
+      # To delete a branch, and for the queue to merge what is enqueued.
+      contents: write
+      # To put a pull request in the merge queue and take it out.
+      pull-requests: write
+    steps:
+      - name: Run the operation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Inputs are read from the environment and never written into the
+          # script, so no input is run as a command.
+          OPERATION: ${{ inputs.operation }}
+          BRANCH: ${{ inputs.branch }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+        run: |
+          set -eu
+
+          refuse() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          number() {
+            case "$PULL_REQUEST" in
+              '' | *[!0-9]*) refuse "pull_request must be a number, and is '$PULL_REQUEST'" ;;
+            esac
+          }
+
+          case "$OPERATION" in
+            delete-branch)
+              [ -n "$BRANCH" ] || refuse "delete-branch needs a branch"
+              case "$BRANCH" in
+                "$DEFAULT_BRANCH" | main | timings | gh-readonly-queue/* | refs/* | *..* | *' '*)
+                  refuse "'$BRANCH' is never deleted"
+                  ;;
+              esac
+              protected=$(gh api "repos/$REPOSITORY/branches/$BRANCH" --jq .protected) ||
+                refuse "there is no branch '$BRANCH'"
+              [ "$protected" = "false" ] || refuse "'$BRANCH' is protected"
+              open=$(gh api -X GET "repos/$REPOSITORY/pulls" -f state=open -f head="$OWNER:$BRANCH" --jq 'length')
+              [ "$open" = "0" ] || refuse "'$BRANCH' has an open pull request"
+              head=$(gh api "repos/$REPOSITORY/branches/$BRANCH" --jq .commit.sha)
+              gh api -X DELETE "repos/$REPOSITORY/git/refs/heads/$BRANCH"
+              echo "Deleted '$BRANCH', which was at $head. To restore it, create a branch at that commit."
+              ;;
+            enqueue)
+              number
+              sha=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .head.sha)
+              state=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .state)
+              [ "$state" = "open" ] || refuse "pull request $PULL_REQUEST is $state"
+              checks=$(gh api "repos/$REPOSITORY/commits/$sha/check-runs" \
+                --jq '[.check_runs[] | select(.name == "ci") | .conclusion] | if length == 0 then "missing" elif all(. == "success") then "success" else join(",") end')
+              [ "$checks" = "success" ] ||
+                refuse "the ci check of pull request $PULL_REQUEST at $sha is '$checks', not success"
+              id=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .node_id)
+              gh api graphql -f id="$id" -f query='
+                mutation($id: ID!) {
+                  enqueuePullRequest(input: {pullRequestId: $id}) {
+                    mergeQueueEntry { position state }
+                  }
+                }'
+              ;;
+            dequeue)
+              number
+              id=$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST" --jq .node_id)
+              gh api graphql -f id="$id" -f query='
+                mutation($id: ID!) {
+                  dequeuePullRequest(input: {id: $id}) {
+                    mergeQueueEntry { position state }
+                  }
+                }'
+              ;;
+            *)
+              refuse "there is no operation '$OPERATION'"
+              ;;
+          esac
