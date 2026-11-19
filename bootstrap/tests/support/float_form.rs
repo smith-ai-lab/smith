@@ -254,7 +254,40 @@ pub fn number(signed: bool, from: Bits, n: u64) -> i128 {
 /// A program whose `main` calls the function `f` with the arguments, and
 /// writes what it gives to standard output, each result in 8 bytes. When
 /// `opaque` the arguments go through memory first, so that no pass knows them.
-pub fn observed(mut functions: Vec<Function>, f: usize, args: &[(Type, u64)], opaque: bool) -> Program {
+pub fn observed(functions: Vec<Function>, f: usize, args: &[(Type, u64)], opaque: bool) -> Program {
+    observe(functions, f, args, opaque, false)
+}
+
+/// As `observed`, except that a float that is not a number is written as the one
+/// float that the evaluator gives, so that what an executable writes is what the
+/// evaluator writes, though the sign and the payload of such a float are the
+/// chip's.
+pub fn observed_canonically(
+    functions: Vec<Function>,
+    f: usize,
+    args: &[(Type, u64)],
+    opaque: bool,
+) -> Program {
+    observe(functions, f, args, opaque, true)
+}
+
+/// The float, or the one float that is not a number when it is not a number.
+fn canonical(b: &mut Builder, v: Value) -> Value {
+    let Type::Float(bits) = b.type_of(v) else {
+        return v;
+    };
+    let not_a_number = b.float_compare(FloatCompare::NotEqual, v, v);
+    let nan = b.float(bits, quiet_nan(bits));
+    b.choose(not_a_number, nan, v)
+}
+
+fn observe(
+    mut functions: Vec<Function>,
+    f: usize,
+    args: &[(Type, u64)],
+    opaque: bool,
+    canonically: bool,
+) -> Program {
     let results = functions[f].results.clone();
     let mut b = Builder::new();
     let at = |b: &mut Builder, buffer: Value, k: usize| {
@@ -282,7 +315,8 @@ pub fn observed(mut functions: Vec<Function>, f: usize, args: &[(Type, u64)], op
     let out = at(&mut b, buffer, args.len());
     for (k, v) in given.iter().enumerate() {
         let place = at(&mut b, out, k);
-        b.store(place, *v);
+        let v = if canonically { canonical(&mut b, *v) } else { *v };
+        b.store(place, v);
     }
     let count = b.int(Bits::B64, 8 * results.len() as u64);
     b.emit(
@@ -622,6 +656,16 @@ fn body(g: &mut Gen, called: Option<usize>) -> Function {
 /// A program of generated functions: `main` calls one of them, which calls
 /// another, with arguments the generator draws, and writes what it gives.
 pub fn program(g: &mut Gen) -> Program {
+    generated(g, false)
+}
+
+/// A program as `program` makes, which writes a float that is not a number as the
+/// one the evaluator gives.
+pub fn canonical_program(g: &mut Gen) -> Program {
+    generated(g, true)
+}
+
+fn generated(g: &mut Gen, canonically: bool) -> Program {
     let called = helper(g);
     let top = body(g, Some(0));
     let args: Vec<(Type, u64)> = PARAMS
@@ -633,5 +677,223 @@ pub fn program(g: &mut Gen) -> Program {
         })
         .collect();
     let opaque = g.below(2) == 0;
-    observed(vec![called, top], 1, &args, opaque)
+    observe(vec![called, top], 1, &args, opaque, canonically)
+}
+
+/// A program that calls the function `f`, which takes values of the types, once
+/// for each row, with the bits of the row as its arguments, which it reads from
+/// the program's data, and writes what each call gives, floats that are not
+/// numbers as one, each result in 8 bytes. A pass cannot know what a row holds,
+/// so each call is made as a function of the form is, with its arguments in
+/// registers.
+pub fn table(f: Function, types: &[Type], rows: &[Vec<u64>]) -> Program {
+    let results = f.results.clone();
+    let mut data = Vec::new();
+    for row in rows {
+        for n in row {
+            data.extend_from_slice(&n.to_le_bytes());
+        }
+    }
+    let mut b = Builder::new();
+    let table = b.emit(
+        Op::Constant(scalar::Constant::Data(0)),
+        &[Type::Address],
+    )[0];
+    let total = b.int(Bits::B64, (8 * results.len() * rows.len()) as u64);
+    let out = b.allocate(total);
+    let zero = b.int(Bits::B64, 0);
+    let (head, head_params) = b.block(&[I64]);
+    let (round, _) = b.block(&[]);
+    let (exit, _) = b.block(&[]);
+    b.jump(head, vec![zero]);
+    b.at(head);
+    let count = b.int(Bits::B64, rows.len() as u64);
+    let go = b.compare(scalar::Compare::LessU, head_params[0], count);
+    b.switch(go, vec![(exit, vec![]), (round, vec![])]);
+    b.at(round);
+    let i = head_params[0];
+    let stride = b.int(Bits::B64, (8 * types.len()) as u64);
+    let offset = b.binary(scalar::Binary::Mul, i, stride);
+    let row = b.binary(scalar::Binary::Add, table, offset);
+    let mut args = Vec::new();
+    for (k, ty) in types.iter().enumerate() {
+        let by = b.int(Bits::B64, 8 * k as u64);
+        let at = b.binary(scalar::Binary::Add, row, by);
+        args.push(b.load(*ty, at));
+    }
+    let given = b.call(0, args, &results);
+    let width = b.int(Bits::B64, (8 * results.len()) as u64);
+    let offset = b.binary(scalar::Binary::Mul, i, width);
+    let mine = b.binary(scalar::Binary::Add, out, offset);
+    for (k, v) in given.iter().enumerate() {
+        let by = b.int(Bits::B64, 8 * k as u64);
+        let at = b.binary(scalar::Binary::Add, mine, by);
+        let v = canonical(&mut b, *v);
+        b.store(at, v);
+    }
+    let one = b.int(Bits::B64, 1);
+    let next = b.binary(scalar::Binary::Add, i, one);
+    b.jump(head, vec![next]);
+    b.at(exit);
+    b.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![out, total],
+        },
+        &[],
+    );
+    b.ret(vec![]);
+    Program {
+        data: vec![data],
+        functions: vec![f, b.finish(&[])],
+        main: 1,
+    }
+}
+
+/// A function of floats of the sizes, more of them than any chip has registers
+/// for, which is called round after round of a loop with every one alive across
+/// the call, and then gives all of them back: a function takes each float's
+/// place from a sum, a difference, or a product of two of its parameters, or
+/// from a parameter itself, in an order that the generator draws.
+pub fn pressure(g: &mut Gen) -> Program {
+    let count = 9 + g.below(14);
+    let types: Vec<Type> = (0..count)
+        .map(|_| if g.below(2) == 0 { F32 } else { F64 })
+        .collect();
+    // The function the loop calls.
+    let mut b = Builder::new();
+    let params = b.params(&types);
+    let mut given = Vec::new();
+    for ty in &types {
+        let same: Vec<Value> = (0..count).filter(|k| types[*k] == *ty).map(|k| params[k]).collect();
+        let (x, y) = (same[g.below(same.len())], same[g.below(same.len())]);
+        given.push(match g.below(4) {
+            0 => x,
+            1 => b.float_binary(FloatBinary::Add, x, y),
+            2 => b.float_binary(FloatBinary::Sub, x, y),
+            _ => b.float_binary(FloatBinary::Mul, x, y),
+        });
+    }
+    b.ret(given);
+    let helper = b.finish(&types);
+    // The function with the loop.
+    let mut b = Builder::new();
+    let params = b.params(&types);
+    let mut head_types = vec![I64];
+    head_types.extend(&types);
+    let (head, state) = b.block(&head_types);
+    let (round, _) = b.block(&[]);
+    let (exit, _) = b.block(&[]);
+    let zero = b.int(Bits::B64, 0);
+    let mut first = vec![zero];
+    first.extend(&params);
+    b.jump(head, first);
+    b.at(head);
+    let rounds = b.int(Bits::B64, 1 + g.below(4) as u64);
+    let go = b.compare(scalar::Compare::LessU, state[0], rounds);
+    b.switch(go, vec![(exit, vec![]), (round, vec![])]);
+    b.at(round);
+    let called = b.call(0, state[1..].to_vec(), &types);
+    let one = b.int(Bits::B64, 1);
+    let next = b.binary(scalar::Binary::Add, state[0], one);
+    let mut again = vec![next];
+    again.extend(&called);
+    b.jump(head, again);
+    b.at(exit);
+    b.ret(state[1..].to_vec());
+    let top = b.finish(&types);
+    let args: Vec<(Type, u64)> = types
+        .iter()
+        .map(|ty| (*ty, float(g, float_bits(*ty))))
+        .collect();
+    observed_canonically(vec![helper, top], 1, &args, g.below(2) == 0)
+}
+
+/// What the instructions of floats of one size give of two floats: the four
+/// operations, the negation of the first, the six comparisons, the first as a
+/// float of the other size, and the first cut to each size of whole number, as
+/// signed and as unsigned.
+fn on_floats(ty: Type) -> Function {
+    let mut b = Builder::new();
+    let v = b.params(&[ty, ty]);
+    let mut results = Vec::new();
+    let mut types = Vec::new();
+    for op in BINARY {
+        results.push(b.float_binary(op, v[0], v[1]));
+        types.push(ty);
+    }
+    results.push(b.float_negate(v[0]));
+    types.push(ty);
+    for op in FloatCompare::ALL {
+        results.push(b.float_compare(op, v[0], v[1]));
+        types.push(I8);
+    }
+    let other = match float_bits(ty) {
+        FloatBits::F32 => FloatBits::F64,
+        FloatBits::F64 => FloatBits::F32,
+    };
+    results.push(b.float_resize(v[0], other));
+    types.push(Type::Float(other));
+    for signed in [false, true] {
+        for bits in Bits::ALL {
+            results.push(b.int_from_float(signed, v[1], bits));
+            types.push(Type::Int(bits));
+            results.push(b.int_from_float(signed, v[0], bits));
+            types.push(Type::Int(bits));
+        }
+    }
+    b.ret(results);
+    b.finish(&types)
+}
+
+/// What the instructions of floats give of whole numbers of each size: the
+/// nearest float of each size, read as signed and as unsigned.
+fn on_ints() -> Function {
+    let types: Vec<Type> = Bits::ALL.iter().map(|bits| Type::Int(*bits)).collect();
+    let mut b = Builder::new();
+    let v = b.params(&types);
+    let mut results = Vec::new();
+    let mut made = Vec::new();
+    for to in [FloatBits::F32, FloatBits::F64] {
+        for signed in [false, true] {
+            for n in &v {
+                results.push(b.float_from_int(signed, *n, to));
+                made.push(Type::Float(to));
+            }
+        }
+    }
+    b.ret(results);
+    b.finish(&made)
+}
+
+/// The programs that call each instruction of floats on the numbers at the
+/// edges of each format, and on any numbers.
+pub fn instruction_programs() -> Vec<Program> {
+    let mut programs = Vec::new();
+    for ty in [F32, F64] {
+        let bits = float_bits(ty);
+        let edges = edges(bits);
+        let mut rows: Vec<Vec<u64>> = Vec::new();
+        for x in &edges {
+            for y in &edges {
+                rows.push(vec![*x, *y]);
+            }
+        }
+        for case in 0..100 {
+            rows.push(crate::generate::sample(6130, case, |g| {
+                vec![float(g, bits), float(g, bits)]
+            }));
+        }
+        programs.push(table(on_floats(ty), &[ty, ty], &rows));
+    }
+    let rows: Vec<Vec<u64>> = (0..150)
+        .map(|case| {
+            crate::generate::sample(6131, case, |g| {
+                Bits::ALL.iter().map(|b| int(g, *b)).collect()
+            })
+        })
+        .collect();
+    let types: Vec<Type> = Bits::ALL.iter().map(|bits| Type::Int(*bits)).collect();
+    programs.push(table(on_ints(), &types, &rows));
+    programs
 }
