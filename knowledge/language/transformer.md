@@ -70,7 +70,7 @@ fn block[t: Pos, d: Pos, h: Nat](b: Block[d, h], x: [t, d]f32) -> [t, d]f32 {
 }
 ```
 
-The model embeds tokens, runs the blocks in order, and projects to the vocabulary. Token ids have type `Fin[v]`, so the embedding lookup needs no bounds check.
+The model embeds tokens, runs the blocks in order, and projects to the vocabulary. Token ids have type `0..v`, so the embedding lookup needs no bounds check.
 
 ```
 struct Gpt[v: Nat, t: Nat, d: Nat, h: Nat, l: Nat] {
@@ -80,7 +80,7 @@ struct Gpt[v: Nat, t: Nat, d: Nat, h: Nat, l: Nat] {
   out: Linear[d, v]
 }
 
-fn logits[v: Nat, t: Pos, d: Pos, h: Nat, l: Nat](m: Gpt[v, t, d, h, l], ids: [t]Fin[v]) -> [t, v]f32 {
+fn logits[v: Nat, t: Pos, d: Pos, h: Nat, l: Nat](m: Gpt[v, t, d, h, l], ids: [t]0..v) -> [t, v]f32 {
   var x = for i, c { m.tok[ids[i], c] + m.pos[i, c] }
   loop n in 0..l { x = block(m.blocks[n], x) }
   for i { apply(m.out, x[i]) }
