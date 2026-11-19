@@ -14,8 +14,20 @@ use crate::targets::{self, any, case_files, updating};
 
 pub const ONCE: &[Test] = &[
     (
-        "the_cases_build_or_report_their_error",
-        the_cases_build_or_report_their_error,
+        "the_cases_build_or_report_their_error_first_quarter",
+        the_cases_build_or_report_their_error_first_quarter,
+    ),
+    (
+        "the_cases_build_or_report_their_error_second_quarter",
+        the_cases_build_or_report_their_error_second_quarter,
+    ),
+    (
+        "the_cases_build_or_report_their_error_third_quarter",
+        the_cases_build_or_report_their_error_third_quarter,
+    ),
+    (
+        "the_cases_build_or_report_their_error_fourth_quarter",
+        the_cases_build_or_report_their_error_fourth_quarter,
     ),
     (
         "build_writes_the_executable_to_the_folder_it_ran_in",
@@ -92,8 +104,27 @@ fn build(dir: &Path, target: Target, file: &str) -> Output {
     smith(dir, &["build", "--target", target.name(), file])
 }
 
-fn the_cases_build_or_report_their_error() {
-    for source in case_files() {
+/// Every case builds for every target and starts the compiler each time, so
+/// the cases are shared by four tests, and none computes for near the limit.
+fn the_cases_build_or_report_their_error_first_quarter() {
+    cases_build_or_report_their_error(0);
+}
+
+fn the_cases_build_or_report_their_error_second_quarter() {
+    cases_build_or_report_their_error(1);
+}
+
+fn the_cases_build_or_report_their_error_third_quarter() {
+    cases_build_or_report_their_error(2);
+}
+
+fn the_cases_build_or_report_their_error_fourth_quarter() {
+    cases_build_or_report_their_error(3);
+}
+
+/// The cases whose place in the order is `quarter` more than a multiple of four.
+fn cases_build_or_report_their_error(quarter: usize) {
+    for source in case_files().into_iter().skip(quarter).step_by(4) {
         let name = source.file_stem().unwrap().to_str().unwrap();
         let file = format!("{name}.smith");
         let out = source.with_extension("out");
