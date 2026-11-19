@@ -77,7 +77,7 @@ fn has(
 }
 
 /// Whether a value of the type may be duplicated.
-fn copies(defs: &Defs, scope: &Scope, ty: &Ty) -> bool {
+pub(super) fn copies(defs: &Defs, scope: &Scope, ty: &Ty) -> bool {
     has((defs, scope), COPY, ty, &mut Vec::new()).is_ok()
 }
 
@@ -1110,12 +1110,8 @@ impl<'a> Walk<'a> {
             }
             let flow = match (param, value_fn) {
                 _ if constructs => Flow::Stored,
-                // `push` takes its list and its item.
-                _ if super::lists_and_text::is_push(defs, call)
-                    || super::lists_and_text::is_freeze(defs, call) =>
-                {
-                    Flow::Taken(name)
-                }
+                // `push` takes its list and its item, `append` its list.
+                _ if super::lists_and_text::gives_away(defs, call, arg) => Flow::Taken(name),
                 (Some(p), _) if p.take => Flow::Taken(name),
                 (None, Some(f)) => {
                     let at = if arg.name.is_none() && !arg.after {
