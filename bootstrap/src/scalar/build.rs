@@ -10,6 +10,7 @@ pub struct Builder {
     types: Vec<Type>,
     blocks: Vec<Block>,
     current: usize,
+    cold: bool,
 }
 
 impl Default for Builder {
@@ -24,6 +25,7 @@ impl Builder {
             types: Vec::new(),
             blocks: Vec::new(),
             current: 0,
+            cold: false,
         };
         b.block(&[]);
         b
@@ -187,11 +189,17 @@ impl Builder {
         self.blocks[self.current].end = End::Return(values);
     }
 
+    /// Says the function being built is run rarely, as `Function::cold` says.
+    pub fn cold(&mut self) {
+        self.cold = true;
+    }
+
     pub fn finish(self, results: &[Type]) -> Function {
         Function {
             types: self.types,
             results: results.to_vec(),
             blocks: self.blocks,
+            cold: self.cold,
         }
     }
 }

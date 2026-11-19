@@ -379,6 +379,11 @@ pub struct Function {
     /// The types of the values it returns, in order.
     pub results: Vec<Type>,
     pub blocks: Vec<Block>,
+    /// Whether the function is run rarely, so that a call of it is never
+    /// replaced by its instructions, however many places call it. Its
+    /// instructions then stay out of the code of a loop that calls it, and
+    /// so do the values it needs.
+    pub cold: bool,
 }
 
 /// A program: it runs the function `main`, which gives back nothing, and then

@@ -419,7 +419,7 @@ fn reading_a_list_asks_for_no_memory_and_moves_no_bytes() {
 
 /// The instructions a push that has room runs in the function of the
 /// runtime: those of its first block and of the block it goes to when there
-/// is room, which is the one that does not ask for memory.
+/// is room, which is the one that does not ask for memory, itself or by a call.
 fn instructions_of_a_push_with_room(scalars: Vec<Type>) -> usize {
     let push = runtime::build(Runtime::Push(scalars), &mut |_| 0);
     let entry = &push.blocks[0];
@@ -431,7 +431,7 @@ fn instructions_of_a_push_with_room(scalars: Vec<Type>) -> usize {
         push.blocks[block]
             .instructions
             .iter()
-            .any(|i| matches!(i.op, Op::System { call: System::Allocate, .. }))
+            .any(|i| matches!(i.op, Op::System { call: System::Allocate, .. } | Op::Call { .. }))
     };
     let kept: Vec<usize> = jumps.iter().map(|j| j.block).filter(|b| !asks(*b)).collect();
     assert_eq!(kept.len(), 1, "one way through a push does not ask for memory");

@@ -65,6 +65,7 @@ impl<'a> Lowering<'a> {
             types: out.types,
             results,
             blocks: out.blocks,
+            cold: false,
         }
     }
 
@@ -84,6 +85,7 @@ impl<'a> Lowering<'a> {
             types: out.types,
             results: writer,
             blocks: out.blocks,
+            cold: false,
         }
     }
 
@@ -857,6 +859,7 @@ impl<'a> Lowering<'a> {
             types: out.types,
             results,
             blocks: out.blocks,
+            cold: false,
         }
     }
 

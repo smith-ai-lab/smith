@@ -46,6 +46,12 @@ pub enum Runtime {
     /// in place when there is room, and otherwise the elements are copied into
     /// new memory with room for twice as many, or for one when there are none.
     Push(Vec<Type>),
+    /// Takes the address of a list's elements, its size, and its room, which
+    /// is not more than its size, and gives the address of new memory that
+    /// holds the elements, and how many elements it has room for: twice the
+    /// size, or one when the size is 0. Each element takes that many bytes.
+    /// It is cold, as `Function::cold` says.
+    Grow(u64),
     /// Is where a program that takes the words it was started with starts. It
     /// takes what the system gives, as `Arguments` does, and calls the
     /// function `main` with the list of words that `Arguments` gives. It gives
@@ -102,7 +108,11 @@ pub fn build(kind: Runtime, place: &mut dyn FnMut(Runtime) -> usize) -> Function
         Runtime::Equal => equal(),
         Runtime::Digits => digits(),
         Runtime::Decimal { bits, signed } => decimal(bits, signed, place(Runtime::Digits)),
-        Runtime::Push(scalars) => push(&scalars, place(Runtime::Copy)),
+        Runtime::Push(scalars) => {
+            let (_, stride) = super::element(&scalars);
+            push(&scalars, place(Runtime::Grow(stride)))
+        }
+        Runtime::Grow(stride) => grow(stride, place(Runtime::Copy)),
         Runtime::Start { main } => words::start(main, place(Runtime::Arguments)),
         Runtime::Arguments => words::arguments(
             place(Runtime::Words),
@@ -482,7 +492,7 @@ fn decimal(bits: Bits, signed: bool, digits: usize) -> Function {
 /// What a list is: the address of its elements, its size, and its room.
 pub(super) const LIST: [Type; 3] = [ADDRESS, LENGTH, LENGTH];
 
-fn push(scalars: &[Type], copy: usize) -> Function {
+fn push(scalars: &[Type], grow: usize) -> Function {
     let (places, stride) = super::element(scalars);
     let mut f = Builder::new();
     let mut types = vec![ADDRESS, LENGTH, LENGTH];
@@ -490,21 +500,39 @@ fn push(scalars: &[Type], copy: usize) -> Function {
     let p = f.params(&types);
     let (address, size, room) = (p[0], p[1], p[2]);
     let item = &p[3..];
-    let width = int(&mut f, stride);
-    let one = int(&mut f, 1);
     let left = f.compare(Compare::LessU, size, room);
     let (moved, _) = f.block(&[]);
-    let (kept, _) = f.block(&[]);
-    f.switch(left, vec![(moved, vec![]), (kept, vec![])]);
+    let (written, there) = f.block(&[ADDRESS, LENGTH]);
+    f.switch(left, vec![(moved, vec![]), (written, vec![address, room])]);
     // A list is held by one name, so memory with room to spare is written
-    // where it is.
-    f.at(kept);
+    // where it is. Memory with none is asked for by a function that is
+    // never replaced by its instructions, so that what it needs is not held
+    // in registers through the rounds of a loop that pushes.
+    f.at(moved);
+    let grown = f.call(grow, vec![address, size, room], &[ADDRESS, LENGTH]);
+    f.jump(written, grown);
+    f.at(written);
+    let (address, room) = (there[0], there[1]);
+    let width = int(&mut f, stride);
+    let one = int(&mut f, 1);
     let used = f.binary(Binary::Mul, size, width);
     let at = after(&mut f, address, used);
     write(&mut f, at, item, &places);
     let bigger = f.binary(Binary::Add, size, one);
     f.ret(vec![address, bigger, room]);
-    f.at(moved);
+    f.finish(&LIST)
+}
+
+/// Gives a list whose memory has room for twice as many elements of the
+/// width as it holds, or for one when it holds none, with its elements in
+/// it, and how many it has room for.
+fn grow(stride: u64, copy: usize) -> Function {
+    let mut f = Builder::new();
+    f.cold();
+    let p = f.params(&[ADDRESS, LENGTH, LENGTH]);
+    let (address, size) = (p[0], p[1]);
+    let width = int(&mut f, stride);
+    let one = int(&mut f, 1);
     let zero = int(&mut f, 0);
     let none = f.compare(Compare::Equal, size, zero);
     let twice = f.binary(Binary::Add, size, size);
@@ -513,11 +541,8 @@ fn push(scalars: &[Type], copy: usize) -> Function {
     let data = f.allocate(asked);
     let used = f.binary(Binary::Mul, size, width);
     f.call(copy, vec![data, address, used], &[]);
-    let at = after(&mut f, data, used);
-    write(&mut f, at, item, &places);
-    let bigger = f.binary(Binary::Add, size, one);
-    f.ret(vec![data, bigger, places_of_room]);
-    f.finish(&LIST)
+    f.ret(vec![data, places_of_room]);
+    f.finish(&[ADDRESS, LENGTH])
 }
 
 /// Writes the scalars of an element, each at its place, from the address.
