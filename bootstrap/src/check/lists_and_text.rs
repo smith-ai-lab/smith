@@ -3,13 +3,39 @@
 
 use super::*;
 
-/// Whether a call is of `push`, which the compiler builds, and no function
-/// of the program takes the name of.
+/// Whether a call is of `push` or of `append`, the two functions that give a
+/// list more elements, which the compiler builds, and no function of the
+/// program takes the name of. The library's own `Text` calls `__append`.
 pub(super) fn is_push(defs: &Defs, call: &Call) -> bool {
+    let name = call.callee.as_str();
     call.qualifier.is_none()
-        && call.callee == "push"
-        && !defs.function_names.contains_key("push")
-        && !defs.struct_names.contains_key("push")
+        && match name {
+            "push" | "append" => {
+                !defs.function_names.contains_key(name) && !defs.struct_names.contains_key(name)
+            }
+            _ => is_library_append(call),
+        }
+}
+
+/// Whether a call is of `__append`, which the library calls where it adds
+/// the elements of a list to another.
+pub(super) fn is_library_append(call: &Call) -> bool {
+    call.qualifier.is_none() && call.callee == "__append" && of_std(call.pos)
+}
+
+/// Whether a call is of `append`, as `push` is of `push`.
+fn is_append(call: &Call) -> bool {
+    call.callee == "append" || call.callee == "__append"
+}
+
+/// Whether a call lets go of the argument `arg`: both of `push` and the
+/// list `append` adds to, which it takes, and not the one it adds from, which
+/// it lends.
+pub(super) fn gives_away(defs: &Defs, call: &Call, arg: &Arg) -> bool {
+    match is_push(defs, call) {
+        true => !is_append(call) || std::ptr::eq(arg, &call.args[0]),
+        false => is_freeze(defs, call),
+    }
 }
 
 /// Whether a call is of `utf8`, which the compiler builds, and no function
@@ -172,12 +198,18 @@ impl<'a> Checker<'a> {
     /// its last element, and asks the system for memory.
     pub(super) fn push(&mut self, body: &mut Body<'a>, call: &Call, want: &Want) -> Ty {
         let defs = self.defs;
-        self.needs(body, "alloc", call.pos, "`push`");
+        let appends = is_append(call);
+        let name = &call.callee;
+        self.needs(body, "alloc", call.pos, &format!("`{name}`"));
         let plain = call.args.iter().all(|a| a.name.is_none() && !a.after);
         if call.args.len() != 2 || !plain {
+            let second = match appends {
+                true => "the list to add after it",
+                false => "the item to add after it",
+            };
             self.errors.push(Error::new(
                 call.pos,
-                "`push` takes a list and the item to add after it",
+                format!("`{name}` takes a list and {second}"),
             ));
             return self.unknown_call(body, call);
         }
@@ -192,11 +224,30 @@ impl<'a> Checker<'a> {
                 self.errors.push(
                     Error::new(
                         call.args[0].value.pos(),
-                        "`push` adds to a list, and this is a slice, which cannot change",
+                        format!(
+                            "`{name}` adds to a list, and this is a slice, which cannot change"
+                        ),
                     )
                     .with_fix("write `copy(s)` of the slice, which is a new list"),
                 );
                 Ty::Unknown
+            }
+            Ty::List(of) if appends => {
+                let more = Ty::List(of.clone());
+                let item = self.expr(body, &call.args[1].value, &Want::Ty(more.clone()));
+                if !as_list(&item, &more) {
+                    self.expect(body, &call.args[1].value, &item, &more);
+                }
+                if !ownership::copies(defs, body.scope, &of[0]) {
+                    self.errors.push(
+                        Error::new(
+                            call.args[1].value.pos(),
+                            "`append` copies the elements it adds, and this list holds elements that cannot be copied",
+                        )
+                        .with_fix("add the elements one at a time with `push`"),
+                    );
+                }
+                more
             }
             Ty::List(of) => {
                 let item = self.expr(body, &call.args[1].value, &Want::Ty(of[0].clone()));
@@ -209,7 +260,7 @@ impl<'a> Checker<'a> {
                     let given = defs.describe(&other, body.scope);
                     self.errors.push(Error::new(
                         call.args[0].value.pos(),
-                        format!("`push` adds to a list, and this is {given}"),
+                        format!("`{name}` adds to a list, and this is {given}"),
                     ));
                 }
                 Ty::Unknown
