@@ -51,7 +51,7 @@ const SMITH_ARM64: usize = 9;
 /// A program that pushes the numbers below `pushes` to a list of `u64`.
 fn program_of(pushes: i64) -> String {
     format!(
-        "fn main() ! console, alloc {{\n  var xs: List[u64] = []\n  loop i in 0..{pushes} {{ xs = push(xs, i) }}\n  print(\"{{xs.size}}\")\n}}\n"
+        "use std.bits (u64)\nuse std.console (console, print)\nuse std.list (push)\n\nfn main() ! console, alloc {{\n  var xs: List[u64] = []\n  loop i in 0..{pushes} {{ xs = push(xs, i) }}\n  print(\"{{xs.size}}\")\n}}\n"
     )
 }
 
@@ -184,9 +184,24 @@ fn pushed(p: &Pushes) -> (String, String) {
     for k in 0..p.live {
         sum_live = format!("wrapping_add({sum_live}, l{k})");
     }
+    // `u8` is written `Byte`, and every other size is imported.
+    let ty = if p.elem == "u8" { "Byte" } else { p.elem };
+    let mut sizes: Vec<&str> = Vec::new();
+    if p.elem != "u8" {
+        sizes.push(p.elem);
+    }
+    if p.live > 0 && !sizes.contains(&"u64") {
+        sizes.push("u64");
+    }
+    sizes.sort_unstable();
+    let bits = if sizes.is_empty() {
+        String::new()
+    } else {
+        format!("use std.bits ({})\n", sizes.join(", "))
+    };
     let source = format!(
-        "fn main() ! console, alloc {{\n  var xs: List[{e}] = []\n  var v: {e} = 0\n{live}  loop i in 0..{n} {{\n{changes}    xs = push(xs, {item})\n    v = wrapping_add(v, {step})\n  }}\n  var total: {e} = 0\n  loop x in xs {{ total = wrapping_add(total, x) }}\n  print(\"{{xs.size}} {{total}} {{{sum_live}}}\")\n}}\n",
-        e = p.elem,
+        "{bits}use std.console (console, print)\nuse std.int (wrapping_add)\nuse std.list (push)\n\nfn main() ! console, alloc {{\n  var xs: List[{e}] = []\n  var v: {e} = 0\n{live}  loop i in 0..{n} {{\n{changes}    xs = push(xs, {item})\n    v = wrapping_add(v, {step})\n  }}\n  var total: {e} = 0\n  loop x in xs {{ total = wrapping_add(total, x) }}\n  print(\"{{xs.size}} {{total}} {{{sum_live}}}\")\n}}\n",
+        e = ty,
         n = p.pushes,
         step = p.step,
     );

@@ -8,14 +8,15 @@ use smith::scalar;
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 
 /// The whole number types, with their names, smallest and largest values.
 const INTS: [(&str, i128, i128); 8] = [
     ("i8", i8::MIN as i128, i8::MAX as i128),
     ("i16", i16::MIN as i128, i16::MAX as i128),
     ("i32", i32::MIN as i128, i32::MAX as i128),
-    ("i64", i64::MIN as i128, i64::MAX as i128),
-    ("u8", 0, u8::MAX as i128),
+    ("Int", i64::MIN as i128, i64::MAX as i128),
+    ("Byte", 0, u8::MAX as i128),
     ("u16", 0, u16::MAX as i128),
     ("u32", 0, u32::MAX as i128),
     ("u64", 0, u64::MAX as i128),
@@ -220,7 +221,7 @@ impl Blocks {
         let c = self.conditional(literals);
         let held = self.held;
         let mut items = format!("fn same(n: {ty}) -> {ty} {{ n }}\n\n");
-        let setup = format!("  s: u8 = {selector}\n  k: {ty} = {held}\n{binds}");
+        let setup = format!("  s: Byte = {selector}\n  k: {ty} = {held}\n{binds}");
         let main = match self.place {
             Place::Binding => format!("{setup}  r: {ty} = {c}\n  print(\"{{r}}\")\n"),
             Place::Bare => {
@@ -250,12 +251,20 @@ impl Blocks {
             }
             Place::Returned => {
                 items.push_str(&format!(
-                    "fn back(s: u8, k: {ty}) -> {ty} {{\n{binds}  {c}\n}}\n\n"
+                    "fn back(s: Byte, k: {ty}) -> {ty} {{\n{binds}  {c}\n}}\n\n"
                 ));
-                format!("  s: u8 = {selector}\n  k: {ty} = {held}\n  print(\"{{back(s, k)}}\")\n")
+                format!("  s: Byte = {selector}\n  k: {ty} = {held}\n  print(\"{{back(s, k)}}\")\n")
             }
         };
-        format!("{items}fn main() ! console, alloc {{\n{main}}}\n")
+        let int: Vec<&str> = match self.place {
+            Place::Operand { op, .. } if OPERATORS[op].starts_with("wrapping") => vec![OPERATORS[op]],
+            _ => vec![],
+        };
+        let uses = header(
+            &[("std.console", &["console", "print"]), ("std.int", &int[..])],
+            ty,
+        );
+        format!("{uses}{items}fn main() ! console, alloc {{\n{main}}}\n")
     }
 
     /// Whether the place may refuse a program for a result it cannot prove
@@ -267,7 +276,7 @@ impl Blocks {
 
 fn a_literal_in_a_block_takes_the_type_of_the_other_blocks_and_of_its_place() {
     // The program of the issue.
-    let issue = "fn main() ! console, alloc {\n  e: u8 = 110\n  var value: List[u8] = []\n  \
+    let issue = "use std.console (console, print)\nuse std.list (push)\n\nfn main() ! console, alloc {\n  e: Byte = 110\n  var value: List[Byte] = []\n  \
         decoded = if e == 'n' { '\\n' } else { e }\n  value = push(value, decoded)\n  \
         print(\"{value.size}\")\n}\n";
     let program = lower(issue.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
@@ -365,8 +374,9 @@ fn blocks_of_two_known_types_are_refused() {
                 _ => text.push_str(&format!(" else if s == {i} {end}")),
             }
         }
+        let uses = header(&[("std.console", &["console", "print"])], &format!("{first} {second}"));
         let source = format!(
-            "fn main() ! console, alloc {{\n  s: u8 = 0\n  a: {first} = 1\n  b: {second} = 1\n  r = {text}\n  print(\"{{r}}\")\n}}\n"
+            "{uses}fn main() ! console, alloc {{\n  s: Byte = 0\n  a: {first} = 1\n  b: {second} = 1\n  r = {text}\n  print(\"{{r}}\")\n}}\n"
         );
         let Err(found) = lower(source.as_bytes()) else {
             panic!("builds\n{source}");
@@ -388,13 +398,13 @@ const ENDS: [&str; 7] = ["7", "-3", "'a'", "\"s\"", "true", "k", "same(k)"];
 /// Where a value may be used.
 const PLACES: [&str; 8] = [
     "{}",
-    "x: u8 = {}",
+    "x: Byte = {}",
     "x: str = {}",
     "takes({})",
     "x == {}",
     "{} == x",
     "wrapping_add(x, {})",
-    "(a, b): (u8, bool) = {}",
+    "(a, b): (Byte, bool) = {}",
 ];
 
 fn anything(g: &mut Gen) -> String {
@@ -416,9 +426,11 @@ fn anything(g: &mut Gen) -> String {
         }
     };
     let place = PLACES[g.below(PLACES.len())].replace("{}", &value);
+    let int: &[&str] = if place.contains("wrapping_add") { &["wrapping_add"] } else { &[] };
+    let uses = header(&[("std.console", &["console"]), ("std.int", int)], "");
     format!(
-        "fn same(n: u8) -> u8 {{ n }}\n\nfn takes(n: u8) -> u8 {{ n }}\n\n\
-         fn main() ! console, alloc {{\n  s: u8 = 1\n  x: u8 = 1\n  k: u8 = 2\n  {place}\n}}\n"
+        "{uses}fn same(n: Byte) -> Byte {{ n }}\n\nfn takes(n: Byte) -> Byte {{ n }}\n\n\
+         fn main() ! console, alloc {{\n  s: Byte = 1\n  x: Byte = 1\n  k: Byte = 2\n  {place}\n}}\n"
     )
 }
 

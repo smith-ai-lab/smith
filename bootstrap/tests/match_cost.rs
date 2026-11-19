@@ -11,7 +11,7 @@ use smith::{lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int, value};
+use crate::numbers::{INTS, Int, value, with_header};
 use crate::aarch64;
 use crate::targets::{runnable, scalar_runs_as};
 
@@ -42,7 +42,7 @@ pub const MACHINE: &[Test] = &[(
 /// The source of a function `f` of a type that gives the place of the literal
 /// it equals among `literals`, or 1000 when it equals none.
 fn function(ty: &str, literals: &[i128]) -> String {
-    let mut source = format!("fn f(b: {ty}) -> i64 {{\n  match b {{\n");
+    let mut source = format!("fn f(b: {ty}) -> Int {{\n  match b {{\n");
     for (i, literal) in literals.iter().enumerate() {
         source.push_str(&format!("    {literal} {{ {i} }}\n"));
     }
@@ -102,7 +102,7 @@ fn printing(n: &Groups) -> String {
         source.push_str(&format!("  x{i}: {} = {s}\n  print(\"{{f(x{i})}}\")\n", n.ty.name));
     }
     source.push_str("}\n");
-    source
+    with_header(source)
 }
 
 fn every_executable_takes_the_block_of_the_literal_a_match_on_many_whole_numbers_equals() {
@@ -142,6 +142,7 @@ fn instructions(ty: &str, literals: &[i128], subject: i128) -> Vec<u64> {
     source.push_str(&format!(
         "\nfn main() ! console {{\n  x: {ty} = {subject}\n  if f(x) == {expected} {{ print(\"yes\") }} else {{ print(\"no\") }}\n}}\n"
     ));
+    let source = with_header(source);
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let (out, ran) = scalar::run_measured(&program);
     assert_eq!(out.stdout, b"yes\n", "for {source}");
@@ -210,7 +211,7 @@ fn the_instructions_a_match_runs_do_not_grow_with_literals_that_lie_close_togeth
     generate::check(
         22,
         2,
-        |g| (*g.pick(&["i32", "u32", "i64", "u64"]), g.below(1000) as i128, 1 + g.below(4) as i128),
+        |g| (*g.pick(&["i32", "u32", "Int", "u64"]), g.below(1000) as i128, 1 + g.below(4) as i128),
         |(ty, start, distance): &(&str, i128, i128)| {
             at_most(&counts(ty, *start, *distance), 0, 2);
         },
@@ -226,7 +227,7 @@ fn the_instructions_a_match_runs_grow_with_the_logarithm_of_literals_that_lie_fa
             // Each doubling of the literals adds a bounded number of
             // instructions, where adding one for each literal would add 32
             // times as many as that for 256.
-            at_most(&counts("i64", *start, *distance), 5, 3);
+            at_most(&counts("Int", *start, *distance), 5, 3);
         },
     );
 }

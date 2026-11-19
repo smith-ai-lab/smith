@@ -50,7 +50,7 @@ fn reached(source: &str) -> (usize, usize) {
 fn a_program_that_uses_nothing_the_prelude_defines_reaches_none_of_it() {
     assert_eq!(reached("fn main() {\n}\n"), (0, 0));
     assert_eq!(
-        reached("fn main() ! console {\n  print(\"hi\")\n}\n"),
+        reached("use std.console (console, print)\n\nfn main() ! console {\n  print(\"hi\")\n}\n"),
         (0, 0)
     );
 }
@@ -58,9 +58,13 @@ fn a_program_that_uses_nothing_the_prelude_defines_reaches_none_of_it() {
 /// A function that uses `Fmt` and `Repr`, and that `main` does not call, is
 /// not checked, so the prelude items it would reach are not either.
 fn a_function_that_nothing_reaches_changes_what_of_the_prelude_is_reached_by_nothing() {
+    let uses = "use std.console (console, print)\n\n";
     let main = "fn main() ! console {\n  print(\"hi\")\n}\n";
-    let unused = "fn unused(n: u8) -> str ! alloc {\n  \"{n} {repr(n)}\"\n}\n";
-    assert_eq!(reached(&format!("{unused}\n{main}")), reached(main));
+    let unused = "fn unused(n: Byte) -> str ! alloc {\n  \"{n} {repr(n)}\"\n}\n";
+    assert_eq!(
+        reached(&format!("{uses}{unused}\n{main}")),
+        reached(&format!("{uses}{main}"))
+    );
 }
 
 /// What is reached is counted at all: a `main` that returns a `Result` is
@@ -88,7 +92,7 @@ fn read(source: &str) -> usize {
 fn a_program_that_uses_nothing_the_prelude_defines_reads_none_of_its_impls() {
     assert_eq!(read("fn main() {\n}\n"), 0);
     assert_eq!(
-        read("fn main() ! console { print(\"hello world\") }\n"),
+        read("use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n"),
         0
     );
 }
@@ -97,16 +101,17 @@ fn a_program_that_uses_nothing_the_prelude_defines_reads_none_of_its_impls() {
 /// every `impl` of it, and no other trait's. A function nothing calls
 /// reaches nothing, so it does not change what is read.
 fn an_impl_is_read_when_the_program_reaches_its_trait_and_not_otherwise() {
+    let uses = "use std.console (console, print)\n\n";
     let main = "fn main() ! console, alloc {\n  print(\"{254}\")\n}\n";
-    let fmt = read(main);
+    let fmt = read(&format!("{uses}{main}"));
     let wholes = prelude_text().matches("\nimpl Fmt[").count();
     assert!(fmt > 0 && fmt < prelude_text().matches("\nimpl").count(), "{fmt}");
     assert!(
         fmt >= wholes,
         "{fmt} of the {wholes} implementations of Fmt, and what they reach"
     );
-    let unused = "fn unused(a: u8, b: u8) -> bool {\n  a == b\n}\n\n";
-    assert_eq!(read(&format!("{unused}{main}")), fmt);
+    let unused = "fn unused(a: Byte, b: Byte) -> bool {\n  a == b\n}\n\n";
+    assert_eq!(read(&format!("{uses}{unused}{main}")), fmt);
 }
 
 /// Adding a trait with a hundred `impl`s to a copy of the prelude's source
@@ -121,9 +126,9 @@ fn adding_a_trait_with_a_hundred_impls_changes_what_a_program_that_uses_none_of_
     let extended = format!("{}{more}", prelude_text());
     let programs = [
         "fn main() {\n}\n",
-        "fn main() ! console { print(\"hello world\") }\n",
-        "fn main() ! console, alloc {\n  print(\"{254}\")\n}\n",
-        "fn next(i: u8) -> u8 { if i < 255 { i + 1 } else { i } }\n\nfn main() ! console, alloc {\n  print(\"{next(254)}\")\n}\n",
+        "use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n",
+        "use std.console (console, print)\n\nfn main() ! console, alloc {\n  print(\"{254}\")\n}\n",
+        "use std.console (console, print)\n\nfn next(i: Byte) -> Byte { if i < 255 { i + 1 } else { i } }\n\nfn main() ! console, alloc {\n  print(\"{next(254)}\")\n}\n",
     ];
     for program in programs {
         let with = |prelude: &str| {
@@ -139,8 +144,8 @@ fn adding_a_trait_with_a_hundred_impls_changes_what_a_program_that_uses_none_of_
 /// one reads the `impl`s of `Iterate`, and the same program with a loop over a
 /// range reads none of them.
 fn the_impls_of_iterate_are_read_by_a_program_with_a_loop_over_a_value_and_by_no_other() {
-    let range = "fn main() ! console {\n  loop i in 0..3 { print(\"x\") }\n}\n";
+    let range = "use std.console (console, print)\n\nfn main() ! console {\n  loop i in 0..3 { print(\"x\") }\n}\n";
     assert_eq!(read(range), 0);
-    let value = "fn main() ! console, alloc {\n  xs: List[u8] = [1]\n  loop v in xs { print(\"x\") }\n}\n";
+    let value = "use std.console (console, print)\n\nfn main() ! console, alloc {\n  xs: List[Byte] = [1]\n  loop v in xs { print(\"x\") }\n}\n";
     assert!(read(value) > 0, "{}", read(value));
 }

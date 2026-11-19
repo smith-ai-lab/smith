@@ -16,7 +16,7 @@ use smith::{lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::programs::pos_after;
+use crate::programs::{lines_added, pos_after, unshifted, with_imports};
 
 pub const ONCE: &[Test] = &[
     (
@@ -50,16 +50,22 @@ pub const ONCE: &[Test] = &[
 ];
 
 /// The errors a program gives, which are none when it is accepted.
+///
+/// The program is written without the `use` lines of what it uses of the
+/// library, which are put at its top, and the places are those it is written
+/// with.
 fn errors(source: &str) -> Vec<Error> {
-    match check(source.as_bytes()) {
+    let full = with_imports(source);
+    match check(full.as_bytes()) {
         Ok(_) => Vec::new(),
-        Err(errors) => errors,
+        Err(errors) => unshifted(errors, lines_added(source, &full)),
     }
 }
 
 /// What a program prints.
 fn prints(source: &str) -> String {
-    let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}\n{source}"));
+    let full = with_imports(source);
+    let program = lower(full.as_bytes()).unwrap_or_else(|e| panic!("{e:?}\n{full}"));
     String::from_utf8(scalar::run(&program).stdout).expect("text")
 }
 

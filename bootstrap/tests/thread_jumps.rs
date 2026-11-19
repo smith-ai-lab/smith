@@ -13,6 +13,7 @@ use smith::scalar::{self, End, Op};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::numbers::with_header;
 use crate::targets::{runnable, runs_as};
 
 pub const ONCE: &[Test] = &[
@@ -310,7 +311,7 @@ fn with_main(declarations: &str, functions: &str, names: &[&str], xs: &[u64], ef
         source += &format!("    print(\"{{{name}(xs[i])}}\")\n");
     }
     source += "  }\n}\n";
-    source
+    with_header(source)
 }
 
 /// The numbers a program is run on: the ones next to where an `if` and a

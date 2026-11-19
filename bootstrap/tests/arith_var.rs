@@ -11,7 +11,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int};
+use crate::numbers::{INTS, Int, with_header};
 
 pub const ONCE: &[Test] = &[
     (
@@ -150,7 +150,7 @@ fn program(g: &mut Gen) -> Program {
 fn source(p: &Program) -> String {
     let mut out = String::from("fn call(f: () -> ()) {\n  f()\n  f()\n}\n\n");
     out.push_str(&format!("fn id(x: {0}) -> {0} {{ x }}\n\n", p.ty.name));
-    out.push_str("fn f(c: u8) ! console, alloc {\n");
+    out.push_str("fn f(c: Byte) ! console, alloc {\n");
     for v in [V::N, V::M] {
         out.push_str(&format!(
             "  var {}: {} = {}\n",
@@ -204,7 +204,7 @@ fn source(p: &Program) -> String {
         out.push_str(&format!("  f({c})\n"));
     }
     out.push_str("}\n");
-    out
+    with_header(out)
 }
 
 /// What the program prints for `c`, or none when an addition does not fit.
@@ -338,13 +338,13 @@ fn a_var_has_the_condition_around_a_use_and_what_it_was_given_whether_a_loop_is_
             } else {
                 ("", "")
             };
-            format!(
-                "fn f(x: {0}, c: u8) ! console, alloc {{\n  var n: {0} = {init}\n  var m: {0} = 0\n  {open}  {between}\n  if n < {1} {{ print(\"{{n + {2}}}\") }}\n  {close}}}\n\nfn main() ! console, alloc {{\n  f({3}, 1)\n}}\n",
+            with_header(format!(
+                "fn f(x: {0}, c: Byte) ! console, alloc {{\n  var n: {0} = {init}\n  var m: {0} = 0\n  {open}  {between}\n  if n < {1} {{ print(\"{{n + {2}}}\") }}\n  {close}}}\n\nfn main() ! console, alloc {{\n  f({3}, 1)\n}}\n",
                 f.ty.name,
                 f.limit,
                 f.k,
                 f.given.unwrap_or(0)
-            )
+            ))
         };
         for looped in [false, true] {
             let text = build(looped);

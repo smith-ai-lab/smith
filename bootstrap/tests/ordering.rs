@@ -39,10 +39,21 @@ pub const ONCE: &[Test] = &[
 
 /// The whole number types, and the values the generator gives each.
 const INTS: &[(&str, &[i128])] = &[
-    ("i64", &[-1, 0, 1, 2]),
+    ("Int", &[-1, 0, 1, 2]),
     ("i8", &[-100, -1, 0, 100]),
-    ("u8", &[0, 1, 200, 255]),
+    ("Byte", &[0, 1, 200, 255]),
 ];
+
+/// The `use` lines of a program: `print` and `console`, which it uses, and
+/// `i8` when it writes it, then the blank line.
+fn uses(text: &str) -> String {
+    let bits = if text.contains("i8") {
+        "use std.bits (i8)\n"
+    } else {
+        ""
+    };
+    format!("{bits}use std.console (console, print)\n\n")
+}
 
 /// The texts: some are the start of another, and some differ by bytes that
 /// are not one character each.
@@ -88,7 +99,7 @@ fn ty(g: &mut Gen, defs: usize, depth: usize) -> Ty {
         _ => Ty::Tuple(
             (0..2 + g.below(2))
                 .map(|_| match ty(g, defs, depth - 1) {
-                    // A literal in a tuple is a `i64` unless a type decides.
+                    // A literal in a tuple is an `Int` unless a type decides.
                     Ty::Int(_) => Ty::Int(0),
                     t => t,
                 })
@@ -299,6 +310,7 @@ fn program(g: &mut Gen) -> Case {
         ));
     }
     source.push_str("}\n");
+    let source = format!("{}{source}", uses(&source));
     Case { source, stdout }
 }
 
@@ -326,13 +338,15 @@ fn holding_a_key(g: &mut Gen) -> (String, bool) {
     for level in 0..1 + g.below(3) {
         match g.below(3) {
             0 => {
-                defs.push_str(&format!("struct S{level} {{\n  n: i64\n  held: {ty}\n}}\n\n"));
+                defs.push_str(&format!(
+                    "struct S{level} {{\n  n: Int\n  held: {ty}\n}}\n\n"
+                ));
                 value = format!("S{level}(n: 1, held: {value})");
                 ty = format!("S{level}");
             }
             1 => {
                 value = format!("(1, {value})");
-                ty = format!("(i64, {ty})");
+                ty = format!("(Int, {ty})");
             }
             _ => {
                 defs.push_str(&format!("enum E{level} {{\n  empty\n  full: {ty}\n}}\n\n"));
@@ -342,7 +356,7 @@ fn holding_a_key(g: &mut Gen) -> (String, bool) {
         }
     }
     let source = format!(
-        "{defs}fn main() ! console, alloc {{\n  a: {ty} = {value}\n  b: {ty} = {value}\n  if a < b {{ print(\"less\") }}\n}}\n"
+        "use std.console (console, print)\n\n{defs}fn main() ! console, alloc {{\n  a: {ty} = {value}\n  b: {ty} = {value}\n  if a < b {{ print(\"less\") }}\n}}\n"
     );
     (source, true)
 }
@@ -370,7 +384,12 @@ fn without_ord_takes_the_order_a_type_was_given_away() {
             written(&defs, &t, &a),
             written(&defs, &t, &b)
         );
-        (write_defs(&defs), main, name)
+        let defs = write_defs(&defs);
+        (
+            format!("{}{defs}", uses(&format!("{defs}{main}"))),
+            main,
+            name,
+        )
     };
     generate::check(236, 8, generate, |(defs, main, name)| {
         assert!(lower(format!("{defs}{main}").as_bytes()).is_ok());
@@ -384,42 +403,59 @@ fn without_ord_takes_the_order_a_type_was_given_away() {
 }
 
 fn an_ord_a_program_writes_replaces_the_one_a_type_was_given() {
-    generate::check(237, 20, |g: &mut Gen| (*g.pick(&[-1i64, 0, 1, 2]), *g.pick(&[-1i64, 0, 1, 2])), |&(x, y)| {
-        let source = format!(
-            "struct Rev {{\n  n: i64\n}}\n\nimpl Ord[Rev] {{\n  fn compare(a: Rev, b: Rev) -> Order {{ compare(b.n, a.n) }}\n}}\n\nfn main() ! console, alloc {{\n  a = (Rev(n: {x}), 0)\n  b = (Rev(n: {y}), 0)\n  print(\"{{a < b}} {{Rev(n: {x}) < Rev(n: {y})}}\")\n}}\n"
-        );
-        let expected = format!("{} {}\n", y < x, y < x);
-        assert_eq!(String::from_utf8(run(&source)).unwrap(), expected, "{source}");
-    });
+    generate::check(
+        237,
+        20,
+        |g: &mut Gen| (*g.pick(&[-1i64, 0, 1, 2]), *g.pick(&[-1i64, 0, 1, 2])),
+        |&(x, y)| {
+            let source = format!(
+                "use std.console (console, print)\n\nstruct Rev {{\n  n: Int\n}}\n\nimpl Ord[Rev] {{\n  fn compare(a: Rev, b: Rev) -> Order {{ compare(b.n, a.n) }}\n}}\n\nfn main() ! console, alloc {{\n  a = (Rev(n: {x}), 0)\n  b = (Rev(n: {y}), 0)\n  print(\"{{a < b}} {{Rev(n: {x}) < Rev(n: {y})}}\")\n}}\n"
+            );
+            let expected = format!("{} {}\n", y < x, y < x);
+            assert_eq!(
+                String::from_utf8(run(&source)).unwrap(),
+                expected,
+                "{source}"
+            );
+        },
+    );
 }
 
 fn comparing_two_structs_of_whole_numbers_is_no_call() {
-    generate::check(238, 12, |g: &mut Gen| {
-        let fields: Vec<&str> = (0..1 + g.below(3)).map(|_| INTS[g.below(INTS.len())].0).collect();
-        fields
-    }, |fields| {
-        let list: Vec<String> = (fields.iter().enumerate())
-            .map(|(i, t)| format!("  f{i}: {t}"))
-            .collect();
-        let zeros = vec!["0"; fields.len()];
-        let values = |zeros: &[&str]| -> String {
-            let items: Vec<String> = (zeros.iter().enumerate())
-                .map(|(i, z)| format!("f{i}: {z}"))
+    generate::check(
+        238,
+        12,
+        |g: &mut Gen| {
+            let fields: Vec<&str> = (0..1 + g.below(3))
+                .map(|_| INTS[g.below(INTS.len())].0)
                 .collect();
-            items.join(", ")
-        };
-        let source = format!(
-            "struct S {{\n{}\n}}\n\nfn below(a: S, b: S) -> bool {{ a < b }}\n\nfn main() ! console {{\n  if below(S({}), S({})) {{ print(\"x\") }}\n}}\n",
-            list.join("\n"),
-            values(&zeros),
-            values(&vec!["1"; fields.len()]),
-        );
-        let program = scalar::passes(&lower(source.as_bytes()).expect("compiles"));
-        let calls = (program.functions.iter())
-            .flat_map(|f| f.blocks.iter())
-            .flat_map(|b| b.instructions.iter())
-            .filter(|i| matches!(i.op, Op::Call { .. }))
-            .count();
-        assert_eq!(calls, 0, "in {source}");
-    });
+            fields
+        },
+        |fields| {
+            let list: Vec<String> = (fields.iter().enumerate())
+                .map(|(i, t)| format!("  f{i}: {t}"))
+                .collect();
+            let zeros = vec!["0"; fields.len()];
+            let values = |zeros: &[&str]| -> String {
+                let items: Vec<String> = (zeros.iter().enumerate())
+                    .map(|(i, z)| format!("f{i}: {z}"))
+                    .collect();
+                items.join(", ")
+            };
+            let source = format!(
+                "{}struct S {{\n{}\n}}\n\nfn below(a: S, b: S) -> bool {{ a < b }}\n\nfn main() ! console {{\n  if below(S({}), S({})) {{ print(\"x\") }}\n}}\n",
+                uses(&list.join("\n")),
+                list.join("\n"),
+                values(&zeros),
+                values(&vec!["1"; fields.len()]),
+            );
+            let program = scalar::passes(&lower(source.as_bytes()).expect("compiles"));
+            let calls = (program.functions.iter())
+                .flat_map(|f| f.blocks.iter())
+                .flat_map(|b| b.instructions.iter())
+                .filter(|i| matches!(i.op, Op::Call { .. }))
+                .count();
+            assert_eq!(calls, 0, "in {source}");
+        },
+    );
 }

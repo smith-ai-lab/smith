@@ -92,7 +92,7 @@ fn a_program_asks_the_system_at_most_once_for_each_64_kb_it_uses_and_once_more()
 fn a_program_that_pushes_for_a_long_time_asks_at_most_once_for_each_64_kb_it_uses_and_once_more() {
     for n in [1, 100, 5000, 40000] {
         let source = format!(
-            "fn main() ! alloc {{\n  var xs: List[u64] = []\n  var ys: List[u8] = []\n  loop i in 0..{n} {{\n    xs = push(xs, i)\n    ys = push(ys, 1)\n  }}\n}}\n"
+            "use std.bits (u64)\nuse std.list (push)\n\nfn main() ! alloc {{\n  var xs: List[u64] = []\n  var ys: List[Byte] = []\n  loop i in 0..{n} {{\n    xs = push(xs, i)\n    ys = push(ys, 1)\n  }}\n}}\n"
         );
         asks_in_large_pieces(source.as_bytes(), None);
     }
@@ -113,7 +113,7 @@ fn the_lexer_on_a_text_of_measure_asks_at_most_once_for_each_64_kb_it_uses_and_o
     let pieces = 504 / PIECE_OF_SOURCE.len();
     let bytes: Vec<String> = PIECE_OF_SOURCE.bytes().map(|b| b.to_string()).collect();
     let source = format!(
-        "{lexer}\nfn piece() -> List[u8] ! alloc {{\n  [{}]\n}}\n\nfn main() ! console, alloc {{\n  p = piece()\n  var src: List[u8] = []\n  loop r in 0..{pieces} {{\n    loop j in 0..p.size {{ src = push(src, p[j]) }}\n  }}\n  match lex(src) {{\n    .ok(tokens) {{ print(\"{{tokens.size}}\") }}\n    .err(errors) {{ print(\"error\") }}\n  }}\n}}\n",
+        "{lexer}\nfn piece() -> List[Byte] ! alloc {{\n  [{}]\n}}\n\nfn main() ! console, alloc {{\n  p = piece()\n  var src: List[Byte] = []\n  loop r in 0..{pieces} {{\n    loop j in 0..p.size {{ src = push(src, p[j]) }}\n  }}\n  match lex(src) {{\n    .ok(tokens) {{ print(\"{{tokens.size}}\") }}\n    .err(errors) {{ print(\"error\") }}\n  }}\n}}\n",
         bytes.join(", ")
     );
     asks_in_large_pieces(source.as_bytes(), None);
@@ -124,14 +124,14 @@ fn the_lexer_on_a_text_of_measure_asks_at_most_once_for_each_64_kb_it_uses_and_o
 /// What a program prints before it builds a list and after it is what it
 /// printed when the system was asked for the list alone.
 fn a_program_prints_what_it_printed_when_it_asks_for_room() {
-    let source = b"fn main() ! console, alloc {\n  print(\"before\")\n  xs: List[u8] = [1, 2, 3]\n  print(\"{xs.size}\")\n}\n";
+    let source = b"use std.console (console, print)\n\nfn main() ! console, alloc {\n  print(\"before\")\n  xs: List[Byte] = [1, 2, 3]\n  print(\"{xs.size}\")\n}\n";
     asks_in_large_pieces(source, Some(b"before\n3\n"));
 }
 
 /// A system that gives nothing, or too little for a piece, ends the program
 /// with status 1 at the first place it needs room, and not before.
 fn a_request_the_system_refuses_ends_the_program_with_status_1_after_what_it_printed() {
-    let source = b"fn main() ! console, alloc {\n  print(\"before\")\n  xs: List[u8] = [1, 2, 3]\n  print(\"{xs.size}\")\n}\n";
+    let source = b"use std.console (console, print)\n\nfn main() ! console, alloc {\n  print(\"before\")\n  xs: List[Byte] = [1, 2, 3]\n  print(\"{xs.size}\")\n}\n";
     let program = smith::lower(source).expect("compiles");
     for limit in [0, 1, 100, PIECE as usize - 1] {
         let outcome = scalar::run_with_limit(&program, limit);
@@ -145,7 +145,7 @@ fn a_request_the_system_refuses_ends_the_program_with_status_1_after_what_it_pri
 /// A program that builds no list and no text at run time has no handler, and
 /// one that has the handler asks for room somewhere.
 fn a_program_that_asks_for_nothing_has_no_handler() {
-    let quiet = smith::lower(b"fn main() ! console {\n  print(\"hi\")\n}\n").expect("compiles");
+    let quiet = smith::lower(b"use std.console (console, print)\n\nfn main() ! console {\n  print(\"hi\")\n}\n").expect("compiles");
     assert!(!quiet.allocates());
     assert!(!quiet.functions.contains(&handler::take()));
     generate::check(311, 20, programs::program, |case| {

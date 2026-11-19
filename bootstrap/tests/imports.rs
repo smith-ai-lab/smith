@@ -146,7 +146,15 @@ fn home(name: &str) -> Option<&'static str> {
         .map(|m| m.name.as_str())
 }
 
-const HELLO: &str = "fn main() ! console {\n  print(\"hi\")\n}\n";
+/// A `main` that prints, with no `use` of its own.
+const MAIN: &str = "fn main() ! console {\n  print(\"hi\")\n}\n";
+
+/// A program that prints, with the `use` it needs.
+const HELLO: &str = "use std.console (console, print)\n\nfn main() ! console {\n  print(\"hi\")\n}\n";
+
+/// The names of the sizes, which `std.bits` holds and the files of `std/` do
+/// not write with `pub`.
+const SIZES: [&str; 6] = ["i16", "i32", "i8", "u16", "u32", "u64"];
 
 /// The names the compiler supplies outside the prelude, by the module the
 /// pages of `knowledge/library/` name for each.
@@ -194,7 +202,11 @@ fn each_name_the_compiler_supplies_is_in_the_module_the_library_pages_name() {
 fn every_name_of_a_module_can_be_imported_at_once() {
     for module in library() {
         let names: Vec<&str> = module.names.iter().map(|(n, _)| n.as_str()).collect();
-        let source = format!("use std.{} ({})\n\n{HELLO}", module.name, names.join(", "));
+        let source = numbers::with_header(format!(
+            "use std.{} ({})\n\n{MAIN}",
+            module.name,
+            names.join(", ")
+        ));
         if let Err(errors) = lower(source.as_bytes()) {
             panic!("{errors:?} for {source}");
         }
@@ -227,24 +239,56 @@ fn names_of(source: &str) -> (HashSet<String>, HashSet<String>) {
     (written, defined)
 }
 
+/// The names of the library that a source writes and does not define, each
+/// with its module, in the order of the modules and then of the names.
+fn names_used(source: &str) -> Vec<(&'static str, String)> {
+    let (written, defined) = names_of(source);
+    let mut used = Vec::new();
+    for module in library() {
+        let mut names: Vec<String> = (module.names.iter())
+            .map(|(n, _)| n.clone())
+            .chain(
+                SIZES
+                    .iter()
+                    .filter(|_| module.name == "bits")
+                    .map(|n| n.to_string()),
+            )
+            .filter(|n| written.contains(n) && !defined.contains(n))
+            .collect();
+        names.sort();
+        used.extend(names.into_iter().map(|n| (module.name.as_str(), n)));
+    }
+    used
+}
+
 /// The source with a `use` line, at its top, for each module whose names it
 /// writes, listing exactly those names, in the order the modules are in.
 fn with_imports(source: &str) -> String {
-    let (written, defined) = names_of(source);
     let mut lines = String::new();
-    for module in library() {
-        let used: Vec<&str> = (module.names.iter())
-            .map(|(n, _)| n.as_str())
-            .filter(|n| written.contains(*n) && !defined.contains(*n))
+    let used = names_used(source);
+    let mut modules: Vec<&str> = used.iter().map(|(m, _)| *m).collect();
+    modules.dedup();
+    for module in modules {
+        let names: Vec<&str> = (used.iter())
+            .filter(|(m, _)| *m == module)
+            .map(|(_, n)| n.as_str())
             .collect();
-        if !used.is_empty() {
-            lines.push_str(&format!("use std.{} ({})\n", module.name, used.join(", ")));
-        }
+        lines.push_str(&format!("use std.{module} ({})\n", names.join(", ")));
     }
     if lines.is_empty() {
         return source.to_string();
     }
     format!("{lines}\n{source}")
+}
+
+/// The source without the `use` lines it starts with, and the blank lines
+/// after them.
+fn without_uses(source: &str) -> String {
+    let mut rest = source;
+    while rest.starts_with("use ") {
+        rest = rest.split_once('\n').map_or("", |(_, after)| after);
+    }
+    rest.trim_start_matches('\n').to_string()
 }
 
 /// A program the generators build that has no mistake.
@@ -256,14 +300,15 @@ fn some_program(g: &mut Gen) -> String {
     }
 }
 
-/// A file that lists the names it uses, and only those, is built as the
-/// same executable, with the same warnings, as the file with no `use`,
-/// because every name of the standard library is in scope until a name
-/// without its `use` is an error. A program that uses no name of the library
-/// lists none, and is the file it was.
+/// A file that lists the names it uses, and only those, is built, and as the
+/// same executable, with the same warnings, as the file with the `use` lines
+/// that this test works out from what the file writes. The same file with no
+/// `use` is refused, with one error for each name of the library that it
+/// writes, which says the module the name is in and the `use` to add.
 fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() {
     generate::check(300, 50, some_program, |source| {
-        let with = with_imports(source);
+        let bare = without_uses(source);
+        let with = with_imports(&bare);
         assert_eq!(
             compile(with.as_bytes(), any()).map_err(|e| format!("{e:?}")),
             compile(source.as_bytes(), any()).map_err(|e| format!("{e:?}")),
@@ -275,6 +320,13 @@ fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() 
                 .map_err(|e| format!("{e:?}"))
         };
         assert_eq!(warnings(&with), warnings(source), "for\n{with}");
+        let used = names_used(&bare);
+        if used.is_empty() {
+            assert_eq!(&bare, source);
+        }
+        for (module, _) in &used {
+            assert!(with.contains(&format!("use std.{module} (")), "for\n{with}");
+        }
     });
 }
 
@@ -289,11 +341,14 @@ fn a_name_that_is_imported_and_not_used_is_a_warning_at_its_name_and_changes_not
                 HELLO
             };
             let head = format!("use std.{} (", module.name);
-            let source = format!("{head}{name})\n\n{bare}");
+            let source = numbers::with_header(format!("{head}{name})\n\n{bare}"));
             let warnings = check(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
             let places: Vec<Pos> = warnings.iter().map(|w| w.pos).collect();
+            // The `use` lines are in the order of the modules, so the line is
+            // the first, or the second where the `use` of `std.console` is above.
+            let line = source.lines().position(|l| l.starts_with(&head)).unwrap() + 1;
             let at = Pos {
-                line: 1,
+                line,
                 col: head.chars().count() + 1,
             };
             assert_eq!(places, [at], "{warnings:?} for {source}");
@@ -391,7 +446,7 @@ fn uses(g: &mut Gen) -> Uses {
             }
         }
     }
-    file.push("\nfn main() ! console {\n  print(\"hi\")\n}\n");
+    file.push("\nfn main() {\n}\n");
     for name in file.defined.clone() {
         file.push(&format!("\nfn {name}() {{\n}}\n"));
     }
@@ -419,7 +474,7 @@ fn each_mistake_in_a_use_is_one_error_at_its_place() {
 fn a_use_after_another_item_is_one_error_at_the_use() {
     for module in library() {
         let name = &module.names[0].0;
-        let before = format!("{HELLO}\n");
+        let before = "fn main() {\n}\n\n".to_string();
         let source = format!("{before}use std.{} ({name})\n", module.name);
         let Err(errors) = lower(source.as_bytes()) else {
             panic!("accepted: {source}");
@@ -477,8 +532,21 @@ fn printed(program: &smith::scalar::Program) -> Vec<u8> {
 /// The program lowered with the library of the modules, each a name and a
 /// source.
 fn built_with(source: &str, library: &[(&str, &str)]) -> smith::scalar::Program {
-    smith::lower_in(source.as_bytes(), library)
+    smith::lower_in(source.as_bytes(), &with_std(library))
         .unwrap_or_else(|e| panic!("{e:?} for\n{source}\n{library:?}"))
+}
+
+/// The modules given, and the modules of the standard library that the
+/// programs here import beside them, which `lower_in` does not read unless
+/// they are given.
+fn with_std<'a>(library: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let mut all = library.to_vec();
+    for module in ["bits", "console", "int"] {
+        if !all.iter().any(|(name, _)| *name == module) {
+            all.push((module, smith::library_text(module)));
+        }
+    }
+    all
 }
 
 /// A module whose items call each other, and the program that imports some of
@@ -516,7 +584,7 @@ fn written(g: &mut Gen, own: &str, kind: &str) -> Written {
         )
     };
     Written {
-        module: items("pub ", if kind_pub { "pub " } else { "" }),
+        module: numbers::with_header(items("pub ", if kind_pub { "pub " } else { "" })),
         pasted: items("", ""),
         body: format!(
             "  print(\"{{twice({a})}} {{measure(.dot)}} {{measure(.line({b}))}} {{make({a}).y}}\")\n"
@@ -531,8 +599,8 @@ fn written(g: &mut Gen, own: &str, kind: &str) -> Written {
 fn a_program_prints_what_it_prints_with_the_items_of_the_module_pasted_into_it() {
     generate::check(40, 20, |g| written(g, "helper", "Pt"), |w| {
         let program = format!("fn main() ! console, alloc {{\n{}}}\n", w.body);
-        let uses = format!("use std.gen ({})\n\n{program}", w.imports.join(", "));
-        let pasted = format!("{}\n{program}", w.pasted);
+        let uses = numbers::with_header(format!("use std.gen ({})\n\n{program}", w.imports.join(", ")));
+        let pasted = numbers::with_header(format!("{}\n{program}", w.pasted));
         let got = built_with(&uses, &[("gen", &w.module)]);
         let wanted = built_with(&pasted, &[]);
         assert_eq!(printed(&got), printed(&wanted), "for\n{uses}\n{}", w.module);
@@ -548,14 +616,18 @@ fn the_names_a_module_does_not_export_are_its_own_and_clash_with_nothing() {
         let own = "fn helper(n: i32) -> i32 { wrapping_mul(n, 1000) }\n\nstruct Pt {\n  z: i32\n}\n\n";
         let mine = "  print(\"{helper(2)} {Pt(z: 3).z}\")\n";
         let program = |body: &str| format!("fn main() ! console, alloc {{\n{mine}{body}}}\n");
-        let with = format!(
+        let with = numbers::with_header(format!(
             "use std.gen ({})\n\n{own}{}",
             w.imports.join(", "),
             program(&w.body)
-        );
+        ));
         let got = printed(&built_with(&with, &[("gen", &w.module)]));
         let wanted = printed(&built_with(
-            &format!("{}\n{own}{}", w.pasted.replace("helper", "mhelper").replace("Pt", "MPt"), program(&w.body)),
+            &numbers::with_header(format!(
+                "{}\n{own}{}",
+                w.pasted.replace("helper", "mhelper").replace("Pt", "MPt"),
+                program(&w.body)
+            )),
             &[],
         ));
         assert_eq!(got, wanted, "for\n{with}");
@@ -565,9 +637,9 @@ fn the_names_a_module_does_not_export_are_its_own_and_clash_with_nothing() {
 
 /// The example of the issue: `is_digit`, written in Smith, called from a program.
 fn a_function_of_a_module_written_in_smith_is_called_from_a_program() {
-    let ascii = "pub fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }\n";
-    let source = "use std.ascii (is_digit)\n\nfn main() ! console, alloc {\n  print(\"{is_digit('7')} {is_digit('x')}\")\n}\n";
-    assert_eq!(printed(&built_with(source, &[("ascii", ascii)])), b"true false\n");
+    let ascii = "pub fn is_digit(b: Byte) -> bool { b >= '0' and b <= '9' }\n";
+    let source = numbers::with_header("use std.ascii (is_digit)\n\nfn main() ! console, alloc {\n  print(\"{is_digit('7')} {is_digit('x')}\")\n}\n".to_string());
+    assert_eq!(printed(&built_with(&source, &[("ascii", ascii)])), b"true false\n");
 }
 
 /// A name of a module that is not `pub` cannot be listed, and its name is not
@@ -578,24 +650,25 @@ fn a_name_that_is_not_pub_and_a_function_the_compiler_builds_are_refused_in_a_pr
         let module = format!("{}\nfn secret(n: i32) -> i32 {{ n }}\n", w.module);
         let library = [("gen", module.as_str())];
         let main = |body: &str| format!("fn main() ! console, alloc {{\n{body}  print(\"x\")\n}}\n");
+        let with = numbers::with_header;
         let refused = |source: String, mention: &str| {
-            let errors = smith::lower_in(source.as_bytes(), &library)
+            let errors = smith::lower_in(source.as_bytes(), &with_std(&library))
                 .expect_err(&format!("refused: {source}"));
             assert!(errors.iter().any(|e| e.message.contains(mention)), "{errors:?} for {source}");
         };
-        refused(format!("use std.gen (secret)\n\n{}", main("")), "secret");
-        refused(main("  n = secret(1)\n"), "secret");
-        refused(main("  n = helper(1)\n"), "helper");
-        refused(main("  n = __wrapping_add(1, 2)\n"), "__wrapping_add");
+        refused(with(format!("use std.gen (secret)\n\n{}", main(""))), "secret");
+        refused(with(main("  n = secret(1)\n")), "secret");
+        refused(with(main("  n = helper(1)\n")), "helper");
+        refused(with(main("  n = __wrapping_add(1, 2)\n")), "__wrapping_add");
     });
 }
 
 /// A function of a module calls the private functions of its module and the
 /// functions the compiler builds.
 fn a_function_of_a_module_calls_the_functions_the_compiler_builds() {
-    let module = "fn base() -> u8 { 200 }\n\npub fn plus(a: u8) -> u8 { __wrapping_add(a, base()) }\n";
-    let source = "use std.gen (plus)\n\nfn main() ! console, alloc {\n  print(\"{plus(100)}\")\n}\n";
-    assert_eq!(printed(&built_with(source, &[("gen", module)])), b"44\n");
+    let module = "fn base() -> Byte { 200 }\n\npub fn plus(a: Byte) -> Byte { __wrapping_add(a, base()) }\n";
+    let source = numbers::with_header("use std.gen (plus)\n\nfn main() ! console, alloc {\n  print(\"{plus(100)}\")\n}\n".to_string());
+    assert_eq!(printed(&built_with(&source, &[("gen", module)])), b"44\n");
 }
 
 /// A module that is not imported is not read, a function that is not reached
@@ -605,12 +678,12 @@ fn only_what_a_program_reaches_is_read_checked_and_built() {
         let broken_file = "pub fn x( {{{\n";
         let unreached = format!("{}\npub fn bad(n: i32) -> i32 {{ nothing_here(n) }}\n", w.module);
         let program = format!("fn main() ! console, alloc {{\n{}}}\n", w.body);
-        let with = format!("use std.gen ({})\n\n{program}", w.imports.join(", "));
+        let with = numbers::with_header(format!("use std.gen ({})\n\n{program}", w.imports.join(", ")));
         let library = [("gen", unreached.as_str()), ("broken", broken_file)];
         assert_eq!(built_with(&with, &library), built_with(&with, &[("gen", &w.module)]));
         let hello = "fn main() ! console, alloc {\n  print(\"hi\")\n}\n";
-        let imported = format!("use std.gen (measure, bad)\n\n{hello}");
-        assert_eq!(built_with(&imported, &library), built_with(hello, &[]));
+        let imported = numbers::with_header(format!("use std.gen (measure, bad)\n\n{hello}"));
+        assert_eq!(built_with(&imported, &library), built_with(&numbers::with_header(hello.to_string()), &[]));
     });
 }
 
@@ -618,11 +691,15 @@ fn only_what_a_program_reaches_is_read_checked_and_built() {
 /// the module, and says which module.
 fn an_error_in_a_function_a_program_reaches_is_at_its_place_in_the_module() {
     generate::check(30, 10, |g| (g.below(5), g.below(6), g.below(5)), |&(lines, indent, name)| {
-        let name = ["nothing", "missing_one", "gone", "n_a", "no_such"][name];
-        let head = format!("{}pub fn bad(n: i32) -> i32 {{\n{}", "\n".repeat(lines), " ".repeat(indent));
+        let name = ["nonesuch", "missing_one", "gone", "n_a", "no_such"][name];
+        let head = format!(
+            "use std.bits (i32)\n\n{}pub fn bad(n: i32) -> i32 {{\n{}",
+            "\n".repeat(lines),
+            " ".repeat(indent)
+        );
         let module = format!("{head}{name}(n)\n}}\n");
-        let source = "use std.gen (bad)\n\nfn main() ! console, alloc {\n  print(\"{bad(1)}\")\n}\n";
-        let errors = smith::lower_in(source.as_bytes(), &[("gen", &module)]).unwrap_err();
+        let source = numbers::with_header("use std.gen (bad)\n\nfn main() ! console, alloc {\n  print(\"{bad(1)}\")\n}\n".to_string());
+        let errors = smith::lower_in(source.as_bytes(), &with_std(&[("gen", &module)])).unwrap_err();
         let found: Vec<_> = errors.iter().filter(|e| e.message.contains(name)).collect();
         assert_eq!(found.len(), 1, "{errors:?}");
         assert_eq!(found[0].module.as_deref(), Some("gen"));
@@ -633,10 +710,13 @@ fn an_error_in_a_function_a_program_reaches_is_at_its_place_in_the_module() {
 /// A call of a function of a module is a compare or two in the scalar form,
 /// as the same function written in the program's file is.
 fn a_function_of_a_module_is_inlined_and_folded_as_one_of_the_file_is() {
-    let ascii = "pub fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }\n";
+    let ascii = "pub fn is_digit(b: Byte) -> bool { b >= '0' and b <= '9' }\n";
     let main = "fn main() ! console, alloc {\n  print(\"{is_digit('7')} {is_digit('x')}\")\n}\n";
-    let imported = built_with(&format!("use std.ascii (is_digit)\n\n{main}"), &[("ascii", ascii)]);
-    let own = built_with(&format!("{}\n{main}", ascii.replace("pub ", "")), &[]);
+    let imported = built_with(
+        &numbers::with_header(format!("use std.ascii (is_digit)\n\n{main}")),
+        &[("ascii", ascii)],
+    );
+    let own = built_with(&numbers::with_header(format!("{}\n{main}", ascii.replace("pub ", ""))), &[]);
     let build = |p: &smith::scalar::Program| {
         smith::scalar::remove(&smith::scalar::common(&smith::scalar::fold(&smith::scalar::inline(p))))
     };

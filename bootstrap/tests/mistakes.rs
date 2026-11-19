@@ -8,7 +8,7 @@ use smith::lower;
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::programs::pos_after;
+use crate::programs::{lines_added, pos_after, shifted, with_imports};
 
 pub const ONCE: &[Test] = &[
     (
@@ -86,11 +86,17 @@ impl File {
     /// its place, mentioning what it must, and none if the file has no
     /// mistake.
     fn check(&self) {
-        let mut expected = self.expected.clone();
+        // The file starts with the `use` lines of what it writes of the
+        // library, which the places of its mistakes come after.
+        let source = with_imports(&self.source);
+        let by = lines_added(&self.source, &source);
+        let mut expected: Vec<(Pos, String)> = (self.expected.iter())
+            .map(|(pos, what)| (shifted(*pos, by), what.clone()))
+            .collect();
         expected.sort_by_key(|(pos, _)| *pos);
-        let found = match lower(self.source.as_bytes()) {
+        let found = match lower(source.as_bytes()) {
             Ok(_) if expected.is_empty() => return,
-            Ok(_) => panic!("expected errors for {:?}", self.source),
+            Ok(_) => panic!("expected errors for {source:?}"),
             Err(errors) => errors,
         };
         let places: Vec<Pos> = found.iter().map(|e| e.pos).collect();
@@ -120,7 +126,7 @@ fn file_with_names_that_are_no_trait(g: &mut Gen) -> File {
     file.push(PRELUDE);
     let mut calls = String::new();
     for i in 0..1 + g.below(3) {
-        let name = *g.pick(&["Nope", "str", "u8", "i64", "Cat", "Shape", "f32"]);
+        let name = *g.pick(&["Nope", "str", "Byte", "Int", "Cat", "Shape", "f32"]);
         let what = if name == "Nope" {
             "no trait named"
         } else {
@@ -297,7 +303,7 @@ fn file_with_defaults_that_need_an_effect(g: &mut Gen) -> File {
     let mut calls = String::new();
     for i in 0..1 + g.below(4) {
         calls.push_str(&format!("  f{i}()\n"));
-        file.push(&format!("fn f{i}(a: List[u8] = "));
+        file.push(&format!("fn f{i}(a: List[Byte] = "));
         match g.below(4) {
             0 => file.push("[]"),
             1 => {
@@ -445,8 +451,8 @@ fn file_with_functions_that_end_in_nothing(g: &mut Gen) -> File {
     for i in 0..1 + g.below(4) {
         let (result, value) = *g.pick(&[
             ("str", "\"a\""),
-            ("u8", "1"),
-            ("i64", "1"),
+            ("Byte", "1"),
+            ("Int", "1"),
             ("Cat", "Cat(name: \"a\")"),
             ("Shape", "Shape.dot"),
         ]);
@@ -524,11 +530,11 @@ const HUGE: &str = "99999999999999999999";
 /// not known, so a mistake that depends on them is not reported.
 fn file_with_calls_of_a_trait_with_a_lambda(g: &mut Gen) -> File {
     let mut file = File::default();
-    file.push("struct Box {\n  n: u8\n}\n\nstruct Other {\n  n: u8\n}\n\n");
+    file.push("struct Box {\n  n: Byte\n}\n\nstruct Other {\n  n: Byte\n}\n\n");
     file.push("trait Mapper[C, A, out R] {\n  fn apply(c: C, a: A, f: fn(A) -> R) -> R\n}\n\n");
-    file.push("impl Mapper[Box, u8, str] {\n");
-    file.push("  fn apply(c: Box, a: u8, f: fn(u8) -> str) -> str { f(a) }\n}\n\n");
-    file.push("fn main() {\n  box = Box(n: 3)\n  other = Other(n: 4)\n  small: u8 = 5\n");
+    file.push("impl Mapper[Box, Byte, str] {\n");
+    file.push("  fn apply(c: Box, a: Byte, f: fn(Byte) -> str) -> str { f(a) }\n}\n\n");
+    file.push("fn main() {\n  box = Box(n: 3)\n  other = Other(n: 4)\n  small: Byte = 5\n");
     for _ in 0..1 + g.below(4) {
         file.push("  ");
         // The call with `box` and a number settles on `i64`, which no

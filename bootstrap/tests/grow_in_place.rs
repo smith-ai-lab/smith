@@ -38,7 +38,7 @@ const WIDTH: usize = 8;
 /// prints the size and the sum of what it holds.
 fn alone(n: usize) -> String {
     format!(
-        "fn main() ! console, alloc {{\n  var xs: List[u64] = []\n  loop i in 0..{n} {{ xs = push(xs, i) }}\n  var sum: u64 = 0\n  loop v in xs {{ sum = wrapping_add(sum, v) }}\n  print(\"{{xs.size}} {{sum}}\")\n}}\n"
+        "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.list (push)\n\nfn main() ! console, alloc {{\n  var xs: List[u64] = []\n  loop i in 0..{n} {{ xs = push(xs, i) }}\n  var sum: u64 = 0\n  loop v in xs {{ sum = wrapping_add(sum, v) }}\n  print(\"{{xs.size}} {{sum}}\")\n}}\n"
     )
 }
 
@@ -100,7 +100,7 @@ fn two_lists_that_grow_in_turn_are_each_copied_at_each_doubling_and_read_as_push
 /// pushes are read as they were built.
 fn a_list_that_grows_in_place_is_read_as_pushed_after_other_lists_ask_for_memory() {
     let n = 3000;
-    let source = "fn make(k: u64) -> List[u64] ! alloc {\n  var ys: List[u64] = []\n  loop j in 0..5 { ys = push(ys, wrapping_add(k, j)) }\n  ys\n}\n\nfn main() ! console, alloc {\n  var xs: List[u64] = []\n  var total: u64 = 0\n  var base: u64 = 0\n  loop r in 0..4 {\n    loop i in 0..750 { xs = push(xs, wrapping_add(base, i)) }\n    ys = make(base)\n    base = wrapping_add(base, 750)\n    loop v in ys { total = wrapping_add(total, v) }\n  }\n  var sum: u64 = 0\n  loop v in xs { sum = wrapping_add(sum, v) }\n  print(\"{xs.size} {sum} {total}\")\n}\n";
+    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.list (push)\n\nfn make(k: u64) -> List[u64] ! alloc {\n  var ys: List[u64] = []\n  loop j in 0..5 { ys = push(ys, wrapping_add(k, j)) }\n  ys\n}\n\nfn main() ! console, alloc {\n  var xs: List[u64] = []\n  var total: u64 = 0\n  var base: u64 = 0\n  loop r in 0..4 {\n    loop i in 0..750 { xs = push(xs, wrapping_add(base, i)) }\n    ys = make(base)\n    base = wrapping_add(base, 750)\n    loop v in ys { total = wrapping_add(total, v) }\n  }\n  var sum: u64 = 0\n  loop v in xs { sum = wrapping_add(sum, v) }\n  print(\"{xs.size} {sum} {total}\")\n}\n";
     let program = lower(source.as_bytes()).unwrap();
     let (outcome, _) = scalar::run_taking(&program, usize::MAX);
     let total: u64 = (0..4u64).map(|r| (0..5).map(|j| 750 * r + j).sum::<u64>()).sum();
@@ -128,6 +128,6 @@ fn every_executable_reads_the_lists_it_grew_in_place_and_not_in_place_as_pushed(
 /// prints their sizes and sums.
 fn two(n: usize) -> String {
     format!(
-        "fn main() ! console, alloc {{\n  var xs: List[u64] = []\n  var ys: List[u64] = []\n  loop i in 0..{n} {{\n    xs = push(xs, i)\n    ys = push(ys, wrapping_add(i, 1))\n  }}\n  var a: u64 = 0\n  var b: u64 = 0\n  loop v in xs {{ a = wrapping_add(a, v) }}\n  loop v in ys {{ b = wrapping_add(b, v) }}\n  print(\"{{xs.size}} {{ys.size}} {{a}} {{b}}\")\n}}\n"
+        "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.list (push)\n\nfn main() ! console, alloc {{\n  var xs: List[u64] = []\n  var ys: List[u64] = []\n  loop i in 0..{n} {{\n    xs = push(xs, i)\n    ys = push(ys, wrapping_add(i, 1))\n  }}\n  var a: u64 = 0\n  var b: u64 = 0\n  loop v in xs {{ a = wrapping_add(a, v) }}\n  loop v in ys {{ b = wrapping_add(b, v) }}\n  print(\"{{xs.size}} {{ys.size}} {{a}} {{b}}\")\n}}\n"
     )
 }

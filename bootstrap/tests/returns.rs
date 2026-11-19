@@ -13,7 +13,7 @@ use smith::{check, compile, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::INTS;
+use crate::numbers::{INTS, with_header};
 use crate::programs::pos_after;
 use crate::targets;
 
@@ -302,7 +302,7 @@ fn write(items: &[Item], p: &str) -> String {
 /// or `acc` when the lines do not end in a `return`.
 fn body(items: &[Item], p: &str) -> String {
     let tail = if ends_in_return(items) { "" } else { "acc\n" };
-    format!("var acc: i64 = 0\n{}{tail}", write(items, p))
+    format!("var acc: Int = 0\n{}{tail}", write(items, p))
 }
 
 /// The same lines with no `return`: each is the value of an `if` that holds
@@ -365,10 +365,10 @@ const ARGUMENTS: [i64; 4] = [0, 1, 2, 5];
 /// A program whose `f` is the function, called for each of `ARGUMENTS`.
 fn program(function: &str) -> String {
     let calls: Vec<String> = ARGUMENTS.iter().map(|x| format!("{{f({x})}}")).collect();
-    format!(
-        "fn f(x: i64) -> i64 {{\n{function}}}\n\nfn main() ! console, alloc {{\n  print(\"{}\")\n}}\n",
+    with_header(format!(
+        "fn f(x: Int) -> Int {{\n{function}}}\n\nfn main() ! console, alloc {{\n  print(\"{}\")\n}}\n",
         calls.join(" ")
-    )
+    ))
 }
 
 fn says(lines: &str) -> Outcome {
@@ -410,7 +410,7 @@ fn a_function_with_returns_prints_what_it_prints_with_each_return_as_the_value_o
             let said = printed(lines);
             let returned = program(&body(lines, "x"));
             assert_eq!(evaluate(&returned), said, "for {returned}");
-            let rewritten = program(&format!("var acc: i64 = 0\n{}", as_value(lines, &[], "x")));
+            let rewritten = program(&format!("var acc: Int = 0\n{}", as_value(lines, &[], "x")));
             assert!(!rewritten.contains("return"), "{rewritten}");
             assert_eq!(evaluate(&rewritten), said, "for {rewritten}");
         },
@@ -434,13 +434,13 @@ fn a_return_in_a_loop_ends_the_loop_and_the_function() {
 /// the caller goes on after the call.
 fn lambda_program(lines: &[Item]) -> String {
     let calls: Vec<String> = ARGUMENTS.iter().map(|x| format!("{{caller({x})}}")).collect();
-    format!(
-        "fn call(x: i64, f: fn(i64) -> i64) -> i64 {{\n  a = f(x)\n  b = f(wrapping_add(x, 1))\n  wrapping_add(wrapping_mul(a, 3), b)\n}}\n\n\
-         fn caller(x: i64) -> i64 {{\n  r = call(x) fn(v) {{\n{}  }}\n  wrapping_add(r, 7)\n}}\n\n\
+    with_header(format!(
+        "fn call(x: Int, f: fn(Int) -> Int) -> Int {{\n  a = f(x)\n  b = f(wrapping_add(x, 1))\n  wrapping_add(wrapping_mul(a, 3), b)\n}}\n\n\
+         fn caller(x: Int) -> Int {{\n  r = call(x) fn(v) {{\n{}  }}\n  wrapping_add(r, 7)\n}}\n\n\
          fn main() ! console, alloc {{\n  print(\"{}\")\n}}\n",
         body(lines, "v"),
         calls.join(" ")
-    )
+    ))
 }
 
 fn lambda_printed(lines: &[Item]) -> Outcome {
@@ -468,7 +468,7 @@ fn a_return_in_a_lambda_leaves_the_lambda_and_the_caller_goes_on() {
 }
 
 fn a_return_in_the_rest_of_a_block_after_try_leaves_with_its_value() {
-    let source = "fn find(name: str, have: Option[str]) -> Result[str, str] {\n  match have {\n    .some(value) { .ok(value) }\n    .none { .err(name) }\n  }\n}\n\n\
+    let source = "use std.console (console, print)\n\nfn find(name: str, have: Option[str]) -> Result[str, str] {\n  match have {\n    .some(value) { .ok(value) }\n    .none { .err(name) }\n  }\n}\n\n\
         fn both(a: Option[str], b: Option[str]) -> Result[str, str] {\n  x = try find(\"a\", a)\n  if x == \"stop\" { return .err(\"stopped\") }\n  y = try find(\"b\", b)\n  .ok(y)\n}\n\n\
         fn show(r: Result[str, str]) -> str ! alloc {\n  match r {\n    .ok(v) { \"ok {v}\" }\n    .err(e) { \"err {e}\" }\n  }\n}\n\n\
         fn main() ! console, alloc {\n  print(show(both(.some(\"1\"), .some(\"2\"))))\n  print(show(both(.some(\"stop\"), .some(\"2\"))))\n  print(show(both(.none, .some(\"2\"))))\n  print(show(both(.some(\"1\"), .none)))\n}\n";
@@ -477,44 +477,49 @@ fn a_return_in_the_rest_of_a_block_after_try_leaves_with_its_value() {
 
 /// The examples of the page that need nothing but what is built.
 fn the_examples_of_the_page_give_what_it_says() {
-    let classify = "fn classify(b: u8) -> str {\n  if b >= '0' and b <= '9' { return \"digit\" }\n  if b == ' ' { return \"space\" }\n  \"other\"\n}\n\n\
-        fn classified(b: u8) -> str {\n  if b >= '0' and b <= '9' { \"digit\" } else if b == ' ' { \"space\" } else { \"other\" }\n}\n\n\
+    let classify = "use std.console (console, print)\n\nfn classify(b: Byte) -> str {\n  if b >= '0' and b <= '9' { return \"digit\" }\n  if b == ' ' { return \"space\" }\n  \"other\"\n}\n\n\
+        fn classified(b: Byte) -> str {\n  if b >= '0' and b <= '9' { \"digit\" } else if b == ' ' { \"space\" } else { \"other\" }\n}\n\n\
         fn main() ! console, alloc {\n  print(classify('7'))\n  print(classify(' '))\n  print(classify('x'))\n  print(classified('7'))\n  print(classified(' '))\n  print(classified('x'))\n}\n";
     prints(
         classify,
         &["digit", "space", "other", "digit", "space", "other"],
     );
-    let log = "fn log_if(verbose: bool, text: str) ! console {\n  if not verbose { return }\n  print(text)\n}\n\n\
+    let log = "use std.console (console, print)\n\nfn log_if(verbose: bool, text: str) ! console {\n  if not verbose { return }\n  print(text)\n}\n\n\
         fn main() ! console, alloc {\n  log_if(false, \"x\")\n  log_if(true, \"y\")\n}\n";
     prints(log, &["y"]);
-    let refused_classify = "fn classify(b: u8) -> str {\n  if b == ' ' { return 1 }\n  \"other\"\n}\n\nfn main() ! console, alloc {\n  print(classify('x'))\n}\n";
+    let refused_classify = "use std.console (console, print)\n\nfn classify(b: Byte) -> str {\n  if b == ' ' { return 1 }\n  \"other\"\n}\n\nfn main() ! console, alloc {\n  print(classify('x'))\n}\n";
     assert_eq!(refused(refused_classify).len(), 1);
 }
 
 /// Where a mistake is, and the program with it: `at` is what comes before it.
 fn placed(before: &str, after: &str) -> (String, smith::diag::Pos) {
-    (format!("{before}{after}"), pos_after(before))
+    let body = format!("{before}{after}");
+    let source = with_header(body.clone());
+    // The `use` lines are above what comes before the mistake.
+    let mut at = pos_after(before);
+    at.line += source.matches('\n').count() - body.matches('\n').count();
+    (source, at)
 }
 
 fn a_return_is_refused_exactly_where_its_value_does_not_fit_or_a_line_cannot_run() {
     let main = "\nfn main() ! console, alloc {\n  print(\"{f(1)}\")\n}\n";
     let cases = [
         // A value of another type than the result.
-        placed("fn f(x: i64) -> i64 {\n  if x > 1 { return ", &format!("\"no\" }}\n  x\n}}\n{main}")),
+        placed("fn f(x: Int) -> Int {\n  if x > 1 { return ", &format!("\"no\" }}\n  x\n}}\n{main}")),
         // Nothing, where the function gives a value.
-        placed("fn f(x: i64) -> i64 {\n  if x > 1 { ", &format!("return }}\n  x\n}}\n{main}")),
+        placed("fn f(x: Int) -> Int {\n  if x > 1 { ", &format!("return }}\n  x\n}}\n{main}")),
         // A value, where the function gives nothing.
         placed(
-            "fn f(x: i64) ! console {\n  if x > 1 { return ",
+            "fn f(x: Int) ! console {\n  if x > 1 { return ",
             "x }\n  print(\"a\")\n}\n\nfn main() ! console, alloc {\n  f(1)\n}\n",
         ),
         // A line after a `return` in its block, at its first line.
         placed(
-            "fn f(x: i64) -> i64 {\n  if x > 1 {\n    return 1\n    ",
+            "fn f(x: Int) -> Int {\n  if x > 1 {\n    return 1\n    ",
             &format!("2\n  }}\n  x\n}}\n{main}"),
         ),
         placed(
-            "fn f(x: i64) -> i64 {\n  return 1\n  ",
+            "fn f(x: Int) -> Int {\n  return 1\n  ",
             &format!("x\n}}\n{main}"),
         ),
     ];
@@ -525,10 +530,10 @@ fn a_return_is_refused_exactly_where_its_value_does_not_fit_or_a_line_cannot_run
     }
     // The same functions with the mistake put right compile.
     for fixed in [
-        "fn f(x: i64) -> i64 {\n  if x > 1 { return 2 }\n  x\n}\n",
-        "fn f(x: i64) -> i64 {\n  if x > 1 { return x }\n  1\n}\n",
+        "fn f(x: Int) -> Int {\n  if x > 1 { return 2 }\n  x\n}\n",
+        "fn f(x: Int) -> Int {\n  if x > 1 { return x }\n  1\n}\n",
     ] {
-        let source = format!("{fixed}{main}");
+        let source = with_header(format!("{fixed}{main}"));
         assert_eq!(refused(&source).len(), 0, "for {source}");
     }
 }
@@ -537,9 +542,9 @@ fn after_an_if_that_returns_arith_knows_the_condition_is_false() {
     for ty in INTS.iter().filter(|t| !t.signed) {
         let t = ty.name;
         let program = |early: &str, result: &str| {
-            format!(
+            with_header(format!(
                 "fn f(a: {t}, b: {t}) -> {t} {{\n  {early}\n  {result}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 0)}}\")\n}}\n"
-            )
+            ))
         };
         // `a < b` is false after the `if`, as in its `else`.
         let known = program("if a < b { return 0 }", "a - b");
@@ -574,7 +579,7 @@ fn a_return_costs_a_jump_and_a_last_return_is_the_value_it_gives() {
         |g| reached(items(g, 2, false)),
         |lines| {
             let returned = program(&body(lines, "x"));
-            let rewritten = program(&format!("var acc: i64 = 0\n{}", as_value(lines, &[], "x")));
+            let rewritten = program(&format!("var acc: Int = 0\n{}", as_value(lines, &[], "x")));
             assert_eq!(evaluate(&returned), evaluate(&rewritten), "for {returned}");
             // The rewrite holds the lines after an `if` once for each block of
             // it, so it may call more, and the `return`s call nothing more.
@@ -603,7 +608,7 @@ fn a_return_costs_a_jump_and_a_last_return_is_the_value_it_gives() {
                 padding += "padding = wrapping_add(padding, x)\n";
             }
             let with = |end: String| {
-                program(&format!("{padding}var acc: i64 = 0\n{}{end}\n", write(&lines, "x")))
+                program(&format!("{padding}var acc: Int = 0\n{}{end}\n", write(&lines, "x")))
             };
             let by_return = with(format!("return {}", last.write("x")));
             let by_value = with(last.write("x"));
@@ -617,9 +622,9 @@ fn a_return_costs_a_jump_and_a_last_return_is_the_value_it_gives() {
 
 fn a_value_without_copy_is_given_away_by_a_return_and_a_lent_value_is_not_returned() {
     let program = |function: &str| {
-        format!(
+        with_header(format!(
             "struct Box {{\n  name: str\n}}\n\nwithout Copy for Box\n\n{function}\nfn main() ! console, alloc {{\n  b = pick(Box(name: \"a\"), true)\n  print(b.name)\n}}\n"
-        )
+        ))
     };
     // A value given away by a `return` is gone only on the path it ends, so
     // the lines after the `if` may give it away again.

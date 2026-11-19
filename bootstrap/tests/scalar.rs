@@ -344,29 +344,29 @@ const LENGTH: Type = Type::Int(Bits::B64);
 const BYTE: Type = Type::Int(Bits::B8);
 
 fn a_text_is_an_address_and_a_length_and_a_bool_is_one_byte() {
-    let text = "fn say(s: str) ! console { print(s) }\nfn main() ! console { say(\"hi\") }\n";
+    let text = "use std.console (console, print)\n\nfn say(s: str) ! console { print(s) }\nfn main() ! console { say(\"hi\") }\n";
     assert_eq!(parameters_of_the_first_call(text), [ADDRESS, LENGTH]);
-    let truth = "fn say(b: bool) ! console { if b { print(\"yes\") } else { print(\"no\") } }\n\
+    let truth = "use std.console (console, print)\n\nfn say(b: bool) ! console { if b { print(\"yes\") } else { print(\"no\") } }\n\
                  fn main() ! console { say(true) }\n";
     assert_eq!(parameters_of_the_first_call(truth), [BYTE]);
 }
 
 fn a_struct_a_tuple_and_an_enum_are_their_parts() {
-    let structure = "struct Named {\n name: str\n loud: bool\n}\n\
+    let structure = "use std.console (console, print)\n\nstruct Named {\n name: str\n loud: bool\n}\n\
         fn say(n: Named) ! console { print(n.name) }\n\
         fn main() ! console { say(Named(name: \"hi\", loud: true)) }\n";
     assert_eq!(
         parameters_of_the_first_call(structure),
         [ADDRESS, LENGTH, BYTE]
     );
-    let tuple = "fn say(pair: (str, bool)) ! console { (s, b) = pair\n print(s) }\n\
+    let tuple = "use std.console (console, print)\n\nfn say(pair: (str, bool)) ! console { (s, b) = pair\n print(s) }\n\
         fn main() ! console { say((\"hi\", true)) }\n";
     assert_eq!(parameters_of_the_first_call(tuple), [ADDRESS, LENGTH, BYTE]);
-    let enumeration = "enum Shade {\n light\n dark\n}\n\
+    let enumeration = "use std.console (console, print)\n\nenum Shade {\n light\n dark\n}\n\
         fn say(s: Shade) ! console { match s {\n .light { print(\"l\") }\n .dark { print(\"d\") }\n } }\n\
         fn main() ! console { say(.dark) }\n";
     assert_eq!(parameters_of_the_first_call(enumeration), [BYTE]);
-    let holding = "enum Maybe {\n some: str\n none\n}\n\
+    let holding = "use std.console (console, print)\n\nenum Maybe {\n some: str\n none\n}\n\
         fn say(m: Maybe) ! console { match m {\n .some(s) { print(s) }\n .none { print(\"none\") }\n } }\n\
         fn main() ! console { say(.some(\"x\")) }\n";
     assert_eq!(
@@ -387,10 +387,10 @@ fn size_of(int: numbers::Int) -> Type {
 
 fn a_number_is_one_scalar_of_the_size_of_its_type() {
     for int in numbers::INTS {
-        let source = format!(
+        let source = numbers::with_header(format!(
             "fn say(n: {0}) ! console {{ print(\"x\") }}\nfn main() ! console {{ say(1) }}\n",
             int.name
-        );
+        ));
         assert_eq!(parameters_of_the_first_call(&source), [size_of(*int)]);
     }
 }
@@ -407,7 +407,7 @@ fn a_program_that_holds_numbers_and_builds_no_text_is_lowered_and_prints_what_it
 }
 
 fn a_program_that_prints_a_number_is_lowered_and_prints_it() {
-    let source = "fn main() ! console, alloc { x: i32 = -12\n print(\"{x}\") }\n";
+    let source = "use std.bits (i32)\nuse std.console (console, print)\n\nfn main() ! console, alloc { x: i32 = -12\n print(\"{x}\") }\n";
     let s = lowered_from(source.as_bytes(), None).scalar;
     assert_eq!(scalar::check(&s), Ok(()));
     assert_eq!(scalar::run(&s).stdout, b"-12\n");
@@ -466,6 +466,7 @@ fn every_operation_on_numbers_gives_what_arithmetic_on_128_bits_gives() {
             source += &format!("  r{i} = op{i}(1, 2)\n");
         }
         source += "}\n";
+        let source = numbers::with_header(source);
         let s = lowered_from(source.as_bytes(), None).scalar;
         assert_eq!(scalar::check(&s), Ok(()), "{source}");
         // `main` calls each in order, so they are the functions after it.
@@ -1060,6 +1061,7 @@ fn layouts(g: &mut Gen) -> Layouts {
         written(&ty),
         written(&ty)
     );
+    let source = numbers::with_header(source);
     Layouts { defs, ty, source }
 }
 

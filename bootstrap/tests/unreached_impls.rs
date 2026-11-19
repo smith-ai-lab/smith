@@ -13,6 +13,7 @@ use smith::work::{Compared, compared};
 use crate::Test;
 use crate::counting::{Allocated, allocated};
 use crate::generate::{self, Gen};
+use crate::programs::with_imports;
 
 pub const ONCE: &[Test] = &[
     (
@@ -30,23 +31,23 @@ const LINES: usize = 60;
 
 /// A program that reaches `Area`, with `extra` after it.
 fn program(extra: &str) -> String {
-    format!(
+    with_imports(&format!(
         "use std.console (console, print)
 
 struct Square {{
-  side: i64
+  side: Int
 }}
 
 struct Circle {{
-  radius: i64
+  radius: Int
 }}
 
 trait Area[T] {{
-  fn area(x: T) -> i64
+  fn area(x: T) -> Int
 }}
 
 impl Area[Square] {{
-  fn area(x: Square) -> i64 {{
+  fn area(x: Square) -> Int {{
     wrapping_mul(x.side, x.side)
   }}
 }}
@@ -55,7 +56,7 @@ fn main() ! console, alloc {{
   print(\"{{area(Square(side: 3))}}\")
 }}
 {extra}"
-    )
+    ))
 }
 
 /// The lines of a body that reads `x.radius`, which neither a reader nor the
@@ -74,9 +75,9 @@ fn body(lines: usize) -> String {
 fn added(lines: usize) -> [String; 3] {
     let body = body(lines);
     [
-        format!("\nimpl Area[Circle] {{\n  fn area(x: Circle) -> i64 {{\n{body}  }}\n}}\n"),
-        format!("\nfn nothing[T](x: Circle, y: T) -> i64 {{\n{body}}}\n"),
-        format!("\nfn nothing(x: Circle) -> i64 {{\n{body}}}\n"),
+        format!("\nimpl Area[Circle] {{\n  fn area(x: Circle) -> Int {{\n{body}  }}\n}}\n"),
+        format!("\nfn nothing[T](x: Circle, y: T) -> Int {{\n{body}}}\n"),
+        format!("\nfn nothing(x: Circle) -> Int {{\n{body}}}\n"),
     ]
 }
 
@@ -174,11 +175,11 @@ trait Show[T] {{
 }}
 
 struct A {{
-  n: i64
+  n: Int
 }}
 
 struct Unused {{
-  n: i64
+  n: Int
 }}
 
 impl Show[A] {{

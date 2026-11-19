@@ -20,6 +20,7 @@
 //! mistake as it writes.
 
 use crate::generate::Gen;
+use crate::numbers::header_for;
 use crate::programs::{Expected, PIECES, pos_after};
 
 use smith::diag::Pos;
@@ -721,6 +722,10 @@ impl Writer<'_> {
     }
 }
 
+/// The `use` the source starts with while it is written, as many lines as
+/// the one it ends with, which names what the program uses.
+const HEADER: &str = "use std.console (console, print)\n\n";
+
 /// Writes the model out with the mistake, and gives the source and the
 /// error the mistake must give.
 fn write(m: &Model, mistake: Option<Mistake>) -> (String, Option<Expected>) {
@@ -728,7 +733,7 @@ fn write(m: &Model, mistake: Option<Mistake>) -> (String, Option<Expected>) {
     let relay = main + 1;
     let mut w = Writer {
         m,
-        text: String::new(),
+        text: String::from(HEADER),
         at: None,
         sites: vec![Vec::new(); relay + 1],
     };
@@ -830,7 +835,17 @@ fn write(m: &Model, mistake: Option<Mistake>) -> (String, Option<Expected>) {
             fix: Some("fn relay() -> str ! alloc".to_string()),
         }),
     };
-    (w.text, expected)
+    // The `use` line is as many lines as it was written as, and names
+    // `print` only when the program prints.
+    let used = header_for(&w.text[HEADER.len()..]);
+    // A program that uses nothing of the library keeps the lines as blank ones.
+    let used = if used.is_empty() {
+        "\n".repeat(HEADER.matches('\n').count())
+    } else {
+        used
+    };
+    assert_eq!(used.matches('\n').count(), HEADER.matches('\n').count());
+    (used + &w.text[HEADER.len()..], expected)
 }
 
 /// What `main` prints, and what it prints before its statement at `at`.

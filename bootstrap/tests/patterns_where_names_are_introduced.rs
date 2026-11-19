@@ -141,6 +141,21 @@ impl Shape {
 
 const BUMP: i32 = 100;
 
+/// The `use` lines of a program that prints, and writes the text: the size
+/// `i32` and `wrapping_add` when it holds them.
+fn uses(text: &str) -> String {
+    let mut out = String::new();
+    if text.contains("i32") {
+        out.push_str("use std.bits (i32)\n");
+    }
+    out.push_str("use std.console (console, print)\n");
+    if text.contains("wrapping_add(") {
+        out.push_str("use std.int (wrapping_add)\n");
+    }
+    out.push('\n');
+    out
+}
+
 /// A tuple of two or three parts, whose parts may be tuples, to a depth.
 fn shape(g: &mut Gen, keys: bool) -> Shape {
     fn build(g: &mut Gen, depth: usize, top: bool, count: &mut usize, keys: bool) -> Shape {
@@ -252,7 +267,7 @@ fn program(place: Place, (s, given): (&Shape, &Shape), other: &Shape, written_ou
             ));
         }
     }
-    out
+    format!("{}{out}", uses(&out))
 }
 
 /// What the program of the place prints.
@@ -303,7 +318,7 @@ fn without_places(messages: Vec<String>) -> Vec<String> {
 }
 
 fn the_examples_of_the_page_on_tuples_for_a_parameter_and_a_loop_give_what_it_says() {
-    let source = "fn first((n, s): (i32, str)) -> i32 { n }\n\nfn total(pairs: List[(str, i32)]) -> i32 {\n  var sum = 0\n  loop (name, count) in pairs { sum = wrapping_add(sum, count) }\n  sum\n}\n\nfn main() ! console, alloc {\n  pairs: List[(str, i32)] = [(\"a\", 4), (\"b\", 5)]\n  print(\"{first((7, \"x\"))}\")\n  print(\"{total(pairs)}\")\n}\n";
+    let source = "use std.bits (i32)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\nfn first((n, s): (i32, str)) -> i32 { n }\n\nfn total(pairs: List[(str, i32)]) -> i32 {\n  var sum = 0\n  loop (name, count) in pairs { sum = wrapping_add(sum, count) }\n  sum\n}\n\nfn main() ! console, alloc {\n  pairs: List[(str, i32)] = [(\"a\", 4), (\"b\", 5)]\n  print(\"{first((7, \"x\"))}\")\n  print(\"{total(pairs)}\")\n}\n";
     assert_eq!(
         run(source),
         Outcome {
@@ -384,6 +399,7 @@ fn a_pattern_that_may_not_match_where_a_name_is_introduced_is_one_error_that_nam
                     "fn main() ! console, alloc {{\n  xs: List[(i32, i32)] = [(1, 2)]\n  loop {pattern} in xs {{ print(\"1\") }}\n}}\n"
                 ),
             };
+            let source = format!("{}{source}", uses(&source));
             let errors = refused(&source);
             assert_eq!(errors.len(), 1, "{errors:?} for\n{source}");
             assert!(
@@ -466,10 +482,12 @@ fn a_parameter_written_as_a_pattern_is_given_by_position_and_takes_no_default() 
             };
             // By position, it is accepted.
             let by_position = built(&header) + &main(&format!("f({value})"));
+            let by_position = format!("{}{by_position}", uses(&by_position));
             assert_eq!(refused(&by_position), Vec::<String>::new(), "{by_position}");
             // By any name, it is refused: no name can be written for it.
             for name in ["arg", "t", "pattern", &s.all()[0].name] {
                 let by_name = built(&header) + &main(&format!("f({name}: {value})"));
+                let by_name = format!("{}{by_name}", uses(&by_name));
                 let errors = refused(&by_name);
                 assert!(
                     errors.iter().any(|e| e.contains("has no parameter named")),
@@ -478,6 +496,7 @@ fn a_parameter_written_as_a_pattern_is_given_by_position_and_takes_no_default() 
             }
             // With a default, it is refused.
             let defaulted = built(&format!("{header} = {value}")) + &main("f()");
+            let defaulted = format!("{}{defaulted}", uses(&defaulted));
             let errors = refused(&defaulted);
             assert_eq!(errors.len(), 1, "{errors:?} for\n{defaulted}");
             assert!(errors[0].contains("default"), "{errors:?}");
@@ -651,6 +670,7 @@ fn each_mistake_in_a_call_of_a_function_with_pattern_parameters_is_one_error_tha
             "fn f({}) -> i32 {{ {sum} }}\n\nfn main() ! console, alloc {{\n",
             declared.join(", ")
         );
+        let head = format!("{}{head}", uses(&head));
         let line = head.matches('\n').count() + 1;
         let mut args: Vec<String> = case.params.iter().map(Param::value).collect();
         let (wanted, at) = match case.mistake {

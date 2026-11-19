@@ -70,7 +70,9 @@ fn errors(source: &str) -> Vec<Error> {
 }
 
 /// `Res` has neither trait, and `Tok` has `Discard` and not `Copy`.
-const TYPES: &str = "struct Res {
+const TYPES: &str = "use std.bits (u64)
+
+struct Res {
   n: u64
 }
 
@@ -773,7 +775,9 @@ fn a_value_without_discard_is_refused_exactly_where_a_path_drops_it_or_takes_it_
 // What the issue says, as it says it.
 
 fn a_function_that_forgets_a_value_without_discard_is_one_error_at_the_value() {
-    let head = "struct Res {
+    let head = "use std.bits (u64)
+
+struct Res {
   n: u64
 }
 
@@ -792,7 +796,9 @@ fn forget(";
 }
 
 /// The types and the functions the examples of the page use.
-const PAGE: &str = "struct Transaction {
+const PAGE: &str = "use std.bits (u64)
+
+struct Transaction {
   id: u64
 }
 
@@ -936,7 +942,9 @@ fn a_value_that_is_made_and_not_used_is_dropped() {
 }
 
 /// The types and functions the probes of a review use.
-const PARTS: &str = "struct Tx {
+const PARTS: &str = "use std.bits (u64)
+
+struct Tx {
   id: u64
 }
 

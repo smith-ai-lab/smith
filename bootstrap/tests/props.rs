@@ -1,6 +1,7 @@
 //! Properties of the compiler, checked in-process on generated programs.
 //! Each takes what it expects from the generator that built its input.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -218,6 +219,42 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
+/// The names of the library a program imports, by module.
+type Uses = BTreeMap<String, BTreeSet<String>>;
+
+/// The program with `names`, each as its module and the name, added to the
+/// `use` lines it begins with, which stay sorted as the formatter sorts them.
+fn with_names(source: &[u8], names: &[(&str, &str)]) -> Vec<u8> {
+    let mut uses = Uses::new();
+    let mut end = 0;
+    for line in source.split_inclusive(|b| *b == b'\n') {
+        let text = std::str::from_utf8(line).unwrap_or("").trim();
+        if let Some((module, held)) = text.strip_prefix("use ").and_then(|t| t.split_once(" (")) {
+            let held = held.trim_end_matches(')');
+            uses.entry(module.to_string())
+                .or_default()
+                .extend(held.split(", ").map(str::to_string));
+        } else if !text.is_empty() {
+            break;
+        }
+        end += line.len();
+    }
+    for (module, name) in names {
+        uses.entry(module.to_string())
+            .or_default()
+            .insert(name.to_string());
+    }
+    let mut out = String::new();
+    for (module, held) in &uses {
+        let held: Vec<&str> = held.iter().map(String::as_str).collect();
+        out.push_str(&format!("use {module} ({})\n", held.join(", ")));
+    }
+    out.push('\n');
+    let mut out = out.into_bytes();
+    out.extend_from_slice(&source[end..]);
+    out
+}
+
 fn the_shrinker_gives_the_smallest_failing_input() {
     // Known to fail: some program prints an `é`.
     let prints_no_e = |case: &Case| {
@@ -300,7 +337,11 @@ fn program_and_unreached(g: &mut Gen) -> (Case, &'static str) {
 fn a_function_main_does_not_reach_is_parsed_and_not_checked() {
     generate::check(12, 121, program_and_unreached, |(case, unreached)| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
-        let mut text = String::from_utf8(case.source.clone()).unwrap();
+        let source = with_names(
+            &case.source,
+            &[("std.console", "console"), ("std.console", "print")],
+        );
+        let mut text = String::from_utf8(source).unwrap();
         text.push_str("\n\n");
         // The program may hold a definition named `unused` already.
         let renamed = unreached
@@ -478,7 +519,11 @@ fn a_var_a_lambda_assigns_holds_what_the_calls_give_however_the_function_calls_i
 /// the calls inside it, so the `k` of `outer` is what it was before the loop.
 fn a_var_a_function_called_in_place_has_the_value_it_had_when_a_loop_around_the_call_runs_no_round()
 {
-    let source = r#"fn inner(n: u32, body: fn(u32)) ! diverge {
+    let source = r#"use std.bits (u32)
+use std.console (console, print)
+use std.int (wrapping_add)
+
+fn inner(n: u32, body: fn(u32)) ! diverge {
   var k: u32 = 0
   loop {
     if k == n { break }
@@ -672,11 +717,11 @@ fn every_placed_mistake_about_numbers_is_one_error_at_its_place() {
 /// numbers its unreached functions use, and the prelude's implementations
 /// for them add nothing.
 fn a_program_that_holds_no_number_builds_to_the_same_bytes_whatever_numbers_it_defines() {
-    const UNREACHED: &str = "fn spare(a: u8, b: u8) -> bool { a < b }\n\
-        fn more(a: i64) -> str ! alloc { \"{wrapping_add(a, 1)}\" }\n";
+    const UNREACHED: &str = "fn spare(a: Byte, b: Byte) -> bool { a < b }\n\
+        fn more(a: Int) -> str ! alloc { \"{wrapping_add(a, 1)}\" }\n";
     generate::check(72, 100, programs::program, |case| {
         let program = lower(&case.source).unwrap_or_else(|e| panic!("{e:?}"));
-        let mut with = case.source.clone();
+        let mut with = with_names(&case.source, &[("std.int", "wrapping_add")]);
         with.extend_from_slice(b"\n");
         with.extend_from_slice(UNREACHED.as_bytes());
         assert_eq!(lower(&with), Ok(program), "{case:?}");
@@ -919,6 +964,10 @@ fn every_input_gives_an_executable_or_an_error_with_a_place() {
     });
 }
 
+/// What the programs that are written here begin with: the names of the
+/// library a program that prints uses.
+const USES: &str = "use std.console (console, print)\n\n";
+
 /// The files that come before the target seam.
 const BEFORE_THE_SEAM: &[(&str, &str)] = &[
     ("diag.rs", include_str!("../src/diag.rs")),
@@ -1042,7 +1091,7 @@ const OPEN_BEFORE_STRING: &[&str] = &["{", "{x + "];
 /// along with what each error must mention. It also holds a mistake for the
 /// checker, if `main` lacks `console`, which must not be reported.
 fn file_with_token_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
-    let mut source = String::new();
+    let mut source = String::from(USES);
     let mut expected = Vec::new();
     source.push_str(g.pick(&["fn main() ! console {", "fn main() {"]));
     source.push_str(g.pick(&[" ", "\n  ", "\n\t"]));
@@ -1147,7 +1196,7 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
         ),
     ];
     {
-        let mut source = String::new();
+        let mut source = String::from(USES);
         let mut expected = Vec::new();
         let items = g.below(3);
         let main_at = g.below(items + 1);
@@ -1189,7 +1238,8 @@ fn file_with_syntax_errors(g: &mut Gen) -> (String, Vec<(Pos, &'static str)>) {
 /// give.
 fn file_with_check_errors(g: &mut Gen) -> (String, Vec<(Pos, String)>) {
     loop {
-        let mut source = String::from("fn main()");
+        let mut source = String::from(USES);
+        source.push_str("fn main()");
         let mut expected = Vec::new();
         let mut listed: Vec<&str> = Vec::new();
         let mut unknown = false;
@@ -1285,7 +1335,7 @@ fn every_error_of_the_checker_is_reported_once_in_order() {
 fn file_with_a_mark(g: &mut Gen) -> (String, usize) {
     let blank = *g.pick(&["", "\n", "\n\n\n\n\n\n\n\n\n\n"]);
     let indent = *g.pick(&["", "  ", "\t", " \t "]);
-    let mut source = format!("fn main() ! console {{{blank}\n{indent}print(\"");
+    let mut source = format!("{USES}fn main() ! console {{{blank}\n{indent}print(\"");
     let mut places = indent.len() + "print(\"".len();
     for _ in 0..g.below(8) {
         let (written, _, width) = g.pick(PIECES);
@@ -1317,6 +1367,7 @@ fn an_error_shows_its_line_with_a_mark_under_its_column() {
 
 fn a_mistake_in_the_text_hides_every_later_stage() {
     let parts: &[&[u8]] = &[
+        USES.as_bytes(),
         b"fn main() {",
         b"\r",
         b"\n  print(\"\\q",

@@ -26,12 +26,12 @@ pub struct Int {
 
 pub const INTS: &[Int] = &[
     Int::new("i32", 32, true),
-    Int::new("u8", 8, false),
+    Int::new("Byte", 8, false),
     Int::new("i8", 8, true),
     Int::new("u16", 16, false),
     Int::new("i16", 16, true),
     Int::new("u32", 32, false),
-    Int::new("i64", 64, true),
+    Int::new("Int", 64, true),
     Int::new("u64", 64, false),
 ];
 
@@ -61,6 +61,192 @@ impl Int {
         let size = 1i128 << self.bits;
         (value - self.min()).rem_euclid(size) + self.min()
     }
+}
+
+/// The names of the standard library, by the module that exports each.
+const STD: &[(&str, &[&str])] = &[
+    (
+        "std.ascii",
+        &["is_digit", "is_hex_digit", "is_letter", "is_space"],
+    ),
+    (
+        "std.bits",
+        &[
+            "bit_and",
+            "bit_not",
+            "bit_or",
+            "bit_xor",
+            "i16",
+            "i32",
+            "i8",
+            "shift_left",
+            "shift_right",
+            "u16",
+            "u32",
+            "u64",
+        ],
+    ),
+    ("std.console", &["console", "print"]),
+    ("std.fmt", &["binary", "hex"]),
+    (
+        "std.int",
+        &[
+            "checked_add",
+            "checked_mul",
+            "checked_narrow",
+            "checked_sub",
+            "narrow",
+            "saturating_add",
+            "saturating_mul",
+            "saturating_narrow",
+            "saturating_sub",
+            "wrapping_add",
+            "wrapping_mul",
+            "wrapping_narrow",
+            "wrapping_sub",
+        ],
+    ),
+    ("std.list", &["copy", "push"]),
+    ("std.utf8", &["Utf8Error", "utf8"]),
+];
+
+/// The names a program of Smith writes as code, a string's braces included,
+/// and not the text of a string, a comment, or a name after a `.`, and the
+/// names it defines, which are not the names of the library it may write.
+fn names_written(src: &str) -> (Vec<String>, Vec<String>) {
+    let chars: Vec<char> = src.chars().collect();
+    let mut names = Vec::new();
+    let mut defined = Vec::new();
+    // What is open: a string (`false`) or the braces in one (`true`), and a
+    // block in those braces, which is a `Some(false)` kept apart below.
+    let mut open: Vec<bool> = Vec::new();
+    // How many blocks in braces are open inside each of the braces in `open`.
+    let mut blocks: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if open.last() == Some(&false) {
+            match c {
+                '\\' => i += 1,
+                '"' => {
+                    open.pop();
+                }
+                '{' if chars.get(i + 1) == Some(&'{') => i += 1,
+                '{' => {
+                    open.push(true);
+                    blocks.push(0);
+                }
+                _ => {}
+            }
+            i += 1;
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '"' {
+            open.push(false);
+            i += 1;
+        } else if c == '\'' {
+            // A character, as `'a'` or `'\n'`, which may hold a quote.
+            i += if chars.get(i + 1) == Some(&'\\') { 4 } else { 3 };
+        } else if c == '{' && open.last() == Some(&true) {
+            *blocks.last_mut().unwrap() += 1;
+            i += 1;
+        } else if c == '}' && open.last() == Some(&true) {
+            if blocks.last() == Some(&0) {
+                open.pop();
+                blocks.pop();
+            } else {
+                *blocks.last_mut().unwrap() -= 1;
+            }
+            i += 1;
+        } else if c.is_alphabetic() || c == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if matches!(word.as_str(), "fn" | "struct" | "enum" | "trait") {
+                let mut j = i;
+                while chars.get(j) == Some(&' ') {
+                    j += 1;
+                }
+                if chars.get(j).is_some_and(|c| c.is_alphabetic() || *c == '_') {
+                    let from = j;
+                    while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                        j += 1;
+                    }
+                    defined.push(chars[from..j].iter().collect());
+                    i = j;
+                    continue;
+                }
+            }
+            if start == 0 || chars[start - 1] != '.' {
+                names.push(word);
+            }
+        } else if c.is_ascii_digit() {
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    (names, defined)
+}
+
+/// The names of the standard library that a program writes, by the module
+/// that exports each.
+fn needed(program: &str) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let (written, defined) = names_written(program);
+    let mut found = std::collections::BTreeMap::new();
+    for (module, names) in STD {
+        for name in names
+            .iter()
+            .filter(|n| written.iter().any(|w| w == *n) && !defined.iter().any(|d| d == *n))
+        {
+            let held: &mut std::collections::BTreeSet<String> =
+                found.entry(module.to_string()).or_default();
+            held.insert(name.to_string());
+        }
+    }
+    found
+}
+
+/// The `use` lines that a program needs for the names of the standard library
+/// it writes, one for each module, modules and names in order, and a blank
+/// line after them: what goes before the program. Nothing, if it needs none.
+pub fn header_for(program: &str) -> String {
+    written_uses(needed(program))
+}
+
+fn written_uses(uses: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>) -> String {
+    let mut header = String::new();
+    for (module, names) in uses {
+        let names: Vec<String> = names.into_iter().collect();
+        header.push_str(&format!("use {module} ({})\n", names.join(", ")));
+    }
+    if !header.is_empty() {
+        header.push('\n');
+    }
+    header
+}
+
+/// The program with the `use` lines that it needs: those it starts with, and
+/// those for the names of the standard library it writes and does not import.
+pub fn with_header(program: String) -> String {
+    let mut uses = needed(&program);
+    let mut rest = program.as_str();
+    while let Some(line) = rest.strip_prefix("use ") {
+        let end = line.find('\n').unwrap_or(line.len());
+        let (module, names) = line[..end].split_once(" (").expect("a use of names");
+        let held = uses.entry(module.to_string()).or_default();
+        for name in names.trim_end_matches(')').split(", ") {
+            held.insert(name.to_string());
+        }
+        rest = line[(end + 1).min(line.len())..].trim_start_matches('\n');
+    }
+    written_uses(uses) + rest
 }
 
 /// A generated program: its source, what it prints, the values it binds,
@@ -320,10 +506,10 @@ fn line(g: &mut Gen, vars: &[Var], at: usize) -> Line {
         }
         7 => {
             let function = *g.pick(&["shift_left", "shift_right"]);
-            // The amount is a literal, or a `u8` the program binds that is
+            // The amount is a literal, or a `Byte` the program binds that is
             // below the number of bits.
             let named: Vec<&Var> = (vars.iter())
-                .filter(|v| v.ty.name == "u8" && v.value < i128::from(first.ty.bits))
+                .filter(|v| v.ty.name == "Byte" && v.value < i128::from(first.ty.bits))
                 .collect();
             let (by, amount) = if !named.is_empty() && g.one_in(2) {
                 let v = *g.pick(&named);
@@ -441,7 +627,7 @@ fn write(
         let spelling = spelled(g, v.value);
         if g.one_in(2) {
             bindings.push_str(&format!("  {} = {spelling}\n", v.name));
-            if v.ty.name != "i64" {
+            if v.ty.name != "Int" {
                 bindings.push_str(&format!("  id_{}({})\n", v.ty.name, v.name));
                 if !taken.contains(&v.ty) {
                     taken.push(v.ty);
@@ -492,7 +678,13 @@ fn write(
         text.push_str(&format!("{after}\n"));
     }
     text.push_str("}\n");
-    (text, expected)
+    // The `use` lines go before what is written, and move what is expected
+    // down by their lines.
+    let header = header_for(&text);
+    if let Some(e) = &mut expected {
+        e.at.line += header.matches('\n').count();
+    }
+    (header + &text, expected)
 }
 
 /// A program that holds, prints, compares, and does arithmetic on whole
@@ -603,7 +795,7 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
             let function = *g.pick(&["shift_left", "shift_right"]);
             fix = Some("`requires`".to_string());
             (
-                format!("amount: u8 = {n}\n  x: {} = 1\n  print(\"{{", ty.name),
+                format!("amount: Byte = {n}\n  x: {} = 1\n  print(\"{{", ty.name),
                 format!("{function}(x, amount)}}\")"),
                 format!("`amount < {}`", ty.bits),
             )
@@ -712,6 +904,7 @@ pub fn quiet(g: &mut Gen) -> NumberCase {
         stdout.push_str(&format!("{printed}\n"));
     }
     source.push_str("}\n");
+    let source = header_for(&source) + &source;
     NumberCase {
         source,
         stdout: stdout.into_bytes(),

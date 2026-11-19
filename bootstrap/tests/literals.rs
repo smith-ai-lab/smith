@@ -10,7 +10,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int, value};
+use crate::numbers::{INTS, Int, value, with_header};
 
 pub const ONCE: &[Test] = &[
     (
@@ -73,7 +73,9 @@ fn refused(source: &str) -> Vec<String> {
 }
 
 fn a_match_on_a_character_names_a_digit_an_open_and_the_rest() {
-    let source = "fn kind(b: u8) -> str {
+    let source = "use std.console (console, print)
+
+fn kind(b: Byte) -> str {
   match b {
     '(' { \"open\" }
     ')' { \"close\" }
@@ -109,10 +111,10 @@ fn a_character_literal_is_its_code_in_every_type_it_fits() {
         150,
         |g| (ascii(g), *g.pick(INTS)),
         |((written, code), ty): &((String, i128), Int)| {
-            let source = format!(
+            let source = with_header(format!(
                 "fn main() ! console, alloc {{\n  x: {} = {written}\n  print(\"{{x}}\")\n}}\n",
                 ty.name
-            );
+            ));
             assert_eq!(prints(&source), [code.to_string()], "for {source}");
         },
     );
@@ -121,10 +123,10 @@ fn a_character_literal_is_its_code_in_every_type_it_fits() {
 fn the_escapes_of_a_character_are_39_92_10_and_9() {
     for (written, code) in [("'\\''", 39), ("'\\\\'", 92), ("'\\n'", 10), ("'\\t'", 9)] {
         for ty in INTS {
-            let source = format!(
+            let source = with_header(format!(
                 "fn main() ! console, alloc {{\n  x: {} = {written}\n  print(\"{{x}}\")\n}}\n",
                 ty.name
-            );
+            ));
             assert_eq!(prints(&source), [code.to_string()], "for {source}");
         }
     }
@@ -139,10 +141,10 @@ fn a_character_outside_ascii_is_refused_as_a_u8_and_is_its_code_point_as_a_wider
             (c, *g.pick(INTS))
         },
         |(c, ty): &(char, Int)| {
-            let source = format!(
+            let source = with_header(format!(
                 "fn main() ! console, alloc {{\n  x: {} = '{c}'\n  print(\"{{x}}\")\n}}\n",
                 ty.name
-            );
+            ));
             let code = *c as i128;
             if ty.bits > 8 && code <= ty.max() {
                 assert_eq!(prints(&source), [code.to_string()], "for {source}");
@@ -211,8 +213,8 @@ fn numbers(g: &mut Gen) -> Numbers {
 fn a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it() {
     generate::check(13, 120, numbers, |n: &Numbers| {
         let t = n.ty.name;
-        let mut by_match = format!("fn f(b: {t}) -> i64 {{\n  match b {{\n");
-        let mut by_if = format!("fn f(b: {t}) -> i64 {{\n  ");
+        let mut by_match = format!("fn f(b: {t}) -> Int {{\n  match b {{\n");
+        let mut by_if = format!("fn f(b: {t}) -> Int {{\n  ");
         for ((arm, given), spelled) in n.arms.iter().zip(&n.spelled) {
             by_match.push_str(&format!("    {spelled} {{ {given} }}\n"));
             by_if.push_str(&format!("if b == {arm} {{ {given} }} else "));
@@ -230,8 +232,8 @@ fn a_match_on_a_whole_number_takes_the_block_of_the_literal_that_equals_it() {
                 at.map_or(n.rest, |(_, given)| *given).to_string()
             })
             .collect();
-        assert_eq!(prints(&format!("{by_match}{main}")), expected, "for {n:?}");
-        assert_eq!(prints(&format!("{by_if}{main}")), expected, "for {n:?}");
+        assert_eq!(prints(&with_header(format!("{by_match}{main}"))), expected, "for {n:?}");
+        assert_eq!(prints(&with_header(format!("{by_if}{main}"))), expected, "for {n:?}");
     });
 }
 
@@ -254,7 +256,7 @@ fn a_match_on_text_takes_the_block_of_the_literal_that_equals_it() {
             (arms, WORDS.to_vec())
         },
         |(arms, subjects): &(Vec<(&str, i64)>, Vec<&str>)| {
-            let mut source = String::from("fn f(s: str) -> i64 {\n  match s {\n");
+            let mut source = String::from("fn f(s: str) -> Int {\n  match s {\n");
             for (w, given) in arms {
                 source.push_str(&format!("    \"{w}\" {{ {given} }}\n"));
             }
@@ -263,6 +265,7 @@ fn a_match_on_text_takes_the_block_of_the_literal_that_equals_it() {
                 source.push_str(&format!("  print(\"{{f(\"{s}\")}}\")\n"));
             }
             source.push_str("}\n");
+            let source = with_header(source);
             let expected: Vec<String> = (subjects.iter())
                 .map(|s| {
                     let at = arms.iter().find(|(m, _)| m == s);
@@ -280,7 +283,7 @@ fn domain() -> std::ops::Range<u8> {
     0..5
 }
 
-/// A pattern for a value of a type `u8`, `Option[u8]`, or a pair: a literal
+/// A pattern for a value of a type `Byte`, `Option[Byte]`, or a pair: a literal
 /// or a bare name.
 #[derive(Clone, Debug)]
 enum Part {
@@ -346,7 +349,7 @@ fn a_literal_in_a_case_and_in_a_tuple_is_matched_by_the_first_pattern_that_match
             (rows, cases)
         },
         |(rows, cases): &Patterns| {
-            let mut source = String::from("fn pair(a: u8, b: u8) -> i64 {\n  match (a, b) {\n");
+            let mut source = String::from("fn pair(a: Byte, b: Byte) -> Int {\n  match (a, b) {\n");
             for (x, y, given) in rows {
                 source.push_str(&format!(
                     "    ({}, {}) {{ {given} }}\n",
@@ -361,7 +364,7 @@ fn a_literal_in_a_case_and_in_a_tuple_is_matched_by_the_first_pattern_that_match
                 source.push_str("    (p, q) { 100 }\n");
             }
             source.push_str("  }\n}\n\n");
-            source.push_str("fn one(found: Option[u8]) -> i64 {\n  match found {\n");
+            source.push_str("fn one(found: Option[Byte]) -> Int {\n  match found {\n");
             for (x, given) in cases {
                 source.push_str(&format!("    .some({}) {{ {given} }}\n", x.written("n")));
             }
@@ -385,18 +388,19 @@ fn a_literal_in_a_case_and_in_a_tuple_is_matched_by_the_first_pattern_that_match
             }
             source.push_str("  print(\"{one(.none)}\")\n}\n");
             expected.push("200".to_string());
+            let source = with_header(source);
             assert_eq!(prints(&source), expected, "for {source}");
         },
     );
 }
 
 fn a_match_on_whole_numbers_or_text_must_end_with_a_bare_name_and_repeat_nothing() {
-    for (ty, one, two) in [("u8", "1", "2"), ("str", "\"a\"", "\"b\"")] {
+    for (ty, one, two) in [("Byte", "1", "2"), ("str", "\"a\"", "\"b\"")] {
         let wrap = |arms: &str| {
-            format!(
-                "fn f(b: {ty}) -> i64 {{\n  match b {{\n{arms}  }}\n}}\n\n\
+            with_header(format!(
+                "fn f(b: {ty}) -> Int {{\n  match b {{\n{arms}  }}\n}}\n\n\
                  fn main() ! console, alloc {{\n  print(\"{{f({one})}}\")\n}}\n"
-            )
+            ))
         };
         let open = wrap(&format!("    {one} {{ 1 }}\n    {two} {{ 2 }}\n"));
         let errors = refused(&open);
@@ -425,12 +429,13 @@ fn a_match_on_whole_numbers_or_text_must_end_with_a_bare_name_and_repeat_nothing
 
 fn a_match_on_whole_numbers_is_one_switch_however_many_literals_it_has() {
     for count in [1, 2, 7, 40] {
-        let mut source = String::from("fn f(b: u8) -> i64 {\n  match b {\n");
+        let mut source = String::from("fn f(b: Byte) -> Int {\n  match b {\n");
         for i in 0..count {
             source.push_str(&format!("    {} {{ {i} }}\n", i * 3));
         }
         source.push_str("    other { 1000 }\n  }\n}\n\nfn main() ! console {\n");
-        source.push_str("  x: u8 = 3\n  if f(x) == 1 { print(\"yes\") }\n}\n");
+        source.push_str("  x: Byte = 3\n  if f(x) == 1 { print(\"yes\") }\n}\n");
+        let source = with_header(source);
         let program = lower(source.as_bytes()).expect("compiles");
         let switches: usize = (program.functions.iter().enumerate())
             .filter(|(at, _)| *at != program.main)

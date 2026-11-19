@@ -83,6 +83,9 @@ fn pair(g: &mut Gen) -> Pair {
     }
 }
 
+/// What a module that holds the functions of `items` imports.
+const ITEMS_USES: &str = "use std.bits (i32)\nuse std.int (wrapping_add, wrapping_mul)\n\n";
+
 /// The module `i` of a pair as a file: it exports `f` and `g`, and has a
 /// private function that both modules name alike. Written for one file,
 /// every name has a number after it.
@@ -133,6 +136,16 @@ fn main_text(p: &Pair, form: usize) -> String {
     };
     let x = p.arg;
     let [fa, ga, fb, gb] = names;
+    // The `use` lines, sorted by the path of the module.
+    let mut lines: Vec<(&str, String)> = head
+        .lines()
+        .map(|l| (l.split(' ').nth(1).unwrap_or(""), l.to_string()))
+        .collect();
+    lines.push(("std.bits", "use std.bits (i32)".to_string()));
+    lines.push(("std.console", "use std.console (console, print)".to_string()));
+    lines.push(("std.int", "use std.int (wrapping_add)".to_string()));
+    lines.sort();
+    let head: String = lines.iter().map(|(_, l)| format!("{l}\n")).collect();
     format!(
         "{head}\nfn helper(n: i32) -> i32 {{ wrapping_add(n, 7) }}\n\n\
          fn main() ! console, alloc {{\n  \
@@ -144,7 +157,7 @@ fn main_text(p: &Pair, form: usize) -> String {
 fn one_file(p: &Pair) -> String {
     let x = p.arg;
     format!(
-        "{}{}fn helper(n: i32) -> i32 {{ wrapping_add(n, 7) }}\n\n\
+        "use std.bits (i32)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\n\n{}{}fn helper(n: i32) -> i32 {{ wrapping_add(n, 7) }}\n\n\
          fn main() ! console, alloc {{\n  \
          print(\"{{f0({x})}} {{g0({x})}} {{f1({x})}} {{g1({x})}} {{helper({x})}}\")\n}}\n",
         items(p, 0, false),
@@ -158,7 +171,7 @@ fn one_file(p: &Pair) -> String {
 /// under different names in one file.
 fn aliases_two_modules_that_export_one_name_give_what_two_names_give_in_one_file() {
     generate::check(20, 40, pair, |p| {
-        let modules: Vec<String> = (0..2).map(|i| items(p, i, true)).collect();
+        let modules: Vec<String> = (0..2).map(|i| format!("{ITEMS_USES}{}", items(p, i, true))).collect();
         let files: Vec<(&str, &str)> = p
             .modules
             .iter()
@@ -180,7 +193,7 @@ fn aliases_two_modules_that_export_one_name_give_what_two_names_give_in_one_file
 /// functions.
 fn aliases_every_way_to_write_a_name_of_a_module_builds_the_same_executable() {
     generate::check(21, 12, pair, |p| {
-        let modules: Vec<String> = (0..2).map(|i| items(p, i, true)).collect();
+        let modules: Vec<String> = (0..2).map(|i| format!("{ITEMS_USES}{}", items(p, i, true))).collect();
         let files = |name: &str| {
             p.modules
                 .iter()
@@ -213,7 +226,8 @@ fn aliases_every_way_to_write_a_name_of_a_module_builds_the_same_executable() {
 /// name.
 fn shapes(k: i32) -> String {
     format!(
-        "pub struct S {{\n  pub w: i32\n}}\n\n\
+        "use std.bits (i32)\nuse std.int (wrapping_add)\n\n\
+         pub struct S {{\n  pub w: i32\n}}\n\n\
          pub fn make(w: i32) -> S {{ S(w: w) }}\n\n\
          pub trait TA[X] {{\n  fn size(x: X) -> i32\n}}\n\n\
          impl TA[S] {{\n  fn size(x: S) -> i32 {{ wrapping_add(x.w, {k}) }}\n}}\n"
@@ -222,7 +236,7 @@ fn shapes(k: i32) -> String {
 
 fn solids(k: i32) -> String {
     format!(
-        "use shapes (S)\n\n\
+        "use shapes (S)\nuse std.bits (i32)\nuse std.int (wrapping_mul)\n\n\
          pub trait TB[X] {{\n  fn size(x: X) -> i32\n}}\n\n\
          impl TB[S] {{\n  fn size(x: S) -> i32 {{ wrapping_mul(x.w, {k}) }}\n}}\n"
     )
@@ -258,14 +272,15 @@ fn aliases_a_function_two_traits_share_is_written_with_its_trait() {
         let list = if t.lists { ", size" } else { "" };
         let x = t.arg;
         let main = format!(
-            "use shapes (S, TA, make{list})\nuse solids (TB)\n\n\
+            "use shapes (S, TA, make{list})\nuse solids (TB)\nuse std.console (console, print)\n\n\
              fn main() ! console, alloc {{\n  \
              print(\"{{TA.size(make({x}))}} {{TB.size(make({x}))}}\")\n}}\n"
         );
         let got = lower_project(main.as_bytes(), &files)
             .unwrap_or_else(|e| panic!("{e:?}\n{main}\n{files:?}"));
         let one = format!(
-            "struct S {{\n  w: i32\n}}\n\n\
+            "use std.bits (i32)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\n\n\
+             struct S {{\n  w: i32\n}}\n\n\
              trait TA[X] {{\n  fn size_a(x: X) -> i32\n}}\n\n\
              impl TA[S] {{\n  fn size_a(x: S) -> i32 {{ wrapping_add(x.w, {ka}) }}\n}}\n\n\
              trait TB[X] {{\n  fn size_b(x: X) -> i32\n}}\n\n\
@@ -279,11 +294,13 @@ fn aliases_a_function_two_traits_share_is_written_with_its_trait() {
     });
 }
 
-const UTIL_A: &str = "pub fn f(n: i32) -> i32 { wrapping_add(n, 1) }\n\n\
+const UTIL_A: &str = "use std.bits (i32)\nuse std.int (wrapping_add)\n\n\
+    pub fn f(n: i32) -> i32 { wrapping_add(n, 1) }\n\n\
     pub fn h(n: i32) -> i32 { n }\n\n\
     fn secret(n: i32) -> i32 { n }\n";
 
-const UTIL_B: &str = "pub fn f(n: i32) -> i32 { wrapping_mul(n, 2) }\n";
+const UTIL_B: &str = "use std.bits (i32)\nuse std.int (wrapping_mul)\n\n\
+    pub fn f(n: i32) -> i32 { wrapping_mul(n, 2) }\n";
 
 /// One mistake, and the error it must give.
 #[derive(Debug)]
@@ -303,31 +320,31 @@ fn placed(m: &Mistake) -> (String, Pos, &'static str) {
         // An alias that the file defines.
         0 => (
             format!("{pad}use geo.util (f as "),
-            format!("g)\n\nfn g() -> i32 {{ 1 }}\n\n{}", main("  x = 1\n")),
+            format!("g)\nuse std.bits (i32)\nuse std.console (console, print)\n\nfn g() -> i32 {{ 1 }}\n\n{}", main("  x = 1\n")),
             "`g`",
         ),
         // An alias that another listed name has.
         1 => (
-            format!("{pad}use geo.util (f, h)\nuse ui.util (f as "),
+            format!("{pad}use geo.util (f, h)\nuse std.console (console, print)\nuse ui.util (f as "),
             format!("h)\n\n{}", main("  x = 1\n")),
             "`h`",
         ),
         // Two modules that are written alike.
         2 => (
-            format!("{pad}use geo.util\nuse ui."),
+            format!("{pad}use geo.util\nuse std.console (console, print)\nuse ui."),
             format!("util\n\n{}", main("  x = 1\n")),
             "`util`",
         ),
         // A name written with a module that is not imported.
         3 => (
-            format!("{pad}use geo.util (f)\n\nfn main() ! console, alloc {{\n  x = "),
+            format!("{pad}use geo.util (f)\nuse std.console (console, print)\n\nfn main() ! console, alloc {{\n  x = "),
             "ui.f(1)\n  print(\"{x}\")\n}\n".to_string(),
             "`ui`",
         ),
         // A function of two traits, written without the trait.
         4 => (
             format!(
-                "{pad}use shapes (S, TA, make, size)\nuse solids (TB)\n\n\
+                "{pad}use shapes (S, TA, make, size)\nuse solids (TB)\nuse std.console (console, print)\n\n\
                  fn main() ! console, alloc {{\n  x = "
             ),
             "size(make(1))\n  print(\"{x}\")\n}\n".to_string(),
@@ -335,19 +352,19 @@ fn placed(m: &Mistake) -> (String, Pos, &'static str) {
         ),
         // A name the module keeps private, written with the module.
         5 => (
-            format!("{pad}use geo.util\n\nfn main() ! console, alloc {{\n  x = util."),
+            format!("{pad}use geo.util\nuse std.console (console, print)\n\nfn main() ! console, alloc {{\n  x = util."),
             "secret(1)\n  print(\"{x}\")\n}\n".to_string(),
             "`secret`",
         ),
         // A name the module does not have, written with the module.
         6 => (
-            format!("{pad}use geo.util\n\nfn main() ! console, alloc {{\n  x = util."),
+            format!("{pad}use geo.util\nuse std.console (console, print)\n\nfn main() ! console, alloc {{\n  x = util."),
             "nothing(1)\n  print(\"{x}\")\n}\n".to_string(),
             "`nothing`",
         ),
         // A module written as a name that is listed.
         _ => (
-            format!("{pad}use ui.util (f)\nuse geo.util as "),
+            format!("{pad}use ui.util (f)\nuse std.console (console, print)\nuse geo.util as "),
             format!("f\n\n{}", main("  x = 1\n")),
             "`f`",
         ),
@@ -394,34 +411,36 @@ fn aliases_each_mistake_is_one_error_at_its_place() {
 /// The examples of the pages, with the names of the pages, over whole
 /// numbers.
 fn aliases_the_examples_of_the_pages_give_what_the_pages_say() {
-    let transaction = "pub fn begin(n: i32) -> i32 { wrapping_add(n, 1) }\n\n\
+    let transaction = "use std.bits (i32)\nuse std.int (wrapping_add, wrapping_mul)\n\n\
+        pub fn begin(n: i32) -> i32 { wrapping_add(n, 1) }\n\n\
         pub fn commit(n: i32) -> i32 { wrapping_mul(n, 3) }\n";
-    let animation = "pub fn begin(n: i32) -> i32 { wrapping_add(n, 100) }\n";
+    let animation = "use std.bits (i32)\nuse std.int (wrapping_add)\n\n\
+        pub fn begin(n: i32) -> i32 { wrapping_add(n, 100) }\n";
     let files = [("db.transaction", transaction), ("ui.animation", animation)];
     let programs = [
         // `as` on a name.
         (
-            "use db.transaction (begin)\nuse ui.animation (begin as start)\n\n\
+            "use db.transaction (begin)\nuse std.console (console, print)\nuse ui.animation (begin as start)\n\n\
              fn main() ! console, alloc {\n  t = begin(1)\n  a = start(1)\n  print(\"{t} {a}\")\n}\n",
             "2 101",
         ),
         // A module imported, and a name written with it.
         (
-            "use db.transaction\n\n\
+            "use db.transaction\nuse std.console (console, print)\n\n\
              fn main() ! console, alloc {\n  t = transaction.begin(1)\n  \
              c = transaction.commit(t)\n  print(\"{t} {c}\")\n}\n",
             "2 6",
         ),
         // Two modules that share a name, each written with its module.
         (
-            "use db.transaction\nuse ui.animation as animation\n\n\
+            "use db.transaction\nuse std.console (console, print)\nuse ui.animation as animation\n\n\
              fn main() ! console, alloc {\n  t = transaction.begin(1)\n  \
              a = animation.begin(1)\n  print(\"{t} {a}\")\n}\n",
             "2 101",
         ),
         // A module under another name.
         (
-            "use db.transaction\nuse ui.animation as anim\n\n\
+            "use db.transaction\nuse std.console (console, print)\nuse ui.animation as anim\n\n\
              fn main() ! console, alloc {\n  t = transaction.begin(1)\n  \
              a = anim.begin(1)\n  print(\"{t} {a}\")\n}\n",
             "2 101",

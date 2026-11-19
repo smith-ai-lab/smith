@@ -236,11 +236,11 @@ fn a_program_that_prints_asks_its_host_for_the_console_and_no_other_does() {
         return;
     }
     let sources = [
-        ("prints", "fn main() ! console { print(\"hi\") }\n", true),
+        ("prints", "use std.console (console, print)\n\nfn main() ! console { print(\"hi\") }\n", true),
         ("is_empty", "fn main() {\n}\n", false),
         (
             "builds_text",
-            "fn main() ! alloc {\n  xs: List[u64] = [1, 2, 3]\n  ys = push(xs, 4)\n}\n",
+            "use std.bits (u64)\nuse std.list (push)\n\nfn main() ! alloc {\n  xs: List[u64] = [1, 2, 3]\n  ys = push(xs, 4)\n}\n",
             false,
         ),
     ];

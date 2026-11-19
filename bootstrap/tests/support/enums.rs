@@ -997,6 +997,7 @@ impl Writer<'_> {
 
     fn program(&mut self) {
         let m = self.m;
+        self.push("use std.console (console, print)\n\n");
         self.push("struct Cat {\n  name: str\n}\n");
         for def in &m.enums {
             self.push(&format!("\nenum {}", def.name));

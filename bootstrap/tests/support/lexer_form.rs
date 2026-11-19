@@ -17,7 +17,7 @@ fn lexer() -> &'static str {
 /// What a program that lexes each input prints for it. Each input starts with
 /// a line `input`.
 const DRIVER: &str = r#"
-fn show(b: List[u8]) -> str ! alloc {
+fn show(b: List[Byte]) -> str ! alloc {
   var s: str = ""
   loop i in 0..b.size {
     if i == 0 { s = "{b[i]}" } else { s = "{s},{b[i]}" }
@@ -66,8 +66,8 @@ fn main() ! console, alloc {
 pub fn program(texts: &[&[u8]]) -> String {
     let mut out = String::from(lexer());
     out.push_str(DRIVER);
-    out.push_str("\nfn nothing() -> List[u8] ! alloc {\n  []\n}\n");
-    out.push_str("\nfn inputs() -> List[List[u8]] ! alloc {\n  [");
+    out.push_str("\nfn nothing() -> List[Byte] ! alloc {\n  []\n}\n");
+    out.push_str("\nfn inputs() -> List[List[Byte]] ! alloc {\n  [");
     for (i, text) in texts.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
