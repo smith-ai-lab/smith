@@ -25,10 +25,6 @@ pub const ONCE: &[Test] = &[
         "int_and_byte_are_not_imported_and_a_size_is_not_renamed",
         int_and_byte_are_not_imported_and_a_size_is_not_renamed,
     ),
-    (
-        "a_file_that_writes_i64_and_u8_with_no_import_still_builds",
-        a_file_that_writes_i64_and_u8_with_no_import_still_builds,
-    ),
 ];
 
 fn builds(source: &str) -> Result<Vec<u8>, String> {
@@ -95,10 +91,5 @@ fn int_and_byte_are_not_imported_and_a_size_is_not_renamed() {
     let said = errors("use std.bits (u16 as short)\nfn main() { }\n");
     assert!(said.contains("`as`"), "{said}");
     let said = errors("use std.list (u16)\nfn main() { }\n");
-    assert!(said.contains("is in the prelude"), "{said}");
-}
-
-fn a_file_that_writes_i64_and_u8_with_no_import_still_builds() {
-    let source = "fn f(a: i64, b: u8, c: u32) -> i64 { a }\nfn main() { f(1, 2, 3) }\n";
-    assert!(builds(source).is_ok(), "{}", errors(source));
+    assert!(said.contains("has no name `u16`") && said.contains("use std.bits (u16)"), "{said}");
 }
