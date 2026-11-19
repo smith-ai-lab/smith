@@ -2411,19 +2411,43 @@ fn written_name(name: &str) -> &str {
     name.split('@').next().unwrap_or(name)
 }
 
-/// The error for a field that code outside its module reads or assigns.
+/// The error for a field that code outside its module reads or assigns. A
+/// program cannot change a module of the library, so the fix there names the
+/// function of that module that gives the field, as `raw_text` gives `text`,
+/// when it has one.
 fn private_field(def: &crate::parser::Struct, field: &str, at: Pos) -> Error {
-    Error::new(
+    let name = written_name(&def.name);
+    let error = Error::new(
         at,
-        format!(
-            "the field `{field}` of `{}` is private to the module that defines it",
-            written_name(&def.name)
-        ),
-    )
-    .with_fix(format!(
-        "write `pub` before `{field}` where `{}` is defined",
-        written_name(&def.name)
-    ))
+        format!("the field `{field}` of `{name}` is private to the module that defines it"),
+    );
+    if !of_library(def.pos) {
+        return error.with_fix(format!(
+            "write `pub` before `{field}` where `{name}` is defined"
+        ));
+    }
+    // The module that defines the struct writes the function in its source.
+    let gives = LIBRARY_MODULES.iter().find_map(|m| {
+        let source = library_text(m);
+        if !source.contains(&format!("pub struct {name} {{")) {
+            return None;
+        }
+        source.lines().find_map(|line| {
+            let head = line.strip_prefix("pub fn ")?;
+            let (called, rest) = head.split_once('(')?;
+            let own = rest.split_once(')')?.0;
+            let takes = own.split_once(": ").is_some_and(|(_, ty)| ty == name);
+            (called.ends_with(&format!("_{field}")) && takes).then(|| called.to_string())
+        })
+    });
+    match gives {
+        Some(f) => error.with_fix(format!(
+            "read it with `{f}`, which the module that defines `{name}` gives"
+        )),
+        None => error.with_fix(format!(
+            "`{field}` is the module's own, and the module gives no function for it"
+        )),
+    }
 }
 
 /// The errors with a place in a module, given as that module and the place

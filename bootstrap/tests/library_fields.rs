@@ -22,6 +22,10 @@ pub const ONCE: &[Test] = &[
         library_fields_a_program_that_only_holds_the_struct_is_accepted,
     ),
     (
+        "library_fields_the_fix_for_a_private_field_names_what_the_module_gives_in_its_place",
+        library_fields_the_fix_for_a_private_field_names_what_the_module_gives_in_its_place,
+    ),
+    (
         "library_fields_no_program_makes_a_rawjson_from_text_that_is_not_json",
         library_fields_no_program_makes_a_rawjson_from_text_that_is_not_json,
     ),
@@ -164,6 +168,9 @@ fn library_fields_a_private_field_is_refused_when_built_or_read_at_its_place() {
         if !c.build {
             assert!(e.message.contains(field.as_str()), "{e}");
         }
+        // A program cannot change the library, so the fix never says to.
+        let fix = e.fix.as_deref().unwrap_or_default();
+        assert!(!fix.contains("write `pub`"), "{fix} for\n{source}");
     });
 }
 
@@ -192,4 +199,15 @@ fn library_fields_no_program_makes_a_rawjson_from_text_that_is_not_json() {
     };
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].message.contains("RawJson"), "{}", errors[0]);
+}
+
+/// The fix for the field of a `RawJson` names the function that gives it.
+fn library_fields_the_fix_for_a_private_field_names_what_the_module_gives_in_its_place() {
+    let source = "use std.json (RawJson, raw_json)\n\nfn f(s: RawJson) {\n  x = s.text\n}\n\nfn main() ! alloc {\n  match raw_json(\"[]\") {\n    .ok(x) { f(x) }\n    .err(e) { }\n  }\n}\n";
+    let Err(errors) = check(source.as_bytes()) else {
+        panic!("accepted");
+    };
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let fix = errors[0].fix.as_deref().unwrap_or_default();
+    assert!(fix.contains("raw_text"), "{fix}");
 }
