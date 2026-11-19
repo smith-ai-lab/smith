@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 enum S {
   one
   two

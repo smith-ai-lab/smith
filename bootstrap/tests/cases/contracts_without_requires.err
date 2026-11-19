@@ -1,4 +1,4 @@
-contracts_without_requires.smith:4:5: cannot prove that `i + 1 <= 255`, so `i + 1` may not fit `u8`
-  4 |   i + 1
+contracts_without_requires.smith:6:5: cannot prove that `i + 1 <= 255`, so `i + 1` may not fit `Byte`
+  6 |   i + 1
     |     ^
   fix: check the operands first, or use `wrapping_add`, `saturating_add`, or `checked_add`

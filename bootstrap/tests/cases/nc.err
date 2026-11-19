@@ -1,4 +1,4 @@
-nc.smith:1:13: `print` needs the `console` effect, which `main` does not declare
-  1 | fn main() { print("hi") }
+nc.smith:3:13: `print` needs the `console` effect, which `main` does not declare
+  3 | fn main() { print("hi") }
     |             ^
   fix: write `fn main() ! console`

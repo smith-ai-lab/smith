@@ -1,12 +1,15 @@
+use std.bits (u16, u64)
+use std.console (console, print)
+
 struct Cat {
   name: str
-  age: u8
+  age: Byte
 }
 
 enum Pet {
   none
   cat: Cat
-  fish: i64
+  fish: Int
 }
 
 struct Key {

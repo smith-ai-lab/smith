@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 fn pick(first: str, second: str = "default") -> str { second }
 
 fn main() ! console {

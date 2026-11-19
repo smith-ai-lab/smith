@@ -1,3 +1,3 @@
-convert_enum_without.smith:10:15: there is no implementation of `Convert` for `u8` and `Number`, as `without Convert for Number` takes it away
-  10 |   p: Number = convert(n)
+convert_enum_without.smith:12:15: there is no implementation of `Convert` for `Byte` and `Number`, as `without Convert for Number` takes it away
+  12 |   p: Number = convert(n)
      |               ^

@@ -1,4 +1,7 @@
-fn up(x: u32, by: u8) -> u32 {
+use std.bits (shift_left, u32)
+use std.console (console, print)
+
+fn up(x: u32, by: Byte) -> u32 {
   shift_left(x, by)
 }
 

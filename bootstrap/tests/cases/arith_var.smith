@@ -1,4 +1,6 @@
-fn next(i: u8) -> u8 {
+use std.console (console, print)
+
+fn next(i: Byte) -> Byte {
   var v = i
   if v < 255 { v + 1 } else { v }
 }

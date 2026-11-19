@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 struct Name {
   first: str
   last: str

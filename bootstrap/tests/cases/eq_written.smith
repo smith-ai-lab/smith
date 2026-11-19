@@ -1,6 +1,8 @@
+use std.console (console, print)
+
 struct Cat {
   name: str
-  age: i64
+  age: Int
 }
 
 impl Eq[Cat] {

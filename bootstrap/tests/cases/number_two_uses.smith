@@ -1,4 +1,7 @@
-fn byte(n: u8) -> u8 { n }
+use std.bits (i32)
+use std.console (console)
+
+fn byte(n: Byte) -> Byte { n }
 
 fn word(n: i32) -> i32 { n }
 

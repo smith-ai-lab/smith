@@ -1,10 +1,14 @@
+use std.bits (i32, i8)
+use std.console (console, print)
+use std.int (checked_add, saturating_add, wrapping_add)
+
 fn main() ! console, alloc {
   a: i32 = 40
-  b: u8 = 250
+  b: Byte = 250
   print("{a} {wrapping_add(b, 10)} {saturating_add(b, 10)} {checked_add(b, 10)} {checked_add(b, 5)}")
   print("{a == 40} {a < 41} {a >= 0x29}")
   low: i8 = -128
-  hex: u8 = 0xff
-  bin: u8 = 0b1010
+  hex: Byte = 0xff
+  bin: Byte = 0b1010
   print("{low} {hex} {bin}")
 }

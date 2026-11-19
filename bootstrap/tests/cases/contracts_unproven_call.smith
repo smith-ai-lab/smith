@@ -1,11 +1,13 @@
-fn next(i: u8) -> r: u8
+use std.console (console, print)
+
+fn next(i: Byte) -> r: Byte
   requires i < 255
   ensures r > i
 {
   i + 1
 }
 
-fn after(x: u8) -> u8 {
+fn after(x: Byte) -> Byte {
   next(x)
 }
 

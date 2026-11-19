@@ -1,12 +1,14 @@
+use std.console (console, print)
+
 enum Number {
-  small: u8
+  small: Byte
   none
 }
 
 without Convert for Number
 
 fn main() ! console, alloc {
-  n: u8 = 4
+  n: Byte = 4
   p: Number = convert(n)
   print("{p}")
 }

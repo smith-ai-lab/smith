@@ -1,12 +1,14 @@
+use std.console (console, print)
+
 trait Pair[A, B] {
   fn join(a: A, b: B) -> str
 }
 
-impl Pair[i64, str] {
-  fn join(a: i64, b: str) -> str { b }
+impl Pair[Int, str] {
+  fn join(a: Int, b: str) -> str { b }
 }
 
-fn one() -> i64 { 1 }
+fn one() -> Int { 1 }
 
 fn show_both[A, B](a: A, b: B) -> str
   requires Pair[A, B]

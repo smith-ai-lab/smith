@@ -1,4 +1,8 @@
-fn double(n: u8) -> u8 { saturating_mul(n, 2) }
+use std.bits (i16)
+use std.console (console, print)
+use std.int (saturating_mul)
+
+fn double(n: Byte) -> Byte { saturating_mul(n, 2) }
 
 fn main() ! console, alloc {
   x = 10

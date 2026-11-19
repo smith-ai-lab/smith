@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 struct Key {
   secret: str
 }

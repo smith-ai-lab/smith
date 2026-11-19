@@ -1,3 +1,7 @@
+use std.bits (u32)
+use std.console (console, print)
+use std.int (wrapping_add)
+
 fn each3(body: fn()) {
   loop i in 0..3 { body() }
 }

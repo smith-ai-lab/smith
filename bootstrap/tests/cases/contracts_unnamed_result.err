@@ -1,4 +1,4 @@
-contracts_unnamed_result.smith:3:11: `next` has an `ensures`, and its signature does not name its result
-  3 |   ensures i < 255
+contracts_unnamed_result.smith:5:11: `next` has an `ensures`, and its signature does not name its result
+  5 |   ensures i < 255
     |           ^
   fix: write the result as `-> name: type`, and use the name in the `ensures`

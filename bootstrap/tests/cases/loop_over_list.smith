@@ -1,6 +1,11 @@
+use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_add)
+use std.list (push)
+
 struct Person {
   name: str
-  age: u8
+  age: Byte
 }
 
 fn sum(xs: List[u64]) -> u64 {
@@ -20,7 +25,7 @@ fn main() ! console, alloc {
   xs: List[u64] = [1, 2, 3]
   print("{sum(xs)}")
   print("{first_over(xs, 1)} {first_over(xs, 5)}")
-  var ys: List[u8] = [4, 5]
+  var ys: List[Byte] = [4, 5]
   loop v in ys {
     ys = push(ys, v)
     print("{v}")
@@ -30,7 +35,7 @@ fn main() ! console, alloc {
     if v == 5 { break }
     print("{v}")
   }
-  empty: List[u8] = []
+  empty: List[Byte] = []
   loop v in empty { print("never") }
   var people: List[Person] = []
   people = push(people, Person(name: "ada", age: 36))

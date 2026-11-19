@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 fn step(word: str) -> (str, str) { ("two", word) }
 
 fn main() ! console {
