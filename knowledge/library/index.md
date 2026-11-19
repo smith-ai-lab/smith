@@ -14,6 +14,7 @@ The modules of the standard library, one file each, named for the module. A modu
 - [map.md](map.md): `Map`, which finds a value by its key, kept in the order its entries were added, and the `Hash` trait a key needs.
 - [serialize.md](serialize.md): `Serialize`, by which a value describes its shape to a writer that knows a format, and `Writer`, which a format has.
 - [deserialize.md](deserialize.md): `Deserialize`, by which a value is built from a reader that knows a format, `Reader`, which a format has, and what is done with a missing field.
+- [describe.md](describe.md): `Describe`, by which a type says what it is made of with no value in hand, each part with its comment, and `Describer`, which a format for descriptions has.
 - [json.md](json.md): `std.json`, which writes a value that has `Serialize` as JSON text and reads JSON text into a value that has `Deserialize`, the settings for how a case and a field's name look, and `RawJson`.
 - [http.md](http.md): `std.http`, with which a program answers HTTP requests with plain functions, and `at`, which puts a server of messages at a path.
 - [html.md](html.md): `std.html`, with which a page is written as calls of plain functions that write it as they run, with every text escaped.

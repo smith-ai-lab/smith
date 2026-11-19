@@ -22,15 +22,15 @@ trait Differentiable[F, out Args, out R]
 }
 
 impl Differentiable[sin] {
-  fn backward(x: f32, d: f32) -> f32 { d * cos(x) }
+  fn backward(args: Args, d: f32) -> Args { Args(x: d * cos(args.x)) }
 }
 
 impl Differentiable[mul] {
-  fn backward((a, b): (f32, f32), d: f32) -> (f32, f32) { (d * b, d * a) }
+  fn backward(args: Args, d: f32) -> Args { Args(a: d * args.b, b: d * args.a) }
 }
 ```
 
-`Args` and `R` are what [`Function`](traits.md#an-impl-for-a-function) gives for the function: the types of its parameters as one tuple, and the type of its result. So one `backward` is declared for functions of every number of parameters. It takes the arguments and how much the result matters, and gives how much each argument matters, in the shape of the arguments. A rule for a function of two parameters takes them apart with a pattern, as `mul`'s does.
+`Args` and `R` are what [`Function`](traits.md#an-impl-for-a-function) gives for the function: a struct whose fields are its parameters, and the type of its result. So one `backward` is declared for functions of every number of parameters. It takes the arguments and how much the result matters, and gives how much each argument matters, as a struct of the same fields, so each amount stands beside the name of the parameter it is for. `sin` is `fn sin(x: f32) -> f32` and `mul` is `fn mul(a: f32, b: f32) -> f32`, and inside an `impl` for a function `Args` is that function's.
 
 For `sin`, an argument `x` matters `cos(x)` times as much as the result does. `grad` asks, at each call it meets, whether the function that is called has such an `impl`. Where it has, `grad` uses the rule. Where it has none, `grad` goes into the body of the function, which the name in the call holds, as [Functions over code](code.md#what-code-is) says. So `grad` knows the rule of no function, and a program adds a function with its own rule without changing `grad`.
 
