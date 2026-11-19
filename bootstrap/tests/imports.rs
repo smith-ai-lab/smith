@@ -215,9 +215,11 @@ fn every_name_of_a_module_can_be_imported_at_once() {
 
 /// The names a source writes, by the lexer, and those it defines. A name
 /// written before a colon is a label of a field, a parameter, or an argument,
-/// which uses no name of the library.
+/// which uses no name of the library, and is a name the source defines, so a
+/// parameter that has the name of a function of the library is not a use of it.
 fn names_of(source: &str) -> (HashSet<String>, HashSet<String>) {
     let mut written = HashSet::new();
+    let mut labels = HashSet::new();
     let lines: Vec<&str> = source.lines().collect();
     for line in smith::lex_plain(source.as_bytes()).unwrap().lines() {
         let parts: Vec<&str> = line.split(' ').collect();
@@ -226,12 +228,14 @@ fn names_of(source: &str) -> (HashSet<String>, HashSet<String>) {
             let name = String::from_utf8(bytes).unwrap();
             let (at, col): (usize, usize) = (parts[1].parse().unwrap(), parts[2].parse().unwrap());
             let after = lines.get(at - 1).and_then(|l| l.get(col - 1 + name.len()..));
-            if !after.is_some_and(|rest| rest.starts_with(':') && !rest.starts_with("::")) {
+            if after.is_some_and(|rest| rest.starts_with(':') && !rest.starts_with("::")) {
+                labels.insert(name);
+            } else {
                 written.insert(name);
             }
         }
     }
-    let mut defined = HashSet::new();
+    let mut defined = labels;
     for line in source.lines() {
         let line = line.trim_start();
         for word in ["fn ", "struct ", "enum ", "trait "] {
