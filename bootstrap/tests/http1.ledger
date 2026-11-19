@@ -1,4 +1,4 @@
-# RFC 9112, sections 2 to 7 and 11: each sentence that holds MUST, MUST NOT,
+# RFC 9112, sections 2 to 7, 9.3, and 11: each sentence that holds MUST, MUST NOT,
 # or SHALL, and what holds it in `std.http1`. A line is
 #   <section> | <first words of the sentence> | test <name>
 # or
@@ -42,9 +42,9 @@
 6.1 | A server MUST NOT send a Transfer-Encoding header field in any response | reason binds a server writing a response head, which is not built
 6.1 | A server MUST NOT send a Transfer-Encoding header field in any 2xx | reason binds a server writing a response head, which is not built
 6.1 | A client MUST NOT send a | reason binds a client sending a request; the module writes no request head
-6.1 | A server MUST NOT send a response | reason binds a server writing a response head, which is not built
-6.1 | Regardless, the server MUST close the | reason binds what holds the connection; request_head refuses a request with a transfer-encoding and a content-length
-6.1 | A server or client that receives | test a_version_other_than_http_1_1_is_refused
+6.1 | A server MUST NOT send a response | reason binds `listen` (#608), the server that writes a response: a client of HTTP/1.0 is answered with no chunked body, and request_head says which version the request was
+6.1 | Regardless, the server MUST close | reason binds `listen` (#608), which closes the connection after its response; request_head refuses a request of HTTP/1.0 with a transfer-encoding, so `listen` answers it and closes
+6.1 | A server or client that receives | test a_request_of_http_1_0_needs_no_host_and_refuses_a_transfer_encoding
 6.2 | A sender MUST NOT send a | reason binds a sender; the head writers are not built, and both readers refuse such a head
 6.3 | A client MUST ignore any Content-Length | reason needs the request method and the status, which body_of, taking only headers, does not have; it binds what frames a response
 6.3 | An intermediary that chooses to forward | reason binds an intermediary, which forwards messages
@@ -67,3 +67,10 @@
 7.3 | Values to be added to this | reason binds a registration of a transfer coding with IANA
 7.4 | A client MUST NOT send the | reason binds a client sending a TE header; the module writes no request head
 7.4 | Since the TE header field only | reason binds a client sending a TE header; the module writes no request head
+9.3 | A client that does not support persistent | reason binds a client sending a request; the module writes no request head
+9.3 | A server that does not support persistent | reason binds `listen` (#608), the server that writes responses: the connection is closed after the response to a request of HTTP/1.0 unless it asked to keep it, and request_head says which version the request was
+9.3 | A server MUST read the entire request message body | reason binds `listen` (#608), which reads the body that body_of says the head has, or closes the connection
+9.3 | Likewise, a client MUST read | reason binds a client reading a response
+9.3 | A proxy server MUST NOT maintain | reason binds a proxy, which holds the connection
+9.3.2 | A server MAY process a sequence of pipelined | reason binds `listen` (#608), the order of the responses to requests that came one after another
+9.3.2 | When retrying pipelined requests | reason binds a client sending requests

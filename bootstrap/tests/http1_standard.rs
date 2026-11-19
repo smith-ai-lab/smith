@@ -1,5 +1,5 @@
 //! `std.http1` is held to the text of RFC 9112, which is in
-//! `reference/rfc/`: every sentence of sections 2 to 7 and 11 that holds MUST,
+//! `reference/rfc/`: every sentence of sections 2 to 7, 9.3, and 11 that holds MUST,
 //! MUST NOT, or SHALL is in a line of the ledger, `http1.ledger`, with the test
 //! that holds it or the reason it binds nothing the module does; the helper that
 //! reads the sentences and the ledger is tried on a ledger that has lost a line
@@ -14,8 +14,8 @@ use crate::standard;
 
 pub const ONCE: &[Test] = &[
     (
-        "every_must_of_rfc_9112_sections_2_to_7_and_11_is_in_the_ledger_of_http1",
-        every_must_of_rfc_9112_sections_2_to_7_and_11_is_in_the_ledger_of_http1,
+        "every_must_of_rfc_9112_sections_2_to_7_9_3_and_11_is_in_the_ledger_of_http1",
+        every_must_of_rfc_9112_sections_2_to_7_9_3_and_11_is_in_the_ledger_of_http1,
     ),
     (
         "a_ledger_that_lost_a_line_or_names_a_test_that_is_not_there_is_refused",
@@ -27,7 +27,7 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
-const SECTIONS: &[&str] = &["2", "3", "4", "5", "6", "7", "11"];
+const SECTIONS: &[&str] = &["2", "3", "4", "5", "6", "7", "9.3", "11"];
 const LEDGER: &str = include_str!("http1.ledger");
 
 /// The names of every test that there is.
@@ -39,7 +39,7 @@ fn test_names() -> Vec<&'static str> {
         .collect()
 }
 
-fn every_must_of_rfc_9112_sections_2_to_7_and_11_is_in_the_ledger_of_http1() {
+fn every_must_of_rfc_9112_sections_2_to_7_9_3_and_11_is_in_the_ledger_of_http1() {
     let rfc = standard::read("rfc9112.txt");
     let tests = test_names();
     if let Err(errors) = standard::check_ledger(&rfc, SECTIONS, LEDGER, &tests) {

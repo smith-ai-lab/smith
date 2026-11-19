@@ -10,9 +10,15 @@ pub enum Read[T] {
   refused: str
 }
 
+pub enum Version {
+  http10
+  http11
+}
+
 pub struct RequestHead {
   pub method: str
   pub target: str
+  pub version: Version
   pub headers: List[(str, str)]
 }
 
@@ -162,17 +168,24 @@ fn header(line: Slice[Byte]) -> Result[(str, str), str] ! alloc
   .ok((name, value))
 }
 
-fn request_line(line: Slice[Byte]) -> Result[(str, str), str] {
+fn request_line(line: Slice[Byte]) -> Result[(str, str, Version), str] {
   method_end = token_end(line, 0)
   if method_end == 0 or method_end >= line.size { return .err("a request line with no method and target") }
   if line[method_end] != 32 { return .err("a byte that is no part of a method") }
   target_from = method_end + 1
   target_end = space_at(line, target_from)
   if target_end == target_from or target_end >= line.size { return .err("a request line with no target and version") }
-  if not same(line[target_end + 1..line.size], "HTTP/1.1") { return .err("a version that is not HTTP/1.1") }
+  rest = line[target_end + 1..line.size]
+  version: Version = if same(rest, "HTTP/1.1") {
+    .http11
+  } else if same(rest, "HTTP/1.0") {
+    .http10
+  } else {
+    return .err("a version that is neither HTTP/1.0 nor HTTP/1.1")
+  }
   method = try text_of(line[0..method_end])
   target = try text_of(line[target_from..target_end])
-  .ok((method, target))
+  .ok((method, target, version))
 }
 
 fn response_line(line: Slice[Byte]) -> Result[(100..600, str), str] {
@@ -352,7 +365,7 @@ fn is_host(value: Slice[Byte]) -> bool {
   true
 }
 
-fn host_fault(headers: List[(str, str)]) -> Option[str] {
+fn host_fault(headers: List[(str, str)], required: bool) -> Option[str] {
   var hosts: Nat = 0
   loop h in headers {
     match h {
@@ -365,12 +378,21 @@ fn host_fault(headers: List[(str, str)]) -> Option[str] {
     }
   }
   if hosts == 0 {
-    .some("a request with no host")
+    if required { .some("a request of HTTP/1.1 with no host") } else { .none }
   } else if hosts > 1 {
     .some("a request with more than one host")
   } else {
     .none
   }
+}
+
+fn has_header(headers: List[(str, str)], wanted: str) -> bool {
+  loop h in headers {
+    match h {
+      (name, value) { if name == wanted { return true } }
+    }
+  }
+  false
 }
 
 pub fn request_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[RequestHead] ! alloc {
@@ -380,13 +402,21 @@ pub fn request_head(bytes: Slice[Byte], limit: Nat = 16384) -> Read[RequestHead]
     .complete((lines, used)) {
       match request_line(lines.first) {
         .err(why) { .refused(why) }
-        .ok((method, target)) {
+        .ok((method, target, version)) {
+          old = match version {
+            .http10 { true }
+            .http11 { false }
+          }
+          // The framing of a message of HTTP/1.0 with a transfer-encoding is faulty.
+          if old and has_header(lines.headers, "transfer-encoding") {
+            return .refused("a transfer-encoding in a request of HTTP/1.0")
+          }
           match body_of(lines.headers) {
             .err(why) { .refused(why) }
             .ok(body) {
-              match host_fault(lines.headers) {
+              match host_fault(lines.headers, not old) {
                 .some(why) { .refused(why) }
-                .none { .complete((RequestHead(method: method, target: target, headers: lines.headers), used)) }
+                .none { .complete((RequestHead(method: method, target: target, version: version, headers: lines.headers), used)) }
               }
             }
           }
