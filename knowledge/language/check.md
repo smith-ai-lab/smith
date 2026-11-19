@@ -10,15 +10,15 @@ status: planned
 `check` tests a statement about data that is known only when the program runs, and gives a proof of it when the test passes. It is the one place a proof comes from a test.
 
 ```
-fn token[v: Nat](raw: Nat) -> Option[Fin[v]] {
+fn token[v: Nat](raw: Nat) -> Option[0..v] {
   match check(raw < v) {
-    .some(p) { .some(Fin(value: raw, below: p)) }
+    .some(p) { .some(raw) }
     .none { .none }
   }
 }
 ```
 
-`check(raw < v)` is `.some(p)` where `p` is a proof of `raw < v` when it holds, and `.none` when it does not. In the first arm `p` is the proof the [`Fin`](proof-fields.md) needs. With `v` as 10, a `raw` of 7 gives `.some` of a `Fin[10]`, and a `raw` of 12 gives `.none`.
+`check(raw < v)` is `.some(p)` where `p` is a proof of `raw < v` when it holds, and `.none` when it does not. In the first arm `p` is a proof of `raw < v`, which lets `raw` enter the range `0..v`, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says of any value. With `v` as 10, a `raw` of 7 gives `.some(7)` of a `0..10`, and a `raw` of 12 gives `.none`.
 
 ## What check is for
 
@@ -48,9 +48,9 @@ In the first arm `p` is a proof that `rows * cols <= limit`, which `fill` requir
 There is no `panic`. A `check` that fails returns `.none`, and a failure that can really happen is returned as a `Result`. A function with none of the `alloc`, `console`, and `diverge` effects therefore returns a value for every input its `requires` lines allow. The first two can [end the task](task-ending.md) when the system runs out of what they stand for.
 
 ```
-fn index_of(raw: Nat, size: Nat) -> Result[Fin[size], str] {
+fn index_of(raw: Nat, size: Nat) -> Result[0..size, str] {
   match check(raw < size) {
-    .some(p) { .ok(Fin(value: raw, below: p)) }
+    .some(p) { .ok(raw) }
     .none { .err("index out of range") }
   }
 }

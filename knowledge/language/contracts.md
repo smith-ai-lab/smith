@@ -104,7 +104,7 @@ fn room(x: u8) -> u8 {
 }
 ```
 
-`room(250)` is `200`. `clamp(x, 0, 100)` gave a `c` that is at most 100, so `c + 100` fits. With `clamp(x, 0, 200)` it is refused: "cannot prove that `c + 100 <= 255`, so `c + 100` may not fit `u8`".
+`room(250)` is `200`. `clamp(x, 0, 100)` gave a `c` that is at most 100, so `c + 100` fits. With `clamp(x, 0, 200)` it is refused, as `c + 100` may be above 255.
 
 ## A function used as a value
 

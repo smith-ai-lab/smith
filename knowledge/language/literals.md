@@ -139,6 +139,23 @@ fn main() ! console, alloc {
 
 This prints `false true false`. A whole number may become a float where a float is expected, as the table says.
 
+## A literal beside a value of a program's own type
+
+When the other operand is a value that is not a number, the literal takes the one type that fits: a range that holds it, for which the operator has an implementation with the other operand's type. When more than one type fits, it is a compile error, and a binding that states its type settles it.
+
+```
+fn scaled(w: Weights) -> Weights { w * 2 }
+```
+
+When `Weights` is a struct of the program that has one `Mul` with an `Int` and no other, the `2` is an `Int`. When it has one with an `Int` and one with a `Byte`, both hold the `2`, and the line is refused. A binding that states the type settles it.
+
+```
+fn scaled(w: Weights) -> Weights {
+  two: Int = 2
+  w * two
+}
+```
+
 ## A character
 
 A whole number may be written as a character between single quotes, and it is the character's code: `'a'` is `97`, the range `97..98`. It is a whole number like any other, and `b - '0'` is arithmetic. The escapes are `\'`, `\\`, `\n`, and `\t`.

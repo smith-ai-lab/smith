@@ -82,7 +82,7 @@ A `Nat` worked out from others, such as `n * 2`, is an ordinary integer once the
 fn doubled(n: Nat) -> Nat { n * 2 }
 ```
 
-This is refused: "cannot prove that `n * 2 <= 18446744073709551615`, so `n * 2` may not fit `Nat`", with the fix "check the operands first". A `Nat` has no wrapping function, so a count is shown to fit with a [`requires`](contracts.md) or an `if`, as [What arith proves](arith.md) says.
+This is refused, as `n * 2` needs more than 64 bits and `n` may be too great for it to fit a `Nat`. A count is shown to fit with a [`requires`](contracts.md) or an `if`, as [What arith proves](arith.md) says.
 
 ## An array kept with its size
 

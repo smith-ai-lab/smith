@@ -45,7 +45,7 @@ A case the enum does not have is refused: `.blue { ... }` on a `Light` gives "`L
 
 ## A match as a value and as a statement
 
-A `match` whose value is used is an expression, and its blocks give the same type.
+A `match` whose value is used is an expression, and its blocks give the same type. Blocks that give whole numbers give the smallest range that holds the values of all of them, as for an [`if`](if.md#both-blocks-give-the-same-type).
 
 ```
 fn main() ! console, alloc {

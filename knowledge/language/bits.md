@@ -42,6 +42,25 @@ fn mask(x: 0..101) -> 0..101 { bit_and(x, 7) }
 
 This is refused, as `0..101` does not fill a size. A foreign declaration is written with these ranges, and they are always kept as themselves, as [How a whole number is kept](../compiler.md#how-a-whole-number-is-kept) says.
 
+## Two values of one range
+
+A bit function takes values of one range, written the same. A wider range is not accepted for a narrower one here, as it is elsewhere, since widening one value would change what the function means.
+
+```
+fn mix(a: Byte, c: 0..65536) -> 0..65536 { bit_and(a, c) }
+```
+
+This is refused, as `a` and `c` are of two ranges. The fix is to bind the narrower with the type of the other.
+
+```
+fn mix(a: Byte, c: 0..65536) -> 0..65536 {
+  wide: 0..65536 = a
+  bit_and(wide, c)
+}
+```
+
+A literal takes the range of the other value, as every literal takes the range that is expected, so `bit_and(x, 0xff)` of a `u32` is a `u32` with a `u32` mask.
+
 ## And, or, xor, and not
 
 `bit_and` keeps the bits that are set in both numbers, `bit_or` those set in either, `bit_xor` those set in one only, and `bit_not` turns every bit around.

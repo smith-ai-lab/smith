@@ -46,14 +46,14 @@ fn last(x: [4]f32) -> f32 {
 An accumulation may be indexed, as in `hist[bucket[i]] += 1.0`. This is how a scatter is written, and it is also the gradient of an indexed read.
 
 ```
-fn histogram(bucket: [8]Fin[4]) -> [4]f32 {
+fn histogram(bucket: [8]0..4) -> [4]f32 {
   var hist: [4]f32 = zeros(4)
   for i { hist[bucket[i]] += 1.0 }
   hist
 }
 ```
 
-Each `bucket[i]` is a [`Fin[4]`](proof-fields.md), a number below `4`, so it indexes `hist`. `histogram` counts how many of the eight numbers are each of `0`, `1`, `2`, and `3`.
+Each `bucket[i]` is a [`0..4`](proof-fields.md#an-index-that-travels), a number below `4`, so it indexes `hist`. `histogram` counts how many of the eight numbers are each of `0`, `1`, `2`, and `3`.
 
 ## Floats
 

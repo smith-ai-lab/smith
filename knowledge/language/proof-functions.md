@@ -10,17 +10,17 @@ status: planned
 A proof is a value like any other. It is passed to a function, returned from one, and held in a field, as [a struct that holds a proof](proof-fields.md) shows. Every proof starts from `arith` or from a [`check`](check.md) that passed, and it is erased before code generation.
 
 ```
-fn keep(a: Nat, p: a < 10) -> a < 10 { p }
+fn keep(a: Nat, p: a > 0) -> a > 0 { p }
 
-fn small(a: Nat) -> Option[Fin[10]] {
-  match check(a < 10) {
-    .some(p) { .some(Fin(value: a, below: keep(a, p))) }
+fn positive(a: Nat) -> Option[Pos] {
+  match check(a > 0) {
+    .some(p) { .some(Pos(value: a, above: keep(a, p))) }
     .none { .none }
   }
 }
 ```
 
-`keep` takes a proof that `a < 10` and gives it back. The parameter `p` is a proof, so the caller owes one, and here it comes from the `check`.
+`keep` takes a proof that `a > 0` and gives it back. The parameter `p` is a proof, so the caller owes one, and here it comes from the `check`.
 
 ## What a proof may not do
 
@@ -52,8 +52,8 @@ That is how `arith` proves the `valid` of an [index](indexing.md): `valid(c, i)`
 
 | Written | Is |
 | --- | --- |
-| `p: a < 10` as a parameter | A proof the caller owes |
-| `-> a < 10` as a result | A proof the function gives |
+| `p: a > 0` as a parameter | A proof the caller owes |
+| `-> a > 0` as a result | A proof the function gives |
 | `requires f(x)` | The comparison that `f(x)` returns, owed by the caller |
 
 Next: [Statements](statements.md)

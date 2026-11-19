@@ -7,7 +7,7 @@ built:
   - "`loop i in a..b` over whole numbers of one type, whose counter `arith` knows is in range of a `var` list's `size` as of any other, which runs in order and not at all when `a >= b`, ended by `break`"
   - "`loop v in xs` over a `List` of any type, which gives `v` each element from the first to the last, once each, over the list the loop began with, which a `var` list assigned in the block does not change, and ended by `break` or left by `return`; the scalar form of its round is one comparison and one load, with no call and no check of the index"
   - "`loop v in x` over a `str`, which gives `v` each byte of it, and over a type of a program's own that implements [`Iterate`](iterate.md)"
-  - "not a `loop` over an array or `reversed`"
+  - "not a `loop` over an array or `reversed`, a counter whose type is a range, or the two ends of a range of different types"
 ---
 
 # `loop`
@@ -15,9 +15,12 @@ built:
 A `loop` runs a block once for each number in a range, in order, one step at a time.
 
 ```
-fn sum_below(n: u64) -> u64 {
-  var total: u64 = 0
-  loop i in 0..n { total = wrapping_add(total, i) }
+fn sum_below(n: Nat) -> Nat {
+  var total: Nat = 0
+  loop i in 0..n {
+    step: Nat = i
+    total = wrapping_add(total, step)
+  }
   total
 }
 ```
@@ -39,11 +42,7 @@ This prints only `done`. The counter is a name for the number of this round and 
 
 ## The type of the counter
 
-The two ends of a range have one type, and the counter has it. With `a: u8` and `b: u32`, `loop i in a..b` is refused: "the two ends of a range need to be of one type, and the first is `u8` where the second is `u32`".
-
-An end that is a literal takes the type of the other end. With `a: u8`, the literal in `loop i in a..300` is a `u8`, and it does not fit: "`300` does not fit `u8`, which holds 0 to 255".
-
-When both ends are literals, how the counter is used in the block decides their type, as for a literal bound to a name in [Literals](literals.md#where-the-type-comes-from). Here `j` is added to a `u8`, so the ends are `u8`.
+The counter is a range: from the least value the first end can have to the greatest value the second end can have, which it stays below. With `n: 0..11`, the counter of `loop i in 0..n` is a `0..10`, as `n` is at most 10 and the counter is below it.
 
 ```
 fn main() ! console, alloc {
@@ -54,7 +53,31 @@ fn main() ! console, alloc {
 }
 ```
 
-This prints `250`, `251`, and `252`. When nothing decides, the ends are `i64`: `loop i in 0..300` counts `i` to `299`, a number a `u8` does not hold.
+This prints `250`, `251`, and `252`. Here `j` is a `0..3`, so `x + j` is a `0..258`, as [Integer arithmetic](arithmetic.md) says. The two ends may be of any ranges, and an end that is a literal is the range that holds it alone, so `loop i in 0..300` counts `i` to `299`, a number a `u8` does not hold.
+
+### A `var` the loop changes
+
+A `var` with no stated type has the range of what it is first given, as [`var`](var.md#the-range-of-a-var) says, so a `var` that a loop assigns states its range.
+
+```
+fn last_index(n: 0..11) -> 0..10 {
+  var last = 0
+  loop i in 0..n { last = i }
+  last
+}
+```
+
+This is refused, as `last` is a `0..1`, the range of the `0` it was first given, and `i` is outside it. The fix is to state the range.
+
+```
+fn last_index(n: 0..11) -> 0..10 {
+  var last: 0..10 = 0
+  loop i in 0..n { last = i }
+  last
+}
+```
+
+`last_index(4)` is `3`. Each assignment in the loop is proven to stay in the range of the `var`.
 
 ## Ending early with `break`
 
@@ -129,7 +152,7 @@ fn next(n: u8) -> u8 {
 }
 ```
 
-`next(4)` is `4`. The counter is below `n`, which is at most `255`, so `i + 1` is at most `255` and fits a `u8`. With `i + 2` it is refused, since `254 + 2` does not fit: "cannot prove that `i + 2 <= 255`, so `i + 2` may not fit `u8`", with the fix "check the operands first, or use `wrapping_add`, `saturating_add`, or `checked_add`".
+`next(4)` is `4`. The counter is below `n`, which is at most `255`, so `i` is a `0..255`, `i + 1` is at most `255`, and a `u8` holds it. With `i + 2` it is refused, as `i` may be `254` and `254 + 2` is above `255`, with the fix to check the operands first.
 
 This is what makes `xs[i]` compile in `loop i in 0..xs.size`, as [Indexing](indexing.md#from-a-loop) shows. The ends are worked out once, so `arith` ties them to nothing that a `var` the loop assigns holds in a later round, or after an assignment in this one. So the `ys[i]` below is refused, since `ys` is assigned before it.
 

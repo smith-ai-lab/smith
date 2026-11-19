@@ -33,6 +33,14 @@ fn brightness(level: 0..101) -> 0..256 { level }
 
 `brightness(100)` is `100`. A value of a range is accepted wherever a range that holds every value of it is expected, with nothing written, so the `level` of `0..101` is a `0..256` where the result needs one. There is no `convert` between whole numbers.
 
+A range with no number, as `5..5` or `0..n` where `n` is `0`, is a type too. No value can be given to it, so a function that takes one cannot be called.
+
+```
+fn never(x: 5..5) -> Nat { 0 }
+```
+
+`never` is accepted, and no call of it is, as no value is a `5..5`.
+
 A value goes the other way only where it is shown to fit, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says.
 
 ```
