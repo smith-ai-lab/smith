@@ -5334,6 +5334,7 @@ impl<'a> Checker<'a> {
                 }
                 match self.expr(body, of, &Want::Any) {
                     Ty::List(_) | Ty::Slice(_) | Ty::Text if name == "size" => Ty::Int(Int::Nat),
+                    Ty::Text if name == "bytes" => Ty::slice(Ty::Int(Int::U8)),
                     Ty::List(_) | Ty::Slice(_) => {
                         self.errors.push(Error::new(
                             *pos,
