@@ -23,4 +23,5 @@ The modules of the standard library, one file each, named for the module. A modu
 - [secret.md](secret.md): `Secret[T]`, a value the time a program takes must not depend on, which cannot steer a branch or be an index.
 - [random.md](random.md): random bits from a key, distributions as ordinary structs with the `Sample` and `LogProb` traits, and how a program adds its own.
 - [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
+- [store.md](store.md): the `store` effect, which keeps bytes under keys past the end of the program, and `save` and `load`, which keep any value that has `Serialize`.
 - [console.md](console.md): the `console` effect, for a program's standard input, output, and error.
