@@ -41,7 +41,7 @@ After `smith deploy`, the folder `dist` holds the module, the file of JavaScript
 
 ## What worker writes
 
-`worker(module, to: folder)` takes what `build` gave for `.wasm` and writes three things into the folder: the module, a file of JavaScript that receives each request, supplies the module's imports from it, and calls the module, and the file of settings that names them. It is written in Smith, as the handlers are, and it writes only what the module imports: a program that keeps nothing has no Durable Object in its settings.
+`worker(module, to: folder)` takes the [`Built`](../language/project-tasks.md#building-in-a-task) that `build` gave for `.wasm` and writes three things into the folder: the module, a file of JavaScript that receives each request, supplies the module's imports from it, and calls the module, and the file of settings that names them. It is written in Smith, as the handlers are, and it writes only what the module imports: a program that keeps nothing has no Durable Object in its settings.
 
 ## The forms
 
