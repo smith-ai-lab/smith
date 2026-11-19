@@ -414,6 +414,7 @@ The compiler is a tool for agents, and an agent that makes a program faster must
 - **Each instruction of the scalar form holds the place in the source it was lowered from, and the function that place is written in.** Every pass keeps both: an instruction that takes the place of others holds the place of the first of them, and inlining keeps the callee's. A target gives each instruction it emits the place of the instruction of the form it emits it for.
 - **The map is made by `emit` from what it has laid out,** so it costs a build without `--map` nothing but holding the places.
 - **Code the compiler adds, which no function of a program was written for, is named for what it does:** `<start>` for what runs before `main`, and one name for each piece of the runtime.
+- **`smith profile` is planned on the map, in two modes, and neither is designed yet.** The first says where the cost of a run goes, by function and by line. The second, built after [tasks](language/tasks.md), is causal, as the profiler Coz is: it says how much faster the whole program would be if one line were faster, by pausing every other task when that line runs and measuring how often a unit of work finishes, where a unit is by default one request answered. For a program of one task the two say the same, so the second waits for tasks.
 - The map is this compiler's own form and no standard one. Symbol tables and debugging records inside the executable, which other tools read, are not built.
 
 ## Releases
