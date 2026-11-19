@@ -2613,9 +2613,43 @@ fn localize(errors: Vec<Error>, labels: &[(usize, String)]) -> Vec<Error> {
                 e.module = Some(label.clone());
                 e.pos.line %= STEP;
             }
+            e.message = as_written(&e.message);
+            e.fix = e.fix.map(|fix| as_written(&fix));
             e
         })
         .collect()
+}
+
+/// A message with each name written as its module wrote it, without the
+/// module that renaming adds after it, as `Tag@m` is `Tag`. The error says
+/// which file it is in. A name the parser made for a pattern, which has a place
+/// after its `@`, is not one of these.
+fn as_written(text: &str) -> String {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let named = chars[i] == '@'
+            && i > 0
+            && word(chars[i - 1])
+            && chars
+                .get(i + 1)
+                .is_some_and(|c| c.is_alphabetic() || *c == '_');
+        if named {
+            i += 1;
+            while i < chars.len()
+                && (word(chars[i])
+                    || (chars[i] == '.' && chars.get(i + 1).is_some_and(|c| word(*c))))
+            {
+                i += 1;
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// The items of a module of the standard library, which are read when the
