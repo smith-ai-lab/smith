@@ -212,6 +212,18 @@ Targets share what they have in common: the arm64 instructions are written once 
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
 
+### The instructions a chip must have
+
+The instructions a program uses are chosen when it is built and never while it runs. No executable tests its chip to pick between two versions of a loop: such a test costs a jump at every call, keeps the loop from being lowered in place, and builds it more than once.
+
+- **An executable for x86-64 needs the level `x86-64-v3`,** which has AVX2, the fused multiply and add, and the bit instructions that came with them, and which the chips made since about 2015 have. Vectors of 256 bits and one instruction for `a * b + c`, which [The rules floats keep](language/float-rules.md#a-product-is-fused) asks for, are there on every chip the executable runs on, so a float gives the bits it gives on arm64, which has always had both. No executable is built for a lower level.
+- **An executable for arm64 needs NEON,** which every arm64 chip has, with its fused multiply and add.
+- **An executable checks its chip once, before `main`.** One that is started on a chip without what it was built for stops with a message that names what is missing, and runs nothing else. This is the only test of the chip in a program.
+- **A higher level is a choice of the build.** AVX-512 on x86-64, and SVE on arm64, are for a program whose author knows where it runs. A project that serves several levels builds an executable for each, and what installs it picks one.
+- **WebAssembly has one set of vectors,** of 128 bits, and no levels.
+
+This is planned. Today an executable for x86-64 uses SSE2 and nothing above it, as [Scalar form](#scalar-form) says, fuses no product, checks nothing when it starts, and no higher level can be chosen.
+
 ### The host of a WebAssembly module
 
 The module and the file of JavaScript are built for programs whose effects are `console` and `alloc`. A handler that is a host, and a module that suspends itself, are planned.
