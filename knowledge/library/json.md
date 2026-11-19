@@ -1,17 +1,18 @@
 ---
 type: specification
 title: JSON
-description: std.json, a format for Serialize that writes a value as JSON text, and the settings that say how a case of an enum and the name of a field look.
+description: std.json, a format for Serialize and Deserialize that writes a value as JSON text and reads JSON text into a value, the settings that say how a case of an enum and the name of a field look, and RawJson, a part of the text that is read later.
 status: partial
 built:
   - "`std.json`, which a program imports with `use std.json (to_json, to_json_as, Json)`, with `to_json` and `to_json_as` of any value that has `Serialize` and the `Json`, `Cases`, and `Names` of the settings, written in Smith from `Serialize` and `Writer` alone"
   - "every shape of the table below, a case of an enum as a key and as a tag, `Names.camel`, and the refusal of a tag that is also a member, with `Clash`"
-  - "not a float, which waits for `f64`, and not a `Map`, which is not built"
+  - "`from_json` and `from_json_as` of any type that has `Deserialize` and `Discard`, which read the text with a `Reader` written in Smith, with `Unknown` in the settings, the errors with their line, column, and path, `describe`, and `RawJson` with its `Deserialize`, and nothing is built between the text and the value"
+  - "not writing a `RawJson`, which is refused, not a float, which waits for `f64`, not a `Map`, which is not built, and not `JsonValue`"
 ---
 
 # JSON
 
-`std.json` writes a value as JSON. `to_json` takes any value that has [`Serialize`](serialize.md) and gives the text.
+`std.json` writes a value as JSON and reads JSON into a value. `to_json` takes any value that has [`Serialize`](serialize.md) and gives the text, and `from_json` takes a text and gives any value that has [`Deserialize`](deserialize.md).
 
 ```
 use std.console (console, print)
@@ -72,6 +73,7 @@ JSON that another program defines has its own way to write a case and to name a 
 struct Json {
   cases: Cases
   names: Names
+  unknown: Unknown = .ignore
 }
 
 enum Cases {
@@ -83,9 +85,14 @@ enum Names {
   written
   camel
 }
+
+enum Unknown {
+  ignore
+  refuse
+}
 ```
 
-`to_json(x)` is `to_json_as(x, Json(cases: .key, names: .written))`.
+`to_json(x)` is `to_json_as(x, Json(cases: .key, names: .written))`, and `from_json(text)` is `from_json_as(text, Json(cases: .key, names: .written))`. `unknown` is for reading, and says what is done with a member of the input that the type has no field of, as [Reading](#reading) says.
 
 **`Cases.tag`** writes the case's name as a member of the object, under the name given. With `.tag("type")`:
 
@@ -126,7 +133,121 @@ mcp = Json(cases: .tag("type"), names: .camel)
 fn reply(c: Content) -> Result[str, Clash] ! alloc { to_json_as(c, mcp) }
 ```
 
-The settings hold for the whole value that is written. A type that needs another form writes its own `impl` of `Serialize`, as [Serialize](serialize.md#writing-it-yourself) shows, and no type carries a setting of its own.
+The settings hold for the whole value that is written or read. A type that needs another form writes its own `impl` of `Serialize`, as [Serialize](serialize.md#writing-it-yourself) shows, and no type carries a setting of its own.
+
+## Reading
+
+`from_json` takes a text and gives a `Result` of the type that the place of the result needs, as [Deserialize](deserialize.md) says. `from_json_as` takes the settings too.
+
+```
+use std.deserialize (ReadError, Problem)
+use std.json (from_json)
+
+struct Tool {
+  name: str
+  description: Option[str]
+  timeout: u64 = 30
+}
+
+fn parse(text: str) -> Result[Tool, ReadError] ! alloc {
+  from_json(text)
+}
+```
+
+`parse("{\"name\":\"a\"}")` is `.ok` of a `Tool` with no description and a timeout of 30. The text may have a space, a tab, a line break, or a return between any two of its tokens, and nothing but those after the value.
+
+```
+fn from_json[T](text: str) -> Result[T, ReadError] ! alloc
+fn from_json_as[T](text: str, json: Json) -> Result[T, ReadError] ! alloc
+```
+
+### What each shape is read from
+
+| Shape | The text that is read |
+| --- | --- |
+| A boolean | `true` or `false` |
+| A whole number | A number with no fraction and no exponent, as `-3` or `18446744073709551615`, and `-0` is `0` |
+| A text | A string, with each escape JSON has undone, and a `\u` that is one half of a pair joined to the other |
+| Nothing, `()` | `null` |
+| A value that is missing | `null`, which is `.none`, and anything else is the value |
+| A sequence | An array |
+| A tuple | An array of exactly its size |
+| A struct | An object, with a member for each field, in any order |
+| A case of an enum | As [the settings](#settings) say |
+
+**Nothing is converted.** `"5"` for a `u64`, `5.5` or `2e3` for a whole number, and `null` for anything that is not an `Option` or `()` are errors, and so is a number that the type cannot hold, as `300` for a `u8`. A `null` where an `Option` is read is `.none`, so `.some(.none)` is read back as `.none`, as it is written the same.
+
+**A field the type has and the text has not** is `.none` for an `Option`, its default when it has one, and an error that names it in every other case. **A member that the type has no field of** is passed over when `unknown` is `.ignore`, which is the default, after being checked to be JSON, and is the error `unknown` when it is `.refuse`. **A member given twice** in one object is the error `twice`, whether or not the type has the field.
+
+A text that has no escape is a piece of the input, and nothing is copied for it.
+
+### A case of an enum
+
+With `Cases.key`, `"empty"` is a case that holds nothing, and `{"square":4}` is a case that holds a value. With `Cases.tag`, the case is read from the member of that name, which is the first member of the object, as `to_json_as` writes it.
+
+```
+mcp = Json(cases: .tag("type"), names: .camel)
+```
+
+With that setting `{"type":"circle","radius":2}` is `Shape.circle(Circle(radius: 2))`, `{"type":"square","value":4}` is `Shape.square(4)`, and `{"type":"empty"}` is `Shape.empty`. A first member that is not the tag is the error `missing` with the tag. The members after the tag are the members of a struct that the case holds, with the rules above, or the one member `value` of any other value, and an object that holds a case that is not a struct has no other member. A name that is no case is the error `case`.
+
+With `Names.camel`, a member `inputSchema` is the field `input_schema`: each upper case letter of a name is read as a `_` and the letter in lower case, so each name that `to_json_as` writes is read as the field it was written from. The names of cases and the tag are read as they are.
+
+### What was wrong
+
+An error is a `ReadError`, as [Deserialize](deserialize.md#what-was-wrong) gives it. `line` and `column` say where, counted from 1, and the column counts bytes. `path` is the way to the value, as `tools[2].timeout`. Reading stops at the first error, so a read that succeeds works out none of them. `describe` makes the words.
+
+```
+fn describe(e: ReadError) -> str ! alloc
+```
+
+For a text of three tools whose third has a timeout that is a text, `describe` is `1:59: tools[2].timeout: expected a whole number, found a text`. A path that is empty is left out. Where each error is, and what it holds, is in the table.
+
+| Error | The place | What it says |
+| --- | --- | --- |
+| `malformed` | The first byte that is not what JSON has there, or the end of the text, or the byte after the value | `not valid JSON` |
+| `shape` | The start of the value that was found | `expected a whole number, found a text`, with the words `a boolean`, `a whole number`, `a text`, `a list`, `an object`, `a case`, `null`, `a number`, and `a number that is not whole` |
+| `range` | The start of the number | `a number that does not fit u8`, and `u64` or `i64` for a number that is more than they hold, or a negative number for an unsigned type |
+| `missing` | The `}` that ends the object, and for a tag that is not the first member, the `{` that opens it | ``missing `y` ``, with the name of the field |
+| `twice` | The start of the name of the second member | `` `x` is given twice `` |
+| `unknown` | The start of the name | `` unknown `z` `` |
+| `case` | The name of the case | `` `triangle` is not a case `` |
+
+A tuple of two that is an array of three is `shape`, `the end of the list` wanted and `a value` found, at the third, and an array of one is `a value` wanted at the `]`. The path of a place that is a name, a value, or a byte that is no value is the way to the member it is in, and of a place after a value, or a `]` or `}`, the way to the array or object that holds it.
+
+```
+use std.deserialize (ReadError, Problem)
+use std.json (from_json_as, Json, describe)
+
+refuse = Json(cases: .key, names: .written, unknown: .refuse)
+```
+
+With `refuse`, `{"x":1,"y":3,"z":0}` read as a `Point` is ``1:15: z: unknown `z` ``.
+
+## A part of the text that is read later
+
+`RawJson` is a value of the text of one JSON value that is not taken apart.
+
+```
+struct RawJson {
+  text: str
+}
+```
+
+It has `Deserialize`: read, it takes whatever value is next, checks that it is one whole JSON value, and holds exactly its bytes, with no space round it, as a piece of the input that shares its memory. `from_json(raw.text)` reads it later into a type.
+
+```
+struct Call {
+  name: str
+  arguments: RawJson
+}
+```
+
+`{"name":"f","arguments":{"x": [1.5e3, "y"]}}` read as a `Call` has `{"x": [1.5e3, "y"]}` for `arguments.text`, with the space in it as it was. A `RawJson` has no `Serialize`, so `to_json` of a value that holds one is refused: "there is no implementation of `Serialize` for `Call`, as `RawJson` has no `Serialize`".
+
+## Memory
+
+Reading asks for memory for the texts that hold an escape, for the lists of the value, and for the objects and arrays that are passed over or held by a `RawJson`, in proportion to each, and for nothing else. A value of numbers, `bool`, and `Option`, with tuples, structs, and cases that hold them, asks for none.
 
 ## The forms
 
@@ -134,3 +255,7 @@ The settings hold for the whole value that is written. A type that needs another
 | --- | --- |
 | `to_json(x)` | The JSON of `x`, with a case as a key and names as written |
 | `to_json_as(x, Json(cases: .tag("type"), names: .camel))` | `.ok` of the JSON of `x`, with the case under `type` and names in camel case, or `.err` of the first `Clash` |
+| `from_json(text)` | `.ok` of the value of the type the place needs, with a case as a key and names as written, or `.err` of the first `ReadError` |
+| `from_json_as(text, Json(cases: .tag("type"), names: .camel, unknown: .refuse))` | The same, with the case under `type`, names in camel case, and a member the type has no field of refused |
+| `describe(e)` | The words of an error, as `1:59: tools[2].timeout: expected a whole number, found a text` |
+| `RawJson` | One JSON value as its text, which `from_json` reads later |
