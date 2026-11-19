@@ -1,7 +1,8 @@
 #!/bin/sh
 # Prints the hash of the executable of every case for every target, one line
 # each, as `<target> <case file> <sha256>`, in order. A case that does not
-# build for a target has no line for it.
+# build for a target has no line for it. A file of JavaScript that is written
+# beside a module is not the executable, and has none.
 # Usage: hash-cases.sh <smith> <cases folder>
 # <smith> is a built compiler, so that any commit's can be asked, and its list
 # of targets is read from what it says when it is given one it does not know.
@@ -38,6 +39,7 @@ for target in $targets; do
     if (cd "$work/case" && "$smith" build --target "$target" "$file") >/dev/null 2>&1; then
       for built in "$work/case"/*; do
         [ "$(basename "$built")" = "$file" ] && continue
+        case "$built" in *.js) continue ;; esac
         echo "$target $file $(hash "$built")"
       done
     fi

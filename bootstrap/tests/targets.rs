@@ -964,6 +964,7 @@ fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
     let programs = [HELLO, JOIN, WORDS];
     for (target, source) in buildable()
         .into_iter()
+        .filter(|t| t.is_machine_code())
         .flat_map(|t| programs.map(|p| (t, p)))
     {
         let bytes = compile(source.as_bytes(), target).unwrap();

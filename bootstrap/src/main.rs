@@ -332,12 +332,13 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
     let entry = &request.entry;
     let (stem, source) = read_entry(entry)?;
     let files = Files::in_current_folder(entry)?;
-    let bytes = smith::compile_project_timed(&source, &files.project(), request.target, timings)
-        .map_err(|errors| {
-            let file = entry.to_string_lossy();
-            let text = files.render(&file, &source, &errors);
-            text.strip_suffix('\n').unwrap_or(&text).to_string()
-        })?;
+    let built =
+        smith::compile_project_files_timed(&source, &files.project(), request.target, timings)
+            .map_err(|errors| {
+                let file = entry.to_string_lossy();
+                let text = files.render(&file, &source, &errors);
+                text.strip_suffix('\n').unwrap_or(&text).to_string()
+            })?;
     let cwd = files.root.clone();
     let name = if stem == "main" {
         cwd.file_name().unwrap_or(stem)
@@ -346,22 +347,30 @@ fn build_timed(request: &Request, timings: &mut Timings) -> Result<PathBuf, Stri
     };
     let output = cwd.join(request.target.executable_name(&name.to_string_lossy()));
     timings
-        .stage("write", || write_executable(&output, &bytes))
-        .map_err(|e| format!("{}: {e}", output.display()))?;
+        .stage("write", || {
+            write_executable(&output, &built.executable, request.target.is_machine_code())?;
+            for (extension, bytes) in &built.beside {
+                write_executable(&output.with_extension(extension), bytes, false)?;
+            }
+            Ok(())
+        })
+        .map_err(|e: std::io::Error| format!("{}: {e}", output.display()))?;
     Ok(output)
 }
 
-/// Writes the executable, replacing any file already there.
-fn write_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// Writes the executable, replacing any file already there, and lets the
+/// system run it when it is a program for a chip.
+fn write_executable(path: &Path, bytes: &[u8], runs: bool) -> std::io::Result<()> {
     if path.is_file() {
         std::fs::remove_file(path)?;
     }
     std::fs::write(path, bytes)?;
     #[cfg(unix)]
-    {
+    if runs {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
     }
+    let _ = runs;
     Ok(())
 }
 

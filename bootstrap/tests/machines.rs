@@ -68,7 +68,10 @@ fn the_machines_file_names_every_target_but_one_once() {
             "{target} or {machine} is named twice"
         );
     }
-    assert_eq!(lines.len(), Target::ALL.len() - 1);
+    // A module runs under `node`, on the machine of the `linux` job, so it
+    // has no machine of its own.
+    let chips = Target::ALL.iter().filter(|t| t.is_machine_code()).count();
+    assert_eq!(lines.len(), chips - 1);
 }
 
 /// What the compiler built, by program and target name.

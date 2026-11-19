@@ -53,6 +53,11 @@ jobs:
         working-directory: bootstrap
     steps:
       - uses: actions/checkout@v6
+      # The tests of the target that writes a module run it under `node`, and
+      # are skipped where it is not installed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Format
         run: cargo fmt --check
       - name: Lint
