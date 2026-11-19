@@ -1,0 +1,28 @@
+# The JSON-RPC 2.0 specification, `reference/jsonrpc/specification.html`: each
+# sentence that holds MUST, MUST NOT, or SHALL, and what holds it in `std.jsonrpc`. A line is
+#   <section> | <first words of the sentence> | test <name>
+# or
+#   <section> | <first words of the sentence> | reason <why std.jsonrpc has nothing to do with it>
+# `tests/jsonrpc_standard.rs` fails for a sentence that is in no line.
+4 | MUST be exactly "2.0". | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+4 | Method names that begin with the word rpc | reason binds a sender of a request; read takes any method, as a protocol built on it may use its own
+4 | An identifier established by the Client | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+4 | The Server MUST reply with the same value | reason binds the server that answers; matching a response to its request is out of scope, and write keeps the id a Response is given
+4.1 | The Server MUST NOT reply to a Notification | reason binds the server that answers; read says which messages are notifications
+4.2 | If present, parameters for the rpc call | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+4.2 | by-position: params MUST be an Array | test a_message_written_is_read_back_as_the_message_and_so_is_a_batch
+4.2 | by-name: params MUST be an Object | test a_message_written_is_read_back_as_the_message_and_so_is_a_batch
+4.2 | The names MUST match exactly | reason binds the method that reads its own parameters; params are left as RawJson
+5 | When a rpc call is made, the Server MUST reply | reason binds the server that answers
+5 | MUST be exactly "2.0". | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+5 | This member MUST NOT exist if there was an error | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+5 | This member MUST NOT exist if there was no error | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+5 | The value for this member MUST be an Object | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+5 | It MUST be the same as the value of the id member | reason binds the server that answers; matching a response to its request is out of scope
+5 | If there was an error in detecting the id | test a_message_written_is_read_back_as_the_message_and_so_is_a_batch
+5 | Either the result member or error member MUST be included | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+5.1 | When a rpc call encounters an error | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+5.1 | This MUST be an integer. | test a_text_broken_in_one_way_the_page_lists_is_the_failure_the_page_names
+6 | If the batch rpc call itself fails to be recognized | test every_example_of_section_7_of_the_specification_is_read_as_it_says
+6 | If there are no Response objects contained | reason binds the server that builds the answer to a batch; write_batch writes the messages it is given, and read refuses an array with nothing in it
+8 | Method names that begin with rpc. are reserved | reason binds a sender of a request; read takes any method, as a protocol built on it may use its own

@@ -2,7 +2,10 @@
 type: specification
 title: JSON-RPC
 description: std.jsonrpc, which reads and writes the messages of JSON-RPC 2.0, a request, a notification, and a response, as values, with the parameters and results left as RawJson.
-status: planned
+status: partial
+built:
+  - "`std.jsonrpc`, written in Smith, with `Id`, `Request`, `Notification`, `Failure`, `Response`, `Message`, and `Received`, `read`, `write`, `write_batch`, and the five failures the standard names, which reads an object, a batch, and each member of a batch on its own, and never gives a message the standard does not allow"
+  - "not `use std.jsonrpc (read)` or `(write)` as the example writes it: a name a program lists leaks into the library modules it reaches, so it is refused, and the module is imported as `use std.jsonrpc` with `jsonrpc.read(text)`"
 ---
 
 # JSON-RPC
