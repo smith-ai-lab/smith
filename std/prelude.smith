@@ -25,7 +25,7 @@ enum Flow[T = (), R = ()] {
 }
 
 struct Utf8Error {
-  at: Nat
+  pub at: Nat
 }
 
 trait Eq[T] {

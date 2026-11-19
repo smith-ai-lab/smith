@@ -2400,13 +2400,10 @@ fn module_of(pos: Pos) -> usize {
 }
 
 /// Whether the field of a struct is private to the module that defines the
-/// struct, and `at` is in another module. Only a module of a project has
-/// private fields: those of the prelude and of the standard library are read
-/// by any file.
+/// struct, and `at` is in another module. The prelude and the file are one
+/// module, so a field of a struct of the prelude is read by any file.
 fn hidden(def: &crate::parser::Struct, field: &crate::parser::Field, at: Pos) -> bool {
-    field.public.is_none()
-        && module_of(def.pos) >= FIRST_PROJECT
-        && module_of(def.pos) != module_of(at)
+    field.public.is_none() && of_library(def.pos) && module_of(def.pos) != module_of(at)
 }
 
 /// A name as its module wrote it, without the module that renaming adds.
