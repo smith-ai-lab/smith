@@ -1,0 +1,311 @@
+# The Model Context Protocol at its tag 2026-07-28, `reference/mcp/2026-07-28/specification/`: each
+# sentence that holds MUST, MUST NOT, or SHALL in the pages that a server is bound by, and what
+# will hold it in `std.mcp`. A line is
+#   <page>#<heading> | <first words of the sentence> | test <name>
+# or
+#   <page>#<heading> | <first words of the sentence> | reason <why std.mcp has nothing to do with it>
+# where <page> is the path of the page there without `.mdx`, and <heading> is the title of the
+# heading nearest above the sentence, or the title of the page before its first heading. The same
+# words twice under one heading are told apart by `(2)` after the heading, from the second. A
+# cell of a table that is a sentence is written as `<first cell of its row>: <the cell>`.
+# `tests/mcp_standard.rs` fails for a sentence that is in no line, and for one that two lines name.
+#
+# Every line says `reason to be decided`: the work that builds `std.mcp` replaces it with a test,
+# or with the reason the sentence binds nothing the module does, line by line.
+#
+# The pages taken are the 22 that `mcp_standard.rs` lists as TAKEN. The pages left out are the 8
+# that it lists as LEFT_OUT, each with why.
+#
+# The words of requirement are those of the issue: MUST, MUST NOT, and SHALL. One sentence of the
+# pages taken says REQUIRED instead, as RFC 2119 allows ("These headers are REQUIRED for
+# compliance." under streamable-http#Standard Request Headers: Mcp-Method on every request, Mcp-Name
+# on tools/call, resources/read, and prompts/get), and is no line here.
+basic/index#Overview | All implementations MUST support the base | reason to be decided
+basic/index#Messages | All messages between MCP clients and | reason to be decided
+basic/index#Requests | Requests MUST include a string or | reason to be decided
+basic/index#Requests | Unlike base JSON-RPC, the ID MUST | reason to be decided
+basic/index#Requests | The request ID MUST NOT match | reason to be decided
+basic/index#Result Responses | Result responses MUST include the same | reason to be decided
+basic/index#Result Responses | Result responses MUST include a result | reason to be decided
+basic/index#Result Responses | The result MUST include a resultType | reason to be decided
+basic/index#ResultType | The set of supported ResultType values | reason to be decided
+basic/index#ResultType | A resultType of any value unrecognized | reason to be decided
+basic/index#ResultType | For backward compatibility with servers implementing | reason to be decided
+basic/index#Error Responses | Error responses MUST include the same | reason to be decided
+basic/index#Error Responses | Error responses MUST include an error | reason to be decided
+basic/index#Error Responses | Error codes MUST be integers. | reason to be decided
+basic/index#Error Codes | New codes MUST NOT be allocated | reason to be decided
+basic/index#Error Codes | Apart from -32002 (see below), receivers | reason to be decided
+basic/index#Error Codes | Implementations MUST NOT emit any code | reason to be decided
+basic/index#Error Codes | Implementations of this protocol version MUST | reason to be decided
+basic/index#Notifications | The receiver MUST NOT send a | reason to be decided
+basic/index#Notifications | Notifications MUST NOT include an ID. | reason to be decided
+basic/index#Statelessness | Servers MUST NOT rely on prior | reason to be decided
+basic/index#Statelessness | State that needs to span multiple | reason to be decided
+basic/index#Schema Dialect | Supported dialects: Implementations MUST support at | reason to be decided
+basic/index#Implementation Requirements | Clients and servers MUST support JSON | reason to be decided
+basic/index#Implementation Requirements | Clients and servers MUST validate schemas | reason to be decided
+basic/index#Implementation Requirements | They MUST handle unsupported dialects gracefully | reason to be decided
+basic/index#Schema Validation | Schemas MUST be valid according to | reason to be decided
+basic/index#$ref Resolution | Implementations MUST NOT automatically dereference $ref | reason to be decided
+basic/index#$ref Resolution | Implementations MAY offer an opt-in mode | reason to be decided
+basic/index#_meta | Certain key names are reserved by | reason to be decided
+basic/index#_meta | If specified, MUST be a series | reason to be decided
+basic/index#_meta | Labels MUST start with a letter | reason to be decided
+basic/index#_meta | Unless empty, MUST begin and end | reason to be decided
+basic/index#_meta | Client requests carry the following io.modelcontextprotocol/* | reason to be decided
+basic/index#_meta | A request missing any required field | reason to be decided
+basic/index#_meta | On HTTP, the response status MUST | reason to be decided
+basic/index#_meta | A server MUST NOT rely on | reason to be decided
+basic/index#_meta | If processing a request requires a | reason to be decided
+basic/index#_meta (2) | On HTTP, the response status MUST | reason to be decided
+basic/index#_meta | On notifications delivered via a subscriptions/listen | reason to be decided
+basic/index#_meta | When present, their values MUST follow | reason to be decided
+basic/index#icons | Clients that support rendering icons MUST | reason to be decided
+basic/index#icons | Consumers of icon metadata MUST take | reason to be decided
+basic/index#icons | Clients MUST reject icon URIs that | reason to be decided
+basic/versioning#Protocol Version Negotiation | If the server does not implement | reason to be decided
+basic/versioning#Protocol Version Negotiation | Servers MUST implement server/discover. | reason to be decided
+basic/versioning#Extension Negotiation | Extension identifiers MUST follow the _meta | reason to be decided
+basic/versioning#Extension Negotiation | If one party supports an extension | reason to be decided
+basic/transports/index#Messages | JSON-RPC messages MUST be UTF-8 encoded. | reason to be decided
+basic/transports/index#Messages | A binding MUST deliver client-sent requests | reason to be decided
+basic/transports/index#Custom Transports | Implementers who choose to support custom | reason to be decided
+basic/transports/streamable-http#Streamable HTTP | The server MUST provide a single | reason to be decided
+basic/transports/streamable-http#Security & Endpoint | Servers MUST validate the Origin header | reason to be decided
+basic/transports/streamable-http#Security & Endpoint | If the Origin header is present | reason to be decided
+basic/transports/streamable-http#Sending Messages | Every JSON-RPC message sent from the | reason to be decided
+basic/transports/streamable-http#Sending Messages | The client MUST use HTTP POST | reason to be decided
+basic/transports/streamable-http#Sending Messages | The client MUST include an Accept | reason to be decided
+basic/transports/streamable-http#Sending Messages | The client MUST include the request | reason to be decided
+basic/transports/streamable-http#Sending Messages | The body of the HTTP POST | reason to be decided
+basic/transports/streamable-http#Sending Messages | The client MUST NOT send JSON-RPC | reason to be decided
+basic/transports/streamable-http#Sending Messages | If the server accepts it, the | reason to be decided
+basic/transports/streamable-http#Sending Messages | If the server cannot accept it, | reason to be decided
+basic/transports/streamable-http#Sending Messages | If the body is a JSON-RPC | reason to be decided
+basic/transports/streamable-http#Sending Messages | The client MUST support both. | reason to be decided
+basic/transports/streamable-http#Receiving Messages | These notifications MUST relate to the | reason to be decided
+basic/transports/streamable-http#Receiving Messages | The server MUST NOT send independent | reason to be decided
+basic/transports/streamable-http#Cancellation | Closing the SSE response stream MUST | reason to be decided
+basic/transports/streamable-http#Cancellation | The server SHOULD stop work on | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | Every POST request to the MCP | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | The header value MUST match the | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | If the values do not match, | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | If the server does not implement the requested protocol | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | If the server does not implement the requested RPC | reason to be decided
+basic/transports/streamable-http#Protocol Version Header | A server that does not support | reason to be decided
+basic/transports/streamable-http#Standard Request Headers | If the Mcp-Name source value cannot | reason to be decided
+basic/transports/streamable-http#Custom Headers from Tool Parameters | While the use of x-mcp-header is | reason to be decided
+basic/transports/streamable-http#Custom Headers from Tool Parameters | When a server's tool definition includes | reason to be decided
+basic/transports/streamable-http#Schema Extension | MUST NOT be empty | reason to be decided
+basic/transports/streamable-http#Schema Extension | MUST match HTTP field-name token syntax | reason to be decided
+basic/transports/streamable-http#Schema Extension | MUST NOT contain control characters, including | reason to be decided
+basic/transports/streamable-http#Schema Extension | MUST be case-insensitively unique among all | reason to be decided
+basic/transports/streamable-http#Schema Extension | MUST only be applied to parameters | reason to be decided
+basic/transports/streamable-http#Schema Extension | Integer values MUST be within the | reason to be decided
+basic/transports/streamable-http#Schema Extension | MUST only be applied to properties | reason to be decided
+basic/transports/streamable-http#Schema Extension | The chain MUST NOT pass through | reason to be decided
+basic/transports/streamable-http#Schema Extension | Clients using the Streamable HTTP transport | reason to be decided
+basic/transports/streamable-http#Schema Extension | Rejection means the client MUST exclude | reason to be decided
+basic/transports/streamable-http#Value Encoding | Clients MUST encode parameter values before | reason to be decided
+basic/transports/streamable-http#Value Encoding | When a value cannot be safely | reason to be decided
+basic/transports/streamable-http#Value Encoding | These markers are case-sensitive and MUST | reason to be decided
+basic/transports/streamable-http#Value Encoding | Servers and intermediaries that need to | reason to be decided
+basic/transports/streamable-http#Value Encoding | In particular, servers MUST decode an | reason to be decided
+basic/transports/streamable-http#Value Encoding | To avoid ambiguity, clients MUST also | reason to be decided
+basic/transports/streamable-http#Client Behavior | When constructing a tools/call request via | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Intermediate servers that do not recognize | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Servers MUST reject requests with a recognized | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Any server that processes the message | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Servers MUST reject requests with a 400 | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value provided: Client MUST include | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value provided: Server MUST validate | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value is null: Client MUST | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter value is null: Server MUST | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter not in arguments: Client MUST | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Parameter not in arguments: Server MUST | reason to be decided
+basic/transports/streamable-http#Server Behavior for Custom Headers | Client omits header but value is | reason to be decided
+basic/transports/streamable-http#Case Sensitivity | Clients and servers MUST use case-insensitive | reason to be decided
+basic/transports/streamable-http#Server Validation | Servers that process the request body | reason to be decided
+basic/transports/streamable-http#Server Validation | When rejecting a request due to | reason to be decided
+basic/transports/streamable-http#Server Validation | For headers that permit the Base64 | reason to be decided
+basic/transports/streamable-http#Server Validation | Intermediaries MUST return an appropriate HTTP | reason to be decided
+basic/transports/stdio#stdio | Messages are delimited by newlines, and | reason to be decided
+basic/transports/stdio#stdio | The server MUST NOT write anything | reason to be decided
+basic/transports/stdio#stdio | The client MUST NOT write anything | reason to be decided
+basic/transports/stdio#Sending Messages | The client MUST NOT write JSON-RPC | reason to be decided
+basic/transports/stdio#Receiving Messages | Clients MUST correlate these using the | reason to be decided
+basic/transports/stdio#Receiving Messages | The server MUST NOT write JSON-RPC | reason to be decided
+basic/transports/stdio#Cancellation | To cancel an in-flight request, the | reason to be decided
+basic/transports/stdio#Cancellation | Servers SHOULD stop work on a | reason to be decided
+basic/transports/stdio#Backward Compatibility | The fallback MUST NOT be keyed | reason to be decided
+basic/patterns/index#Overview | Servers MUST NOT initiate JSON-RPC requests, | reason to be decided
+basic/patterns/subscriptions#Opening a Stream | The server MUST NOT send notification | reason to be decided
+basic/patterns/subscriptions#Acknowledgment | The server MUST send notifications/subscriptions/acknowledged as | reason to be decided
+basic/patterns/subscriptions#Receiving Notifications | On stdio, where all messages share | reason to be decided
+basic/patterns/subscriptions#Graceful Closure | On stdio, if the connection is | reason to be decided
+basic/patterns/cancellation#Cancellation | A server MUST send notifications/cancelled referencing | reason to be decided
+basic/patterns/cancellation#Cancellation | Servers MUST NOT send notifications/cancelled for | reason to be decided
+basic/patterns/cancellation#Transport-Specific Cancellation | Streamable HTTP: Closing the SSE response | reason to be decided
+basic/patterns/cancellation#Transport-Specific Cancellation | The client MUST send a notifications/cancelled | reason to be decided
+basic/patterns/cancellation#Behavior Requirements | Cancellation notifications MUST only reference requests | reason to be decided
+basic/patterns/cancellation#Behavior Requirements | Server-sent cancellation notifications MUST reference a | reason to be decided
+basic/patterns/cancellation#Timing Considerations | Both parties MUST handle these race | reason to be decided
+basic/patterns/progress#Progress Flow | Progress tokens MUST be a string | reason to be decided
+basic/patterns/progress#Progress Flow | Progress tokens can be chosen by | reason to be decided
+basic/patterns/progress#Progress Flow | The progress value MUST increase with | reason to be decided
+basic/patterns/progress#Behavior Requirements | Progress notifications MUST only reference tokens | reason to be decided
+basic/patterns/progress#Implementation Notes | Progress notifications MUST stop after completion | reason to be decided
+basic/patterns/mrtr#Multi Round-Trip Requests | Servers MUST send server-to-client requests (such | reason to be decided
+basic/patterns/mrtr#Multi Round-Trip Requests | Every request MUST include the required | reason to be decided
+basic/patterns/mrtr#InputRequiredResult | Clients MUST NOT inspect, parse, modify, | reason to be decided
+basic/patterns/mrtr#Supported Requests | Servers MUST NOT send InputRequiredResult responses | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | inputRequests keys are server assigned identifiers | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | inputRequests values are request objects that | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | If a client request contains a | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | If requestState influences authorization, resource access, | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | Servers for which a given requestState | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | Servers MUST include at least one | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | Servers MUST NOT send an inputRequests | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | For example, if a client does | reason to be decided
+basic/patterns/mrtr#Server Requirements (Basic Workflow) | Servers MUST NOT assume that clients | reason to be decided
+basic/patterns/mrtr#Client Requirements (Basic Workflow) | If a client receives an InputRequiredResult | reason to be decided
+basic/patterns/mrtr#Client Requirements (Basic Workflow) | If an InputRequiredResult contains the requestState | reason to be decided
+basic/patterns/mrtr#Client Requirements (Basic Workflow) | Clients MUST NOT inspect, parse, modify, | reason to be decided
+basic/patterns/mrtr#Client Requirements (Basic Workflow) | If the InputRequiredResult does not contain | reason to be decided
+basic/patterns/mrtr#Client Requirements (Basic Workflow) | The JSON-RPC id MUST be different | reason to be decided
+basic/patterns/mrtr#Client Requirements (Basic Workflow) | They MUST NOT be used for | reason to be decided
+basic/patterns/mrtr#Security Considerations | Servers MUST validate request state as | reason to be decided
+basic/authorization/index#Protocol Requirements | Implementations using alternative transports MUST follow | reason to be decided
+basic/authorization/index#Overview | Authorization servers MUST implement OAuth 2.1 | reason to be decided
+basic/authorization/index#Overview | MCP servers MUST implement OAuth 2.0 | reason to be decided
+basic/authorization/index#Overview | MCP clients MUST use OAuth 2.0 | reason to be decided
+basic/authorization/index#Overview | MCP authorization servers MUST provide at | reason to be decided
+basic/authorization/index#Overview | MCP clients MUST support both discovery | reason to be decided
+basic/authorization/index#Authorization Server Discovery | Implementations MUST follow the normative discovery | reason to be decided
+basic/authorization/index#Client Registration | Before initiating the authorization flow, MCP | reason to be decided
+basic/authorization/index#Scope Selection Strategy | Clients MUST NOT assume any particular | reason to be decided
+basic/authorization/index#Scope Selection Strategy | Clients MUST treat the scopes provided | reason to be decided
+basic/authorization/index#Authorization Response Validation | Before redirecting the user-agent, the client | reason to be decided
+basic/authorization/index#Authorization Response Validation | Authorization servers that include the iss | reason to be decided
+basic/authorization/index#Authorization Response Validation | On receiving the authorization response, MCP | reason to be decided
+basic/authorization/index#Authorization Response Validation | A future revision of this specification | reason to be decided
+basic/authorization/index#Authorization Response Validation | After decoding the iss value from | reason to be decided
+basic/authorization/index#Authorization Response Validation | This validation applies equally to error | reason to be decided
+basic/authorization/index#Resource Parameter Implementation | MCP clients MUST implement Resource Indicators | reason to be decided
+basic/authorization/index#Resource Parameter Implementation | MUST be included in both authorization | reason to be decided
+basic/authorization/index#Resource Parameter Implementation | MUST identify the MCP server that | reason to be decided
+basic/authorization/index#Resource Parameter Implementation | MUST use the canonical URI of | reason to be decided
+basic/authorization/index#Canonical Server URI | MCP clients MUST send this parameter | reason to be decided
+basic/authorization/index#Token Requirements | Access token handling when making requests | reason to be decided
+basic/authorization/index#Token Requirements | MCP client MUST use the Authorization | reason to be decided
+basic/authorization/index#Token Requirements | Note that authorization MUST be included | reason to be decided
+basic/authorization/index#Token Requirements | Access tokens MUST NOT be included | reason to be decided
+basic/authorization/index#Token Handling | MCP servers, acting in their role | reason to be decided
+basic/authorization/index#Token Handling | MCP servers MUST validate that access | reason to be decided
+basic/authorization/index#Token Handling | If validation fails, servers MUST respond | reason to be decided
+basic/authorization/index#Token Handling | Invalid or expired tokens MUST receive | reason to be decided
+basic/authorization/index#Token Handling | MCP clients MUST NOT send tokens | reason to be decided
+basic/authorization/index#Token Handling | MCP servers MUST only accept tokens | reason to be decided
+basic/authorization/index#Token Handling | MCP servers MUST NOT accept or | reason to be decided
+basic/authorization/index#Refresh Tokens | MUST keep refresh tokens confidential in | reason to be decided
+basic/authorization/index#Refresh Tokens | MUST NOT assume refresh tokens will | reason to be decided
+basic/authorization/index#Error Handling | Servers MUST return appropriate HTTP status | reason to be decided
+basic/authorization/index#Step-Up Authorization Flow | Servers MUST account for scope hierarchies, | reason to be decided
+basic/authorization/index#Security Considerations | Implementations of this specification MUST follow | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Location | MCP servers MUST implement the OAuth | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Location | The Protected Resource Metadata document returned | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Location | Clients MUST maintain separate registration state | reason to be decided
+basic/authorization/authorization-server-discovery#Protected Resource Metadata Discovery Requirements | MCP servers MUST implement one of | reason to be decided
+basic/authorization/authorization-server-discovery#Protected Resource Metadata Discovery Requirements | MCP clients MUST support both discovery | reason to be decided
+basic/authorization/authorization-server-discovery#Protected Resource Metadata Discovery Requirements | MCP clients MUST be able to | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Metadata Discovery | To handle different issuer URL formats | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Metadata Discovery | For issuer URLs with path components | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Metadata Discovery | For issuer URLs without path components | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Metadata Discovery | After retrieving a metadata document, MCP | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Metadata Discovery | If they differ, the client MUST | reason to be decided
+basic/authorization/authorization-server-discovery#Authorization Server Metadata Discovery | For example, a document fetched from | reason to be decided
+basic/authorization/security-considerations#Authorization Security Considerations | This document outlines security requirements that | reason to be decided
+basic/authorization/security-considerations#Authorization Security Considerations | Additionally, implementors MUST follow OAuth 2.1 | reason to be decided
+basic/authorization/security-considerations#Token Audience Binding and Validation | MCP clients MUST include the resource | reason to be decided
+basic/authorization/security-considerations#Token Audience Binding and Validation | MCP servers MUST validate that tokens | reason to be decided
+basic/authorization/security-considerations#Token Theft | Clients and servers MUST implement secure | reason to be decided
+basic/authorization/security-considerations#Token Theft | For public clients, authorization servers MUST | reason to be decided
+basic/authorization/security-considerations#Communication Security | Implementations MUST follow OAuth 2.1 Section | reason to be decided
+basic/authorization/security-considerations#Communication Security | All authorization server endpoints MUST be | reason to be decided
+basic/authorization/security-considerations#Communication Security | All redirect URIs MUST be either | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | To mitigate this, MCP clients MUST | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | MCP clients MUST use the S256 | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | Since OAuth 2.1 and PKCE specifications | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | OAuth 2.0 Authorization Server Metadata: If | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | MCP clients MUST verify the presence | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | If the field is absent, MCP | reason to be decided
+basic/authorization/security-considerations#Authorization Code Protection | Authorization servers providing OpenID Connect Discovery | reason to be decided
+basic/authorization/security-considerations#Open Redirection | MCP clients MUST have redirect URIs | reason to be decided
+basic/authorization/security-considerations#Open Redirection | Authorization servers MUST validate exact redirect | reason to be decided
+basic/authorization/security-considerations#Open Redirection | Authorization servers MUST take precautions to | reason to be decided
+basic/authorization/security-considerations#Client ID Metadata Document Security | When implementing Client ID Metadata Documents, | reason to be decided
+basic/authorization/security-considerations#Localhost Redirect URI Risks | MUST clearly display the redirect URI | reason to be decided
+basic/authorization/security-considerations#Confused Deputy Problem | MCP proxy servers using static client | reason to be decided
+basic/authorization/security-considerations#Access Token Privilege Restriction | MCP servers MUST validate access tokens | reason to be decided
+basic/authorization/security-considerations#Access Token Privilege Restriction | A MCP server MUST follow the | reason to be decided
+basic/authorization/security-considerations#Access Token Privilege Restriction | MCP servers MUST only accept tokens | reason to be decided
+basic/authorization/security-considerations#Access Token Privilege Restriction | The MCP server MUST NOT pass | reason to be decided
+basic/authorization/security-considerations#Access Token Privilege Restriction | MCP clients MUST implement and use | reason to be decided
+server/discover#Discovery | Servers MUST implement it. | reason to be decided
+server/tools#Tools | Every request MUST include the required | reason to be decided
+server/tools#Capabilities | Servers that support tools MUST declare | reason to be decided
+server/tools#Capabilities | Servers that declare the tools capability | reason to be decided
+server/tools#Capabilities | This set MAY be empty and | reason to be decided
+server/tools#Input Required Tool Results | Note that the JSON-RPC id MUST | reason to be decided
+server/tools#Tool | MUST be a valid JSON Schema | reason to be decided
+server/tools#Tool | For trust & safety and security, | reason to be decided
+server/tools#x-mcp-header | MUST NOT be empty | reason to be decided
+server/tools#x-mcp-header | MUST match HTTP field-name token syntax | reason to be decided
+server/tools#x-mcp-header | MUST NOT contain control characters, including | reason to be decided
+server/tools#x-mcp-header | MUST be case-insensitively unique among all | reason to be decided
+server/tools#x-mcp-header | MUST only be applied to parameters | reason to be decided
+server/tools#x-mcp-header | Integer values MUST be within the | reason to be decided
+server/tools#x-mcp-header | MUST only be applied to properties | reason to be decided
+server/tools#x-mcp-header | Clients using the Streamable HTTP transport | reason to be decided
+server/tools#x-mcp-header | Rejection means the client MUST exclude | reason to be decided
+server/tools#Output Schema | Servers MUST provide structured results that | reason to be decided
+server/tools#Security Considerations | Servers MUST: | reason to be decided
+server/resources#Resources | Every request MUST include the required | reason to be decided
+server/resources#Capabilities | Servers that support resources MUST declare | reason to be decided
+server/resources#Capabilities | Servers that declare the resources capability | reason to be decided
+server/resources#Capabilities | This set MAY be empty and | reason to be decided
+server/resources#Custom URI Schemes | Custom URI schemes MUST be in | reason to be decided
+server/resources#Error Handling | If the requested resource does not | reason to be decided
+server/resources#Error Handling | Servers MUST NOT return an empty | reason to be decided
+server/resources#Security Considerations | Servers MUST validate all resource URIs | reason to be decided
+server/resources#Security Considerations | Binary data MUST be properly encoded | reason to be decided
+server/resources#Security Considerations | Servers MUST sanitize file paths to | reason to be decided
+server/prompts#Prompts | Every request MUST include the required | reason to be decided
+server/prompts#Capabilities | Servers that support prompts MUST declare | reason to be decided
+server/prompts#Capabilities | Servers that declare the prompts capability | reason to be decided
+server/prompts#Capabilities | This set MAY be empty and | reason to be decided
+server/prompts#Image Content | The image data MUST be base64-encoded | reason to be decided
+server/prompts#Audio Content | The audio data MUST be base64-encoded | reason to be decided
+server/prompts#Embedded Resources | Resources can contain either text or | reason to be decided
+server/prompts#Security | Implementations MUST carefully validate all prompt | reason to be decided
+server/utilities/caching#Cacheable Results | Servers MUST include caching hints on | reason to be decided
+server/utilities/caching#Cache Key | Clients MUST NOT serve a cached | reason to be decided
+server/utilities/caching#Time-to-Live (TTL) Field | Servers MUST provide a ttlMs value | reason to be decided
+server/utilities/caching#Freshness Calculation | Implementations that do choose to poll | reason to be decided
+server/utilities/caching#Cache Scope Field | Caches MUST NOT be shared across | reason to be decided
+server/utilities/caching#Interaction with Pagination | Servers MUST apply the same cacheScope | reason to be decided
+server/utilities/caching#Interaction with Pagination | For example, if the first page | reason to be decided
+server/utilities/caching#Security Considerations | Servers MUST be aware that responses | reason to be decided
+server/utilities/caching#Security Considerations | MUST apply appropriate per-primitive access controls, | reason to be decided
+server/utilities/pagination#Pagination | Every request MUST include the required | reason to be decided
+server/utilities/pagination#Pagination Model | Page size is determined by the | reason to be decided
+server/utilities/pagination#Implementation Guidelines | Clients MUST treat cursors as opaque | reason to be decided
+server/utilities/pagination#Implementation Guidelines | Don't make any determination based on | reason to be decided
+server/utilities/completion#Completion | Every request MUST include the required | reason to be decided
+server/utilities/completion#Capabilities | Servers that support completions MUST declare | reason to be decided
+server/utilities/completion#Security | Implementations MUST: | reason to be decided
+server/utilities/logging#Capabilities | Servers that emit log message notifications | reason to be decided
+server/utilities/logging#Per-request log level | The server MUST NOT emit notifications/message | reason to be decided
+server/utilities/logging#Per-request log level | When the field is present, the | reason to be decided
+server/utilities/logging#Security | Log messages MUST NOT contain: | reason to be decided
