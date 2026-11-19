@@ -420,6 +420,7 @@ impl<'a> Out<'a> {
         match ty {
             form::Type::Address => self.constant(form::Constant::Null, ty),
             form::Type::Int(_) => self.constant(form::Constant::Int(0), ty),
+            form::Type::Float(_) => self.constant(form::Constant::Float(0), ty),
         }
     }
 
