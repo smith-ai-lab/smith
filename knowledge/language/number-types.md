@@ -12,7 +12,7 @@ built:
   - "a range taken where a narrower one is needed, at the same places, which compiles when a condition or a `requires` shows that it fits, and is refused otherwise with an error that says what could not be proven"
   - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges, as the numbers they hold are, where one type of 64 bits holds the numbers of both"
   - "a range whose bound is the name of a parameter, `0..n` or `m..256`, as the type of a parameter: the body knows that the parameter is below `n` or at least `m`, as a `requires` says, and a call compiles when its argument is shown to be, and is the empty type where `n` is not above the first bound"
-  - "not a name for a bound in the type of a result or of a binding, which is planned, and a comparison of two ranges that no type of 64 bits holds"
+  - "not the `size` of a name as a bound, which is planned, and a comparison of two ranges that no type of 64 bits holds"
 ---
 
 # Number types
@@ -88,6 +88,21 @@ fn first_free(n: Nat) -> 0..n { 0 }
 ```
 
 `first_free` is refused, because `0` is not below `n` when `n` is `0`.
+
+A bound may also be the `size` of a name, written `xs.size`, where `xs` is a parameter or an `=` binding that is a `List`, a `Slice`, a `str`, or an array. So a function that indexes says in its signature what it needs.
+
+```
+fn pick(xs: List[Nat], i: 0..xs.size) -> Nat { xs[i] }
+```
+
+`pick([4, 5, 6], 2)` is `6`. `xs[i]` needs no proof, as `i` is below `xs.size` by its type, and `pick(xs, 3)` on a list of three is refused where it is called. The size of a list that a function is lent does not change while it holds it, so the bound means one number for the whole function.
+
+`size` is the only field a bound may name, and a bound is never worked out: `0..grid.rows`, `0..n + 1`, and `0..count(xs)` are each refused, the first with "a bound is a whole number, a name, or the `size` of a name". A binding gives any other number a name first.
+
+```
+m = n + 1
+i: 0..m = n
+```
 
 A name is not a bound in the type of a field, of a `var`, or inside another type such as `List[0..n]`.
 
