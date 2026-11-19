@@ -28,7 +28,7 @@ fn next_stopping(i: Byte) -> Byte { clamp(i + 1) }
 | `narrow` | An `Option` of the range expected: `.some` of the value when it is in it, `.none` when it is not |
 | `clamp` | The value of the range expected that is nearest the value |
 
-Both take a value of any range. [Integer arithmetic](../language/arithmetic.md#entering-a-range-with-no-proof) says more.
+Both take a value of any range, or a float, as [A float entering a range](../language/arithmetic.md#a-float-entering-a-range) says. [Integer arithmetic](../language/arithmetic.md#entering-a-range-with-no-proof) says more.
 
 | Does | Wraps |
 | --- | --- |

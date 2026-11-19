@@ -1,12 +1,12 @@
 ---
 type: specification
 title: Integer arithmetic
-description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, narrow and clamp where nothing proves it, and the functions that wrap.
+description: The exact range that a plain +, -, *, or / gives, the proof asked where a value enters a narrower range, narrow and clamp where nothing proves it or the value is a float, and the functions that wrap.
 status: partial
 built:
   - "a plain `+`, `-`, or `*` on `u8` to `i64`, which compiles when `arith` proves that the result fits the type of its operands, and an error that says what could not be proven"
   - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
-  - "not a range as a type, the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range"
+  - "not a range as a type, the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float"
 ---
 
 # Integer arithmetic
@@ -133,6 +133,46 @@ fn same(x: Byte) -> Option[Byte] { narrow(x) }
 ```
 
 This is refused, as `Byte` holds every value of `x`. A call with no range expected is refused too, as `n = narrow(x)` with nothing that states the range of `n`.
+
+## A float entering a range
+
+A float becomes a whole number through the same two functions and in no other way. A float may hold a fraction, a number outside every range, or no number at all, so it is never taken as a whole number with nothing written.
+
+`narrow(x)` of a float gives `.some` only when `x` is exactly a whole number of the range expected. A float with a fraction, one outside the range, an infinity, and a float that is not a number each give `.none`.
+
+```
+use std.int (narrow)
+
+fn seats(x: f64) -> Option[0..500] { narrow(x) }
+```
+
+`seats(12.0)` is `.some(12)`. `seats(12.5)`, `seats(500.0)`, and `seats(-1.0)` are `.none`.
+
+`clamp(x)` of a float gives the value of the range expected that is nearest `x`. A float with a fraction goes to the nearest whole number, and one that is exactly half way between two goes to the even one. A float below the range gives the least value, and one above it the greatest, as an infinity does. A float that is not a number gives the greatest value, as it comes after every other float where floats are ordered, as [Comparisons](comparisons.md) says.
+
+```
+use std.console (console, print)
+use std.int (clamp)
+
+fn level(x: f64) -> Byte { clamp(x) }
+
+fn main() ! console, alloc {
+  print("{level(2.4)} {level(2.5)} {level(3.5)} {level(-7.0)} {level(1e30)}")
+}
+```
+
+This prints `2 2 4 0 255`. `2.5` is half way between `2` and `3` and goes to `2`, the even one, and `3.5` goes to `4`.
+
+A program that wants another rounding rounds the float first, with `floor`, `ceil`, `trunc`, or `round` of [`std.float`](../library/float.md), each of which gives a float.
+
+```
+use std.float (floor)
+use std.int (clamp)
+
+fn level_down(x: f64) -> Byte { clamp(floor(x)) }
+```
+
+`level_down(2.9)` is `2`.
 
 ## More than 64 bits
 
