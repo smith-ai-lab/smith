@@ -58,6 +58,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The test that runs a module as a Cloudflare Worker starts `workerd`
+      # with `miniflare`, pinned in the lock beside the test, and is skipped
+      # where it is not installed.
+      - name: Install the package that runs a Worker
+        working-directory: bootstrap/tests/support
+        run: npm ci --ignore-scripts
       # The test of an executable started on a chip without the level it was
       # built for makes such a chip with `qemu-x86_64`, and fails where it is
       # not installed.
