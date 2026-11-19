@@ -246,3 +246,15 @@ fn in_order(mut errors: Vec<diag::Error>) -> Vec<diag::Error> {
     errors.dedup();
     errors
 }
+
+/// The errors in every module of the standard library, each read whole and
+/// checked whole, whether or not a program reaches what is in it.
+pub fn check_standard_library() -> Vec<diag::Error> {
+    in_order(check::check_standard_library())
+}
+
+/// The errors in every module of a library, given as a name and a source each,
+/// read whole and checked whole.
+pub fn check_library(modules: &[(&str, &str)]) -> Vec<diag::Error> {
+    in_order(check::check_library(&check::Library::new(modules)))
+}

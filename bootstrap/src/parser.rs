@@ -11,6 +11,7 @@ use crate::lexer::{Piece, Tok, Token};
 
 mod lists_and_text;
 mod numbers_and_operators;
+pub mod outline;
 mod traits;
 
 pub use lists_and_text::Part;
@@ -19,7 +20,7 @@ use numbers_and_operators::number;
 pub use traits::{Impl, Trait, Without};
 
 /// The definitions of a file, each kind in the order they are written.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct File {
     // Each item is shared, so that the prelude's, which is parsed once in a
     // process, is not copied into each file that is checked.
