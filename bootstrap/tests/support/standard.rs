@@ -1,7 +1,8 @@
 //! What a test needs to hold a library module to the text of a standard, which
-//! is in `reference/rfc/`: the sentences of some sections that hold MUST,
-//! MUST NOT, or SHALL, a ledger that says for each what holds it, and the
-//! bytes that a rule of the standard's ABNF allows.
+//! is in `reference/`: in `rfc/` an RFC, in `jsonrpc/` a page of HTML, and in
+//! `mcp/` the pages of a specification in MDX. The sentences of some sections
+//! that hold MUST, MUST NOT, or SHALL, a ledger that says for each what holds
+//! it, and the bytes that a rule of the standard's ABNF allows.
 //!
 //! A ledger is text, one line to a sentence, written `<section> | <first
 //! words of the sentence> | test <name>` or `<section> | <first words> |
@@ -13,10 +14,15 @@ use std::path::PathBuf;
 
 /// The text of a standard of `reference/rfc/`, such as `rfc9112.txt`.
 pub fn read(file: &str) -> String {
+    read_under("rfc", file)
+}
+
+/// The text of a file under `reference/`, such as `rfc` and `rfc9112.txt`.
+pub fn read_under(dir: &str, file: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("reference")
-        .join("rfc")
+        .join(dir)
         .join(file);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("{} is read by the tests: {e}", path.display()))
@@ -224,6 +230,214 @@ fn decode(piece: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// Every sentence that holds one of the words of requirement in a page of the
+/// Model Context Protocol's specification, which is MDX in
+/// `reference/mcp/<version>/specification/`, in the order of the text. `page`
+/// is the path of the page there without `.mdx`, and the section of a sentence
+/// is that, a `#`, and the title of the heading nearest above it, or the title
+/// of the page before its first heading. The code blocks of a page are no
+/// part of its text; a paragraph, an item of a list, and a cell of a table are
+/// each cut into sentences alone, a cell after the first of its row with that
+/// first cell and a colon before it; and what Markdown adds (`**`, back quotes,
+/// the address of a link, a tag) is not in what a sentence says.
+pub fn mdx_sentences(page: &str, mdx: &str) -> Vec<Sentence> {
+    let mut lines = mdx.trim_start_matches('\u{feff}').lines().peekable();
+    let mut title = String::new();
+    if lines.peek().is_some_and(|l| l.trim() == "---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line.trim() == "---" {
+                break;
+            }
+            if let Some(t) = line.strip_prefix("title:") {
+                title = t.trim().trim_matches('"').to_string();
+            }
+        }
+    }
+    let mut found = Vec::new();
+    let mut section = format!("{page}#{title}");
+    let mut paragraph: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for raw in lines {
+        let line = raw.trim();
+        if line.starts_with("```") {
+            flush_paragraph(&section, &mut paragraph, &mut found);
+            fenced = !fenced;
+        } else if fenced {
+            continue;
+        } else if line.is_empty() {
+            flush_paragraph(&section, &mut paragraph, &mut found);
+        } else if line.starts_with('#') {
+            flush_paragraph(&section, &mut paragraph, &mut found);
+            let heading = clean_markdown(line.trim_start_matches('#'));
+            section = format!("{page}#{}", heading.replace('|', "/"));
+        } else if line.starts_with('|') {
+            flush_paragraph(&section, &mut paragraph, &mut found);
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            if cells.iter().all(|c| c.chars().all(|c| matches!(c, '-' | ':' | ' '))) {
+                continue;
+            }
+            let cells: Vec<String> = cells.into_iter().map(clean_markdown).collect();
+            // A cell that is a sentence by itself is told from the same words in
+            // another row by the first cell of its row, which says which row it is.
+            let names_row = !cells[0].contains("MUST") && !cells[0].contains("SHALL");
+            for (i, cell) in cells.iter().enumerate() {
+                paragraph.push(if i > 0 && names_row {
+                    format!("{}: {cell}", cells[0])
+                } else {
+                    cell.clone()
+                });
+                flush_paragraph(&section, &mut paragraph, &mut found);
+            }
+        } else if line.starts_with('[') && line.contains("]: ") {
+            // The address a link of the page names, which is no text.
+            continue;
+        } else {
+            let (item, text) = list_item(line);
+            if item {
+                flush_paragraph(&section, &mut paragraph, &mut found);
+            }
+            let text = clean_markdown(text);
+            if text.is_empty() {
+                // A line of tags only, as `<Note>` is, ends a paragraph.
+                flush_paragraph(&section, &mut paragraph, &mut found);
+            } else {
+                paragraph.push(text);
+            }
+        }
+    }
+    flush_paragraph(&section, &mut paragraph, &mut found);
+    // The same words twice in one section are told apart by the number of the
+    // time, from the second: `page#Title (2)`.
+    let mut seen: Vec<(String, String, usize)> = Vec::new();
+    for sentence in &mut found {
+        let key = (sentence.section.clone(), sentence.text.clone());
+        match seen.iter_mut().find(|(s, t, _)| (s, t) == (&key.0, &key.1)) {
+            Some((_, _, n)) => {
+                *n += 1;
+                sentence.section = format!("{} ({n})", sentence.section);
+            }
+            None => seen.push((key.0, key.1, 1)),
+        }
+    }
+    found
+}
+
+/// The sentences of a paragraph of text that hold a word of requirement, taken
+/// from `paragraph`, which is left empty. A word is its letters and digits
+/// only, so `**MUST**,` is `MUST`.
+fn flush_paragraph(section: &str, paragraph: &mut Vec<String>, found: &mut Vec<Sentence>) {
+    let text = paragraph.join(" ");
+    paragraph.clear();
+    for sentence in cut(&text) {
+        let words: Vec<&str> = sentence.split_whitespace().collect();
+        let plain: Vec<&str> = words
+            .iter()
+            .map(|w| w.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
+            .collect();
+        let has = |k: &str| {
+            let k: Vec<&str> = k.split(' ').collect();
+            plain.windows(k.len()).any(|w| w == k.as_slice())
+        };
+        if KEYWORDS.iter().any(|k| has(k)) {
+            found.push(Sentence {
+                section: section.to_string(),
+                text: words.join(" "),
+            });
+        }
+    }
+}
+
+/// Whether a line begins an item of a list, and the line without its marker.
+fn list_item(line: &str) -> (bool, &str) {
+    for marker in ["- ", "* "] {
+        if let Some(rest) = line.strip_prefix(marker) {
+            return (true, rest);
+        }
+    }
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    match line[digits..].strip_prefix(". ") {
+        Some(rest) if digits > 0 => (true, rest),
+        _ => (false, line),
+    }
+}
+
+/// The text of a line of Markdown: a link as the words it shows, a tag of the
+/// few that a page uses, bold, and the marks of an emphasis or of code gone.
+/// What a back quote holds stays as it is.
+fn clean_markdown(line: &str) -> String {
+    let line = drop_links(line.trim().trim_start_matches('>'));
+    let mut out = String::new();
+    for (i, part) in line.split('`').enumerate() {
+        if i % 2 == 1 {
+            out.push_str(part);
+            continue;
+        }
+        let mut part = part
+            .replace("**", "")
+            .replace("&mdash;", "\u{2014}")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+        for tag in ["Note", "Info", "Warning", "div", "b", "sup", "sub", "br"] {
+            part = part
+                .replace(&format!("</{tag}>"), "")
+                .replace(&format!("<{tag}>"), "");
+        }
+        // A tag with attributes, as `<div id="x" />` is.
+        while let Some(open) = part.find("<div ") {
+            let close = part[open..].find('>').map_or(part.len(), |c| open + c + 1);
+            part.replace_range(open..close, "");
+        }
+        out.push_str(&drop_emphasis(&part));
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The text with an `_` that begins or ends a word taken out, as `_request_`
+/// is a word in italics, and the `_` inside a word kept.
+fn drop_emphasis(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    for (i, c) in chars.iter().enumerate() {
+        let before = i.checked_sub(1).map(|j| chars[j]);
+        let after = chars.get(i + 1).copied();
+        let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+        if *c == '_' && word(before) != word(after) && before != Some('\\') {
+            continue;
+        }
+        out.push(*c);
+    }
+    out
+}
+
+/// The text with each link, `[words](address)` or `[words][name]`, as its words.
+fn drop_links(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '[' {
+            let to = |from: usize, c: char| chars[from..].iter().position(|x| *x == c).map(|p| from + p);
+            if let Some(close) = to(i + 1, ']') {
+                let end = match chars.get(close + 1) {
+                    Some('(') => to(close + 2, ')'),
+                    Some('[') => to(close + 2, ']'),
+                    _ => None,
+                };
+                if let Some(end) = end {
+                    out.extend(&chars[i + 1..close]);
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 /// What the ledger gives for each sentence of `wanted` sections of `rfc`: the
 /// errors, none when every sentence is in a line that says what holds it. A
 /// line that names a test names one of `tests`, and a line that names no
@@ -234,7 +448,16 @@ pub fn check_ledger(
     ledger: &str,
     tests: &[&str],
 ) -> Result<(), Vec<String>> {
-    let sentences = sentences(rfc, wanted);
+    check_sentences(&sentences(rfc, wanted), ledger, tests)
+}
+
+/// What the ledger gives for each of `sentences`, as `check_ledger` says it
+/// for those of a standard, and an error for a sentence that two lines name.
+pub fn check_sentences(
+    sentences: &[Sentence],
+    ledger: &str,
+    tests: &[&str],
+) -> Result<(), Vec<String>> {
     let mut named = vec![false; sentences.len()];
     let mut errors = Vec::new();
     for line in ledger.lines().map(str::trim) {
@@ -253,7 +476,9 @@ pub fn check_ledger(
         match at[..] {
             [] => errors.push(format!("names no sentence: {line}")),
             [i] => {
-                named[i] = true;
+                if std::mem::replace(&mut named[i], true) {
+                    errors.push(format!("names a sentence that a line before it names: {line}"));
+                }
                 if let Some(name) = holds.strip_prefix("test ") {
                     if !tests.contains(&name.trim()) {
                         errors.push(format!("names a test that does not exist: {line}"));
