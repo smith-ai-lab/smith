@@ -26,6 +26,10 @@ pub const ONCE: &[Test] = &[
         every_way_that_der_is_not_written_right_is_an_error_in_a_value_that_is_right_otherwise,
     ),
     (
+        "a_bit_string_gives_its_bytes_and_the_bits_left_over_and_each_fault_in_one_is_an_error",
+        a_bit_string_gives_its_bytes_and_the_bits_left_over_and_each_fault_in_one_is_an_error,
+    ),
+    (
         "reading_the_parts_of_a_value_asks_for_memory_that_does_not_depend_on_their_bytes",
         reading_the_parts_of_a_value_asks_for_memory_that_does_not_depend_on_their_bytes,
     ),
@@ -217,4 +221,66 @@ fn reading_the_parts_of_a_value_asks_for_memory_that_does_not_depend_on_their_by
     assert_eq!(long_said, "3 3000\n");
     assert!(!short.is_empty());
     assert_eq!(short, long, "the memory asked for depends on how long the bytes are");
+}
+
+/// What `bits` gives for the contents of a value of tag `id`, as the standard
+/// says a bit string is written: the number of bits left over is below 8, there
+/// is a byte to leave them in when there are any, and they are zero.
+fn bits_line(id: u8, contents: &[u8]) -> String {
+    if id != 3 || contents.is_empty() {
+        return "err".to_string();
+    }
+    let left = contents[0];
+    if left > 7 || (contents.len() == 1 && left != 0) {
+        return "err".to_string();
+    }
+    if contents.len() > 1 && contents[contents.len() - 1] & ((1u8 << left) - 1) != 0 {
+        return "err".to_string();
+    }
+    format!("ok {} {left}", contents.len() - 1)
+}
+
+fn a_bit_string_gives_its_bytes_and_the_bits_left_over_and_each_fault_in_one_is_an_error() {
+    generate::check(
+        4,
+        4,
+        |g| {
+            (0..24)
+                .map(|i| {
+                    let id = if i % 8 == 7 { 4 } else { 3 };
+                    let left = match i % 4 {
+                        0 => 0,
+                        1 => g.below(8) as u8,
+                        2 => 8 + g.below(248) as u8,
+                        _ => g.below(8) as u8,
+                    };
+                    let mut c = vec![left];
+                    c.extend(bytes(g, 6));
+                    // Every second one with bits left over has them zero, and the others any.
+                    if i % 2 == 0 && c.len() > 1 && left < 8 {
+                        let last = c.len() - 1;
+                        c[last] &= !((1u8 << left) - 1);
+                    }
+                    (id, c)
+                })
+                .collect::<Vec<_>>()
+        },
+        |cases| {
+            let mut source = String::from(
+                "use std.console (console, print)\nuse std.der (bits, value)\n\nfn show(b: Slice[Byte]) ! console, alloc {\n  match value(b) {\n    .err(e) { print(\"err\") }\n    .ok((v, rest)) {\n      match bits(v) {\n        .ok((bytes, left)) { print(\"ok {bytes.size} {left}\") }\n        .err(e) { print(\"err\") }\n      }\n    }\n  }\n}\n\n",
+            );
+            for (i, (id, c)) in cases.iter().enumerate() {
+                source += &format!("fn input{i}() -> Slice[Byte] {{ {} }}\n\n", literal(&tlv(*id, c)));
+            }
+            source += "fn main() ! console, alloc {\n";
+            for i in 0..cases.len() {
+                source += &format!("  show(input{i}())\n");
+            }
+            source += "}\n";
+            let lines = run(&source);
+            let model: Vec<String> = cases.iter().map(|(id, c)| bits_line(*id, c)).collect();
+            assert_eq!(lines, model);
+            assert!(model.iter().any(|l| l.starts_with("ok")) && model.iter().any(|l| l == "err"));
+        },
+    );
 }
