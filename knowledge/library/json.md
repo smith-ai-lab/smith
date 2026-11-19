@@ -243,7 +243,7 @@ fn raw_text(raw: RawJson) -> str
 
 `raw_json("[1, 2] ")` is `.ok` of a `RawJson` that holds `[1, 2]`, as a piece of the text with the space round it left out, and shares its memory. A text that is not one whole JSON value is the error that reading it gives, so `raw_json(text)` is `.ok` exactly when `from_json(text)` of a `RawJson` is. `raw_text` gives the text.
 
-It has `Deserialize`: read, it takes whatever value is next, checks that it is one whole JSON value, and holds exactly its bytes, with no space round it, as a piece of the input that shares its memory. `from_json(raw_text(raw))` reads it later into a type.
+It has `Deserialize`: read, it takes whatever value is next, checks that it is one whole JSON value, whatever reader gave the bytes, and holds exactly its bytes, with no space round it, as a piece of the input that shares its memory. Bytes that are not one value are the error `malformed` of that reader, and no `RawJson`. `from_json(raw_text(raw))` reads it later into a type.
 
 ```
 struct Call {
