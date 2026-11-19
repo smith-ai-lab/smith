@@ -154,6 +154,7 @@ The `Hash` a type is given is built from one function over 64 bits and a rule fo
 | CPU | arm64 and x86-64 machine code, written to Mach-O, ELF, and PE directly |
 | Apple GPU | Metal shading language source, compiled by the OS at load time |
 | Vulkan GPU | SPIR-V binary |
+| WebAssembly | A module, and a file of JavaScript that loads it, which is planned |
 
 Everything up to the kernel form is the same for every target. Each CPU target supplies its instruction selection, its calling convention, and its executable writer, and that seam exists from the first program. The compiler writes executables itself and runs no linker or assembler.
 
@@ -165,10 +166,20 @@ A target is one case of an enum, and adding a case is what adds a target: the co
 - **macOS on x86-64,** named `macos_x64`. A Mach-O executable like that of `macos_arm64`, for an Intel Mac.
 - **Windows on x86-64,** named `windows_x64`. A PE executable for the console that reaches the kernel through `KERNEL32.dll`, which it links dynamically.
 - **Windows on arm64,** named `windows_arm64`. A PE executable like that of `windows_x64`, for an arm64 machine.
+- **WebAssembly,** named `wasm`, which is planned and not built. A module of 32-bit WebAssembly, written by the compiler as the executables are, with what [The host of a WebAssembly module](#the-host-of-a-webassembly-module) says.
 
 Targets share what they have in common: the arm64 instructions are written once for every arm64 target, the x86-64 instructions once for every x86-64 target, the ELF writer once for both Linux targets, the Mach-O writer once for both macOS targets, and the PE writer once for both Windows targets.
 
 Everything runs as native code, including compile-time code such as literal conversion. The checker contains a small symbolic evaluator that simplifies expressions with unknowns, such as `n + 0`, to compare types. It defines what core terms mean, so it is also the test oracle.
+
+### The host of a WebAssembly module
+
+This is planned, as the target is.
+
+- **An effect is an import.** A WebAssembly module has no operating system under it, and what it may ask of its host is what the module imports. Each operation of an effect that reaches `main` with no handler is an import of the module, named for the effect and the operation, and `main` is an export. So what a module can do to the world outside is its list of imports, which is the list of effects `main` carries, and a module whose `main` lists none imports nothing. An effect a program declares is an import in the same way as one of the library's.
+- **The compiler knows no host.** Nothing in it names a browser, a server, or a company's platform. Beside the module, `smith build` writes a file of JavaScript that loads it and supplies each import the module has, from the list of them, which is what a host with a JavaScript entry needs, as a Cloudflare Worker has. What a platform offers beyond the library's effects, as its storage, is an effect declared in a library, and reaches the host as any other. A host that speaks another interface, as WASI, is given the same module with an adapter that supplies the same imports.
+- **A handler is a host.** A program that runs a WebAssembly module supplies its imports, and in Smith what supplies the operations of an effect is a handler. So a Smith program that runs a Smith module handles the module's effects with handlers, and grants it the effects it chooses.
+- **A module suspends itself.** An import that must wait, as a request to the network, cannot return what it waits for, since a host with JavaScript gives a promise and an import returns at once. The copy of a function that runs under such an import is the state machine [Effects](#effects) describes: it saves its place and returns to the host, and the host calls the module's export `resume` when what it waited for is there. The module asks nothing of the engine for this, so it runs on every engine, and it is the same code that suspends a task on every other target.
 
 ## Standing alone
 

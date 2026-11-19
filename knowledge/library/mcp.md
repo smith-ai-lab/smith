@@ -57,7 +57,7 @@ No tool is stored in a value. A tool may have any effects, and they are required
 
 ## Where a server listens
 
-The first argument of `serve` is where requests come from and answers go. `stdio()` reads lines from the standard input and writes them to the standard output. The lambda and the tools are the same wherever the server listens.
+The first argument of `serve` is where requests come from and answers go. `stdio()` reads lines from the standard input and writes them to the standard output. The lambda and the tools are the same wherever the server listens. `worker()` takes each request from the host of a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) and gives it the answer, which is how a server runs on a platform that calls it for each HTTP request, and its two operations are an effect, so they are imports of the module like any other.
 
 ## The forms
 
