@@ -1,4 +1,4 @@
-shift_unproven.smith:2:3: cannot prove that `by < 32`, which a shift of a `u32` needs
-  2 |   shift_left(x, by)
+shift_unproven.smith:5:3: cannot prove that `by < 32`, which a shift of a `u32` needs
+  5 |   shift_left(x, by)
     |   ^
   fix: check `by < 32` with an `if`, or state it in a `requires`

@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 fn main() ! console {
   print("one \q two \x three } four")
 }

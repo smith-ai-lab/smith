@@ -1,10 +1,12 @@
+use std.console (console, print)
+
 enum Pair {
-  left: u8
-  right: u8
+  left: Byte
+  right: Byte
 }
 
 fn main() ! console, alloc {
-  n: u8 = 4
+  n: Byte = 4
   p: Pair = convert(n)
   print("{p}")
 }

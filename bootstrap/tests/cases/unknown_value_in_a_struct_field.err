@@ -1,3 +1,3 @@
-unknown_value_in_a_struct_field.smith:10:7: there is no name `nothere` defined before this in `f1`
-  10 |   x = nothere
+unknown_value_in_a_struct_field.smith:12:7: there is no name `nothere` defined before this in `f1`
+  12 |   x = nothere
      |       ^

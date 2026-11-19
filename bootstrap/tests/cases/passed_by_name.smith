@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 fn apply(text: str, f: fn(str) -> str) -> str { f(text) }
 
 fn pick(first: fn() -> str, second: fn() -> str) -> str { second() }

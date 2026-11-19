@@ -2,6 +2,6 @@ pub struct Utf8Error {
   at: Nat
 }
 
-pub fn utf8(bytes: Slice[u8]) -> Result[str, Utf8Error] {
+pub fn utf8(bytes: Slice[Byte]) -> Result[str, Utf8Error] {
   __utf8(bytes)
 }

@@ -4,6 +4,10 @@
 // it. The tests of bootstrap hold it to the Rust lexer.
 
 use std.ascii (is_digit, is_hex_digit, is_letter)
+use std.bits (u64)
+use std.console (console, print)
+use std.int (saturating_add, saturating_sub, wrapping_add, wrapping_mul)
+use std.list (push)
 
 struct Pos {
   line: Nat
@@ -17,12 +21,12 @@ struct Pos {
 // GAP 4 (#190): a keyword and a punctuation are the number of their place in
 // a table.
 enum Tok {
-  ident: List[u8]
+  ident: List[Byte]
   keyword: Nat
-  number: List[u8]
-  string: List[u8]
+  number: List[Byte]
+  string: List[Byte]
   interp_open
-  text: List[u8]
+  text: List[Byte]
   interp_close
   punct: Nat
   newline
@@ -39,18 +43,18 @@ struct LexError {
   pos: Pos
   code: u64
   why: u64
-  detail: List[u8]
+  detail: List[Byte]
 }
 
 struct Lexer {
-  src: List[u8]
+  src: List[Byte]
   at: Nat
   pos: Pos
   tokens: List[Token]
   errors: List[LexError]
   line_has_token: bool
-  keywords: List[List[u8]]
-  puncts: List[List[u8]]
+  keywords: List[List[Byte]]
+  puncts: List[List[Byte]]
 }
 
 // The errors, by number.
@@ -61,7 +65,7 @@ struct Lexer {
 // 9 unknown escape in a char    10 a character that holds more than one
 // 11 unexpected character       12 not a number
 
-fn keyword_table() -> List[List[u8]] ! alloc {
+fn keyword_table() -> List[List[Byte]] ! alloc {
   [['a', 'n', 'd'], ['a', 's'], ['b', 'r', 'e', 'a', 'k'], ['d', 'e', 'r', 'i', 'v', 'e'],
    ['e', 'f', 'f', 'e', 'c', 't'], ['e', 'l', 's', 'e'], ['e', 'n', 's', 'u', 'r', 'e', 's'],
    ['e', 'n', 'u', 'm'], ['f', 'n'], ['f', 'o', 'r'], ['f', 'o', 'r', 'e', 'i', 'g', 'n'],
@@ -73,7 +77,7 @@ fn keyword_table() -> List[List[u8]] ! alloc {
    ['v', 'a', 'r'], ['w', 'i', 't', 'h'], ['w', 'i', 't', 'h', 'o', 'u', 't']]
 }
 
-fn punctuation_table() -> List[List[u8]] ! alloc {
+fn punctuation_table() -> List[List[Byte]] ! alloc {
   [['.', '.'], ['-', '>'], ['+', '='], ['-', '='], ['*', '='], ['/', '='], ['=', '='],
    ['!', '='], ['<', '='], ['>', '='], ['('], [')'], ['['], [']'], ['{'], ['}'], [','],
    [':'], ['.'], ['='], ['<'], ['>'], ['+'], ['-'], ['*'], ['/'], ['@'], ['^'], ['!'], ['|', '>']]
@@ -81,12 +85,12 @@ fn punctuation_table() -> List[List[u8]] ! alloc {
 
 // ---- bytes ----
 
-fn byte_at(src: List[u8], i: Nat) -> Option[u8] {
+fn byte_at(src: List[Byte], i: Nat) -> Option[Byte] {
   if i < src.size { .some(src[i]) } else { .none }
 }
 
 // The byte after the one at `i`, if there is one.
-fn byte_after(src: List[u8], i: Nat) -> Option[u8] {
+fn byte_after(src: List[Byte], i: Nat) -> Option[Byte] {
   if i < src.size {
     if i + 1 < src.size { .some(src[i + 1]) } else { .none }
   } else {
@@ -95,15 +99,15 @@ fn byte_after(src: List[u8], i: Nat) -> Option[u8] {
 }
 
 // A byte that starts a name: std.ascii's letters are a-z and A-Z only.
-fn is_name_start(b: u8) -> bool { b == '_' or is_letter(b) }
+fn is_name_start(b: Byte) -> bool { b == '_' or is_letter(b) }
 
-fn is_word_byte(b: u8) -> bool { is_name_start(b) or is_digit(b) }
+fn is_word_byte(b: Byte) -> bool { is_name_start(b) or is_digit(b) }
 
 // A byte that continues a character and does not start one.
-fn is_continuation(b: u8) -> bool { b >= 0x80 and b <= 0xBF }
+fn is_continuation(b: Byte) -> bool { b >= 0x80 and b <= 0xBF }
 
-fn slice(src: List[u8], from: Nat, to: Nat) -> List[u8] ! alloc {
-  var bytes: List[u8] = []
+fn slice(src: List[Byte], from: Nat, to: Nat) -> List[Byte] ! alloc {
+  var bytes: List[Byte] = []
   loop i in from..to {
     if i < src.size { bytes = push(bytes, src[i]) }
   }
@@ -126,13 +130,13 @@ fn last_code(errors: List[LexError]) -> u64 {
   if errors.size == 0 { 0 } else { errors[errors.size - 1].code }
 }
 
-fn append(a: take List[u8], b: List[u8]) -> List[u8] ! alloc {
+fn append(a: take List[Byte], b: List[Byte]) -> List[Byte] ! alloc {
   var all = a
   loop i in 0..b.size { all = push(all, b[i]) }
   all
 }
 
-fn same_bytes(a: List[u8], b: List[u8]) -> bool {
+fn same_bytes(a: List[Byte], b: List[Byte]) -> bool {
   var same = a.size == b.size
   loop i in 0..a.size {
     if same and i < b.size and a[i] != b[i] { same = false }
@@ -140,7 +144,7 @@ fn same_bytes(a: List[u8], b: List[u8]) -> bool {
   same
 }
 
-fn index_of(text: List[u8], target: u8) -> Option[Nat] {
+fn index_of(text: List[Byte], target: Byte) -> Option[Nat] {
   var found: Option[Nat] = .none
   loop i in 0..text.size {
     if found == .none and text[i] == target { found = .some(i) }
@@ -151,7 +155,7 @@ fn index_of(text: List[u8], target: u8) -> Option[Nat] {
 // ---- UTF-8 ----
 
 // Whether a byte may be the second of a character that starts with `lead`.
-fn second_ok(lead: u8, b: u8) -> bool {
+fn second_ok(lead: Byte, b: Byte) -> bool {
   if lead == 0xE0 {
     b >= 0xA0 and b <= 0xBF
   } else if lead == 0xED {
@@ -166,7 +170,7 @@ fn second_ok(lead: u8, b: u8) -> bool {
 }
 
 // How many bytes the character that starts at `i` has, as the lead byte says.
-fn wanted(lead: u8) -> Nat {
+fn wanted(lead: Byte) -> Nat {
   if lead < 0x80 {
     1
   } else if lead >= 0xC2 and lead <= 0xDF {
@@ -183,7 +187,7 @@ fn wanted(lead: u8) -> Nat {
 // How many bytes at `i` are valid, up to the length of the character. This is
 // what `utf8_chunks` calls the longest piece of a character that is valid so
 // far, and the character is whole when it is as long as `wanted` says.
-fn valid_prefix(src: List[u8], i: Nat) -> n: Nat
+fn valid_prefix(src: List[Byte], i: Nat) -> n: Nat
   requires i < src.size
   ensures n <= 4 and n <= src.size - i
 {
@@ -200,7 +204,7 @@ fn valid_prefix(src: List[u8], i: Nat) -> n: Nat
   }
 }
 
-fn advance(pos: Pos, b: u8) -> Pos {
+fn advance(pos: Pos, b: Byte) -> Pos {
   if b == '\n' {
     Pos(line: saturating_add(pos.line, 1), col: 1)
   } else if is_continuation(b) {
@@ -210,7 +214,7 @@ fn advance(pos: Pos, b: u8) -> Pos {
   }
 }
 
-fn text_errors(src: List[u8]) -> List[LexError] ! alloc {
+fn text_errors(src: List[Byte]) -> List[LexError] ! alloc {
   var errors: List[LexError] = []
   var pos = Pos(line: 1, col: 1)
   var i: Nat = 0
@@ -236,7 +240,7 @@ fn text_errors(src: List[u8]) -> List[LexError] ! alloc {
 
 // ---- tokens so far ----
 
-fn error_at(lx: take Lexer, pos: Pos, code: u64, why: u64, detail: take List[u8]) -> Lexer ! alloc {
+fn error_at(lx: take Lexer, pos: Pos, code: u64, why: u64, detail: take List[Byte]) -> Lexer ! alloc {
   var next = lx
   next.errors = push(next.errors, LexError(pos: pos, code: code, why: why, detail: detail))
   next
@@ -326,10 +330,10 @@ fn comment(lx: take Lexer, start: Pos) -> Lexer ! alloc {
 // is: at least one digit, and an `_` only between two digits. The reasons are
 // 1 no digit, 2 an `_` not between two digits, and 3 a byte that is no digit
 // of the base, which `bad` then holds.
-fn digits(text: List[u8], base: u8) -> (u64, u8) {
+fn digits(text: List[Byte], base: Byte) -> (u64, Byte) {
   var why: u64 = 0
-  var bad: u8 = 0
-  var previous: u8 = 0
+  var bad: Byte = 0
+  var previous: Byte = 0
   if text.size == 0 { why = 1 }
   loop i in 0..text.size {
     c = text[i]
@@ -360,10 +364,10 @@ fn digits(text: List[u8], base: u8) -> (u64, u8) {
 struct Problem {
   base: u64
   why: u64
-  bad: u8
+  bad: Byte
 }
 
-fn problem_of(base: u64, found: (u64, u8)) -> Problem {
+fn problem_of(base: u64, found: (u64, Byte)) -> Problem {
   (why, bad) = found
   Problem(base: base, why: why, bad: bad)
 }
@@ -372,7 +376,7 @@ fn first_problem(a: Problem, b: Problem) -> Problem {
   if a.why != 0 { a } else { b }
 }
 
-fn check_number(text: List[u8]) -> Problem ! alloc {
+fn check_number(text: List[Byte]) -> Problem ! alloc {
   none = Problem(base: 10, why: 0, bad: 0)
   if text.size >= 2 and text[0] == '0' and text[1] == 'x' {
     problem_of(16, digits(slice(text, 2, text.size), 16))
@@ -458,7 +462,7 @@ fn number(lx: take Lexer, start: Pos) -> Lexer ! alloc {
 
 // ---- characters ----
 
-fn close_character(lx: take Lexer, start: Pos, text: take List[u8], ok: bool) -> Lexer ! alloc {
+fn close_character(lx: take Lexer, start: Pos, text: take List[Byte], ok: bool) -> Lexer ! alloc {
   if byte_at(lx.src, lx.at) == .some('\'') {
     closed = bump(lx)
     if ok { push_token(closed, .number(push(text, '\'')), start) } else { closed }
@@ -469,7 +473,7 @@ fn close_character(lx: take Lexer, start: Pos, text: take List[u8], ok: bool) ->
 
 // Where the character that starts at `at` ends, which is where `bump_char`
 // would leave a lexer that was there.
-fn char_end(src: List[u8], at: Nat) -> Nat {
+fn char_end(src: List[Byte], at: Nat) -> Nat {
   var i = at
   if i < src.size { i = i + 1 }
   loop round in 0..4 {
@@ -499,7 +503,7 @@ fn escape_error(lx: take Lexer, at: Pos, code: u64) -> Lexer ! alloc {
 fn character(lx: take Lexer, start: Pos) -> Lexer ! alloc {
   opened = bump(lx)
   at = opened.pos
-  text: List[u8] = ['\'']
+  text: List[Byte] = ['\'']
   match byte_at(opened.src, opened.at) {
     .none { error_at(opened, start, 7, 0, []) }
     .some(c) {
@@ -534,7 +538,7 @@ fn character(lx: take Lexer, start: Pos) -> Lexer ! alloc {
 
 // ---- punctuation ----
 
-fn starts_with(src: List[u8], at: Nat, p: List[u8]) -> bool {
+fn starts_with(src: List[Byte], at: Nat, p: List[Byte]) -> bool {
   if at <= src.size and p.size <= src.size - at {
     var same = true
     loop i in 0..p.size {
@@ -583,7 +587,7 @@ fn punct(lx: take Lexer, start: Pos) -> Lexer ! alloc {
 
 // Reads what starts with `c`, which is not a line break: a space, a
 // comment, or a token.
-fn token3(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
+fn token3(lx: take Lexer, start: Pos, c: Byte) -> Lexer ! alloc {
   if c == ' ' or c == '\t' {
     bump(lx)
   } else if c == '/' and byte_after(lx.src, lx.at) == .some('/') {
@@ -604,7 +608,7 @@ fn token3(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
 fn string2(lx: take Lexer, start: Pos) -> Lexer ! alloc {
   rounds = lx.src.size
   var next = bump(lx)
-  var value: List[u8] = []
+  var value: List[Byte] = []
   var interpolated = false
   loop round in 0..rounds {
     at = next.pos
@@ -639,7 +643,7 @@ fn string2(lx: take Lexer, start: Pos) -> Lexer ! alloc {
             .some(e) {
               if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
                 next = bump(next)
-                decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
+                decoded: Byte = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
                 value = push(value, decoded)
               } else if e == '\n' {
                 next = escape_error(next, at, 6)
@@ -711,7 +715,7 @@ fn expression2(lx: take Lexer, start: Pos) -> (Lexer, bool) ! alloc {
 
 // Reads what starts with `c`, which is not a line break: a space, a
 // comment, or a token.
-fn token2(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
+fn token2(lx: take Lexer, start: Pos, c: Byte) -> Lexer ! alloc {
   if c == ' ' or c == '\t' {
     bump(lx)
   } else if c == '/' and byte_after(lx.src, lx.at) == .some('/') {
@@ -734,7 +738,7 @@ fn token2(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
 fn string1(lx: take Lexer, start: Pos) -> Lexer ! alloc {
   rounds = lx.src.size
   var next = bump(lx)
-  var value: List[u8] = []
+  var value: List[Byte] = []
   var interpolated = false
   loop round in 0..rounds {
     at = next.pos
@@ -769,7 +773,7 @@ fn string1(lx: take Lexer, start: Pos) -> Lexer ! alloc {
             .some(e) {
               if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
                 next = bump(next)
-                decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
+                decoded: Byte = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
                 value = push(value, decoded)
               } else if e == '\n' {
                 next = escape_error(next, at, 6)
@@ -841,7 +845,7 @@ fn expression1(lx: take Lexer, start: Pos) -> (Lexer, bool) ! alloc {
 
 // Reads what starts with `c`, which is not a line break: a space, a
 // comment, or a token.
-fn token1(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
+fn token1(lx: take Lexer, start: Pos, c: Byte) -> Lexer ! alloc {
   if c == ' ' or c == '\t' {
     bump(lx)
   } else if c == '/' and byte_after(lx.src, lx.at) == .some('/') {
@@ -864,7 +868,7 @@ fn token1(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
 fn string0(lx: take Lexer, start: Pos) -> Lexer ! alloc {
   rounds = lx.src.size
   var next = bump(lx)
-  var value: List[u8] = []
+  var value: List[Byte] = []
   var interpolated = false
   loop round in 0..rounds {
     at = next.pos
@@ -899,7 +903,7 @@ fn string0(lx: take Lexer, start: Pos) -> Lexer ! alloc {
             .some(e) {
               if e == '"' or e == '\\' or e == '{' or e == '}' or e == 'n' or e == 't' {
                 next = bump(next)
-                decoded: u8 = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
+                decoded: Byte = if e == 'n' { '\n' } else if e == 't' { '\t' } else { e }
                 value = push(value, decoded)
               } else if e == '\n' {
                 next = escape_error(next, at, 6)
@@ -971,7 +975,7 @@ fn expression0(lx: take Lexer, start: Pos) -> (Lexer, bool) ! alloc {
 
 // Reads what starts with `c`, which is not a line break: a space, a
 // comment, or a token.
-fn token0(lx: take Lexer, start: Pos, c: u8) -> Lexer ! alloc {
+fn token0(lx: take Lexer, start: Pos, c: Byte) -> Lexer ! alloc {
   if c == ' ' or c == '\t' {
     bump(lx)
   } else if c == '/' and byte_after(lx.src, lx.at) == .some('/') {
@@ -1062,7 +1066,7 @@ fn without_breaks_before_pipes(tokens: List[Token]) -> List[Token] ! alloc {
 }
 
 // Splits a file into tokens. The last token is always `eof`.
-fn lex(src: take List[u8]) -> Result[List[Token], List[LexError]] ! alloc {
+fn lex(src: take List[Byte]) -> Result[List[Token], List[LexError]] ! alloc {
   bad = text_errors(src)
   if bad.size > 0 {
     .err(bad)

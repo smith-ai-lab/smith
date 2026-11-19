@@ -1,4 +1,6 @@
-fn next(i: u8) -> u8 { i + 1 }
+use std.console (console, print)
+
+fn next(i: Byte) -> Byte { i + 1 }
 
 fn main() ! console, alloc {
   print("{next(254)}")

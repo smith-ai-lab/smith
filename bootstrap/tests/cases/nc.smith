@@ -1,1 +1,3 @@
+use std.console (print)
+
 fn main() { print("hi") }

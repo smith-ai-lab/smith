@@ -1,3 +1,6 @@
+use std.bits (i32, u32)
+use std.console (console, print)
+
 fn same_size(n: u32) -> i32 { convert(n) }
 
 fn main() ! console, alloc {

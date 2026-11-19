@@ -1,4 +1,4 @@
-narrow_nothing_to_narrow.smith:2:3: `u32` holds every value of `u8`, so there is nothing to narrow
-  2 |   narrow(n)
+narrow_nothing_to_narrow.smith:6:3: `u32` holds every value of `Byte`, so there is nothing to narrow
+  6 |   narrow(n)
     |   ^
   fix: use `convert`

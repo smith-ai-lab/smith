@@ -1,3 +1,3 @@
-requires_missing.smith:18:9: there is no implementation of `Pair` for `str` and `i64`, which `show_both` needs
-  18 |   print(show_both("a", one()))
+requires_missing.smith:20:9: there is no implementation of `Pair` for `str` and `Int`, which `show_both` needs
+  20 |   print(show_both("a", one()))
      |         ^

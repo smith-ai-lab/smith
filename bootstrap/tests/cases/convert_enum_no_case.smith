@@ -1,5 +1,8 @@
+use std.bits (u16)
+use std.console (console, print)
+
 enum Pair {
-  left: u8
+  left: Byte
   none
 }
 

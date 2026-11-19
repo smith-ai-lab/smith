@@ -1,4 +1,4 @@
-default_order.smith:1:35: `name` has no default, and comes after `greeting`, which has one
-  1 | fn greet(greeting: str = "hello", name: str) -> str { greeting }
+default_order.smith:3:35: `name` has no default, and comes after `greeting`, which has one
+  3 | fn greet(greeting: str = "hello", name: str) -> str { greeting }
     |                                   ^
   fix: move `name` before `greeting`, or give it a default

@@ -1,4 +1,4 @@
-arith_unproven.smith:1:26: cannot prove that `i + 1 <= 255`, so `i + 1` may not fit `u8`
-  1 | fn next(i: u8) -> u8 { i + 1 }
-    |                          ^
+arith_unproven.smith:3:30: cannot prove that `i + 1 <= 255`, so `i + 1` may not fit `Byte`
+  3 | fn next(i: Byte) -> Byte { i + 1 }
+    |                              ^
   fix: check the operands first, or use `wrapping_add`, `saturating_add`, or `checked_add`

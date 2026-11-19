@@ -1,5 +1,9 @@
+use std.bits (u64)
+use std.console (console, print)
+use std.int (checked_mul, checked_sub, saturating_add, saturating_mul, wrapping_sub)
+
 fn main() ! console, alloc {
-  least: i64 = -9_223_372_036_854_775_808
+  least: Int = -9_223_372_036_854_775_808
   greatest: u64 = 0xffff_ffff_ffff_ffff
   print("{least} {greatest} {repr(least)}")
   print("{wrapping_sub(least, 1)} {saturating_mul(greatest, 2)} {checked_mul(least, -1)}")

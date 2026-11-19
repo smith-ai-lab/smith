@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 enum Maybe[T] {
   some: T
   none

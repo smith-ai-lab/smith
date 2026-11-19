@@ -1,4 +1,4 @@
-convert_nothing_expected.smith:3:10: `convert` gives the type that is expected here, and none is
-  3 |   wide = convert(small)
+convert_nothing_expected.smith:5:10: `convert` gives the type that is expected here, and none is
+  5 |   wide = convert(small)
     |          ^
   fix: write the type, as in `y: u32 = convert(x)`

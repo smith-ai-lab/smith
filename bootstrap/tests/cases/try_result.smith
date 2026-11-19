@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 fn find(name: str, have: Option[str]) -> Result[str, str] ! alloc {
   match have {
     .some(value) { .ok(value) }

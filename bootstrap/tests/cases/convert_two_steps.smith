@@ -1,4 +1,7 @@
-fn far(n: u8) -> u64 { convert(convert(n)) }
+use std.bits (u64)
+use std.console (console, print)
+
+fn far(n: Byte) -> u64 { convert(convert(n)) }
 
 fn main() ! console, alloc {
   print("{far(7)}")

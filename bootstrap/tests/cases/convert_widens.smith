@@ -1,6 +1,9 @@
-fn widen(small: u8) -> u32 { convert(small) }
+use std.bits (i8, u32)
+use std.console (console, print)
 
-fn sign(small: i8) -> i64 { convert(small) }
+fn widen(small: Byte) -> u32 { convert(small) }
+
+fn sign(small: i8) -> Int { convert(small) }
 
 fn main() ! console, alloc {
   print("{widen(200)}")
