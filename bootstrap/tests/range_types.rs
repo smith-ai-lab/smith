@@ -550,14 +550,22 @@ fn a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one() {
 
 
 /// Wherever a value is given where a type is needed, a range is taken as any
-/// value is: the item of a case, an element of a tuple, a field of a struct
-/// that is generic or not, and an item of a list. A narrower range is taken as
+/// value is: a binding, a `var`, an argument, a result, the item of a case, an
+/// element of a tuple, a field of a struct that is generic or not, and an item
+/// of a list, each also inside another. A narrower range is taken as
 /// it is, a wider one where a condition shows that it fits, and one not shown to
 /// fit is refused with what could not be proven.
 fn a_range_is_taken_in_every_place_a_type_is_needed() {
     // The declarations, the type the place is, how the place is made of an
     // expression, what it is made of when it is left out, and how it is read.
-    const PLACES: [(&str, &str, &str, &str, &str); 5] = [
+    // A place is a binding, a `var`, an argument, a result, an item of a case, a
+    // tuple, a struct that is generic or not, and a list, and each is also
+    // written inside another.
+    const PLACES: [(&str, &str, &str, &str, &str); 14] = [
+        ("", "Byte", "\n    x: Byte = E\n    x\n  ", "0", "print(\"{r}\")"),
+        ("", "Byte", "\n    var x: Byte = 0\n    x = E\n    x\n  ", "0", "print(\"{r}\")"),
+        ("fn same(v: Byte) -> Byte { v }\n\n", "Byte", "same(E)", "0", "print(\"{r}\")"),
+        ("", "Byte", "E", "0", "print(\"{r}\")"),
         (
             "",
             "Option[Byte]",
@@ -571,6 +579,13 @@ fn a_range_is_taken_in_every_place_a_type_is_needed() {
             "(E, 1)",
             "(0, 1)",
             "match r {\n    (v, w) { print(\"{v}\") }\n  }",
+        ),
+        (
+            "",
+            "((Byte, Byte), Byte)",
+            "((E, 1), E)",
+            "((0, 1), 0)",
+            "match r {\n    ((v, w), u) { print(\"{v}\") }\n  }",
         ),
         (
             "struct Box[T] {\n  item: T\n}\n\n",
@@ -587,10 +602,44 @@ fn a_range_is_taken_in_every_place_a_type_is_needed() {
             "print(\"{r.at}\")",
         ),
         ("", "List[Byte]", "[E]", "[0]", "loop x in r { print(\"{x}\") }"),
+        (
+            "",
+            "Option[(Byte, Byte)]",
+            ".some((E, 1))",
+            ".none",
+            "match r {\n    .some((v, w)) { print(\"{v}\") }\n    .none { print(\"none\") }\n  }",
+        ),
+        (
+            "",
+            "List[(Byte, Byte)]",
+            "[(E, 1)]",
+            "[(0, 1)]",
+            "loop p in r {\n    match p {\n      (v, w) { print(\"{v}\") }\n    }\n  }",
+        ),
+        (
+            "struct Box[T] {\n  item: T\n}\n\n",
+            "Box[(Byte, Byte)]",
+            "Box(item: (E, 1))",
+            "Box(item: (0, 1))",
+            "match r.item {\n    (v, w) { print(\"{v}\") }\n  }",
+        ),
+        (
+            "enum Pair {\n  pair: (Byte, Byte)\n  none\n}\n\n",
+            "Pair",
+            ".pair((E, 1))",
+            ".none",
+            "match r {\n    .pair((v, w)) { print(\"{v}\") }\n    .none { print(\"none\") }\n  }",
+        ),
     ];
+    // A tuple whose items are ranges of their own, and a case that holds one, to any depth.
+    let items = with_header(
+        "enum E {\n  pair: (Byte, 0..10)\n  none\n}\n\nfn tup(b: Byte) -> (Byte, 0..10) {\n  if b >= 48 and b <= 57 { (b - 48, b - 48) } else { (0, 0) }\n}\n\nfn case(b: Byte) -> E {\n  if b >= 48 and b <= 57 { .pair((b - 48, b - 48)) } else { .none }\n}\n\nfn deep(b: Byte) -> ((Byte, 0..10), Byte) {\n  if b >= 48 and b <= 57 { ((b - 48, b - 48), b - 48) } else { ((0, 0), 0) }\n}\n\nfn main() ! console, alloc {\n  match tup(50) {\n    (x, y) { print(\"{x} {y}\") }\n  }\n  match case(50) {\n    .pair((x, y)) { print(\"{x} {y}\") }\n    .none { print(\"none\") }\n  }\n  match deep(50) {\n    ((x, y), z) { print(\"{x} {y} {z}\") }\n  }\n}\n"
+            .to_string(),
+    );
+    assert_eq!(stdout(&items), "2 2\n2 2\n2 2 2\n", "for\n{items}");
     generate::check(
         4008,
-        20,
+        6,
         |g: &mut Gen| (g.below(200) as i128, g.below(40) as i128 + 1),
         |&(low, by)| {
             for (decls, ty, make, none, read) in PLACES {
@@ -614,7 +663,7 @@ fn a_range_is_taken_in_every_place_a_type_is_needed() {
                 let wider = with_header(format!(
                     "{}fn shifted(b: Byte) -> {wide} ! alloc {{\n  {}\n}}\n\nfn main() ! console, alloc {{\n  r = shifted({low})\n  {read}\n}}\n",
                     decls.replace("Byte", "u16"),
-                    make.replace('E', "b")
+                    make.replace("Byte", "u16").replace('E', "b")
                 ));
                 assert_eq!(stdout(&wider), format!("{low}\n"), "for\n{wider}");
             }
