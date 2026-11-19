@@ -583,7 +583,7 @@ fn written(g: &mut Gen, own: &str, kind: &str) -> Written {
         format!(
             "{p}fn {own}(n: i32) -> i32 {{ wrapping_add(n, {k1}) }}\n\n\
              {p}fn twice(n: i32) -> i32 {{ {own}({own}(n)) }}\n\n\
-             {kind_p}struct {kind} {{\n  x: i32\n  y: i32\n}}\n\n\
+             {kind_p}struct {kind} {{\n  {p}x: i32\n  {p}y: i32\n}}\n\n\
              {p}enum Shape {{\n  dot\n  line: i32\n}}\n\n\
              {p}trait Area[T] {{\n  fn area(s: T) -> i32\n}}\n\n\
              impl Area[{kind}] {{\n  fn area(s: {kind}) -> i32 {{ wrapping_add(twice(s.x), s.y) }}\n}}\n\n\

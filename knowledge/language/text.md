@@ -38,8 +38,8 @@ fn count_spaces(s: str) -> Nat {
 Bytes become text through `utf8`, which reads them once. It gives the text, which is the same bytes and no copy of them, or the place of the first byte that is not valid. It takes a `Slice`, so the bytes are the caller's still when they are not valid, and bytes a program built in a `List` are frozen first, as `utf8(freeze(out))`.
 
 ```
-struct Utf8Error {
-  at: Nat
+pub struct Utf8Error {
+  pub at: Nat
 }
 
 fn utf8(bytes: Slice[Byte]) -> Result[str, Utf8Error]
