@@ -172,6 +172,14 @@ impl Parser<'_> {
             )
             .with_fix("put the comparison that runs first in parentheses"));
         }
+        Ok(compared(left, op, right, op_pos))
+    }
+}
+
+/// The comparison of `left` with `right` by `op`, which is one of `==`,
+/// `!=`, `<`, `<=`, `>`, and `>=`, written with the operator at `op_pos`.
+pub(super) fn compared(left: Expr, op: &str, right: Expr, op_pos: Pos) -> Expr {
+    {
         let pos = left.pos();
         let ordered = !matches!(op, "==" | "!=");
         let same = Expr::Call(Call {
@@ -189,7 +197,7 @@ impl Parser<'_> {
                 .collect(),
             end: op_pos,
         });
-        Ok(match op {
+        match op {
             "==" => same,
             "!=" => negated(pos, same),
             // `a < b` is the `match` on how `a` and `b` stand that says
@@ -222,6 +230,6 @@ impl Parser<'_> {
                     form: Form::Match,
                 }))
             }
-        })
+        }
     }
 }
