@@ -1503,7 +1503,14 @@ fn decoded(quoted: &[u8]) -> Vec<u8> {
             Some('f') => out.push('\u{c}'),
             Some('u') => {
                 let hex: String = chars.by_ref().take(4).collect();
-                out.push(char::from_u32(u32::from_str_radix(&hex, 16).unwrap_or(63)).unwrap_or('?'));
+                let mut unit = u32::from_str_radix(&hex, 16).unwrap_or(63);
+                if (0xd800..0xdc00).contains(&unit) {
+                    // The other half of the pair, which the text has after it.
+                    let low: String = chars.by_ref().skip(2).take(4).collect();
+                    let low = u32::from_str_radix(&low, 16).unwrap_or(0xdc00);
+                    unit = 0x10000 + ((unit - 0xd800) << 10) + (low - 0xdc00);
+                }
+                out.push(char::from_u32(unit).unwrap_or('?'));
             }
             Some(other) => out.push(other),
             None => {}
@@ -1533,7 +1540,7 @@ fn mutate(g: &mut Gen, text: &[u8]) -> Vec<u8> {
 /// place each, so that some are JSON and some are not.
 fn drawn_texts(g: &mut Gen) -> Vec<Vec<u8>> {
     let t = tree(g, 3);
-    let pad = *g.pick(&["", " ", "\n", "\r\n\t "]);
+    let pad = *g.pick(&["", " ", "\n", "\r", "\r\n\t "]);
     let escape = g.one_in(2);
     let mut text = pad.as_bytes().to_vec();
     tree_text(&t, pad, escape, &mut text);
@@ -1561,15 +1568,19 @@ fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
         }
         source.push_str("}\n");
         let source = with_import(&["from_json", "raw_text", "RawJson"], source);
-        let printed = lines(&prints(&source));
-        assert_eq!(printed.len(), texts.len(), "{source}");
-        for (line, text) in printed.iter().zip(texts) {
+        // A path holds the line feed of a name that has one, so the output is
+        // compared whole and not split into lines.
+        let printed = String::from_utf8(prints(&source)).expect("text");
+        let mut rest = printed.as_str();
+        for text in texts {
             let expected = match model(text) {
-                Ok(size) => format!("ok {size}"),
-                Err(stop) => error(text, stop.at, &stop.path, "malformed"),
+                Ok(size) => format!("ok {size}\n"),
+                Err(stop) => format!("{}\n", error(text, stop.at, &stop.path, "malformed")),
             };
-            assert_eq!(line, &expected, "{:?}", String::from_utf8_lossy(text));
+            assert!(rest.starts_with(&expected), "{:?}\n{rest:?}", String::from_utf8_lossy(text));
+            rest = &rest[expected.len()..];
         }
+        assert_eq!(rest, "", "{source}");
     });
 }
 
