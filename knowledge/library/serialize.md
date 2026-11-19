@@ -82,7 +82,7 @@ trait Writer[W] {
 }
 ```
 
-`Writer` has a `float(w, value: f64) -> W ! alloc` for the shape of a float, which is written once `f64` is built. `of` names the format that `bytes` are in, as `"json"` does for the text of a [`RawJson`](json.md#a-part-of-the-text-that-is-read-later). A writer of that format writes the bytes where they go, as one value, with nothing copied but the bytes into its output. Any other writer writes them as a text, as `text` does, so bytes are never put into a format they are not in. How a shape looks in the output is the format's to say: whether a case of an enum is a text or an object in JSON is said by `std.json`, and `Serialize` says only that it is a case.
+`Writer` has a `float(w, value: f64) -> W ! alloc` for the shape of a float, which is written once `f64` is built. `of` names the format that `bytes` are in, as `"json"` does for the text of a [`RawJson`](json.md#a-part-of-the-text-that-is-read-later). A writer of that format writes the bytes where they go, as one value, with nothing copied but the bytes into its output. Any other writer writes them as a text, as `text` does, so bytes are never put into a format they are not in. The bytes are a text until there is a format that is not text and a shape for bytes, so a writer is not given bytes that are not UTF-8. How a shape looks in the output is the format's to say: whether a case of an enum is a text or an object in JSON is said by `std.json`, and `Serialize` says only that it is a case.
 
 ## Given automatically
 

@@ -7,7 +7,7 @@ built:
   - "`std.json`, which a program imports with `use std.json (to_json, to_json_as, Json)`, with `to_json` and `to_json_as` of any value that has `Serialize` and the `Json`, `Cases`, and `Names` of the settings, written in Smith from `Serialize` and `Writer` alone"
   - "every shape of the table below, a case of an enum as a key and as a tag, `Names.camel`, and the refusal of a tag that is also a member, with `Clash`"
   - "`from_json` and `from_json_as` of any type that has `Deserialize` and `Discard`, which read the text with a `Reader` written in Smith, with `Unknown` in the settings, the errors with their line, column, and path, `describe`, and `RawJson` with its `Deserialize`, and nothing is built between the text and the value"
-  - "`RawJson` written with `to_json` as the bytes it holds, with `raw` of `Writer` and `Reader`, and under `value` where a case that is written with a tag holds it"
+  - "`RawJson` written with `to_json` as the bytes it holds, with `raw` of `Writer` and `Reader`, and under `value` where a case that is written with a tag holds it, `raw_json` and `raw_text`, and bytes that are not JSON, or not a text, written as a text"
   - "not a float, which waits for `f64`, not a `Map`, which is not built, and not `JsonValue`"
 ---
 
@@ -227,15 +227,20 @@ With `refuse`, `{"x":1,"y":3,"z":0}` read as a `Point` is ``1:15: z: unknown `z`
 
 ## A part of the text that is read later
 
-`RawJson` is a value of the text of one JSON value that is not taken apart.
+`RawJson` is a value of the text of one JSON value that is not taken apart. It always holds one whole JSON value, as a `str` always holds UTF-8, so its field is not `pub`, and it is made by reading, or by `raw_json`, which checks.
 
 ```
 struct RawJson {
   text: str
 }
+
+fn raw_json(text: str) -> Result[RawJson, ReadError] ! alloc
+fn raw_text(raw: RawJson) -> str
 ```
 
-It has `Deserialize`: read, it takes whatever value is next, checks that it is one whole JSON value, and holds exactly its bytes, with no space round it, as a piece of the input that shares its memory. `from_json(raw.text)` reads it later into a type.
+`raw_json("[1, 2] ")` is `.ok` of a `RawJson` that holds `[1, 2]`, as a piece of the text with the space round it left out, and shares its memory. A text that is not one whole JSON value is the error that reading it gives, so `raw_json(text)` is `.ok` exactly when `from_json(text)` of a `RawJson` is. `raw_text` gives the text.
+
+It has `Deserialize`: read, it takes whatever value is next, checks that it is one whole JSON value, and holds exactly its bytes, with no space round it, as a piece of the input that shares its memory. `from_json(raw_text(raw))` reads it later into a type.
 
 ```
 struct Call {
@@ -244,9 +249,9 @@ struct Call {
 }
 ```
 
-`{"name":"f","arguments":{"x": [1.5e3, "y"]}}` read as a `Call` has `{"x": [1.5e3, "y"]}` for `arguments.text`, with the space in it as it was.
+`{"name":"f","arguments":{"x": [1.5e3, "y"]}}` read as a `Call` has `{"x": [1.5e3, "y"]}` for `raw_text(call.arguments)`, with the space in it as it was.
 
-It has `Serialize` too, which writes its bytes where the value goes, as they are, with each space in them and every digit of each number: `to_json` of that `Call` is `{"name":"f","arguments":{"x": [1.5e3, "y"]}}`, and `1.50`, `1e400`, and a number of 40 digits are written as they were read. A `RawJson` that a case holds is a value that is not a struct, so with `Cases.tag` it is written under `value`, and `.tag("value")` clashes with it as it does with any such value. Both use `raw` with `"json"`, which [Serialize](serialize.md#the-shapes) and [Deserialize](deserialize.md#the-shapes) say. Written by another format, a `RawJson` is a text, and read from another format, it is the bytes of a text, so what a format writes it reads back.
+It has `Serialize` too, which writes its bytes where the value goes, as they are, with each space in them and every digit of each number: `to_json` of that `Call` is `{"name":"f","arguments":{"x": [1.5e3, "y"]}}`, and `1.50`, `1e400`, and a number of 40 digits are written as they were read. A `RawJson` that is no JSON, which a program could only make where a field that is not `pub` is not kept private, is written as a text, and so are the bytes of another format. Bytes that are not UTF-8 are written as a text with each byte that begins no character as U+FFFD. A `RawJson` that a case holds is a value that is not a struct, so with `Cases.tag` it is written under `value`, and `.tag("value")` clashes with it as it does with any such value. Both use `raw` with `"json"`, which [Serialize](serialize.md#the-shapes) and [Deserialize](deserialize.md#the-shapes) say. Written by another format, a `RawJson` is a text, and read from another format, it is the bytes of a text, so what a format writes it reads back.
 
 ## Memory
 
@@ -261,4 +266,5 @@ Reading asks for memory for the texts that hold an escape, for the lists of the 
 | `from_json(text)` | `.ok` of the value of the type the place needs, with a case as a key and names as written, or `.err` of the first `ReadError` |
 | `from_json_as(text, Json(cases: .tag("type"), names: .camel, unknown: .refuse))` | The same, with the case under `type`, names in camel case, and a member the type has no field of refused |
 | `describe(e)` | The words of an error, as `1:59: tools[2].timeout: expected a whole number, found a text` |
-| `RawJson` | One JSON value as its text, which `from_json` reads later |
+| `RawJson` | One JSON value as its text, which `from_json` reads later and `to_json` writes as it is |
+| `raw_json(text)` | `.ok` of the `RawJson` of one whole JSON value, or the error that reading it gives |
