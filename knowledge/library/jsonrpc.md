@@ -88,6 +88,19 @@ fn method_of(text: str) -> str ! alloc {
 - A value that is no message is `.err` of `invalid_request()`: one with no `"jsonrpc": "2.0"`, a `method` that is not a text, an `id` that is not a text, a whole number, or `null`, `params` that are neither an object nor an array, a response with both a result and an error or with neither, and an array with nothing in it.
 - An id written with a fraction or an exponent is refused, as two programs do not agree on when such numbers are equal.
 
+Where the standard is silent, `read` does this:
+
+- A request whose `id` is `null` is a `Request` with `.null`, and a message with no `id` is a `Notification`.
+- A member the standard does not name is passed over and not kept. A `method` that begins with `rpc.` is read as any other.
+- A number `id` is a whole number of `Int`: one beyond `Int` is refused, as one with a fraction is, and `-0` is `0`.
+- `params` that is `null`, or is no object or array, is refused. `params` of `[]` or `{}` is `.some`.
+- A member given twice is refused.
+- `"jsonrpc"` is the text `2.0` however it is written, so `"2\u002e0"` is read.
+- A `Response` has an `id`, and exactly one of `result` and `error`. A `result` of `null` is a result. An `error` is an object with a whole `code` of `Int` and a text `message`, and `data` of any value, `null` too, is `.some`. A message with `method` and also `result` or `error` is refused.
+- Text after the value, text of nothing or of spaces, and text that is not JSON are `parse_error()`. A value that is no object or array, such as `3`, `"x"`, or `null`, is `invalid_request()`.
+- A member of a batch that is no object, or is an array, is `.err(invalid_request())`, and the others are read.
+- A message that is read is as a `Request`, `Notification`, or `Response` whatever the order of its members, and `params` and every `RawJson` keep the text they came as, spaces in them too.
+
 ## Writing
 
 ```
@@ -95,7 +108,7 @@ fn write(to: take Text, message: Message) -> Text ! alloc
 fn write_batch(to: take Text, messages: List[Message]) -> Text ! alloc
 ```
 
-`write` appends one message to a [`Text`](text.md), with `"jsonrpc":"2.0"` first, and `write_batch` appends several as one array. For every message `m`, reading what `write` wrote gives `m`.
+`write` appends one message to a [`Text`](text.md), with `"jsonrpc":"2.0"` first, and `write_batch` appends several as one array. `write_batch` of no messages appends `[]`, which `read` refuses; what answers a batch sends nothing when it has nothing to say. For every message `m`, reading what `write` wrote gives `m`.
 
 ## The failures the standard names
 
