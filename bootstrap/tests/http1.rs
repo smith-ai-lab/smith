@@ -29,6 +29,26 @@ pub const ONCE: &[Test] = &[
         a_head_longer_than_the_limit_is_refused_at_the_limit_however_the_bytes_go_on,
     ),
     (
+        "a_version_other_than_http_1_1_is_refused",
+        a_version_other_than_http_1_1_is_refused,
+    ),
+    (
+        "a_request_needs_exactly_one_host_and_a_valid_one",
+        a_request_needs_exactly_one_host_and_a_valid_one,
+    ),
+    (
+        "whitespace_between_the_start_line_and_the_first_header_is_refused",
+        whitespace_between_the_start_line_and_the_first_header_is_refused,
+    ),
+    (
+        "a_target_of_each_of_the_four_forms_is_read_as_it_is_written",
+        a_target_of_each_of_the_four_forms_is_read_as_it_is_written,
+    ),
+    (
+        "an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response",
+        an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response,
+    ),
+    (
         "body_of_says_how_the_body_is_framed_from_the_headers",
         body_of_says_how_the_body_is_framed_from_the_headers,
     ),
@@ -96,6 +116,12 @@ fn head(g: &mut Gen) -> Head {
             (name.to_ascii_lowercase(), name, core, format!("{before}\u{0}{after}"))
         })
         .collect();
+    let mut headers: Vec<(String, String, String, String)> = headers;
+    if request {
+        let host = (*g.pick(&["example.com", "a.b:8080", "[::1]:80", "h%41", "", "x_y!$&'()*+,;=~"])).to_string();
+        let at = g.below(headers.len() + 1);
+        headers.insert(at, ("host".into(), "Host".into(), host, "\u{0} ".into()));
+    }
     Head { first, headers, parts, request }
 }
 
@@ -223,7 +249,7 @@ fn fault(g: &mut Gen, h: &Head) -> Vec<u8> {
     }
     let mut ends: Vec<&[u8]> = vec![CRLF; lines.len()];
     let at = 1 + g.below(lines.len() - 1);
-    match g.below(8) {
+    match g.below(if h.request { 11 } else { 8 }) {
         // A line that ends with a line feed alone.
         0 => ends[at] = b"\n",
         // A carriage return that no line feed follows.
@@ -234,11 +260,16 @@ fn fault(g: &mut Gen, h: &Head) -> Vec<u8> {
             lines[at].insert(colon, *g.pick(b" \t"));
         }
         // A header line that continues the one before.
-        3 => lines.insert(at, format!("{}x", *g.pick(&[" ", "\t"])).into_bytes()),
+        // (After a response's start line only: a fold later in a response is
+        // replaced by a space, as one test below says.)
+        3 => {
+            let at = if h.request { at } else { 1 };
+            lines.insert(at, format!("{}x", *g.pick(&[" ", "\t"])).into_bytes());
+        }
         // A byte that is no part of a value.
         4 => {
             let colon = lines[at].iter().position(|b| *b == b':').unwrap();
-            lines[at].insert(colon + 1, *g.pick(&[0, 1, 31, 127]));
+            lines[at].insert(colon + 1, *g.pick(&[0, 1, 13, 31, 127]));
         }
         // More than one content-length.
         5 => {
@@ -248,9 +279,20 @@ fn fault(g: &mut Gen, h: &Head) -> Vec<u8> {
         // A content-length that is not a number.
         6 => lines.insert(at, format!("content-length: {}", g.pick(&["a", "1a", "-1", "1 2", "", "99999999999999999999999"])).into_bytes()),
         // A content-length together with a transfer-encoding.
-        _ => {
+        7 => {
             lines.insert(at, b"transfer-encoding: chunked".to_vec());
             lines.insert(at, b"content-length: 3".to_vec());
+        }
+        // A request with no host.
+        8 => lines.retain(|l| !l.to_ascii_lowercase().starts_with(b"host:")),
+        // A request with two hosts.
+        9 => lines.insert(at, format!("{}: example.com", g.pick(&["host", "HOST"])).into_bytes()),
+        // A request with a host that is not one.
+        _ => {
+            let bad = *g.pick(&["a b", "a/b", "u@h", "h%zz", "h?q", "h#f", "a\\b", "h%4", "<h>"]);
+            for line in lines.iter_mut().filter(|l| l.to_ascii_lowercase().starts_with(b"host:")) {
+                *line = format!("host: {bad}").into_bytes();
+            }
         }
     }
     ends.resize(lines.len(), CRLF);
@@ -356,6 +398,18 @@ fn body_of_says_how_the_body_is_framed_from_the_headers() {
         ("[(\"content-length\", \"x\")]", "err".into()),
         ("[(\"content-length\", \"18446744073709551616\")]", "err".into()),
         ("[(\"content-length\", \"1\"), (\"transfer-encoding\", \"chunked\")]", "err".into()),
+        ("[(\"transfer-encoding\", \"chunked, chunked\")]", "err".into()),
+        ("[(\"transfer-encoding\", \"chunked\"), (\"transfer-encoding\", \"chunked\")]", "err".into()),
+        ("[(\"transfer-encoding\", \"\")]", "err".into()),
+        ("[(\"transfer-encoding\", \" , \")]", "err".into()),
+        ("[(\"transfer-encoding\", \"gzip\"), (\"transfer-encoding\", \"chunked\")]", "chunked".into()),
+        ("[(\"transfer-encoding\", \"chunked\"), (\"transfer-encoding\", \"gzip\")]", "err".into()),
+        ("[(\"transfer-encoding\", \"chunked\"), (\"transfer-encoding\", \"\")]", "chunked".into()),
+        ("[(\"transfer-encoding\", \"chunked,\")]", "chunked".into()),
+        ("[(\"transfer-encoding\", \",CHUNKED \")]", "chunked".into()),
+        ("[(\"transfer-encoding\", \"chunked x\")]", "err".into()),
+        ("[(\"transfer-encoding\", \"chunkedx\")]", "err".into()),
+        ("[(\"content-length\", \"1, 1\")]", "err".into()),
     ];
     let calls: Vec<String> = cases.iter().map(|(h, _)| format!("show({h})")).collect();
     let source = program("body_of", helpers, &calls);
@@ -374,7 +428,7 @@ fn written_chunk(g: &mut Gen, data: &[u8]) -> Vec<u8> {
     } else {
         format!("{:X}", data.len())
     };
-    let extension = if g.one_in(3) { ";name=value" } else { "" };
+    let extension = *g.pick(&["", "", ";name=value", " ;a", "\t ; b = c", ";q=\"x\"", ";a;b=c"]);
     let mut bytes = format!("{size}{extension}\r\n").into_bytes();
     bytes.extend(data);
     bytes.extend(CRLF);
@@ -464,4 +518,189 @@ fn write_chunk_writes_a_chunk_that_chunk_reads_back() {
             assert_eq!(printed(&program("chunk, write_chunk", &helpers, &calls)), lines);
         },
     );
+}
+
+/// A head with `host` set as given, as `show` of a request prints it.
+fn request_with(lines: &[&str]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for line in lines {
+        bytes.extend(line.bytes());
+        bytes.extend(CRLF);
+    }
+    bytes.extend(CRLF);
+    bytes
+}
+
+fn a_request_needs_exactly_one_host_and_a_valid_one() {
+    let start = "GET /x HTTP/1.1";
+    let cases: Vec<(Vec<&str>, bool)> = vec![
+        (vec![start, "host: example.com"], true),
+        (vec![start, "Host: example.com:8080"], true),
+        (vec![start, "host: [::1]:80"], true),
+        (vec![start, "host:"], true),
+        (vec![start, "host: a%41"], true),
+        (vec![start], false),
+        (vec![start, "accept: */*"], false),
+        (vec![start, "host: a", "host: a"], false),
+        (vec![start, "host: a", "x: y", "HOST: b"], false),
+        (vec![start, "host: a b"], false),
+        (vec![start, "host: a/b"], false),
+        (vec![start, "host: user@a"], false),
+        (vec![start, "host: a%4"], false),
+        (vec![start, "host: a%zz"], false),
+    ];
+    let calls: Vec<String> = cases
+        .iter()
+        .map(|(lines, _)| format!("show_request({})", list(&request_with(lines))))
+        .collect();
+    let lines = printed(&read_program(&calls));
+    // A request that is read prints its first line, then a line for each header.
+    let mut at = 0;
+    for (case, (head, read)) in cases.iter().enumerate() {
+        if *read {
+            assert!(lines[at].starts_with("request GET /x "), "case {case}: {head:?}");
+            at += 1 + head.len() - 1;
+        } else {
+            assert_eq!(lines[at], "refused", "case {case}: {head:?}");
+            at += 1;
+        }
+    }
+    assert_eq!(at, lines.len());
+}
+
+fn whitespace_between_the_start_line_and_the_first_header_is_refused() {
+    let calls: Vec<String> = [
+        ("GET /x HTTP/1.1", "host: a", true),
+        ("HTTP/1.1 200 OK", "x: a", false),
+    ]
+    .iter()
+    .flat_map(|(start, header, request)| {
+        let show = if *request { "show_request" } else { "show_response" };
+        [" ", "\t", "  ", " x: y", "\tx"]
+            .iter()
+            .flat_map(move |white| {
+                // The whitespace line before the first header, after the first
+                // header and before it with a header between.
+                [
+                    request_with(&[start, white, header]),
+                    request_with(&[start, white]),
+                    request_with(&[start, &format!("{white}{header}"), header]),
+                ]
+            })
+            .map(|bytes| format!("{show}({})", list(&bytes)))
+            .collect::<Vec<_>>()
+    })
+    .collect();
+    assert_eq!(
+        printed(&read_program(&calls)),
+        vec!["refused"; calls.len()]
+    );
+}
+
+fn a_target_of_each_of_the_four_forms_is_read_as_it_is_written() {
+    let targets = [
+        "/",
+        "/where?q=1&r=%41#x",
+        "http://example.com/a?b",
+        "https://u@example.com:8443",
+        "example.com:443",
+        "*",
+    ];
+    let calls: Vec<String> = targets
+        .iter()
+        .map(|t| format!("show_request({})", list(&request_with(&[&format!("OPTIONS {t} HTTP/1.1"), "host: example.com"]))))
+        .collect();
+    let mut expected = Vec::new();
+    for t in targets {
+        let used = request_with(&[&format!("OPTIONS {t} HTTP/1.1"), "host: example.com"]).len();
+        expected.push(format!("request OPTIONS {t} {used}"));
+        expected.push("host|example.com|".to_string());
+    }
+    assert_eq!(printed(&read_program(&calls)), expected);
+}
+
+fn an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response() {
+    generate::check(
+        5956,
+        3,
+        |g| {
+            (0..12)
+                .map(|_| {
+                    let before = blanks(g);
+                    let first = word(g, &['a', 'Z', '0', ';'], 4);
+                    let more = word(g, &['b', 'Y', '1', '='], 4);
+                    let folds = 1 + g.below(2);
+                    let blank = (0..folds).map(|_| format!("\r\n{}", *g.pick(&[" ", "\t", "  ", " \t"]))).collect::<Vec<_>>();
+                    (before, first, more, blank)
+                })
+                .collect::<Vec<_>>()
+        },
+        |batch| {
+            let mut calls = Vec::new();
+            let mut expected = Vec::new();
+            for (before, first, more, folds) in batch {
+                // `x: <first><before> <more>`, with each fold in place of a space.
+                let mut value = format!("{first}{before}");
+                for fold in folds {
+                    value += &format!("{fold}{more}");
+                }
+                let response = format!("HTTP/1.1 200 OK\r\nx: {value}\r\ny: z\r\n\r\nbody");
+                let request = format!("GET / HTTP/1.1\r\nhost: h\r\nx: {value}\r\n\r\n");
+                calls.push(format!("show_response({})", list(response.as_bytes())));
+                calls.push(format!("show_request({})", list(request.as_bytes())));
+                // Each fold is one space, whatever the blanks that were with it.
+                let mut replaced = format!("{first}{before}");
+                for _ in folds {
+                    replaced += &format!(" {more}");
+                }
+                let used = response.len() - "body".len();
+                expected.push(format!("response 200 OK| {used}"));
+                expected.push(format!("x|{replaced}|"));
+                expected.push("y|z|".to_string());
+                expected.push("refused".to_string());
+            }
+            assert_eq!(printed(&read_program(&calls)), expected);
+        },
+    );
+    // A response whose last transfer coding is not chunked is read, and its
+    // body is up to the end of the connection. A request with one is refused.
+    let response = b"HTTP/1.1 200 OK\r\ntransfer-encoding: gzip\r\n\r\n";
+    let calls = [
+        format!("show_response({})", list(response)),
+        format!("show_request({})", list(b"POST / HTTP/1.1\r\nhost: h\r\ntransfer-encoding: gzip\r\n\r\n")),
+    ];
+    assert_eq!(
+        printed(&read_program(&calls)),
+        vec![
+            format!("response 200 OK| {}", response.len()),
+            "transfer-encoding|gzip|".to_string(),
+            "refused".to_string()
+        ]
+    );
+}
+
+fn a_version_other_than_http_1_1_is_refused() {
+    let calls: Vec<String> = [
+        "GET / HTTP/1.0",
+        "GET / HTTP/2.0",
+        "GET / HTTP/1.11",
+        "GET / http/1.1",
+        "GET / HTTP/1.1 ",
+        "GET /  HTTP/1.1",
+        "GET / HTTP/1.0\r\ntransfer-encoding: chunked",
+        "GET / HTTP/1.0\r\nhost: h\r\ntransfer-encoding: chunked",
+    ]
+    .iter()
+    .map(|start| {
+        let mut bytes = start.as_bytes().to_vec();
+        bytes.extend(b"\r\nhost: h\r\n\r\n");
+        format!("show_request({})", list(&bytes))
+    })
+    .chain(
+        ["HTTP/1.0 200 OK", "HTTP/2.0 200 OK", "HTTP/1.11 200 OK", "HTTP/1.1 200OK", "HTTP/1.1 99 x", "HTTP/1.1 600 x", "HTTP/1.1 2000 x"]
+            .iter()
+            .map(|start| format!("show_response({})", list(format!("{start}\r\n\r\n").as_bytes()))),
+    )
+    .collect();
+    assert_eq!(printed(&read_program(&calls)), vec!["refused"; calls.len()]);
 }

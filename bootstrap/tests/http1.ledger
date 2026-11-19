@@ -1,0 +1,69 @@
+# RFC 9112, sections 2 to 7 and 11: each sentence that holds MUST, MUST NOT,
+# or SHALL, and what holds it in `std.http1`. A line is
+#   <section> | <first words of the sentence> | test <name>
+# or
+#   <section> | <first words of the sentence> | reason <why std.http1 has nothing to do with it>
+# `tests/http1_standard.rs` fails for a sentence that is in no line.
+2.2 | A recipient MUST parse an HTTP | test a_head_that_is_written_is_read_back_and_every_front_part_of_it_is_incomplete
+2.2 | A sender MUST NOT generate a | reason binds a sender; the head writers are not built, and write_chunk writes no bare CR
+2.2 | A recipient of such a bare | test a_head_with_one_of_the_faults_of_the_page_put_in_is_refused_and_never_complete
+2.2 | An HTTP/1.1 user agent MUST NOT | reason binds a client sending a request; the module writes no request
+2.2 | If terminating the request message body | reason binds a client sending a request body; the module writes no request
+2.2 | A sender MUST NOT send whitespace | reason binds a sender; the head writers are not built
+2.2 | A recipient that receives whitespace between | test whitespace_between_the_start_line_and_the_first_header_is_refused
+2.3 | Intermediaries that process HTTP messages | reason binds an intermediary, which forwards messages; std.http1 only reads and writes them
+3 | A server that receives a request- | test a_head_longer_than_the_limit_is_refused_at_the_limit_however_the_bytes_go_on
+3.2 | A client MUST send a Host | reason binds a client sending a request; the module writes no request head
+3.2 | If the target URI includes an | reason binds a client sending a request; the module writes no request head
+3.2 | If the authority component is missing | reason binds a client sending a request; the module writes no request head
+3.2 | A server MUST respond with a | test a_request_needs_exactly_one_host_and_a_valid_one
+3.2.1 | When making a request directly to | reason binds a client sending a request; the module writes no request head
+3.2.1 | If the target URI's path component | reason binds a client sending a request; the module writes no request head
+3.2.2 | When making a request to a | reason binds a client sending a request; the module writes no request head
+3.2.2 | A client MUST send a Host | reason binds a client sending a request; the module writes no request head
+3.2.2 | When a proxy receives a request | reason binds a proxy; request_head gives the target and every header as written, and a proxy decides what to use
+3.2.2 | A proxy that forwards such a | reason binds a proxy, which writes the request it forwards
+3.2.2 | When an origin server receives a | reason binds the server that routes a request; request_head gives the target and every header as written
+3.2.2 | A server MUST accept the absolute-form | test a_target_of_each_of_the_four_forms_is_read_as_it_is_written
+3.2.3 | When making a CONNECT request to | reason binds a client sending a request; the module writes no request head
+3.2.4 | When a client wishes to request | reason binds a client sending a request; the module writes no request head
+3.2.4 | If a proxy receives an OPTIONS | reason binds a proxy, which writes the request it forwards
+4 | A server MUST send the space | reason binds a server writing a status line; write_response_head is not built
+5.1 | A server MUST reject, with a | test a_head_with_one_of_the_faults_of_the_page_put_in_is_refused_and_never_complete
+5.1 | A proxy MUST remove any such | reason binds a proxy forwarding a response; response_head refuses such a head instead of passing it on
+5.2 | A sender MUST NOT generate a | reason binds a sender; the head writers are not built
+5.2 | A server that receives an obs-fold | test an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response
+5.2 | A proxy or gateway that receives | test an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response
+5.2 | A user agent that receives an | test an_obs_fold_is_refused_in_a_request_and_made_one_space_in_a_response
+6.1 | A recipient MUST be able to | test a_chunk_is_read_as_its_bytes_with_what_it_took_and_a_chunk_of_no_bytes_is_the_last
+6.1 | A sender MUST NOT apply the | reason binds a sender; write_chunk writes one chunk, and applying chunked to a body is the caller's
+6.1 | If any transfer coding other than chunked is applied to a request's | reason binds a sender; the module writes no request head
+6.1 | If any transfer coding other than chunked is applied to a response's | reason binds a sender; the module writes no response head
+6.1 | A server MUST NOT send a Transfer-Encoding header field in any response | reason binds a server writing a response head, which is not built
+6.1 | A server MUST NOT send a Transfer-Encoding header field in any 2xx | reason binds a server writing a response head, which is not built
+6.1 | A client MUST NOT send a | reason binds a client sending a request; the module writes no request head
+6.1 | A server MUST NOT send a response | reason binds a server writing a response head, which is not built
+6.1 | Regardless, the server MUST close the | reason binds what holds the connection; request_head refuses a request with a transfer-encoding and a content-length
+6.1 | A server or client that receives | test a_version_other_than_http_1_1_is_refused
+6.2 | A sender MUST NOT send a | reason binds a sender; the head writers are not built, and both readers refuse such a head
+6.3 | A client MUST ignore any Content-Length | reason needs the request method and the status, which body_of, taking only headers, does not have; it binds what frames a response
+6.3 | An intermediary that chooses to forward | reason binds an intermediary, which forwards messages
+6.3 | If a Transfer-Encoding header field is | test body_of_says_how_the_body_is_framed_from_the_headers
+6.3 | If a message is received without | test a_head_with_one_of_the_faults_of_the_page_put_in_is_refused_and_never_complete
+6.3 | If the unrecoverable error is in | reason binds the server that answers and closes; the reader gives refused and the server answers 400
+6.3 | If it is in a response message received by a proxy, | reason binds a proxy, which closes the connection and answers 502; the reader gives refused
+6.3 | If it is in a response message received by a user | reason binds the client holding the connection; the reader gives refused
+6.3 | If the sender closes the connection | reason binds what holds the connection; chunk and the heads say incomplete until the bytes are there
+6.3 | A user agent that sends a | reason binds a client sending a request; the module writes no request head
+6.3 | A client MUST NOT use the | reason binds a client sending a request; the module writes no request head
+6.3 | A client MUST NOT process, cache, | reason binds a client holding a connection; the readers say how many bytes a message took, and the caller decides about the rest
+7.1 | A recipient MUST be able to parse and decode | test a_chunk_is_read_as_its_bytes_with_what_it_took_and_a_chunk_of_no_bytes_is_the_last
+7.1 | Therefore, recipients MUST anticipate potentially large | test a_chunk_is_read_as_its_bytes_with_what_it_took_and_a_chunk_of_no_bytes_is_the_last
+7.1.1 | A recipient MUST ignore unrecognized chunk | test a_chunk_is_read_as_its_bytes_with_what_it_took_and_a_chunk_of_no_bytes_is_the_last
+7.1.2 | A recipient that retains a received | reason retains no trailer field; chunk passes over the trailer section
+7.1.2 | A recipient MUST NOT merge a received | reason merges no trailer field; chunk passes over the trailer section
+7.3 | Registrations MUST include the following fields: | reason binds a registration of a transfer coding with IANA
+7.3 | Names of transfer codings MUST NOT | reason binds a registration of a transfer coding with IANA
+7.3 | Values to be added to this | reason binds a registration of a transfer coding with IANA
+7.4 | A client MUST NOT send the | reason binds a client sending a TE header; the module writes no request head
+7.4 | Since the TE header field only | reason binds a client sending a TE header; the module writes no request head
