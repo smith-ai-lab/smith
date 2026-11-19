@@ -76,7 +76,7 @@ fn keyword_table() -> List[List[u8]] ! alloc {
 fn punctuation_table() -> List[List[u8]] ! alloc {
   [['.', '.'], ['-', '>'], ['+', '='], ['-', '='], ['*', '='], ['/', '='], ['=', '='],
    ['!', '='], ['<', '='], ['>', '='], ['('], [')'], ['['], [']'], ['{'], ['}'], [','],
-   [':'], ['.'], ['='], ['<'], ['>'], ['+'], ['-'], ['*'], ['/'], ['@'], ['^'], ['!']]
+   [':'], ['.'], ['='], ['<'], ['>'], ['+'], ['-'], ['*'], ['/'], ['@'], ['^'], ['!'], ['|', '>']]
 }
 
 // ---- bytes ----
@@ -549,7 +549,10 @@ fn starts_with(src: List[u8], at: Nat, p: List[u8]) -> bool {
 fn punct(lx: take Lexer, start: Pos) -> Lexer ! alloc {
   var found: Option[Nat] = .none
   loop k in 0..lx.puncts.size {
-    if found == .none and starts_with(lx.src, lx.at, lx.puncts[k]) { found = .some(k) }
+    if starts_with(lx.src, lx.at, lx.puncts[k]) {
+      found = .some(k)
+      break
+    }
   }
   match found {
     .none {
@@ -1006,6 +1009,58 @@ fn run(lx: take Lexer) -> Lexer ! alloc {
   push_token(next, .eof, eof)
 }
 
+// 29 is the place of `|>` in the table of punctuation.
+fn is_pipe(tok: Tok) -> bool {
+  match tok {
+    .punct(k) { k == 29 }
+    other { false }
+  }
+}
+
+// Whether a `|>` stands after a line break.
+fn has_break_before_pipe(tokens: List[Token]) -> bool {
+  var found = false
+  loop i in 1..tokens.size {
+    if is_pipe(tokens[i].tok) and is_newline(tokens[i - 1].tok) { found = true }
+  }
+  found
+}
+
+// The token as a new one, since a list does not give away what it holds.
+fn copy_tok(tok: Tok) -> Tok ! alloc {
+  match tok {
+    .ident(b) { .ident(slice(b, 0, b.size)) }
+    .keyword(k) { .keyword(k) }
+    .number(b) { .number(slice(b, 0, b.size)) }
+    .string(b) { .string(slice(b, 0, b.size)) }
+    .interp_open { .interp_open }
+    .text(b) { .text(slice(b, 0, b.size)) }
+    .interp_close { .interp_close }
+    .punct(k) { .punct(k) }
+    .newline { .newline }
+    .eof { .eof }
+  }
+}
+
+// The tokens without the line breaks that stand in front of a `|>`, which
+// goes on from the line before.
+fn without_breaks_before_pipes(tokens: List[Token]) -> List[Token] ! alloc {
+  var kept: List[Token] = []
+  var breaks: List[Pos] = []
+  loop i in 0..tokens.size {
+    if is_newline(tokens[i].tok) {
+      breaks = push(breaks, tokens[i].pos)
+    } else {
+      if not is_pipe(tokens[i].tok) {
+        loop k in 0..breaks.size { kept = push(kept, Token(tok: .newline, pos: breaks[k])) }
+      }
+      breaks = []
+      kept = push(kept, Token(tok: copy_tok(tokens[i].tok), pos: tokens[i].pos))
+    }
+  }
+  kept
+}
+
 // Splits a file into tokens. The last token is always `eof`.
 fn lex(src: take List[u8]) -> Result[List[Token], List[LexError]] ! alloc {
   bad = text_errors(src)
@@ -1015,7 +1070,13 @@ fn lex(src: take List[u8]) -> Result[List[Token], List[LexError]] ! alloc {
     lx = Lexer(src: src, at: 0, pos: Pos(line: 1, col: 1), tokens: [], errors: [],
                line_has_token: false, keywords: keyword_table(), puncts: punctuation_table())
     done = run(lx)
-    if done.errors.size == 0 { .ok(done.tokens) } else { .err(done.errors) }
+    if done.errors.size > 0 {
+      .err(done.errors)
+    } else if has_break_before_pipe(done.tokens) {
+      .ok(without_breaks_before_pipes(done.tokens))
+    } else {
+      .ok(done.tokens)
+    }
   }
 }
 
