@@ -81,10 +81,26 @@ fn cut(paragraph: &str) -> Vec<String> {
     sentences
 }
 
+/// A part of a standard's text, in order: where a section begins (or none, where
+/// what follows is no part of the numbered sections), a line of a paragraph, and
+/// the end of a paragraph.
+enum Part {
+    Section(Option<String>),
+    Line(String),
+    End,
+}
+
 /// Every sentence of the sections `wanted` (and the sections inside them)
 /// that holds one of the words of requirement, in the order of the text. A
-/// sentence is its words with every run of spaces made one.
-pub fn sentences(rfc: &str, wanted: &[&str]) -> Vec<Sentence> {
+/// sentence is its words with every run of spaces made one. The text is an
+/// RFC as `www.rfc-editor.org` publishes it, or a page of HTML whose sections
+/// are headings that begin with their number.
+pub fn sentences(text: &str, wanted: &[&str]) -> Vec<Sentence> {
+    let parts = if text.contains("<html") || text.trim_start().starts_with("<!") {
+        html_parts(text)
+    } else {
+        rfc_parts(text)
+    };
     let mut found = Vec::new();
     let mut section: Option<String> = None;
     let mut paragraph: Vec<String> = Vec::new();
@@ -107,24 +123,105 @@ pub fn sentences(rfc: &str, wanted: &[&str]) -> Vec<Sentence> {
         }
         paragraph.clear();
     };
+    for part in parts {
+        match part {
+            Part::Section(next) => {
+                flush(&section, &mut paragraph);
+                section = next;
+            }
+            Part::End => flush(&section, &mut paragraph),
+            Part::Line(line) => paragraph.push(line),
+        }
+    }
+    flush(&section, &mut paragraph);
+    found
+}
+
+/// The parts of an RFC: a heading at the start of a line begins a section, an
+/// appendix ends them, and a blank line ends a paragraph.
+fn rfc_parts(rfc: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
     for line in rfc.trim_start_matches('\u{feff}').lines() {
         if page_furniture(line) {
             continue;
         }
         if line.starts_with("Appendix ") {
-            flush(&section, &mut paragraph);
-            section = None;
+            parts.push(Part::Section(None));
         } else if let Some(number) = heading(line).filter(|_| !line.starts_with(' ')) {
-            flush(&section, &mut paragraph);
-            section = Some(number.to_string());
+            parts.push(Part::Section(Some(number.to_string())));
         } else if line.trim().is_empty() {
-            flush(&section, &mut paragraph);
+            parts.push(Part::End);
         } else {
-            paragraph.push(line.trim().to_string());
+            parts.push(Part::Line(line.trim().to_string()));
         }
     }
-    flush(&section, &mut paragraph);
-    found
+    parts
+}
+
+/// The parts of a page of HTML: the text of each paragraph, list item, and
+/// definition, cut at each line break, and each heading of the second or third
+/// level that begins with a number, such as `4.1 Notification`, as a section.
+fn html_parts(html: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    let mut heading = false;
+    let mut rest = html;
+    while let Some(open) = rest.find('<') {
+        text.push_str(&decode(&rest[..open]));
+        let Some(close) = rest[open..].find('>') else {
+            break;
+        };
+        let tag = rest[open + 1..open + close].trim().to_ascii_lowercase();
+        rest = &rest[open + close + 1..];
+        let name = tag
+            .trim_start_matches('/')
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .next()
+            .unwrap_or("");
+        // What a script or a style holds is no text of the page.
+        if (name == "script" || name == "style") && !tag.starts_with('/') {
+            let end = format!("</{name}");
+            rest = rest.find(&end).map_or("", |i| &rest[i..]);
+            continue;
+        }
+        let block = matches!(
+            name,
+            "p" | "br" | "li" | "dd" | "dt" | "dl" | "ul" | "ol" | "pre" | "div" | "table" | "tr"
+                | "td" | "th" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        );
+        if !block {
+            continue;
+        }
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if heading {
+            let number = words.first().copied().unwrap_or("");
+            let numbered = !number.is_empty()
+                && number
+                    .split('.')
+                    .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+            parts.push(Part::Section(numbered.then(|| number.to_string())));
+        } else if !words.is_empty() {
+            parts.push(Part::Line(words.join(" ")));
+        }
+        text.clear();
+        heading = false;
+        parts.push(Part::End);
+        if matches!(name, "h2" | "h3") && !tag.starts_with('/') {
+            heading = true;
+        }
+    }
+    parts
+}
+
+/// The text of a piece of HTML with the character references it holds, which
+/// are `&nbsp;`, `&lt;`, `&gt;`, `&quot;`, and `&amp;`, written out.
+fn decode(piece: &str) -> String {
+    piece
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
 }
 
 /// What the ledger gives for each sentence of `wanted` sections of `rfc`: the
