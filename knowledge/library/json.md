@@ -245,6 +245,8 @@ fn raw_text(raw: RawJson) -> str
 
 It has `Deserialize`: read, it takes whatever value is next, checks that it is one whole JSON value, whatever reader gave the bytes, and holds exactly its bytes, with no space round it, as a piece of the input that shares its memory. Bytes that are not one value are the error `malformed` of that reader, and no `RawJson`. `from_json(raw_text(raw))` reads it later into a type.
 
+Reading a `RawJson` walks the bytes of its value twice. The reader passes over the value to find where it ends, and `RawJson` then checks those bytes, as a reader of a program's own could hand it anything, and nothing a reader gives back shows that the bytes are one whole JSON value. The second walk costs time in proportion to the value held, and gives the same answer. It ends when a reader gives the bytes with a proof that the [kernel](../language/trust.md) checks, which [issue 555](https://github.com/smith-ai-lab/smith/issues/555) is for. No reader is believed without one.
+
 ```
 struct Call {
   name: str
