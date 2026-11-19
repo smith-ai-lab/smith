@@ -62,6 +62,18 @@ fn main() { spin() }
 
 This gives "`spin` needs the `diverge` effect, which `main` does not declare", with the fix "write `fn main() ! diverge`". With `loop decreases n`, as [the open-ended `loop`](open-loop.md#a-loop-that-is-proven-to-end) describes, the loop is proven to end and the function lists nothing.
 
+## What a signature says about time
+
+A function that lists no effect ends, asks the system for no memory, and waits for nothing, because not ending is `diverge`, memory of a size known only at run time is `alloc`, and every wait for the world outside is an effect of the library. So the signature alone says that a function is fit to be called where time is short, as the function that fills the next buffer of sound is.
+
+```
+fn fill(out: take Buffer, state: take Synth) -> (Buffer, Synth)
+```
+
+`fill` cannot loop without end, cannot ask for memory, and cannot wait for a file, the network, or a lock, and neither can anything it calls, since a caller lists the effects of what it calls. Nothing is written to say so, and nothing is checked beyond what is checked of every function.
+
+This says that the time is bounded and not what the bound is. A bound in steps, stated in a contract and proven, is not in the language, and a bound in seconds depends on the processor and is outside it.
+
 ## Where an effect ends
 
 An effect that nothing handles is carried by every caller up to [`main`](first-program.md), where a program starts. The effects `main` lists are provided by the operating system.
