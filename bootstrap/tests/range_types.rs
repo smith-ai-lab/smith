@@ -70,6 +70,10 @@ pub const ONCE: &[Test] = &[
         arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range,
     ),
     (
+        "a_range_is_taken_by_the_item_of_a_case_where_the_type_asked_for_settles_it",
+        a_range_is_taken_by_the_item_of_a_case_where_the_type_asked_for_settles_it,
+    ),
+    (
         "a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one",
         a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one,
     ),
@@ -539,6 +543,35 @@ fn a_sum_a_difference_and_a_product_give_the_exact_range_and_no_narrower_one() {
                     assert!(!compiles(&narrower), "accepted\n{narrower}");
                 }
             }
+        },
+    );
+}
+
+/// The item of a case whose type the type asked for settles is a range taken as
+/// any value is: a narrower range as it is, and a wider one where a condition
+/// shows it fits, so `.some(b - 48)` of a `Byte` that is at least 48 is an
+/// `Option[Byte]`, and one that is not shown to be is refused.
+fn a_range_is_taken_by_the_item_of_a_case_where_the_type_asked_for_settles_it() {
+    generate::check(
+        4008,
+        20,
+        |g: &mut Gen| (g.below(200) as i128, g.below(40) as i128 + 1),
+        |&(low, by)| {
+            let program = |guard: &str| {
+                with_header(format!(
+                    "fn shifted(b: Byte) -> Option[Byte] {{\n  if {guard} {{ .some(b - {by}) }} else {{ .none }}\n}}\n\nfn main() ! console, alloc {{\n  match shifted({}) {{\n    .some(v) {{ print(\"{{v}}\") }}\n    .none {{ print(\"none\") }}\n  }}\n}}\n",
+                    low + by
+                ))
+            };
+            let shown = program(&format!("b >= {by}"));
+            assert_eq!(stdout(&shown), format!("{low}\n"), "for\n{shown}");
+            let unshown = program("b >= 0");
+            let errors = check(unshown.as_bytes()).expect_err("a value not shown to fit");
+            assert!(errors.iter().any(|e| e.message.contains("cannot prove")), "{errors:?}");
+            let wider = with_header(format!(
+                "fn widened(b: Byte) -> Option[u16] {{ .some(b) }}\n\nfn main() ! console, alloc {{\n  match widened({low}) {{\n    .some(v) {{ print(\"{{v}}\") }}\n    .none {{ print(\"none\") }}\n  }}\n}}\n"
+            ));
+            assert_eq!(stdout(&wider), format!("{low}\n"), "for\n{wider}");
         },
     );
 }
