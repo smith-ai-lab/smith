@@ -497,7 +497,7 @@ struct Bad {
   problem: Problem
 }
 
-fn is_space(b: Byte) -> bool { b == ' ' or b == '\n' or b == 13 or b == '\t' }
+fn is_space(b: Byte) -> bool { b <= ' ' and (b == ' ' or b == '\n' or b == 13 or b == '\t') }
 
 fn is_digit(b: Byte) -> bool { b >= '0' and b <= '9' }
 
@@ -515,6 +515,7 @@ fn skip_space(b: Slice[Byte], from: Nat) -> Nat {
 
 // The last byte before `at` that is not a space, or 0.
 fn last_before(b: Slice[Byte], at: Nat) -> Byte {
+  if at > 0 and at <= b.size and not is_space(b[at - 1]) { return b[at - 1] }
   var i = at
   loop k in 0..at {
     if i == 0 { return 0 }
@@ -559,6 +560,9 @@ struct Num {
   negative: bool
   from: Nat
   whole: bool
+  // The value of the digits before a fraction or an exponent, which is only
+  // right when they are no more than 19.
+  size: u64
 }
 
 // The number that starts at `at`, which is checked against the grammar of
@@ -571,11 +575,18 @@ fn number(b: Slice[Byte], at: Nat) -> Result[Num, Bad] {
   from = i
   c = byte(b, i)
   if not is_digit(c) { return Result.err(malformed(i)) }
+  var size: u64 = 0
   if c == '0' {
     i = saturating_add(i, 1)
   } else {
     loop k in 0..b.size {
-      if is_digit(byte(b, i)) { i = saturating_add(i, 1) } else { break }
+      d = byte(b, i)
+      if is_digit(d) {
+        size = wrapping_add(wrapping_mul(size, 10), convert(wrapping_sub(d, '0')))
+        i = saturating_add(i, 1)
+      } else {
+        break
+      }
     }
   }
   var whole = true
@@ -598,11 +609,11 @@ fn number(b: Slice[Byte], at: Nat) -> Result[Num, Bad] {
       if is_digit(byte(b, i)) { i = saturating_add(i, 1) } else { break }
     }
   }
-  Result.ok(Num(end: i, negative: negative, from: from, whole: whole))
+  Result.ok(Num(end: i, negative: negative, from: from, whole: whole, size: size))
 }
 
-// The value of the digits of a whole number, or `.none` when it is more than a
-// `u64` holds.
+// The value of the digits of a whole number of 20 digits or more, or `.none`
+// when it is more than a `u64` holds.
 fn magnitude(b: Slice[Byte], from: Nat, end: Nat) -> Option[u64] {
   var m: u64 = 0
   loop i in from..end {
@@ -1313,6 +1324,11 @@ fn whole(b: Slice[Byte], a: Nat, of: str) -> Result[Whole, Bad] {
     .err(e) { Result.err(e) }
     .ok(n) {
       if not n.whole { return Result.err(not_whole(a)) }
+      // Nineteen digits are less than 10^19, which a `u64` holds, so `number`
+      // has their value.
+      if saturating_sub(n.end, n.from) <= 19 {
+        return Result.ok(Whole(end: n.end, negative: n.negative, size: n.size))
+      }
       match magnitude(b, n.from, n.end) {
         .some(m) { Result.ok(Whole(end: n.end, negative: n.negative, size: m)) }
         .none { Result.err(Bad(at: a, problem: .range(of))) }
