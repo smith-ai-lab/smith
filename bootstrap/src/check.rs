@@ -2876,6 +2876,9 @@ struct Resolver<'l, 'a> {
     unimported: Vec<Error>,
     next_std: usize,
     next_project: usize,
+    /// The module of the standard library that exports each name, the first of
+    /// them where two do, which is worked out when an error first needs it.
+    homes: std::cell::OnceCell<HashMap<String, &'a str>>,
 }
 
 /// Whose `use` lines are being read.
@@ -2902,7 +2905,36 @@ impl<'l, 'a> Resolver<'l, 'a> {
             unimported: Vec::new(),
             next_std: 1,
             next_project: FIRST_PROJECT,
+            homes: std::cell::OnceCell::new(),
         }
+    }
+
+    /// The module of the standard library that exports each name. A module's
+    /// source is not lexed or parsed for it: an item that a module exports is
+    /// written with `pub` at the start of a line, as `fn`, `struct`, `enum`, or
+    /// `trait`, so the names are read off those lines.
+    fn homes(&self) -> &HashMap<String, &'a str> {
+        self.homes.get_or_init(|| {
+            let mut homes = HashMap::new();
+            for (module, _) in &self.library.modules {
+                let Some(source) = self.library.source(&format!("std.{module}")) else {
+                    continue;
+                };
+                for line in source.lines() {
+                    let Some(rest) = ["pub fn ", "pub struct ", "pub enum ", "pub trait "]
+                        .into_iter()
+                        .find_map(|start| line.strip_prefix(start))
+                    else {
+                        continue;
+                    };
+                    let end = rest
+                        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .unwrap_or(rest.len());
+                    homes.entry(rest[..end].to_string()).or_insert(*module);
+                }
+            }
+            homes
+        })
     }
 
     /// Reads the module with the name, or says what is wrong in it. A module
@@ -3504,15 +3536,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 .with_fix(format!("write `pub` before `{name}` in `{}`", read.label));
         }
         let mut error = Error::new(pos, format!("`{module}` has no name `{name}`"));
-        let home = self.library.modules.iter().map(|(m, _)| *m).find(|m| {
-            self.library
-                .source(&format!("std.{m}"))
-                .and_then(|source| {
-                    let tokens = crate::lexer::lex(source.as_bytes()).ok()?;
-                    crate::parser::parse_library(&tokens).ok()
-                })
-                .is_some_and(|f| f.exports.iter().any(|e| e == name))
-        });
+        let home = self.homes().get(name).copied();
         if let Some(home) = home {
             error = error.with_fix(format!("write `use std.{home} ({name})`"));
         } else if SIZES.contains(&name) {

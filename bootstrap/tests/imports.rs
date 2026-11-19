@@ -20,6 +20,10 @@ use crate::{numbers, programs, text};
 
 pub const ONCE: &[Test] = &[
     (
+        "a_name_a_module_does_not_export_costs_a_lookup_and_names_the_module_that_does",
+        a_name_a_module_does_not_export_costs_a_lookup_and_names_the_module_that_does,
+    ),
+    (
         "each_name_the_compiler_supplies_is_in_the_module_the_library_pages_name",
         each_name_the_compiler_supplies_is_in_the_module_the_library_pages_name,
     ),
@@ -754,4 +758,45 @@ fn a_function_of_a_module_is_inlined_and_folded_as_one_of_the_file_is() {
         smith::scalar::remove(&smith::scalar::common(&smith::scalar::fold(&smith::scalar::inline(p))))
     };
     assert_eq!(build(&imported), build(&own));
+}
+
+/// A name that a module does not export is one error, and the fix names the
+/// first module that does export it, for every name of every module. The
+/// error costs what the file costs without it, within twice: the modules of the
+/// library are not lexed or parsed to find where the name is.
+fn a_name_a_module_does_not_export_costs_a_lookup_and_names_the_module_that_does() {
+    use crate::counting::allocated;
+    // The module that exports each name first, in the order the library lists.
+    let mut first: Vec<(&str, &str)> = Vec::new();
+    for module in library() {
+        for (name, _) in &module.names {
+            if !first.iter().any(|(n, _)| n == name) {
+                first.push((name, &module.name));
+            }
+        }
+    }
+    for (name, home) in first.iter().filter(|(_, home)| *home != "console") {
+        // `std.bits` is not where these are, unless it is, and then another is.
+        let from = if *home == "bits" { "text" } else { "bits" };
+        let source = format!("use std.{from} ({name})\n\nfn main() {{\n}}\n");
+        let Err(errors) = check(source.as_bytes()) else {
+            continue;
+        };
+        for e in errors.iter().filter(|e| e.message.contains("has no name")) {
+            let fix = e.fix.as_deref().unwrap_or_default();
+            assert!(
+                fix.contains(&format!("use std.{home} ({name})")) || *home == from,
+                "{name} is in {home}: {e:?}"
+            );
+        }
+    }
+    let plain = "use std.bits (u8)\n\nfn main() {\n}\n";
+    let wrong = "use std.bits (u8, Zz)\n\nfn main() {\n}\n";
+    let (_, without) = allocated(|| check(plain.as_bytes()));
+    let (result, with) = allocated(|| check(wrong.as_bytes()));
+    assert!(result.is_err(), "Zz is not a name of std.bits");
+    assert!(
+        with.bytes <= 2 * without.bytes && with.calls <= 2 * without.calls,
+        "a name no module exports allocates {with:?}, and the file without it {without:?}"
+    );
 }
