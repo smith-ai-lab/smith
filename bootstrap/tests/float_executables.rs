@@ -37,13 +37,14 @@ fn building() -> Vec<Target> {
 }
 
 fn check(program: &Program) {
+    // The form as it is made: a product that one sum uses is fused.
+    let program = &scalar::fuse(program);
     assert_eq!(scalar::check(program), Ok(()));
     let said = scalar::run(program);
     let passed = scalar::passes(program);
     for target in building() {
         scalar_runs_as(program, target, &said);
-        // A product that a sum uses is fused in the passed form, so its answer is the evaluator's of that form.
-        scalar_runs_as(&passed, target, &scalar::run(&passed));
+        scalar_runs_as(&passed, target, &said);
     }
 }
 
