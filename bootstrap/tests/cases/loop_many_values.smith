@@ -1,0 +1,22 @@
+use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
+
+fn mix(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64, h: u64) -> u64 {
+  var x: u64 = 0
+  var y: u64 = 1
+  var z: u64 = 2
+  loop i in 0..n {
+    x = wrapping_add(wrapping_mul(x, a), b)
+    y = wrapping_add(wrapping_mul(y, c), d)
+    z = wrapping_add(wrapping_mul(z, e), f)
+    x = wrapping_add(x, g)
+    y = wrapping_add(y, h)
+    z = wrapping_add(z, i)
+  }
+  wrapping_add(wrapping_add(x, y), z)
+}
+
+fn main() ! console, alloc {
+  print("{mix(1000, 3, 5, 7, 11, 13, 17, 19, 23)}")
+}
