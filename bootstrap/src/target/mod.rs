@@ -18,9 +18,15 @@ mod wasm;
 mod wasm_code;
 mod wasm_host;
 mod wasm_module;
+mod wasm_structure;
 mod windows_arm64;
 mod windows_x64;
 mod x86_64;
+
+/// Whether the blocks of a function are written as loops and branches by a
+/// target that writes a module: every jump back goes to a block that dominates
+/// the jump.
+pub use wasm_structure::is_structured;
 
 use crate::scalar::Program;
 
