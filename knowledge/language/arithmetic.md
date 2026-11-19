@@ -6,7 +6,8 @@ status: partial
 built:
   - "a plain `+`, `-`, or `*` on `u8` to `i64`, which compiles when `arith` proves that the result fits the type of its operands, and an error that says what could not be proven"
   - "`wrapping_`, `saturating_`, and `checked_` of `add`, `sub`, and `mul`"
-  - "not a range as a type, the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float"
+  - "a value that enters a narrower range, at a binding, a `var`, an argument, and a result, which compiles when a condition or a `requires` shows that it fits, and an error that says what could not be proven"
+  - "not the exact range of a result, `/`, `%`, or `narrow(x)` and `clamp(x)` of every range, or of a float"
 ---
 
 # Integer arithmetic

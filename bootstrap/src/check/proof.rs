@@ -1079,6 +1079,7 @@ impl<'a> Checker<'a> {
         value: &Expr,
         (from, to): (Int, Int),
         (written, pos): (&str, Pos),
+        fix: &str,
     ) {
         if !Self::decided(body) || body.contract {
             return;
@@ -1117,14 +1118,24 @@ impl<'a> Checker<'a> {
                             self.defs.spelling(to)
                         ),
                     )
-                    .with_fix(
-                        "check the value first, state it in a `requires`, or use \
-                         `wrapping_narrow`, `saturating_narrow`, or `checked_narrow`",
-                    ),
+                    .with_fix(fix),
                 );
                 return;
             }
         }
+    }
+
+    /// Reports a value of range `from` that enters the narrower range `to`
+    /// where `arith` does not show that it fits.
+    pub(super) fn enters(&mut self, body: &mut Body<'a>, value: &Expr, (from, to): (Int, Int)) {
+        let written = written_expr(value);
+        self.narrows(
+            body,
+            value,
+            (from, to),
+            (&written, value.pos()),
+            "check the value first, or state it in a `requires`",
+        );
     }
 }
 

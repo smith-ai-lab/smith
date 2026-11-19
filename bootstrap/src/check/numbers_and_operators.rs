@@ -515,7 +515,14 @@ impl<'a> Checker<'a> {
             // What it gives is the number it is given, which `arith` knows.
             self.narrowed.insert(addr(call));
             let written = format!("{name}({})", written_expr(value));
-            self.narrows(body, value, (from, to), (&written, call.pos));
+            self.narrows(
+                body,
+                value,
+                (from, to),
+                (&written, call.pos),
+                "check the value first, state it in a `requires`, or use \
+                 `wrapping_narrow`, `saturating_narrow`, or `checked_narrow`",
+            );
         }
         wanted
     }
