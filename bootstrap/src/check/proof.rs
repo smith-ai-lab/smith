@@ -145,7 +145,9 @@ impl Facts {
             "shift_right" => BitOp::ShiftRight,
             _ => return,
         };
-        let places = params_of(&sig.params, &call.args);
+        let Some(places) = params_of(&sig.params, &call.args) else {
+            return;
+        };
         let (Some(first), Some(second)) = (
             places.iter().position(|p| *p == 0),
             places.iter().position(|p| *p == 1),
@@ -1371,10 +1373,14 @@ impl<'a> Checker<'a> {
         if !Self::decided(body) || (callee.requires.is_empty() && callee.ensures.is_empty()) {
             return;
         }
+        // A call with an argument for no parameter is reported, and proves nothing.
+        let Some(places) = params_of(&sig.params, &call.args) else {
+            return;
+        };
         let mut facts = std::mem::take(&mut body.facts);
         let mut sums = HashMap::new();
         let mut texts: HashMap<String, String> = HashMap::new();
-        for (arg, place) in call.args.iter().zip(params_of(&sig.params, &call.args)) {
+        for (arg, place) in call.args.iter().zip(places) {
             let (name, ty) = &sig.params[place];
             if matches!(ty, Ty::List(_) | Ty::Slice(_)) {
                 let mut builder = self.builder(body, &mut facts, true);
