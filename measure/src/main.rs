@@ -1,7 +1,7 @@
 //! Times the programs that decide how fast a Smith program is, a loop that
 //! pushes to a list, the lexer in `compiler/lexer.smith`, and `std.json`
 //! writing a list of structs and reading the text, each beside the same program in Rust, and how
-//! fast the compiler builds. It prints one
+//! fast the compiler builds. The lexer is also built as a module for `node`, when it is installed. It prints one
 //! line for each program, each implementation, and each size, with the time
 //! for each push or each byte, and for `build` the time of each stage of a
 //! build. Run it with `sh measure/run.sh`, which times the compiler in
@@ -11,6 +11,7 @@
 
 mod build;
 mod json;
+mod wasm;
 
 use std::hint::black_box;
 use std::io::Read;
@@ -61,6 +62,7 @@ fn main() {
     }
     if wants("lexer") {
         lex(&smith, &work, lexer_source);
+        wasm::run(&smith, &work, lexer_source);
     }
     if wants("build") {
         build::run(&smith, &work, &root);
@@ -131,6 +133,36 @@ pub(crate) fn lex_at(
     lexer_source: &str,
     size: usize,
 ) -> (usize, usize, Option<Duration>, usize) {
+    lex_for(smith, work, lexer_source, size, Host::Native, None)
+}
+
+/// Where a program built by `smith_time` is run: as an executable of this
+/// machine, or as a module under `node`.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Host {
+    Native,
+    Node,
+}
+
+impl Host {
+    /// The name of the program's files, so that the two hosts do not share them.
+    fn tag(self) -> &'static str {
+        match self {
+            Host::Native => "",
+            Host::Node => "-wasm",
+        }
+    }
+}
+
+/// `lex_at` for a host.
+pub(crate) fn lex_for(
+    smith: &Path,
+    work: &Path,
+    lexer_source: &str,
+    size: usize,
+    host: Host,
+    rounds: Option<usize>,
+) -> (usize, usize, Option<Duration>, usize) {
     let piece: Vec<String> = PIECE.bytes().map(|b| b.to_string()).collect();
     let piece = piece.join(", ");
     let (pieces, input) = lexer_input(size);
@@ -141,9 +173,15 @@ pub(crate) fn lex_at(
     };
     let lexing = "match lex(src) {\n      .ok(tokens) { last = tokens.size }\n      .err(errors) { last = 0 }\n    }";
     let tokens = smith::count_tokens(&input).expect("the input lexes");
-    let (time, reps) = smith_time(smith, work, "lexer", &tokens.to_string(), |reps| {
-        (program(reps, lexing), program(reps, "last = src.size"))
-    });
+    let (time, reps) = smith_time_on(
+        smith,
+        work,
+        "lexer",
+        &tokens.to_string(),
+        host,
+        rounds,
+        |reps| (program(reps, lexing), program(reps, "last = src.size")),
+    );
     (input.len(), tokens, time, reps)
 }
 
@@ -160,11 +198,30 @@ pub(crate) fn smith_time(
     expected: &str,
     programs: impl Fn(usize) -> (String, String),
 ) -> (Option<Duration>, usize) {
+    smith_time_on(smith, work, name, expected, Host::Native, None, programs)
+}
+
+/// `smith_time` for a host, and for a number of rounds when it is given, as a
+/// module that the engine optimizes while it runs is not itself in the first
+/// few.
+pub(crate) fn smith_time_on(
+    smith: &Path,
+    work: &Path,
+    name: &str,
+    expected: &str,
+    host: Host,
+    rounds: Option<usize>,
+    programs: impl Fn(usize) -> (String, String),
+) -> (Option<Duration>, usize) {
     let build = |source: &str, tag: &str| {
-        let file = work.join(format!("{name}-{tag}.smith"));
+        let file = work.join(format!("{name}{}-{tag}.smith", host.tag()));
         std::fs::write(&file, source).unwrap();
-        let status = Command::new(smith)
-            .arg("build")
+        let mut command = Command::new(smith);
+        command.arg("build");
+        if host == Host::Node {
+            command.args(["--target", "wasm"]);
+        }
+        let status = command
             .arg(&file)
             .current_dir(work)
             .stderr(Stdio::inherit())
@@ -173,13 +230,27 @@ pub(crate) fn smith_time(
         assert!(status.success(), "smith build {} failed", file.display());
         work.join(file.file_stem().unwrap())
     };
+    let run = |stem: &Path| {
+        let stem = stem.to_path_buf();
+        move || match host {
+            Host::Native => Command::new(&stem),
+            Host::Node => {
+                let mut node = Command::new("node");
+                node.arg(stem.with_extension("js"));
+                node
+            }
+        }
+    };
     let net = |reps: usize| {
         let (program, baseline) = programs(reps);
         let (whole, base) = (build(&program, "whole"), build(&baseline, "base"));
-        let base = least(&base, None)?;
-        let whole = least(&whole, Some(expected))?;
+        let base = least_of(run(&base), None)?;
+        let whole = least_of(run(&whole), Some(expected))?;
         Some(whole.saturating_sub(base))
     };
+    if let Some(rounds) = rounds {
+        return (net(rounds).map(|t| t / rounds as u32), rounds);
+    }
     let Some(one) = net(1) else { return (None, 1) };
     if one >= LONG_ENOUGH {
         return (Some(one), 1);
@@ -190,10 +261,16 @@ pub(crate) fn smith_time(
 
 /// The least of several runs of an executable, or `None` if one is given up on.
 pub(crate) fn least(exe: &Path, expected: Option<&str>) -> Option<Duration> {
+    least_of(|| Command::new(exe), expected)
+}
+
+/// The least of several runs of a command, as `least`.
+pub(crate) fn least_of(command: impl Fn() -> Command, expected: Option<&str>) -> Option<Duration> {
+    let exe = PathBuf::from(command().get_program());
     let mut best: Option<Duration> = None;
     for _ in 0..RUNS {
         let start = Instant::now();
-        let mut child = Command::new(exe).stdout(Stdio::piped()).spawn().unwrap();
+        let mut child = command().stdout(Stdio::piped()).spawn().unwrap();
         loop {
             if let Some(status) = child.try_wait().unwrap() {
                 let mut said = String::new();
