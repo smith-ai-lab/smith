@@ -42,6 +42,22 @@ pub const ONCE: &[Test] = &[
         a_value_enters_a_narrower_range_exactly_when_a_condition_or_a_requires_shows_it_fits,
     ),
     (
+        "any_two_ranges_are_compared_as_the_numbers_they_hold_are",
+        any_two_ranges_are_compared_as_the_numbers_they_hold_are,
+    ),
+    (
+        "a_parameter_of_a_range_to_a_name_is_below_it_at_every_call_and_in_the_body",
+        a_parameter_of_a_range_to_a_name_is_below_it_at_every_call_and_in_the_body,
+    ),
+    (
+        "a_range_from_a_name_is_at_least_it_at_every_call",
+        a_range_from_a_name_is_at_least_it_at_every_call,
+    ),
+    (
+        "a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_refused",
+        a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_refused,
+    ),
+    (
         "the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them",
         the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them,
     ),
@@ -363,4 +379,87 @@ fn narrow_name(low: i128, high: i128) -> String {
         }
     }
     format!("{low}..{}", high + 1)
+}
+
+/// `==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges say what
+/// the numbers say, and are refused only where no type holds both ranges.
+fn any_two_ranges_are_compared_as_the_numbers_they_hold_are() {
+    generate::check(4010, 40, |g: &mut Gen| (range(g), range(g), g.below(2), g.below(2)), |((a, b), (c, d), x, y)| {
+        let (low, high) = (*a.min(c), *b.max(d));
+        let held = low >= i64::MIN as i128
+            && high <= if low < 0 { i64::MAX as i128 } else { u64::MAX as i128 };
+        let (x, y) = ([*a, *b][*x], [*c, *d][*y]);
+        let source = with_header(format!(
+            "fn main() ! console, alloc {{\n  p: {a}..{} = {x}\n  q: {c}..{} = {y}\n  print(\"{{p == q}} {{p != q}} {{p < q}} {{p <= q}} {{p > q}} {{p >= q}}\")\n}}\n",
+            b + 1,
+            d + 1
+        ));
+        if !held {
+            assert!(!compiles(&source), "for\n{source}");
+            return;
+        }
+        let want = format!("{} {} {} {} {} {}\n", x == y, x != y, x < y, x <= y, x > y, x >= y);
+        assert_eq!(stdout(&source), want, "for\n{source}");
+    });
+}
+
+/// A parameter written `0..n`, for a parameter `n`, is a number below it: the
+/// body knows that, and a call compiles exactly when its argument is shown
+/// to be below the argument for `n`. Where `n` is 0 no argument is.
+fn a_parameter_of_a_range_to_a_name_is_below_it_at_every_call_and_in_the_body() {
+    generate::check(4011, 30, |g: &mut Gen| (g.below(40) as u64, g.below(40) as u64), |(n, i)| {
+        let source = |args: &str| {
+            with_header(format!(
+                "fn pick(n: Nat, i: 0..n) -> Nat {{ i }}\n\nfn inner(n: Nat, i: 0..n) -> Nat {{ i }}\n\nfn outer(n: Nat, i: 0..n) -> Nat {{ inner(n, i) }}\n\nfn main() ! console, alloc {{\n  print(\"{{pick({args})}} {{outer({args})}}\")\n}}\n"
+            ))
+        };
+        let called = source(&format!("{n}, {i}"));
+        if i < n {
+            assert_eq!(stdout(&called), format!("{i} {i}\n"), "for\n{called}");
+        } else {
+            let errors = check(called.as_bytes()).expect_err("an argument that is not below");
+            assert!(errors.iter().any(|e| e.message.contains("cannot prove")), "{errors:?} for\n{called}");
+        }
+        // A function that is not given a fact about `i` cannot give it on.
+        let loose = with_header(
+            "fn inner(n: Nat, i: 0..n) -> Nat { i }\n\nfn outer(n: Nat, i: Nat) -> Nat { inner(n, i) }\n\nfn main() ! console, alloc {\n  print(\"{outer(5, 2)}\")\n}\n"
+                .to_string(),
+        );
+        assert!(!compiles(&loose), "for\n{loose}");
+    });
+}
+
+/// A parameter written `m..256`, for a parameter `m`, is at least it.
+fn a_range_from_a_name_is_at_least_it_at_every_call() {
+    generate::check(4012, 30, |g: &mut Gen| (g.below(256) as u64, g.below(256) as u64), |(m, i)| {
+        let source = with_header(format!(
+            "fn from(m: Byte, i: m..256) -> Byte {{ i }}\n\nfn main() ! console, alloc {{\n  print(\"{{from({m}, {i})}}\")\n}}\n"
+        ));
+        if m <= i {
+            assert_eq!(stdout(&source), format!("{i}\n"), "for\n{source}");
+        } else {
+            assert!(!compiles(&source), "for\n{source}");
+        }
+    });
+}
+
+/// A bound that is a name is a parameter of the function, other than the
+/// parameter itself, and a whole number. Names are not built in a result, a
+/// binding, a field, or inside another type.
+fn a_bound_that_is_not_a_parameter_or_is_written_where_names_are_not_built_is_refused() {
+    for (bad, call, mentions) in [
+        ("fn f(n: Nat, i: 0..m) -> Nat { i }", "f(1, 0)", "`m`"),
+        ("fn f(i: 0..i) -> Nat { 0 }", "f(0)", "`i`"),
+        ("fn f(n: str, i: 0..n) -> Nat { 0 }", "f(\"a\", 0)", "whole numbers"),
+        ("fn f(n: Nat) -> 0..n { 0 }", "f(1)", "not supported"),
+        ("fn f(n: Nat) -> Nat {\n  x: 0..n = 0\n  0\n}", "f(1)", "not supported"),
+        ("fn f(n: Nat, xs: List[0..n]) -> Nat { 0 }", "f(1, [0])", "not supported"),
+        ("struct S {\n  a: 0..n\n}\n\nfn f(s: S) -> Nat { 0 }", "f(S(a: 0))", "not supported"),
+    ] {
+        let source = with_header(format!(
+            "{bad}\n\nfn main() ! console, alloc {{\n  print(\"{{{call}}}\")\n}}\n"
+        ));
+        let errors = check(source.as_bytes()).expect_err("a bound that is not built");
+        assert!(errors.iter().any(|e| e.message.contains(mentions)), "{errors:?} for\n{source}");
+    }
 }

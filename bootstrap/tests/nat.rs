@@ -149,9 +149,9 @@ fn a_loop_over_the_size_gives_a_nat_that_indexes_and_no_other_type_indexes() {
     });
 }
 
-/// The operators and comparisons take two sides of one type, for `Nat` as for
-/// every other type, so a `Nat` and a `u64` meeting in one are refused, and
-/// so is each other pair.
+/// `+`, `-`, and `*` take two sides of one type, so two types meeting in one
+/// are refused. A comparison takes any two ranges, and is refused only where
+/// no type holds the numbers of both.
 fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat_and_every_whole_number_type()
 {
     const COMPARE: [&str; 6] = ["==", "!=", "<", "<=", ">", ">="];
@@ -159,6 +159,7 @@ fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat
     for (i, a) in all.iter().enumerate() {
         for (j, b) in all.iter().enumerate() {
             let mut proven = true;
+            let mut compared = false;
             let source = if (i + j) % 2 == 0 {
                 // A difference is not proven to fit from the ranges of its sides,
                 // and a product of two variables is not one `arith` reasons about.
@@ -169,12 +170,21 @@ fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat
                     a.name, b.name, a.name
                 ))
             } else {
+                compared = true;
                 let op = COMPARE[(i + j) % COMPARE.len()];
                 with_header(format!(
                     "fn f(x: {}, y: {}) -> bool {{ x {op} y }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 2)}}\")\n}}\n",
                     a.name, b.name
                 ))
             };
+            if compared {
+                // The numbers of both fit 64 bits, signed when one is.
+                let (low, high) = (a.min.min(b.min), a.max.max(b.max));
+                let held = low >= i64::MIN as i128
+                    && high <= if low < 0 { i64::MAX as i128 } else { u64::MAX as i128 };
+                assert_eq!(compiles(&source), held, "for\n{source}");
+                continue;
+            }
             assert_eq!(compiles(&source), a == b && proven, "for\n{source}");
             if a != b && proven {
                 assert_eq!(mistakes(&source), 1, "for\n{source}");
