@@ -1,3 +1,3 @@
-convert_not_every_value.smith:1:31: there is no implementation of `Convert` for `u32` and `i32`
-  1 | fn same_size(n: u32) -> i32 { convert(n) }
+convert_not_every_value.smith:4:31: there is no implementation of `Convert` for `u32` and `i32`
+  4 | fn same_size(n: u32) -> i32 { convert(n) }
     |                               ^

@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 fn repeat(word: str = "again", body: fn(str) -> str) -> str { body(word) }
 
 fn main() ! console {

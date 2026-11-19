@@ -1,4 +1,4 @@
-struct_field_case_without_enum.smith:6:17: the enum of `.left` is not known here
-  6 |   x = Box(item: .left)
+struct_field_case_without_enum.smith:8:17: the enum of `.left` is not known here
+  8 |   x = Box(item: .left)
     |                 ^
   fix: write the enum's name before the dot, or give the binding a type

@@ -1,4 +1,4 @@
-alloc_missing.smith:1:30: a string that holds an expression needs the `alloc` effect, which `greet` does not declare
-  1 | fn greet(name: str) -> str { "hello {name}" }
+alloc_missing.smith:3:30: a string that holds an expression needs the `alloc` effect, which `greet` does not declare
+  3 | fn greet(name: str) -> str { "hello {name}" }
     |                              ^
   fix: write `fn greet(name: str) -> str ! alloc`

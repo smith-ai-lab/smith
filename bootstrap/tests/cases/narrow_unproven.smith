@@ -1,4 +1,8 @@
-fn digit(n: u64) -> u8 {
+use std.bits (u64)
+use std.console (console, print)
+use std.int (narrow)
+
+fn digit(n: u64) -> Byte {
   narrow(n)
 }
 

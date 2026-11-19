@@ -1,3 +1,3 @@
-convert_to_itself.smith:1:26: there is no implementation of `Convert` for `u32` and `u32`
-  1 | fn same(n: u32) -> u32 { convert(n) }
+convert_to_itself.smith:4:26: there is no implementation of `Convert` for `u32` and `u32`
+  4 | fn same(n: u32) -> u32 { convert(n) }
     |                          ^

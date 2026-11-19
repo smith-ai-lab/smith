@@ -3,8 +3,8 @@ pub trait Bits[T] {
   fn bit_or(a: T, b: T) -> T
   fn bit_xor(a: T, b: T) -> T
   fn bit_not(a: T) -> T
-  fn shift_left(a: T, by: u8) -> T
-  fn shift_right(a: T, by: u8) -> T
+  fn shift_left(a: T, by: Byte) -> T
+  fn shift_right(a: T, by: Byte) -> T
 }
 
 pub fn bit_and[T: Bits](a: T, b: T) -> T {
@@ -23,10 +23,10 @@ pub fn bit_not[T: Bits](a: T) -> T {
   __bit_not(a)
 }
 
-pub fn shift_left[T: Bits](a: T, by: u8) -> T {
+pub fn shift_left[T: Bits](a: T, by: Byte) -> T {
   __shift_left(a, by)
 }
 
-pub fn shift_right[T: Bits](a: T, by: u8) -> T {
+pub fn shift_right[T: Bits](a: T, by: Byte) -> T {
   __shift_right(a, by)
 }

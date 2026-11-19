@@ -1,6 +1,8 @@
+use std.bits (u64)
+
 pub trait Writer[W] {
   fn boolean(w: take W, value: bool) -> W ! alloc
-  fn signed(w: take W, value: i64) -> W ! alloc
+  fn signed(w: take W, value: Int) -> W ! alloc
   fn unsigned(w: take W, value: u64) -> W ! alloc
   fn text(w: take W, value: str) -> W ! alloc
   fn nothing(w: take W) -> W ! alloc
@@ -16,7 +18,7 @@ pub trait Writer[W] {
   fn case(w: take W, of: str, name: str, holds: bool) -> W ! alloc
   fn map(w: take W, size: Nat) -> W ! alloc
   fn end_map(w: take W) -> W ! alloc
-  fn raw(w: take W, of: str, bytes: Slice[u8]) -> W ! alloc
+  fn raw(w: take W, of: str, bytes: Slice[Byte]) -> W ! alloc
 }
 
 pub trait Serialize[T] {

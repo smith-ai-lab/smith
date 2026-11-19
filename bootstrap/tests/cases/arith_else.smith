@@ -1,4 +1,6 @@
-fn previous(i: u8) -> u8 {
+use std.console (console, print)
+
+fn previous(i: Byte) -> Byte {
   if i == 0 { 0 } else { i - 1 }
 }
 

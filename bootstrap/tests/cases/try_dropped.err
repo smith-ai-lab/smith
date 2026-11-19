@@ -1,4 +1,4 @@
-try_dropped.smith:9:3: this gives a `Result[str, str]`, which nothing uses, so a failure would be dropped
-  9 |   find("a", a)
-    |   ^
+try_dropped.smith:11:3: this gives a `Result[str, str]`, which nothing uses, so a failure would be dropped
+  11 |   find("a", a)
+     |   ^
   fix: write `try` before it, or match on it

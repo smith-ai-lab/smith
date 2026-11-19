@@ -1,9 +1,11 @@
+use std.console (console, print)
+
 struct Feet {
-  value: i64
+  value: Int
 }
 
 struct Meters {
-  value: i64
+  value: Int
 }
 
 impl Convert[Feet, Meters] {

@@ -1,4 +1,6 @@
+use std.console (console, print)
+
 fn main() ! console {
-  small: u8 = 256
+  small: Byte = 256
   print("done")
 }

@@ -1,3 +1,5 @@
+use std.console (console, print)
+
 struct Border {
   style: str = "solid"
   colour: str = "black"

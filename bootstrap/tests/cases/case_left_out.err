@@ -1,4 +1,4 @@
-case_left_out.smith:14:3: this `match` does not cover `.cat(_)`, `.lost(.none)`, and `.none`
-  14 |   match p {
+case_left_out.smith:16:3: this `match` does not cover `.cat(_)`, `.lost(.none)`, and `.none`
+  16 |   match p {
      |   ^
   fix: add blocks for `.cat(_)`, `.lost(.none)`, and `.none`, or end with a bare name that covers the rest

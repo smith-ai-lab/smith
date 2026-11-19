@@ -1,5 +1,8 @@
+use std.bits (u32)
+use std.console (console, print)
+
 struct Rect {
-  w: u8
+  w: Byte
 }
 
 enum Shape {
@@ -11,7 +14,7 @@ enum Shape {
 fn main() ! console, alloc {
   r: Shape = convert(Rect(w: 1))
   print("{r}")
-  n: u8 = 4
+  n: Byte = 4
   wide: u32 = convert(n)
   c: Shape = convert(wide)
   print("{c}")

@@ -1,11 +1,16 @@
-fn text(bytes: take List[u8]) -> str {
+use std.bits (bit_and, shift_right, u64)
+use std.int (wrapping_add, wrapping_narrow)
+use std.list (push)
+use std.utf8 (utf8)
+
+fn text(bytes: take List[Byte]) -> str {
   match utf8(freeze(bytes)) {
     .ok(t) { t }
     .err(e) { "" }
   }
 }
 
-fn hex_digit(d: u64, upper: bool) -> u8 {
+fn hex_digit(d: u64, upper: bool) -> Byte {
   if d < 10 {
     wrapping_narrow(wrapping_add(48, d))
   } else if upper {
@@ -15,8 +20,8 @@ fn hex_digit(d: u64, upper: bool) -> u8 {
   }
 }
 
-pub fn hex(n: u64, width: u8 = 0, upper: bool = true) -> str ! alloc {
-  var digits: List[u8] = []
+pub fn hex(n: u64, width: Byte = 0, upper: bool = true) -> str ! alloc {
+  var digits: List[Byte] = []
   loop i in 16..width { digits = push(digits, '0') }
   var started: bool = false
   loop j in 0..16 {
@@ -28,8 +33,8 @@ pub fn hex(n: u64, width: u8 = 0, upper: bool = true) -> str ! alloc {
   text(digits)
 }
 
-pub fn binary(n: u64, width: u8 = 0) -> str ! alloc {
-  var digits: List[u8] = []
+pub fn binary(n: u64, width: Byte = 0) -> str ! alloc {
+  var digits: List[Byte] = []
   loop i in 64..width { digits = push(digits, '0') }
   var started: bool = false
   loop j in 0..64 {

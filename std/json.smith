@@ -1,5 +1,9 @@
+use std.bits (bit_and, bit_not, bit_or, shift_left, shift_right, u32, u64)
+use std.deserialize (Deserialize, Problem, ReadError, Reader, fail, read)
+use std.int (checked_add, checked_mul, narrow, saturating_add, saturating_sub, wrapping_add, wrapping_mul, wrapping_narrow, wrapping_sub)
+use std.list (push)
 use std.serialize (Serialize, Writer, write)
-use std.deserialize (Deserialize, Reader, ReadError, Problem, read, fail)
+use std.utf8 (utf8)
 
 pub enum Cases {
   key
@@ -37,7 +41,7 @@ struct Open {
 
 struct Out {
   settings: Json
-  bytes: List[u8]
+  bytes: List[Byte]
   depth: Nat
   comma: bool
   tagged: bool
@@ -45,7 +49,7 @@ struct Out {
   top: Nat
 }
 
-fn put(to: take Out, b: u8) -> Out ! alloc {
+fn put(to: take Out, b: Byte) -> Out ! alloc {
   var w = to
   w.bytes = push(w.bytes, b)
   w
@@ -57,13 +61,13 @@ fn put_text(to: take Out, s: str) -> Out ! alloc {
   w
 }
 
-fn hex_digit(d: u8) -> u8 {
+fn hex_digit(d: Byte) -> Byte {
   if d < 10 { wrapping_add(d, '0') } else { wrapping_add(d, 87) }
 }
 
 // The text as a string of JSON: `"`, `\`, and the bytes below a space are
 // written as escapes, and every other byte as it is.
-fn quote(to: take Out, s: List[u8]) -> Out ! alloc {
+fn quote(to: take Out, s: List[Byte]) -> Out ! alloc {
   var w = put(to, '"')
   loop i in 0..s.size {
     b = s[i]
@@ -98,7 +102,7 @@ fn quote(to: take Out, s: List[u8]) -> Out ! alloc {
 fn camel_case(to: take Out, name: str) -> Out ! alloc {
   var w = to
   var up = false
-  var before: u8 = 0
+  var before: Byte = 0
   loop i in 0..name.size {
     b = name[i]
     if up {
@@ -153,20 +157,20 @@ fn finish(to: take Out) -> Out ! alloc {
 
 fn scalar(to: take Out, s: str) -> Out ! alloc { finish(put_text(start(to), s)) }
 
-fn open(to: take Out, b: u8) -> Out ! alloc {
+fn open(to: take Out, b: Byte) -> Out ! alloc {
   var w = put(start(to), b)
   w.depth = saturating_add(w.depth, 1)
   w
 }
 
-fn close(to: take Out, b: u8) -> Out ! alloc {
+fn close(to: take Out, b: Byte) -> Out ! alloc {
   var w = put(to, b)
   w.depth = saturating_sub(w.depth, 1)
   finish(w)
 }
 
 // Whether the bytes are one whole JSON value, with space round it or none.
-fn is_one_value(bytes: Slice[u8]) -> bool ! alloc {
+fn is_one_value(bytes: Slice[Byte]) -> bool ! alloc {
   a = skip_space(bytes, 0)
   match scan(bytes, a) {
     .err(e) { false }
@@ -176,8 +180,8 @@ fn is_one_value(bytes: Slice[u8]) -> bool ! alloc {
 
 // The bytes as the bytes of a text: each byte that does not begin a character
 // of UTF-8 is U+FFFD.
-fn text_of(bytes: Slice[u8]) -> List[u8] ! alloc {
-  var acc: List[u8] = []
+fn text_of(bytes: Slice[Byte]) -> List[Byte] ! alloc {
+  var acc: List[Byte] = []
   var i: Nat = 0
   loop k in 0..bytes.size {
     if i >= bytes.size { break }
@@ -211,7 +215,7 @@ impl Writer[Out] {
   fn boolean(w: take Out, value: bool) -> Out ! alloc {
     if value { scalar(w, "true") } else { scalar(w, "false") }
   }
-  fn signed(w: take Out, value: i64) -> Out ! alloc { scalar(w, fmt(value)) }
+  fn signed(w: take Out, value: Int) -> Out ! alloc { scalar(w, fmt(value)) }
   fn unsigned(w: take Out, value: u64) -> Out ! alloc { scalar(w, fmt(value)) }
   fn text(w: take Out, value: str) -> Out ! alloc { finish(quote(start(w), value)) }
   fn nothing(w: take Out) -> Out ! alloc { scalar(w, "null") }
@@ -268,7 +272,7 @@ impl Writer[Out] {
   }
   fn map(w: take Out, size: Nat) -> Out ! alloc { open(w, '[') }
   fn end_map(w: take Out) -> Out ! alloc { close(w, ']') }
-  fn raw(w: take Out, of: str, bytes: Slice[u8]) -> Out ! alloc {
+  fn raw(w: take Out, of: str, bytes: Slice[Byte]) -> Out ! alloc {
     var v = start(w)
     if of == "json" and is_one_value(bytes) {
       loop i in 0..bytes.size { v.bytes = push(v.bytes, bytes[i]) }
@@ -343,7 +347,7 @@ fn shallower(to: take Check) -> Check ! alloc {
   w
 }
 
-fn same_bytes(bytes: List[u8], t: str) -> bool {
+fn same_bytes(bytes: List[Byte], t: str) -> bool {
   var same = bytes.size == t.size
   if same {
     loop i in 0..t.size {
@@ -354,7 +358,7 @@ fn same_bytes(bytes: List[u8], t: str) -> bool {
 }
 
 // The name of a field as `Out` writes it.
-fn written_name(name: str, camel: bool) -> List[u8] ! alloc {
+fn written_name(name: str, camel: bool) -> List[Byte] ! alloc {
   var w = Out(settings: Json(cases: .key, names: .camel), bytes: [], depth: 0, comma: false, tagged: false, opens: [], top: 0)
   if camel {
     w = camel_case(w, name)
@@ -366,7 +370,7 @@ fn written_name(name: str, camel: bool) -> List[u8] ! alloc {
 
 impl Writer[Check] {
   fn boolean(w: take Check, value: bool) -> Check ! alloc { begin(w) }
-  fn signed(w: take Check, value: i64) -> Check ! alloc { begin(w) }
+  fn signed(w: take Check, value: Int) -> Check ! alloc { begin(w) }
   fn unsigned(w: take Check, value: u64) -> Check ! alloc { begin(w) }
   fn text(w: take Check, value: str) -> Check ! alloc { begin(w) }
   fn nothing(w: take Check) -> Check ! alloc { begin(w) }
@@ -378,7 +382,7 @@ impl Writer[Check] {
   fn end_tuple(w: take Check) -> Check ! alloc { shallower(w) }
   fn map(w: take Check, size: Nat) -> Check ! alloc { deeper(w) }
   fn end_map(w: take Check) -> Check ! alloc { shallower(w) }
-  fn raw(w: take Check, of: str, bytes: Slice[u8]) -> Check ! alloc { begin(w) }
+  fn raw(w: take Check, of: str, bytes: Slice[Byte]) -> Check ! alloc { begin(w) }
   fn structure(w: take Check, name: str, fields: Nat) -> Check ! alloc {
     var v = w
     if v.held {
@@ -468,16 +472,16 @@ struct Bad {
   problem: Problem
 }
 
-fn is_space(b: u8) -> bool { b == ' ' or b == '\n' or b == 13 or b == '\t' }
+fn is_space(b: Byte) -> bool { b == ' ' or b == '\n' or b == 13 or b == '\t' }
 
-fn is_digit(b: u8) -> bool { b >= '0' and b <= '9' }
+fn is_digit(b: Byte) -> bool { b >= '0' and b <= '9' }
 
 // The byte at `at`, which is 0 beyond the end, and no JSON has a 0.
-fn byte(b: Slice[u8], at: Nat) -> u8 {
+fn byte(b: Slice[Byte], at: Nat) -> Byte {
   if at < b.size { b[at] } else { 0 }
 }
 
-fn skip_space(b: Slice[u8], from: Nat) -> Nat {
+fn skip_space(b: Slice[Byte], from: Nat) -> Nat {
   loop i in from..b.size {
     if not is_space(b[i]) { return i }
   }
@@ -485,7 +489,7 @@ fn skip_space(b: Slice[u8], from: Nat) -> Nat {
 }
 
 // The last byte before `at` that is not a space, or 0.
-fn last_before(b: Slice[u8], at: Nat) -> u8 {
+fn last_before(b: Slice[Byte], at: Nat) -> Byte {
   var i = at
   loop k in 0..at {
     if i == 0 { return 0 }
@@ -499,13 +503,13 @@ fn malformed(at: Nat) -> Bad { Bad(at: at, problem: .malformed) }
 
 // How the input describes the value that starts at `at`, or `.none` where
 // no value starts.
-fn found(b: Slice[u8], at: Nat) -> Option[str] {
+fn found(b: Slice[Byte], at: Nat) -> Option[str] {
   c = byte(b, at)
   if c == '"' { Option.some("a text") } else if c == '-' or is_digit(c) { Option.some("a number") } else if c == 't' or c == 'f' { Option.some("a boolean") } else if c == 'n' { Option.some("null") } else if c == '[' { Option.some("a list") } else if c == '{' { Option.some("an object") } else { Option.none }
 }
 
 // The error for a value of another kind than the one wanted.
-fn wrong(b: Slice[u8], at: Nat, wanted: str) -> Bad {
+fn wrong(b: Slice[Byte], at: Nat, wanted: str) -> Bad {
   match found(b, at) {
     .some(f) { Bad(at: at, problem: .shape((wanted, f))) }
     .none { malformed(at) }
@@ -513,7 +517,7 @@ fn wrong(b: Slice[u8], at: Nat, wanted: str) -> Bad {
 }
 
 // The end of the word `w` that is at `at`.
-fn word(b: Slice[u8], at: Nat, w: str) -> Result[Nat, Bad] {
+fn word(b: Slice[Byte], at: Nat, w: str) -> Result[Nat, Bad] {
   var ok = saturating_add(at, w.size) <= b.size
   if ok {
     loop i in 0..w.size {
@@ -535,7 +539,7 @@ struct Num {
 // The number that starts at `at`, which is checked against the grammar of
 // JSON: a `-`, a `0` or a digit other than `0` and digits, a fraction, and an
 // exponent. `from` is where its digits start.
-fn number(b: Slice[u8], at: Nat) -> Result[Num, Bad] {
+fn number(b: Slice[Byte], at: Nat) -> Result[Num, Bad] {
   var i = at
   negative = byte(b, i) == '-'
   if negative { i = saturating_add(i, 1) }
@@ -574,7 +578,7 @@ fn number(b: Slice[u8], at: Nat) -> Result[Num, Bad] {
 
 // The value of the digits of a whole number, or `.none` when it is more than a
 // `u64` holds.
-fn magnitude(b: Slice[u8], from: Nat, end: Nat) -> Option[u64] {
+fn magnitude(b: Slice[Byte], from: Nat, end: Nat) -> Option[u64] {
   var m: u64 = 0
   loop i in from..end {
     if i < b.size {
@@ -593,12 +597,12 @@ fn magnitude(b: Slice[u8], from: Nat, end: Nat) -> Option[u64] {
   Option.some(m)
 }
 
-fn hex_value(c: u8) -> Option[u32] {
+fn hex_value(c: Byte) -> Option[u32] {
   if is_digit(c) { Option.some(convert(wrapping_sub(c, '0'))) } else if c >= 'a' and c <= 'f' { Option.some(convert(wrapping_sub(c, 87))) } else if c >= 'A' and c <= 'F' { Option.some(convert(wrapping_sub(c, 55))) } else { Option.none }
 }
 
 // The four hexadecimal digits at `at`.
-fn hex4(b: Slice[u8], at: Nat) -> Option[u32] {
+fn hex4(b: Slice[Byte], at: Nat) -> Option[u32] {
   var v: u32 = 0
   loop i in 0..4 {
     match hex_value(byte(b, saturating_add(at, i))) {
@@ -617,7 +621,7 @@ struct Quoted {
   escaped: bool
 }
 
-fn quoted(b: Slice[u8], at: Nat) -> Result[Quoted, Bad] {
+fn quoted(b: Slice[Byte], at: Nat) -> Result[Quoted, Bad] {
   var i = saturating_add(at, 1)
   var escaped = false
   loop k in 0..b.size {
@@ -667,7 +671,7 @@ fn quoted(b: Slice[u8], at: Nat) -> Result[Quoted, Bad] {
 // container which this one is the value of, as the place of its key or its
 // number in an array.
 struct Frame {
-  kind: u8
+  kind: Byte
   below: Nat
   key: Nat
   index: Nat
@@ -704,7 +708,7 @@ fn frame_at(frames: List[Frame], at: Nat) -> Frame {
 // JSON value, and stops at the first place that is `target` or beyond, where
 // it says which containers are open. The containers are kept as the byte that
 // opened each, so a value that holds none asks for no memory.
-fn walk(b: Slice[u8], start: Nat, target: Nat) -> Result[Walk, Bad] ! alloc {
+fn walk(b: Slice[Byte], start: Nat, target: Nat) -> Result[Walk, Bad] ! alloc {
   var frames: List[Frame] = []
   var top: Nat = 0
   var key: Nat = 0
@@ -807,7 +811,7 @@ fn walk(b: Slice[u8], start: Nat, target: Nat) -> Result[Walk, Bad] ! alloc {
 
 // The end of the value that starts at `start`, which is checked to be one
 // whole JSON value.
-fn scan(b: Slice[u8], start: Nat) -> Result[Nat, Bad] ! alloc {
+fn scan(b: Slice[Byte], start: Nat) -> Result[Nat, Bad] ! alloc {
   match walk(b, start, saturating_add(b.size, 1)) {
     .ok(w) {
       match w.bad {
@@ -821,7 +825,7 @@ fn scan(b: Slice[u8], start: Nat) -> Result[Nat, Bad] ! alloc {
 
 // The `:` after the name of a member that starts at `at`, passed: where the
 // member's value is to start.
-fn member(b: Slice[u8], at: Nat) -> Result[Nat, Bad] {
+fn member(b: Slice[Byte], at: Nat) -> Result[Nat, Bad] {
   if byte(b, at) != '"' { return Result.err(malformed(at)) }
   match quoted(b, at) {
     .ok(q) {
@@ -833,7 +837,7 @@ fn member(b: Slice[u8], at: Nat) -> Result[Nat, Bad] {
 }
 
 // A character of the number `code`, as bytes.
-fn put_char(to: take List[u8], code: u32) -> List[u8] ! alloc {
+fn put_char(to: take List[Byte], code: u32) -> List[Byte] ! alloc {
   var acc = to
   if code < 128 {
     acc = push(acc, wrapping_narrow(code))
@@ -855,13 +859,13 @@ fn put_char(to: take List[u8], code: u32) -> List[u8] ! alloc {
 
 // Takes the bytes of a string that `quoted` checked from `at` to `end`, with
 // its escapes undone.
-fn unescape(b: Slice[u8], at: Nat, end: Nat) -> List[u8] ! alloc {
-  var acc: List[u8] = []
+fn unescape(b: Slice[Byte], at: Nat, end: Nat) -> List[Byte] ! alloc {
+  var acc: List[Byte] = []
   var i = saturating_add(at, 1)
   loop k in 0..b.size {
     if saturating_add(i, 1) >= end { break }
     c = byte(b, i)
-    var made: u8 = c
+    var made: Byte = c
     var step: Nat = 1
     var code: u32 = 0
     var is_code = false
@@ -900,7 +904,7 @@ fn unescape(b: Slice[u8], at: Nat, end: Nat) -> List[u8] ! alloc {
 
 // The text that the string at `at`, which ends at `end`, stands for. A string
 // with nothing to undo is a piece of the input, so nothing is copied for it.
-fn text_at(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
+fn text_at(b: Slice[Byte], q: Quoted, at: Nat) -> str ! alloc {
   lo = saturating_add(at, 1)
   hi = saturating_sub(q.end, 1)
   if not q.escaped and lo <= hi and hi <= b.size {
@@ -916,7 +920,7 @@ fn text_at(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
 }
 
 // The byte before or after the one at `i`, or 0.
-fn byte_of(name: List[u8], i: Nat, before: bool) -> u8 {
+fn byte_of(name: List[Byte], i: Nat, before: bool) -> Byte {
   at = if before { saturating_sub(i, 1) } else { saturating_add(i, 1) }
   if at < name.size and (i > 0 or not before) { name[at] } else { 0 }
 }
@@ -925,7 +929,7 @@ fn byte_of(name: List[u8], i: Nat, before: bool) -> u8 {
 // case letter: a `_` that is followed by a lower case letter and does not follow
 // a `_` is taken out when a name is written, and an upper case letter is the
 // letter after one, so a name that has either is not written.
-fn written_camel(name: List[u8]) -> (bool, bool) {
+fn written_camel(name: List[Byte]) -> (bool, bool) {
   var ok = true
   var upper = false
   loop i in 0..name.size {
@@ -945,7 +949,7 @@ fn written_camel(name: List[u8]) -> (bool, bool) {
 // field that is written as the member's name, with each upper case letter read
 // as a `_` and the letter in lower case. A member that is not a name that is
 // written is given with a space before it, which is no name of a field.
-fn field_name(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
+fn field_name(b: Slice[Byte], q: Quoted, at: Nat) -> str ! alloc {
   lo = saturating_add(at, 1)
   hi = saturating_sub(q.end, 1)
   if not q.escaped and lo <= hi and hi <= b.size {
@@ -954,7 +958,7 @@ fn field_name(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
   }
   raw = unescape(b, at, q.end)
   (ok, upper) = written_camel(raw)
-  var acc: List[u8] = []
+  var acc: List[Byte] = []
   if not ok { acc = push(acc, ' ') }
   loop i in 0..raw.size {
     c = raw[i]
@@ -972,14 +976,14 @@ fn field_name(b: Slice[u8], q: Quoted, at: Nat) -> str ! alloc {
 
 // The path to the place `at`, which is the way to the value there from the
 // top, as `tools[2].timeout`.
-fn path_at(b: Slice[u8], at: Nat) -> str ! alloc {
+fn path_at(b: Slice[Byte], at: Nat) -> str ! alloc {
   match walk(b, skip_space(b, 0), at) {
     .ok(w) { render_path(b, w) }
     .err(e) { "" }
   }
 }
 
-fn put_member(b: Slice[u8], to: take List[u8], kind: u8, key: Nat, index: Nat) -> List[u8] ! alloc {
+fn put_member(b: Slice[Byte], to: take List[Byte], kind: Byte, key: Nat, index: Nat) -> List[Byte] ! alloc {
   var acc = to
   if kind == '{' {
     match quoted(b, key) {
@@ -999,7 +1003,7 @@ fn put_member(b: Slice[u8], to: take List[u8], kind: u8, key: Nat, index: Nat) -
   acc
 }
 
-fn render_path(b: Slice[u8], w: Walk) -> str ! alloc {
+fn render_path(b: Slice[Byte], w: Walk) -> str ! alloc {
   // The open containers, innermost first.
   var chain: List[Nat] = []
   var t = w.top
@@ -1008,7 +1012,7 @@ fn render_path(b: Slice[u8], w: Walk) -> str ! alloc {
     chain = push(chain, t)
     t = frame_at(w.frames, t).below
   }
-  var acc: List[u8] = []
+  var acc: List[Byte] = []
   loop j in 0..chain.size {
     f = frame_at(w.frames, chain[chain.size - 1 - j])
     if f.below != 0 and f.below <= w.frames.size {
@@ -1026,7 +1030,7 @@ fn render_path(b: Slice[u8], w: Walk) -> str ! alloc {
 
 // The line and the column of the byte `at`, each counted from 1, the column in
 // bytes.
-fn place(b: Slice[u8], at: Nat) -> (Nat, Nat) {
+fn place(b: Slice[Byte], at: Nat) -> (Nat, Nat) {
   var line: Nat = 1
   var row: Nat = 0
   loop i in 0..b.size {
@@ -1039,7 +1043,7 @@ fn place(b: Slice[u8], at: Nat) -> (Nat, Nat) {
   (line, saturating_add(saturating_sub(at, row), 1))
 }
 
-fn read_error(b: Slice[u8], bad: Bad) -> ReadError ! alloc {
+fn read_error(b: Slice[Byte], bad: Bad) -> ReadError ! alloc {
   (line, column) = place(b, bad.at)
   ReadError(path: path_at(b, bad.at), problem: bad.problem, line: line, column: column)
 }
@@ -1050,8 +1054,8 @@ fn grown_nat(items: Slice[Nat], item: Nat) -> Slice[Nat] ! alloc {
   freeze(push(acc, item))
 }
 
-fn grown_byte(items: Slice[u8], item: u8) -> Slice[u8] ! alloc {
-  var acc: List[u8] = []
+fn grown_byte(items: Slice[Byte], item: Byte) -> Slice[Byte] ! alloc {
+  var acc: List[Byte] = []
   loop i in 0..items.size { acc = push(acc, items[i]) }
   freeze(push(acc, item))
 }
@@ -1066,7 +1070,7 @@ fn without_last_nat(items: Slice[Nat]) -> Slice[Nat] {
   }
 }
 
-fn without_last_byte(items: Slice[u8]) -> Slice[u8] {
+fn without_last_byte(items: Slice[Byte]) -> Slice[Byte] {
   n = items.size
   if n >= 1 {
     k = n - 1
@@ -1103,7 +1107,7 @@ fn top_closes(r: In) -> bool {
   if r.cases == 0 {
     false
   } else if n < 64 {
-    by: u8 = narrow(n)
+    by: Byte = narrow(n)
     bit_and(shift_right(r.forms, by), 1) == 1
   } else {
     m = r.deep.size
@@ -1123,7 +1127,7 @@ fn top_not_closing(r: take In) -> In ! alloc {
   if w.cases == 0 {
     w
   } else if n < 64 {
-    by: u8 = narrow(n)
+    by: Byte = narrow(n)
     one: u64 = 1
     w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
     w
@@ -1140,7 +1144,7 @@ fn left_case(r: take In) -> In {
   if w.cases == 0 {
     w
   } else if n < 64 {
-    by: u8 = narrow(n)
+    by: Byte = narrow(n)
     one: u64 = 1
     w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
     w.cases = n
@@ -1158,12 +1162,12 @@ fn left_case(r: take In) -> In {
 // `tags`. A case written with a tag is `pending` from its name until what it
 // holds is begun.
 struct In {
-  bytes: Slice[u8]
+  bytes: Slice[Byte]
   at: Nat
   mark: Nat
   json: Json
   forms: u64
-  deep: Slice[u8]
+  deep: Slice[Byte]
   cases: Nat
   pending: bool
   tags: Slice[Nat]
@@ -1173,7 +1177,7 @@ fn failed_bool(r: take In, bad: Bad) -> (In, Result[bool, ReadError]) ! alloc {
   (r, Result.err(read_error(r.bytes, bad)))
 }
 
-fn failed_i64(r: take In, bad: Bad) -> (In, Result[i64, ReadError]) ! alloc {
+fn failed_i64(r: take In, bad: Bad) -> (In, Result[Int, ReadError]) ! alloc {
   (r, Result.err(read_error(r.bytes, bad)))
 }
 
@@ -1185,7 +1189,7 @@ fn failed_str(r: take In, bad: Bad) -> (In, Result[str, ReadError]) ! alloc {
   (r, Result.err(read_error(r.bytes, bad)))
 }
 
-fn failed_bytes(r: take In, bad: Bad) -> (In, Result[Slice[u8], ReadError]) ! alloc {
+fn failed_bytes(r: take In, bad: Bad) -> (In, Result[Slice[Byte], ReadError]) ! alloc {
   (r, Result.err(read_error(r.bytes, bad)))
 }
 
@@ -1198,7 +1202,7 @@ fn failed_name(r: take In, bad: Bad) -> (In, Result[Option[str], ReadError]) ! a
 }
 
 
-fn ends_value(c: u8) -> bool {
+fn ends_value(c: Byte) -> bool {
   c == '"' or is_digit(c) or c == 'e' or c == 'l' or c == ']' or c == '}'
 }
 
@@ -1277,7 +1281,7 @@ struct Whole {
   size: u64
 }
 
-fn whole(b: Slice[u8], a: Nat, of: str) -> Result[Whole, Bad] {
+fn whole(b: Slice[Byte], a: Nat, of: str) -> Result[Whole, Bad] {
   c = byte(b, a)
   if c != '-' and not is_digit(c) { return Result.err(wrong(b, a, "a whole number")) }
   match number(b, a) {
@@ -1303,7 +1307,7 @@ fn pushed(r: take In, form: u64) -> Result[In, Bad] ! alloc {
   var w = r
   n = w.cases
   if n < 64 {
-    by: u8 = narrow(n)
+    by: Byte = narrow(n)
     w.forms = bit_or(w.forms, shift_left(form, by))
   } else {
     w.deep = grown_byte(w.deep, wrapping_narrow(form))
@@ -1322,7 +1326,7 @@ struct Found {
 // Looks for the member named `tag` among the members of the object that opens
 // at `open`, in any place, passing over the others. It gives the `missing` of
 // the tag at the `}` that ends an object that has none.
-fn find_tag(b: Slice[u8], open: Nat, tag: str) -> Result[Found, Bad] ! alloc {
+fn find_tag(b: Slice[Byte], open: Nat, tag: str) -> Result[Found, Bad] ! alloc {
   var at = skip_space(b, saturating_add(open, 1))
   var first = true
   loop k in 0..saturating_add(b.size, 1) {
@@ -1380,7 +1384,7 @@ impl Reader[In] {
       }
     }
   }
-  fn signed(r: take In) -> (In, Result[i64, ReadError]) ! alloc {
+  fn signed(r: take In) -> (In, Result[Int, ReadError]) ! alloc {
     match value_start(r) {
       .err(e) { failed_i64(r, e) }
       .ok(a) {
@@ -1390,7 +1394,7 @@ impl Reader[In] {
             w = moved(r, n.end, a)
             if n.negative {
               if n.size <= 9223372036854775807 {
-                v: i64 = narrow(n.size)
+                v: Int = narrow(n.size)
                 (w, Result.ok(0 - v))
               } else if n.size == 9223372036854775808 {
                 (w, Result.ok(wrapping_sub(0 - 9223372036854775807, 1)))
@@ -1703,7 +1707,7 @@ impl Reader[In] {
       failed_unit(moved(w, w.at, at), malformed(at))
     }
   }
-  fn raw(r: take In, of: str) -> (In, Result[Slice[u8], ReadError]) ! alloc {
+  fn raw(r: take In, of: str) -> (In, Result[Slice[Byte], ReadError]) ! alloc {
     match value_start(r) {
       .err(e) { failed_bytes(r, e) }
       .ok(a) {
@@ -1745,7 +1749,7 @@ impl Reader[In] {
 
 // Looks in the members of the object from `from`, after the value of a member
 // named `name`, for another of that name, and gives it as `twice` at its name.
-fn again(b: Slice[u8], from: Nat, name: str) -> Option[Bad] ! alloc {
+fn again(b: Slice[Byte], from: Nat, name: str) -> Option[Bad] ! alloc {
   var at = from
   loop k in 0..b.size {
     at = skip_space(b, at)

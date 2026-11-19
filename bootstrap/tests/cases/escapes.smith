@@ -1,4 +1,7 @@
 // Escapes and text that is not ASCII.
+
+use std.console (console, print)
+
 fn main() ! console {
   print("tab\there \"quoted\" \\ \{braces\} café\nnext line")
 }

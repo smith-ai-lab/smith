@@ -1,5 +1,7 @@
+use std.console (console, print)
+
 fn main() ! console, alloc {
-  small: u8 = 7
+  small: Byte = 7
   wide = convert(small)
   print("{wide}")
 }

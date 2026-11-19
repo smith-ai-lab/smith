@@ -1,4 +1,4 @@
-effect_through_call.smith:2:3: `greet` needs the `console` effect, which `main` does not declare
-  2 |   greet("world")
+effect_through_call.smith:4:3: `greet` needs the `console` effect, which `main` does not declare
+  4 |   greet("world")
     |   ^
   fix: write `fn main() ! console`

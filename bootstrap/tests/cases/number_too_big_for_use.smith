@@ -1,4 +1,6 @@
-fn byte(n: u8) -> u8 { n }
+use std.console (console)
+
+fn byte(n: Byte) -> Byte { n }
 
 fn main() ! console {
   x = 300

@@ -1,10 +1,10 @@
-several_escapes.smith:2:14: unknown escape: a backslash is followed by `q`, not one of " \ { } n t
-  2 |   print("one \q two \x three } four")
+several_escapes.smith:4:14: unknown escape: a backslash is followed by `q`, not one of " \ { } n t
+  4 |   print("one \q two \x three } four")
     |              ^
-several_escapes.smith:2:21: unknown escape: a backslash is followed by `x`, not one of " \ { } n t
-  2 |   print("one \q two \x three } four")
+several_escapes.smith:4:21: unknown escape: a backslash is followed by `x`, not one of " \ { } n t
+  4 |   print("one \q two \x three } four")
     |                     ^
-several_escapes.smith:2:30: a `}` in a string closes no expression
-  2 |   print("one \q two \x three } four")
+several_escapes.smith:4:30: a `}` in a string closes no expression
+  4 |   print("one \q two \x three } four")
     |                              ^
   fix: write `\}` for a brace
