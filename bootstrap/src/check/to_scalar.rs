@@ -1072,6 +1072,25 @@ impl<'a> Lowering<'a> {
     /// The values an expression gives, and their type, where `env` stands
     /// for the type parameters of the definition it is written in.
     fn expr(&mut self, out: &mut Out<'a>, expr: &'a Expr, env: &[Ty]) -> (Ty, Vec<form::Value>) {
+        let (ty, values) = self.as_written(out, expr, env);
+        match (&ty, self.typed.widened.get(&addr(expr))) {
+            (Ty::Int(from), Some(&to)) => {
+                // A range taken where a wider one is needed is the same number
+                // at the size the wider one is kept at.
+                let wide = out.resize(from.signed(), values[0], bits_of(to));
+                (Ty::Int(to), vec![wide])
+            }
+            _ => (ty, values),
+        }
+    }
+
+    /// The values an expression gives as it is written, and their type.
+    fn as_written(
+        &mut self,
+        out: &mut Out<'a>,
+        expr: &'a Expr,
+        env: &[Ty],
+    ) -> (Ty, Vec<form::Value>) {
         let typed = self.typed;
         let defs = typed.defs;
         match expr {

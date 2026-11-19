@@ -32,8 +32,8 @@ pub const ONCE: &[Test] = &[
         a_literal_a_block_cannot_hold_is_refused_at_the_literal,
     ),
     (
-        "blocks_of_two_known_types_are_refused",
-        blocks_of_two_known_types_are_refused,
+        "blocks_of_two_known_types_give_the_smallest_range_that_holds_both_and_are_refused_when_none_does",
+        blocks_of_two_known_types_give_the_smallest_range_that_holds_both_and_are_refused_when_none_does,
     ),
     (
         "any_blocks_put_anywhere_never_panic_the_compiler",
@@ -352,7 +352,7 @@ fn a_literal_a_block_cannot_hold_is_refused_at_the_literal() {
     });
 }
 
-fn blocks_of_two_known_types_are_refused() {
+fn blocks_of_two_known_types_give_the_smallest_range_that_holds_both_and_are_refused_when_none_does() {
     generate::check(2212, 40, blocks, |case| {
         let (first, second) = (INTS[case.int].0, INTS[(case.int + 1 + case.held.rem_euclid(7) as usize) % 8].0);
         let n = case.ends.len();
@@ -378,16 +378,27 @@ fn blocks_of_two_known_types_are_refused() {
         let source = format!(
             "{uses}fn main() ! console, alloc {{\n  s: Byte = 0\n  a: {first} = 1\n  b: {second} = 1\n  r = {text}\n  print(\"{{r}}\")\n}}\n"
         );
-        let Err(found) = lower(source.as_bytes()) else {
-            panic!("builds\n{source}");
-        };
-        assert!(!found.is_empty(), "{source}");
-        for e in &found {
-            assert!(
-                e.message.contains(first) || e.message.contains(second),
-                "{}\n{source}",
-                e
-            );
+        // The smallest range that holds both is a type when its numbers fit 64
+        // bits, signed when it has a negative one.
+        let other = INTS[(case.int + 1 + case.held.rem_euclid(7) as usize) % 8];
+        let (low, high) = (INTS[case.int].1.min(other.1), INTS[case.int].2.max(other.2));
+        let fits = low >= i64::MIN as i128
+            && high <= if low < 0 { i64::MAX as i128 } else { u64::MAX as i128 };
+        match lower(source.as_bytes()) {
+            Ok(program) => {
+                assert!(fits, "builds\n{source}");
+                assert_eq!(scalar::run(&program).stdout, b"1\n", "{source}");
+            }
+            Err(found) => {
+                assert!(!fits && !found.is_empty(), "{found:?}\n{source}");
+                for e in &found {
+                    assert!(
+                        e.message.contains(first) || e.message.contains(second),
+                        "{}\n{source}",
+                        e
+                    );
+                }
+            }
         }
     });
 }

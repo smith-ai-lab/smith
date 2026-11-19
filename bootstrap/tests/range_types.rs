@@ -34,6 +34,18 @@ pub const ONCE: &[Test] = &[
         a_range_of_more_than_64_bits_is_refused,
     ),
     (
+        "a_range_is_taken_where_a_range_that_holds_every_number_of_it_is_needed",
+        a_range_is_taken_where_a_range_that_holds_every_number_of_it_is_needed,
+    ),
+    (
+        "the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them",
+        the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them,
+    ),
+    (
+        "a_value_is_not_taken_where_a_range_that_does_not_hold_every_number_of_its_range_is_needed",
+        a_value_is_not_taken_where_a_range_that_does_not_hold_every_number_of_its_range_is_needed,
+    ),
+    (
         "arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range",
         arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range,
     ),
@@ -231,5 +243,70 @@ fn arith_proves_a_sum_of_a_range_exactly_when_it_fits_the_range() {
         );
         let errors = check(sized.as_bytes()).expect_err("a sum that may not fit");
         assert!(fixes(&errors).iter().all(|f| f.contains("wrapping_add")), "{errors:?}");
+    });
+}
+
+/// A range inside another: the other's bounds, a number of the first, and the
+/// first's bounds.
+fn nested(g: &mut Gen) -> ((i128, i128), (i128, i128), i128) {
+    let (low, high) = range(g);
+    let inner_low = low + g.below((high - low).min(1000) as usize + 1) as i128;
+    let inner_high = inner_low + g.below((high - inner_low).min(1000) as usize + 1) as i128;
+    let n = inner_low + g.below((inner_high - inner_low).min(1000) as usize + 1) as i128;
+    ((low, high), (inner_low, inner_high), n)
+}
+
+/// A value of a range is taken, with nothing written, where a range that
+/// holds every number of it is needed: bound, passed, given back, put in a
+/// field, a variable, a list, and given by a block, as the number it is.
+fn a_range_is_taken_where_a_range_that_holds_every_number_of_it_is_needed() {
+    generate::check(4006, 30, nested, |((low, high), (ilow, ihigh), n)| {
+        let wide = format!("{low}..{}", high + 1);
+        let narrow = format!("{ilow}..{}", ihigh + 1);
+        let source = with_header(format!(
+            "struct Held {{\n  n: {wide}\n}}\n\nfn pass(x: {wide}) -> {wide} {{ x }}\n\nfn lift(x: {narrow}) -> {wide} {{ x }}\n\nfn pick(flag: bool, x: {narrow}) -> {wide} {{\n  if flag {{ x }} else {{ {ilow} }}\n}}\n\nfn which(o: Option[{narrow}]) -> {wide} {{\n  match o {{\n    .some(v) {{ v }}\n    .none {{ {ilow} }}\n  }}\n}}\n\nfn main() ! console, alloc {{\n  a: {narrow} = {n}\n  b: {wide} = a\n  var c: {wide} = {low}\n  c = a\n  h = Held(n: a)\n  xs: List[{wide}] = [a, {low}]\n  print(\"{{b}} {{pass(a)}} {{lift(a)}} {{c}} {{h.n}} {{xs[0]}} {{pick(true, a)}} {{which(.some(a))}}\")\n}}\n"
+        ));
+        assert_eq!(stdout(&source), format!("{}\n", vec![n.to_string(); 8].join(" ")), "for\n{source}");
+    });
+}
+
+/// A value of a range is not taken where the range needed does not hold every
+/// number of it, and nothing says that the value is in it.
+fn a_value_is_not_taken_where_a_range_that_does_not_hold_every_number_of_its_range_is_needed() {
+    generate::check(4007, 30, |g: &mut Gen| (range(g), range(g)), |((a, b), (c, d))| {
+        if *c <= *a && *b <= *d {
+            return;
+        }
+        let source = with_header(format!(
+            "fn same(x: {a}..{}) -> {c}..{} {{ x }}\n\nfn main() ! console, alloc {{\n  print(\"{{same({a})}}\")\n}}\n",
+            b + 1,
+            d + 1
+        ));
+        assert!(!compiles(&source), "for\n{source}");
+    });
+}
+
+/// The blocks of an `if` or a `match` that give ranges, where no type is
+/// needed, give the smallest range that holds them, whichever block is first:
+/// it is the type of the name they are bound to, so it is taken where exactly
+/// that range is needed, and the number is the one the block gave.
+fn the_blocks_of_an_if_and_a_match_give_the_smallest_range_that_holds_them() {
+    generate::check(4008, 30, |g: &mut Gen| (range(g), range(g), g.below(2)), |((a, b), (c, d), which)| {
+        let (low, high) = (*a.min(c), *b.max(d));
+        let hull_fits = if low < 0 { high <= i64::MAX as i128 } else { high <= u64::MAX as i128 };
+        let want = [a, c][*which];
+        let source = with_header(format!(
+            "fn main() ! console, alloc {{\n  s: Byte = {which}\n  x: {a}..{} = {a}\n  y: {c}..{} = {c}\n  r = if s == 0 {{ x }} else {{ y }}\n  m = match s {{\n    0 {{ y }}\n    _ {{ x }}\n  }}\n  h: {low}..{} = r\n  k: {low}..{} = m\n  print(\"{{h}} {{k}}\")\n}}\n",
+            b + 1,
+            d + 1,
+            high + 1,
+            high + 1
+        ));
+        if !hull_fits {
+            assert!(!compiles(&source), "for\n{source}");
+            return;
+        }
+        let other = [c, a][*which];
+        assert_eq!(stdout(&source), format!("{want} {other}\n"), "for\n{source}");
     });
 }
