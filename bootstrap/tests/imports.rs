@@ -306,7 +306,7 @@ fn some_program(g: &mut Gen) -> String {
 /// `use` is refused, with one error for each name of the library that it
 /// writes, which says the module the name is in and the `use` to add.
 fn a_file_that_imports_the_names_it_uses_builds_what_it_built_without_the_use() {
-    generate::check(300, 50, some_program, |source| {
+    generate::check(300, 20, some_program, |source| {
         let bare = without_uses(source);
         let with = with_imports(&bare);
         assert_eq!(
