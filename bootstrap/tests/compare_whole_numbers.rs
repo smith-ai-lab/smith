@@ -254,7 +254,7 @@ fn unknown(name: &str, plus: u64) -> String {
 }
 
 /// The line that binds the size of the arguments to a `u64`, which wraps.
-const COUNT: &str = "  n: u64 = convert(args.size)\n";
+const COUNT: &str = "  n: u64 = args.size\n";
 
 /// How many comparisons and how many calls a program has after the passes.
 fn counted(source: &str) -> (usize, usize) {

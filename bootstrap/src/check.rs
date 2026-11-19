@@ -468,16 +468,6 @@ impl Ty {
         }
     }
 
-    /// The type as the scalar form sees it, in which a `Nat` is a `u64`: both
-    /// are 64 bits, so a program that holds a count in a `Nat` is the program
-    /// that held it in a `u64`.
-    fn lowered(&self) -> Ty {
-        match self {
-            Ty::Int(Int::Nat) => Ty::Int(Int::U64),
-            t => t.with_args(t.args().iter().map(Ty::lowered).collect()),
-        }
-    }
-
     /// Whether it is a function, or holds one.
     fn holds_fn(&self) -> bool {
         matches!(self, Ty::Fn(_)) || self.args().iter().any(Ty::holds_fn)
@@ -820,6 +810,7 @@ struct Defs<'a> {
 struct Spelled {
     int: Option<bool>,
     byte: Option<bool>,
+    nat: Option<bool>,
 }
 
 impl<'a> Defs<'a> {
@@ -1025,6 +1016,7 @@ impl<'a> Defs<'a> {
         match name {
             "Int" | "i64" => spelled.int.get_or_insert(name == "Int"),
             "Byte" | "u8" => spelled.byte.get_or_insert(name == "Byte"),
+            "Nat" | "u64" => spelled.nat.get_or_insert(name == "Nat"),
             _ => return,
         };
         self.spelled.set(spelled);
@@ -1038,6 +1030,7 @@ impl<'a> Defs<'a> {
         match int {
             Int::I64 if spelled.int == Some(true) => "Int",
             Int::U8 if spelled.byte == Some(true) => "Byte",
+            Int::U64 if spelled.nat == Some(true) => "Nat",
             _ => int.name(),
         }
     }
@@ -6619,7 +6612,7 @@ impl<'a> Checker<'a> {
                     return self.case(body, Some(e), name, of.pos(), *pos, None, want);
                 }
                 match self.expr(body, of, &Want::Any) {
-                    Ty::List(_) | Ty::Slice(_) | Ty::Text if name == "size" => Ty::Int(Int::Nat),
+                    Ty::List(_) | Ty::Slice(_) | Ty::Text if name == "size" => Ty::Int(Int::U64),
                     Ty::Text if name == "bytes" => Ty::slice(Ty::Int(Int::U8)),
                     Ty::List(_) | Ty::Slice(_) => {
                         self.errors.push(Error::new(

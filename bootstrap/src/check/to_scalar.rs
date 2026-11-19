@@ -781,16 +781,6 @@ impl<'a> Lowering<'a> {
 
     /// The place of a copy in the program, which it takes if it has none.
     fn place(&mut self, body: Body) -> usize {
-        let body = match body {
-            Body::Copy(Instance { template, args }) => Body::Copy(Instance {
-                template: match template {
-                    Template::Impl(i, fi) => Template::Impl(self.typed.defs.lowered_impl(i), fi),
-                    other => other,
-                },
-                args: args.iter().map(Ty::lowered).collect(),
-            }),
-            runtime => runtime,
-        };
         let found = match &body {
             Body::Copy(instance) => self.copies.get(instance).copied(),
             Body::Runtime(kind) => (self.runtimes.iter())

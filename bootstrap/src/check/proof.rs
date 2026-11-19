@@ -1016,16 +1016,12 @@ impl<'a> Checker<'a> {
                             self.defs.spelling(t)
                         ),
                     )
-                    .with_fix(match t {
-                        // A count has no wrapping, saturating, or checked arithmetic.
-                        Int::Nat => "check the operands first".to_string(),
-                        _ => format!(
-                            "check the operands first, or use `{}`, `{}`, or `{}`",
-                            named("wrapping", *op),
-                            named("saturating", *op),
-                            named("checked", *op)
-                        ),
-                    }),
+                    .with_fix(format!(
+                        "check the operands first, or use `{}`, `{}`, or `{}`",
+                        named("wrapping", *op),
+                        named("saturating", *op),
+                        named("checked", *op)
+                    )),
                 );
                 return;
             }

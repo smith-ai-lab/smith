@@ -1,7 +1,6 @@
-//! `Nat`, the type of a count: a type of its own that a program writes for a
-//! parameter, a result, a field, and inside another type, which is the type
-//! of the size of a list and of a text, and which meets each whole number type
-//! as `knowledge/language/number-types.md` says.
+//! `Nat`, the type of a count, which is `u64` written another way: it is
+//! written for a parameter, a result, a field, and inside another type, and it
+//! is the type of the size of a list and of a text.
 
 use smith::{check, lower, scalar};
 
@@ -27,32 +26,12 @@ pub const ONCE: &[Test] = &[
         an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat_and_every_whole_number_type,
     ),
     (
-        "convert_between_nat_and_every_whole_number_type_compiles_exactly_when_the_second_holds_every_value_of_the_first",
-        convert_between_nat_and_every_whole_number_type_compiles_exactly_when_the_second_holds_every_value_of_the_first,
-    ),
-    (
-        "a_nat_converted_to_a_u64_and_back_is_the_number_it_was",
-        a_nat_converted_to_a_u64_and_back_is_the_number_it_was,
-    ),
-    (
-        "a_nat_has_no_wrapping_function_and_no_bit_operation_and_a_u64_has_both",
-        a_nat_has_no_wrapping_function_and_no_bit_operation_and_a_u64_has_both,
-    ),
-    (
-        "a_nat_has_the_saturating_and_the_checked_functions_and_gives_what_a_u64_gives",
-        a_nat_has_the_saturating_and_the_checked_functions_and_gives_what_a_u64_gives,
-    ),
-    (
-        "a_nat_and_a_u64_use_one_copy_of_a_saturating_function",
-        a_nat_and_a_u64_use_one_copy_of_a_saturating_function,
+        "nat_and_u64_are_one_type",
+        nat_and_u64_are_one_type,
     ),
     (
         "a_nat_is_held_by_a_field_a_tuple_a_list_an_option_and_a_function",
         a_nat_is_held_by_a_field_a_tuple_a_list_an_option_and_a_function,
-    ),
-    (
-        "a_nat_shares_the_functions_of_a_u64_that_is_beside_it",
-        a_nat_shares_the_functions_of_a_u64_that_is_beside_it,
     ),
     (
         "arith_proves_a_sum_and_a_difference_of_a_nat_from_what_is_known_of_it",
@@ -68,30 +47,15 @@ struct Whole {
     max: i128,
 }
 
-impl Whole {
-    fn holds_all(self, other: Whole) -> bool {
-        self.min <= other.min && other.max <= self.max
-    }
-}
-
-const NAT: Whole = Whole {
-    name: "Nat",
-    min: 0,
-    max: u64::MAX as i128,
-};
-
-/// `Nat` and every other whole number type.
+/// Every whole number type, `Nat` being `u64`.
 fn whole() -> Vec<Whole> {
-    let mut all: Vec<Whole> = INTS
-        .iter()
+    INTS.iter()
         .map(|t| Whole {
             name: t.name,
             min: t.min(),
             max: t.max(),
         })
-        .collect();
-    all.push(NAT);
-    all
+        .collect()
 }
 
 fn stdout(source: &str) -> String {
@@ -153,7 +117,7 @@ fn the_size_of_a_list_and_of_a_text_is_a_nat_and_no_other_type() {
                     "fn main() ! console, alloc {{\n  {given}\n  k: {} = {what}\n  print(\"{{k}}\")\n}}\n",
                     ty.name
                 ));
-                if ty == NAT {
+                if ty.name == "u64" {
                     assert_eq!(stdout(&source), format!("{n}\n"), "for\n{source}");
                 } else {
                     assert_eq!(mistakes(&source), 1, "for\n{source}");
@@ -179,7 +143,7 @@ fn a_loop_over_the_size_gives_a_nat_that_indexes_and_no_other_type_indexes() {
                 "fn main() ! console, alloc {{\n  xs: List[Byte] = [1, 2, 3]\n  i: {} = 1\n  print(\"{{xs[i]}}\")\n}}\n",
                 ty.name
             ));
-            assert_eq!(compiles(&source), ty == NAT, "for\n{source}");
+            assert_eq!(compiles(&source), ty.name == "u64", "for\n{source}");
         }
     });
 }
@@ -216,113 +180,6 @@ fn an_operator_between_two_types_compiles_exactly_when_they_are_one_type_for_nat
             }
         }
     }
-}
-
-/// `convert` between two whole number types compiles exactly when they
-/// differ and the second holds every value of the first, which for `Nat` is
-/// every unsigned type below it and `u64`, and from `Nat` is `u64` only.
-fn convert_between_nat_and_every_whole_number_type_compiles_exactly_when_the_second_holds_every_value_of_the_first()
- {
-    let all = whole();
-    for from in &all {
-        for to in &all {
-            if *from != NAT && *to != NAT {
-                continue;
-            }
-            let source = with_header(format!(
-                "fn f(x: {}) -> {} {{ convert(x) }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
-                from.name, to.name
-            ));
-            let wanted = from != to && to.holds_all(*from);
-            assert_eq!(compiles(&source), wanted, "for\n{source}");
-            if !wanted {
-                assert_eq!(mistakes(&source), 1, "for\n{source}");
-            }
-        }
-    }
-}
-
-/// A `Nat` taken to a `u64` and back, and a `u64` taken to a `Nat` and back,
-/// are the number they were, for the least and the greatest value and others.
-fn a_nat_converted_to_a_u64_and_back_is_the_number_it_was() {
-    generate::check(3633, 30, count, |n| {
-        let source = with_header(format!(
-            "fn main() ! console, alloc {{\n  a: Nat = {n}\n  b: u64 = convert(a)\n  c: Nat = convert(b)\n  d: u64 = {n}\n  e: Nat = convert(d)\n  f: u64 = convert(e)\n  print(\"{{b}} {{c}} {{e}} {{f}}\")\n}}\n"
-        ));
-        assert_eq!(stdout(&source), format!("{n} {n} {n} {n}\n"), "for\n{source}");
-    });
-}
-
-/// The wrapping functions and the functions of `Bits` are for the types that
-/// are a word of the machine, and a `Nat` is not one.
-fn a_nat_has_no_wrapping_function_and_no_bit_operation_and_a_u64_has_both() {
-    const FUNCTIONS: [(&str, &str, &str); 9] = [
-        ("wrapping_add", "std.int", "x, y"),
-        ("wrapping_sub", "std.int", "x, y"),
-        ("wrapping_mul", "std.int", "x, y"),
-        ("bit_and", "std.bits", "x, y"),
-        ("bit_or", "std.bits", "x, y"),
-        ("bit_xor", "std.bits", "x, y"),
-        ("bit_not", "std.bits", "x"),
-        ("shift_left", "std.bits", "x, 1"),
-        ("shift_right", "std.bits", "x, 1"),
-    ];
-    for (name, module, args) in FUNCTIONS {
-        for ty in ["u64", "Nat"] {
-            let source = with_header(format!(
-                "use {module} ({name})\n\nfn main() ! console, alloc {{\n  x: {ty} = 6\n  y: {ty} = 3\n  print(\"{{{name}({args})}}\")\n}}\n"
-            ));
-            assert_eq!(compiles(&source), ty == "u64", "for\n{source}");
-            if ty == "Nat" {
-                assert_eq!(mistakes(&source), 1, "for\n{source}");
-            }
-        }
-    }
-}
-
-/// The saturating and the checked functions of a `Nat` give what they give on
-/// a `u64` of the same values, for values drawn with the edges, and the
-/// greatest `Nat` plus one stops at the greatest `Nat` and is `.none` when
-/// checked.
-fn a_nat_has_the_saturating_and_the_checked_functions_and_gives_what_a_u64_gives() {
-    const FUNCTIONS: [&str; 6] = [
-        "saturating_add",
-        "saturating_sub",
-        "saturating_mul",
-        "checked_add",
-        "checked_sub",
-        "checked_mul",
-    ];
-    generate::check(3637, 12, |g: &mut Gen| (count(g), count(g)), |(a, b)| {
-        let program = |ty: &str| {
-            let mut source = format!("fn main() ! console, alloc {{\n  a: {ty} = {a}\n  b: {ty} = {b}\n");
-            for f in FUNCTIONS {
-                source += &format!("  print(\"{{{f}(a, b)}}\")\n");
-            }
-            with_header(source + "}\n")
-        };
-        assert_eq!(stdout(&program("Nat")), stdout(&program("u64")), "for\n{}", program("Nat"));
-    });
-    let source = "use std.console (console, print)\nuse std.int (checked_add, saturating_add)\n\nfn next_line(line: Nat) -> Nat { saturating_add(line, 1) }\n\nfn main() ! console, alloc {\n  top: Nat = 18446744073709551615\n  print(\"{next_line(top)} {next_line(4)}\")\n  c: Option[Nat] = checked_add(top, 1)\n  print(\"{c == .none}\")\n}\n";
-    assert_eq!(stdout(source), "18446744073709551615 5\ntrue\n", "for\n{source}");
-}
-
-/// A program that uses a saturating function on a `Nat` and on a `u64` holds
-/// the functions it holds when it uses it on two `u64`.
-fn a_nat_and_a_u64_use_one_copy_of_a_saturating_function() {
-    generate::check(3638, 6, |g: &mut Gen| g.below(6), |which| {
-        let f = ["saturating_add", "saturating_sub", "saturating_mul", "checked_add", "checked_sub", "checked_mul"][*which];
-        let source = |a: &str| {
-            with_header(format!(
-                "fn main() ! console, alloc {{\n  xs: List[Byte] = [1, 2]\n  a: {a} = 7\n  b: u64 = 3\n  print(\"{{{f}(a, a)}} {{{f}(b, b)}}\")\n}}\n"
-            ))
-        };
-        let nat = source("Nat").replace("a: Nat = 7", "a: Nat = xs.size");
-        let functions = |source: &str| {
-            lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for\n{source}")).functions.len()
-        };
-        assert_eq!(functions(&nat), functions(&source("u64")), "for\n{nat}");
-    });
 }
 
 /// A `Nat` is a field of a struct, an item of a tuple and of a list, inside an
@@ -376,27 +233,16 @@ fn arith_proves_a_sum_and_a_difference_of_a_nat_from_what_is_known_of_it() {
     });
 }
 
-/// A `Nat` costs what a `u64` costs: where a program holds a count that it
-/// held in a `u64` before, and a `u64` beside it, the program has the
-/// functions it had, since the scalar form has one type of 64 bits and a
-/// function that works on it is held once.
-fn a_nat_shares_the_functions_of_a_u64_that_is_beside_it() {
-    generate::check(3636, 12, |g: &mut Gen| (g.below(3), g.below(5) + 1, g.below(5)), |(uses, n, m)| {
-        let used = [
-            "print(\"{a} {b}\")",
-            "print(\"{a == a} {b == b}\")",
-            "print(\"{a < a} {b < b} {a >= a}\")",
-        ][*uses];
-        let source = |a: &str| {
-            let items = vec!["1"; *n].join(", ");
-            with_header(format!(
-                "fn main() ! console, alloc {{\n  xs: List[Byte] = [{items}]\n  a: {a} = {n}\n  b: u64 = {m}\n  {used}\n}}\n"
-            ))
-        };
-        let nat = source("Nat").replace(&format!("a: Nat = {n}"), "a: Nat = xs.size");
-        let functions = |source: &str| {
-            lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for\n{source}")).functions.len()
-        };
-        assert_eq!(functions(&nat), functions(&source("u64")), "for\n{nat}");
+
+/// `Nat` and `u64` are one type with two names: a value of one is the other
+/// with nothing written, in a binding, an argument, a result, an operator,
+/// and inside another type, and the functions of `u64` serve a `Nat`.
+fn nat_and_u64_are_one_type() {
+    generate::check(3639, 20, count, |n| {
+        let source = with_header(format!(
+            "use std.bits (u64)\nuse std.int (wrapping_add)\n\nfn count(n: Nat) -> u64 {{ n }}\n\nfn back(n: u64) -> Nat {{ n }}\n\nfn main() ! console, alloc {{\n  a: Nat = {n}\n  b: u64 = a\n  l: List[Nat] = [a]\n  m: List[u64] = l\n  print(\"{{count(a)}} {{back(b)}} {{a == b}} {{wrapping_add(a, b)}} {{m[0]}}\")\n}}\n"
+        ));
+        let twice = (*n as u128 * 2) as u64;
+        assert_eq!(stdout(&source), format!("{n} {n} true {twice} {n}\n"), "for\n{source}");
     });
 }

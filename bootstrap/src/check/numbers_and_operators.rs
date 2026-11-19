@@ -15,12 +15,10 @@ pub(super) enum Int {
     U16,
     U32,
     U64,
-    /// A count: 0 and up, in 64 bits, a type of its own and not `u64`.
-    Nat,
 }
 
 impl Int {
-    pub(super) const ALL: [Int; 9] = [
+    pub(super) const ALL: [Int; 8] = [
         Int::I8,
         Int::I16,
         Int::I32,
@@ -29,7 +27,6 @@ impl Int {
         Int::U16,
         Int::U32,
         Int::U64,
-        Int::Nat,
     ];
 
     pub(super) fn name(self) -> &'static str {
@@ -42,16 +39,16 @@ impl Int {
             Int::U16 => "u16",
             Int::U32 => "u32",
             Int::U64 => "u64",
-            Int::Nat => "Nat",
         }
     }
 
-    /// The type a name written in a file stands for: `Int` is `i64` and
-    /// `Byte` is `u8`.
+    /// The type a name written in a file stands for: `Int` is `i64`, `Nat`
+    /// is `u64`, and `Byte` is `u8`.
     pub(super) fn named(name: &str) -> Option<Int> {
         let name = match name {
             "Int" => "i64",
             "Byte" => "u8",
+            "Nat" => "u64",
             _ => name,
         };
         Int::ALL.into_iter().find(|t| t.name() == name)
@@ -66,7 +63,7 @@ impl Int {
             Int::I8 | Int::U8 => 8,
             Int::I16 | Int::U16 => 16,
             Int::I32 | Int::U32 => 32,
-            Int::I64 | Int::U64 | Int::Nat => 64,
+            Int::I64 | Int::U64 => 64,
         }
     }
 

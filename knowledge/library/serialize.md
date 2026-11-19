@@ -50,7 +50,7 @@ A value describes itself with twelve shapes and no others. A format is a type th
 | Shape | Is written by | For |
 | --- | --- | --- |
 | A boolean | `boolean(w, value)` | `bool` |
-| A whole number | `signed(w, value)` and `unsigned(w, value)` | `i8` to `i64`, and `u8` to `u64` and `Nat` |
+| A whole number | `signed(w, value)` and `unsigned(w, value)` | `i8` to `i64`, and `u8` to `u64` |
 | A float | `float(w, value)` | `f32`, `f64` |
 | A text | `text(w, value)` | `str` |
 | Nothing | `nothing(w)` | `()` |
