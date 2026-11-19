@@ -21,6 +21,10 @@ The modules of the standard library, one file each, named for the module. A modu
 - [html.md](html.md): `std.html`, with which a page is written as calls of plain functions that write it as they run, with every text escaped.
 - [mcp.md](mcp.md): `std.mcp`, with which a program is a Model Context Protocol server whose tools are plain functions described by their comments and parameters.
 - [secret.md](secret.md): `Secret[T]`, a value the time a program takes must not depend on, which cannot steer a branch or be an index.
+- [base64.md](base64.md): `std.base64`, which writes bytes as text in the base64 alphabet and reads them back, in the standard form and in the form for an address.
+- [sha2.md](sha2.md): `std.sha2`, with `sha256` and `hmac_sha256`, which signs bytes with a key that is a secret.
+- [jwt.md](jwt.md): `std.jwt`, with `verify`, which gives the claims of a token only when its signature, time, issuer, and audience are right.
+- [oauth.md](oauth.md): `std.oauth`, with which a server is an OAuth resource server: it says which authorization server to use and lets in only a request with a token from it.
 - [random.md](random.md): random bits from a key, distributions as ordinary structs with the `Sample` and `LogProb` traits, and how a program adds its own.
 - [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
 - [store.md](store.md): the `store` effect, which keeps bytes under keys past the end of the program, and `save` and `load`, which keep any value that has `Serialize`.
