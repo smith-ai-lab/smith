@@ -1,0 +1,5 @@
+The Model Context Protocol specification at its tag 2026-07-28, from
+https://github.com/modelcontextprotocol/modelcontextprotocol (commit 5f5440bb26a62e2cf3440b92da5a667efa03b267), unchanged:
+schema/ is its schema/2026-07-28 (schema.json, schema.ts, examples), and specification/ is the .mdx pages of
+docs/specification/2026-07-28 but schema.mdx, which is made from schema.ts, and the pictures.
+LICENSE is the license of that repository. Nothing here is edited.
