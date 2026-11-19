@@ -169,15 +169,6 @@ fn close(to: take Out, b: Byte) -> Out ! alloc {
   finish(w)
 }
 
-// Whether the bytes are one whole JSON value, with space round it or none.
-fn is_one_value(bytes: Slice[Byte]) -> bool ! alloc {
-  a = skip_space(bytes, 0)
-  match scan(bytes, a) {
-    .err(e) { false }
-    .ok(e) { skip_space(bytes, e) >= bytes.size }
-  }
-}
-
 // The bytes as the bytes of a text: each byte that does not begin a character
 // of UTF-8 is U+FFFD.
 fn text_of(bytes: Slice[Byte]) -> List[Byte] ! alloc {
@@ -274,12 +265,11 @@ impl Writer[Out] {
   fn end_map(w: take Out) -> Out ! alloc { close(w, ']') }
   fn raw(w: take Out, of: str, bytes: Slice[Byte]) -> Out ! alloc {
     var v = start(w)
-    if of == "json" and is_one_value(bytes) {
+    if of == "json" {
       loop i in 0..bytes.size { v.bytes = push(v.bytes, bytes[i]) }
       finish(v)
     } else {
-      // Bytes of another format are a text, and so are bytes that are no JSON,
-      // which are never put into the output as they are.
+      // Bytes of another format are a text.
       finish(quote(v, text_of(bytes)))
     }
   }
