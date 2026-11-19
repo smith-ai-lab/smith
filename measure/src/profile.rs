@@ -180,6 +180,7 @@ pub fn print(
         ("by_function", whole_costs.0, base_costs.0),
         ("by_line", whole_costs.1, base_costs.1),
     ] {
+        let (all_whole, all_base): (u64, u64) = (whole.values().sum(), base.values().sum());
         let mut net: Vec<(String, u64)> = whole
             .into_iter()
             .map(|(key, n)| {
@@ -190,9 +191,15 @@ pub fn print(
             .collect();
         net.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let total: u64 = net.iter().map(|(_, n)| n).sum();
+        // The total is what the whole costs beyond the base, which is the figure
+        // printed above these lines. A place that costs less in the whole than
+        // in the base is left out of the list, so the list sums to more than
+        // that by what such places cost less: it is printed, not hidden.
         println!(
-            "{label} {kind} total instructions_per_byte={:.2}",
-            total as f64 / per
+            "{label} {kind} total instructions_per_byte={:.2} (the list below sums to {:.2}; {:.2} is saved in places that cost less than in the base)",
+            all_whole.saturating_sub(all_base) as f64 / per,
+            total as f64 / per,
+            total.saturating_sub(all_whole.saturating_sub(all_base)) as f64 / per
         );
         for (key, n) in net.iter().take(SHOWN) {
             println!(
