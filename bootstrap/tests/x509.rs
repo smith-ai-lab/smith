@@ -30,6 +30,18 @@ pub const ONCE: &[Test] = &[
         a_certificate_that_is_damaged_in_any_way_is_a_value_or_an_error_and_nothing_else,
     ),
     (
+        "pem_reads_a_file_of_several_certificates_to_the_bytes_of_each",
+        pem_reads_a_file_of_several_certificates_to_the_bytes_of_each,
+    ),
+    (
+        "the_certificates_that_rfc_7468_gives_as_examples_are_read_to_their_bytes",
+        the_certificates_that_rfc_7468_gives_as_examples_are_read_to_their_bytes,
+    ),
+    (
+        "a_file_that_is_not_pem_of_certificates_is_an_error_and_pem_reads_what_the_model_reads",
+        a_file_that_is_not_pem_of_certificates_is_an_error_and_pem_reads_what_the_model_reads,
+    ),
+    (
         "a_certificate_of_a_version_other_than_3_is_an_error",
         a_certificate_of_a_version_other_than_3_is_an_error,
     ),
@@ -792,4 +804,327 @@ fn the_identifiers_of_the_extensions_that_are_read_are_those_of_appendix_a_of_th
     assert_eq!(identifier_of(&rfc, "id-ce-basicConstraints"), id_ce(19));
     assert_eq!(identifier_of(&rfc, "id-ce-keyUsage"), id_ce(15));
     assert_eq!(identifier_of(&rfc, "id-ce-extKeyUsage"), id_ce(37));
+}
+
+// The tests of `pem`.
+
+const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// The base64 of RFC 4648 with padding, written here for the tests.
+fn base64(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..=chunk.len() {
+            out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+        out.extend(std::iter::repeat_n('=', 3 - chunk.len()));
+    }
+    out
+}
+
+/// Source that prints, for each text, `err` or the number of certificates `pem` gave and each as hex.
+fn pem_program(inputs: &[Vec<u8>]) -> String {
+    let mut source = String::from(
+        "use std.bits (bit_and, shift_right)
+use std.console (console, print)
+use std.int (wrapping_add)
+use std.list (freeze, push)
+use std.utf8 (utf8)
+use std.x509 (pem)
+
+fn digit(d: Byte) -> Byte {
+  if d < 10 { wrapping_add(d, '0') } else { wrapping_add(d, 87) }
+}
+
+fn hex(b: List[Byte]) -> str ! alloc {
+  var built: List[Byte] = []
+  loop i in 0..b.size {
+    built = push(built, digit(shift_right(b[i], 4)))
+    built = push(built, digit(bit_and(b[i], 15)))
+  }
+  match utf8(freeze(built)) {
+    .ok(t) { t }
+    .err(e) { \"\" }
+  }
+}
+
+fn show(bytes: Slice[Byte]) ! console, alloc {
+  match utf8(bytes) {
+    .err(e) { print(\"not text\") }
+    .ok(t) {
+      match pem(t) {
+        .err(e) { print(\"err\") }
+        .ok(cs) {
+          var line = \"ok {cs.size}\"
+          loop i in 0..cs.size { line = \"{line} {hex(cs[i])}\" }
+          print(line)
+        }
+      }
+    }
+  }
+}
+
+",
+    );
+    for (i, input) in inputs.iter().enumerate() {
+        source += &format!("fn input{i}() -> Slice[Byte] {{ {} }}\n\n", literal(input));
+    }
+    source += "fn main() ! console, alloc {\n";
+    for i in 0..inputs.len() {
+        source += &format!("  show(input{i}())\n");
+    }
+    source + "}\n"
+}
+
+/// What the standard grammar of RFC 7468 (Figure 1) says `pem` gives for a text, written again here from
+/// the grammar and not from the library. A line ends at CRLF, CR, or LF. A line that is
+/// `-----BEGIN CERTIFICATE-----` and blanks begins a certificate, after which lines that are nothing but blanks
+/// may come, and blanks may come before the first line of base64, which is `1*base64char *WSP`: no blank is
+/// before or inside it, and a line of nothing may follow the last of them and only the end line after
+/// that. `-----END CERTIFICATE-----` and blanks ends it, and what the lines held is one certificate. Lines
+/// before, between, and after certificates are not read. The grammar leaves out a label that does not match, a
+/// byte that is not base64, and base64 that is not written as RFC 4648 writes it, so those are errors here.
+fn model_pem(text: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
+    let mut lines: Vec<&[u8]> = Vec::new();
+    let mut from = 0;
+    let mut i = 0;
+    while i < text.len() {
+        if text[i] == b'\n' || text[i] == 13 {
+            lines.push(&text[from..i]);
+            if text[i] == 13 && text.get(i + 1) == Some(&b'\n') {
+                i += 1;
+            }
+            from = i + 1;
+        }
+        i += 1;
+    }
+    lines.push(&text[from..]);
+    let blank = |c: &u8| *c == b' ' || *c == b'\t';
+    let mut found = Vec::new();
+    // `None` is outside a certificate, and the rest is the base64 so far and whether a line of nothing ended it.
+    let mut inside: Option<(String, bool, bool)> = None;
+    for raw in lines {
+        let mut end = raw.len();
+        while end > 0 && blank(&raw[end - 1]) {
+            end -= 1;
+        }
+        let line = &raw[..end];
+        match &mut inside {
+            None => {
+                if line == b"-----BEGIN CERTIFICATE-----" {
+                    inside = Some((String::new(), false, false));
+                }
+            }
+            Some((body, started, nothing)) => {
+                if line == b"-----END CERTIFICATE-----" {
+                    found.push(model_base64(body)?);
+                    inside = None;
+                    continue;
+                }
+                // Before the first base64 line, blanks at its start are not part of it.
+                let line = if *started { line } else { &line[line.iter().take_while(|c| blank(c)).count()..] };
+                if line.is_empty() {
+                    if *started {
+                        if *nothing {
+                            return Err(());
+                        }
+                        *nothing = true;
+                    }
+                } else if *nothing || line.iter().any(|c| *c >= 128) {
+                    return Err(());
+                } else {
+                    *started = true;
+                    body.push_str(std::str::from_utf8(line).map_err(|_| ())?);
+                }
+            }
+        }
+    }
+    if inside.is_some() || found.is_empty() {
+        return Err(());
+    }
+    Ok(found)
+}
+
+/// RFC 4648 base64 with padding, which refuses what is not written as `encode` writes it.
+fn model_base64(text: &str) -> Result<Vec<u8>, ()> {
+    let t = text.as_bytes();
+    if !t.len().is_multiple_of(4) {
+        return Err(());
+    }
+    let mut out = Vec::new();
+    for (i, group) in t.chunks(4).enumerate() {
+        let last = i == t.len() / 4 - 1;
+        let padding = group.iter().rev().take_while(|c| **c == b'=').count();
+        if padding > 2 || (padding > 0 && !last) {
+            return Err(());
+        }
+        let mut n = 0u32;
+        for c in &group[..4 - padding] {
+            n = n << 6 | ALPHABET.iter().position(|a| a == c).ok_or(())? as u32;
+        }
+        n <<= 6 * padding as u32;
+        let bytes = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        if padding > 0 && n & ((1 << (8 * padding)) - 1) != 0 {
+            return Err(());
+        }
+        out.extend(&bytes[..3 - padding]);
+    }
+    Ok(out)
+}
+
+fn pem_line(result: Result<Vec<Vec<u8>>, ()>) -> String {
+    match result {
+        Err(()) => "err".to_string(),
+        Ok(cs) => {
+            let mut line = format!("ok {}", cs.len());
+            for c in &cs {
+                line += &format!(" {}", hex_of(c));
+            }
+            line
+        }
+    }
+}
+
+/// A certificate as PEM writes it, with a line of `width` characters and the line ending given.
+fn block(der: &[u8], width: usize, ending: &str, label: &str) -> String {
+    let text = base64(der);
+    let mut out = format!("-----BEGIN {label}-----{ending}");
+    for line in text.as_bytes().chunks(width) {
+        out += &format!("{}{ending}", std::str::from_utf8(line).unwrap());
+    }
+    out + &format!("-----END {label}-----{ending}")
+}
+
+fn pem_reads_a_file_of_several_certificates_to_the_bytes_of_each() {
+    let ders: Vec<Vec<u8>> = CERTIFICATES.iter().map(|n| certificate_file(n, "der")).collect();
+    let mut inputs = Vec::new();
+    for (width, ending) in [(64, "\n"), (64, "\r\n"), (76, "\r"), (1000, "\n")] {
+        // Every certificate, with text between them and a block of another kind that is not read.
+        let mut text = String::from("Bag attributes\n    friendlyName: test\n");
+        for der in &ders {
+            text += &block(der, width, ending, "CERTIFICATE");
+            text += &format!("some words between{ending}");
+        }
+        text += &block(b"not a certificate", width, ending, "PRIVATE KEY");
+        inputs.push(text.into_bytes());
+    }
+    // One certificate, with no ending to the last line, and with blanks at the ends of lines.
+    let one = block(&ders[0], 64, " \t\n", "CERTIFICATE");
+    inputs.push(one.trim_end().as_bytes().to_vec());
+    let lines = run(&pem_program(&inputs));
+    let expected: Vec<String> = inputs.iter().map(|_| pem_line(Ok(ders.clone()))).collect();
+    assert_eq!(lines[..4], expected[..4]);
+    assert_eq!(lines[4], pem_line(Ok(vec![ders[0].clone()])));
+    // What `pem` gives is what `certificate` reads.
+    let reads = run(&certificates_program(&ders));
+    assert!(reads.iter().all(|l| l.starts_with("ok ")), "{reads:?}");
+}
+
+/// The certificates that the text of RFC 7468 gives as examples, with the lines before the first begin line of
+/// each, as the text has them, and the bytes that the base64 of each is.
+fn examples_of_the_standard() -> Vec<(String, Vec<u8>)> {
+    let rfc = crate::standard::read("rfc7468.txt");
+    let lines: Vec<&str> = rfc.lines().collect();
+    let mut examples = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        if line.trim_end() != "-----BEGIN CERTIFICATE-----" {
+            continue;
+        }
+        let end = at + lines[at..].iter().position(|l| l.trim_end() == "-----END CERTIFICATE-----").unwrap();
+        // The explanatory text of Figure 7 is the three lines before the begin line.
+        let before = if lines[at - 1].starts_with("Validity:") { &lines[at - 3..at] } else { &lines[at..at] };
+        let body: String = lines[at + 1..end].concat();
+        let mut text = before.join("\n");
+        if !before.is_empty() {
+            text += "\n";
+        }
+        text += &lines[at..=end].join("\n");
+        examples.push((text + "\n", model_base64(&body).unwrap()));
+    }
+    examples
+}
+
+fn the_certificates_that_rfc_7468_gives_as_examples_are_read_to_their_bytes() {
+    let examples = examples_of_the_standard();
+    assert_eq!(examples.len(), 2, "the figures of sections 5.1 and 5.2");
+    let inputs: Vec<Vec<u8>> = examples.iter().map(|e| e.0.clone().into_bytes()).collect();
+    let lines = run(&pem_program(&inputs));
+    for ((_, der), line) in examples.iter().zip(&lines) {
+        assert_eq!(line, &pem_line(Ok(vec![der.clone()])));
+        // A certificate of the text of the standard, which `std.x509` reads as it reads any.
+        assert!(der[0] == 0x30, "a sequence");
+    }
+}
+
+fn a_file_that_is_not_pem_of_certificates_is_an_error_and_pem_reads_what_the_model_reads() {
+    generate::check(
+        7,
+        4,
+        |g| {
+            let ders: Vec<Vec<u8>> = (0..3).map(|_| bytes(g, 150)).collect();
+            (0..16)
+                .map(|case| {
+                    let ending = *g.pick(&["\n", "\r\n", "\r"]);
+                    let mut text = String::new();
+                    for _ in 0..g.below(4) {
+                        let der = &ders[g.below(3)];
+                        let mut b = block(der, 1 + g.below(80), ending, "CERTIFICATE");
+                        // What the grammar allows that a text seldom has, in some of them.
+                        if g.below(3) == 0 {
+                            b = b.replacen(ending, &format!(" \t{ending}{ending}  "), 1);
+                        }
+                        if g.below(3) == 0 {
+                            b = b.replace(&format!("{ending}-----END"), &format!("{ending}{ending}-----END"));
+                        }
+                        // A fault of one kind in some of them, chosen by the case.
+                        if g.below(3) == 0 {
+                            match (case + g.below(6)) % 7 {
+                                5 => b = b.replacen(ending, &format!("{ending} "), 2),
+                                6 => b = b.replace(&format!("{ending}-----END"), &format!("{ending}{ending}{ending}-----END")),
+                                0 => b = b.replace("-----END", "-----EN"),
+                                1 => b = b.replacen(ending, &format!("{ending}-----BEGIN CERTIFICATE-----{ending}"), 2),
+                                2 => b = b.replacen("A", "!", 1),
+                                3 => b = b.replacen(ending, &format!("é{ending}"), 2),
+                                _ => b = b.replacen("=", "==", 1),
+                            }
+                        }
+                        text += &b;
+                        text += &format!("text{ending}");
+                    }
+                    text.into_bytes()
+                })
+                .collect::<Vec<_>>()
+        },
+        |inputs| {
+            // Texts of a kind that a draw may not make: a certificate that is begun and not ended, after one that is, and texts with none.
+            let good = block(&[1, 2, 3], 64, "\n", "CERTIFICATE");
+            let mut inputs = inputs.clone();
+            inputs.push(format!("{good}-----BEGIN CERTIFICATE-----\nAAAA\n").into_bytes());
+            inputs.push(format!("{good}-----BEGIN CERTIFICATE-----\n").into_bytes());
+            inputs.push(Vec::new());
+            inputs.push(b"no certificate here\n".to_vec());
+            inputs.push(block(&[1, 2, 3], 64, "\n", "PRIVATE KEY").into_bytes());
+            // Where lines of nothing and blanks may be and where they may not: before the base64 and after it, but not
+            // between its lines, and blanks at the start of the first line and not at the start of another.
+            for text in [
+                "-----BEGIN CERTIFICATE-----\nAAAA\n\nAAAA\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nAAAA\nAAAA\n\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nAAAA\nAAAA\n\n\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\n\n  \n  AAAA\nAAAA\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nAAAA\n AAAA\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nAA AA\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE----- \t\r\nAAAA\r-----END CERTIFICATE----- \t",
+                "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nAAAA\n-----END X509 CERTIFICATE-----\n",
+            ] {
+                inputs.push(text.as_bytes().to_vec());
+            }
+            let inputs = &inputs;
+            let lines = run(&pem_program(inputs));
+            let expected: Vec<String> = inputs.iter().map(|b| pem_line(model_pem(b))).collect();
+            assert_eq!(lines, expected);
+            assert!(expected.iter().any(|l| l.starts_with("ok")) && expected.iter().any(|l| l == "err"));
+        },
+    );
 }

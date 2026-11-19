@@ -1,7 +1,9 @@
 use std.bits (u64)
 use std.der (Value, bits, children, object, text, value, whole)
+use std.base64 (decode)
 use std.int (wrapping_add, wrapping_mul)
 use std.list (push)
+use std.text (Text, append_ascii, finish, text as new_text)
 
 pub struct Certificate {
   pub signed: Slice[Byte]
@@ -371,4 +373,136 @@ pub fn certificate(bytes: Slice[Byte]) -> Result[Certificate, str] ! alloc {
     }
   }
   .ok(Certificate(signed: signed, algorithm: outer_algorithm, signature: signature_bytes, serial: serial, issuer: issuer, subject: subject, not_before: before, not_after: after_time, key_algorithm: key_algorithm, key: key, names: names, authority: authority, path_length: path_length))
+}
+
+// Whether the bytes of `input` from `from` to `to` are the bytes of `marker`.
+fn is_line(input: str, from: Nat, to: Nat, marker: str) -> bool
+  requires from <= to and to <= input.size
+{
+  if to - from != marker.size { return false }
+  loop k in 0..marker.size {
+    if input[from + k] != marker[k] { return false }
+  }
+  true
+}
+
+// Where in a certificate `pem` is: before the begin line of one, after it and
+// before the first line of its base64, in its base64 lines, or after a blank
+// line that ends them, which only the end line may follow.
+enum Place {
+  outside
+  before
+  inside
+  blank
+}
+
+// What `pem` has read so far: the certificates it has, the base64 text of the
+// one it is in, and where in it.
+struct Pem {
+  found: List[List[Byte]]
+  body: Text
+  at: Place
+}
+
+// Where the line of `input` from `from` to `to` ends, with the blanks at its
+// end, which are spaces and tabs, taken off.
+fn trimmed(input: str, from: Nat, to: Nat) -> end: Nat
+  requires from <= to and to <= input.size
+  ensures from <= end and end <= to
+{
+  loop k in 0..to - from {
+    at = to - 1 - k
+    if input[at] != '\t' and input[at] != ' ' { return at + 1 }
+  }
+  from
+}
+
+// Where the line of `input` from `from` to `end` begins when the blanks at its
+// start, which are spaces and tabs, are taken off.
+fn started(input: str, from: Nat, end: Nat) -> begin: Nat
+  requires from <= end and end <= input.size
+  ensures from <= begin and begin <= end
+{
+  loop k in 0..end - from {
+    if input[from + k] != '\t' and input[from + k] != ' ' { return from + k }
+  }
+  end
+}
+
+fn read_line(state: take Pem, input: str, from: Nat, to: Nat) -> Result[Pem, str] ! alloc {
+  var s = state
+  if to > input.size or from > to { return .err("a line that is not in the text") }
+  end = trimmed(input, from, to)
+  match s.at {
+    .outside {
+      if is_line(input, from, end, "-----BEGIN CERTIFICATE-----") {
+        s.at = .before
+        s.body = new_text()
+      }
+      return .ok(s)
+    }
+    _ { }
+  }
+  if is_line(input, from, end, "-----END CERTIFICATE-----") {
+    match decode(finish(s.body)) {
+      .some(bytes) {
+        s.found = push(s.found, bytes)
+        s.at = .outside
+        s.body = new_text()
+        return .ok(s)
+      }
+      .none { return .err("a certificate that is not base64") }
+    }
+  }
+  // Blanks before the first line of base64 are no part of it, and a line of
+  // nothing there is not a line of it.
+  begin = match s.at {
+    .before { started(input, from, end) }
+    _ { from }
+  }
+  if begin == end {
+    match s.at {
+      .inside { s.at = .blank }
+      .blank { return .err("a certificate with two lines of nothing before its end") }
+      _ { }
+    }
+    return .ok(s)
+  }
+  match s.at {
+    .blank { return .err("a certificate with base64 after a line of nothing") }
+    _ { }
+  }
+  s.at = .inside
+  loop k in begin..end {
+    b = input[k]
+    if b >= 128 { return .err("a byte that is not base64 in a certificate") }
+    s.body = append_ascii(s.body, b)
+  }
+  .ok(s)
+}
+
+pub fn pem(input: str) -> Result[List[List[Byte]], str] ! alloc {
+  var s = Pem(found: [], body: new_text(), at: .outside)
+  var from: Nat = 0
+  var i: Nat = 0
+  // A line ends at a carriage return, a line feed, or both in that order.
+  loop n in 0..input.size {
+    if i < input.size {
+      if input[i] == '\n' or input[i] == 13 {
+        s = try read_line(s, input, from, i)
+        if input[i] == 13 and i + 1 < input.size {
+          if input[i + 1] == '\n' { i = i + 1 }
+        }
+        from = i + 1
+      }
+      i = i + 1
+    }
+  }
+  s = try read_line(s, input, from, input.size)
+  match s.at {
+    .outside { }
+    _ { return .err("a certificate with no end") }
+  }
+  if s.found.size == 0 { return .err("no certificate in the text") }
+  .ok(s.found)
 }

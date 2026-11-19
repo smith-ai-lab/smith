@@ -2,11 +2,11 @@
 type: specification
 title: DER and certificates
 description: std.der, which reads the tagged values of DER as pieces of the bytes it is given, and std.x509, which reads a certificate into its names, its time, and its key, and checks nothing.
-status: partial
+status: built
 built:
   - "`std.der`: `Value` and `Tag`, `value`, `children`, `whole`, `text`, `object`, and `bits`, with every `Slice` of a `Value` a piece of the bytes given and each way DER is not written right that the page lists an `.err`"
   - "`std.x509`: `Certificate` and `certificate`, which reads a certificate of version 3 to the parts the struct lists, with its times as the seconds since 1970 from 1970 to the year 9999, and gives `.err` for a certificate that is not written as DER writes it, an extension marked critical that is not read, and an extension that is written twice"
-  - "not `pem`, which needs `std.base64`"
+  - "`pem`, which reads the text of one certificate or of several to the bytes of each, with the lines between them and blocks of another kind not read"
 ---
 
 # DER and certificates
@@ -81,7 +81,7 @@ fn pem(text: str) -> Result[List[List[Byte]], str] ! alloc
 - `names` are the DNS names of the extension for other names, each as written, a `*` at the front among them. `authority` and `path_length` are the extension that says a certificate may sign others: `authority` is `.none` when the certificate has none, and `.some(false)` or `.some(true)` when it has.
 - An extension marked critical that this module does not read makes the certificate `.err`, as RFC 5280 asks, so a rule this module does not know is never passed over in silence. It reads the extensions for other names, for whether a certificate may sign others, for key usage, and for extended key usage, and passes over any other that is not critical. Key usage and extended key usage are checked to be written as they should be, and give nothing to the struct.
 - `not_before` and `not_after` are read from a `utc_time` of 13 bytes, which is 19 from a year of 50 and 20 below, or a `general_time` of 15, each ending in `Z` with its seconds, as DER writes them, and a time before 1970 or a day that its month does not have is `.err`. `serial` has its zero at the front taken off, as `whole` does, and `signature` and `key` are the bytes of their bit strings, which `certificate` takes only when no bits are left over.
-- `pem` gives the bytes of each certificate in a text of the kind that begins `-----BEGIN CERTIFICATE-----`, read with [`std.base64`](base64.md).
+- `pem` gives the bytes of each certificate in a text of the kind that begins `-----BEGIN CERTIFICATE-----`, read with [`std.base64`](base64.md) as [RFC 7468](../../reference/rfc/rfc7468.txt) says. It reads the standard grammar of that text (its Figure 1), and not the strict one (Figure 3) or the lax one (Figure 2). The strict form is what a program that writes should write, with every line of 64 characters, and `pem` writes nothing. The lax form ignores white space anywhere in the data, so it would take a snippet or a mangled text for a certificate, which a program that reads what to trust must not do. The standard form reads every text that the strict one writes, and the lines of 76 characters and of other sizes that other tools write. A line ends at a carriage return, a line feed, or both. The blanks, which are spaces and tabs, at the end of a line are not read, and so are the blanks that come before the first line of base64 and the lines of nothing there. After the last line of base64 one line of nothing may come. A blank at the start of any other line, or inside one, a byte that is not base64, padding that is not at the end, and a label on the end line that is not `CERTIFICATE`, make `.err`, as does a certificate with no end line. Lines before, between, and after certificates are not read, and neither is a block of another label, such as a private key. A text with no certificate is `.err`.
 
 ## The forms
 
