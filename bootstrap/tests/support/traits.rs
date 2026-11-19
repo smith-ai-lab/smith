@@ -1400,7 +1400,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
         (String::new(), 0, Vec::new())
     };
 
-    let reached = reached_fns(&m);
+    let (reached, reached_impls) = reached_fns(&m);
     let firsts: Vec<(usize, usize)> = (0..m.impls.len())
         .filter(|&i| !m.impls[i].second)
         .flat_map(|i| (0..m.traits[m.impls[i].of].fns.len()).map(move |f| (i, f)))
@@ -1429,7 +1429,14 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
     let qualified: usize = (m.fns.iter().enumerate())
         .filter(|(f, _)| reached.contains(f))
         .flat_map(|(_, d)| &d.body)
-        .chain(m.impls.iter().flat_map(|im| im.bodies.iter().flatten()))
+        .chain(
+            (m.impls.iter().enumerate()).flat_map(|(i, im)| {
+                let reached_impls = &reached_impls;
+                (im.bodies.iter().enumerate())
+                    .filter(move |(func, _)| reached_impls.contains(&(i, *func)))
+                    .flat_map(|(_, body)| body)
+            }),
+        )
         .map(|s| qualified_in(&m, stmt_expr(s)))
         .sum();
     let mut b = Builder {
@@ -1470,7 +1477,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
         match item {
             Item::Struct(s) => structure(&mut b, &m, s),
             Item::Trait(k) => declared_trait(&mut b, &m, k),
-            Item::Impl(i) => implementation(&mut b, &m, i, &sites),
+            Item::Impl(i) => implementation(&mut b, &m, i, &sites, &reached_impls),
             Item::Fn(f) => function(&mut b, &m, f, reached.contains(&f), &sites),
         }
     }
@@ -1511,31 +1518,51 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
 }
 
 /// The functions `main` reaches, as the compiler finds them: through the
-/// calls of each function it reaches and of every implementation, as each
-/// trait is called from `main`.
-fn reached_fns(m: &Model) -> Vec<usize> {
-    let mut reached = vec![0];
-    for im in &m.impls {
-        for s in im.bodies.iter().flatten() {
-            for f in 1..m.fns.len() {
-                if calls(stmt_expr(s), f) && !reached.contains(&f) {
-                    reached.push(f);
-                }
-            }
+/// calls of each copy of a function it runs, which for a trait's function is
+/// the implementation that fits the type it is called with. An implementation
+/// that no call of `main` or of what it reaches uses is not read.
+fn reached_fns(m: &Model) -> (Vec<usize>, Vec<(usize, usize)>) {
+    fn walk(m: &Model, copy: Copy, seen: &mut Vec<Copy>) {
+        if seen.contains(&copy) {
+            return;
+        }
+        seen.push(copy.clone());
+        for stmt in m.body_of(copy.0) {
+            visit(m, stmt_expr(stmt), &copy.1, seen);
         }
     }
-    let mut i = 0;
-    while i < reached.len() {
-        for s in &m.fns[reached[i]].body {
-            for f in 1..m.fns.len() {
-                if calls(stmt_expr(s), f) && !reached.contains(&f) {
-                    reached.push(f);
-                }
+    fn visit(m: &Model, expr: &Expr, env: &[Ty], seen: &mut Vec<Copy>) {
+        let target = match expr {
+            Expr::Call { f, types, .. } => {
+                Some((Template::Fn(*f), types.iter().map(|t| t.subst(env)).collect()))
             }
+            Expr::TraitCall {
+                of, func, types, ..
+            } => m
+                .holds(*of, &types[0].subst(env), &[])
+                .and_then(|(_, by)| by)
+                .map(|(i, types)| (Template::Impl(i, *func), types)),
+            _ => None,
+        };
+        if let Some(copy) = target {
+            walk(m, copy, seen);
         }
-        i += 1;
+        for inner in inside(expr) {
+            visit(m, inner, env, seen);
+        }
     }
-    reached
+    let mut seen = Vec::new();
+    walk(m, (Template::Fn(0), Vec::new()), &mut seen);
+    let mut fns: Vec<usize> = Vec::new();
+    let mut impls: Vec<(usize, usize)> = Vec::new();
+    for (t, _) in seen {
+        match t {
+            Template::Fn(f) if !fns.contains(&f) => fns.push(f),
+            Template::Impl(i, func) if !impls.contains(&(i, func)) => impls.push((i, func)),
+            _ => {}
+        }
+    }
+    (fns, impls)
 }
 
 fn qualified_in(m: &Model, expr: &Expr) -> usize {
@@ -1594,7 +1621,7 @@ fn declared_trait(b: &mut Builder, m: &Model, k: usize) {
     b.push("}\n");
 }
 
-fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites) {
+fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites, reached: &[(usize, usize)]) {
     let im = &m.impls[i];
     let t = &m.traits[im.of];
     let names: Vec<&str> = im.generics.iter().map(|(n, _)| *n).collect();
@@ -1642,7 +1669,10 @@ fn implementation(b: &mut Builder, m: &Model, i: usize, sites: &Sites) {
             b.push(&wanted);
         }
         b.push(" {\n");
-        statements(b, m, &im.bodies[func], &ctx_names, "    ", true);
+        // An implementation that no call of `main`, or of what it reaches, uses is
+        // not read, so a mistake in its body is not reported.
+        let used = reached.contains(&(i, func));
+        statements(b, m, &im.bodies[func], &ctx_names, "    ", used);
         b.renamed = None;
         b.push("  }\n");
         if here && b.kind == Some(Kind::ExtraFn) {
