@@ -465,7 +465,7 @@ fn uses(g: &mut Gen) -> Uses {
 /// Each mistake in a `use` is one error at the place the generator wrote
 /// it, the file with none is accepted, and no other error follows.
 fn each_mistake_in_a_use_is_one_error_at_its_place() {
-    generate::check(301, 70, uses, |file| match lower(file.source.as_bytes()) {
+    generate::check(301, 200, uses, |file| match lower(file.source.as_bytes()) {
         Ok(_) => assert!(file.expected.is_empty(), "accepted"),
         Err(errors) => {
             let places: Vec<Pos> = errors.iter().map(|e| e.pos).collect();
