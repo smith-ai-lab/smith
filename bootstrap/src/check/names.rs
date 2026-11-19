@@ -209,3 +209,80 @@ pub(super) fn own_final<S: std::hash::BuildHasher>(
         None => format!("{name}@{module}"),
     }
 }
+
+/// What one module of the file calls what: the module's name, the names it
+/// writes as they are, the names the file that is built gives its names with
+/// `as`, and what it lists from other modules. The module that is read whole
+/// and the one that is read item by item both answer from it, so that a name
+/// is written one way only.
+pub(super) struct ModuleScope<'s, 'k> {
+    /// The module's name.
+    pub(super) name: &'s str,
+    /// Whether the module is of the standard library, whose names that start
+    /// with `__` are the compiler's and are not renamed.
+    pub(super) standard: bool,
+    /// Whether the module writes a name as it is.
+    pub(super) kept: &'k dyn Fn(&str) -> bool,
+    /// The names the file that is built gives the module's names with `as`.
+    pub(super) aliased: &'s [(String, String)],
+    /// What the module lists from other modules, as it writes each and as the
+    /// file writes it.
+    pub(super) imports: &'s [(String, String)],
+}
+
+impl<'s, 'k> ModuleScope<'s, 'k> {
+    /// What a name the module defines is written as in the file: as the file
+    /// that is built names it with `as`, as it is when the module writes it so
+    /// or the compiler builds it, or with the module after it.
+    pub(super) fn final_name(&self, name: &str) -> String {
+        match self.aliased.iter().find(|(from, _)| from == name) {
+            Some((_, alias)) => alias.clone(),
+            None if (self.kept)(name) => name.to_string(),
+            None => format!("{name}@{}", self.name),
+        }
+    }
+
+    /// What the name the module writes is written as in the file, when it is
+    /// not as the module writes it. `defined` says whether the module defines
+    /// the name.
+    pub(super) fn rename(&self, name: &str, defined: bool) -> Option<String> {
+        if let Some((_, to)) = self.imports.iter().find(|(from, _)| from == name) {
+            return Some(to.clone());
+        }
+        if !defined || (self.standard && name.starts_with("__")) {
+            return None;
+        }
+        let to = self.final_name(name);
+        (to != name).then_some(to)
+    }
+
+    /// The names, as the module writes them, that the name as the file writes
+    /// it may be, among those the module defines, and among those it lists
+    /// from other modules when `listed` says so.
+    pub(super) fn originals<'n>(&self, written: &'n str, listed: bool) -> Vec<&'n str>
+    where
+        's: 'n,
+    {
+        let mut found: Vec<&str> = Vec::new();
+        if let Some((name, module)) = written.split_once('@') {
+            if module == self.name {
+                found.push(name);
+            }
+        } else if (self.kept)(written) {
+            found.push(written);
+        }
+        found.extend(
+            (self.aliased.iter())
+                .filter(|(_, alias)| alias == written)
+                .map(|(from, _)| from.as_str()),
+        );
+        if listed {
+            found.extend(
+                (self.imports.iter())
+                    .filter(|(_, to)| to == written)
+                    .map(|(from, _)| from.as_str()),
+            );
+        }
+        found
+    }
+}
