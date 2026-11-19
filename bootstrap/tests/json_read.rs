@@ -33,6 +33,10 @@ pub const ONCE: &[Test] = &[
         a_text_broken_in_one_place_is_the_error_of_that_place_with_its_line_column_and_path,
     ),
     (
+        "cases_in_the_values_of_cases_are_read_to_any_depth",
+        cases_in_the_values_of_cases_are_read_to_any_depth,
+    ),
+    (
         "the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is",
         the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is,
     ),
@@ -924,6 +928,50 @@ fn the_members_of_an_object_are_read_in_any_order_with_the_tag_wherever_it_is() 
             run_cases(defs, t, v, *settings, cases)
         }
     });
+}
+
+// Cases in the values of cases.
+
+fn cases_in_the_values_of_cases_are_read_to_any_depth() {
+    // A type of `depth` enums, each of which holds the next in a case and ends
+    // in a case that holds nothing, and the text of the value that goes to the
+    // end, for each setting, with the tag before the value and after it by turns.
+    for depth in [3usize, 5, 70] {
+        let mut types = String::new();
+        for d in 0..depth {
+            let held = if d + 1 < depth { format!("c0: E{}\n  c1", d + 1) } else { "c0\n  c1".to_string() };
+            types.push_str(&format!("enum E{d} {{\n  {held}\n}}\n\n"));
+        }
+        let mut value: String = (0..depth - 1).map(|d| format!("E{d}.c0(")).collect();
+        value.push_str(&format!("E{}.c0", depth - 1));
+        value.push_str(&")".repeat(depth - 1));
+        // The text with a case as a key, and with it as a tag.
+        let key = format!("{}\"c0\"{}", "{\"c0\":".repeat(depth - 1), "}".repeat(depth - 1));
+        let tag_first = format!("{}{{\"type\":\"c0\"}}{}", "{\"type\":\"c0\",\"value\":".repeat(depth - 1), "}".repeat(depth - 1));
+        let mut tag_last = String::new();
+        for _ in 0..depth - 1 {
+            tag_last.push_str("{\"value\":");
+        }
+        tag_last.push_str("{\"type\":\"c0\"}");
+        for _ in 0..depth - 1 {
+            tag_last.push_str(",\"type\":\"c0\"}");
+        }
+        let mut source = format!(
+            "use std.json (from_json_as, to_json_as, Json)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{types}fn main() ! console, alloc {{\n  v: E0 = {value}\n  k = Json(cases: .key, names: .written)\n  t = Json(cases: .tag(\"type\"), names: .written)\n"
+        );
+        for (name, text, json) in [("key", &key, "k"), ("first", &tag_first, "t"), ("last", &tag_last, "t")] {
+            source.push_str(&format!(
+                "  {name}: Result[E0, ReadError] = from_json_as({}, {json})\n  match {name} {{\n    .ok(w) {{\n      match to_json_as(w, {json}) {{\n        .ok(u) {{\n          match to_json_as(v, {json}) {{\n            .ok(x) {{ print(\"ok {{u == x}}\") }}\n            .err(c) {{ print(\"clash\") }}\n          }}\n        }}\n        .err(c) {{ print(\"clash\") }}\n      }}\n    }}\n    .err(e) {{ print(say(e)) }}\n  }}\n",
+                text_source(text.as_bytes())
+            ));
+        }
+        source.push_str("}\n");
+        let printed = lines(&prints(&source));
+        assert_eq!(printed.len(), 3, "{source}");
+        assert_eq!(printed[0], "ok true", "{source}");
+        assert_eq!(printed[1], "ok true", "{source}");
+        assert_eq!(printed[2], "ok true", "{source}");
+    }
 }
 
 // A text broken in one place.

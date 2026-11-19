@@ -990,38 +990,118 @@ fn read_error(b: Slice[u8], bad: Bad) -> ReadError ! alloc {
   ReadError(path: path_at(b, bad.at), problem: bad.problem, line: line, column: column)
 }
 
-// The place of the name of the tag in the object of the innermost case that is
-// open and is written with one, which is no place when none is. The places of
-// the cases that are open are `t0` to `t3`, the first of the outermost, and
-// `top` says how many there are.
-fn tag_at(r: In) -> Nat {
-  match r.top {
-    1 { r.t0 }
-    2 { r.t1 }
-    3 { r.t2 }
-    4 { r.t3 }
-    _ { 18446744073709551615 }
+fn grown_nat(items: Slice[Nat], item: Nat) -> Slice[Nat] ! alloc {
+  var acc: List[Nat] = []
+  loop i in 0..items.size { acc = push(acc, items[i]) }
+  freeze(push(acc, item))
+}
+
+fn grown_byte(items: Slice[u8], item: u8) -> Slice[u8] ! alloc {
+  var acc: List[u8] = []
+  loop i in 0..items.size { acc = push(acc, items[i]) }
+  freeze(push(acc, item))
+}
+
+fn without_last_nat(items: Slice[Nat]) -> Slice[Nat] {
+  n = items.size
+  if n >= 1 {
+    k = n - 1
+    items[..k]
+  } else {
+    items
   }
 }
 
-// The reader with the tag of a case that is open at `at`. A case in the value
-// of 4 cases that are open, which are written with a tag, is not read.
-fn tagged(r: take In, at: Nat) -> Result[In, Bad] {
-  var w = r
-  match w.top {
-    0 { w.t0 = at }
-    1 { w.t1 = at }
-    2 { w.t2 = at }
-    3 { w.t3 = at }
-    _ { return Result.err(malformed(at)) }
+fn without_last_byte(items: Slice[u8]) -> Slice[u8] {
+  n = items.size
+  if n >= 1 {
+    k = n - 1
+    items[..k]
+  } else {
+    items
   }
-  w.top = saturating_add(w.top, 1)
+}
+
+// The place of the name of the tag in the object of the innermost case that is
+// open and is written with one, which is no place when none is.
+fn tag_at(r: In) -> Nat {
+  n = r.tags.size
+  if n >= 1 {
+    k = n - 1
+    r.tags[k]
+  } else {
+    18446744073709551615
+  }
+}
+
+// The reader with the tag of a case that is open at `at`.
+fn tagged(r: take In, at: Nat) -> Result[In, Bad] ! alloc {
+  var w = r
+  w.tags = grown_nat(w.tags, at)
   Result.ok(w)
 }
 
-// The reader of JSON text. The bytes of each case that is open, and whether
-// closing it takes a `}`, are the bits of `forms`, and `cases` says how many
-// there are. A case written with a tag is `pending` from its name until what it
+// Whether closing the case that is innermost takes a `}`: the bit of its
+// level, which is in `forms` for the first 64 levels and in `deep` for the
+// rest.
+fn top_closes(r: In) -> bool {
+  n = saturating_sub(r.cases, 1)
+  if r.cases == 0 {
+    false
+  } else if n < 64 {
+    by: u8 = narrow(n)
+    bit_and(shift_right(r.forms, by), 1) == 1
+  } else {
+    m = r.deep.size
+    if m >= 1 {
+      k = m - 1
+      r.deep[k] == 1
+    } else {
+      false
+    }
+  }
+}
+
+// The reader with the innermost case not taking a `}` to close.
+fn top_not_closing(r: take In) -> In ! alloc {
+  var w = r
+  n = saturating_sub(w.cases, 1)
+  if w.cases == 0 {
+    w
+  } else if n < 64 {
+    by: u8 = narrow(n)
+    one: u64 = 1
+    w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
+    w
+  } else {
+    w.deep = grown_byte(without_last_byte(w.deep), 0)
+    w
+  }
+}
+
+// The reader with the innermost case closed.
+fn left_case(r: take In) -> In {
+  var w = r
+  n = saturating_sub(w.cases, 1)
+  if w.cases == 0 {
+    w
+  } else if n < 64 {
+    by: u8 = narrow(n)
+    one: u64 = 1
+    w.forms = bit_and(w.forms, bit_not(shift_left(one, by)))
+    w.cases = n
+    w
+  } else {
+    w.deep = without_last_byte(w.deep)
+    w.cases = n
+    w
+  }
+}
+
+// The reader of JSON text. `cases` says how many cases are open, and whether
+// closing each takes a `}` is a bit of `forms`, and of `deep` past the 64th.
+// The places of the tags of the cases that are open and written with one are
+// `tags`. A case written with a tag is `pending` from its name until what it
 // holds is begun.
 struct In {
   bytes: Slice[u8]
@@ -1029,13 +1109,10 @@ struct In {
   mark: Nat
   json: Json
   forms: u64
+  deep: Slice[u8]
   cases: Nat
   pending: bool
-  t0: Nat
-  t1: Nat
-  t2: Nat
-  t3: Nat
-  top: Nat
+  tags: Slice[Nat]
 }
 
 fn failed_bool(r: take In, bad: Bad) -> (In, Result[bool, ReadError]) ! alloc {
@@ -1168,11 +1245,16 @@ fn literal(r: take In, a: Nat, w: str, wanted: str) -> (In, Result[(), ReadError
   }
 }
 
-fn pushed(r: take In, form: u64) -> Result[In, Bad] {
+fn pushed(r: take In, form: u64) -> Result[In, Bad] ! alloc {
   var w = r
-  if w.cases >= 64 { return Result.err(malformed(w.mark)) }
-  w.forms = bit_or(shift_left(w.forms, 1), form)
-  w.cases = saturating_add(w.cases, 1)
+  n = w.cases
+  if n < 64 {
+    by: u8 = narrow(n)
+    w.forms = bit_or(w.forms, shift_left(form, by))
+  } else {
+    w.deep = grown_byte(w.deep, wrapping_narrow(form))
+  }
+  w.cases = saturating_add(n, 1)
   Result.ok(w)
 }
 
@@ -1376,8 +1458,7 @@ impl Reader[In] {
   }
   fn structure(r: take In, name: str) -> (In, Result[(), ReadError]) ! alloc {
     if r.pending {
-      var w = moved(r, r.at, r.mark)
-      w.forms = bit_and(w.forms, 18446744073709551614)
+      w = top_not_closing(moved(r, r.at, r.mark))
       (w, Result.ok(()))
     } else {
       match value_start(r) {
@@ -1519,16 +1600,15 @@ impl Reader[In] {
   }
   fn end_case(r: take In) -> (In, Result[(), ReadError]) ! alloc {
     var w = r
-    closes = bit_and(w.forms, 1) == 1
+    closes = top_closes(w)
     empty = w.pending
     tag = tag_at(w)
-    w.forms = shift_right(w.forms, 1)
-    w.cases = saturating_sub(w.cases, 1)
+    w = left_case(w)
     w.pending = false
     var at = skip_space(w.bytes, w.at)
     match w.json.cases {
       .key { }
-      .tag(t) { w.top = saturating_sub(w.top, 1) }
+      .tag(t) { w.tags = without_last_nat(w.tags) }
     }
     if not closes { return (w, Result.ok(())) }
     match w.json.cases {
@@ -1631,7 +1711,7 @@ impl[T] FromJson[T]
 {
   fn from_json_as(text: str, json: Json) -> Result[T, ReadError] ! alloc {
     bytes = text.bytes
-    r = In(bytes: bytes, at: 0, mark: 0, json: json, forms: 0, cases: 0, pending: false, t0: 0, t1: 0, t2: 0, t3: 0, top: 0)
+    r = In(bytes: bytes, at: 0, mark: 0, json: json, forms: 0, deep: [], cases: 0, pending: false, tags: [])
     (w, result): (In, Result[T, ReadError]) = read(r)
     match result {
       .err(e) { Result.err(e) }
