@@ -22,7 +22,7 @@ fn show_both[A, B](a: A, b: B) -> str
   join(a, b)
 }
 
-fn sum3[A, B](x: A, y: B, z: B) -> B
+fn sum3[A, B: Discard](x: A, y: B, z: B) -> B
   requires Plus[A, B, B]
   requires Plus[B, B, B]
 {
