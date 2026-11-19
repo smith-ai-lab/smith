@@ -11,6 +11,8 @@ use crate::scalar::{
     System as Call, Type, Value,
 };
 
+mod vector;
+
 /// A register, by its number in the instruction encoding.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Reg(u8);
@@ -48,13 +50,14 @@ const REGISTERS: Registers = Registers {
     passed: 5,
 };
 
-/// The registers that hold floats: `xmm0` to `xmm13`, in the order the
-/// allocator numbers them, after those of `HOMES`. A call may change every one,
-/// on every system, as a call into the system of one of them may. `xmm14` and
-/// `xmm15` are kept for the chip: `xmm15` is where a result is worked out when
-/// its home is the frame or one of its operands, and `xmm14` holds a value
-/// that is read from the frame to be compared or converted.
-const FLOATS: [Reg; 14] = [
+/// The registers that hold floats and vectors: `xmm0` to `xmm12`, in the order
+/// the allocator numbers them, after those of `HOMES`. A call may change every
+/// one, on every system, as a call into the system of one of them may. `xmm13`,
+/// `xmm14`, and `xmm15` are kept for the chip: `xmm15` is where a result is
+/// worked out when its home is the frame or one of its operands, `xmm14` holds
+/// a value that is read from the frame to be compared or converted, and
+/// `xmm13` is the third that the instructions of vectors work in.
+const FLOATS: [Reg; 13] = [
     Reg(0),
     Reg(1),
     Reg(2),
@@ -68,8 +71,8 @@ const FLOATS: [Reg; 14] = [
     Reg(10),
     Reg(11),
     Reg(12),
-    Reg(13),
 ];
+const XMM13: Reg = Reg(13);
 const XMM14: Reg = Reg(14);
 const XMM15: Reg = Reg(15);
 
@@ -77,7 +80,7 @@ const XMM15: Reg = Reg(15);
 /// results that are floats, in `xmm0` to `xmm7`, in the order each has among
 /// the floats. What does not fit goes in the caller's frame.
 const FLOAT_REGISTERS: Registers = Registers {
-    changed: 14,
+    changed: 13,
     preserved: 0,
     passed: 8,
 };
@@ -807,7 +810,12 @@ impl Asm {
     /// The prefix of the instruction of scalar floats of `width` bytes: `f3` for
     /// 4 and `f2` for 8.
     fn scalar(width: u32) -> u8 {
-        if width == 4 { 0xf3 } else { 0xf2 }
+        match width {
+            4 => 0xf3,
+            8 => 0xf2,
+            // `movups`, which moves a vector whole, has no prefix.
+            _ => 0,
+        }
     }
 
     /// `movaps rd, rs`: copies a float, whole.
@@ -1077,7 +1085,7 @@ enum Loc {
 fn passing(places: &[Passed], types: &[Type], base: u32) -> Vec<Loc> {
     (places.iter().zip(types))
         .map(|(place, ty)| match (place, ty) {
-            (Passed::Register(k), Type::Float(_)) => Loc::Xmm(FLOATS[*k]),
+            (Passed::Register(k), Type::Float(_) | Type::Vector(_)) => Loc::Xmm(FLOATS[*k]),
             (Passed::Register(k), _) => Loc::Register(HOMES[*k]),
             (Passed::Frame(at), _) => Loc::Frame(base + at),
         })
@@ -1303,6 +1311,9 @@ impl<S: System> Writer<'_, S> {
             }
             (Loc::Register(to), Loc::Frame(from)) => self.load_frame(asm, to, width, from),
             (Loc::Frame(to), Loc::Register(from)) => self.store_frame(asm, to, from, width, true),
+            (Loc::Frame(to), Loc::Frame(from)) if width == 16 => {
+                self.copy_vector_frame(asm, to, from)
+            }
             (Loc::Frame(to), Loc::Frame(from)) => {
                 self.load_frame(asm, RAX, width, from);
                 self.store_frame(asm, to, RAX, width, true);
@@ -1316,10 +1327,16 @@ impl<S: System> Writer<'_, S> {
                 }
             }
             (Loc::Xmm(to), Loc::Frame(from)) => asm.float_load(to, width, Place::Frame(from)),
+            (Loc::Frame(to), Loc::Xmm(from)) if width == 16 => {
+                self.store_vector_frame(asm, to, from)
+            }
             (Loc::Frame(to), Loc::Xmm(from)) => self.store_float_frame(asm, to, from, width),
             // Through r11, which holds what breaks a circle of copies. The
             // circle may hold floats of both sizes, so the register is copied
             // whole.
+            (Loc::Register(_), Loc::Xmm(_)) | (Loc::Xmm(_), Loc::Register(_)) if width == 16 => {
+                unreachable!("a vector is never in a register of integers")
+            }
             (Loc::Register(to), Loc::Xmm(from)) => asm.bits_from_float(to, 8, from),
             (Loc::Xmm(to), Loc::Register(from)) => asm.float_from_bits(to, 8, from),
             (Loc::Xmm(_), Loc::Imm(_)) => unreachable!("a float is not a number held"),
@@ -1374,13 +1391,21 @@ impl<S: System> Writer<'_, S> {
     }
 
     /// Does the moves as if all were copied at once. A place that another
-    /// move is still to read is held in r11 first, when they go in a circle.
+    /// move is still to read is held in r11 first, when they go in a circle,
+    /// and a vector in xmm15, which no copy changes.
     fn run(&self, asm: &mut Asm, moves: &[Move<Loc>]) {
+        let aside = |width: u32| {
+            if width == 16 {
+                Loc::Xmm(XMM15)
+            } else {
+                Loc::Register(R11)
+            }
+        };
         for step in moves::sequence(moves) {
             match step {
                 Step::Copy { to, from, width } => self.copy(asm, to, from, width),
-                Step::Save { from, width } => self.copy(asm, Loc::Register(R11), from, width),
-                Step::Restore { to, width } => self.copy(asm, to, Loc::Register(R11), width),
+                Step::Save { from, width } => self.copy(asm, aside(width), from, width),
+                Step::Restore { to, width } => self.copy(asm, to, aside(width), width),
             }
         }
     }
@@ -1813,6 +1838,9 @@ impl<S: System> Writer<'_, S> {
         if matches!(ty, Type::Float(_)) {
             return self.float_store(asm, place, *value);
         }
+        if matches!(ty, Type::Vector(_)) {
+            return self.vector_write(asm, place, *value);
+        }
         match self.at[value.0] {
             Loc::Imm(n) => self.store_imm(asm, place, n, size(*ty), RCX),
             _ => {
@@ -1882,25 +1910,67 @@ impl<S: System> Writer<'_, S> {
                 let address = self.read(asm, RAX, *address);
                 self.float_store(asm, Place::At(address), *value);
             }
-            Op::VectorBinary { .. }
-            | Op::VectorFloatBinary { .. }
-            | Op::VectorCompare { .. }
-            | Op::VectorFloatCompare { .. }
-            | Op::VectorChoose { .. }
-            | Op::VectorSplat(_)
-            | Op::VectorExtract { .. }
-            | Op::VectorInsert { .. }
-            | Op::VectorSum(_)
-            | Op::VectorFirstSet(_) => {
-                unreachable!("x86-64 does not build vectors yet")
+            Op::Load {
+                ty: Type::Vector(_),
+                address,
+            } => {
+                let address = self.read(asm, RAX, *address);
+                self.vector_load(asm, results[0], address);
             }
+            Op::Store {
+                ty: Type::Vector(_),
+                address,
+                value,
+            } => {
+                let address = self.read(asm, RAX, *address);
+                self.vector_write(asm, Place::At(address), *value);
+            }
+            Op::Choose {
+                on,
+                then,
+                otherwise,
+            } if matches!(self.f.types[results[0].0], Type::Vector(_)) => {
+                self.vector_choose_by_number(asm, results[0], *on, *then, *otherwise)
+            }
+            Op::Constant(Constant::Vector(..)) => {
+                let Op::Constant(c) = operation else {
+                    unreachable!()
+                };
+                self.vector_constant(asm, results[0], c.vector_bits().expect("a vector"));
+            }
+            Op::VectorBinary { op, a, b } => self.vector_binary(asm, results[0], *op, *a, *b),
+            Op::VectorFloatBinary { op, a, b } => {
+                self.vector_float_binary(asm, results[0], *op, *a, *b)
+            }
+            Op::VectorCompare { op, signed, a, b } => {
+                self.vector_compare(asm, results[0], *op, *signed, *a, *b)
+            }
+            Op::VectorFloatCompare { op, a, b } => {
+                self.vector_float_compare(asm, results[0], *op, *a, *b)
+            }
+            Op::VectorChoose {
+                mask,
+                then,
+                otherwise,
+            } => self.vector_choose(asm, results[0], *mask, *then, *otherwise),
+            Op::VectorSplat(value) => self.vector_splat(asm, results[0], *value),
+            Op::VectorExtract { vector, lane } => {
+                self.vector_extract(asm, results[0], *vector, *lane)
+            }
+            Op::VectorInsert {
+                vector,
+                lane,
+                value,
+            } => self.vector_insert(asm, results[0], *vector, *lane, *value),
+            Op::VectorSum(vector) => self.vector_sum(asm, results[0], *vector),
+            Op::VectorFirstSet(mask) => self.vector_first_set(asm, results[0], *mask),
             Op::Constant(_) if matches!(self.at[results[0].0], Loc::Imm(_)) => {}
             Op::Constant(c) => {
                 let result = results[0];
                 let t = self.target(result, &[]);
                 match c {
                     Constant::Float(_) => unreachable!("x86-64 does not build floats yet"),
-                    Constant::Vector(..) => unreachable!("x86-64 does not build vectors yet"),
+                    Constant::Vector(..) => unreachable!("a vector constant is made as one"),
                     Constant::Int(n) => {
                         let n = match self.width(result) {
                             8 => *n,

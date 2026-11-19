@@ -112,9 +112,16 @@ impl Offer {
 }
 
 /// The kind of register a value of the type is held in: 0 for an integer or an
-/// address, 1 for a float.
+/// address, 1 for a float or a vector.
 pub fn kind(ty: Type) -> usize {
-    usize::from(matches!(ty, Type::Float(_)))
+    usize::from(matches!(ty, Type::Float(_) | Type::Vector(_)))
+}
+
+/// Whether a value of the type may not be kept in a register across a call. A
+/// register that a call leaves alone may leave only part of a vector, as the
+/// registers `v8` to `v15` of arm64 do, so a vector is never kept in one.
+fn is_lost_by_calls(ty: Type) -> bool {
+    matches!(ty, Type::Vector(_))
 }
 
 /// Where a value lives, for the whole of its life.
@@ -558,7 +565,9 @@ fn across_a_call(f: &Function, kinds_of: &[u8], facts: &Facts, homeless: &[bool]
                     last_here[v.0] = at;
                 }
                 for v in alive.values.iter().filter(|v| last_here[v.0] != at) {
-                    crosses[usize::from(kinds_of[v.0])] = true;
+                    if !is_lost_by_calls(f.types[v.0]) {
+                        crosses[usize::from(kinds_of[v.0])] = true;
+                    }
                 }
             }
             for v in &facts.dying[at] {
@@ -675,12 +684,18 @@ fn spill(
                 for v in &facts.dying[at] {
                     last_here[v.0] = at;
                 }
-                let across: Vec<Value> = (held.values.iter().copied())
+                let mut across: Vec<Value> = (held.values.iter().copied())
                     .filter(|v| last_here[v.0] != at)
                     .collect();
                 for v in &across {
                     crosses[v.0] = true;
                 }
+                // A vector alive across a call is in the frame.
+                for v in across.iter().filter(|v| is_lost_by_calls(f.types[v.0])) {
+                    spilled[v.0] = true;
+                    held.remove(*v);
+                }
+                across.retain(|v| !spilled[v.0]);
                 for kind_of in 0..2 {
                     let mut of_kind: Vec<Value> = (across.iter().copied())
                         .filter(|v| usize::from(kinds_of[v.0]) == kind_of)

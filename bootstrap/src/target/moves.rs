@@ -46,7 +46,15 @@ pub fn sequence<L: Copy + PartialEq>(moves: &[Move<L>]) -> Vec<Step<L>> {
                 });
             }
             None => {
-                let (place, _, width) = left[0];
+                let (place, _, _) = left[0];
+                // What is held aside is what the place holds, which is as wide as
+                // each move that reads it, and not as the move that writes it,
+                // for a vector and a float may take each other's place.
+                let width = (left.iter())
+                    .filter(|m| m.1 == Some(place))
+                    .map(|m| m.2)
+                    .max()
+                    .expect("a place that is still to be read is read by a move");
                 steps.push(Step::Save { from: place, width });
                 for m in &mut left {
                     if m.1 == Some(place) {
