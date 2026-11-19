@@ -257,6 +257,14 @@ Here the `0.5` is an `f32`, as the type of `x` is. A whole number may become a f
 
 An array written in brackets is backed by `FromArray`, and its elements are literals that follow these rules. [Arrays](arrays.md) says what an array is.
 
+Where nothing says what type it is, an array written in brackets is an array of as many elements as are written, and the type of its elements is the smallest that holds them all. For whole numbers that is one range, as each is the range that holds it alone.
+
+```
+xs = [1, 2, 3, 4]
+```
+
+`xs` is a `[4]1..5`: four elements, each at least `1` and below `5`. It is taken wherever a `List`, a `Slice`, or an array of a wider element is needed, as a range is taken where a wider one is, so `total(xs)` compiles for a `total` that takes a `List[Nat]`. Elements that no one type holds, as `[1, "a"]`, are refused. An array of nothing, `[]`, has no element to say its type, so it is written where a type is expected.
+
 ## The forms
 
 | Written | Is | Its type |
