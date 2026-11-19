@@ -23,6 +23,18 @@ pub(super) fn is_library_append(call: &Call) -> bool {
     call.qualifier.is_none() && call.callee == "__append" && of_std(call.pos)
 }
 
+/// Whether a call is of `__finish`, which `Text` of the library calls where
+/// the bytes it holds become a text, with nothing read again.
+fn is_library_finish(call: &Call) -> bool {
+    call.qualifier.is_none() && call.callee == "__finish" && of_std(call.pos)
+}
+
+/// Whether a call is of a function that only the library calls, and that a
+/// function of this file builds, rather than an intrinsic of numbers.
+pub(super) fn is_library_call(call: &Call) -> bool {
+    is_library_append(call) || is_library_finish(call)
+}
+
 /// Whether a call is of `append`, as `push` is of `push`.
 fn is_append(call: &Call) -> bool {
     call.callee == "append" || call.callee == "__append"
@@ -75,6 +87,7 @@ pub(super) fn is_freeze(defs: &Defs, call: &Call) -> bool {
         && call.callee == "freeze"
         && !defs.function_names.contains_key("freeze")
         && !defs.struct_names.contains_key("freeze")
+        || is_library_finish(call)
 }
 
 impl<'a> Checker<'a> {
@@ -102,7 +115,8 @@ impl<'a> Checker<'a> {
     }
 
     /// Checks `freeze(list)`, which gives the memory of the list as a slice,
-    /// with nothing copied.
+    /// with nothing copied, and `__finish(list)`, which gives the bytes of a
+    /// list of bytes as a text, as the library's `Text` knows them valid.
     pub(super) fn freeze(&mut self, body: &mut Body<'a>, call: &Call, want: &Want) -> Ty {
         let defs = self.defs;
         let plain = call.args.iter().all(|a| a.name.is_none() && !a.after);
@@ -117,14 +131,19 @@ impl<'a> Checker<'a> {
             Want::Ty(Ty::Slice(of)) => Want::Ty(Ty::List(of.clone())),
             _ => Want::Any,
         };
+        let finishes = is_library_finish(call);
         match self.expr(body, &call.args[0].value, &list_want) {
-            Ty::List(of) => Ty::Slice(of),
+            Ty::List(of) if finishes && of[0] == Ty::Int(Int::U8) => Ty::Text,
+            Ty::List(of) if !finishes => Ty::Slice(of),
             Ty::Unknown => Ty::Unknown,
             other => {
                 let given = defs.describe(&other, body.scope);
                 self.errors.push(Error::new(
                     call.args[0].value.pos(),
-                    format!("`freeze` takes a list, and this is {given}"),
+                    format!(
+                        "`{}` takes a list, and this is {given}",
+                        call.callee.trim_start_matches("__")
+                    ),
                 ));
                 Ty::Unknown
             }

@@ -95,6 +95,7 @@ fn literal(ty: &str) -> &'static str {
         "str" => "\"a\"",
         "Nat" => "0",
         "bool" => "true",
+        "List[Byte]" => "[]",
         other => panic!("the test writes no value of `{other}`, so it needs one"),
     }
 }
@@ -126,12 +127,16 @@ fn case(g: &mut generate::Gen) -> Case {
 /// function `f`, which takes the struct or makes it, so that the checker reads
 /// `f`. A struct that no function of its module gives needs a line here.
 fn around(h: &Hidden, takes: bool) -> (String, String) {
-    let (names, got) = match h.name.as_str() {
-        "RawJson" => ("RawJson, raw_json", "raw_json(\"[]\")"),
+    let (names, takes_main) = match h.name.as_str() {
+        "RawJson" => (
+            "RawJson, raw_json",
+            "fn main() ! alloc {\n  match raw_json(\"[]\") {\n    .ok(x) { f(x) }\n    .err(e) { }\n  }\n}\n",
+        ),
+        "Text" => ("Text, text", "fn main() {\n  f(text())\n}\n"),
         other => panic!("the test makes no `{other}`, so it needs a way to"),
     };
     let main = if takes {
-        format!("fn main() ! alloc {{\n  match {got} {{\n    .ok(x) {{ f(x) }}\n    .err(e) {{ }}\n  }}\n}}\n")
+        takes_main.to_string()
     } else {
         "fn main() {\n  x = f()\n}\n".to_string()
     };
