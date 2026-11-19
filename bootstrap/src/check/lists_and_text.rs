@@ -119,11 +119,11 @@ impl<'a> Checker<'a> {
         let slice = self.expr(body, of, &Want::Any);
         for end in [ends.0, ends.1].into_iter().flatten() {
             let wanted = match flexible(end) {
-                true => Want::Ty(Ty::Int(Int::Nat)),
+                true => Want::Ty(Ty::Int(Int::U64)),
                 false => Want::Any,
             };
             match self.expr(body, end, &wanted) {
-                Ty::Int(Int::Nat) | Ty::Unknown => {}
+                Ty::Int(Int::U64) | Ty::Unknown => {}
                 Ty::Int(t) => {
                     self.errors.push(
                         Error::new(
@@ -136,7 +136,7 @@ impl<'a> Checker<'a> {
                         .with_fix("use `convert`"),
                     );
                 }
-                at @ Ty::Flex(_) => self.expect(body, end, &at, &Ty::Int(Int::Nat)),
+                at @ Ty::Flex(_) => self.expect(body, end, &at, &Ty::Int(Int::U64)),
                 other => {
                     let given = defs.describe(&other, body.scope);
                     self.errors.push(Error::new(
@@ -300,12 +300,12 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         let list = self.expr(body, of, &Want::Any);
         let wanted = match flexible(index) {
-            true => Want::Ty(Ty::Int(Int::Nat)),
+            true => Want::Ty(Ty::Int(Int::U64)),
             false => Want::Any,
         };
         let at = self.expr(body, index, &wanted);
         match &at {
-            Ty::Int(Int::Nat) | Ty::Unknown => {}
+            Ty::Int(Int::U64) | Ty::Unknown => {}
             Ty::Int(t) => {
                 self.errors.push(
                     Error::new(
@@ -318,7 +318,7 @@ impl<'a> Checker<'a> {
                     .with_fix("use `convert`"),
                 );
             }
-            Ty::Flex(_) => self.expect(body, index, &at, &Ty::Int(Int::Nat)),
+            Ty::Flex(_) => self.expect(body, index, &at, &Ty::Int(Int::U64)),
             other => {
                 let given = defs.describe(other, body.scope);
                 self.errors.push(Error::new(

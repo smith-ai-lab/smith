@@ -5,8 +5,7 @@ description: Every whole number is a range written a..b, the floats, the names I
 status: partial
 built:
   - "`i8` to `i64` and `u8` to `u64`, `==`, `!=`, `<`, `<=`, `>`, and `>=` between two of one type, and an error where two types meet in an operator"
-  - "`Nat`, written for a parameter, a result, a field, and inside another type, the type of the `size` of a `List` and of a `str` and of a `loop` variable over `0..xs.size`, a literal where one is needed, an error where a `Nat` meets a `u64` or any other type in an operator or is bound to one, `convert` from `u8`, `u16`, `u32`, and `u64` to a `Nat` and from a `Nat` to a `u64`, the saturating and the checked functions, and neither a wrapping function nor a bit operation"
-  - "`Int` and `Byte`, in every file with no import, the same types as `i64` and `u8`, and `use std.bits (u8, u16, u32, u64, i8, i16, i32, i64)`, or any of them, the names of sizes, which a file that writes one with no import is refused"
+  - "`Int`, `Nat`, and `Byte`, in every file with no import, the same types as `i64`, `u64`, and `u8`, `Nat` the type of the `size` of a `List` and of a `str` and of a `loop` variable over `0..xs.size`, and `use std.bits (u8, u16, u32, u64, i8, i16, i32, i64)`, or any of them, the names of sizes, which a file that writes one with no import is refused"
   - "not a range as a type"
 ---
 

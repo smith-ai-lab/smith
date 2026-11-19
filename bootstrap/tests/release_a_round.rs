@@ -88,7 +88,7 @@ impl Round {
                 "  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    ys = build({n}, c{k})\n    sum = wrapping_add(sum, total(ys))\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n"
             ),
             Round::Text => format!(
-                "  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    s = \"{{c{k}}}-{long}\"\n    tsum = wrapping_add(tsum, convert(s.size))\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n"
+                "  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    s = \"{{c{k}}}-{long}\"\n    tsum = wrapping_add(tsum, s.size)\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n"
             ),
             Round::Nested => format!(
                 "  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    var zs: List[List[u64]] = []\n    zs = push(zs, build({n}, c{k}))\n    zs = push(zs, build({n}, wrapping_add(c{k}, 1)))\n    loop z in zs {{ sum = wrapping_add(sum, total(z)) }}\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n"
@@ -109,7 +109,7 @@ impl Round {
                 "  var found{k}: List[u64] = []\n  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    ys = build({n}, c{k})\n    if c{k} == {half} {{\n      found{k} = ys\n      break\n    }}\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n  sum = wrapping_add(sum, total(found{k}))\n"
             ),
             Round::KeptText => format!(
-                "  var last{k}: str = \"\"\n  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    last{k} = \"{{c{k}}}-{long}\"\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n  tsum = wrapping_add(tsum, convert(last{k}.size))\n"
+                "  var last{k}: str = \"\"\n  var c{k}: u64 = 0\n  loop r{k} in 0..{r} {{\n    last{k} = \"{{c{k}}}-{long}\"\n    c{k} = wrapping_add(c{k}, 1)\n  }}\n  tsum = wrapping_add(tsum, last{k}.size)\n"
             ),
         };
         (body, String::new())

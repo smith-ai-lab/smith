@@ -231,7 +231,7 @@ impl<'a> Lowering<'a> {
         for (arg, at) in call.args.iter().zip(places) {
             let (ty, values) = self.expr(out, &arg.value, env);
             if let (Ty::Int(t), None) = (ty, int) {
-                int = Some(if t == Int::Nat { Int::U64 } else { t });
+                int = Some(t);
             }
             args[*at] = Some(values[0]);
         }

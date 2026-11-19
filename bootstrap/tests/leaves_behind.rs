@@ -216,7 +216,7 @@ fn level(k: usize, what: &Level) -> String {
     let below = k - 1;
     match what {
         Level::Pass { temp } => format!(
-            "fn f{k}(a: u64) -> Held ! alloc {{\n  t = build({temp}, a)\n  r = f{below}(wrapping_add(a, convert(t.size)))\n  r\n}}\n\n"
+            "fn f{k}(a: u64) -> Held ! alloc {{\n  t = build({temp}, a)\n  r = f{below}(wrapping_add(a, t.size))\n  r\n}}\n\n"
         ),
         Level::Combine {
             temp,
