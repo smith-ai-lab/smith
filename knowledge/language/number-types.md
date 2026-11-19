@@ -44,6 +44,22 @@ fn never(x: 5..5) -> Nat { 0 }
 
 `never` is accepted, and no call of it is, as no value is a `5..5`.
 
+A range whose second bound is a name below its first holds no number either. `a..n` is every whole number that is at least `a` and below `n`, and when `n` is below `a` there is none, as when the two are equal. Nothing is proved and nothing is checked when the program runs.
+
+```
+fn spare(from: Nat, n: Nat, x: from..n) -> Nat { x }
+```
+
+`spare` is accepted. Where `n` is below `from`, no value is a `from..n`, so it cannot be called there.
+
+A range written with two numbers, the second below the first, is refused, as both are in view and it can only be a mistake. An empty range is written with the two equal.
+
+```
+fn wrong(x: 5..3) -> Nat { 0 }
+```
+
+`wrong` is refused, because `3` is below `5`.
+
 A value goes the other way only where it is shown to fit, or taken in by `narrow` or `clamp`, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says.
 
 ```
