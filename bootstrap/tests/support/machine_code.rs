@@ -128,7 +128,9 @@ fn x86_64_instruction(file: &[u8], start: usize) -> Option<Instruction> {
             let second = file[at];
             at += 1;
             match second {
-                0x05 => (false, 0, Kind::Other),
+                // `syscall` and `cpuid`, and `xgetbv`, which has a ModRM byte.
+                0x05 | 0xa2 => (false, 0, Kind::Other),
+                0x01 => (true, 0, Kind::Other),
                 0x80..=0x8f => {
                     let to = (at + 4) as i64 + i32_at(file, at);
                     return Some(Instruction {

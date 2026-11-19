@@ -11,6 +11,7 @@ use crate::scalar::{
     System as Call, Type, Value,
 };
 
+mod level;
 mod vector;
 
 /// A register, by its number in the instruction encoding.
@@ -1048,6 +1049,7 @@ pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     }
     asm.align_stack();
     asm.reserve_stack(S::RESERVED);
+    let lines = level::check::<S>(&mut asm, fail);
     if takes {
         S::arguments_by_call(&mut asm);
     }
@@ -1062,6 +1064,7 @@ pub fn code<S: System>(program: &Program) -> (Asm, Vec<(usize, &[u8])>) {
     let data = texts
         .into_iter()
         .zip(program.data.iter().map(Vec::as_slice))
+        .chain(lines)
         .collect();
     (asm, data)
 }
