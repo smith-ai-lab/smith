@@ -23,6 +23,10 @@ pub const ONCE: &[Test] = &[
         appending_a_text_adds_its_bytes,
     ),
     (
+        "a_text_of_any_length_is_added_whole_after_what_the_list_holds",
+        a_text_of_any_length_is_added_whole_after_what_the_list_holds,
+    ),
+    (
         "appending_asks_for_memory_once_however_many_elements_it_adds",
         appending_asks_for_memory_once_however_many_elements_it_adds,
     ),
@@ -98,6 +102,27 @@ fn appending_a_text_adds_its_bytes() {
         let expected: String = s.bytes().chain(s.bytes()).map(|b| format!("{b}\n")).collect();
         assert_eq!(prints(&source), expected, "for {source}");
     });
+}
+
+/// A text of each length from 0 to 40 bytes, each made of bytes of its own
+/// to tell a byte left out or moved, is added after the ones before it, in a
+/// list that has room for some and not for others.
+fn a_text_of_any_length_is_added_whole_after_what_the_list_holds() {
+    let mut body = String::new();
+    let mut expected = String::new();
+    let mut total = 0;
+    for n in 0..=40usize {
+        let text: String = (0..n).map(|k| char::from(b'a' + ((k * 7 + n) % 26) as u8)).collect();
+        body += &format!("  xs = append(xs, \"{text}\")\n");
+        for b in text.bytes() {
+            expected += &format!("{b}\n");
+        }
+        total += n;
+    }
+    let source = format!(
+        "use std.console (console, print)\nuse std.list (append)\n\nfn main() ! console, alloc {{\n  var xs: List[Byte] = []\n{body}  loop v in xs {{ print(\"{{v}}\") }}\n  print(\"{{xs.size}}\")\n}}\n"
+    );
+    assert_eq!(prints(&source), format!("{expected}{total}\n"), "for {source}");
 }
 
 /// An empty list given a text of any length asks for memory once, for room
