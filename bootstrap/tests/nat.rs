@@ -102,19 +102,20 @@ fn a_literal_is_a_nat_where_one_is_needed_and_is_refused_when_it_does_not_fit() 
     }
 }
 
-/// `xs.size` and `s.size` have the type `Nat`: they are bound to a `Nat`, and
-/// bound to any other whole number type they are refused with one error.
+/// `xs.size` and `s.size` have the type `Nat`: a function gives one as a `Nat`,
+/// and as any other whole number type it is refused with one error, as the
+/// size of a list or a text that a function takes is not shown to fit.
 fn the_size_of_a_list_and_of_a_text_is_a_nat_and_no_other_type() {
     generate::check(3631, 6, |g: &mut Gen| g.below(6), |n| {
         let items = vec!["7"; *n].join(", ");
         let text = "a".repeat(*n);
-        for (given, what) in [
-            (format!("xs: List[Byte] = [{items}]"), "xs.size"),
-            (format!("xs: str = \"{text}\""), "xs.size"),
+        for (given, ty_of_xs) in [
+            (format!("xs: List[Byte] = [{items}]"), "List[Byte]"),
+            (format!("xs: str = \"{text}\""), "str"),
         ] {
             for ty in whole() {
                 let source = with_header(format!(
-                    "fn main() ! console, alloc {{\n  {given}\n  k: {} = {what}\n  print(\"{{k}}\")\n}}\n",
+                    "fn size_of(xs: {ty_of_xs}) -> {} {{ xs.size }}\n\nfn main() ! console, alloc {{\n  {given}\n  print(\"{{size_of(xs)}}\")\n}}\n",
                     ty.name
                 ));
                 if ty.name == "u64" {

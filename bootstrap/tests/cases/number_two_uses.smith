@@ -6,7 +6,7 @@ fn byte(n: Byte) -> Byte { n }
 fn word(n: i8) -> i8 { n }
 
 fn main() ! console {
-  x = 10
+  x = 200
   byte(x)
   word(x)
 }
