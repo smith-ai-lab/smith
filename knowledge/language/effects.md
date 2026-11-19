@@ -107,6 +107,18 @@ This prints `hi`, because `main` allows `console`. With `fn main() {` in its pla
 
 A function that receives a lambda never lists the effects of the lambda, and no signature can say "whatever the lambda does". There are no effect variables. This is sound because the function that receives a lambda can call it and pass it on, and cannot store or return it, so the lambda runs only inside the call it is written at. A [lambda that is kept](lambdas.md#where-a-lambda-may-go) is a function stored in a value, and states its effects as the next section says.
 
+A function with a name that is passed is checked the same way, since passing `hi` is passing `fn() { hi() }`.
+
+```
+fn hi() ! console { print("hi") }
+
+fn main() ! console {
+  do(hi)
+}
+```
+
+This prints `hi`. The effects of `hi` are required of `main`, where its name is written, and `do` states none. With `fn main() {` it is refused, as `hi` needs `console` and `main` does not declare it. The compiler does not build this yet: it refuses every function with an effect that is passed by name, so no words are quoted.
+
 ## A function stored in a value
 
 A function stored in a value states its effects in its type, after the result as in a signature, and is pure when none are written.
@@ -118,7 +130,7 @@ struct Button {
 }
 ```
 
-`on_press` is a function that may use the console. A field of type `fn()` would be pure.
+`on_press` is a function that may use the console. A field of type `fn()` would be pure. What is stored has exactly the effects its type states: `Button(label: "ok", on_press: hi)` is accepted for `hi` above, and a function that prints is refused for a field of type `fn()`, because whoever calls the field later is checked against the type alone. Only a function that is passed has its effects checked where it is written.
 
 ## The forms
 
