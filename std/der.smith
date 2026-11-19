@@ -1,5 +1,5 @@
-use std.bits (bit_and, shift_right)
-use std.int (wrapping_add, wrapping_mul)
+use std.bits (bit_and, shift_left, shift_right)
+use std.int (wrapping_add, wrapping_mul, wrapping_sub)
 use std.list (push)
 use std.utf8 (utf8)
 
@@ -207,5 +207,28 @@ pub fn object(of: Value) -> Result[List[Nat], str] ! alloc {
       .ok(arcs)
     }
     _ { .err("a value that is not an object identifier") }
+  }
+}
+
+// The bytes of a bit string and how many bits at the end of the last byte are
+// left over, which DER writes as zero.
+pub fn bits(of: Value) -> Result[(Slice[Byte], Nat), str] {
+  match of.tag {
+    .bits {
+      c = of.bytes
+      if c.size == 0 { return .err("a bit string of no bytes") }
+      by = c[0]
+      if by > 7 { return .err("a bit string with more than seven bits left over") }
+      if c.size == 1 {
+        if by != 0 { return .err("a bit string with bits left over and no byte to leave them in") }
+        return .ok((c[1..], 0))
+      }
+      one: Byte = 1
+      mask = wrapping_sub(shift_left(one, by), 1)
+      if bit_and(c[c.size - 1], mask) != 0 { return .err("a bit string whose bits left over are not zero") }
+      left: Nat = by
+      .ok((c[1..], left))
+    }
+    _ { .err("a value that is not a bit string") }
   }
 }
