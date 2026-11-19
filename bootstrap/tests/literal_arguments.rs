@@ -7,14 +7,15 @@ use smith::scalar;
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 
 /// The whole number types, with their names, smallest and largest values.
 const INTS: [(&str, i128, i128); 8] = [
     ("i8", i8::MIN as i128, i8::MAX as i128),
     ("i16", i16::MIN as i128, i16::MAX as i128),
     ("i32", i32::MIN as i128, i32::MAX as i128),
-    ("i64", i64::MIN as i128, i64::MAX as i128),
-    ("u8", 0, u8::MAX as i128),
+    ("Int", i64::MIN as i128, i64::MAX as i128),
+    ("Byte", 0, u8::MAX as i128),
     ("u16", 0, u16::MAX as i128),
     ("u32", 0, u32::MAX as i128),
     ("u64", 0, u64::MAX as i128),
@@ -139,7 +140,7 @@ impl Call {
             let text = literal(self.values[i], how);
             args.push(match how {
                 Written::Bound => {
-                    binds.push_str(&format!("  v{i}: i64 = {text}\n"));
+                    binds.push_str(&format!("  v{i}: Int = {text}\n"));
                     format!("v{i}")
                 }
                 Written::Passed => format!("same({text})"),
@@ -150,6 +151,9 @@ impl Call {
     }
 }
 
+/// What the programs that print import.
+const USES: &str = "use std.console (console, print)\n\n";
+
 const SAME: &str = "fn same[T](x: take T) -> T { x }\n\n";
 
 /// A call of a function that gives back one of its arguments, whose
@@ -157,7 +161,7 @@ const SAME: &str = "fn same[T](x: take T) -> T { x }\n\n";
 fn picking(case: &Call, literals: bool) -> String {
     let (binds, args) = case.arguments(literals);
     format!(
-        "{SAME}fn pick{} -> {} {{ {} }}\n\nfn main() ! console, alloc {{\n{binds}  print(\"{{pick({args})}}\")\n}}\n",
+        "{USES}{SAME}fn pick{} -> {} {{ {} }}\n\nfn main() ! console, alloc {{\n{binds}  print(\"{{pick({args})}}\")\n}}\n",
         case.giving_back(),
         NAMES[case.chosen],
         PARAMS[case.chosen],
@@ -166,7 +170,7 @@ fn picking(case: &Call, literals: bool) -> String {
 
 fn a_literal_for_a_type_parameter_is_an_i64_as_a_binding_of_it_is() {
     // The program of the issue.
-    let issue = "fn f[A, B](a: A, b: B) -> u8 { 1 }\n\nfn main() ! console, alloc { print(\"{f(1, 1)}\") }\n";
+    let issue = "use std.console (console, print)\n\nfn f[A, B](a: A, b: B) -> Byte { 1 }\n\nfn main() ! console, alloc { print(\"{f(1, 1)}\") }\n";
     let program = lower(issue.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(scalar::run(&program).stdout, b"1\n");
 
@@ -220,11 +224,11 @@ fn a_literal_for_a_type_parameter_that_needs_a_trait_compiles_when_i64_has_it() 
         // The unused type of a trait that `i64` does not have, so that the
         // literal is not the only thing that could be chosen.
         let mut source = format!(
-            "{SAME}trait Show[T] {{\n  fn show(x: T) -> str\n}}\n\n\
-             impl Show[u8] {{\n  fn show(x: u8) -> str {{ \"u8\" }}\n}}\n\n"
+            "{USES}{SAME}trait Show[T] {{\n  fn show(x: T) -> str\n}}\n\n\
+             impl Show[Byte] {{\n  fn show(x: Byte) -> str {{ \"Byte\" }}\n}}\n\n"
         );
         if case.i64_has_it {
-            source.push_str("impl Show[i64] {\n  fn show(x: i64) -> str { \"i64\" }\n}\n\n");
+            source.push_str("impl Show[Int] {\n  fn show(x: Int) -> str { \"Int\" }\n}\n\n");
         }
         source.push_str(&format!(
             "fn named[{}]({}) -> str{requires}\n{{\n  show({})\n}}\n\n",
@@ -238,16 +242,18 @@ fn a_literal_for_a_type_parameter_that_needs_a_trait_compiles_when_i64_has_it() 
         source.push_str(&format!("  print(named({args}))\n}}\n"));
         match (lower(source.as_bytes()), case.i64_has_it) {
             (Ok(program), true) => {
-                assert_eq!(scalar::run(&program).stdout, b"i64\n", "{source}")
+                assert_eq!(scalar::run(&program).stdout, b"Int\n", "{source}")
             }
             (Err(e), true) => panic!("{e:?}\n{source}"),
             (Ok(_), false) => panic!("builds\n{source}"),
             (Err(found), false) => {
                 assert_eq!(found.len(), 1, "{found:?}\n{source}");
                 assert_eq!(found[0].pos, Pos { line, col: 9 }, "{}", found[0]);
-                for name in ["Show", "`i64`"] {
-                    assert!(found[0].message.contains(name), "{}", found[0]);
-                }
+                assert!(found[0].message.contains("Show"), "{}", found[0]);
+                // The compiler names the type `Int` when a name is bound to
+                // it with the type written, and `i64` when only a literal is.
+                let message = &found[0].message;
+                assert!(message.contains("`Int`") || message.contains("`i64`"), "{}", found[0]);
             }
         }
     });
@@ -272,13 +278,14 @@ fn sum(g: &mut Gen) -> Sum {
 fn two_literals_for_the_functions_of_a_trait_with_an_out_type_are_i64() {
     generate::check(2112, 40, sum, |case| {
         let mut source = String::from(
-            "trait Plus[A, B, out C] {\n  fn plus(a: A, b: B) -> C\n}\n\n\
-             impl Plus[u8, u8, u8] {\n  fn plus(a: u8, b: u8) -> u8 { wrapping_add(a, b) }\n}\n\n",
+            "use std.console (console, print)\nuse std.int (wrapping_add)\n\n\
+             trait Plus[A, B, out C] {\n  fn plus(a: A, b: B) -> C\n}\n\n\
+             impl Plus[Byte, Byte, Byte] {\n  fn plus(a: Byte, b: Byte) -> Byte { wrapping_add(a, b) }\n}\n\n",
         );
         if case.i64_has_it {
             source.push_str(
-                "impl Plus[i64, i64, i64] {\n  \
-                 fn plus(a: i64, b: i64) -> i64 { wrapping_add(a, b) }\n}\n\n",
+                "impl Plus[Int, Int, Int] {\n  \
+                 fn plus(a: Int, b: Int) -> Int { wrapping_add(a, b) }\n}\n\n",
             );
         }
         source.push_str("fn main() ! console, alloc {\n");
@@ -309,13 +316,13 @@ const ARGUMENTS: [&str; 5] = ["7", "-3", "\"s\"", "true", "same(2)"];
 /// Where a call's result is put, with a type that may be none it gives.
 const PLACES: [&str; 8] = [
     "{}",
-    "x: u8 = {}",
+    "x: Byte = {}",
     "x: str = {}",
     "takes({})",
     "x == {}",
     "{} == x",
     "takes(same({}))",
-    "(a, b): (u8, bool) = {}",
+    "(a, b): (Byte, bool) = {}",
 ];
 
 /// A call of a function of type parameters and a `str`, with an argument of
@@ -332,11 +339,11 @@ fn anything(g: &mut Gen) -> String {
     };
     let place = PLACES[g.below(PLACES.len())].replace("{}", &call);
     format!(
-        "{SAME}fn pair[A, B](a: A, b: B) -> u8 {{ 1 }}\n\n\
+        "use std.console (console)\n\n{SAME}fn pair[A, B](a: A, b: B) -> Byte {{ 1 }}\n\n\
          fn both[A, B](a: take A, b: take B) -> (A, B) {{ (a, b) }}\n\n\
          fn f[A, B: Discard, C: Discard](a: take A, b: take B, c: take C, s: str) -> A {{ a }}\n\n\
-         fn takes(n: u8) -> u8 {{ n }}\n\n\
-         fn main() ! console, alloc {{\n  x: u8 = 1\n  {place}\n}}\n"
+         fn takes(n: Byte) -> Byte {{ n }}\n\n\
+         fn main() ! console, alloc {{\n  x: Byte = 1\n  {place}\n}}\n"
     )
 }
 
@@ -481,16 +488,24 @@ impl Placed {
                 (holder, "  print(\"{back()}\")\n".to_string())
             }
         };
-        format!("{SHAPES}{items}fn main() ! console, alloc {{\n{main}}}\n")
+        let int: Vec<&str> = match self.place {
+            Place::Operand if OPERATORS[self.op].starts_with("wrapping") => vec![OPERATORS[self.op]],
+            _ => vec![],
+        };
+        let uses = header(
+            &[("std.console", &["console", "print"]), ("std.int", &int[..])],
+            ty,
+        );
+        format!("{uses}{SHAPES}{items}fn main() ! console, alloc {{\n{main}}}\n")
     }
 }
 
 fn a_literal_for_a_type_parameter_takes_the_type_the_place_of_the_result_needs() {
     // The program of the issue.
-    let issue = "fn id[A](a: take A) -> A { a }\n\nfn takes(n: u8) -> u8 { n }\n\n\
+    let issue = "use std.bits (i32)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\nfn id[A](a: take A) -> A { a }\n\nfn takes(n: Byte) -> Byte { n }\n\n\
         fn pair[A, B](a: take A, b: take B) -> (A, B) { (a, b) }\n\n\
-        fn main() ! console, alloc {\n  y: u8 = id(7)\n  (r, s): (u8, i32) = pair(3, 4)\n  \
-        k: u8 = 200\n  print(\"{y} {r} {s} {takes(id(7))} {wrapping_add(k, id(5))}\")\n}\n";
+        fn main() ! console, alloc {\n  y: Byte = id(7)\n  (r, s): (Byte, i32) = pair(3, 4)\n  \
+        k: Byte = 200\n  print(\"{y} {r} {s} {takes(id(7))} {wrapping_add(k, id(5))}\")\n}\n";
     let program = lower(issue.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(scalar::run(&program).stdout, b"7 3 4 7 205\n");
 

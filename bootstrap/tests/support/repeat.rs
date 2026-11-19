@@ -141,5 +141,33 @@ pub fn repeated(lexer: &str, copies: usize, root: &str, count: &str) -> String {
         out.push_str(&format!("  print(\"{{count_{copy}()}}\")\n"));
     }
     out.push_str("}\n");
+    used_imports_only(&out)
+}
+
+/// `text` with the names of its `use` lines that nothing else in it writes
+/// taken away, as a program that is cut down imports what it still uses.
+fn used_imports_only(text: &str) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let rest: String = (lines.iter())
+        .filter(|l| !l.starts_with("use "))
+        .copied()
+        .collect();
+    let words: Vec<&str> = rest
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .collect();
+    let mut out = String::new();
+    for line in lines {
+        let Some(import) = line.trim_end().strip_prefix("use ") else {
+            out.push_str(line);
+            continue;
+        };
+        let (module, names) = import.split_once(" (").expect("a use of names");
+        let kept: Vec<&str> = (names.trim_end_matches(')').split(", "))
+            .filter(|n| words.contains(n))
+            .collect();
+        if !kept.is_empty() {
+            out.push_str(&format!("use {module} ({})\n", kept.join(", ")));
+        }
+    }
     out
 }

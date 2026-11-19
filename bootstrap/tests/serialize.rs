@@ -14,6 +14,7 @@ use smith::{check, lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 use crate::programs::pos_after;
 
 pub const ONCE: &[Test] = &[
@@ -69,13 +70,42 @@ fn prints(source: &str) -> String {
     String::from_utf8(scalar::run(&program).stdout).expect("text")
 }
 
-const IMPORT: &str = "use std.serialize (Serialize, Writer, write)\n\n";
+/// The names of the library that the programs of the generators use, each
+/// with the module it is in.
+const KNOWN: &[(&str, &str)] = &[
+    ("std.deserialize", "Deserialize"),
+    ("std.deserialize", "Problem"),
+    ("std.deserialize", "ReadError"),
+    ("std.deserialize", "Reader"),
+    ("std.deserialize", "read"),
+    ("std.int", "wrapping_add"),
+    ("std.serialize", "Serialize"),
+    ("std.serialize", "Writer"),
+    ("std.serialize", "write"),
+    ("std.utf8", "utf8"),
+];
+
+/// The program of `rest`, opened with the `use` lines it needs: `imports`,
+/// which the test names, `console` and `print`, each name of `KNOWN` that
+/// `rest` writes, and the sizes it writes.
+pub fn with_import(imports: &[(&str, &[&str])], rest: &str) -> String {
+    let words: Vec<&str> = rest.split(|c: char| !(c.is_alphanumeric() || c == '_')).collect();
+    let mut all: Vec<(&str, Vec<&str>)> = imports.iter().map(|(m, n)| (*m, n.to_vec())).collect();
+    all.push(("std.console", vec!["console", "print"]));
+    for (module, name) in KNOWN {
+        if words.contains(name) {
+            all.push((*module, vec![*name]));
+        }
+    }
+    let all: Vec<(&str, &[&str])> = all.iter().map(|(m, n)| (*m, &n[..])).collect();
+    format!("{}{rest}", header(&all, rest))
+}
 
 /// The functions of `Writer`, which each take the writer and the arguments
 /// after it, and say what a writer of each kind does.
 const FUNCTIONS: &[(&str, &str)] = &[
     ("boolean", "value: bool"),
-    ("signed", "value: i64"),
+    ("signed", "value: Int"),
     ("unsigned", "value: u64"),
     ("text", "value: str"),
     ("nothing", ""),
@@ -91,7 +121,7 @@ const FUNCTIONS: &[(&str, &str)] = &[
     ("case", "of: str, name: str, holds: bool"),
     ("map", "size: Nat"),
     ("end_map", ""),
-    ("raw", "of: str, bytes: Slice[u8]"),
+    ("raw", "of: str, bytes: Slice[Byte]"),
 ];
 
 /// An `impl` of `Writer` for `name`, which gives each function's body, from
@@ -146,10 +176,12 @@ fn count() -> String {
 // What the issue says, as it says it.
 
 fn a_struct_writes_its_name_and_each_field_in_order() {
-    let source = format!(
-        "{IMPORT}{}struct Point {{
-  x: i64
-  y: i64
+    let source = with_import(
+        &[],
+        &format!(
+            "{}struct Point {{
+  x: Int
+  y: Int
 }}
 
 fn main() ! console, alloc {{
@@ -157,7 +189,8 @@ fn main() ! console, alloc {{
   print(l.lines)
 }}
 ",
-        log()
+            log()
+        ),
     );
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
@@ -170,9 +203,12 @@ fn main() ! console, alloc {{
 /// `raw` names the format that its bytes are in, and a writer of another format
 /// writes them as a text, as `text` does.
 fn a_rawjson_written_to_a_writer_of_another_format_is_a_text() {
-    let source = format!(
-        "use std.serialize (Serialize, Writer, write)\nuse std.json (RawJson, raw_json)\n\n{}struct Call {{\n  args: RawJson\n}}\n\nfn main() ! console, alloc {{\n  match raw_json(\"[1.50, 1e400]\") {{\n    .ok(r) {{\n      l = write(Call(args: r), Log(lines: \"\"))\n      print(l.lines)\n    }}\n    .err(e) {{ print(\"err\") }}\n  }}\n}}\n",
-        log()
+    let source = with_import(
+        &[("std.json", &["RawJson", "raw_json"])],
+        &format!(
+            "{}struct Call {{\n  args: RawJson\n}}\n\nfn main() ! console, alloc {{\n  match raw_json(\"[1.50, 1e400]\") {{\n    .ok(r) {{\n      l = write(Call(args: r), Log(lines: \"\"))\n      print(l.lines)\n    }}\n    .err(e) {{ print(\"err\") }}\n  }}\n}}\n",
+            log()
+        ),
     );
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
@@ -209,8 +245,8 @@ pub const INTS: &[(&str, i128, i128)] = &[
     ("i8", -128, 127),
     ("i16", -32768, 32767),
     ("i32", -2147483648, 2147483647),
-    ("i64", i64::MIN as i128, i64::MAX as i128),
-    ("u8", 0, 255),
+    ("Int", i64::MIN as i128, i64::MAX as i128),
+    ("Byte", 0, 255),
     ("u16", 0, 65535),
     ("u32", 0, 4294967295),
     ("u64", 0, u64::MAX as i128),
@@ -430,11 +466,11 @@ pub fn value(g: &mut Gen, defs: &Defs, t: &Ty) -> (String, Vec<String>) {
 /// The types a program that writes a value needs: the definitions, the
 /// struct that writes itself, and the one that cannot be written.
 fn definitions(defs: &Defs, own_impl: bool) -> String {
-    let mut out = format!("{}struct Celsius {{\n  degrees: i64\n}}\n\n", defs.source());
+    let mut out = format!("{}struct Celsius {{\n  degrees: Int\n}}\n\n", defs.source());
     if own_impl {
         out.push_str(
             "impl Serialize[Celsius] {
-  fn write[W: Writer](value: Celsius, to: take W) -> W ! alloc { signed(to, value.degrees) }
+  fn write[W: Writer](value: Celsius, to: take W) -> W ! alloc { Writer.signed(to, value.degrees) }
 }
 
 ",
@@ -467,10 +503,13 @@ fn case(g: &mut Gen, parts: Parts, own_impl: bool, writer: &str, to: &str) -> Ca
         top = Ty::Tuple(vec![top, Ty::Own]);
     }
     let (value, calls) = value(g, &defs, &top);
-    let head = format!(
-        "{IMPORT}{writer}{}fn main() ! console, alloc {{\n  v: {} = {value}\n  l = ",
-        definitions(&defs, own_impl),
-        defs.name(&top)
+    let head = with_import(
+        &[("std.serialize", &["write"])],
+        &format!(
+            "{writer}{}fn main() ! console, alloc {{\n  v: {} = {value}\n  l = ",
+            definitions(&defs, own_impl),
+            defs.name(&top)
+        ),
     );
     let at = pos_after(&head);
     let source = format!("{head}write(v, {to})\n");
@@ -594,10 +633,13 @@ fn writing_a_list_asks_for_no_memory_but_the_writers() {
                 "  if xs.size == {n} {{ print(\"ok\") }} else {{ print(\"no\") }}\n"
             )
         };
-        format!(
-            "{IMPORT}{}fn main() ! console, alloc {{\n  xs: List[u32] = [{}]\n{tail}}}\n",
-            count(),
-            items.join(", ")
+        with_import(
+            &[],
+            &format!(
+                "{}fn main() ! console, alloc {{\n  xs: List[u32] = [{}]\n{tail}}}\n",
+                count(),
+                items.join(", ")
+            ),
         )
     };
     for n in [0, 1, 5, 40] {
@@ -617,63 +659,44 @@ fn writing_a_list_asks_for_no_memory_but_the_writers() {
 // Where `Serialize` and `Writer` are.
 
 fn serialize_and_writer_are_imported_with_use_and_are_not_in_the_prelude() {
-    let writes = "struct Point {
-  x: i64
-}
-
-fn main() ! console, alloc {
-  l = write(Point(x: 1), 0)
-}
-";
+    let writes = "use std.console (console)\n\nstruct Point {\n  x: Int\n}\n\nfn main() ! console, alloc {\n  l = write(Point(x: 1), 0)\n}\n";
     // No name of the module is known to a program that does not import it.
     let found = errors(writes);
     assert!(
         found.iter().any(|e| e.message.contains("`write`")),
         "{found:?}"
     );
-    let bound = "struct Count {
-  n: u64
-}
-
-fn show[W: Writer](w: take W) -> W ! alloc { w }
-
-fn main() ! alloc {
-  c = show(Count(n: 0))
-}
-";
+    let body = "struct Count {\n  n: u64\n}\n\nfn show[W: Writer](w: take W) -> W ! alloc { w }\n\nfn main() ! alloc {\n  c = show(Count(n: 0))\n}\n";
+    let bound = format!("use std.bits (u64)\n\n{body}");
+    let bound = bound.as_str();
     let found = errors(bound);
     assert!(
         found.iter().any(|e| e.message.contains("`Writer`")),
         "{found:?}"
     );
     // With `use`, the same program asks for a writer, and is given one.
-    let imported = format!("{IMPORT}{bound}");
+    let imported = format!("use std.bits (u64)\nuse std.serialize (Serialize, Writer, write)\n\n{body}");
     let found = errors(&imported);
     assert!(
         found.iter().any(|e| e.message.contains("`Writer`") && e.message.contains("`Count`")),
         "{found:?}"
     );
-    let written = format!("{IMPORT}{}{}", count(), &bound[bound.find("fn show").unwrap()..]);
+    let written = with_import(&[], &format!("{}{}", count(), &body[body.find("fn show").unwrap()..]));
     let found = errors(&written);
     assert!(found.is_empty(), "{found:?}\n{written}");
 }
 
 fn a_program_that_never_writes_a_value_is_the_program_it_was() {
-    let base = "struct Point {
-  x: i64
-  y: i64
-}
-
-fn main() ! console, alloc {
-  p = Point(x: 3, y: 4)
-  print(\"{p.x} {p.y}\")
-}
-";
+    let items = "struct Point {\n  x: Int\n  y: Int\n}\n\nfn main() ! console, alloc {\n  p = Point(x: 3, y: 4)\n  print(\"{p.x} {p.y}\")\n}\n";
+    let base = format!("use std.console (console, print)\n\n{items}");
     // The same program, with the module imported and everything that writes
     // a value defined, and a function that writes that nothing calls.
-    let extended = format!(
-        "{IMPORT}{}fn unused(p: Point) -> Log ! alloc {{ write(p, Log(lines: \"\")) }}\n\n{base}",
-        log()
+    let extended = with_import(
+        &[],
+        &format!(
+            "{}fn unused(p: Point) -> Log ! alloc {{ write(p, Log(lines: \"\")) }}\n\n{items}",
+            log()
+        ),
     );
     let (a, b) = (lower(base.as_bytes()).unwrap(), lower(extended.as_bytes()).unwrap());
     assert_eq!(a, b);

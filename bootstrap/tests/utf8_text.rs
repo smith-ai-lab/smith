@@ -11,6 +11,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 
 pub const ONCE: &[Test] = &[
     (
@@ -83,7 +84,7 @@ fn text(g: &mut Gen) -> String {
 fn a_text_counts_the_bytes_of_its_utf8_and_is_read_by_a_byte_at_each_place() {
     generate::check(300, 60, text, |s| {
         let source = format!(
-            "fn main() ! console, alloc {{\n  s: str = \"{s}\"\n  print(\"{{s.size}}\")\n  loop i in 0..s.size {{ print(\"{{s[i]}}\") }}\n}}\n"
+            "use std.console (console, print)\n\nfn main() ! console, alloc {{\n  s: str = \"{s}\"\n  print(\"{{s.size}}\")\n  loop i in 0..s.size {{ print(\"{{s[i]}}\") }}\n}}\n"
         );
         let mut lines = vec![s.len().to_string()];
         lines.extend(s.bytes().map(|b| b.to_string()));
@@ -94,7 +95,7 @@ fn a_text_counts_the_bytes_of_its_utf8_and_is_read_by_a_byte_at_each_place() {
 fn count_spaces_of_a_text_is_the_number_of_its_spaces() {
     generate::check(301, 60, text, |s| {
         let source = format!(
-            "fn count_spaces(s: str) -> u64 {{\n  var n: u64 = 0\n  loop i in 0..s.size {{\n    if s[i] == ' ' {{ n = wrapping_add(n, 1) }}\n  }}\n  n\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{count_spaces(\"{s}\")}}\")\n}}\n"
+            "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\n\nfn count_spaces(s: str) -> u64 {{\n  var n: u64 = 0\n  loop i in 0..s.size {{\n    if s[i] == ' ' {{ n = wrapping_add(n, 1) }}\n  }}\n  n\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{count_spaces(\"{s}\")}}\")\n}}\n"
         );
         let spaces = s.bytes().filter(|b| *b == b' ').count();
         prints(&source, vec![spaces.to_string()]);
@@ -149,7 +150,7 @@ fn utf8_gives_the_text_of_valid_bytes_and_the_first_place_that_is_not() {
     generate::check(302, 150, bytes, |case| {
         let items: Vec<String> = case.bytes.iter().map(u8::to_string).collect();
         let source = format!(
-            "fn main() ! console, alloc {{\n  b: List[u8] = [{}]\n  match utf8(freeze(b)) {{\n    .ok(t) {{\n      print(\"ok {{t.size}}\")\n      loop i in 0..t.size {{ print(\"{{t[i]}}\") }}\n    }}\n    .err(e) {{ print(\"err {{e.at}}\") }}\n  }}\n}}\n",
+            "use std.console (console, print)\nuse std.utf8 (utf8)\n\nfn main() ! console, alloc {{\n  b: List[Byte] = [{}]\n  match utf8(freeze(b)) {{\n    .ok(t) {{\n      print(\"ok {{t.size}}\")\n      loop i in 0..t.size {{ print(\"{{t[i]}}\") }}\n    }}\n    .err(e) {{ print(\"err {{e.at}}\") }}\n  }}\n}}\n",
             items.join(", ")
         );
         let lines = match case.broken {
@@ -165,7 +166,7 @@ fn utf8_gives_the_text_of_valid_bytes_and_the_first_place_that_is_not() {
 }
 
 fn the_examples_of_the_page_on_text_hold() {
-    let source = "fn count_spaces(s: str) -> u64 {\n  var n: u64 = 0\n  loop i in 0..s.size {\n    if s[i] == ' ' { n = wrapping_add(n, 1) }\n  }\n  n\n}\n\nfn show(r: Result[str, Utf8Error]) ! console, alloc {\n  match r {\n    .ok(t) { print(\"ok {t}\") }\n    .err(e) { print(\"err {e.at}\") }\n  }\n}\n\nfn main() ! console, alloc {\n  print(\"{count_spaces(\"a b c\")}\")\n  print(\"{\"é\".size}\")\n  show(utf8(\"hi\"))\n  b: List[u8] = [255, 104]\n  show(utf8(freeze(b)))\n}\n";
+    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.utf8 (Utf8Error, utf8)\n\nfn count_spaces(s: str) -> u64 {\n  var n: u64 = 0\n  loop i in 0..s.size {\n    if s[i] == ' ' { n = wrapping_add(n, 1) }\n  }\n  n\n}\n\nfn show(r: Result[str, Utf8Error]) ! console, alloc {\n  match r {\n    .ok(t) { print(\"ok {t}\") }\n    .err(e) { print(\"err {e.at}\") }\n  }\n}\n\nfn main() ! console, alloc {\n  print(\"{count_spaces(\"a b c\")}\")\n  print(\"{\"é\".size}\")\n  show(utf8(\"hi\"))\n  b: List[Byte] = [255, 104]\n  show(utf8(freeze(b)))\n}\n";
     prints(
         source,
         ["2", "2", "ok hi", "err 0"].map(String::from).to_vec(),
@@ -182,12 +183,13 @@ fn an_index_of_a_text_compiles_exactly_when_an_index_of_a_list_does_with_the_sam
     ];
     let mut compiled = 0;
     for shape in shapes {
+        let uses = header(&[("std.console", &["console", "print"])], shape);
         let of = |ty: &str, arg: &str| {
             format!(
-                "fn show(xs: {ty}) ! console, alloc {{\n{shape}}}\n\nfn main() ! console, alloc {{ show({arg}) }}\n"
+                "{uses}fn show(xs: {ty}) ! console, alloc {{\n{shape}}}\n\nfn main() ! console, alloc {{ show({arg}) }}\n"
             )
         };
-        let list = refused(&of("List[u8]", "[1, 2]"));
+        let list = refused(&of("List[Byte]", "[1, 2]"));
         let text = refused(&of("str", "\"ab\""));
         assert_eq!(list, text, "for {shape}");
         compiled += usize::from(text.is_empty());
@@ -224,10 +226,10 @@ fn costs(source: &str) -> (usize, usize, usize) {
 fn the_size_and_an_index_of_a_text_cost_what_they_cost_on_a_list() {
     let of = |ty: &str, arg: &str| {
         format!(
-            "fn total(xs: {ty}) -> u8 {{\n  var sum: u8 = 0\n  loop i in 0..xs.size {{ sum = wrapping_add(sum, xs[i]) }}\n  sum\n}}\n\nfn main() ! alloc {{\n  total({arg})\n}}\n"
+            "use std.int (wrapping_add)\n\nfn total(xs: {ty}) -> Byte {{\n  var sum: Byte = 0\n  loop i in 0..xs.size {{ sum = wrapping_add(sum, xs[i]) }}\n  sum\n}}\n\nfn main() ! alloc {{\n  total({arg})\n}}\n"
         )
     };
-    let list = costs(&of("List[u8]", "[1, 2, 3]"));
+    let list = costs(&of("List[Byte]", "[1, 2, 3]"));
     let text = costs(&of("str", "\"abc\""));
     assert_eq!(list, text, "list then text");
     assert_ne!(text, (0, 0, 0), "nothing was counted");
@@ -236,7 +238,7 @@ fn the_size_and_an_index_of_a_text_cost_what_they_cost_on_a_list() {
 fn a_text_given_where_bytes_are_expected_is_neither_called_nor_copied() {
     generate::check(305, 40, text, |s| {
         let source = format!(
-            "fn total(b: List[u8]) -> Nat {{ b.size }}\n\nfn main() ! console {{\n  if total(\"{s}\") == {} {{ print(\"same\") }}\n}}\n",
+            "use std.console (console, print)\n\nfn total(b: List[Byte]) -> Nat {{ b.size }}\n\nfn main() ! console {{\n  if total(\"{s}\") == {} {{ print(\"same\") }}\n}}\n",
             s.len()
         );
         let program = lower(source.as_bytes()).expect("compiles");
@@ -259,7 +261,7 @@ fn utf8_copies_nothing() {
             })
             .count()
     };
-    let without = "fn main() ! console, alloc {\n  b: List[u8] = [104, 105]\n  print(\"ok\")\n}\n";
-    let with = "fn main() ! console, alloc {\n  b: List[u8] = [104, 105]\n  match utf8(freeze(b)) {\n    .ok(t) { print(\"ok\") }\n    .err(e) { print(\"err\") }\n  }\n}\n";
+    let without = "use std.console (console, print)\n\nfn main() ! console, alloc {\n  b: List[Byte] = [104, 105]\n  print(\"ok\")\n}\n";
+    let with = "use std.console (console, print)\nuse std.utf8 (utf8)\n\nfn main() ! console, alloc {\n  b: List[Byte] = [104, 105]\n  match utf8(freeze(b)) {\n    .ok(t) { print(\"ok\") }\n    .err(e) { print(\"err\") }\n  }\n}\n";
     assert_eq!(allocations(with), allocations(without));
 }

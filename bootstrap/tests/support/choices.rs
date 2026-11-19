@@ -631,6 +631,9 @@ fn model(g: &mut Gen) -> Model {
     Model { defs, values, main }
 }
 
+/// What every program begins with: the names of the standard library it uses.
+const USES: &str = "use std.console (console, print)\n\n";
+
 fn write_defs(m: &Model, out: &mut String) {
     for def in &m.defs {
         let kind = if def.is_enum { "enum" } else { "struct" };
@@ -807,7 +810,7 @@ fn write_values(m: &Model, out: &mut String) {
 /// comparisons give.
 pub fn program(g: &mut Gen) -> ChoiceCase {
     let m = model(g);
-    let mut source = String::new();
+    let mut source = String::from(USES);
     write_defs(&m, &mut source);
     source.push_str("fn main() ! console, alloc {\n");
     write_values(&m, &mut source);
@@ -857,7 +860,7 @@ fn holding(g: &mut Gen, defs: &[Def], depth: usize) -> Ty {
 /// of `main` after its values are bound.
 pub fn program_with_mistake(g: &mut Gen) -> ChoiceCase {
     let m = model(g);
-    let mut source = String::new();
+    let mut source = String::from(USES);
     write_defs(&m, &mut source);
     source.push_str("struct Hidden {\n  key: str\n}\n\nwithout Eq for Hidden\n\n");
     source.push_str("fn risky() -> Result[str, str] { .ok(\"a\") }\n\n");

@@ -993,6 +993,7 @@ impl Writer {
     }
 
     fn program(&mut self, m: &Model) {
+        self.push("use std.console (console, print)\n\n");
         self.push("struct Cat {\n  name: str\n}\n\nenum Pet {\n");
         for (name, holds) in cases() {
             self.push(&format!("  {name}"));

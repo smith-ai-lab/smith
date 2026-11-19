@@ -3,6 +3,8 @@
 //! that only follows from what is not built. Each property takes the places
 //! from the text the generator wrote.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use smith::diag::Pos;
 use smith::lower;
 
@@ -40,104 +42,142 @@ struct Unbuilt {
 
 const UNBUILT: &[Unbuilt] = &[
     Unbuilt {
-        declares: "fn u{i}() -> i64 {\n  x = @1.5\n  wrapping_add(x, 1)\n}\n",
+        declares: "fn u{i}() -> Int {\n  x = @1.5\n  wrapping_add(x, 1)\n}\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}() -> i64 { @1e5 }\n",
+        declares: "fn u{i}() -> Int { @1e5 }\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}() -> i64 {\n  x = @1.5\n  y = @2.5\n  wrapping_add(x, y)\n}\n",
+        declares: "fn u{i}() -> Int {\n  x = @1.5\n  y = @2.5\n  wrapping_add(x, y)\n}\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(a: @[3]i64) -> i64 { 1 }\n",
+        declares: "fn u{i}(a: @[3]Int) -> Int { 1 }\n",
         call: "u{i}([1, 2, 3])",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}() -> @[3]i64 { [1, 2, 3] }\n",
+        declares: "fn u{i}() -> @[3]Int { [1, 2, 3] }\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}[n: @Nat](a: @[n]i64) -> i64 { 1 }\n",
+        declares: "fn u{i}[n: @Nat](a: @[n]Int) -> Int { 1 }\n",
         call: "u{i}([1, 2])",
         parsed: false,
     },
     Unbuilt {
-        declares: "fn u{i}(n: i64) -> i64 {\n  var y = n\n  y @+= 1\n  wrapping_add(y, 1)\n}\n",
+        declares: "fn u{i}(n: Int) -> Int {\n  var y = n\n  y @+= 1\n  wrapping_add(y, 1)\n}\n",
         call: "u{i}(1)",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(x: i64) -> i64 { @-x }\n",
+        declares: "fn u{i}(x: Int) -> Int { @-x }\n",
         call: "u{i}(1)",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}() -> i64 { (1)@(2) }\n",
+        declares: "fn u{i}() -> Int { (1)@(2) }\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(f: fn(i64) -> i64 @! console) -> i64 { 1 }\n",
+        declares: "fn u{i}(f: fn(Int) -> Int @! console) -> Int { 1 }\n",
         call: "",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(a: @(i64)) -> i64 { 1 }\n",
+        declares: "fn u{i}(a: @(Int)) -> Int { 1 }\n",
         call: "u{i}(1)",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(n: i64) -> i64 {\n  if n == 0 { 0 } else { @u{i}(wrapping_sub(n, 1)) }\n}\n",
+        declares: "fn u{i}(n: Int) -> Int {\n  if n == 0 { 0 } else { @u{i}(wrapping_sub(n, 1)) }\n}\n",
         call: "u{i}(1)",
         parsed: false,
     },
     Unbuilt {
-        declares: "fn u{i}(n: i64) -> i64 { v{i}(n) }\nfn v{i}(n: i64) -> i64 { @u{i}(n) }\n",
+        declares: "fn u{i}(n: Int) -> Int { v{i}(n) }\nfn v{i}(n: Int) -> Int { @u{i}(n) }\n",
         call: "u{i}(1)",
         parsed: false,
     },
     Unbuilt {
-        declares: "fn u{i}() -> i64 ! @fs { 1 }\n",
+        declares: "fn u{i}() -> Int ! @fs { 1 }\n",
         call: "u{i}()",
         parsed: false,
     },
     // In a block inside a function, and in two blocks of one statement.
     Unbuilt {
-        declares: "fn u{i}(c: bool) -> i64 {\n  if c {\n    y = 2\n    @-y\n  } else {\n    @1.5\n  }\n}\n",
+        declares: "fn u{i}(c: bool) -> Int {\n  if c {\n    y = 2\n    @-y\n  } else {\n    @1.5\n  }\n}\n",
         call: "u{i}(true)",
         parsed: true,
     },
     Unbuilt {
-        declares: "fn u{i}(c: bool) -> i64 {\n  x = if c {\n    @2.5\n  } else {\n    3\n  }\n  wrapping_add(x, 1)\n}\n",
+        declares: "fn u{i}(c: bool) -> Int {\n  x = if c {\n    @2.5\n  } else {\n    3\n  }\n  wrapping_add(x, 1)\n}\n",
         call: "u{i}(true)",
         parsed: true,
     },
     // A name a statement that is not built would bind is still bound.
     Unbuilt {
-        declares: "fn u{i}() -> i64 {\n  a = 1\n  z = @-a\n  b = @1.5\n  (c, d) = @1.5\n  wrapping_add(z, wrapping_add(b, wrapping_add(c, d)))\n}\n",
+        declares: "fn u{i}() -> Int {\n  a = 1\n  z = @-a\n  b = @1.5\n  (c, d) = @1.5\n  wrapping_add(z, wrapping_add(b, wrapping_add(c, d)))\n}\n",
         call: "u{i}()",
         parsed: true,
     },
     Unbuilt {
-        declares: "struct P{i} { x: i64 = @1.5 }\nfn u{i}() -> i64 { P{i}().x }\n",
+        declares: "struct P{i} { x: Int = @1.5 }\nfn u{i}() -> Int { P{i}().x }\n",
         call: "u{i}()",
         parsed: true,
     },
 ];
 
+/// The names of the library a file imports, by module.
+type Uses = BTreeMap<String, BTreeSet<String>>;
+
+/// The `use` lines of `uses`, sorted as the formatter sorts them, and the
+/// blank line after them, or nothing when it holds no name.
+fn header(uses: &Uses) -> String {
+    let mut out = String::new();
+    for (module, names) in uses {
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        out.push_str(&format!("use {module} ({})\n", names.join(", ")));
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+/// The `use` lines a program begins with, and the length of the text they
+/// and the blank lines after them take.
+fn leading_uses(program: &[u8]) -> (Uses, usize) {
+    let text = String::from_utf8_lossy(program);
+    let mut uses = Uses::new();
+    let mut end = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some(rest) = line.strip_prefix("use ") {
+            let (module, names) = rest.split_once(" (").expect("a use line");
+            let names = names.trim_end().trim_end_matches(')');
+            let at = uses.entry(module.to_string()).or_default();
+            at.extend(names.split(", ").map(str::to_string));
+        } else if !line.trim().is_empty() {
+            break;
+        }
+        end += line.len();
+    }
+    (uses, end)
+}
+
 /// Some of what is not built, written as functions that follow `before`,
 /// where each error of it is, and the statements of a `main` that runs it.
 /// Only what the parser reports in full is used when nothing runs it.
-fn written(g: &mut Gen, before: &str, runs: bool) -> (String, Vec<Pos>, String) {
+fn written(g: &mut Gen, before: &str, runs: bool) -> (String, Vec<Pos>, String, Uses) {
     let mut text = String::new();
+    let mut uses = Uses::new();
     let mut places = Vec::new();
     let mut calls = String::new();
     for i in 0..1 + g.below(4) {
@@ -148,6 +188,17 @@ fn written(g: &mut Gen, before: &str, runs: bool) -> (String, Vec<Pos>, String) 
             }
         };
         let declares = one.declares.replace("{i}", &i.to_string());
+        for (module, name) in [
+            ("std.console", "console"),
+            ("std.int", "wrapping_add"),
+            ("std.int", "wrapping_sub"),
+        ] {
+            if declares.contains(name) {
+                uses.entry(module.to_string())
+                    .or_default()
+                    .insert(name.to_string());
+            }
+        }
         let mut rest = declares.as_str();
         while let Some(at) = rest.find('@') {
             text.push_str(&rest[..at]);
@@ -160,7 +211,7 @@ fn written(g: &mut Gen, before: &str, runs: bool) -> (String, Vec<Pos>, String) 
             calls.push_str(&format!("  r{i} = {call}\n  print(\"{{r{i}}}\")\n"));
         }
     }
-    (text, places, calls)
+    (text, places, calls, uses)
 }
 
 /// A program with a mistake placed in it, from one of the generators.
@@ -233,20 +284,34 @@ fn assert_errors(source: &[u8], mistake: &Expected, places: &[Pos]) {
 /// is not built, which nothing runs.
 fn program_with_unbuilt(g: &mut Gen) -> (Vec<u8>, Expected, Vec<Pos>) {
     let (program, mut mistake) = with_mistake(g);
-    let (mut source, mut places, _) = written(g, "", false);
+    let (mut source, mut places, _, needed) = written(g, "", false);
+    // A mistake in the text or the tokens hides every error of the later
+    // stages, so the file is the program as it is, and the functions are not
+    // written into it, whose `use` lines the mistake may be in.
+    if smith::count_tokens(&program).is_err() {
+        return (program, mistake, Vec::new());
+    }
     source.push('\n');
+    // The functions follow the `use` lines of the program, with the names
+    // they use added.
+    let (mut uses, end) = leading_uses(&program);
+    for (module, names) in needed {
+        uses.entry(module).or_default().extend(names);
+    }
+    let head = header(&uses);
+    let moved = head.matches('\n').count() + source.matches('\n').count()
+        - program[..end].iter().filter(|b| **b == b'\n').count();
+    for place in &mut places {
+        place.line += head.matches('\n').count();
+    }
     // An error about the whole file, that there is no `main`, stays at its start.
     if mistake.mentions != "`main`" {
-        mistake.at.line += source.matches('\n').count();
+        mistake.at.line += moved;
     }
-    // A file is read in stages, and a mistake in its text or its tokens hides
-    // every error of the later ones, of the syntax and of what is not built.
-    if smith::count_tokens(&program).is_err() {
-        places.clear();
-    }
-    let mut source = source.into_bytes();
-    source.extend_from_slice(&program);
-    (source, mistake, places)
+    let mut out = head.into_bytes();
+    out.extend_from_slice(source.as_bytes());
+    out.extend_from_slice(&program[end..]);
+    (out, mistake, places)
 }
 
 fn a_use_of_what_is_not_built_in_a_file_with_a_placed_mistake_gives_both_errors() {
@@ -259,19 +324,33 @@ fn a_use_of_what_is_not_built_in_a_file_with_a_placed_mistake_gives_both_errors(
 /// and the functions that use what is not built, and uses what they give.
 fn program_that_runs_unbuilt(g: &mut Gen) -> (Vec<u8>, Expected, Vec<Pos>) {
     let (head, mistake, mentions) = if g.one_in(2) {
-        ("fn bad(a: i64) -> i64 {\n  a ", "+ \"b\"", "whole numbers")
+        ("fn bad(a: Int) -> Int {\n  a ", "+ \"b\"", "whole numbers")
     } else {
-        ("fn bad(a: i64) -> str {\n  ", "a", "text")
+        ("fn bad(a: Int) -> str {\n  ", "a", "text")
     };
     let mut source = head.to_string();
     let at = pos_after(&source);
     source.push_str(mistake);
     source.push_str("\n}\n\n");
-    let (more, places, calls) = written(g, &source, true);
+    let (more, mut places, calls, mut uses) = written(g, &source, true);
     source.push_str(&more);
     source.push_str("\nfn main() ! console, alloc {\n  a = bad(1)\n");
     source.push_str(&calls);
     source.push_str("  print(\"{a}\")\n}\n");
+    uses.entry("std.console".to_string())
+        .or_default()
+        .extend(["console".to_string(), "print".to_string()]);
+    let head = header(&uses);
+    // What is written is placed from the start of the text, and the lines of
+    // the `use` lines move it all down.
+    let at = Pos {
+        line: at.line + head.matches('\n').count(),
+        col: at.col,
+    };
+    for place in &mut places {
+        place.line += head.matches('\n').count();
+    }
+    let source = format!("{head}{source}");
     let mistake = Expected {
         at,
         mentions: mentions.to_string(),
@@ -289,7 +368,7 @@ fn what_is_not_built_and_is_used_gives_its_error_and_the_mistake_of_another_func
 /// A value that is not built is the value of a binding that is read, of a
 /// field, of a condition, and of an argument, and nothing is said of any.
 fn a_value_that_is_not_built_is_said_nothing_of_where_it_is_used() {
-    let before = "fn f() -> i64 ! console, alloc {\n  x = ";
+    let before = "use std.console (console, print)\nuse std.int (wrapping_add)\n\nfn f() -> Int ! console, alloc {\n  x = ";
     let source = format!(
         "{before}1.5\n  y = x\n  a = if y == 2 {{ 1 }} else {{ 2 }}\n  b = wrapping_add(y, a)\n  print(\"{{y}}{{b}}\")\n  b\n}}\n\n\
          fn main() ! console, alloc {{\n  print(\"{{f()}}\")\n}}\n"

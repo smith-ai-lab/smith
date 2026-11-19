@@ -17,7 +17,7 @@ use smith::{check, lower, scalar};
 use crate::Test;
 use crate::generate::{self, Gen};
 use crate::programs::pos_after;
-use crate::serialize::{self, Defs, INTS, Parts, Ty};
+use crate::serialize::{self, Defs, INTS, Parts, Ty, with_import};
 
 pub const ONCE: &[Test] = &[
     (
@@ -89,10 +89,15 @@ fn lines(of: &[String]) -> String {
     of.iter().map(|l| format!("{l}\n")).collect()
 }
 
-const IMPORT: &str = "use std.serialize (Serialize, Writer, write)
-use std.deserialize (Deserialize, Reader, ReadError, Problem, read)
-
-";
+/// How a message names a whole number type: the compiler spells `Int` and
+/// `Byte` as the sizes they are, `i64` and `u8`, in what it tells of a type.
+fn spelled(name: &str) -> &str {
+    match name {
+        "Int" => "i64",
+        "Byte" => "u8",
+        other => other,
+    }
+}
 
 // The reader of the tests.
 
@@ -135,7 +140,7 @@ fn reader() -> String {
     let mut out = String::from(
         "enum Shape {
   boolean: bool
-  signed: i64
+  signed: Int
   unsigned: u64
   text: str
   nothing
@@ -163,10 +168,10 @@ struct Rd {
   p2: str
   p3: str
   p4: str
-  k1: i64
-  k2: i64
-  k3: i64
-  k4: i64
+  k1: Int
+  k2: Int
+  k3: Int
+  k4: Int
 }
 
 fn peek(r: Rd) -> Shape {
@@ -365,12 +370,12 @@ fn peek(r: Rd) -> Shape {
     };
     out.push_str("impl Reader[Rd] {\n");
     out.push_str(&simple("boolean", "bool", ".boolean(v)", "v"));
-    out.push_str(&simple("signed", "i64", ".signed(v)", "v"));
+    out.push_str(&simple("signed", "Int", ".signed(v)", "v"));
     out.push_str(&simple("unsigned", "u64", ".unsigned(v)", "v"));
     out.push_str(&simple("text", "str", ".text(v)", "v"));
     out.push_str(&simple("nothing", "()", ".nothing", "()"));
     out.push_str(
-        "  fn raw(r: take Rd, of: str) -> (Rd, Result[Slice[u8], ReadError]) ! alloc {
+        "  fn raw(r: take Rd, of: str) -> (Rd, Result[Slice[Byte], ReadError]) ! alloc {
     match peek(r) {
       .text(v) { (step(r, \"raw\"), Result.ok(v.bytes)) }
       _ { (note(r, \"raw\"), Result.err(wrong(r, \"raw\"))) }
@@ -459,10 +464,10 @@ fn peek(r: Rd) -> Shape {
 // What the issue says, as it says it.
 
 fn a_struct_is_read_from_its_name_each_field_and_its_end() {
-    let source = format!(
-        "{IMPORT}{}struct Point {{
-  x: i64
-  y: i64
+    let source = with_import(&[], &format!(
+        "{}struct Point {{
+  x: Int
+  y: Int
 }}
 
 fn main() ! console, alloc {{
@@ -477,7 +482,7 @@ fn main() ! console, alloc {{
 ",
         reader(),
         fresh("xs", true, false)
-    );
+    ));
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
     assert_eq!(
@@ -489,10 +494,13 @@ fn main() ! console, alloc {{
 /// `raw` names the format that its bytes are in, and a reader of another format
 /// reads a text and gives its bytes.
 fn a_rawjson_read_from_a_reader_of_another_format_is_the_bytes_of_its_text() {
-    let source = format!(
-        "{IMPORT}use std.json (RawJson, raw_text)\n\n{}fn main() ! console, alloc {{\n  xs: List[Shape] = [Shape.text(\"[1.50, 1e400]\")]\n  (r, v): (Rd, Result[RawJson, ReadError]) = read({})\n  match v {{\n    .ok(x) {{ print(raw_text(x)) }}\n    .err(e) {{ print(show(e)) }}\n  }}\n}}\n",
-        reader(),
-        fresh("xs", false, false)
+    let source = with_import(
+        &[("std.json", &["RawJson", "raw_text"])],
+        &format!(
+            "{}fn main() ! console, alloc {{\n  xs: List[Shape] = [Shape.text(\"[1.50, 1e400]\")]\n  (r, v): (Rd, Result[RawJson, ReadError]) = read({})\n  match v {{\n    .ok(x) {{ print(raw_text(x)) }}\n    .err(e) {{ print(show(e)) }}\n  }}\n}}\n",
+            reader(),
+            fresh("xs", false, false)
+        ),
     );
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
@@ -693,7 +701,7 @@ fn value(g: &mut Gen, defs: &Defs, t: &Ty, path: &str, made: &mut Made) -> Strin
 /// The definitions a program that reads a value needs: those of the type, the
 /// struct that reads and writes itself, and the one that cannot be read.
 fn definitions(defs: &Defs, own_impl: bool) -> String {
-    let mut out = format!("{}struct Celsius {{\n  degrees: i64\n}}\n\n", defs.source());
+    let mut out = format!("{}struct Celsius {{\n  degrees: Int\n}}\n\n", defs.source());
     if own_impl {
         out.push_str(
             "impl Deserialize[Celsius] {
@@ -729,7 +737,8 @@ struct Case {
     made: Made,
 }
 
-fn case(g: &mut Gen, parts: Parts, own_impl: bool, log: bool) -> Case {
+/// `writes` is whether what follows writes the value that was read.
+fn case(g: &mut Gen, parts: Parts, own_impl: bool, log: bool, writes: bool) -> Case {
     let mut defs = Defs::default();
     let mut top = serialize::ty(g, &mut defs, 4, parts);
     if parts.barred && !serialize::holds(&defs, &top, &Ty::Barred) {
@@ -740,13 +749,17 @@ fn case(g: &mut Gen, parts: Parts, own_impl: bool, log: bool) -> Case {
     }
     let mut made = Made::default();
     value(g, &defs, &top, "", &mut made);
-    let head = format!(
-        "{IMPORT}{}{}{}fn main() ! console, alloc {{\n  xs: List[Shape] = [{}]\n  (r, v): (Rd, Result[{}, ReadError]) = ",
-        reader(),
-        serialize::log(),
-        definitions(&defs, own_impl),
-        made.shapes.join(", "),
-        defs.name(&top)
+    let write: &[&str] = if writes { &["write"] } else { &[] };
+    let head = with_import(
+        &[("std.deserialize", &["read"]), ("std.serialize", write)],
+        &format!(
+            "{}{}{}fn main() ! console, alloc {{\n  xs: List[Shape] = [{}]\n  (r, v): (Rd, Result[{}, ReadError]) = ",
+            reader(),
+            serialize::log(),
+            definitions(&defs, own_impl),
+            made.shapes.join(", "),
+            defs.name(&top)
+        ),
     );
     let at = pos_after(&head);
     let source = format!("{head}read({})\n", fresh("xs", log, false));
@@ -772,7 +785,7 @@ fn the_shapes_the_writer_records_for_every_value_read_back_to_the_same_value() {
         own: false,
         barred: false,
     };
-    let generate = move |g: &mut Gen| case(g, parts, false, true);
+    let generate = move |g: &mut Gen| case(g, parts, false, true, true);
     generate::check(4581, 8, generate, |c| {
         let source = format!("{}{WRITES}", c.source);
         let found = errors(&source);
@@ -799,8 +812,8 @@ enum Kind {
 /// The types of field: the name, the default as source, the call the writer
 /// records for the default, the shape the input gives, and its call.
 const BASES: &[(&str, &str, &str, &str, &str)] = &[
-    ("i64", "7", "signed 7", "Shape.signed(5)", "signed 5"),
-    ("u8", "9", "unsigned 9", "Shape.unsigned(3)", "unsigned 3"),
+    ("Int", "7", "signed 7", "Shape.signed(5)", "signed 5"),
+    ("Byte", "9", "unsigned 9", "Shape.unsigned(3)", "unsigned 3"),
     ("bool", "true", "boolean true", "Shape.boolean(false)", "boolean false"),
     ("str", "\"d\"", "text d", "Shape.text(\"x\")", "text x"),
 ];
@@ -849,7 +862,7 @@ fn a_field_left_out_is_none_or_its_default_or_an_error_that_names_it() {
         (fields, inputs, g.one_in(2))
     };
     generate::check(4583, 6, generate, |(fields, inputs, lenient)| {
-        let mut source = format!("{IMPORT}{}{}", reader(), serialize::log());
+        let mut source = format!("{}{}", reader(), serialize::log());
         source.push_str("struct Tool {\n");
         for (f, (kind, base)) in fields.iter().enumerate() {
             let (name, default, ..) = BASES[*base];
@@ -956,6 +969,7 @@ fn main() ! console, alloc {
             }
         }
         source.push_str("}\n");
+        let source = with_import(&[], &source);
         let found = errors(&source);
         assert!(found.is_empty(), "{found:?}\n{source}");
         assert_eq!(prints(&source), expected, "{source}");
@@ -965,13 +979,13 @@ fn main() ! console, alloc {
 // A number that does not fit, and a shape that is not the one asked for.
 
 fn a_number_outside_its_type_is_range_with_the_types_name() {
-    let mut source = format!("{IMPORT}{}fn main() ! console, alloc {{\n", reader());
+    let mut source = format!("{}fn main() ! console, alloc {{\n", reader());
     let mut expected = String::new();
     let mut at = 0;
     for (name, least, greatest) in INTS {
         let signed = *least < 0;
         let shape = if signed { "Shape.signed" } else { "Shape.unsigned" };
-        let narrow = !matches!(*name, "i64" | "u64" | "Nat");
+        let narrow = !matches!(*name, "Int" | "u64" | "Nat");
         // The least and the greatest, and one past each when the type is
         // narrower than the numbers a reader gives.
         let mut numbers = vec![(*least, true), (*greatest, true)];
@@ -995,12 +1009,13 @@ fn a_number_outside_its_type_is_range_with_the_types_name() {
             expected.push_str(&if fits {
                 format!("{n}\n")
             } else {
-                format!("range {name}\n")
+                format!("range {}\n", spelled(name))
             });
             at += 1;
         }
     }
     source.push_str("}\n");
+    let source = with_import(&[], &source);
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
     assert_eq!(prints(&source), expected, "{source}");
@@ -1013,7 +1028,7 @@ fn a_shape_that_is_not_the_one_asked_for_is_shape() {
         barred: false,
     };
     // The first shape is not the one the type asks for, whatever the type.
-    let generate = move |g: &mut Gen| case(g, parts, false, true);
+    let generate = move |g: &mut Gen| case(g, parts, false, true, true);
     generate::check(4584, 8, generate, |c| {
         let mut made = c.source.clone();
         let first = &c.made.shapes[0];
@@ -1036,7 +1051,7 @@ fn the_path_of_an_error_is_the_way_to_the_value_that_broke() {
         barred: false,
     };
     let generate = move |g: &mut Gen| {
-        let c = case(g, parts, false, true);
+        let c = case(g, parts, false, true, true);
         let at = g.below(c.made.leaves.len().max(1));
         (c, at)
     };
@@ -1074,7 +1089,7 @@ fn a_read_that_succeeds_asks_for_no_memory_of_its_own() {
         own: false,
         barred: false,
     };
-    let generate = move |g: &mut Gen| case(g, parts, false, false);
+    let generate = move |g: &mut Gen| case(g, parts, false, false, false);
     generate::check(4586, 8, generate, |c| {
         let reads = format!(
             "{}  match v {{\n    .ok(x) {{ print(\"ok\") }}\n    .err(e) {{ print(\"no\") }}\n  }}\n}}\n",
@@ -1103,7 +1118,7 @@ fn a_type_taken_from_without_deserialize_refuses_every_type_that_holds_it_at_the
         own: false,
         barred: true,
     };
-    let generate = move |g: &mut Gen| case(g, parts, false, true);
+    let generate = move |g: &mut Gen| case(g, parts, false, true, false);
     generate::check(4582, 8, generate, |c| {
         let source = format!("{}  print(r.asked)\n}}\n", c.source);
         let found = errors(&source);
@@ -1120,7 +1135,7 @@ fn a_types_own_impl_is_the_one_used_wherever_it_is_a_part() {
         own: true,
         barred: false,
     };
-    let generate = move |g: &mut Gen| case(g, parts, true, true);
+    let generate = move |g: &mut Gen| case(g, parts, true, true, true);
     generate::check(4587, 8, generate, |c| {
         let source = format!("{}{WRITES}", c.source);
         let found = errors(&source);
@@ -1137,74 +1152,52 @@ fn a_types_own_impl_is_the_one_used_wherever_it_is_a_part() {
 // Where `Deserialize` and `Reader` are.
 
 fn deserialize_and_reader_are_imported_with_use_and_are_not_in_the_prelude() {
-    let reads = "struct Point {
-  x: i64
-}
-
-fn main() {
-  v = read(0)
-}
-";
+    let reads = "struct Point {\n  x: Int\n}\n\nfn main() {\n  v = read(0)\n}\n";
     // No name of the module is known to a program that does not import it.
     let found = errors(reads);
     assert!(
         found.iter().any(|e| e.message.contains("`read`")),
         "{found:?}"
     );
-    let bound = "struct Count {
-  n: u64
-}
-
-fn pass[R: Reader](r: take R) -> R ! alloc { r }
-
-fn main() ! alloc {
-  c = pass(Count(n: 0))
-}
-";
+    let body = "struct Count {\n  n: u64\n}\n\nfn pass[R: Reader](r: take R) -> R ! alloc { r }\n\nfn main() ! alloc {\n  c = pass(Count(n: 0))\n}\n";
+    let bound = format!("use std.bits (u64)\n\n{body}");
+    let bound = bound.as_str();
     let found = errors(bound);
     assert!(
         found.iter().any(|e| e.message.contains("`Reader`")),
         "{found:?}"
     );
     // With `use`, the same program asks for a reader, and is given one.
-    let imported = format!("{IMPORT}{bound}");
+    let imported = format!("use std.bits (u64)\nuse std.deserialize (Reader)\n\n{body}");
     let found = errors(&imported);
     assert!(
         found.iter().any(|e| e.message.contains("`Reader`") && e.message.contains("`Count`")),
         "{found:?}"
     );
-    let read = format!(
-        "{IMPORT}{}{}",
-        reader(),
-        "fn pass[R: Reader](r: take R) -> R ! alloc { r }
-
-fn main() ! alloc {
-  xs: List[Shape] = [Shape.over]
-  c = pass(RD)
-}
-"
-        .replace("RD", &fresh("xs", true, false))
+    let read = with_import(
+        &[],
+        &format!(
+            "{}{}",
+            reader(),
+            "fn pass[R: Reader](r: take R) -> R ! alloc { r }\n\nfn main() ! alloc {\n  xs: List[Shape] = [Shape.over]\n  c = pass(RD)\n}\n"
+                .replace("RD", &fresh("xs", true, false))
+        ),
     );
     let found = errors(&read);
     assert!(found.is_empty(), "{found:?}\n{read}");
 }
 
 fn a_program_that_never_reads_a_value_is_the_program_it_was() {
-    let base = "struct Point {
-  x: i64
-  y: i64
-}
-
-fn main() ! console, alloc {
-  p = Point(x: 3, y: 4)
-  print(\"{p.x} {p.y}\")
-}
-";
+    let items = "struct Point {\n  x: Int\n  y: Int\n}\n\nfn main() ! console, alloc {\n  p = Point(x: 3, y: 4)\n  print(\"{p.x} {p.y}\")\n}\n";
+    let base = format!("use std.console (console, print)\n\n{items}");
     // The same program, with the module imported and everything that reads a
     // value defined, and a function that reads that nothing calls.
-    let extended = format!(
-        "{IMPORT}{}fn unused(r: Rd) -> (Rd, Result[Point, ReadError]) ! alloc {{ read(r) }}\n\n{base}",
-        reader()
+    let extended = with_import(
+        &[],
+        &format!(
+            "{}fn unused(r: Rd) -> (Rd, Result[Point, ReadError]) ! alloc {{ read(r) }}\n\n{items}",
+            reader()
+        ),
     );
     let (a, b) = (lower(base.as_bytes()).unwrap(), lower(extended.as_bytes()).unwrap());
     assert_eq!(a, b);

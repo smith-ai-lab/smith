@@ -15,7 +15,7 @@ use smith::{check, lower};
 use crate::Test;
 use crate::generate::{self, Gen};
 use crate::growth;
-use crate::programs::pos_after;
+use crate::programs::{lines_added, pos_after, shifted, with_imports};
 
 pub const ONCE: &[Test] = &[
     (
@@ -49,7 +49,7 @@ pub const ONCE: &[Test] = &[
 ];
 
 /// The type of an element, and how many bytes it takes in a list.
-const ELEMS: &[(&str, usize)] = &[("u8", 1), ("u32", 4), ("u64", 8)];
+const ELEMS: &[(&str, usize)] = &[("Byte", 1), ("u32", 4), ("u64", 8)];
 
 /// How many bytes a list takes in a list: its address, size, and room.
 const LIST: usize = 24;
@@ -195,7 +195,7 @@ enum E {
 }
 
 struct Deep {
-  inner: (W, u8)
+  inner: (W, Byte)
 }
 
 fn dump(xs: List[{e}]) ! console, alloc {
@@ -203,7 +203,7 @@ fn dump(xs: List[{e}]) ! console, alloc {
   loop v in xs { print(\"{v}\") }
 }
 
-fn read_t(t: (List[{e}], u8)) ! console, alloc {
+fn read_t(t: (List[{e}], Byte)) ! console, alloc {
   match t {
     (xs, k) { dump(xs) }
   }
@@ -229,7 +229,7 @@ fn read_l(ls: List[List[{e}]]) ! console, alloc {
 
 fn wpush(w: take W, v: {e}) -> W ! alloc { W(xs: push(w.xs, v)) }
 
-fn tpush(t: take (List[{e}], u8), v: {e}) -> (List[{e}], u8) ! alloc {
+fn tpush(t: take (List[{e}], Byte), v: {e}) -> (List[{e}], Byte) ! alloc {
   match t {
     (xs, k) { (push(xs, v), k) }
   }
@@ -259,7 +259,7 @@ fn declare(k: Kind, h: usize) -> String {
     match k {
         Kind::Plain => format!("  var h{h}: List[{{e}}] = []\n"),
         Kind::Field => format!("  var h{h}: W = W(xs: [])\n"),
-        Kind::Tuple => format!("  var h{h}: (List[{{e}}], u8) = ([], 7)\n"),
+        Kind::Tuple => format!("  var h{h}: (List[{{e}}], Byte) = ([], 7)\n"),
         Kind::Enum => format!("  var h{h}: E = E.empty\n"),
         Kind::Deep => format!("  var h{h}: Deep = Deep(inner: (W(xs: []), 1))\n"),
         Kind::Lists => format!("  var h{h}: List[List[{{e}}]] = []\n"),
@@ -318,6 +318,7 @@ fn source(p: &Program, reads: bool) -> String {
 }
 
 fn lowered(source: &str) -> scalar::Program {
+    let source = &with_imports(source);
     lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"))
 }
 
@@ -456,16 +457,18 @@ fn a_function_that_gives_a_list_away_and_uses_it_again_is_one_error_whose_fix_is
  {
     let both = |first: &str| {
         format!(
-            "use std.list (copy)\n\nfn both(xs: take List[u8]) -> (List[u8], List[u8]) ! alloc {{\n  ys = push({first}, 1)\n  (xs, ys)\n}}\n\nfn main() ! console, alloc {{\n  zs: List[u8] = [7, 8]\n  (a, b) = both(zs)\n  print(\"{{a.size}} {{b.size}}\")\n}}\n"
+            "use std.list (copy)\n\nfn both(xs: take List[Byte]) -> (List[Byte], List[Byte]) ! alloc {{\n  ys = push({first}, 1)\n  (xs, ys)\n}}\n\nfn main() ! console, alloc {{\n  zs: List[Byte] = [7, 8]\n  (a, b) = both(zs)\n  print(\"{{a.size}} {{b.size}}\")\n}}\n"
         )
     };
     let kept = both("copy(xs)");
     let program = lowered(&kept);
     assert_eq!(scalar::run(&program).stdout, b"2 3\n".to_vec());
     let refused = both("xs");
-    let errors = check(refused.as_bytes()).expect_err("a list used after it was given away");
+    let full = with_imports(&refused);
+    let errors = check(full.as_bytes()).expect_err("a list used after it was given away");
     assert_eq!(errors.len(), 1, "{errors:?}");
     let second = pos_after(&refused[..refused.find("(xs, ys)").unwrap() + 1]);
+    let second = shifted(second, lines_added(&refused, &full));
     assert_eq!(errors[0].pos, second);
     assert!(
         errors[0].fix.as_deref().is_some_and(|f| f.contains("copy(xs)")),
@@ -478,26 +481,26 @@ fn a_function_that_gives_a_list_away_and_uses_it_again_is_one_error_whose_fix_is
 fn a_list_has_no_copy_and_neither_has_what_holds_one_and_a_text_has_it() {
     // Each type, whether it has `Copy`, and a value of it.
     let types: &[(&str, bool, &str)] = &[
-        ("List[u8]", false, "[]"),
+        ("List[Byte]", false, "[]"),
         ("List[str]", false, "[]"),
-        ("List[List[u8]]", false, "[]"),
+        ("List[List[Byte]]", false, "[]"),
         ("W", false, "W(xs: [])"),
-        ("(List[u8], u8)", false, "([], 1)"),
-        ("Option[List[u8]]", false, "Option.none"),
+        ("(List[Byte], Byte)", false, "([], 1)"),
+        ("Option[List[Byte]]", false, "Option.none"),
         ("E", false, "E.none"),
         ("str", true, "\"a\""),
-        ("u8", true, "1"),
-        ("(str, u8)", true, "(\"a\", 1)"),
+        ("Byte", true, "1"),
+        ("(str, Byte)", true, "(\"a\", 1)"),
         ("Option[str]", true, "Option.some(\"a\")"),
         ("V", true, "V(s: \"a\", n: 1)"),
     ];
-    let items = "struct W {\n  xs: List[u8]\n}\n\nenum E {\n  none\n  some: List[u8]\n}\n\nstruct V {\n  s: str\n  n: u8\n}\n\n";
+    let items = "struct W {\n  xs: List[Byte]\n}\n\nenum E {\n  none\n  some: List[Byte]\n}\n\nstruct V {\n  s: str\n  n: Byte\n}\n\n";
     for (ty, copies, value) in types {
         // A call that asks for `Copy` of the type, and a value used twice.
         let asks = format!(
             "{items}fn twin[T: Copy](x: T) -> u64 {{ 1 }}\n\nfn use_it(x: {ty}) -> u64 {{ twin(x) }}\n\nfn main() ! alloc {{\n  x: {ty} = {value}\n  n = use_it(x)\n}}\n"
         );
-        let errors = check(asks.as_bytes()).err().unwrap_or_default();
+        let errors = check(with_imports(&asks).as_bytes()).err().unwrap_or_default();
         assert_eq!(errors.is_empty(), *copies, "{errors:?} for {ty}");
         if !copies {
             assert!(
@@ -508,7 +511,7 @@ fn a_list_has_no_copy_and_neither_has_what_holds_one_and_a_text_has_it() {
         let again = format!(
             "{items}fn twice(x: take {ty}) -> ({ty}, {ty}) {{ (x, x) }}\n\nfn main() ! alloc {{\n  x: {ty} = {value}\n  r = twice(x)\n}}\n"
         );
-        let errors = check(again.as_bytes()).err().unwrap_or_default();
+        let errors = check(with_imports(&again).as_bytes()).err().unwrap_or_default();
         assert_eq!(errors.is_empty(), *copies, "{errors:?} for {ty}");
     }
 }
@@ -538,8 +541,8 @@ fn copy_gives_a_new_list_of_the_same_elements_and_asks_for_alloc() {
         let expected: String = lines.iter().map(|l| format!("{l}\n")).collect();
         assert_eq!(scalar::run(&lowered(&source)).stdout, expected.into_bytes(), "for {source}");
     });
-    let quiet = "use std.list (copy)\n\nfn twice(xs: List[u8]) -> List[u8] { copy(xs) }\n\nfn main() {\n  xs: List[u8] = []\n  ys = twice(xs)\n}\n";
-    let errors = check(quiet.as_bytes()).err().unwrap_or_default();
+    let quiet = "use std.list (copy)\n\nfn twice(xs: List[Byte]) -> List[Byte] { copy(xs) }\n\nfn main() {\n  xs: List[Byte] = []\n  ys = twice(xs)\n}\n";
+    let errors = check(with_imports(quiet).as_bytes()).err().unwrap_or_default();
     assert!(
         errors.iter().any(|e| e.message.contains("`alloc`")),
         "{errors:?} does not name `alloc`"

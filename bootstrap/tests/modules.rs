@@ -79,6 +79,18 @@ fn tree(g: &mut Gen) -> Tree {
     }
 }
 
+/// The `use` lines, written sorted by the path of the module, and a blank
+/// line after them.
+fn uses(lines: &[(&str, String)]) -> String {
+    let mut lines = lines.to_vec();
+    lines.sort();
+    let text: String = lines.iter().map(|(m, names)| format!("use {m} ({names})\n")).collect();
+    format!("{text}\n")
+}
+
+/// What the one file that holds every module and the main imports.
+const ONE_FILE_USES: &str = "use std.bits (i32)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\n\n";
+
 /// The items of the module `i`. Written as a file of the module, each item
 /// that others use is `pub`, the struct has a private field, and the module
 /// has a private function that every module names alike. Written for one file,
@@ -91,11 +103,15 @@ fn items(t: &Tree, i: usize, separate: bool) -> String {
     };
     let [k0, k1, k2, k3] = t.numbers[i];
     let mut text = String::new();
-    if separate && let Some(j) = t.modules[i].1 {
-        text += &format!(
-            "use {} (S{j}, f{j}, make{j}, sum{j})\n\n",
-            t.modules[j].0
-        );
+    if separate {
+        let mut lines = vec![
+            ("std.bits", "i32".to_string()),
+            ("std.int", "wrapping_add, wrapping_mul".to_string()),
+        ];
+        if let Some(j) = t.modules[i].1 {
+            lines.push((t.modules[j].0, format!("S{j}, f{j}, make{j}, sum{j}")));
+        }
+        text += &uses(&lines);
     }
     text += &format!(
         "fn {helper}(n: i32) -> i32 {{ wrapping_mul(n, {k0}) }}\n\n\
@@ -127,10 +143,15 @@ fn items(t: &Tree, i: usize, separate: bool) -> String {
 fn main_text(t: &Tree, with_uses: bool) -> String {
     let mut text = String::new();
     if with_uses {
+        let mut lines = vec![
+            ("std.bits", "i32".to_string()),
+            ("std.console", "console, print".to_string()),
+            ("std.int", "wrapping_add".to_string()),
+        ];
         for (i, (name, _)) in t.modules.iter().enumerate() {
-            text += &format!("use {name} (f{i}, make{i}, mix{i}, sum{i}, t{i}, val{i})\n");
+            lines.push((name, format!("f{i}, make{i}, mix{i}, sum{i}, t{i}, val{i}")));
         }
-        text += "\n";
+        text += &uses(&lines);
     }
     let [a, b, c] = t.args;
     text += "fn helper(n: i32) -> i32 { wrapping_add(n, 7) }\n\nfn main() ! console, alloc {\n";
@@ -158,8 +179,9 @@ fn project_modules_print_what_the_same_items_print_in_one_file() {
         let main = main_text(t, true);
         let got = lower_project(main.as_bytes(), &files)
             .unwrap_or_else(|e| panic!("{e:?}\n{main}\n{files:?}"));
-        let one: String = (0..t.modules.len())
-            .map(|i| items(t, i, false))
+        let one: String = [ONE_FILE_USES.to_string()]
+            .into_iter()
+            .chain((0..t.modules.len()).map(|i| items(t, i, false)))
             .chain([main_text(t, false)])
             .collect();
         let wanted = lower(one.as_bytes()).unwrap_or_else(|e| panic!("{e:?}\n{one}"));
@@ -179,12 +201,13 @@ struct Mistake {
 
 const KINDS: usize = 8;
 
-const GEO: &str = "pub fn f0(n: i32) -> i32 { wrapping_add(n, 1) }\n\n\
+const GEO: &str = "use std.bits (i32)\nuse std.int (wrapping_add)\n\n\
+    pub fn f0(n: i32) -> i32 { wrapping_add(n, 1) }\n\n\
     pub struct S0 {\n  pub a: i32\n  b: i32\n}\n\n\
     pub fn make0(x: i32) -> S0 { S0(a: x, b: 2) }\n\n\
     fn secret(n: i32) -> i32 { n }\n";
 
-const MATH: &str = "use geo (S0, f0)\n\n\
+const MATH: &str = "use geo (S0, f0)\nuse std.bits (i32)\n\n\
     pub trait T1[X] {\n  fn t1(x: X) -> i32\n}\n\n\
     impl T1[S0] {\n  fn t1(x: S0) -> i32 { f0(x.a) }\n}\n";
 
@@ -200,7 +223,9 @@ struct Placed {
 
 fn placed(m: &Mistake) -> Placed {
     let pad = "\n".repeat(m.pad);
-    let head = "use geo (S0, make0)\nuse util.math (T1, t1)\n\n";
+    let head = "use geo (S0, make0)\nuse std.console (console, print)\nuse util.math (T1, t1)\n\n";
+    let head_with_bits =
+        "use geo (S0, make0)\nuse std.bits (i32)\nuse std.console (console, print)\nuse util.math (T1, t1)\n\n";
     let body = |code: &str| format!("fn main() ! console {{\n{code}  print(\"x\")\n}}\n");
     let plain = |main: String, at: Pos, mentions: &'static str| Placed {
         main,
@@ -212,26 +237,28 @@ fn placed(m: &Mistake) -> Placed {
     match m.which {
         0 => {
             let before = format!("{pad}use geo (make0)\nuse ");
-            let main = format!("{before}ghost.deep (x)\n\n{}", body(""));
+            let main = format!("{before}ghost.deep (x)\nuse std.console (console, print)\n\n{}", body(""));
             plain(main, pos_after(&before), "ghost.deep")
         }
         1 => {
             let before = format!("{pad}use geo (make0, ");
-            let main = format!("{before}secret)\n\n{}", body(""));
+            let main = format!("{before}secret)\nuse std.console (console, print)\n\n{}", body(""));
             plain(main, pos_after(&before), "secret")
         }
         2 => {
             let before = format!("{pad}use geo (");
-            let main = format!("{before}nothing_there)\n\n{}", body(""));
+            let main = format!("{before}nothing_there)\nuse std.console (console, print)\n\n{}", body(""));
             plain(main, pos_after(&before), "nothing_there")
         }
         3 => {
             // `geo` and `util.math` import each other, so no order builds them.
             let before = "use ";
-            let geo = format!("use util.math (t1)\n\n{GEO}");
-            let math = format!("{pad}{before}geo (f0)\n\npub fn t1(n: i32) -> i32 {{ f0(n) }}\n");
+            let geo = GEO.replacen("\n\n", "\nuse util.math (t1)\n\n", 1);
+            let math = format!(
+                "{pad}{before}geo (f0)\nuse std.bits (i32)\n\npub fn t1(n: i32) -> i32 {{ f0(n) }}\n"
+            );
             Placed {
-                main: format!("use geo (f0)\n\n{}", body("")),
+                main: format!("use geo (f0)\nuse std.console (console, print)\n\n{}", body("")),
                 modules: vec![("geo", geo), ("util.math", math)],
                 module: Some("util/math.smith"),
                 at: pos_after(&format!("{pad}{before}")),
@@ -255,7 +282,7 @@ fn placed(m: &Mistake) -> Placed {
         }
         _ => {
             // An `impl` in a module that defines neither its trait nor its type.
-            let before = format!("{pad}{head}impl ");
+            let before = format!("{pad}{head_with_bits}impl ");
             let main = format!(
                 "{before}T1[S0] {{\n  fn t1(x: S0) -> i32 {{ 0 }}\n}}\n\n{}",
                 body("")
@@ -306,11 +333,11 @@ fn project_a_file_nothing_reaches_is_never_read_by_a_build_and_is_checked() {
                 "fn broken( {{{\n",
                 "use ghost (x)\n",
                 "use geo (nothing_there)\n",
-                "pub struct S {\n  pub x: i32\n",
+                "use std.bits (i32)\n\npub struct S {\n  pub x: i32\n",
                 "use geo (f0)\nuse geo (f0)\n",
             ][kind];
             let wrong = format!("{}{bad}", "\n".repeat(pad));
-            let main = "use geo (f0)\n\nfn main() ! console, alloc {\n  print(\"{f0(1)}\")\n}\n";
+            let main = "use geo (f0)\nuse std.console (console, print)\n\nfn main() ! console, alloc {\n  print(\"{f0(1)}\")\n}\n";
             let reached = [("geo", GEO)];
             let with = [("geo", GEO), ("extra.stray", wrong.as_str())];
             assert_eq!(
@@ -349,10 +376,11 @@ fn write_project(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
     dir
 }
 
-const MAIN_ENTRY: &str = "use db.transaction (Transaction, begin, commit)\n\n\
+const MAIN_ENTRY: &str = "use db.transaction (Transaction, begin, commit)\nuse std.console (console, print)\n\n\
     fn main() ! console {\n  t = begin(41)\n  if commit(t) == 42 { print(\"committed\") } else { print(\"lost\") }\n}\n";
 
-const TRANSACTION: &str = "pub struct Transaction {\n  id: i32\n}\n\n\
+const TRANSACTION: &str = "use std.bits (i32)\nuse std.int (wrapping_add)\n\n\
+    pub struct Transaction {\n  id: i32\n}\n\n\
     pub fn begin(n: i32) -> Transaction { Transaction(id: wrapping_add(n, 1)) }\n\n\
     pub fn commit(t: Transaction) -> i32 { t.id }\n";
 

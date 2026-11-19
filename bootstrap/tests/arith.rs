@@ -11,7 +11,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int, value};
+use crate::numbers::{INTS, Int, value, with_header};
 
 pub const ONCE: &[Test] = &[
     (
@@ -109,13 +109,13 @@ fn pair(g: &mut Gen) -> Pair {
 /// type, and the program prints the true result.
 fn an_operation_on_two_numbers_compiles_exactly_when_its_true_result_fits_and_prints_it() {
     generate::check(90, 150, pair, |p| {
-        let source = format!(
+        let source = with_header(format!(
             "fn main() ! console, alloc {{\n  a: {0} = {1}\n  b: {0} = {2}\n  print(\"{{a {3} b}}\")\n}}\n",
             p.ty.name,
             lit(p.a),
             lit(p.b),
             p.op
-        );
+        ));
         let result = exact(p.op, p.a, p.b);
         match check(source.as_bytes()) {
             Ok(_) => {
@@ -275,7 +275,9 @@ fn boxed(g: &mut Gen) -> Boxed {
         }
     }
     Boxed {
-        source: format!("{source_fn}\nfn main() ! console, alloc {{\n{calls}}}\n"),
+        source: with_header(format!(
+            "{source_fn}\nfn main() ! console, alloc {{\n{calls}}}\n"
+        )),
         fits: fits_all,
         written: operation,
         stdout,
@@ -441,9 +443,9 @@ fn facts_and_goal(g: &mut Gen) -> Facts {
     }
     body.push_str("  } else {\n    0\n  }\n");
     let t = ty.name;
-    let source = format!(
+    let source = with_header(format!(
         "fn f(x: {t}, y: {t}) -> {t} {{\n{body}}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 2)}}\")\n}}\n"
-    );
+    ));
     let mut fits_all = true;
     for x in -8..=8 {
         for y in -8..=8 {
@@ -482,10 +484,10 @@ fn arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false(
 fn each_operation_of_an_expression_is_proven_by_itself() {
     for ty in INTS {
         for (first, second, a) in [("+", "-", ty.max()), ("-", "+", ty.min())] {
-            let source = format!(
+            let source = with_header(format!(
                 "fn main() ! console, alloc {{\n  a: {0} = {1}\n  b: {0} = 1\n  c: {0} = 1\n  print(\"{{a {first} b {second} c}}\")\n}}\n",
                 ty.name, a
-            );
+            ));
             let errors = check(source.as_bytes()).expect_err("the first operation does not fit");
             let goal = format!("a {first} b");
             assert!(
@@ -504,10 +506,10 @@ fn each_operation_of_an_expression_is_proven_by_itself() {
 /// so `x * y` is refused even where both are no more than 1.
 fn a_product_of_two_values_that_are_not_constants_is_refused() {
     for ty in INTS {
-        let source = format!(
+        let source = with_header(format!(
             "fn f(x: {0}, y: {0}) -> {0} {{\n  if x >= 0 and x <= 1 and y >= 0 and y <= 1 {{\n    x * y\n  }} else {{\n    0\n  }}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 1)}}\")\n}}\n",
             ty.name
-        );
+        ));
         let errors = check(source.as_bytes()).expect_err("a product of two unknowns");
         assert!(
             errors.iter().any(|e| e.message.contains("x * y")),
@@ -537,10 +539,10 @@ fn an_accepted_operation_is_the_one_instruction_and_tests_nothing() {
     for ty in INTS {
         for op in OPS {
             let lowered = |operation: &str| {
-                let source = format!(
+                let source = with_header(format!(
                     "fn f(x: {0}, y: {0}) -> {0} {{\n  if x >= 1 and x <= 2 and y >= 0 and y <= 1 {{\n    {operation}\n  }} else {{\n    0\n  }}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(2, 1)}}\")\n}}\n",
                     ty.name
-                );
+                ));
                 lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"))
             };
             let operand = if op == "*" { "2" } else { "y" };
@@ -627,7 +629,7 @@ fn operators_group_as_the_precedence_table_says() {
             (text, value_of(&t))
         },
         |(text, value)| {
-            let source = format!("fn main() ! console, alloc {{\n  print(\"{{{text}}}\")\n}}\n");
+            let source = with_header(format!("fn main() ! console, alloc {{\n  print(\"{{{text}}}\")\n}}\n"));
             assert_eq!(
                 run(&source),
                 Outcome {

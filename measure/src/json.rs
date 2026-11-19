@@ -29,7 +29,10 @@ fn text_size() -> usize {
 /// with it each time, and prints the last number `body` gives.
 fn smith_program(reps: usize, body: &str) -> String {
     format!(
-        "use std.json (to_json)
+        "use std.bits (bit_and, i32, u32)
+use std.console (console, print)
+use std.json (to_json)
+use std.list (push)
 
 struct Item {{
   id: u32
@@ -212,8 +215,11 @@ fn build_time(smith: &Path, work: &Path, name: &str) -> Duration {
 /// and writes it each time and does `body` with the text.
 fn smith_reader(reps: usize, body: &str) -> String {
     format!(
-        "use std.json (to_json, from_json)
-use std.deserialize (ReadError, Problem)
+        "use std.bits (bit_and, i32, u32)
+use std.console (console, print)
+use std.deserialize (Problem, ReadError)
+use std.json (from_json, to_json)
+use std.list (push)
 
 struct Item {{
   id: u32

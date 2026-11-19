@@ -49,11 +49,11 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
-const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
+const HELLO: &str = "use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n";
 
 /// The program of the issue that asked for warnings: a function nothing
 /// calls, and a binding nothing reads.
-const TWO_WARNINGS: &str = "fn unused() -> str { \"never called\" }
+const TWO_WARNINGS: &str = "use std.console (console, print)\n\nfn unused() -> str { \"never called\" }
 
 fn main() ! console {
   word = \"never read\"
@@ -379,10 +379,11 @@ fn linted(g: &mut Gen) -> Linted {
     while !items.is_empty() {
         order.push(items.remove(g.below(items.len())));
     }
-    let mut source = String::new();
+    // Every program prints, and writes `console` and `print` for it.
+    let mut source = String::from("use std.console (console, print)\n\n");
     let mut warnings = Vec::new();
-    for item in order {
-        if !source.is_empty() {
+    for (at, item) in order.into_iter().enumerate() {
+        if at > 0 {
             source.push_str("\n\n");
         }
         for (offset, mentions) in &item.marks {

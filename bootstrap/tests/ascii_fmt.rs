@@ -47,7 +47,7 @@ fn kinds(b: u8) -> [bool; 4] {
 }
 
 fn the_four_kinds_of_ascii_are_what_a_table_of_every_byte_says() {
-    let source = "use std.ascii (is_digit, is_hex_digit, is_letter, is_space)\n\nfn main() ! console, alloc {\n  loop i in 0..256 {\n    b: u8 = wrapping_narrow(i)\n    print(\"{is_digit(b)} {is_hex_digit(b)} {is_letter(b)} {is_space(b)}\")\n  }\n}\n";
+    let source = "use std.ascii (is_digit, is_hex_digit, is_letter, is_space)\nuse std.console (console, print)\nuse std.int (wrapping_narrow)\n\nfn main() ! console, alloc {\n  loop i in 0..256 {\n    b: Byte = wrapping_narrow(i)\n    print(\"{is_digit(b)} {is_hex_digit(b)} {is_letter(b)} {is_space(b)}\")\n  }\n}\n";
     let lines = (0..=255u8)
         .map(|b| kinds(b).map(|k| k.to_string()).join(" "))
         .collect();
@@ -75,7 +75,7 @@ fn call(g: &mut Gen) -> Call {
 
 fn hex_and_binary_give_what_rust_formats_padded_and_never_cut() {
     generate::check(311, 20, |g| (0..12).map(|_| call(g)).collect::<Vec<_>>(), |calls| {
-        let mut source = String::from("use std.fmt (binary, hex)\n\nfn main() ! console, alloc {\n");
+        let mut source = String::from("use std.console (console, print)\nuse std.fmt (binary, hex)\n\nfn main() ! console, alloc {\n");
         let mut lines = Vec::new();
         for Call { n, width, upper } in calls {
             let w = *width as usize;
@@ -90,7 +90,7 @@ fn hex_and_binary_give_what_rust_formats_padded_and_never_cut() {
 }
 
 fn the_examples_of_the_pages_on_ascii_and_fmt_hold() {
-    let source = "use std.ascii (is_digit)\nuse std.fmt (binary, hex)\n\nfn digits(s: str) -> Nat {\n  var n: Nat = 0\n  loop i in 0..s.size {\n    if is_digit(s[i]) { n = saturating_add(n, 1) }\n  }\n  n\n}\n\nfn byte(b: u8) -> str ! alloc { hex(convert(b), width: 2) }\n\nfn main() ! console, alloc {\n  print(\"{digits(\"a1b22\")}\")\n  print(\"U+{hex(233, width: 4)}\")\n  print(byte(10))\n  print(hex(255))\n  print(hex(255, upper: false))\n  print(hex(255, width: 1))\n  print(hex(0))\n  print(hex(0, width: 4))\n  print(binary(5))\n  print(binary(5, width: 8))\n  print(binary(5, width: 2))\n  print(binary(0))\n  print(hex(18446744073709551615, width: 20))\n  print(binary(18446744073709551615))\n}\n";
+    let source = "use std.ascii (is_digit)\nuse std.console (console, print)\nuse std.fmt (binary, hex)\nuse std.int (saturating_add)\n\nfn digits(s: str) -> Nat {\n  var n: Nat = 0\n  loop i in 0..s.size {\n    if is_digit(s[i]) { n = saturating_add(n, 1) }\n  }\n  n\n}\n\nfn byte(b: Byte) -> str ! alloc { hex(convert(b), width: 2) }\n\nfn main() ! console, alloc {\n  print(\"{digits(\"a1b22\")}\")\n  print(\"U+{hex(233, width: 4)}\")\n  print(byte(10))\n  print(hex(255))\n  print(hex(255, upper: false))\n  print(hex(255, width: 1))\n  print(hex(0))\n  print(hex(0, width: 4))\n  print(binary(5))\n  print(binary(5, width: 8))\n  print(binary(5, width: 2))\n  print(binary(0))\n  print(hex(18446744073709551615, width: 20))\n  print(binary(18446744073709551615))\n}\n";
     let lines = [
         "3",
         "U+00E9",

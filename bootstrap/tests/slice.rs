@@ -12,6 +12,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 use crate::programs::pos_after;
 
 pub const ONCE: &[Test] = &[
@@ -58,7 +59,7 @@ pub const ONCE: &[Test] = &[
 ];
 
 /// The type of an element, and how many bytes it takes.
-const ELEMS: &[(&str, usize)] = &[("u8", 1), ("u32", 4), ("u64", 8)];
+const ELEMS: &[(&str, usize)] = &[("Byte", 1), ("u32", 4), ("u64", 8)];
 
 fn lowered(source: &str) -> scalar::Program {
     lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"))
@@ -79,45 +80,7 @@ fn expected(lines: &[String]) -> Vec<u8> {
 /// piece of a list, which is the next issue; `out` of the page's `evens` is a
 /// word of the language, so the list is called `built`.
 fn the_slice_examples_of_the_page_give_what_the_page_says() {
-    let source = "fn evens(n: u64) -> Slice[u64] ! alloc {
-  var built: List[u64] = []
-  loop i in 0..n { built = push(built, wrapping_mul(i, 2)) }
-  freeze(built)
-}
-
-struct Halves {
-  left: Slice[u64]
-  right: Slice[u64]
-}
-
-fn halves(s: Slice[u64], mid: Nat) -> Halves
-  requires mid <= s.size
-{
-  Halves(left: s[..mid], right: s[mid..])
-}
-
-fn total(xs: List[u64]) -> u64 {
-  var t: u64 = 0
-  loop i in 0..xs.size { t = wrapping_add(t, xs[i]) }
-  t
-}
-
-fn demo(building: List[u64], done: Slice[u64]) -> u64 {
-  wrapping_add(total(building), total(done))
-}
-
-fn main() ! console, alloc {
-  e = evens(3)
-  if 3 <= e.size { print(\"{total(e)} {e.size} {e[2]}\") }
-  f = evens(5)
-  if 3 <= f.size {
-    h = halves(f, 3)
-    print(\"{h.left.size} {total(h.left)} {h.right.size} {total(h.right)}\")
-  }
-  building: List[u64] = [10, 20]
-  print(\"{demo(building, f)}\")
-}
-";
+    let source = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\nuse std.list (push)\n\nfn evens(n: u64) -> Slice[u64] ! alloc {\n  var built: List[u64] = []\n  loop i in 0..n { built = push(built, wrapping_mul(i, 2)) }\n  freeze(built)\n}\n\nstruct Halves {\n  left: Slice[u64]\n  right: Slice[u64]\n}\n\nfn halves(s: Slice[u64], mid: Nat) -> Halves\n  requires mid <= s.size\n{\n  Halves(left: s[..mid], right: s[mid..])\n}\n\nfn total(xs: List[u64]) -> u64 {\n  var t: u64 = 0\n  loop i in 0..xs.size { t = wrapping_add(t, xs[i]) }\n  t\n}\n\nfn demo(building: List[u64], done: Slice[u64]) -> u64 {\n  wrapping_add(total(building), total(done))\n}\n\nfn main() ! console, alloc {\n  e = evens(3)\n  if 3 <= e.size { print(\"{total(e)} {e.size} {e[2]}\") }\n  f = evens(5)\n  if 3 <= f.size {\n    h = halves(f, 3)\n    print(\"{h.left.size} {total(h.left)} {h.right.size} {total(h.right)}\")\n  }\n  building: List[u64] = [10, 20]\n  print(\"{demo(building, f)}\")\n}\n";
     let out = scalar::run(&lowered(source));
     assert_eq!(out.stdout, b"6 3 4\n3 6 2 14\n50\n".to_vec());
 }
@@ -205,8 +168,16 @@ fn frozen_source(f: &Frozen) -> String {
         main += &format!("  dump(o{k})\n");
     }
     main += &format!("  if {n} <= s.size {{ read(s) }}\n");
+    let uses = header(
+        &[
+            ("std.bits", &["u64"]),
+            ("std.console", &["console", "print"]),
+            ("std.list", &["push"]),
+        ],
+        t,
+    );
     format!(
-        "fn dump(xs: List[{t}]) ! console, alloc {{
+        "{uses}fn dump(xs: List[{t}]) ! console, alloc {{
   print(\"{{xs.size}}\")
   loop v in xs {{ print(\"{{v}}\") }}
 }}
@@ -273,8 +244,9 @@ fn a_piece_compiles_exactly_when_both_ends_are_proven_inside_and_has_the_element
                 Ends::End => format!("s[..{b}]"),
             };
             let items: Vec<String> = (0..n).map(|k| (k + 1).to_string()).collect();
+            let uses = header(&[("std.console", &["console", "print"])], t);
             let source = format!(
-                "fn dump(xs: List[{t}]) ! console, alloc {{
+                "{uses}fn dump(xs: List[{t}]) ! console, alloc {{
   print(\"{{xs.size}}\")
   loop v in xs {{ print(\"{{v}}\") }}
 }}
@@ -324,9 +296,17 @@ fn main() ! console, alloc {{
 fn freeze_asks_for_no_memory_moves_no_byte_and_runs_no_instruction_more() {
     for (t, _) in ELEMS {
         for n in [0usize, 1, 5, 9] {
+            let uses = header(
+                &[
+                    ("std.console", &["console", "print"]),
+                    ("std.int", &["wrapping_add"]),
+                    ("std.list", &["push"]),
+                ],
+                t,
+            );
             let program = |read: &str| {
                 format!(
-                    "fn total(xs: List[{t}]) -> {t} {{
+                    "{uses}fn total(xs: List[{t}]) -> {t} {{
   var sum: {t} = 0
   loop v in xs {{ sum = wrapping_add(sum, v) }}
   sum
@@ -359,7 +339,7 @@ fn main() ! console, alloc {{
 fn a_list_given_to_freeze_is_given_away_and_a_use_of_it_afterwards_is_one_error() {
     let program = |second: &str| {
         format!(
-            "fn keep(xs: take List[u8]) -> (Slice[u8], Nat) {{\n  s = freeze(xs)\n  (s, {second})\n}}\n\nfn main() ! alloc {{\n  xs: List[u8] = [1, 2]\n  r = keep(xs)\n}}\n"
+            "fn keep(xs: take List[Byte]) -> (Slice[Byte], Nat) {{\n  s = freeze(xs)\n  (s, {second})\n}}\n\nfn main() ! alloc {{\n  xs: List[Byte] = [1, 2]\n  r = keep(xs)\n}}\n"
         )
     };
     assert!(check(program("s.size").as_bytes()).is_ok());
@@ -383,10 +363,14 @@ fn a_slice_has_copy_and_is_bound_stored_and_returned_freely() {
         |(elem, items)| {
             let t = ELEMS[*elem].0;
             let written: Vec<String> = items.iter().map(u64::to_string).collect();
+            let uses = header(
+                &[("std.console", &["console", "print"]), ("std.list", &["push"])],
+                t,
+            );
             let source = format!(
-                "struct Held {{
+                "{uses}struct Held {{
   all: Slice[{t}]
-  tag: u8
+  tag: Byte
 }}
 
 fn dump(xs: List[{t}]) ! console, alloc {{
@@ -421,23 +405,23 @@ fn main() ! console, alloc {{
         },
     );
     // Each type, whether it has `Copy`, and a value of it.
-    let items = "struct S {\n  all: Slice[u8]\n}\n\nstruct W {\n  xs: List[u8]\n}\n\n";
+    let items = "struct S {\n  all: Slice[Byte]\n}\n\nstruct W {\n  xs: List[Byte]\n}\n\n";
     let types: &[(&str, bool, &str)] = &[
-        ("Slice[u8]", true, "[1]"),
+        ("Slice[Byte]", true, "[1]"),
         ("Slice[u64]", true, "[]"),
         ("S", true, "S(all: [1])"),
-        ("(Slice[u8], u8)", true, "([1], 2)"),
-        ("Option[Slice[u8]]", true, "Option.some([1])"),
-        ("Slice[Slice[u8]]", true, "[]"),
-        ("List[u8]", false, "[1]"),
+        ("(Slice[Byte], Byte)", true, "([1], 2)"),
+        ("Option[Slice[Byte]]", true, "Option.some([1])"),
+        ("Slice[Slice[Byte]]", true, "[]"),
+        ("List[Byte]", false, "[1]"),
         ("W", false, "W(xs: [1])"),
     ];
     for (ty, copies, value) in types {
         let source = format!(
-            "{items}fn twin[T: Copy](x: T) -> u64 {{ 1 }}\n\nfn use_it(x: {ty}) -> u64 {{ twin(x) }}\n\nfn main() ! alloc {{\n  x: {ty} = {value}\n  n = use_it(x)\n}}\n"
+            "use std.bits (u64)\n\n{items}fn twin[T: Copy](x: T) -> u64 {{ 1 }}\n\nfn use_it(x: {ty}) -> u64 {{ twin(x) }}\n\nfn main() ! alloc {{\n  x: {ty} = {value}\n  n = use_it(x)\n}}\n"
         );
         let errors = check(source.as_bytes()).err().unwrap_or_default();
-        let nested = *ty == "Slice[Slice[u8]]";
+        let nested = *ty == "Slice[Slice[Byte]]";
         // A slice of slices is written out with elements that are not numbers.
         if nested {
             continue;
@@ -452,8 +436,8 @@ fn main() ! console, alloc {{
 fn a_slice_a_list_and_a_text_are_passed_where_a_list_is_lent_and_a_slice_is_refused_where_one_is_taken() {
     let program = |given: &str, total: u8| {
         format!(
-            "fn total(xs: List[u8]) -> u8 {{
-  var sum: u8 = 0
+            "use std.console (console, print)\nuse std.int (wrapping_add)\n\nfn total(xs: List[Byte]) -> Byte {{
+  var sum: Byte = 0
   loop v in xs {{ sum = wrapping_add(sum, v) }}
   sum
 }}
@@ -465,8 +449,8 @@ fn main() ! console {{
         )
     };
     for (given, total) in [
-        ("  s: Slice[u8] = [1, 2, 3]\n  got = total(s)\n", 6),
-        ("  s: Slice[u8] = [1, 2, 3]\n  got = total(s[1..3])\n", 5),
+        ("  s: Slice[Byte] = [1, 2, 3]\n  got = total(s)\n", 6),
+        ("  s: Slice[Byte] = [1, 2, 3]\n  got = total(s[1..3])\n", 5),
         ("  got = total(\"ab\")\n", 195),
     ] {
         let source = program(given, total);
@@ -477,7 +461,7 @@ fn main() ! console {{
         assert!(taken.is_empty(), "{taken:?} for {source}");
         assert_eq!(copied.iter().sum::<usize>(), 0, "{copied:?} for {source}");
     }
-    let taking = "use std.list (copy)\n\nfn grow(xs: take List[u8]) -> List[u8] ! alloc { push(xs, 1) }\n\nfn go(s: Slice[u8]) -> List[u8] ! alloc { grow(SLICE) }\n\nfn main() ! alloc {\n  s: Slice[u8] = [1, 2]\n  r = go(s)\n}\n";
+    let taking = "use std.list (copy, push)\n\nfn grow(xs: take List[Byte]) -> List[Byte] ! alloc { push(xs, 1) }\n\nfn go(s: Slice[Byte]) -> List[Byte] ! alloc { grow(SLICE) }\n\nfn main() ! alloc {\n  s: Slice[Byte] = [1, 2]\n  r = go(s)\n}\n";
     assert!(check(taking.replace("SLICE", "copy(s)").as_bytes()).is_ok());
     let refused = taking.replace("SLICE", "s");
     let errors = check(refused.as_bytes()).expect_err("a slice where a list is taken");
@@ -499,10 +483,15 @@ fn copy_of_a_slice_gives_a_new_list_and_asks_for_alloc() {
         |(elem, items, extra)| {
             let t = ELEMS[*elem].0;
             let written: Vec<String> = items.iter().map(u64::to_string).collect();
+            let uses = header(
+                &[
+                    ("std.console", &["console", "print"]),
+                    ("std.list", &["copy", "push"]),
+                ],
+                t,
+            );
             let source = format!(
-                "use std.list (copy)
-
-fn dump(xs: List[{t}]) ! console, alloc {{
+                "{uses}fn dump(xs: List[{t}]) ! console, alloc {{
   print(\"{{xs.size}}\")
   loop v in xs {{ print(\"{{v}}\") }}
 }}
@@ -525,7 +514,7 @@ fn main() ! console, alloc {{
             assert_eq!(scalar::run(&lowered(&source)).stdout, expected(&lines), "for {source}");
         },
     );
-    let quiet = "use std.list (copy)\n\nfn twice(s: Slice[u8]) -> List[u8] { copy(s) }\n\nfn main() ! alloc {\n  s: Slice[u8] = [1]\n  r = twice(s)\n}\n";
+    let quiet = "use std.list (copy)\n\nfn twice(s: Slice[Byte]) -> List[Byte] { copy(s) }\n\nfn main() ! alloc {\n  s: Slice[Byte] = [1]\n  r = twice(s)\n}\n";
     let errors = check(quiet.as_bytes()).err().unwrap_or_default();
     assert!(errors.iter().any(|e| e.message.contains("`alloc`")), "{errors:?} does not name `alloc`");
 }
@@ -546,8 +535,9 @@ fn a_slice_written_out_is_data_in_the_executable_and_asks_for_no_alloc_and_no_me
         |(elem, items, at)| {
             let t = ELEMS[*elem].0;
             let written: Vec<String> = items.iter().map(usize::to_string).collect();
+            let uses = header(&[("std.console", &["console", "print"])], t);
             let source = format!(
-                "fn pick() -> {t} {{
+                "{uses}fn pick() -> {t} {{
   s: Slice[{t}] = [{}]
   s[{at}]
 }}
@@ -566,7 +556,7 @@ fn main() ! console {{
             assert!(taken.is_empty(), "{taken:?} for {source}");
         },
     );
-    let list = "fn pick() -> u8 {\n  s: List[u8] = [2, 3]\n  s[1]\n}\n\nfn main() ! alloc {\n  v = pick()\n}\n";
+    let list = "fn pick() -> Byte {\n  s: List[Byte] = [2, 3]\n  s[1]\n}\n\nfn main() ! alloc {\n  v = pick()\n}\n";
     let errors = check(list.as_bytes()).err().unwrap_or_default();
     assert!(errors.iter().any(|e| e.message.contains("`alloc`")), "{errors:?} does not name `alloc`");
 }
@@ -574,9 +564,9 @@ fn main() ! console {{
 /// A slice cannot change: `push` is refused on one, and so is an assignment to
 /// one of its elements.
 fn nothing_is_pushed_to_and_no_element_is_assigned_in_a_slice() {
-    let pushed = "fn more(s: Slice[u8]) -> Slice[u8] ! alloc { push(s, 1) }\n\nfn main() ! alloc {\n  s: Slice[u8] = [1]\n  r = more(s)\n}\n";
+    let pushed = "use std.list (push)\n\nfn more(s: Slice[Byte]) -> Slice[Byte] ! alloc { push(s, 1) }\n\nfn main() ! alloc {\n  s: Slice[Byte] = [1]\n  r = more(s)\n}\n";
     let errors = check(pushed.as_bytes()).expect_err("a push to a slice");
     assert!(errors.iter().all(|e| e.message.contains("slice")), "{errors:?}");
-    let assigned = "fn set(s: Slice[u8]) {\n  s[0] = 1\n}\n\nfn main() {\n  s: Slice[u8] = [1]\n  set(s)\n}\n";
+    let assigned = "fn set(s: Slice[Byte]) {\n  s[0] = 1\n}\n\nfn main() {\n  s: Slice[Byte] = [1]\n  set(s)\n}\n";
     assert!(check(assigned.as_bytes()).is_err());
 }

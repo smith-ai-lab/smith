@@ -19,7 +19,7 @@
 use smith::diag::Pos;
 
 use crate::generate::Gen;
-use crate::programs::{Expected, PIECES, pos_after};
+use crate::programs::{Expected, PIECES, lines_added, pos_after, shifted, with_imports};
 
 /// A program with traits: its source, the same program written out with
 /// one function and one struct for each type used, what it prints, and
@@ -1493,12 +1493,20 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> TraitCase {
         kind.is_none() || b.mistake.is_some(),
         "the mistake {kind:?} was placed"
     );
+    // The `use` lines of what the program writes of the library come first,
+    // and the mistake is placed after them.
+    let source = with_imports(&b.text);
+    let by = lines_added(&b.text, &source);
+    let mistake = b.mistake.map(|mut m| {
+        m.at = shifted(m.at, by);
+        m
+    });
     TraitCase {
-        source: b.text,
-        written_out,
+        source,
+        written_out: with_imports(&written_out),
         stdout,
         copies,
-        mistake: b.mistake,
+        mistake,
     }
 }
 
@@ -2010,7 +2018,7 @@ fn call_args(
 pub fn boxes(g: &mut Gen) -> (String, Vec<u8>) {
     let labelled = g.one_in(2);
     let mut source = String::from(
-        "struct Box[T] {\n  item: T\n  label: str\n}\n\nstruct Cat {\n  name: str\n}\n\n\
+        "use std.console (console, print)\n\nstruct Box[T] {\n  item: T\n  label: str\n}\n\nstruct Cat {\n  name: str\n}\n\n\
          trait Named[T] {\n  fn name_of(x: T) -> str\n}\n\n\
          impl Named[Cat] {\n  fn name_of(x: Cat) -> str { x.name }\n}\n\n\
          impl Named[str] {\n  fn name_of(x: str) -> str { x }\n}\n\n",
@@ -2071,12 +2079,12 @@ pub fn requires(g: &mut Gen) -> Requires {
     const TYPES: [(&str, &str); 3] = [
         ("str", "\"s\""),
         ("Cat", "Cat(name: \"c\")"),
-        ("i64", "one()"),
+        ("Int", "one()"),
     ];
     let through_show = g.one_in(2);
     let shown: Vec<bool> = TYPES.iter().map(|_| g.one_in(2)).collect();
     let mut source = String::from(
-        "struct Cat {\n  name: str\n}\n\nfn one() -> i64 { 1 }\n\n\
+        "use std.console (console, print)\n\nstruct Cat {\n  name: str\n}\n\nfn one() -> Int { 1 }\n\n\
          trait Show[T] {\n  fn show(x: T) -> str\n}\n\n\
          trait Pair[A, B] {\n  fn join(a: A, b: B) -> str\n}\n\n",
     );

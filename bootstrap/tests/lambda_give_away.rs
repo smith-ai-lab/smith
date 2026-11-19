@@ -51,6 +51,19 @@ impl Src {
     }
 }
 
+/// The names of the library the programs of this file use.
+const USES: &str = "use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_add)
+
+";
+
+/// The same for a program that adds nothing.
+const USES_WITHOUT_ADD: &str = "use std.bits (u64)
+use std.console (console, print)
+
+";
+
 /// The type every program of this file gives away, with the functions that
 /// lend and take it. The secrets of `a`, `b`, and `s` are 3, 5, and 11.
 const KEY: &str = "struct Key {
@@ -96,6 +109,7 @@ fn a_function_that_is_called_once_takes_the_lambda_that_gives_a_value_away_and_o
  {
     let program = |marked: &str| {
         let mut src = Src::default();
+        src.push(USES);
         src.push(KEY);
         src.push(&format!(
             "fn finish(k: take Key, f: {marked}fn(take Key) -> u64) -> u64 {{ f(k) }}\n\n"
@@ -273,6 +287,7 @@ fn after_gives(at: &[(usize, bool, Pos)]) -> Vec<Pos> {
 fn program(case: &Case) -> (String, Vec<Pos>) {
     let mut src = Src::default();
     let mut wanted: Vec<Pos> = Vec::new();
+    src.push(USES);
     src.push(KEY);
     let (shape, kind) = (case.shape, case.kind);
     let marked = if kind == Kind::Taken { "take " } else { "" };
@@ -386,6 +401,7 @@ fn in_place(case: &Case) -> (u64, String) {
     }
 
     let mut src = Src::default();
+    src.push(USES);
     src.push(KEY);
     src.push("fn user(a: take Key, b: take Key, s: take Key) -> u64 {\n");
     if case.assigns() {
@@ -462,6 +478,7 @@ fn two_lambdas_of_one_call_that_use_a_name_one_gave_away_are_refused_at_the_seco
     generate::check(707, 60, pairs, |pair| {
         let marked = if pair.kind == Kind::Taken { "take " } else { "" };
         let mut src = Src::default();
+        src.push(USES);
         src.push(KEY);
         src.push(&format!(
             "fn both(f: {marked}fn() -> u64, g: {marked}fn() -> u64) -> u64 {{ wrapping_add(f(), g()) }}\n\nfn user(a: take Key, b: take Key, s: take Key) -> u64 {{\n  r = both(f: "
@@ -519,6 +536,7 @@ fn two_lambdas_of_one_call_that_use_a_name_one_gave_away_are_refused_at_the_seco
 fn with_passes_its_block_to_a_parameter_that_takes_it_and_the_block_may_give_a_value_away() {
     let program = |marked: &str| {
         let mut src = Src::default();
+        src.push(USES);
         src.push(KEY);
         src.push(&format!(
             "fn spend(k: take Key, body: {marked}fn(take Key) -> u64) -> u64 {{ body(k) }}\n\nfn user(a: take Key, b: take Key, s: take Key) -> u64 {{\n  "
@@ -542,6 +560,7 @@ fn a_function_that_may_not_call_its_function_is_given_a_lambda_that_gives_away_o
  {
     let program = |bound: &str| {
         let mut src = Src::default();
+        src.push(USES_WITHOUT_ADD);
         src.push(KEY);
         src.push("fn run[R](c: bool, other: take R, f: take fn(u64) -> R) -> R {\n  other\n}\n\n");
         src.push("fn keep[T](x: take T) -> T { x }\n\n");

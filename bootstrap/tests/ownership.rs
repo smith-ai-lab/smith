@@ -11,7 +11,7 @@ use smith::diag::{Error, Pos};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::programs::pos_after;
+use crate::programs::{pos_after, with_imports};
 
 pub const ONCE: &[Test] = &[
     (
@@ -62,7 +62,9 @@ fn named(pos: Pos) -> String {
 
 /// A type `Key` that has no `Copy`, with what the examples of the pages
 /// use, and the example's own functions for `split` and `uniform`.
-const KEY: &str = "struct Key {
+const KEY: &str = "use std.bits (u64)
+
+struct Key {
   secret: u64
 }
 
@@ -76,7 +78,9 @@ fn uniform(k: take Key) -> u64 { 3 }
 
 fn the_examples_of_the_pages_on_ownership_and_take_are_accepted_or_refused_as_they_say() {
     // A number has `Copy`, so a struct of numbers has it.
-    let mirror = "struct Point {
+    let mirror = "use std.bits (u64)
+
+struct Point {
   x: u64
   y: u64
 }
@@ -240,7 +244,7 @@ impl Types {
     }
 
     fn source(&self) -> String {
-        let mut out = String::from("struct Key {\n  secret: u64\n}\n\nwithout Copy for Key\n\n");
+        let mut out = String::from("use std.bits (u64)\n\nstruct Key {\n  secret: u64\n}\n\nwithout Copy for Key\n\n");
         for (i, def) in self.defs.iter().enumerate() {
             if def.is_enum {
                 out.push_str(&format!("enum T{i} {{\n"));
@@ -391,7 +395,9 @@ impl Held {
 
 /// The types and the functions every generated program has. Each type has
 /// a function that takes its value and one that lends it.
-const PRELUDE: &str = "struct Key {
+const PRELUDE: &str = "use std.bits (u64)
+
+struct Key {
   secret: u64
 }
 
@@ -968,7 +974,9 @@ fn a_function_type_marks_a_parameter_take_and_its_lambda_is_held_to_it() {
 fn without_copy_and_without_discard_are_refused_for_what_is_not_a_type_of_the_program() {
     // A type of the program has either taken away, and a trait the compiler
     // gives no such thing to is refused as before.
-    let ok = "struct Key {
+    let ok = "use std.bits (u64)
+
+struct Key {
   secret: u64
 }
 
@@ -993,7 +1001,7 @@ fn main() ! diverge {
         ("without Copy for str", "is neither"),
         ("without Copy for Key\nwithout Copy for Key", "already taken away"),
     ] {
-        let source = format!("struct Key {{\n  secret: u64\n}}\n\n{line}\n\nfn main() {{\n  k = Key(secret: 1)\n}}\n");
+        let source = format!("use std.bits (u64)\n\nstruct Key {{\n  secret: u64\n}}\n\n{line}\n\nfn main() {{\n  k = Key(secret: 1)\n}}\n");
         let found = errors(&source);
         assert_eq!(found.len(), 1, "{found:?}\n{source}");
         assert!(found[0].message.contains(what), "{}\n{source}", found[0]);
@@ -1003,7 +1011,7 @@ fn main() ! diverge {
 /// A `Key` that a loop over a list gives stays in the list, so the loop may
 /// read it and may not return it, and the list is still there after the loop.
 fn the_element_a_loop_over_a_list_gives_is_lent_and_is_refused_where_it_is_returned() {
-    let read = format!(
+    let read = with_imports(&format!(
         "{KEY}fn total(ks: List[Key]) -> u64 {{
   var n: u64 = 0
   loop k in ks {{ n = wrapping_add(n, k.secret) }}
@@ -1016,7 +1024,7 @@ fn main() ! alloc {{
   b = total(ks)
 }}
 "
-    );
+    ));
     assert!(errors(&read).is_empty(), "{:?}", errors(&read));
     let returned = format!(
         "{KEY}fn first(ks: List[Key]) -> Key {{

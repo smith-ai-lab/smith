@@ -58,8 +58,18 @@ impl Shape {
             body.push_str("  s = \"a{1}\"\n");
         }
         let args = vec!["7"; self.parameters].join(", ");
+        let mut uses = String::new();
+        if self.parameters > 0 {
+            uses.push_str("use std.bits (u64)\n");
+        }
+        if self.console {
+            uses.push_str("use std.console (console, print)\n");
+        }
+        if !uses.is_empty() {
+            uses.push('\n');
+        }
         format!(
-            "fn hi({}) ! {} {{\n{body}}}\n\nfn run(f: fn({types})) {{ f({args}) }}\n\n",
+            "{uses}fn hi({}) ! {} {{\n{body}}}\n\nfn run(f: fn({types})) {{ f({args}) }}\n\n",
             params.join(", "),
             effects.join(", ")
         )
@@ -126,7 +136,7 @@ fn an_effect_the_function_passed_by_name_needs_is_one_error_at_the_name_as_for_i
 /// outermost lambda is written in.
 fn a_name_inside_a_lambda_asks_the_function_the_lambda_is_written_in_at_any_depth() {
     generate::check(303, 6, |g| 1 + g.below(3), |&depth| {
-        let head = "fn hi() ! console { print(\"hi\") }\n\n\
+        let head = "use std.console (console, print)\n\nfn hi() ! console { print(\"hi\") }\n\n\
                     fn run(f: fn()) { f() }\n\n";
         let mut inner = "run(hi)".to_string();
         for _ in 0..depth {

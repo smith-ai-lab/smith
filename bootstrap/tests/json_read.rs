@@ -14,6 +14,7 @@ use smith::{lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 
 pub const ONCE: &[Test] = &[
     (
@@ -90,7 +91,7 @@ fn lines(printed: &[u8]) -> Vec<String> {
 
 /// Source that turns bytes into a text, which a literal cannot do for a byte
 /// below a space other than a line break and a tab.
-const TEXT: &str = "fn s(bytes: take List[u8]) -> str {
+const TEXT: &str = "fn s(bytes: take List[Byte]) -> str {
   match utf8(freeze(bytes)) {
     .ok(t) { t }
     .err(e) { \"\" }
@@ -111,6 +112,35 @@ fn say(e: ReadError) -> str ! alloc {
 }
 
 ";
+
+/// The program of `rest`, which has `TEXT` in it, opened with the `use` lines
+/// it needs: `json`, the names of `std.json` it uses, `console` and `print`,
+/// the names `TEXT` reads with, `utf8`, what `rest` writes of the sizes, and
+/// `push` where it calls it.
+fn with_import(json: &[&str], rest: String) -> String {
+    let push: &[&str] = if rest.contains("push(") { &["push"] } else { &[] };
+    let uses = header(
+        &[
+            ("std.console", &["console", "print"]),
+            ("std.deserialize", &["ReadError"]),
+            ("std.json", json),
+            ("std.list", push),
+            ("std.utf8", &["utf8"]),
+        ],
+        &rest,
+    );
+    uses + &rest
+}
+
+/// How a message names a whole number type: the compiler spells `Int` and
+/// `Byte` as the sizes they are, `i64` and `u8`, in what it tells of a type.
+fn spelled(name: &str) -> &str {
+    match name {
+        "Int" => "i64",
+        "Byte" => "u8",
+        other => other,
+    }
+}
 
 /// The source of a text as a `str`.
 fn text_source(bytes: &[u8]) -> String {
@@ -190,8 +220,8 @@ const INTS: &[(&str, i128, i128)] = &[
     ("i8", -128, 127),
     ("i16", -32768, 32767),
     ("i32", -2147483648, 2147483647),
-    ("i64", i64::MIN as i128, i64::MAX as i128),
-    ("u8", 0, 255),
+    ("Int", i64::MIN as i128, i64::MAX as i128),
+    ("Byte", 0, 255),
     ("u16", 0, 65535),
     ("u32", 0, 4294967295),
     ("u64", 0, u64::MAX as i128),
@@ -678,7 +708,7 @@ struct Case {
 fn reading(defs: &Defs, t: &Ty, v: &Val, settings: Settings, cases: &[Case]) -> String {
     let name = defs.name(t);
     let mut out = format!(
-        "use std.json (from_json_as, to_json, Json)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{}",
+        "{TEXT}{}",
         defs.source()
     );
     out.push_str(&format!(
@@ -695,7 +725,7 @@ fn reading(defs: &Defs, t: &Ty, v: &Val, settings: Settings, cases: &[Case]) -> 
         ));
     }
     out.push_str("}\n");
-    out
+    with_import(&["from_json_as", "Json", "to_json"], out)
 }
 
 fn run_cases(defs: &Defs, t: &Ty, v: &Val, settings: Settings, cases: &[Case]) {
@@ -787,11 +817,11 @@ fn every_example_of_the_reading_part_of_the_page_gives_what_the_page_says() {
         ok("Shape", r#"{"type":"square","value":4}"#, mcp, "\"{v == Shape.square(4)}\"", "true"),
         ok("Shape", r#"{"type":"empty"}"#, mcp, "\"{v == Shape.empty}\"", "true"),
         ok("Content", r#"{"inputSchema":1}"#, mcp, "\"{v.input_schema}\"", "1"),
-        bad("u8", "300", keep, "300", "", "a number that does not fit u8"),
+        bad("Byte", "300", keep, "300", "", "a number that does not fit u8"),
         bad("u64", "\"5\"", keep, "\"5\"", "", "expected a whole number, found a text"),
         bad("u64", "5.5", keep, "5.5", "", "expected a whole number, found a number that is not whole"),
         bad("u64", "18446744073709551616", keep, "1844", "", "a number that does not fit u64"),
-        bad("i64", "-9223372036854775809", keep, "-92", "", "a number that does not fit i64"),
+        bad("Int", "-9223372036854775809", keep, "-92", "", "a number that does not fit i64"),
         ok("()", "null", keep, "\"unit\"", "unit"),
         bad("Point", "null", keep, "null", "", "expected an object, found null"),
         bad("Point", r#"{"x":1,"x":2,"y":3}"#, keep, "\"x\":2", "x", "`x` is given twice"),
@@ -807,12 +837,9 @@ fn every_example_of_the_reading_part_of_the_page_gives_what_the_page_says() {
         bad("Point", r#"{"x":1,"y":3} x"#, keep, " x", "", "not valid JSON").after(1),
     ];
     let mut source = format!(
-        "use std.json (from_json_as, Json, describe)
-use std.deserialize (ReadError, Problem)
-
-{TEXT}struct Point {{
-  x: i64
-  y: i64
+        "{TEXT}struct Point {{
+  x: Int
+  y: Int
 }}
 
 struct Tool {{
@@ -836,7 +863,7 @@ enum Shape {{
 }}
 
 struct Content {{
-  input_schema: u8
+  input_schema: Byte
 }}
 
 fn opt(o: Option[str]) -> str {{
@@ -859,6 +886,7 @@ fn main() ! console, alloc {{
         ));
     }
     source.push_str("}\n");
+    let source = with_import(&["describe", "from_json_as", "Json"], source);
     let printed = lines(&prints(&source));
     let expected: Vec<&str> = examples.iter().map(|e| e.expected.as_str()).collect();
     assert_eq!(printed, expected, "{source}");
@@ -870,7 +898,7 @@ fn a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting() {
     generate::check(6001, 6, made_with_defs, |(defs, t, v, _)| {
         let name = defs.name(t);
         let mut source = format!(
-            "use std.json (to_json_as, from_json_as, Json)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{}fn main() ! console, alloc {{\n  v: {name} = {}\n",
+            "{TEXT}{}fn main() ! console, alloc {{\n  v: {name} = {}\n",
             defs.source(),
             v.source()
         );
@@ -881,6 +909,7 @@ fn a_value_written_by_to_json_as_is_read_back_as_the_value_for_each_setting() {
             ));
         }
         source.push_str("}\n");
+        let source = with_import(&["from_json_as", "Json", "to_json_as"], source);
         let printed = lines(&prints(&source));
         assert_eq!(printed, vec!["ok true"; SETTINGS.len()], "{source}");
     });
@@ -965,7 +994,7 @@ fn cases_in_the_values_of_cases_are_read_to_any_depth() {
             tag_last.push_str(",\"type\":\"c0\"}");
         }
         let mut source = format!(
-            "use std.json (from_json_as, to_json_as, Json)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{types}fn main() ! console, alloc {{\n  v: E0 = {value}\n  k = Json(cases: .key, names: .written)\n  t = Json(cases: .tag(\"type\"), names: .written)\n"
+            "{TEXT}{types}fn main() ! console, alloc {{\n  v: E0 = {value}\n  k = Json(cases: .key, names: .written)\n  t = Json(cases: .tag(\"type\"), names: .written)\n"
         );
         for (name, text, json) in [("key", &key, "k"), ("first", &tag_first, "t"), ("last", &tag_last, "t")] {
             source.push_str(&format!(
@@ -974,6 +1003,7 @@ fn cases_in_the_values_of_cases_are_read_to_any_depth() {
             ));
         }
         source.push_str("}\n");
+        let source = with_import(&["from_json_as", "Json", "to_json_as"], source);
         let printed = lines(&prints(&source));
         assert_eq!(printed.len(), 3, "{source}");
         assert_eq!(printed[0], "ok true", "{source}");
@@ -1045,7 +1075,7 @@ fn broken(g: &mut Gen, w: &Written, settings: Settings) -> Vec<Case> {
         let (_, least, greatest) = *INTS.iter().find(|(m, ..)| m == name).unwrap();
         let too = if least < 0 && g.one_in(2) { least - 1 } else { greatest + 1 };
         let t = spliced(text, n.start, n.end, too.to_string().as_bytes());
-        add(t, n.start, &n.path, &format!("range {name}"));
+        add(t, n.start, &n.path, &format!("range {}", spelled(name)));
     }
     // A bracket changed, where a value opens and where it closes.
     let bracketed: Vec<&Node> = plain
@@ -1521,7 +1551,7 @@ fn drawn_texts(g: &mut Gen) -> Vec<Vec<u8>> {
 fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
     generate::check(6005, 8, drawn_texts, |texts| {
         let mut source = format!(
-            "use std.json (from_json, RawJson, raw_text)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn main() ! console, alloc {{\n"
+            "{TEXT}fn main() ! console, alloc {{\n"
         );
         for (i, text) in texts.iter().enumerate() {
             source.push_str(&format!(
@@ -1530,6 +1560,7 @@ fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
             ));
         }
         source.push_str("}\n");
+        let source = with_import(&["from_json", "raw_text", "RawJson"], source);
         let printed = lines(&prints(&source));
         assert_eq!(printed.len(), texts.len(), "{source}");
         for (line, text) in printed.iter().zip(texts) {
@@ -1545,7 +1576,7 @@ fn text_the_reader_of_the_test_refuses_is_refused_where_it_refuses_it() {
 // A part of the text that is not taken apart.
 
 const WRAP: &str = "struct Wrap {
-  head: u8
+  head: Byte
   body: RawJson
   tail: Option[str]
 }
@@ -1566,12 +1597,13 @@ fn a_rawjson_holds_the_bytes_of_its_value_and_reads_later_to_the_value_a_direct_
         let text = [&b"{\"head\":1,\"body\":"[..], &written.bytes, &b",\"tail\":null}"[..]].concat();
         let name = defs.name(t);
         let source = format!(
-            "use std.json (from_json_as, to_json, Json, RawJson, raw_text)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{WRAP}{}fn main() ! console, alloc {{\n  v: {name} = {}\n  j = {}\n  r: Result[Wrap, ReadError] = from_json_as({}, j)\n  match r {{\n    .ok(w) {{\n      print(raw_text(w.body))\n      later: Result[{name}, ReadError] = from_json_as(raw_text(w.body), j)\n      match later {{\n        .ok(x) {{ print(\"{{to_json(x) == to_json(v)}}\") }}\n        .err(e) {{ print(say(e)) }}\n      }}\n    }}\n    .err(e) {{ print(say(e)) }}\n  }}\n}}\n",
+            "{TEXT}{WRAP}{}fn main() ! console, alloc {{\n  v: {name} = {}\n  j = {}\n  r: Result[Wrap, ReadError] = from_json_as({}, j)\n  match r {{\n    .ok(w) {{\n      print(raw_text(w.body))\n      later: Result[{name}, ReadError] = from_json_as(raw_text(w.body), j)\n      match later {{\n        .ok(x) {{ print(\"{{to_json(x) == to_json(v)}}\") }}\n        .err(e) {{ print(say(e)) }}\n      }}\n    }}\n    .err(e) {{ print(say(e)) }}\n  }}\n}}\n",
             defs.source(),
             v.source(),
             settings.source(false),
             text_source(&text)
         );
+        let source = with_import(&["from_json_as", "Json", "raw_text", "RawJson", "to_json"], source);
         let printed = prints(&source);
         let expected = [&body[..], b"\ntrue\n"].concat();
         assert_eq!(String::from_utf8_lossy(&printed), String::from_utf8_lossy(&expected), "{source}");
@@ -1589,7 +1621,7 @@ fn asked(source: &str) -> (Vec<u8>, usize, usize) {
 /// A function that makes the text of a `Wrap`, whose body is `n` zeros in an
 /// array, from the bytes of a text that is built with `push`.
 const MAKE: &str = "fn make(n: Nat) -> str ! alloc {
-  var l: List[u8] = []
+  var l: List[Byte] = []
   loop b in \"\\{\\\"head\\\":1,\\\"body\\\":[\" { l = push(l, b) }
   loop i in 0..n {
     if i > 0 { l = push(l, ',') }
@@ -1608,8 +1640,9 @@ fn a_rawjson_shares_the_memory_of_the_input() {
         } else {
             "  print(\"ok\")\n".to_string()
         };
-        format!(
-            "use std.json (from_json, RawJson, raw_text)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{WRAP}{MAKE}fn main() ! console, alloc {{\n  t = make({n})\n{tail}}}\n"
+        with_import(
+            &["from_json", "raw_text", "RawJson"],
+            format!("{TEXT}{WRAP}{MAKE}fn main() ! console, alloc {{\n  t = make({n})\n{tail}}}\n"),
         )
     };
     // What the reading asks for, beyond building the text, is the same for a
@@ -1641,8 +1674,9 @@ fn reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_
             } else {
                 "  print(\"ok\")\n".to_string()
             };
-            format!(
-                "use std.json (from_json)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}{decls}fn main() ! console, alloc {{\n  var l: List[u8] = []\n{build}  t = s(l)\n{tail}}}\n"
+            with_import(
+                &["from_json"],
+                format!("{TEXT}{decls}fn main() ! console, alloc {{\n  var l: List[Byte] = []\n{build}  t = s(l)\n{tail}}}\n"),
             )
         };
         let (stdout, with, copied) = asked(&program(true));
@@ -1653,9 +1687,9 @@ fn reading_asks_for_memory_for_the_texts_and_lists_of_the_value_and_for_nothing_
     // A value that holds no text and no list asks for what a value of `()`
     // does, whatever it holds.
     let nothing = extra("", "()", &pushes("null"), "true");
-    let few = extra("struct N {\n  a: u8\n}\n\n", "N", &pushes(r#"{"a":1}"#), "w.a == 1");
+    let few = extra("struct N {\n  a: Byte\n}\n\n", "N", &pushes(r#"{"a":1}"#), "w.a == 1");
     let many = extra(
-        "struct N {\n  a: u8\n  b: bool\n  c: Option[u8]\n  d: (u8, i8)\n  e: Mode\n  f: i64\n}\n\nenum Mode {\n  c1\n  c2: u8\n}\n\n",
+        "struct N {\n  a: Byte\n  b: bool\n  c: Option[Byte]\n  d: (Byte, i8)\n  e: Mode\n  f: Int\n}\n\nenum Mode {\n  c1\n  c2: Byte\n}\n\n",
         "N",
         &pushes(r#"{"a":1,"b":true,"c":null,"d":[7,-8],"e":"c1","f":-9223372036854775808}"#),
         "w.a == 1",
@@ -1703,7 +1737,7 @@ fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_i
         texts
     }, |texts| {
         let mut source = format!(
-            "use std.json (from_json, to_json, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn main() ! console, alloc {{\n"
+            "{TEXT}fn main() ! console, alloc {{\n"
         );
         for (i, text) in texts.iter().enumerate() {
             source.push_str(&format!(
@@ -1712,6 +1746,7 @@ fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_i
             ));
         }
         source.push_str("}\n");
+        let source = with_import(&["from_json", "RawJson", "to_json"], source);
         let printed = lines(&prints(&source));
         // A text can hold a line break between its tokens, which is a line of
         // its own in what is printed, so what is printed is compared whole.
@@ -1726,7 +1761,7 @@ fn a_rawjson_that_is_read_and_written_is_the_bytes_it_was_less_the_space_round_i
 fn raw_json_is_ok_exactly_when_reading_a_rawjson_is_and_what_a_rawjson_writes_is_json() {
     generate::check(6009, 6, drawn_texts, |texts| {
         let mut source = format!(
-            "use std.json (from_json, to_json, raw_json, raw_text, RawJson)\nuse std.deserialize (ReadError, Problem)\n\n{TEXT}fn show(t: str) ! console, alloc {{
+            "{TEXT}fn show(t: str) ! console, alloc {{
   a: Result[RawJson, ReadError] = from_json(t)
   b = raw_json(t)
   match a {{
@@ -1755,6 +1790,7 @@ fn main() ! console, alloc {{\n"
             source.push_str(&format!("  show({})\n", text_source(text)));
         }
         source.push_str("}\n");
+        let source = with_import(&["from_json", "raw_json", "raw_text", "RawJson", "to_json"], source);
         let printed = String::from_utf8(prints(&source)).unwrap();
         // What the reader of the test says of each text, and what is written,
         // which is the text less the space round it, and is JSON.
@@ -1778,9 +1814,10 @@ fn a_rawjson_built_by_hand_from_text_that_is_not_json_is_not_written_as_it_is() 
     // written as it is.
     let text = "] not json \", \"admin\": true";
     let source = format!(
-        "use std.json (to_json, RawJson)\n\n{TEXT}struct Call {{\n  name: str\n  arguments: RawJson\n}}\n\nfn main() ! console, alloc {{\n  bad = RawJson(text: {})\n  print(to_json(Call(name: \"f\", arguments: bad)))\n}}\n",
+        "{TEXT}struct Call {{\n  name: str\n  arguments: RawJson\n}}\n\nfn main() ! console, alloc {{\n  bad = RawJson(text: {})\n  print(to_json(Call(name: \"f\", arguments: bad)))\n}}\n",
         text_source(text.as_bytes())
     );
+    let source = with_import(&["RawJson", "to_json"], source);
     // A program that builds one by hand is refused where the compiler keeps
     // a field that is not `pub` private to the library, and where it does not,
     // the text is written as a text.

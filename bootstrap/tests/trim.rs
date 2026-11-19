@@ -16,7 +16,7 @@ use smith::lower;
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int, value};
+use crate::numbers::{INTS, Int, header_for, value};
 use crate::targets::{runnable, runs_as};
 
 pub const ONCE: &[Test] = &[
@@ -90,7 +90,7 @@ pub const MACHINE: &[Test] = &[
 ];
 
 /// A chain of functions of a struct of `types.len()` fields, `f0` and so on.
-/// The first field is an `i64`, and each function changes it with a number
+/// The first field is an `Int`, and each function changes it with a number
 /// that is its own, which is how the test finds the function in the program
 /// after the passes. Function `l` changes the fields in `changed[l]`, reads
 /// the fields in `read[l]` to choose what it adds to the first, and hands the
@@ -173,7 +173,7 @@ impl Chain {
     }
 
     fn source(&self) -> String {
-        let mut s = String::from("use std.int (wrapping_add, wrapping_mul)\n\nstruct S {\n");
+        let mut s = String::from("struct S {\n");
         for (i, t) in self.types.iter().enumerate() {
             s.push_str(&format!("  f{i}: {}\n", t.name));
         }
@@ -213,7 +213,7 @@ impl Chain {
             }
         }
         s.push_str("}\n");
-        s
+        header_for(&s) + &s
     }
 }
 
@@ -308,9 +308,10 @@ struct Written {
 }
 
 const READ_ON_ONE_PATH: Written = Written {
-    source: "use std.int (wrapping_add, wrapping_mul)
+    source: "use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
 
-fn pick(a: i64, b: i64, c: i64) -> i64 {
+fn pick(a: Int, b: Int, c: Int) -> Int {
 {pad}  var r = wrapping_mul(wrapping_add(c, 1), 424242)
   if a > 0 { r = wrapping_add(r, b) }
   r
@@ -330,11 +331,12 @@ fn main() ! console, alloc {
 };
 
 const DIFFERS_ON_ONE_RETURN: Written = Written {
-    source: "use std.int (wrapping_add, wrapping_mul)
+    source: "use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
 
 struct P {
-  x: i64
-  y: i64
+  x: Int
+  y: Int
 }
 
 fn step(p: P) -> P {
@@ -358,12 +360,13 @@ fn main() ! console, alloc {
 };
 
 const LOOP_OVER_A_VAR: Written = Written {
-    source: "use std.int (wrapping_add, wrapping_mul)
+    source: "use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
 
 struct S {
-  a: i64
-  b: i64
-  c: i64
+  a: Int
+  b: Int
+  c: Int
 }
 
 fn step(s: S) -> S {
@@ -392,12 +395,13 @@ fn main() ! console, alloc {
 };
 
 const TWO_PLACES: Written = Written {
-    source: "use std.int (wrapping_add, wrapping_mul)
+    source: "use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
 
 struct S {
-  a: i64
-  b: i64
-  c: i64
+  a: Int
+  b: Int
+  c: Int
 }
 
 fn bump(s: S) -> S {
@@ -425,7 +429,10 @@ fn main() ! console, alloc {
 /// A function that allocates on one path only, and gives back what it made.
 /// What `main` holds before and after the calls is read at the end.
 const ALLOCATES_ON_ONE_PATH: Written = Written {
-    source: "use std.int (wrapping_add)
+    source: "use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_add)
+use std.list (push)
 
 fn make(n: u64) -> List[u64] ! alloc {
   var xs: List[u64] = []
@@ -459,12 +466,13 @@ fn main() ! console, alloc {
 };
 
 const SWAPPED: Written = Written {
-    source: "use std.int (wrapping_add, wrapping_mul)
+    source: "use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
 
 struct T {
-  x: i64
-  y: i64
-  z: i64
+  x: Int
+  y: Int
+  z: Int
 }
 
 fn swap(t: T) -> T {
@@ -486,12 +494,13 @@ fn main() ! console, alloc {
 };
 
 const TWICE: Written = Written {
-    source: "use std.int (wrapping_add, wrapping_mul)
+    source: "use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul)
 
 struct T {
-  x: i64
-  y: i64
-  z: i64
+  x: Int
+  y: Int
+  z: Int
 }
 
 fn twice(t: T) -> T {
@@ -702,7 +711,7 @@ fn a_main_that_reads_nothing_it_is_given_is_still_given_it() {
     assert!(scalar::trim(&program).takes_arguments());
     assert!(scalar::passes(&program).takes_arguments());
 
-    let source = "fn main(args: List[str]) ! console, alloc { print(\"done\") }\n";
+    let source = "use std.console (console, print)\n\nfn main(args: List[str]) ! console, alloc { print(\"done\") }\n";
     let program = built(source);
     assert!(program.takes_arguments(), "{program:?}");
     let after = scalar::passes(&program);

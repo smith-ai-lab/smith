@@ -1198,6 +1198,7 @@ impl Writer {
     }
 
     fn program(&mut self, m: &Model) {
+        self.push("use std.console (console, print)\n\n");
         self.push("struct Cat {\n  name: str\n}\n\nenum Pet {\n  cat: Cat\n  none\n}\n");
         self.push("\nfn say(text: str) ! console { print(text) }\n");
         for (name, params, result, body) in PLAIN {
@@ -1628,6 +1629,15 @@ pub fn loop_program(g: &mut Gen) -> LoopCase {
         "\nfn main() ! {diverge}console, alloc {{\n  var a: u32 = 0\n  var b: u32 = 0\n  var p = Pair(a: 0, b: 0)\n  f{called}({n}, {mode}) fn(x) {{\n    {}\n  }}\n  print(\"{{a}} {{b}} {{p.a}}\")\n}}\n",
         effect.text()
     ));
+    // `wrapping_mul` is written by only some of the effects.
+    let int = if text.contains("wrapping_mul(") {
+        "wrapping_add, wrapping_mul"
+    } else {
+        "wrapping_add"
+    };
+    let text = format!(
+        "use std.bits (u32)\nuse std.console (console, print)\nuse std.int ({int})\n\n{text}"
+    );
     LoopCase {
         source: text,
         stdout: format!("{} {} {}\n", v.a, v.b, v.p).into_bytes(),
