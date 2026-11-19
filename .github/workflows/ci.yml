@@ -267,8 +267,9 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: sh .github/check-commits.sh "$BASE" "$HEAD"
 
-  # Every page of the language says how much of it is built. It builds nothing,
-  # so it runs for every change.
+  # Every page of the language says how much of it is built, and no file of the
+  # repository is a built executable. It builds nothing, so it runs for every
+  # change.
   status:
     name: language status
     runs-on: ubuntu-latest
@@ -276,6 +277,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Check the status of every language page
         run: sh .github/check-status.sh
+      - name: Check that no built executable is committed
+        run: sh .github/check-no-executables.sh
 
   ci:
     name: ci
