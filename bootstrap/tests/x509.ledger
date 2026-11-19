@@ -1,0 +1,146 @@
+# RFC 5280, sections 4.1 and 4.2: each sentence that holds MUST, MUST NOT,
+# or SHALL, and what holds it in `std.x509`. A line is
+#   <section> | <first words of the sentence> | test <name>
+# or
+#   <section> | <first words of the sentence> | reason <why std.x509 has nothing to do with it>
+# `tests/x509_standard.rs` fails for a sentence that is in no line.
+4.1 | TBSCertificate ::= SEQUENCE { version | test a_certificate_of_a_version_other_than_3_is_an_error
+4.1 | subjectUniqueID [2] IMPLICIT UniqueIdentifier OPTIONAL, | test a_certificate_of_a_version_other_than_3_is_an_error
+4.1.1.2 | This field MUST contain the | reason binds the certificate's writer, and the module checks no signature
+4.1.2.1 | When extensions are used, as | test a_certificate_of_a_version_other_than_3_is_an_error
+4.1.2.1 | At a minimum, conforming implementations | test a_certificate_of_a_version_other_than_3_is_an_error
+4.1.2.2 | The serial number MUST be | test a_serial_number_is_read_to_20_octets_and_is_an_error_below_one
+4.1.2.2 | It MUST be unique for | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.1.2.2 | CAs MUST force the serialNumber | test a_serial_number_is_read_to_20_octets_and_is_an_error_below_one
+4.1.2.2 | Certificate users MUST be able | test a_serial_number_is_read_to_20_octets_and_is_an_error_below_one
+4.1.2.2 | Conforming CAs MUST NOT use | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.1.2.3 | This field MUST contain the | reason binds the certificate's writer, and the module checks no signature
+4.1.2.4 | The issuer field MUST contain | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.4 | CAs conforming to this profile | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.4 | However, conforming implementations MUST be | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.4 | Implementations of this specification MUST | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.4 | In addition, implementations of this | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.4 | Certificate users MUST be prepared | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.5 | CAs conforming to this profile | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.1.2.5 | Conforming applications MUST be able | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5 | When the issuer will not | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.1.2.5.1 | For the purposes of this | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5.1 | Conforming systems MUST interpret the | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5.1 | Where YY is greater than | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5.1 | Where YY is less than | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5.2 | For the purposes of this | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.5.2 | GeneralizedTime values MUST NOT include | test a_time_is_read_as_the_seconds_since_1970_in_both_forms_and_nothing_else_is
+4.1.2.6 | If the subject is a | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | then the subject field MUST | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | If subject naming information is | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | Where it is non-empty, the | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | The DN MUST be unique | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | Implementations of this specification MUST | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | When encoding attribute values of | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | (a) When the subject of | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | Thus, if the subject CA | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | (b) When the subject of | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.6 | Conforming implementations generating new certificates | reason names are given as the bytes they are written in, and the module takes none apart or compares them
+4.1.2.8 | These fields MUST only appear | test a_certificate_of_a_version_other_than_3_is_an_error
+4.1.2.8 | These fields MUST NOT appear | test a_certificate_of_a_version_other_than_3_is_an_error
+4.1.2.8 | CAs conforming to this profile | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.1.2.9 | This field MUST only appear | test a_certificate_of_a_version_other_than_3_is_an_error
+4.2 | Each extension in a certificate | test a_certificate_with_an_extension_marked_critical_that_is_not_read_is_an_error
+4.2 | A non-critical extension MAY be | test a_certificate_is_read_to_what_openssl_printed_for_it
+4.2 | A certificate MUST NOT include | test an_extension_that_is_written_twice_is_an_error_whichever_it_is
+4.2 | Conforming CAs MUST support key | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2 | If the CA issues certificates | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2 | At a minimum, applications conforming | reason binds an application that validates a path; the module reads four extensions and refuses a certificate with another marked critical (see above), so none is passed over
+4.2.1.1 | The keyIdentifier field of the | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.1 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.2 | To facilitate certification path construction, | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.2 | In conforming CA certificates, the | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.2 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.3 | Conforming CAs MUST include this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.3 | If the keyCertSign bit is | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.3 | If the keyUsage extension is | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.3 | When the keyUsage extension appears | reason the module reads a key usage as a bit string and does not judge what its bits mean
+4.2.1.4 | A certificate policy OID MUST | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.4 | If this extension is critical, | test a_certificate_with_an_extension_marked_critical_that_is_not_read_is_an_error
+4.2.1.4 | When qualifiers are used with | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.4 | Conforming CAs MUST NOT encode | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.5 | Policies MUST NOT be mapped | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.6 | Whenever such identities are to | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.6 | Because the subject alternative name | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.6 | Further, if the only subject | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.6 | If the subject field contains | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.6 | When the subjectAltName extension contains an Internet | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | When the subjectAltName extension contains an iPAddress, | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | For IP version 4, as | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | For IP version 6, as | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | When the subjectAltName extension contains a domain | test a_certificate_is_read_to_what_openssl_printed_for_it
+4.2.1.6 | The name MUST be in | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | addition, while the string " | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | Finally, the use of the | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | When the subjectAltName extension contains a URI, | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | The name MUST NOT be | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | The name MUST include both | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | URIs that include an authority | reason binds how a name that is not a DNS name is written, which the module passes over; a DNS name is read as it is written, and the module checks no syntax of it
+4.2.1.6 | The DN MUST be unique | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.6 | If the subjectAltName extension is | test an_extension_that_is_read_and_is_not_written_right_is_an_error_and_one_that_is_not_read_is_passed_over
+4.2.1.6 | Unlike the subject field, conforming | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.7 | Issuer alternative name MUST be | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.8 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.9 | If the cA boolean is | reason binds what a key may be used for, and the module judges no relation between two extensions
+4.2.1.9 | If the basic constraints extension | reason binds what a key may be used for, and the module judges no relation between two extensions
+4.2.1.9 | Where it appears, the pathLenConstraint | test an_extension_that_is_read_and_is_not_written_right_is_an_error_and_one_that_is_not_read_is_passed_over
+4.2.1.9 | Conforming CAs MUST include this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.9 | CAs MUST NOT include the | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.10 | The name constraints extension, which | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.10 | Conforming CAs MUST NOT issue | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.10 | That is, either the permittedSubtrees | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | Applications conforming to this profile | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | If a name constraints extension | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | Within this profile, the minimum | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | However, if an application encounters | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | The constraint MUST be specified | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | If a constraint is applied | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | rfc822Name name form, but the | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | Restrictions of the form directoryName | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | Restrictions of the form x400Address | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | When applying restrictions of the | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | At a minimum, implementations MUST | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | This implies name restrictions MUST | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | The syntax of iPAddress MUST | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | For IPv4 addresses, the iPAddress | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.10 | For IPv6 addresses, the iPAddress | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.11 | Conforming applications MUST be able | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.11 | Applications that support the inhibitPolicyMapping | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.11 | If the policyConstraints extension is | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.11 | Conforming CAs MUST NOT issue | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.11 | That is, either the inhibitPolicyMapping | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.11 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.12 | Object identifiers used to identify | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.12 | If the extension is present, | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.12 | If a certificate contains both | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.12 | If there is no purpose | reason binds what uses a certificate, or the path it is in; the module reads one certificate and checks nothing
+4.2.1.13 | While each of these fields | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | If the certificate issuer is not | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | If the certificate issuer is also | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.13 | If the DistributionPointName contains a | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | When the HTTP or FTP | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | When the LDAP URI scheme | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | The DistributionPointName MUST NOT use | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | If the DistributionPoint omits the | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | When a conforming CA includes | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.13 | If present, the cRLIssuer MUST | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | The encoding of the name | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.1.13 | If the cRLIssuer field is | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.14 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.1.15 | The extension MUST be marked | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.2.1 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.2.1 | The LDAP URI [RFC4516] MUST | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.1 | Where the information is available | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.1 | Conforming applications that support HTTP | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.2 | Conforming CAs MUST mark this | reason binds a CA that issues certificates; the module reads one certificate and checks nothing of how it was made
+4.2.2.2 | The LDAP URI [RFC4516] MUST | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.2 | Where the information is available | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.2 | Conforming applications that support HTTP | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.2 | Where the timestamping services are available via HTTP | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
+4.2.2.2 | Where the timestamping services are available via electronic | reason the module passes over this extension, and refuses a certificate that marks it critical (see 4.2)
