@@ -45,6 +45,8 @@ A trait function is called like any other function. The call finds the `impl` fr
 A call of a trait function for types that have no `impl` is refused.
 
 ```
+use std.console (console, print)
+
 trait Named[T] {
   fn name_of(x: T) -> str
 }
@@ -90,6 +92,8 @@ A trait has at most one `impl` for a choice of types. A second `impl Named[Cat]`
 Each trait is its own set of functions, so two traits may have a function of the same name. A call that could mean either is refused, and it is written with the name of the trait, as `Named.label(c)`.
 
 ```
+use std.console (console, print)
+
 trait Named[T] {
   fn label(x: T) -> str
 }
@@ -195,6 +199,10 @@ impl Named[Cat] {
 A trait's function takes type parameters of its own, with [bounds](bounds.md), as any function does. They are the function's and not the trait's, so one function serves every type that meets the bound.
 
 ```
+use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_add)
+
 trait Sink[W] {
   fn put(w: take W, n: u64) -> W
 }

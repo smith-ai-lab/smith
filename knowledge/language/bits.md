@@ -37,6 +37,8 @@ trait Bits[T] {
 The names of these are the sizes, `u8` to `i64`, in [`std.bits`](../library/bits.md). A function over any other range is refused, as a range of fewer values has bits that no function can leave alone.
 
 ```
+use std.bits (bit_and)
+
 fn mask(x: 0..101) -> 0..101 { bit_and(x, 7) }
 ```
 
@@ -47,12 +49,16 @@ This is refused, as `0..101` does not fill a size. A foreign declaration is writ
 A bit function takes values of one range, written the same. A wider range is not accepted for a narrower one here, as it is elsewhere, since widening one value would change what the function means.
 
 ```
+use std.bits (bit_and)
+
 fn mix(a: Byte, c: 0..65536) -> 0..65536 { bit_and(a, c) }
 ```
 
 This is refused, as `a` and `c` are of two ranges. The fix is to bind the narrower with the type of the other.
 
 ```
+use std.bits (bit_and)
+
 fn mix(a: Byte, c: 0..65536) -> 0..65536 {
   wide: 0..65536 = a
   bit_and(wide, c)
@@ -66,6 +72,9 @@ A literal takes the range of the other value, as every literal takes the range t
 `bit_and` keeps the bits that are set in both numbers, `bit_or` those set in either, `bit_xor` those set in one only, and `bit_not` turns every bit around.
 
 ```
+use std.bits (bit_and, bit_not, bit_or, bit_xor)
+use std.console (console, print)
+
 fn main() ! console, alloc {
   a: Byte = 0b1100
   b: Byte = 0b1010
@@ -78,6 +87,9 @@ This prints `8 14 6 243`, which is `0b1000`, `0b1110`, `0b0110`, and `0b11110011
 A function does the common job of picking a part out of a number.
 
 ```
+use std.bits (bit_and, u32)
+use std.console (console, print)
+
 fn low_byte(x: u32) -> u32 { bit_and(x, 0xff) }
 
 fn main() ! console, alloc {
@@ -93,6 +105,9 @@ This prints `120`, which is `0x78`.
 `shift_left` moves the bits up by `by` places, and `shift_right` moves them down. `shift_left` drops the bits that leave the top. `shift_right` keeps the sign of a signed number and fills an unsigned one with zeros.
 
 ```
+use std.bits (bit_and, i8, shift_left, shift_right, u32)
+use std.console (console, print)
+
 fn second_byte(x: u32) -> u32 { bit_and(shift_right(x, 8), 0xff) }
 
 fn main() ! console, alloc {
@@ -113,6 +128,8 @@ This prints `86`, `48 3`, `224 120`, and `-16 -4`. The `240` of `u` loses its to
 A shift compiles only when `by` is proven to be below the number of bits in the range, as an index is proven below a size. Nothing tests it when the program runs.
 
 ```
+use std.bits (shift_left, u32)
+
 fn up(x: u32, by: Byte) -> u32 {
   shift_left(x, by)
 }
@@ -121,6 +138,9 @@ fn up(x: u32, by: Byte) -> u32 {
 This is refused: `by` may be 255, which a shift of a `u32` does not allow. A condition proves it for the block it guards.
 
 ```
+use std.bits (shift_left, u32)
+use std.console (console, print)
+
 fn up(x: u32, by: Byte) -> u32 {
   if by < 32 { shift_left(x, by) } else { 0 }
 }
@@ -137,6 +157,8 @@ This prints `16 0`. An amount that is a number is proven by itself, so `shift_le
 Small numbers are packed into a larger one with `+` and `*`, as in `reg * 8 + rm`. Their ranges say that they do not run into each other, so nothing is proven. It compiles to the same shifts.
 
 ```
+use std.console (console, print)
+
 fn pack(reg: 0..8, rm: 0..8) -> 0..64 { reg * 8 + rm }
 
 fn main() ! console, alloc {

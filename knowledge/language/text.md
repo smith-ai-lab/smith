@@ -18,7 +18,7 @@ A `str` is bytes that cannot change, kept together with a proof that they are va
 
 ```
 struct str {
-  bytes: Slice[u8]
+  bytes: Slice[Byte]
   valid: is_utf8(bytes)
 }
 ```
@@ -42,7 +42,7 @@ struct Utf8Error {
   at: Nat
 }
 
-fn utf8(bytes: Slice[u8]) -> Result[str, Utf8Error]
+fn utf8(bytes: Slice[Byte]) -> Result[str, Utf8Error]
 ```
 
 The bytes of a text are its `bytes` field, a `Slice[u8]` that is read like any slice and cannot be assigned to. So a piece of a text is made a text again by `utf8(s.bytes[a..b])`, which copies nothing. The size of `s.bytes` is the size of `s` to `arith`, so a fact about one proves an index or a piece of the other, also through a name given `s.bytes`.

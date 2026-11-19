@@ -12,6 +12,9 @@ built:
 Every string literal may hold expressions in braces, and there is no other kind of string. Each expression is turned into text by the `Fmt` trait, and the pieces are joined into one `str`.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 fn greet(name: str, age: i32) ! console, alloc {
   print("hello {name}, you are {age}")
 }
@@ -40,6 +43,9 @@ A `str`, an integer, and a `bool` have it, and the text they give is the value a
 A type that should read differently implements `Fmt` itself.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 struct Money {
   cents: i32
 }
@@ -72,6 +78,9 @@ A backslash writes a character that would otherwise mean something else. These e
 | `\t` | A tab |
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 fn show(x: i32, y: i32) ! console, alloc {
   print("point \{{x}, {y}\}")
 }

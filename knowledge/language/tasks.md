@@ -12,9 +12,9 @@ Concurrent work runs in tasks, and there are no raw threads or locks. Data is im
 `fetch` is shown by its signature alone. A call such as `fetch(a)` carries the `net` effect.
 
 ```
-fn fetch(url: str) -> Result[List[u8], NetError] ! net, alloc
+fn fetch(url: str) -> Result[List[Byte], NetError] ! net, alloc
 
-fn fetch_one(url: str) -> Result[List[u8], NetError] ! net, alloc {
+fn fetch_one(url: str) -> Result[List[Byte], NetError] ! net, alloc {
   with tasks()
   t = spawn { fetch(url) }
   join(t)
@@ -28,7 +28,7 @@ fn fetch_one(url: str) -> Result[List[u8], NetError] ! net, alloc {
 A child runs at the same time as its parent, so two spawns run two children together. Each is joined for its value.
 
 ```
-fn fetch_both(a: str, b: str) -> Result[(List[u8], List[u8]), NetError] ! net, alloc {
+fn fetch_both(a: str, b: str) -> Result[(List[Byte], List[Byte]), NetError] ! net, alloc {
   with tasks()
   ta = spawn { fetch(a) }
   tb = spawn { fetch(b) }
@@ -59,6 +59,8 @@ fn warm(url: str) ! net, alloc {
 A function that spawns without opening its own group spawns into its caller's, and it carries the `spawn` effect. The caller that opens the group does not carry it.
 
 ```
+use std.bits (i32)
+
 fn start(n: i32) ! spawn {
   spawn { n * 2 }
   ()

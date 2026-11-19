@@ -10,6 +10,8 @@ status: planned
 A handler is a function that runs a lambda with an effect handled, and it is installed with [`with`](with.md). It is declared by putting the effect on its lambda parameter, and it handles the effect by calling the effect's name, as [Declaring an effect](effect-declarations.md) describes.
 
 ```
+use std.bits (u64)
+
 fn fixed_clock[T](body: fn() -> T ! time) -> T {
   time(now: { 42 }, body: body)
 }
@@ -27,7 +29,7 @@ fn reading() -> u64 {
 A function that runs under a handler does not carry the effect the handler handles. `read_all` is shown by its signature alone, and `memory_fs` handles `fs` with an in-memory file system, so `fixture_config` does not carry `fs`.
 
 ```
-fn read_all(path: str) -> Result[List[u8], FsError] ! fs, alloc
+fn read_all(path: str) -> Result[List[Byte], FsError] ! fs, alloc
 
 fn memory_fs[T](files: Files, body: fn() -> T ! fs) -> T
 
@@ -43,6 +45,8 @@ fn fixture_config() -> Result[Config, FsError] ! alloc {
 A handler is an ordinary function. This one is a clock for tests, which reads one tick later every time it is asked.
 
 ```
+use std.bits (u64)
+
 fn fake_clock[T](body: fn() -> T ! time) -> T {
   var ticks: u64 = 0
   time(
@@ -70,6 +74,8 @@ fn two_readings() -> (u64, u64) {
 The lambda of an operation runs under the handlers outside its own. A handler whose operation reads the clock gets the clock that was in force around its `with`.
 
 ```
+use std.bits (u64)
+
 fn doubled_clock[T](body: fn() -> T ! time) -> T ! time {
   time(now: { now() * 2 }, body: body)
 }
@@ -86,6 +92,8 @@ fn doubled() -> u64 {
 A handler whose operations print must sit in a function that carries `console`, and the code running under the handler does not.
 
 ```
+use std.console (console, print)
+
 fn loud_clock[T](body: fn() -> T ! time) -> T ! console {
   time(
     now: {
@@ -109,6 +117,8 @@ fn main() ! console {
 The handler in force at every call is known when the program is built, because `with` is part of the source and a lambda cannot escape. The compiler builds a copy of a function for each handler it runs under, as it does for each type a generic function is used with. `report` below is built twice.
 
 ```
+use std.bits (u64)
+
 fn fixed[T](tick: u64, body: fn() -> T ! time) -> T {
   time(now: { tick }, body: body)
 }

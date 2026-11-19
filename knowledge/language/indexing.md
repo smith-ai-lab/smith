@@ -15,8 +15,10 @@ built:
 ## Reading an element
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
-  xs: List[u8] = [10, 20, 30]
+  xs: List[Byte] = [10, 20, 30]
   print("{xs[0]}")
   print("{xs[2]}")
 }
@@ -29,8 +31,10 @@ This prints `10` and `30`. The same is written on an array, as `a[0]` for a `[3]
 An index is a whole number, and it must be at least 0 and below the size of what it reads. The compiler proves that, with the procedure [`arith`](arith.md), from what is in scope, which includes the range that is the type of the index. When it cannot, the program is refused.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
-  xs: List[u8] = [10, 20, 30]
+  xs: List[Byte] = [10, 20, 30]
   print("{xs[3]}")
 }
 ```
@@ -58,6 +62,8 @@ fn entry[m: Nat, k: Nat](a: [m, k]f32, r: 0..m, c: 0..k) -> f32 { a[r, c] }
 Inside `loop i in 0..xs.size`, `i` is below `xs.size`.
 
 ```
+use std.bits (u32)
+
 fn largest(xs: List[u32]) -> u32 {
   var best: u32 = 0
   loop i in 0..xs.size {
@@ -86,7 +92,7 @@ fn at_or_zero(xs: List[Byte], i: Nat) -> Byte {
 A function can state what it needs of its arguments with `requires`, and then the callers prove it.
 
 ```
-fn at(xs: List[u8], i: u64) -> u8
+fn at(xs: List[Byte], i: u64) -> Byte
   requires i < xs.size
 {
   xs[i]

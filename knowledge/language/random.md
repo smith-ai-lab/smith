@@ -53,6 +53,8 @@ After this a `Point` has no `Random`, so a test cannot take one as a parameter.
 A type's own `impl` replaces the one it was given, which is how a test gets values of a particular shape.
 
 ```
+use std.bits (i32)
+
 struct Pair {
   a: i32
   b: i32

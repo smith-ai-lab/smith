@@ -14,9 +14,12 @@ built:
 `Serialize` is the trait by which a value describes its shape to a writer. The writer knows a format, such as JSON, and the value knows none.
 
 ```
+use std.console (console, print)
+use std.json (to_json)
+
 struct Point {
-  x: i64
-  y: i64
+  x: Int
+  y: Int
 }
 
 fn main() ! console, alloc {
@@ -62,7 +65,7 @@ A value describes itself with twelve shapes and no others. A format is a type th
 ```
 trait Writer[W] {
   fn boolean(w: take W, value: bool) -> W ! alloc
-  fn signed(w: take W, value: i64) -> W ! alloc
+  fn signed(w: take W, value: Int) -> W ! alloc
   fn unsigned(w: take W, value: u64) -> W ! alloc
   fn text(w: take W, value: str) -> W ! alloc
   fn nothing(w: take W) -> W ! alloc
@@ -78,7 +81,7 @@ trait Writer[W] {
   fn case(w: take W, of: str, name: str, holds: bool) -> W ! alloc
   fn map(w: take W, size: Nat) -> W ! alloc
   fn end_map(w: take W) -> W ! alloc
-  fn raw(w: take W, of: str, bytes: Slice[u8]) -> W ! alloc
+  fn raw(w: take W, of: str, bytes: Slice[Byte]) -> W ! alloc
 }
 ```
 
@@ -89,6 +92,8 @@ trait Writer[W] {
 A struct, an enum, a tuple, a list, a slice, and an `Option` have `Serialize` when each of their parts has it, as they have [`Eq`](../language/comparisons.md). The numbers, `bool`, `str`, and `()` have it. What `Point` above is given is what this writes:
 
 ```
+use std.serialize (Serialize, Writer)
+
 impl Serialize[Point] {
   fn write[W: Writer](value: Point, to: take W) -> W ! alloc {
     var w = structure(to, "Point", 2)
@@ -122,8 +127,10 @@ without Serialize for Session
 A type's own `impl` replaces the one it is given, wherever the type is a part of another. This writes a `Celsius` as the number it holds.
 
 ```
+use std.serialize (Serialize, Writer)
+
 struct Celsius {
-  degrees: i64
+  degrees: Int
 }
 
 impl Serialize[Celsius] {

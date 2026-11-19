@@ -16,9 +16,12 @@ built:
 `Deserialize` is the trait by which a value is built from a reader. The reader knows a format, such as JSON, and the type knows none. It is [`Serialize`](serialize.md) the other way round.
 
 ```
+use std.deserialize (ReadError)
+use std.json (from_json)
+
 struct Point {
-  x: i64
-  y: i64
+  x: Int
+  y: Int
 }
 
 fn parse(text: str) -> Result[Point, ReadError] ! alloc {
@@ -47,7 +50,7 @@ A reader gives the shapes a [writer](serialize.md#the-shapes) takes, one at a ti
 ```
 trait Reader[R] {
   fn boolean(r: take R) -> (R, Result[bool, ReadError]) ! alloc
-  fn signed(r: take R) -> (R, Result[i64, ReadError]) ! alloc
+  fn signed(r: take R) -> (R, Result[Int, ReadError]) ! alloc
   fn unsigned(r: take R) -> (R, Result[u64, ReadError]) ! alloc
   fn text(r: take R) -> (R, Result[str, ReadError]) ! alloc
   fn nothing(r: take R) -> (R, Result[(), ReadError]) ! alloc
@@ -61,7 +64,7 @@ trait Reader[R] {
   fn unknown(r: take R, name: str) -> (R, Result[(), ReadError]) ! alloc
   fn case(r: take R, of: str) -> (R, Result[str, ReadError]) ! alloc
   fn end_case(r: take R) -> (R, Result[(), ReadError]) ! alloc
-  fn raw(r: take R, of: str) -> (R, Result[Slice[u8], ReadError]) ! alloc
+  fn raw(r: take R, of: str) -> (R, Result[Slice[Byte], ReadError]) ! alloc
   fn fail(r: take R, problem: Problem) -> (R, ReadError) ! alloc
 }
 ```

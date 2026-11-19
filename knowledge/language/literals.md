@@ -27,6 +27,8 @@ That is why the `2.0` in the default of [`scale`](functions.md#defaults) is an `
 A whole number is written in digits. It is the range that holds it alone, so `5` is the range from 5 up to but not including 6, written `5..6`, as [Number types](number-types.md) says. It goes wherever a range that holds it is expected.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   small: 0..256 = 200
   wide: 0..100000 = 70000
@@ -39,6 +41,8 @@ This prints `200 70000`.
 A whole number may also be written in hexadecimal, with `0x`, and in binary, with `0b`. An `_` between two digits is ignored, so a long number can be read.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   a = 1_000_000
   b = 0xff
@@ -65,6 +69,8 @@ This gives "`0xZZ` is not a number: `Z` is not a hexadecimal digit".
 A `-` directly before a number is part of the literal, so `-128` is the range `-128..-127`, which fits `-128..128`. `128` does not.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   low: -128..128 = -128
   print("{low}")
@@ -78,6 +84,8 @@ This prints `-128`.
 A literal is a range of its own, so a number that a stated range cannot hold is refused where it enters that range, and no program is built that holds it.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   small: 0..256 = 256
   print("done")
@@ -91,6 +99,8 @@ This is refused, as `256` is not in `0..256`. A negative number is refused by a 
 A literal bound to a name keeps its own range, so the name goes wherever a range that holds it is expected. After `x = 10`, a call `byte(x)` of a function that takes a `0..256` is accepted, and so is a call of one that takes a `-5..6000`.
 
 ```
+use std.console (console, print)
+
 fn byte(n: 0..256) -> 0..256 { n }
 
 fn word(n: 0..65536) -> 0..65536 { n }
@@ -104,6 +114,8 @@ fn main() ! console, alloc {
 This prints `10 10`. A number that the range of a use cannot hold is refused at that use.
 
 ```
+use std.console (console)
+
 fn byte(n: 0..256) -> 0..256 { n }
 
 fn main() ! console {
@@ -117,6 +129,8 @@ This is refused, as `300` is not in `0..256`. A binding that states its range, a
 A whole number given for a type parameter is the range that holds it alone, and so is the type parameter.
 
 ```
+use std.console (console, print)
+
 fn first[A, B](a: A, b: B) -> A { a }
 
 fn main() ! console, alloc {
@@ -131,6 +145,8 @@ This prints `1`, with `A` the range `1..2` and `B` the range `2..3`.
 A literal beside another number is a range of its own, and the operator gives the exact range of the two, as [Integer arithmetic](arithmetic.md) says. Any two ranges are compared, so a literal that the other side cannot hold is a comparison that gives `false`.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   x: 0..256 = 7
   print("{x == 5} {x < 'a'} {x == 300}")
@@ -161,6 +177,8 @@ fn scaled(w: Weights) -> Weights {
 A whole number may be written as a character between single quotes, and it is the character's code: `'a'` is `97`, the range `97..98`. It is a whole number like any other, and `b - '0'` is arithmetic. The escapes are `\'`, `\\`, `\n`, and `\t`.
 
 ```
+use std.console (console, print)
+
 fn is_digit(b: Byte) -> bool { b >= '0' and b <= '9' }
 
 fn main() ! console, alloc {
@@ -180,6 +198,8 @@ x: Byte = 'é'
 This is refused, as `'é'` is not ASCII, so it takes more than one byte and is not a `Byte`.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   x: 0..1114112 = 'é'
   print("{x}")
@@ -193,6 +213,8 @@ This prints `233`.
 A string in double quotes is a `str`, which [Text and bytes](text.md) describes. A string may hold expressions in braces, as [Strings that hold expressions](interpolation.md) says.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hi")
 }
@@ -201,6 +223,8 @@ fn main() ! console {
 `bool` is an enum the prelude defines, with the cases `false` and `true`, which are written as bare names. They are its cases wherever they are written, in an expression and in a pattern alike.
 
 ```
+use std.console (console, print)
+
 fn flip(b: bool) -> bool {
   match b {
     true { false }

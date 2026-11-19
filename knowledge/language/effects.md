@@ -14,6 +14,8 @@ built:
 An effect is something a function does outside itself, and a signature lists each one the function may do, after its return type with a `!`.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hello")
 }
@@ -26,6 +28,8 @@ fn main() ! console {
 A function with no `!` clause is pure. It does nothing outside itself, so it can be called anywhere.
 
 ```
+use std.bits (i32)
+
 fn first(a: i32, b: i32) -> i32 { a }
 ```
 
@@ -34,6 +38,8 @@ fn first(a: i32, b: i32) -> i32 { a }
 A function without an effect cannot perform it, so an effect works as a permission. A pure function that prints is refused.
 
 ```
+use std.console (console, print)
+
 fn greet(name: str) {
   print("hello")
 }
@@ -50,6 +56,8 @@ This gives "`print` needs the `console` effect, which `greet` does not declare",
 Effects are listed after the return type, separated by commas, in any order.
 
 ```
+use std.console (console, print)
+
 fn shout(name: str) -> str ! console, alloc {
   print("hey")
   "hello {name}"
@@ -59,6 +67,8 @@ fn shout(name: str) -> str ! console, alloc {
 `! alloc, console` means the same. An effect is named once in a list, so naming it again is refused.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, console {
   print("hi")
 }
@@ -71,6 +81,8 @@ This gives "the `console` effect is already listed".
 A caller must have every effect its callees use. `main` below calls `shout`, which needs `console` and `alloc`.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   print(shout("Ana"))
 }
@@ -79,6 +91,8 @@ fn main() ! console, alloc {
 This prints `hey` and then `hello Ana`. A caller that lacks one of them is refused.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print(shout("Ana"))
 }
@@ -97,6 +111,8 @@ The stored signature always states the effect list. The compiler proposes it whi
 A lambda's effects are checked where it is written: whatever its body does must be allowed by the function it sits in, and the function receiving it says nothing about them. `do` below runs a lambda and states no effect.
 
 ```
+use std.console (console, print)
+
 fn do[T](body: fn() -> T) -> T { body() }
 
 fn main() ! console {
@@ -111,6 +127,8 @@ A function that receives a lambda never lists the effects of the lambda, and no 
 A function with a name that is passed is checked the same way, since passing `hi` is passing `fn() { hi() }`.
 
 ```
+use std.console (console, print)
+
 fn hi() ! console { print("hi") }
 
 fn main() ! console {

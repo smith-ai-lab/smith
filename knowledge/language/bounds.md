@@ -23,6 +23,8 @@ fn show[T: Named](x: T) -> str { name_of(x) }
 `show(Cat(name: "Tom"))` is `"Tom"`. A call with a type that has no `impl` of `Named` is refused where it is called.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print(show(Cat(name: "Tom")))
   print(show(Bird(name: "Tweety")))
@@ -115,6 +117,8 @@ For `b: Box[str] = Box(item: "inside")`, `show(b)` is `"inside"`, and a box of a
 A use that two `impl`s fit is refused. Here a `Box[i64]` fits both of the `impl`s of `Box[T]`, as `i64` has `Show` and `Ord`.
 
 ```
+use std.console (console, print)
+
 trait Show[T] {
   fn show(x: T) -> str
 }
@@ -123,8 +127,8 @@ struct Box[T] {
   item: T
 }
 
-impl Show[i64] {
-  fn show(x: i64) -> str { "n" }
+impl Show[Int] {
+  fn show(x: Int) -> str { "n" }
 }
 
 impl[T] Show[Box[T]]
@@ -140,7 +144,7 @@ impl[T] Show[Box[T]]
 }
 
 fn main() ! console {
-  b: Box[i64] = Box(item: 1)
+  b: Box[Int] = Box(item: 1)
   print(show(b))
 }
 ```

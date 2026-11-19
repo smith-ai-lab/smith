@@ -16,7 +16,7 @@ built:
 `return e` makes the function give `e` at once, and the lines after it do not run. It is for leaving early, so that the lines that follow a check stay at the left.
 
 ```
-fn classify(b: u8) -> str {
+fn classify(b: Byte) -> str {
   if b >= '0' and b <= '9' { return "digit" }
   if b == ' ' { return "space" }
   "other"
@@ -26,7 +26,7 @@ fn classify(b: u8) -> str {
 `classify('7')` is `"digit"`, `classify(' ')` is `"space"`, and `classify('x')` is `"other"`. The function means what this one means, with each check one step further in:
 
 ```
-fn classify(b: u8) -> str {
+fn classify(b: Byte) -> str {
   if b >= '0' and b <= '9' { "digit" } else if b == ' ' { "space" } else { "other" }
 }
 ```
@@ -40,6 +40,8 @@ The last expression of a function is still what it gives, as [Functions](functio
 In a function that gives nothing, `return` is written alone.
 
 ```
+use std.console (console, print)
+
 fn log_if(verbose: bool, text: str) ! console {
   if not verbose { return }
   print(text)
@@ -53,7 +55,7 @@ fn log_if(verbose: bool, text: str) ! console {
 `return e` gives the function's type. A value of another type is refused, as the last expression is, and so is a `return` with no value in a function that gives one.
 
 ```
-fn classify(b: u8) -> str {
+fn classify(b: Byte) -> str {
   if b == ' ' { return 1 }
   "other"
 }
@@ -66,7 +68,9 @@ This is refused, since `1` is not text.
 A `return` inside a `loop` ends the loop and the function.
 
 ```
-fn index_of(xs: List[u8], target: u8) -> Option[u64] {
+use std.bits (u64)
+
+fn index_of(xs: List[Byte], target: Byte) -> Option[u64] {
   loop i in 0..xs.size {
     if xs[i] == target { return .some(i) }
   }
@@ -81,7 +85,7 @@ fn index_of(xs: List[u8], target: u8) -> Option[u64] {
 `return` leaves the nearest function or [lambda](lambdas.md) around it. Inside a lambda that is passed to a function, it gives the lambda's value and goes no further.
 
 ```
-fn clamp_all(xs: List[i64]) -> List[i64] ! alloc {
+fn clamp_all(xs: List[Int]) -> List[Int] ! alloc {
   map(xs) fn(x) {
     if x < 0 { return 0 }
     x
@@ -96,7 +100,7 @@ fn clamp_all(xs: List[i64]) -> List[i64] ! alloc {
 Nothing unwinds. A `return` gives a value to whatever called the function or lambda it is in, and that caller goes on with its next line, as after any call. So after a [`with`](with.md), where the rest of the block is a lambda, the function that was given the lambda still finishes its work.
 
 ```
-fn header(path: str) -> Result[List[u8], FsError] ! fs, alloc {
+fn header(path: str) -> Result[List[Byte], FsError] ! fs, alloc {
   with f = open(path)
   n = try size(f)
   if n < 64 { return .err(.failed("too short")) }
@@ -111,6 +115,8 @@ There are three ways out of `header`: the `try`, the `return`, and the last line
 [`try`](try.md) leaves with a failure it was handed. `return` leaves with a value the function chooses.
 
 ```
+use std.bits (u16)
+
 fn port(text: str) -> Result[u16, PortError] {
   n = try parse_int(text)
   if n < 0 or n > 65535 { return .err(.too_big) }
@@ -123,6 +129,8 @@ fn port(text: str) -> Result[u16, PortError] {
 A value that must be used exactly once, as [Values used exactly once](resources.md) describes, must be used on the way a `return` leaves by, as on every other way. Here the file is not closed when the `try` leaves.
 
 ```
+use std.bits (u64)
+
 fn peek(path: str) -> Result[u64, FsError] ! fs {
   f = try open_file(path)
   n = try size(f)

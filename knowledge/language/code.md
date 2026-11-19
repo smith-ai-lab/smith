@@ -59,6 +59,8 @@ fn both(first: Code[fn() -> bool], second: Code[fn() -> bool]) -> Code[bool] {
 A call of `both` is the expression `run(first)() and run(second)()` with the two checks in place of `first` and `second`. The names in those checks are the names of the function that called `both`.
 
 ```
+use std.bits (i32)
+
 fn ordered(a: i32, b: i32, c: i32) -> bool {
   both(first: { a < b }) { b < c }
 }

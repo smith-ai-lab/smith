@@ -12,6 +12,8 @@ built:
 Smith provides eleven effects, which a signature lists by name like any other. Five are declared by the standard library, and a program can handle them. Six are given by the compiler.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hello")
 }
@@ -79,6 +81,8 @@ This says that the time is bounded and not what the bound is. A bound in steps, 
 An effect that nothing handles is carried by every caller up to [`main`](first-program.md), where a program starts. The effects `main` lists are provided by the operating system.
 
 ```
+use std.console (console, print)
+
 fn greet(name: str) ! console, alloc {
   print("hello {name}")
 }

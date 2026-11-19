@@ -54,6 +54,8 @@ fn make(r: Rect) -> Shape { .rect(r) }
 Where the expected type is not known, the case is written in full, with the name of the enum before the dot. This form is allowed anywhere.
 
 ```
+use std.console (console)
+
 fn main() ! console, alloc {
   s = Shape.rect(Rect(w: 7, h: 1))
   e = Shape.empty
@@ -63,6 +65,8 @@ fn main() ! console, alloc {
 The dot form where the type is not known is refused.
 
 ```
+use std.console (console)
+
 fn main() ! console {
   s = .empty
 }
@@ -120,9 +124,9 @@ A `Step[()]` has a `more` that holds `()`. It is built as `.more` and matched as
 An enum may take type parameters in brackets after its name, and a case may hold one. `Option[T]` is such an enum, and is always in scope: its cases are `some`, which holds a `T`, and `none`.
 
 ```
-fn lone(n: u8) -> Option[u8] { .some(n) }
+fn lone(n: Byte) -> Option[Byte] { .some(n) }
 
-fn nothing() -> Option[u8] { .none }
+fn nothing() -> Option[Byte] { .none }
 ```
 
 [Type parameters](type-parameters.md) says how a program writes its own.

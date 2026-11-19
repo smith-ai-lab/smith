@@ -23,6 +23,8 @@ struct Rect {
 A struct is made by calling its name, with every field given by name. `.` reads a field.
 
 ```
+use std.console (console, print)
+
 fn wider(a: Rect, b: Rect) -> bool { a.w > b.w }
 
 fn main() ! console, alloc {
@@ -72,6 +74,9 @@ A struct's fields are written one to a line. `struct Rect { w: i32, h: i32 }` is
 A field of a [`var`](var.md) can be assigned with `=`.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 fn widen(r: Rect, to: i32) -> Rect {
   var wide = r
   wide.w = to
@@ -92,6 +97,8 @@ The other forms of assignment, `+=`, `-=`, `*=`, and `/=`, work on a field as th
 Assigning to a field of a name that is not a `var` is refused.
 
 ```
+use std.console (console)
+
 fn main() ! console, alloc {
   r = Rect(w: 3, h: 4)
   r.w = 5
@@ -105,6 +112,9 @@ This gives "`r` is not a `var`, so it cannot be assigned to", with the fix "decl
 A field may have a default, written after its type with `=`, as a [parameter's](functions.md) is. A default is a fixed value, and any field may have one, wherever it stands. Construction may then leave the field out.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 struct Border {
   width: i32 = 1
   inset: i32 = 0
@@ -120,6 +130,9 @@ fn main() ! console, alloc {
 This prints `1 0 4 0`. A field that comes after one with a default may have none, because fields are always given by name.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 struct Margin {
   width: i32 = 1
   inset: i32
@@ -149,7 +162,7 @@ It is made of literals, structs, enums, tuples, lists, other top-level values, a
 ```
 keywords = ["fn", "if", "else", "loop", "match"]
 
-fn area(r: Rect) -> i64 { r.w * r.h }
+fn area(r: Rect) -> Int { r.w * r.h }
 
 unit_area = area(unit)
 ```

@@ -12,6 +12,8 @@ built:
 `var` defines a local that can change. `var x = e` is a [binding](bindings.md) that may be given a new value later.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   var word = "first"
   print(word)
@@ -33,6 +35,8 @@ A `var` may state its type, as a binding does: `var word: str = "first"`. It alw
 A `var` keeps the type of its first value, so a new value of another type is refused. The range of a whole number is part of its type, as the next section says.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   var word = "a"
   word = 5
@@ -49,6 +53,8 @@ A name is never defined where it can already be used, `var` or not. `var word = 
 A `var` with no stated type has the range of what it is first given. A value outside that range is refused, with the fix to state the range of the `var`.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   var level: 0..101 = 0
   level = 100
@@ -74,6 +80,8 @@ fn grow(start: f32, rate: f32) -> f32 {
 `grow(10.0, 0.5)` is `16.0`. With a whole number, `n += 1` is `n = n + 1`, and the result enters the range of `n`, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   var n: 0..11 = 0
   n += 1

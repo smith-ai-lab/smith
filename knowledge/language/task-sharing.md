@@ -14,7 +14,7 @@ A spawned lambda runs at the same time as its parent, so three rules say what it
 An ordinary value is immutable, and the child finishes before the group's block ends, so nothing is copied. Both children here read `url`.
 
 ```
-fn fetch_twice(url: str) -> Result[(List[u8], List[u8]), NetError] ! net, alloc {
+fn fetch_twice(url: str) -> Result[(List[Byte], List[Byte]), NetError] ! net, alloc {
   with tasks()
   ta = spawn { fetch(url) }
   tb = spawn { fetch(url) }
@@ -29,6 +29,8 @@ fn fetch_twice(url: str) -> Result[(List[u8], List[u8]), NetError] ! net, alloc 
 A [`var`](var.md) is read as its value at the moment of the spawn, and the child cannot assign it. Results come back through `join`.
 
 ```
+use std.bits (i32)
+
 fn snapshot() -> i32 {
   var n = 1
   with tasks()
@@ -43,6 +45,8 @@ The child read `n` as `1`, so `join(t)` is `2` and `snapshot()` is `7`.
 A child that assigns a `var` is refused. The compiler does not build this refusal, so no words are quoted.
 
 ```
+use std.bits (i32)
+
 fn counted() -> i32 {
   var n = 0
   with tasks()

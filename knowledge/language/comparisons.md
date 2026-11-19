@@ -25,9 +25,11 @@ trait Eq[A, B = A] {
 A text, a struct, an enum, a tuple, a `bool`, `()`, and a whole number each have `Eq`, so they are compared with `==`.
 
 ```
+use std.console (console, print)
+
 struct Cat {
   name: str
-  age: i64
+  age: Int
 }
 
 fn word(b: bool) -> str {
@@ -97,7 +99,7 @@ So a type writes `compare` once and has all four, and they cannot disagree with 
 A whole number has `Ord`, so it is compared with `<`.
 
 ```
-fn smaller(a: i64, b: i64) -> bool { a < b }
+fn smaller(a: Int, b: Int) -> bool { a < b }
 ```
 
 The two sides may differ in type where an implementation relates them, as two integer types are related under [Conversion](conversion.md).

@@ -13,6 +13,8 @@ built:
 Data whose size is known only at run time, such as a growing list or a map, allocates through the `alloc` effect, and an arena is the memory it allocates from.
 
 ```
+use std.console (console, print)
+
 fn greet(name: str) -> str ! alloc { "hello {name}" }
 
 fn main() ! console, alloc {
@@ -27,6 +29,11 @@ This prints `hello world`. `greet` builds a text whose length depends on `name`,
 A function that builds a text with an expression in it, or grows a `List`, carries `alloc`.
 
 ```
+use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_mul)
+use std.list (push)
+
 fn squares(n: u64) -> List[u64] ! alloc {
   var acc: List[u64] = []
   loop i in 0..n { acc = push(acc, wrapping_mul(i, i)) }
@@ -45,6 +52,9 @@ This prints `5`. Leaving `alloc` out of `squares` is refused: "`push` needs the 
 A function's temporaries are released when it returns, and its result is built directly in its caller's memory, so nothing is copied on return.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn sum_of_squares(n: u64) -> u64 ! alloc {
   xs = squares(n)
   var total = 0

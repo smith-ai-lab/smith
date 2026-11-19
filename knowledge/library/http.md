@@ -75,6 +75,8 @@ fn logout() -> Redirect ! store
 A function that can fail gives a `Result[T, E]`, and the type of the error says its status, through the trait `Status`.
 
 ```
+use std.bits (u16)
+
 trait Status[E] {
   fn status(e: E) -> u16
 }

@@ -10,11 +10,11 @@ status: planned
 A `Secret[T]` holds a value that must not be learned from how long the program takes: a key, a password, a part of a signature. Code that stops at the first byte that differs tells whoever times it how many bytes were right. A `Secret` cannot be used that way, and the compiler refuses the code, as it refuses an index that may be out of range.
 
 ```
-use std.secret (Secret, secret, reveal, is_zero)
 use std.bits (bit_or, bit_xor)
+use std.secret (Secret, is_zero, reveal, secret)
 
-fn same(a: Secret[[32]u8], b: Secret[[32]u8]) -> bool {
-  var diff: Secret[u8] = secret(0)
+fn same(a: Secret[[32]Byte], b: Secret[[32]Byte]) -> bool {
+  var diff: Secret[Byte] = secret(0)
   loop i in 0..32 { diff = bit_or(diff, bit_xor(a[i], b[i])) }
   reveal(is_zero(diff))
 }
@@ -33,7 +33,7 @@ A `Secret` of a whole number has the operations whose time does not depend on th
 A `Secret` has no [`Eq`](../language/comparisons.md) and no `Ord`, so comparing one gives no `bool`, and nothing made of it can be the condition of an `if`, the value of a `match`, or the end of a `loop`.
 
 ```
-fn leaks(key: Secret[u8], guess: u8) -> bool { key == secret(guess) }
+fn leaks(key: Secret[Byte], guess: Byte) -> bool { key == secret(guess) }
 ```
 
 This is refused: a `Secret[u8]` has no `Eq`. A `Secret` is not an index, so `table[key]` is refused, as which place of memory is read shows in the time. It has no division and no remainder, which take a time that depends on the numbers on real processors. It has no [`Fmt`](../language/interpolation.md) and no `Repr`, so it is not printed by mistake.

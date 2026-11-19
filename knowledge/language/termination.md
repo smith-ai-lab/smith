@@ -14,6 +14,9 @@ built:
 Every function ends unless it carries `diverge`, which means it may not finish. A function that ends is one a caller can rely on to give a value.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn sum_below(n: u64) -> u64 {
   var total: u64 = 0
   loop i in 0..n { total = wrapping_add(total, i) }
@@ -24,6 +27,9 @@ fn sum_below(n: u64) -> u64 {
 `sum_below(10)` is `45`. It carries no effect, and the compiler knows it ends because a `loop` over a range ends: the range is worked out once, as [`loop`](loop.md) says. So does a `loop` over an array or over an `Iterate` type, and so does a recursion that goes only into a part of its argument.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn total(xs: List[u64]) -> u64 {
   if xs.size == 0 { 0 } else { wrapping_add(xs[0], total(xs[1..])) }
 }
@@ -54,7 +60,7 @@ This is refused: "`settled` needs the `diverge` effect, which `first` does not d
 Anything that is not a loop over a range, a loop over an array or an `Iterate` type, or structural recursion ends because of a `decreases`, which names one expression of whole numbers, the measure. For an open-ended loop it is written `loop decreases e`, as [the open-ended `loop`](open-loop.md#a-loop-that-is-proven-to-end) shows. For a function that calls itself on something other than a part of its argument, it is written after the signature.
 
 ```
-fn first_zero(x: List[u8], from: u64) -> Option[u64]
+fn first_zero(x: List[Byte], from: u64) -> Option[u64]
   decreases x.size - from
 {
   if from >= x.size {
