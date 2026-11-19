@@ -9,6 +9,7 @@ built:
   - "reading a value, lending it, and reading a field of it take nothing, and a value given away twice is refused at the second use"
   - "a part of a value that is taken leaves each other part without `Discard` to be taken, on every path, for a struct, one in a struct, and a tuple taken apart"
   - "a value without `Discard` that is made and only lent or read, as an argument of a parameter that lends, a field read from it, or a statement of its own, is refused as dropped at the value, whether it is of a type of the program's or a type parameter's"
+  - "a parameter of a lambda that is taken is followed as a parameter of a function is, whether its type is written or not, and a lambda that drops it is refused at the parameter"
   - "a lambda that gives away a value without `Discard` is refused where its function is lent or may be left uncalled, with one error at the lambda"
 ---
 

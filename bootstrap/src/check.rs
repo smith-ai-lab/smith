@@ -5508,6 +5508,8 @@ impl<'a> Checker<'a> {
                 self.errors.push(self.defined_twice(body, name, *pos));
             }
             types.push(ty.clone());
+            // The ownership check reads the type of a parameter from here.
+            self.types.insert(addr(&l.params[i]), ty.clone());
             body.names.push((name.clone(), ty.clone()));
         }
         let want = match result {

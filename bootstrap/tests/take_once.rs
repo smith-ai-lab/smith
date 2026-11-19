@@ -44,6 +44,10 @@ pub const ONCE: &[Test] = &[
         a_value_that_is_made_and_not_used_is_dropped,
     ),
     (
+        "a_parameter_of_a_lambda_that_is_taken_is_followed_as_one_of_a_function_is",
+        a_parameter_of_a_lambda_that_is_taken_is_followed_as_one_of_a_function_is,
+    ),
+    (
         "taking_a_part_of_a_value_leaves_each_other_part_to_be_taken",
         taking_a_part_of_a_value_leaves_each_other_part_to_be_taken,
     ),
@@ -1057,4 +1061,240 @@ fn a_chain_of_vars_that_a_loop_moves_a_value_along_is_read_until_it_settles() {
             assert_eq!(found.len(), wanted, "{found:?}\n{source}");
         }
     }
+}
+
+// A parameter of a lambda that is taken.
+
+/// What the body of a lambda does with its parameter `t`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    Look,
+    Part,
+    /// Returns the parameter, which takes it.
+    Give,
+    /// Returns another value, which drops the parameter.
+    Fresh,
+    Break,
+}
+
+#[derive(Clone, Debug)]
+enum Piece {
+    Act(Step),
+    If(Vec<Piece>, Option<Vec<Piece>>),
+    Arms(Vec<Vec<Piece>>),
+    Loop(Vec<Piece>),
+}
+
+fn pieces(g: &mut Gen, depth: usize, in_loop: bool) -> Vec<Piece> {
+    let mut steps = vec![Step::Look, Step::Part, Step::Give, Step::Fresh];
+    if in_loop {
+        steps.push(Step::Break);
+    }
+    let made: Vec<Piece> = (0..1 + g.below(3))
+        .map(|_| match if depth == 0 { 0 } else { g.below(5) } {
+            1 => Piece::If(
+                pieces(g, depth - 1, in_loop),
+                g.one_in(2).then(|| pieces(g, depth - 1, in_loop)),
+            ),
+            2 => Piece::Arms((0..3).map(|_| pieces(g, depth - 1, in_loop)).collect()),
+            3 => Piece::Loop(pieces(g, depth - 1, true)),
+            _ => Piece::Act(*g.pick(&steps)),
+        })
+        .collect();
+    // No line follows one that leaves.
+    let mut kept = Vec::new();
+    for piece in made {
+        let leaves = leaves_piece(&piece);
+        kept.push(piece);
+        if leaves {
+            break;
+        }
+    }
+    kept
+}
+
+fn leaves_piece(piece: &Piece) -> bool {
+    match piece {
+        Piece::Act(step) => matches!(step, Step::Give | Step::Fresh | Step::Break),
+        Piece::If(then, Some(otherwise)) => ends_piece(then) && ends_piece(otherwise),
+        Piece::If(_, None) | Piece::Loop(_) => false,
+        Piece::Arms(arms) => arms.iter().all(|a| ends_piece(a)),
+    }
+}
+
+fn ends_piece(pieces: &[Piece]) -> bool {
+    pieces.last().is_some_and(leaves_piece)
+}
+
+/// What the paths of a lambda's body do: whether one ends where the parameter
+/// was not given back, and which paths go on, and which leave the loop.
+#[derive(Default)]
+struct Reach {
+    dropped: bool,
+}
+
+impl Reach {
+    /// Whether the end of the block is reached, and whether a `break` is.
+    fn run(&mut self, pieces: &[Piece]) -> (bool, bool) {
+        let mut breaks = false;
+        for piece in pieces {
+            match piece {
+                Piece::Act(Step::Look | Step::Part) => {}
+                Piece::Act(Step::Give) => return (false, breaks),
+                Piece::Act(Step::Fresh) => {
+                    self.dropped = true;
+                    return (false, breaks);
+                }
+                Piece::Act(Step::Break) => return (false, true),
+                Piece::If(then, otherwise) => {
+                    let a = self.run(then);
+                    let b = otherwise.as_ref().map_or((true, false), |o| self.run(o));
+                    breaks |= a.1 || b.1;
+                    if !(a.0 || b.0) {
+                        return (false, breaks);
+                    }
+                }
+                Piece::Arms(arms) => {
+                    let mut falls = false;
+                    for arm in arms {
+                        let a = self.run(arm);
+                        falls |= a.0;
+                        breaks |= a.1;
+                    }
+                    if !falls {
+                        return (false, breaks);
+                    }
+                }
+                Piece::Loop(body) => {
+                    // The loop may go round none, once, or more.
+                    self.run(body);
+                }
+            }
+        }
+        (true, breaks)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Lambda {
+    held: Held,
+    shape: Shape,
+    /// Whether the parameter's type is written.
+    typed: bool,
+    /// Whether the function the lambda is given to takes it.
+    kept: bool,
+    pieces: Vec<Piece>,
+    /// Whether the body ends by giving the parameter back.
+    gives: bool,
+}
+
+fn lambda_case(g: &mut Gen) -> Lambda {
+    Lambda {
+        held: *g.pick(&[Held::Res, Held::Tok]),
+        shape: *g.pick(&[Shape::Plain, Shape::Struct, Shape::Tuple, Shape::Enum]),
+        typed: g.one_in(2),
+        kept: g.one_in(2),
+        pieces: pieces(g, 2, false),
+        gives: g.one_in(2),
+    }
+}
+
+fn write_pieces(pieces: &[Piece], c: &Lambda, out: &mut String, depth: usize, count: &mut (usize, usize)) {
+    let indent = "  ".repeat(depth);
+    for piece in pieces {
+        match piece {
+            Piece::Act(Step::Look) => {
+                count.0 += 1;
+                out.push_str(&format!("{indent}n{} = look(t)\n", count.0));
+            }
+            Piece::Act(Step::Part) => {
+                let part = if c.shape == Shape::Struct { "t.item" } else { "t" };
+                count.0 += 1;
+                out.push_str(&format!("{indent}n{} = look({part})\n", count.0));
+            }
+            Piece::Act(Step::Give) => out.push_str(&format!("{indent}return t\n")),
+            Piece::Act(Step::Fresh) => out.push_str(&format!("{indent}return mk()\n")),
+            Piece::Act(Step::Break) => out.push_str(&format!("{indent}break\n")),
+            Piece::If(then, otherwise) => {
+                out.push_str(&format!("{indent}if c {{\n"));
+                write_pieces(then, c, out, depth + 1, count);
+                if !ends_piece(then) {
+                    out.push_str(&format!("{indent}  0\n"));
+                }
+                match otherwise {
+                    Some(otherwise) => {
+                        out.push_str(&format!("{indent}}} else {{\n"));
+                        write_pieces(otherwise, c, out, depth + 1, count);
+                        if !ends_piece(otherwise) {
+                            out.push_str(&format!("{indent}  0\n"));
+                        }
+                        out.push_str(&format!("{indent}}}\n"));
+                    }
+                    None => out.push_str(&format!("{indent}}}\n")),
+                }
+            }
+            Piece::Arms(arms) => {
+                out.push_str(&format!("{indent}match d {{\n"));
+                for (arm, case) in arms.iter().zip(["north", "south", "east"]) {
+                    out.push_str(&format!("{indent}  .{case} {{\n"));
+                    write_pieces(arm, c, out, depth + 2, count);
+                    if !ends_piece(arm) {
+                        out.push_str(&format!("{indent}    0\n"));
+                    }
+                    out.push_str(&format!("{indent}  }}\n"));
+                }
+                out.push_str(&format!("{indent}}}\n"));
+            }
+            Piece::Loop(body) => {
+                count.1 += 1;
+                out.push_str(&format!("{indent}loop i{} in 0..3 {{\n", count.1));
+                write_pieces(body, c, out, depth + 1, count);
+                out.push_str(&format!("{indent}}}\n"));
+            }
+        }
+    }
+}
+
+fn a_parameter_of_a_lambda_that_is_taken_is_followed_as_one_of_a_function_is() {
+    generate::check(4811, 100, lambda_case, |c| {
+        let ty = c.shape.ty(c.held);
+        let mut out = format!(
+            "{TYPES}fn mk() -> {ty} {{ {} }}
+
+fn feed_take(x: take {ty}, f: take fn(take {ty}) -> {ty}) -> {ty} {{ f(x) }}
+
+fn feed_lend(x: take {ty}, f: fn(take {ty}) -> {ty}) -> {ty} {{ f(x) }}
+
+fn run(c: bool, d: Dir) ! diverge {{
+  m = {}(mk()) fn(",
+            c.shape.make(c.held),
+            if c.kept { "feed_take" } else { "feed_lend" }
+        );
+        let param = pos_after(&out);
+        out.push('t');
+        if c.typed {
+            out.push_str(&format!(": {ty}"));
+        }
+        out.push_str(") {\n");
+        write_pieces(&c.pieces, c, &mut out, 2, &mut (0, 0));
+        let mut reach = Reach::default();
+        let (falls, _) = reach.run(&c.pieces);
+        if falls {
+            if c.gives {
+                out.push_str("    t\n");
+            } else {
+                out.push_str("    mk()\n");
+                reach.dropped = true;
+            }
+        }
+        out.push_str("  }\n  sink(m)\n}\n\nfn main() ! diverge {\n  run(true, Dir.north)\n}\n");
+        let found = errors(&out);
+        let wanted = reach.dropped && c.held == Held::Res;
+        let got: Vec<Pos> = found.iter().map(|e| e.pos).collect();
+        assert_eq!(got, if wanted { vec![param] } else { vec![] }, "{found:?}\n{out}");
+        if wanted {
+            assert!(found[0].message.contains("`t` is dropped here"), "{}", found[0]);
+            assert!(found[0].message.contains("nothing takes it"), "{}", found[0]);
+        }
+    });
 }
