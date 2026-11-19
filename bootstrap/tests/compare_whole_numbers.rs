@@ -15,7 +15,7 @@ use smith::{compile, lower};
 use crate::Test;
 use crate::generate::{self, Gen};
 use crate::machine_code::{self, Kind};
-use crate::numbers::{INTS, value};
+use crate::numbers::{INTS, value, with_header};
 use crate::targets::{runnable, runs_as};
 
 pub const ONCE: &[Test] = &[
@@ -304,7 +304,7 @@ fn program_with(name: &str, at: Option<usize>, bound: Option<&str>) -> String {
         source += &format!("  if f{k}(y, x) {{ print(\"yes\") }} else {{ print(\"no\") }}\n");
     }
     source += "}\n";
-    source
+    with_header(source)
 }
 
 /// For each operator: the comparison adds exactly one comparison for each of
@@ -391,7 +391,7 @@ fn answers(name: &str, min: i128, max: i128, signed: bool, g: &mut Gen) -> (Stri
         }
     }
     source += "}\n";
-    (source, said)
+    (with_header(source), said)
 }
 
 fn answers_are_what_rust_says(index: usize) {
@@ -465,7 +465,7 @@ fn branching(name: &str, ops: bool, equal: bool) -> String {
         };
         source += &format!("  if {condition} {{ print(\"yes\") }} else {{ print(\"no\") }}\n");
     }
-    source + "}\n"
+    with_header(source + "}\n")
 }
 
 /// For the type, `if a < b { x } else { y }` of each operator is one
@@ -512,7 +512,7 @@ fn a_branch_is_one_compare_and_one_jump(index: usize) {
             // The one thing more that a branch may hold is the sign
             // extension of the two operands of each of the four operators
             // that read a signed number narrower than a register.
-            let more = if signed && name != "i64" { 4 * 2 } else { 0 };
+            let more = if signed && name != "Int" { 4 * 2 } else { 0 };
             assert!(
                 (same.len()..=same.len() + more).contains(&found.len()),
                 "{} instructions, and {} for `==`, on {target:?}: {source}",

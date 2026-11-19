@@ -41,12 +41,15 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
+/// What every program here imports: the `main` of each prints.
+const USES: &str = "use std.console (console, print)\n\n";
+
 /// Three functions of three whole numbers each, which use their parameters in
 /// different ways, so that a value in another place gives other code.
 const FUNCTIONS: &str = "\
-fn f0(a: u8, b: u8, c: u8) -> u8 { if a < b { c } else { a } }
-fn f1(a: u8, b: u8, c: u8) -> u8 { if b < c { a } else { b } }
-fn f2(a: u8, b: u8, c: u8) -> u8 { if c < a { b } else { c } }
+fn f0(a: Byte, b: Byte, c: Byte) -> Byte { if a < b { c } else { a } }
+fn f1(a: Byte, b: Byte, c: Byte) -> Byte { if b < c { a } else { b } }
+fn f2(a: Byte, b: Byte, c: Byte) -> Byte { if c < a { b } else { c } }
 ";
 
 /// A step of a pipeline: a function, the place the value goes to, and how
@@ -115,7 +118,7 @@ impl Step {
 }
 
 fn program(expr: &str) -> String {
-    format!("{FUNCTIONS}fn main() ! console, alloc {{\n  print(\"{{{expr}}}\")\n}}\n")
+    format!("{USES}{FUNCTIONS}fn main() ! console, alloc {{\n  print(\"{{{expr}}}\")\n}}\n")
 }
 
 fn bytes(source: &str, target: Target) -> Vec<u8> {
@@ -183,7 +186,7 @@ fn a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth() {
             }
             // The value is bound inside `if`s `depth` deep.
             let nested = |value: &str| {
-                let mut body = String::from("  var r: u8 = 0\n");
+                let mut body = String::from("  var r: Byte = 0\n");
                 for d in 0..*depth {
                     body.push_str(&format!("{}if r == 0 {{\n", indent(1 + d)));
                 }
@@ -191,7 +194,7 @@ fn a_line_that_starts_with_a_pipe_goes_on_from_the_line_before_at_any_depth() {
                 for d in (0..*depth).rev() {
                     body.push_str(&format!("{}}}\n", indent(1 + d)));
                 }
-                format!("{FUNCTIONS}fn main() ! console, alloc {{\n{body}  print(\"{{r}}\")\n}}\n")
+                format!("{USES}{FUNCTIONS}fn main() ! console, alloc {{\n{body}  print(\"{{r}}\")\n}}\n")
             };
             let (lines, single) = (nested(piped.trim_end()), nested(&written));
             for &target in Target::ALL {
@@ -206,9 +209,10 @@ fn a_pipeline_binds_more_loosely_than_every_operator_and_groups_from_the_left() 
     // side, and `x |> f() |> g()` is `g(f(x))`.
     let source = |expr: &str| {
         format!(
-            "fn g(a: bool, b: u8) -> u8 {{ if a {{ b }} else {{ 0 }} }}\n\
-             fn h(a: bool) -> u8 {{ if a {{ 1 }} else {{ 2 }} }}\n\
-             fn n(a: u8) -> bool {{ a < 3 }}\n\
+            "use std.console (console, print)\n\n\
+             fn g(a: bool, b: Byte) -> Byte {{ if a {{ b }} else {{ 0 }} }}\n\
+             fn h(a: bool) -> Byte {{ if a {{ 1 }} else {{ 2 }} }}\n\
+             fn n(a: Byte) -> bool {{ a < 3 }}\n\
              fn main() ! console, alloc {{\n  print(\"{{{expr}}}\")\n}}\n"
         )
     };
@@ -233,9 +237,9 @@ fn a_pipeline_binds_more_loosely_than_every_operator_and_groups_from_the_left() 
 fn the_right_side_is_a_call_of_a_name_a_module_a_field_or_one_that_ends_with_a_lambda() {
     let source = |expr: &str| {
         format!(
-            "use std.ascii\n\n\
-             fn same(x: u8) -> u8 {{ x }}\n\
-             fn apply(x: u8, f: fn(u8) -> u8) -> u8 {{ f(x) }}\n\
+            "use std.ascii\nuse std.console (console, print)\n\n\
+             fn same(x: Byte) -> Byte {{ x }}\n\
+             fn apply(x: Byte, f: fn(Byte) -> Byte) -> Byte {{ f(x) }}\n\
              fn main() ! console, alloc {{\n  print(\"{{{expr}}}\")\n}}\n"
         )
     };
@@ -257,8 +261,9 @@ fn the_right_side_is_a_call_of_a_name_a_module_a_field_or_one_that_ends_with_a_l
     // refused, and the pipeline is refused as the call it stands for is.
     let field = |call: &str| {
         format!(
-            "struct Pricing {{\n  discount: fn(u8) -> u8\n}}\n\n\
-             fn same(x: u8) -> u8 {{ x }}\n\
+            "use std.console (console, print)\n\n\
+             struct Pricing {{\n  discount: fn(Byte) -> Byte\n}}\n\n\
+             fn same(x: Byte) -> Byte {{ x }}\n\
              fn main() ! console, alloc {{\n  sale = Pricing(discount: same)\n  print(\"{{{call}}}\")\n}}\n"
         )
     };
@@ -272,10 +277,11 @@ fn the_right_side_is_a_call_of_a_name_a_module_a_field_or_one_that_ends_with_a_l
 fn try_is_written_on_the_step_it_belongs_to() {
     let source = |body: &str| {
         format!(
-            "fn parse(t: u8) -> Result[u8, u8] {{ .ok(t) }}\n\
-             fn scale(p: u8, by: u8) -> u8 {{ if p < by {{ p }} else {{ by }} }}\n\
-             fn check(p: u8) -> Result[u8, u8] {{ .ok(p) }}\n\
-             fn read(t: u8) -> Result[u8, u8] {{\n{body}  .ok(point)\n}}\n\
+            "use std.console (console, print)\n\n\
+             fn parse(t: Byte) -> Result[Byte, Byte] {{ .ok(t) }}\n\
+             fn scale(p: Byte, by: Byte) -> Byte {{ if p < by {{ p }} else {{ by }} }}\n\
+             fn check(p: Byte) -> Result[Byte, Byte] {{ .ok(p) }}\n\
+             fn read(t: Byte) -> Result[Byte, Byte] {{\n{body}  .ok(point)\n}}\n\
              fn main() ! console, alloc {{\n  match read(4) {{\n    .ok(v) {{ print(\"{{v}}\") }}\n    .err(e) {{ print(\"{{e}}\") }}\n  }}\n}}\n"
         )
     };
@@ -314,10 +320,10 @@ fn mistakes(source: &str) -> (Vec<(usize, usize)>, String) {
 
 fn a_mistake_in_a_pipeline_is_one_error_at_the_place_it_is_in_the_call_it_stands_for() {
     const PRELUDE: &str = "\
-fn take_it(x: take List[u8], n: u8) -> List[u8] { x }
-fn say(x: u8) -> u8 ! console { x }
-fn pick(xs: List[u8], i: Nat) -> u8 requires i < xs.size { xs[i] }
-fn pair(a: u8, b: u8) -> u8 { a }
+fn take_it(x: take List[Byte], n: Byte) -> List[Byte] { x }
+fn say(x: Byte) -> Byte ! console { x }
+fn pick(xs: List[Byte], i: Nat) -> Byte requires i < xs.size { xs[i] }
+fn pair(a: Byte, b: Byte) -> Byte { a }
 ";
     generate::check(
         470_003,
@@ -328,34 +334,34 @@ fn pair(a: u8, b: u8) -> u8 { a }
             // error must mention, and the call the pipeline stands for.
             let (piped, name, written) = match kind {
                 0 => (
-                    format!("fn f() -> u8 {{ \u{1}\"s\" |> pair({x}) }}"),
-                    "u8",
-                    format!("fn f() -> u8 {{ pair(\"s\", {x}) }}"),
+                    format!("fn f() -> Byte {{ \u{1}\"s\" |> pair({x}) }}"),
+                    "Byte",
+                    format!("fn f() -> Byte {{ pair(\"s\", {x}) }}"),
                 ),
                 1 => (
-                    format!("fn f() -> u8 {{ {x} |> pair(\u{1}\"s\") }}"),
-                    "u8",
-                    format!("fn f() -> u8 {{ pair({x}, \"s\") }}"),
+                    format!("fn f() -> Byte {{ {x} |> pair(\u{1}\"s\") }}"),
+                    "Byte",
+                    format!("fn f() -> Byte {{ pair({x}, \"s\") }}"),
                 ),
                 2 => (
-                    format!("fn f() -> u8 {{ {y} |> pair(\u{1}\"s\", _) }}"),
-                    "u8",
-                    format!("fn f() -> u8 {{ pair(\"s\", {y}) }}"),
+                    format!("fn f() -> Byte {{ {y} |> pair(\u{1}\"s\", _) }}"),
+                    "Byte",
+                    format!("fn f() -> Byte {{ pair(\"s\", {y}) }}"),
                 ),
                 3 => (
-                    format!("fn f() -> u8 {{ {x} |> \u{1}say() }}"),
+                    format!("fn f() -> Byte {{ {x} |> \u{1}say() }}"),
                     "console",
-                    format!("fn f() -> u8 {{ say({x}) }}"),
+                    format!("fn f() -> Byte {{ say({x}) }}"),
                 ),
                 _ => (
-                    "fn f(xs: List[u8], i: Nat) -> u8 { i |> \u{1}pick(xs, _) }".to_string(),
+                    "fn f(xs: List[Byte], i: Nat) -> Byte { i |> \u{1}pick(xs, _) }".to_string(),
                     "pick",
-                    "fn f(xs: List[u8], i: Nat) -> u8 { pick(xs, i) }".to_string(),
+                    "fn f(xs: List[Byte], i: Nat) -> Byte { pick(xs, i) }".to_string(),
                 ),
             };
-            let main = "fn main() ! console, alloc {\n  xs: List[u8] = []\n  print(\"{f(xs, 1)}\")\n}\n";
+            let main = "fn main() ! console, alloc {\n  xs: List[Byte] = []\n  print(\"{f(xs, 1)}\")\n}\n";
             let main = if kind == 4 { main } else { &main.replace("f(xs, 1)", "f()") };
-            let wrap = |f: &str| format!("{PRELUDE}{f}\n{main}");
+            let wrap = |f: &str| format!("{USES}{PRELUDE}{f}\n{main}");
             let (source, place) = marked(&wrap(&piped));
             let (places, said) = mistakes(&source);
             assert_eq!(places, vec![place], "{said} for {source}");
@@ -366,7 +372,7 @@ fn pair(a: u8, b: u8) -> u8 { a }
     );
     // A value used after it was given away is the second use.
     let (source, place) = marked(&format!(
-        "{PRELUDE}fn main() ! console, alloc {{\n  xs: List[u8] = []\n  a = xs |> take_it(1)\n  b = \u{1}xs |> take_it(2)\n  print(\"{{a.size}}{{b.size}}\")\n}}\n"
+        "{USES}{PRELUDE}fn main() ! console, alloc {{\n  xs: List[Byte] = []\n  a = xs |> take_it(1)\n  b = \u{1}xs |> take_it(2)\n  print(\"{{a.size}}{{b.size}}\")\n}}\n"
     ));
     let (places, said) = mistakes(&source);
     assert_eq!(places, vec![place], "{said}");
@@ -374,7 +380,7 @@ fn pair(a: u8, b: u8) -> u8 { a }
 }
 
 fn two_holes_a_hole_inside_an_argument_and_a_right_side_that_is_no_call_are_each_one_error() {
-    const PRELUDE: &str = "fn pair(a: u8, b: u8) -> u8 { a }\nfn one(a: u8) -> u8 { a }\n";
+    const PRELUDE: &str = "fn pair(a: Byte, b: Byte) -> Byte { a }\nfn one(a: Byte) -> Byte { a }\n";
     for (piped, word) in [
         // The second `_`.
         ("pair(_, \u{1}_)", "one `_`"),
@@ -388,7 +394,7 @@ fn two_holes_a_hole_inside_an_argument_and_a_right_side_that_is_no_call_are_each
         ("\u{1}one(1).x", "not a call"),
     ] {
         let source = format!(
-            "{PRELUDE}fn f(x: u8) -> u8 {{ x |> {piped} }}\nfn main() ! console, alloc {{ print(\"{{f(1)}}\") }}\n"
+            "{USES}{PRELUDE}fn f(x: Byte) -> Byte {{ x |> {piped} }}\nfn main() ! console, alloc {{ print(\"{{f(1)}}\") }}\n"
         );
         let (source, place) = marked(&source);
         let errors = check(source.as_bytes()).expect_err(&format!("compiled: {source}"));

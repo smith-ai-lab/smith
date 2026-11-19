@@ -15,7 +15,7 @@ use smith::{lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::programs::pos_after;
+use crate::programs::{pos_after, with_imports};
 
 pub const ONCE: &[Test] = &[
     (
@@ -54,7 +54,9 @@ fn errors(source: &str) -> Vec<Error> {
 
 /// The types a type parameter is given. `Key` has `Discard` and not `Copy`,
 /// `Soft` has `Copy` and not `Discard`, and `Raw` has neither.
-const TYPES: &str = "struct Key {
+const TYPES: &str = "use std.bits (u64)
+
+struct Key {
   secret: u64
 }
 
@@ -620,7 +622,7 @@ fn main() {{
 }
 
 fn a_generic_function_that_only_hands_on_or_reads_needs_no_bound_and_takes_a_key() {
-    let source = format!(
+    let source = with_imports(&format!(
         "{TYPES}fn keep[T](a: take T) -> T {{ a }}
 
 fn size_of[T](xs: List[T]) -> Nat {{ xs.size }}
@@ -633,7 +635,7 @@ fn main() ! console, alloc {{
   print(\"{{k.secret}} {{n}} {{m}}\")
 }}
 "
-    );
+    ));
     let found = errors(&source);
     assert!(found.is_empty(), "{found:?}\n{source}");
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));

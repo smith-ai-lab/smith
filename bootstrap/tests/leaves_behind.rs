@@ -9,6 +9,7 @@ use smith::scalar::{self, Op, Program, handler};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::programs::with_imports;
 use crate::targets::{runnable, runs_as};
 
 pub const ONCE: &[Test] = &[
@@ -63,9 +64,9 @@ fn asks(source: &str) -> (usize, Vec<u8>) {
 
 /// A program that calls `sum_of_squares` of `n` as many times as it is told to.
 fn calling(calls: u64, n: u64) -> String {
-    format!(
+    with_imports(&format!(
         "{SQUARES}fn main() ! console, alloc {{\n  var sum = 0\n  loop i in 0..{calls} {{ sum = wrapping_add(sum, sum_of_squares({n})) }}\n  print(\"{{sum}}\")\n}}\n"
-    )
+    ))
 }
 
 /// The number of times the system is asked does not grow with the number of
@@ -116,6 +117,7 @@ fn a_list_returned_through_calls_is_written_once() {
             source += &format!(
                 "fn main() ! alloc {{\n  ys = r{depth}()\n  if ys.size == {items} {{ }}\n}}\n"
             );
+            let source = with_imports(&source);
             let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
             let (outcome, taken) = scalar::run_taking(&program, usize::MAX);
             assert_eq!(outcome.status, 0);
@@ -297,7 +299,7 @@ fn program(g: &mut Gen) -> Case {
         stdout.extend(format!("{} {sum} {}\n", held.label, held.xs.len()).bytes());
     }
     source += "}\n";
-    Case { source, stdout }
+    Case { source: with_imports(&source), stdout }
 }
 
 fn what_a_function_builds_prints_what_the_generator_says_when_every_value_is_read_after_the_calls_that_could_release_it()
@@ -345,7 +347,7 @@ fn called_by(program: &Program, from: usize) -> Vec<usize> {
 /// request is its result takes the stack for results and no other, and gives
 /// it back, as a function that has a temporary takes both.
 fn a_function_takes_the_stacks_it_uses_and_no_others() {
-    let source = "fn plain(n: u64) -> u64 { wrapping_add(n, 1) }\n\nfn result() -> List[u64] ! alloc { [1, 2, 3] }\n\nfn temporary() -> Nat ! alloc {\n  xs: List[u64] = [1, 2, 3]\n  xs.size\n}\n\nfn main() ! alloc {\n  a = plain(1)\n  b = result()\n  c = temporary()\n}\n";
+    let source = "use std.bits (u64)\nuse std.int (wrapping_add)\n\nfn plain(n: u64) -> u64 { wrapping_add(n, 1) }\n\nfn result() -> List[u64] ! alloc { [1, 2, 3] }\n\nfn temporary() -> Nat ! alloc {\n  xs: List[u64] = [1, 2, 3]\n  xs.size\n}\n\nfn main() ! alloc {\n  a = plain(1)\n  b = result()\n  c = temporary()\n}\n";
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
     // What the program starts with calls `main`.
     let main = called_by(&program, program.main)[0];
@@ -435,7 +437,7 @@ fn read(k: usize, what: Read) -> Part {
             let bytes: Vec<String> = (0..letters).map(|i| (97 + i).to_string()).collect();
             let text: String = (0..letters).map(|i| char::from(97 + i as u8)).collect();
             Part {
-                item: format!("fn read{k}() -> Result[str, Utf8Error] ! alloc {{\n  b: List[u8] = [{}]\n  junk = squares(40)\n  utf8(freeze(b))\n}}\n\n", bytes.join(", ")),
+                item: format!("fn read{k}() -> Result[str, Utf8Error] ! alloc {{\n  b: List[Byte] = [{}]\n  junk = squares(40)\n  utf8(freeze(b))\n}}\n\n", bytes.join(", ")),
                 call: format!("  r{k} = read{k}()\n"),
                 show: format!("  match r{k} {{\n    .ok(t) {{ print(\"{{t}}\") }}\n    .err(e) {{ print(\"err\") }}\n  }}\n"),
                 line: text,
@@ -470,7 +472,7 @@ fn reads(g: &mut Gen) -> Case {
         "fn main() ! console, alloc {{\n{calls}  z = sum_sq({})\n{shows}}}\n",
         150 + g.below(150)
     );
-    Case { source, stdout }
+    Case { source: with_imports(&source), stdout }
 }
 
 fn what_is_read_out_of_a_temporary_and_returned_is_still_there_after_a_call_that_would_overwrite_what_was_released()

@@ -125,7 +125,7 @@ pub const MACHINE: &[Test] = &[
     ),
 ];
 
-const HELLO: &str = "fn main() ! console { print(\"hello world\") }\n";
+const HELLO: &str = "use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n";
 
 /// The targets the compiler builds for, in the order of the enum.
 pub fn buildable() -> Vec<Target> {
@@ -730,7 +730,7 @@ fn a_program_the_system_refuses_memory_ends_with_a_failing_status_and_does_nothi
 
 fn a_long_literal_is_printed_whole() {
     let text = "abcdefghij".repeat(100_000);
-    let source = format!("fn main() ! console {{ print(\"{text}\") }}\n");
+    let source = format!("use std.console (console, print)\n\nfn main() ! console {{ print(\"{text}\") }}\n");
     let said = scalar::run(&after_the_pass(source.as_bytes()));
     assert_eq!(said.stdout, format!("{text}\n").into_bytes());
     for target in runnable() {
@@ -955,10 +955,10 @@ fn elf_segment_kinds(bytes: &[u8]) -> Vec<usize> {
 }
 
 /// A program that asks the system for memory.
-const JOIN: &str = "fn main() ! console, alloc {\n  x = \"a\"\n  print(\"{x}{x}\")\n}\n";
+const JOIN: &str = "use std.console (console, print)\n\nfn main() ! console, alloc {\n  x = \"a\"\n  print(\"{x}{x}\")\n}\n";
 
 /// A program that takes the words it was started with.
-const WORDS: &str = "fn main(args: List[str]) ! console, alloc {\n  print(\"{args.size}\")\n}\n";
+const WORDS: &str = "use std.console (console, print)\n\nfn main(args: List[str]) ! console, alloc {\n  print(\"{args.size}\")\n}\n";
 
 fn every_executable_uses_only_thin_wrappers_over_the_kernel() {
     const PT_DYNAMIC: usize = 2;

@@ -31,6 +31,21 @@ pub const ONCE: &[Test] = &[
     ),
 ];
 
+/// The program with the `use` lines for the names of the library it writes:
+/// every program writes `u64`, `console`, and `print`.
+fn with_uses(body: &str) -> String {
+    let ints: Vec<&str> = ["wrapping_add", "wrapping_mul"]
+        .into_iter()
+        .filter(|name| body.contains(&format!("{name}(")))
+        .collect();
+    let int = if ints.is_empty() {
+        String::new()
+    } else {
+        format!("use std.int ({})\n", ints.join(", "))
+    };
+    format!("use std.bits (u64)\nuse std.console (console, print)\n{int}\n{body}")
+}
+
 fn run(source: &str) -> Outcome {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {source}"));
     scalar::run(&program)
@@ -59,14 +74,14 @@ fn try_in_a_loop_reads_the_elements_up_to_the_first_failure_and_no_more() {
         let elements: Vec<String> = (0..size)
             .map(|i| if i == bad { "Result.err(\"x\")".to_string() } else { format!("Result.ok({})", i + 1) })
             .collect();
-        let source = format!(
+        let source = with_uses(&format!(
             "fn read(r: Result[u64, str]) -> Result[u64, str] ! console {{\n  print(\"read\")\n  r\n}}\n\n\
              fn first_bad(xs: List[Result[u64, str]]) -> Result[u64, str] ! console {{\n  var total: u64 = 0\n  \
              loop i in 0..xs.size {{\n    v = try read(xs[i])\n    total = wrapping_add(total, v)\n  }}\n  .ok(total)\n}}\n\n\
              fn main() ! console, alloc {{\n  xs: List[Result[u64, str]] = [{}]\n  match first_bad(xs) {{\n    \
              .ok(t) {{ print(\"ok {{t}}\") }}\n    .err(e) {{ print(\"err {{e}}\") }}\n  }}\n}}\n",
             elements.join(", ")
-        );
+        ));
         let mut lines: Vec<String> = Vec::new();
         let mut total = 0;
         let mut failed = false;
@@ -216,6 +231,11 @@ fn written(operand: &str, at: usize, matched: bool) -> String {
 /// or as the `match` on what `split` gives, which `Try.split` is wrapped in so
 /// that what the function gives settles what it splits into.
 fn program(family: &Family, place: &Place, matched: bool) -> String {
+    with_uses(&body_of(family, place, matched))
+}
+
+/// What `program` writes after its `use` lines.
+fn body_of(family: &Family, place: &Place, matched: bool) -> String {
     let mut body = place.body.to_string();
     for (at, operand) in place.operands.iter().enumerate() {
         body = body.replace(&format!("@{at}"), &written(operand, at, matched));
@@ -269,7 +289,7 @@ fn a_value_the_function_owns_is_used_after_a_try_as_before_it() {
     for (f, p) in every_pair() {
         let (family, place) = (&FAMILIES[f], &PLACES[p]);
         let source = |again: bool| {
-            let sugar = program(family, place, false);
+            let sugar = body_of(family, place, false);
             let give = format!(
                 "  n = consume(k)\n{}  {ok}(wrapping_add({last}, n))\n}}",
                 if again { "  m = consume(k)\n" } else { "" },
@@ -281,10 +301,10 @@ fn a_value_the_function_owns_is_used_after_a_try_as_before_it() {
                 .replace("fn f(cut: u64)", "fn f(k: take Key, cut: u64)")
                 .replace(&ending, &give)
                 .replace("show(f(", "show(f(Key(secret: 4), ");
-            format!(
+            with_uses(&format!(
                 "struct Key {{\n  secret: u64\n}}\n\nwithout Copy for Key\n\n\
                  fn consume(k: take Key) -> u64 {{ k.secret }}\n\n{owned}"
-            )
+            ))
         };
         let expected: Vec<String> = (0..=10)
             .map(|cut| match (place.gives)(cut) {
@@ -306,10 +326,14 @@ fn a_value_the_function_owns_is_used_after_a_try_as_before_it() {
 /// A case that holds nothing and a case that holds `()` are one thing: it is
 /// built and matched written `.more`, and `.more(())` is the same.
 fn a_case_that_holds_nothing_is_the_case_that_holds_unit_in_building_and_in_a_pattern() {
-    generate::check(804, 8, |g| g.below(2) == 0, |&more| {
-        let program = |built: &str, matched: &str| {
-            format!(
-                "enum Step[T] {{\n  more: T\n  done\n}}\n\n\
+    generate::check(
+        804,
+        8,
+        |g| g.below(2) == 0,
+        |&more| {
+            let program = |built: &str, matched: &str| {
+                format!(
+                    "use std.console (console, print)\n\nenum Step[T] {{\n  more: T\n  done\n}}\n\n\
                  fn make(more: bool) -> Step[()] {{\n  if more {{ {built} }} else {{ .done }}\n}}\n\n\
                  fn main() ! console {{\n  match make({more}) {{\n    {matched} {{ print(\"more\") }}\n    .done {{ print(\"done\") }}\n  }}\n}}\n"
             )
@@ -329,12 +353,13 @@ fn a_case_that_holds_nothing_is_the_case_that_holds_unit_in_building_and_in_a_pa
 /// `then` is not a function of `Try`, and a `try` in a lambda returns from
 /// the lambda, whose result is the one that is split into.
 fn try_has_no_then_to_write_and_a_try_in_a_lambda_returns_from_the_lambda() {
-    let source = "fn main() ! console, alloc {\n  r: Option[u8] = Try.then(Option.some(1))\n}\n";
+    let source = "use std.console (console)\n\nfn main() ! console, alloc {\n  r: Option[Byte] = Try.then(Option.some(1))\n}\n";
     let found = errors(source);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].message.contains("`then`"), "{}", found[0]);
-    let source = "fn apply(f: fn(u8) -> Option[u8]) -> Option[u8] { f(1) }\n\n\
-                  fn go(o: Option[u8]) -> Option[u8] {\n  r = apply() fn(v) {\n    x = try o\n    .some(wrapping_add(x, v))\n  }\n  r\n}\n\n\
+    let source = "use std.console (console, print)\nuse std.int (wrapping_add)\n\n\
+                  fn apply(f: fn(Byte) -> Option[Byte]) -> Option[Byte] { f(1) }\n\n\
+                  fn go(o: Option[Byte]) -> Option[Byte] {\n  r = apply() fn(v) {\n    x = try o\n    .some(wrapping_add(x, v))\n  }\n  r\n}\n\n\
                   fn main() ! console, alloc {\n  match go(.some(2)) {\n    .some(v) { print(\"{v}\") }\n    .none { print(\"none\") }\n  }\n  \
                   match go(.none) {\n    .some(v) { print(\"{v}\") }\n    .none { print(\"none\") }\n  }\n}\n";
     assert_eq!(run(source), says(&["3".to_string(), "none".to_string()]), "{source}");

@@ -14,7 +14,7 @@
 
 use std::fmt;
 
-use smith::diag::Pos;
+use smith::diag::{Error, Pos};
 
 use crate::generate::Gen;
 
@@ -1171,7 +1171,7 @@ fn build(g: &mut Gen, kind: Option<Kind>) -> Case {
             }
         }
     }
-    let written_out = written_out.text.into_bytes();
+    let written_out = format!("{}{}", header(&written_out.text), written_out.text).into_bytes();
     let mut case = finish(b, stdout, m.fns.len());
     case.written_out = written_out;
     case
@@ -1991,23 +1991,49 @@ fn literal_text(b: &mut Builder, pieces: &[usize], kind: Option<Kind>) {
     }
 }
 
+/// The `use` line a file needs for the names of the standard library its
+/// text writes, and the blank line after it; nothing if it writes none.
+fn header(text: &str) -> String {
+    let words: Vec<&str> = text
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .collect();
+    let names: Vec<&str> = ["console", "print"]
+        .into_iter()
+        .filter(|n| words.contains(n))
+        .collect();
+    if names.is_empty() {
+        String::new()
+    } else {
+        format!("use std.console ({})\n\n", names.join(", "))
+    }
+}
+
 /// The file, with a mistake in its text placed at any character, if that
 /// is the kind.
 fn finish(b: Builder, stdout: Vec<u8>, reached: usize) -> Case {
-    let mut source = b.text.clone().into_bytes();
+    let head = header(&b.text);
+    let lines = head.matches('\n').count();
+    let text = format!("{head}{}", b.text);
+    let mut source = text.clone().into_bytes();
     let mut mistake = b.mistake;
+    if let Some(m) = &mut mistake
+        && b.kind != Some(Kind::NoMain)
+    {
+        // The mistake was placed in the text after the `use` lines.
+        m.at.line += lines;
+    }
     let inserted: Option<(&[u8], &str, Option<&str>)> = match b.kind {
         Some(Kind::CarriageReturn) => Some((b"\r", "carriage return", Some("line feed"))),
         Some(Kind::InvalidUtf8) => Some((b"\xff", "UTF-8", None)),
         _ => None,
     };
     if let Some((bytes, mentions, fix)) = inserted {
-        let boundaries: Vec<usize> = (0..=b.text.len())
-            .filter(|i| b.text.is_char_boundary(*i))
+        let boundaries: Vec<usize> = (0..=text.len())
+            .filter(|i| text.is_char_boundary(*i))
             .collect();
         let at = *b.g.pick(&boundaries);
         mistake = Some(Expected {
-            at: pos_after(&b.text[..at]),
+            at: pos_after(&text[..at]),
             mentions: mentions.to_string(),
             fix: fix.map(str::to_string),
         });
@@ -2035,7 +2061,7 @@ fn finish(b: Builder, stdout: Vec<u8>, reached: usize) -> Case {
 pub fn shared_and_copied(g: &mut Gen) -> (String, String) {
     let count = 1 + g.below(FIELDS.len());
     let fields = &FIELDS[..count];
-    let mut program = String::from("struct Name {\n");
+    let mut program = String::from("use std.console (console, print)\n\nstruct Name {\n");
     for field in fields {
         program.push_str(&format!("  {field}: str\n"));
     }
@@ -2064,4 +2090,213 @@ pub fn shared_and_copied(g: &mut Gen) -> (String, String) {
         format!("{program}  b = {shared}\n{rest}"),
         format!("{program}  b = {copied}\n{rest}"),
     )
+}
+
+// The `use` lines of a program that a test writes.
+
+/// Each module of the standard library, with the names of it that a program
+/// of a test may write.
+const STD_NAMES: &[(&str, &[&str])] = &[
+    (
+        "std.ascii",
+        &["is_digit", "is_hex_digit", "is_letter", "is_space"],
+    ),
+    (
+        "std.bits",
+        &[
+            "Bits", "bit_and", "bit_not", "bit_or", "bit_xor", "shift_left", "shift_right",
+            "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+        ],
+    ),
+    ("std.console", &["console", "print"]),
+    ("std.fmt", &["binary", "hex"]),
+    (
+        "std.int",
+        &[
+            "checked_add", "checked_mul", "checked_narrow", "checked_sub", "narrow",
+            "saturating_add", "saturating_mul", "saturating_narrow", "saturating_sub",
+            "wrapping_add", "wrapping_mul", "wrapping_narrow", "wrapping_sub",
+        ],
+    ),
+    ("std.list", &["copy", "push"]),
+    ("std.utf8", &["Utf8Error", "utf8"]),
+];
+
+/// The start and end of each identifier of Smith text that is written as
+/// code, those in the braces of a string among them.
+fn identifiers(src: &str) -> Vec<(usize, usize)> {
+    fn code(b: &[u8], mut i: usize, in_brace: bool, out: &mut Vec<(usize, usize)>) -> usize {
+        let mut depth = 0usize;
+        while i < b.len() {
+            let c = b[i];
+            if c == b'/' && b.get(i + 1) == Some(&b'/') {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            } else if c == b'"' {
+                i = string(b, i + 1, out);
+            } else if c == b'\'' {
+                // A character, such as 'a' or '\n'.
+                let mut j = i + 1;
+                j += if b.get(j) == Some(&b'\\') { 2 } else { 1 };
+                i = if b.get(j) == Some(&b'\'') { j + 1 } else { i + 1 };
+            } else if c == b'{' {
+                depth += 1;
+                i += 1;
+            } else if c == b'}' {
+                if in_brace && depth == 0 {
+                    return i + 1;
+                }
+                depth = depth.saturating_sub(1);
+                i += 1;
+            } else if c.is_ascii_alphabetic() || c == b'_' {
+                let start = i;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                    i += 1;
+                }
+                out.push((start, i));
+            } else if c.is_ascii_digit() {
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        i
+    }
+    fn string(b: &[u8], mut i: usize, out: &mut Vec<(usize, usize)>) -> usize {
+        while i < b.len() {
+            match b[i] {
+                b'\\' => i += 2,
+                b'{' => i = code(b, i + 1, true, out),
+                b'"' => return i + 1,
+                _ => i += 1,
+            }
+        }
+        i
+    }
+    let mut out = Vec::new();
+    code(src.as_bytes(), 0, false, &mut out);
+    out
+}
+
+/// The name of a `use` line's entry, without its `as`.
+fn imported_name(entry: &str) -> &str {
+    entry.split(" as ").next().unwrap_or(entry)
+}
+
+/// The text with the `use` lines it needs for the names of the standard
+/// library it writes and does not define itself: those of its header that it
+/// has, and the others added, one line for each module, the modules sorted by
+/// path and the names by plain byte order, then one blank line. Text that
+/// writes none is as it was.
+pub fn with_imports(src: &str) -> String {
+    use std::collections::{BTreeMap, BTreeSet};
+    let words = identifiers(src);
+    let mut needed: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (k, &(s, e)) in words.iter().enumerate() {
+        let name = &src[s..e];
+        let Some((module, _)) = STD_NAMES.iter().find(|(_, names)| names.contains(&name)) else {
+            continue;
+        };
+        let before = src[..s].trim_end_matches([' ', '\t']);
+        if before.ends_with('.') {
+            continue;
+        }
+        let defined = k > 0 && {
+            let (ps, pe) = words[k - 1];
+            before.len() == pe
+                && matches!(&src[ps..pe], "fn" | "struct" | "enum" | "trait" | "effect" | "type")
+        };
+        if !defined {
+            needed.entry(module).or_default().insert(name);
+        }
+    }
+    if needed.is_empty() {
+        return src.to_string();
+    }
+    let lines: Vec<&str> = src.split('\n').collect();
+    let mut at = 0;
+    while at < lines.len() && (lines[at].starts_with("//") || lines[at].trim().is_empty()) {
+        at += 1;
+    }
+    // A comment right before the first item belongs to it.
+    while at > 0 && lines[at - 1].starts_with("//") {
+        at -= 1;
+    }
+    let head: Vec<&str> = lines[..at].to_vec();
+    let mut uses: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    while at < lines.len() {
+        let parsed = lines[at].strip_prefix("use ").and_then(|r| {
+            let (module, names) = r.split_once(" (")?;
+            Some((module, names.strip_suffix(')')?))
+        });
+        let Some((module, names)) = parsed else {
+            break;
+        };
+        let entry = uses.entry(module.to_string()).or_default();
+        entry.extend(names.split(',').map(|n| n.trim().to_string()).filter(|n| !n.is_empty()));
+        at += 1;
+        let mut next = at;
+        while next < lines.len() && lines[next].trim().is_empty() {
+            next += 1;
+        }
+        if next < lines.len() && lines[next].starts_with("use ") && lines[next].contains(" (") {
+            at = next;
+        }
+    }
+    let mut rest: &[&str] = &lines[at..];
+    while !uses.is_empty() && rest.first().is_some_and(|l| l.trim().is_empty()) {
+        rest = &rest[1..];
+    }
+    for (module, names) in needed {
+        let entry = uses.entry(module.to_string()).or_default();
+        for name in names {
+            if !entry.iter().any(|e| imported_name(e) == name) {
+                entry.push(name.to_string());
+            }
+        }
+    }
+    let mut out = String::new();
+    if !head.is_empty() {
+        out.push_str(&head.join("\n"));
+        out.push('\n');
+        if head.last().is_some_and(|l| !l.trim().is_empty()) {
+            out.push('\n');
+        }
+    }
+    for (module, mut names) in uses {
+        names.sort_by(|a, b| imported_name(a).cmp(imported_name(b)));
+        out.push_str(&format!("use {module} ({})\n", names.join(", ")));
+    }
+    out.push('\n');
+    out.push_str(&rest.join("\n"));
+    out
+}
+
+/// How many lines `with_imports` added to the top of the text.
+pub fn lines_added(before: &str, after: &str) -> isize {
+    after.matches('\n').count() as isize - before.matches('\n').count() as isize
+}
+
+/// The place `by` lines further down.
+pub fn shifted(at: Pos, by: isize) -> Pos {
+    Pos {
+        line: (at.line as isize + by) as usize,
+        col: at.col,
+    }
+}
+
+/// The errors with each place `by` lines further up, where the text they
+/// were found in has the `use` lines that `with_imports` put above the text
+/// that a test keeps its places in.
+pub fn unshifted(errors: Vec<Error>, by: isize) -> Vec<Error> {
+    errors
+        .into_iter()
+        .map(|mut e| {
+            e.pos = shifted(e.pos, -by);
+            e
+        })
+        .collect()
 }

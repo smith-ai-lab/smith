@@ -56,7 +56,7 @@ use std.deserialize {list}
 use std.json (from_json, to_json)
 
 struct P {{
-  x: i64
+  x: Int
 }}
 
 fn main() ! console, alloc {{
@@ -100,10 +100,12 @@ fn round_trip(g: &mut Gen) -> (String, usize) {
     let (value, _) = serialize::value(g, &defs, &top);
     let (list, error) = *g.pick(LISTS);
     let name = defs.name(&top);
+    let defs_source = defs.source();
+    let bits = bits_line(&format!("{defs_source} {name} {value}"));
     let mut source = format!(
-        "use std.console (console, print)
+        "{bits}use std.console (console, print)
 use std.deserialize {list}
-use std.json (to_json, from_json, to_json_as, from_json_as, Json)
+use std.json (Json, from_json, from_json_as, to_json, to_json_as)
 
 {}fn main() ! console, alloc {{
   v: {name} = {value}
@@ -114,7 +116,7 @@ use std.json (to_json, from_json, to_json_as, from_json_as, Json)
     .err(e) {{ print(\"read\") }}
   }}
 ",
-        defs.source()
+        defs_source
     );
     for (k, setting) in SETTINGS.iter().enumerate() {
         source.push_str(&format!(
@@ -166,12 +168,30 @@ fn a_program_that_does_not_list_read_error_is_one_error_at_the_name_it_lacks() {
     }
 }
 
+/// The line that imports the sizes the text names, and nothing if it names
+/// none.
+fn bits_line(text: &str) -> String {
+    let mut sizes: Vec<&str> = ["i16", "i32", "i64", "i8", "u16", "u32", "u64", "u8"]
+        .into_iter()
+        .filter(|n| text.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == *n))
+        .collect();
+    sizes.sort();
+    if sizes.is_empty() {
+        String::new()
+    } else {
+        format!("use std.bits ({})\n", sizes.join(", "))
+    }
+}
+
 /// The source of a module of the library from its start up to the item that
 /// starts with `until`, with its `pub` taken out, so that a program defines
 /// the same traits, structs, and enums as the library does.
 fn own(module: &str, until: &str) -> String {
     let text = library_text(module);
-    text[..text.find(until).unwrap()].replace("pub ", "")
+    let text = text[..text.find(until).unwrap()].replace("pub ", "");
+    // The program has the `use` lines of its own, at its top.
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with("use ")).collect();
+    format!("{}\n", lines.join("\n"))
 }
 
 fn a_program_that_defines_the_names_of_the_library_beside_the_library_listed_as_other_names_does_what_each_says()
@@ -182,19 +202,23 @@ fn a_program_that_defines_the_names_of_the_library_beside_the_library_listed_as_
         own("deserialize", "pub trait Deserialize"),
         serialize::log()
     );
-    for lists in [
-        "use std.serialize (Writer as LibWriter)
-use std.deserialize (ReadError as LibError, Problem as LibProblem, Reader as LibReader)
-",
-        "",
+    for (deserialize, serialize) in [
+        (
+            "use std.deserialize (Problem as LibProblem, ReadError as LibError, Reader as LibReader)\n",
+            "use std.serialize (Writer as LibWriter)\n",
+        ),
+        ("", ""),
     ] {
-        let error = if lists.is_empty() { "ReadError" } else { "LibError" };
+        let lists = !deserialize.is_empty();
+        let error = if lists { "LibError" } else { "ReadError" };
         let source = format!(
-            "use std.console (console, print)
-{lists}use std.json (from_json, to_json)
+            "use std.bits (u64)
+use std.console (console, print)
+{deserialize}use std.json (from_json, to_json)
+{serialize}use std.utf8 (utf8)
 
 struct P {{
-  x: i64
+  x: Int
 }}
 
 {defined}
@@ -213,7 +237,7 @@ fn main() ! console, alloc {{
         );
         // Without the library's `ReadError` listed, the result is the
         // program's own, which `from_json` does not give.
-        if lists.is_empty() {
+        if !lists {
             let errors = check(source.as_bytes()).err().unwrap_or_default();
             assert!(!errors.is_empty(), "{source}");
             continue;

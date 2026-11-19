@@ -10,7 +10,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int, value};
+use crate::numbers::{INTS, Int, value, with_header};
 
 pub const ONCE: &[Test] = &[
     (
@@ -120,9 +120,9 @@ fn expected(kinds: &[(&str, i64)]) -> BTreeMap<String, i64> {
 /// A program that calls `f` with its arguments, where `f` has the
 /// parameters and body written.
 fn with(params: &str, gives: &str, requires: &str, body: &str, args: &str) -> String {
-    format!(
+    with_header(format!(
         "fn f({params}) -> {gives}\n{requires}{{\n  {body}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({args})}}\")\n}}\n"
-    )
+    ))
 }
 
 /// For every integer type, each function of `Bits` adds to a function that
@@ -147,7 +147,7 @@ fn a_function_of_bits_is_one_instruction_and_no_call() {
             expected(&[("Xor", 1), ("Constant", 1)]),
             "bit_not on {t}"
         );
-        let shifted = format!("x: {t}, by: u8");
+        let shifted = format!("x: {t}, by: Byte");
         let requires = format!("  requires by < {}\n", ty.bits);
         let shift = |body: &str| with(&shifted, t, &requires, body, "2, 1");
         let base = shift("x");
@@ -233,12 +233,12 @@ fn a_shift_compiles_exactly_when_its_amount_is_proven_below_the_bits_of_the_type
     for ty in INTS {
         for function in ["shift_left", "shift_right"] {
             for limit in [ty.bits - 1, ty.bits, ty.bits + 1] {
-                let source = format!(
-                    "fn f(x: {0}, by: u8) -> {0}\n  requires by <= {limit}\n{{\n  {function}(x, by)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 0)}}\")\n}}\n",
+                let source = with_header(format!(
+                    "fn f(x: {0}, by: Byte) -> {0}\n  requires by <= {limit}\n{{\n  {function}(x, by)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 0)}}\")\n}}\n",
                     ty.name
-                );
+                ));
                 let fits = limit < ty.bits;
-                // A `u8` is below its own bits only when it is.
+                // A `Byte` is below its own bits only when it is.
                 assert_eq!(
                     compiles(&source).is_ok(),
                     fits,
@@ -361,11 +361,11 @@ fn what_arith_knows_of_a_value_it_knows_of_its_narrow_and_of_no_other_narrowing(
         let mut known = bounds(from, to);
         known.push(format!("x <= {k}"));
         let program = |function: &str, needed: i128, requires: &str| {
-            format!(
+            with_header(format!(
                 "fn g(y: {to_t}) -> {to_t}\n  requires y <= {needed}\n{{\n  y\n}}\n\nfn f(x: {from_t}) -> {to_t}\n{requires}{{\n  y: {to_t} = {function}(x)\n  g(y)\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
                 to_t = to.name,
                 from_t = from.name,
-            )
+            ))
         };
         let requires = format!("  requires {}\n", known.join(" and "));
         let name = format!("{} to {}", from.name, to.name);
@@ -484,7 +484,7 @@ fn program(r: &Range) -> String {
             "z".to_string(),
         )
     };
-    format!(
+    with_header(format!(
         "fn g(y: {t}) -> {t}\n  requires y <= {needs}\n{{\n  y\n}}\n\nfn f({params}) -> {t}\n  requires {requires}\n{{\n  g({function}(x, {second}))\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({args})}}\")\n}}\n",
         needs = r.needs,
         args = if params.contains("z") {
@@ -492,7 +492,7 @@ fn program(r: &Range) -> String {
         } else {
             r.least.to_string()
         },
-    )
+    ))
 }
 
 /// The values of a bound that can show a fact false: both ends, the ones
@@ -712,10 +712,10 @@ fn a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type() 
     for ty in INTS {
         for function in ["shift_left", "shift_right"] {
             for by in [0, 1, ty.bits - 1, ty.bits, ty.bits + 1, 255] {
-                let source = format!(
+                let source = with_header(format!(
                     "fn f(x: {0}) -> {0} {{ {function}(x, {by}) }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n",
                     ty.name
-                );
+                ));
                 let result = check(source.as_bytes());
                 assert_eq!(
                     result.is_ok(),
@@ -736,13 +736,13 @@ fn a_shift_by_a_number_compiles_exactly_when_it_is_below_the_bits_of_the_type() 
 }
 
 /// The function of the issue: a number masked to its low five bits and
-/// added to 200 fits a `u8`, and is 231 for 255, and a mask that keeps one
+/// added to 200 fits a `Byte`, and is 231 for 255, and a mask that keeps one
 /// bit more does not.
 fn a_mask_of_a_number_keeps_a_sum_with_it_inside_the_type() {
     let source = |mask: u32| {
-        format!(
-            "fn f(x: u8) -> u8 {{ bit_and(x, {mask}) + 200 }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(255)}}\")\n}}\n"
-        )
+        with_header(format!(
+            "fn f(x: Byte) -> Byte {{ bit_and(x, {mask}) + 200 }}\n\nfn main() ! console, alloc {{\n  print(\"{{f(255)}}\")\n}}\n"
+        ))
     };
     let program = lower(source(31).as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(
@@ -820,13 +820,13 @@ fn the_least_of_shift_right_is_not_one_too_large_and_not_one_too_small() {
 
 fn holds_least(l: &Least) {
     let t = l.ty.name;
-    let source = format!(
+    let source = with_header(format!(
         "fn g(y: {t}) -> {t}\n  requires y >= {needs}\n{{\n  y\n}}\n\nfn f(x: {t}) -> {t}\n  requires x >= {least} and x <= {most}\n{{\n  g(shift_right(x, {by}))\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({least})}}\")\n}}\n",
         needs = l.needs,
         least = l.least,
         most = l.most,
         by = l.by,
-    );
+    ));
     let compiled = check(source.as_bytes()).is_ok();
     assert_eq!(compiled, l.needs <= l.least >> l.by, "{source}");
     if compiled {

@@ -58,7 +58,7 @@ const TRAITS: [&str; 2] = ["Shown", "Drawn"];
 
 fn module(i: usize) -> String {
     format!(
-        "pub trait {}[T] {{\n  fn show(x: T) -> i32\n}}\n",
+        "use std.bits (i32)\n\npub trait {}[T] {{\n  fn show(x: T) -> i32\n}}\n",
         TRAITS[i]
     )
 }
@@ -68,8 +68,18 @@ fn main_text(p: &Pair) -> String {
     let list = if p.lists { ", show" } else { "" };
     let [ka, kb] = p.numbers;
     let x = p.arg;
+    // The `use` lines are sorted by the path of the module.
+    let mut uses = [
+        (a, format!("Shown{list}")),
+        (b, "Drawn".to_string()),
+        ("std.bits", "i32".to_string()),
+        ("std.console", "console, print".to_string()),
+        ("std.int", "wrapping_add, wrapping_mul".to_string()),
+    ];
+    uses.sort();
+    let uses: String = uses.iter().map(|(m, names)| format!("use {m} ({names})\n")).collect();
     format!(
-        "use {a} (Shown{list})\nuse {b} (Drawn)\n\n\
+        "{uses}\n\
          struct Mine {{\n  n: i32\n}}\n\n\
          struct Yours {{\n  n: i32\n}}\n\n\
          impl Shown[Mine] {{\n  fn show(x: Mine) -> i32 {{ wrapping_add(x.n, {ka}) }}\n}}\n\n\
@@ -85,7 +95,8 @@ fn one_file(p: &Pair) -> String {
     let [ka, kb] = p.numbers;
     let x = p.arg;
     format!(
-        "trait Shown[T] {{\n  fn show_a(x: T) -> i32\n}}\n\n\
+        "use std.bits (i32)\nuse std.console (console, print)\nuse std.int (wrapping_add, wrapping_mul)\n\n\
+         trait Shown[T] {{\n  fn show_a(x: T) -> i32\n}}\n\n\
          trait Drawn[T] {{\n  fn show_b(x: T) -> i32\n}}\n\n\
          struct Mine {{\n  n: i32\n}}\n\n\
          struct Yours {{\n  n: i32\n}}\n\n\
@@ -101,7 +112,7 @@ fn one_file(p: &Pair) -> String {
 /// builds and prints what the function gives.
 fn impl_imported_a_trait_listed_without_its_function_is_implemented() {
     let animation = "pub trait Shown[T] {\n  fn show(x: T) -> str\n}\n";
-    let main = "use std.console (console, print)\nuse ui.animation (Shown)\n\n\
+    let main = "use std.bits (i32)\nuse std.console (console, print)\nuse ui.animation (Shown)\n\n\
         struct Mine {\n  n: i32\n}\n\n\
         impl Shown[Mine] {\n  fn show(x: Mine) -> str { \"shown\" }\n}\n\n\
         fn main() ! console, alloc {\n  print(Shown.show(Mine(n: 1)))\n}\n";
@@ -156,7 +167,7 @@ struct Mistake {
 fn placed(m: &Mistake) -> (String, Pos, &'static str) {
     let pad = "\n".repeat(m.pad);
     let head = format!(
-        "{pad}use ui.animation (Shown)\n\nstruct Mine {{\n  n: i32\n}}\n\n"
+        "{pad}use std.bits (i32)\nuse std.console (console, print)\nuse ui.animation (Shown)\n\nstruct Mine {{\n  n: i32\n}}\n\n"
     );
     let main = "fn main() ! console, alloc {\n  print(\"{Shown.show(Mine(n: 1))}\")\n}\n";
     if m.lacks {

@@ -562,6 +562,8 @@ fn stdout(m: &Model) -> Vec<u8> {
 // How the program is written.
 
 const HELPERS: &str = "\
+use std.console (console, print)
+
 enum Maybe {
   yes: str
   no

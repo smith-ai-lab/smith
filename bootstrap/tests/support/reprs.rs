@@ -65,6 +65,9 @@ impl std::fmt::Debug for Written {
 
 const HOLE: &str = "\u{0}";
 
+/// What every program starts with: every one prints.
+const HEADER: &str = "use std.console (console, print)\n\n";
+
 const NAMES: &[&str] = &["Cat", "Pet", "Bag", "Duo"];
 const FIELDS: &[&str] = &["name", "left", "right"];
 const CASES: &[&str] = &["cat", "dog", "none"];
@@ -500,7 +503,7 @@ fn print_line(way: Print, name: &str) -> String {
 
 /// The program with a hole for each value, and what it prints.
 fn write(m: &Model) -> (Written, Vec<u8>) {
-    let mut template = String::new();
+    let mut template = String::from(HEADER);
     write_defs(m, &mut template);
     template.push_str("fn main() ! console, alloc {\n");
     let mut stdout = Vec::new();
@@ -615,7 +618,7 @@ pub fn program_with_mistake(g: &mut Gen) -> ReprCase {
         4 => *g.pick(&[Mistake::NoType, Mistake::NoTrait, Mistake::Text]),
         _ => *g.pick(&[Mistake::Twice, Mistake::Itself]),
     };
-    let mut source = String::new();
+    let mut source = String::from(HEADER);
     write_defs(&m, &mut source);
     source.push_str("struct Hidden {\n  key: str\n}\n\n");
     if mistake == Mistake::Itself {

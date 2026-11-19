@@ -78,18 +78,10 @@ pub const MACHINE: &[Test] = &[
 ];
 
 /// The program of the issue: it counts its words.
-const COUNT: &str = "fn main(args: List[str]) ! console, alloc {
-  print(\"started with {args.size} arguments\")
-}
-";
+const COUNT: &str = "use std.console (console, print)\n\nfn main(args: List[str]) ! console, alloc {\n  print(\"started with {args.size} arguments\")\n}\n";
 
 /// A program that prints each word on a line of its own.
-const EACH: &str = "fn main(args: List[str]) ! console, alloc {
-  loop i in 0..args.size {
-    print(args[i])
-  }
-}
-";
+const EACH: &str = "use std.console (console, print)\n\nfn main(args: List[str]) ! console, alloc {\n  loop i in 0..args.size {\n    print(args[i])\n  }\n}\n";
 
 fn words(texts: &[&str]) -> Vec<Vec<u8>> {
     texts.iter().map(|t| t.as_bytes().to_vec()).collect()
@@ -344,12 +336,12 @@ fn a_main_with_a_parameter_that_is_not_a_list_of_text_is_refused_and_the_error_s
  {
     let dir = folder("main_parameters");
     let refused = [
-        "fn main(args: List[u8]) ! console {}\n",
-        "fn main(args: str) ! console {}\n",
-        "fn main(args: List[List[str]]) ! console {}\n",
-        "fn main(count: u8) ! console {}\n",
-        "fn main(args: List[str], more: List[str]) ! console {}\n",
-        "fn main(args: List[str] = []) ! console {}\n",
+        "use std.console (console)\n\nfn main(args: List[Byte]) ! console {}\n",
+        "use std.console (console)\n\nfn main(args: str) ! console {}\n",
+        "use std.console (console)\n\nfn main(args: List[List[str]]) ! console {}\n",
+        "use std.console (console)\n\nfn main(count: Byte) ! console {}\n",
+        "use std.console (console)\n\nfn main(args: List[str], more: List[str]) ! console {}\n",
+        "use std.console (console)\n\nfn main(args: List[str] = []) ! console {}\n",
     ];
     for (i, source) in refused.iter().enumerate() {
         assert!(!errors_of(source).is_empty(), "{source}");
@@ -364,7 +356,7 @@ fn a_main_with_a_parameter_that_is_not_a_list_of_text_is_refused_and_the_error_s
         );
     }
     // These are the two forms `main` may take, and neither is refused.
-    for source in [COUNT, EACH, "fn main() ! console { print(\"hi\") }\n"] {
+    for source in [COUNT, EACH, "use std.console (console, print)\n\nfn main() ! console { print(\"hi\") }\n"] {
         assert_eq!(errors_of(source), Vec::<String>::new(), "{source}");
     }
 }
@@ -374,8 +366,8 @@ fn a_main_with_no_parameter_reads_and_asks_for_nothing_for_the_words() {
     // which its executable holds when it asks.
     let asks = |bytes: &[u8]| bytes.windows(15).any(|w| w == b"GetCommandLineW");
     for source in [
-        "fn main() ! console { print(\"hello world\") }\n",
-        "fn main() ! console, alloc {\n  x = \"a\"\n  print(\"{x}{x}\")\n}\n",
+        "use std.console (console, print)\n\nfn main() ! console { print(\"hello world\") }\n",
+        "use std.console (console, print)\n\nfn main() ! console, alloc {\n  x = \"a\"\n  print(\"{x}{x}\")\n}\n",
     ] {
         let program = program(source);
         assert!(!program.takes_arguments());

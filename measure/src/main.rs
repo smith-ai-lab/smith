@@ -85,7 +85,7 @@ fn push(smith: &Path, work: &Path) {
     for n in SIZES {
         let program = |reps: usize, body: &str| {
             format!(
-                "fn main() ! console, alloc {{\n  var last: Nat = 0\n  loop k in 0..{reps} {{\n    var xs: List[u64] = []\n    loop i in 0..{n} {{ {body} }}\n    last = xs.size\n  }}\n  print(\"{{last}}\")\n}}\n"
+                "use std.bits (u64)\nuse std.console (console, print)\nuse std.list (push)\n\nfn main() ! console, alloc {{\n  var last: Nat = 0\n  loop k in 0..{reps} {{\n    var xs: List[u64] = []\n    loop i in 0..{n} {{ {body} }}\n    last = xs.size\n  }}\n  print(\"{{last}}\")\n}}\n"
             )
         };
         let (time, reps) = smith_time(smith, work, "push", &n.to_string(), |reps| {
@@ -168,7 +168,7 @@ pub(crate) fn lex_for(
     let (pieces, input) = lexer_input(size);
     let program = |reps: usize, body: &str| {
         format!(
-            "{lexer_source}\nfn piece() -> List[u8] ! alloc {{\n  [{piece}]\n}}\n\nfn main() ! console, alloc {{\n  p = piece()\n  var last: Nat = 0\n  loop k in 0..{reps} {{\n    var src: List[u8] = []\n    loop r in 0..{pieces} {{\n      loop j in 0..p.size {{ src = push(src, p[j]) }}\n    }}\n    {body}\n  }}\n  print(\"{{last}}\")\n}}\n"
+            "{lexer_source}\nfn piece() -> List[Byte] ! alloc {{\n  [{piece}]\n}}\n\nfn main() ! console, alloc {{\n  p = piece()\n  var last: Nat = 0\n  loop k in 0..{reps} {{\n    var src: List[Byte] = []\n    loop r in 0..{pieces} {{\n      loop j in 0..p.size {{ src = push(src, p[j]) }}\n    }}\n    {body}\n  }}\n  print(\"{{last}}\")\n}}\n"
         )
     };
     let lexing = "match lex(src) {\n      .ok(tokens) { last = tokens.size }\n      .err(errors) { last = 0 }\n    }";

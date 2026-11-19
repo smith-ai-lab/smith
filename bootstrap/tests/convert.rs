@@ -5,7 +5,7 @@
 use smith::check;
 
 use crate::Test;
-use crate::numbers::INTS;
+use crate::numbers::{INTS, header_for};
 
 pub const ONCE: &[Test] = &[
     (
@@ -21,9 +21,10 @@ pub const ONCE: &[Test] = &[
 /// A program with a function that takes an `x` of type `from` and gives what
 /// `body` says, of type `to`.
 fn program(from: &str, to: &str, body: &str) -> String {
-    format!(
+    let program = format!(
         "fn f(x: {from}) -> {to} {{\n  {body}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1)}}\")\n}}\n"
-    )
+    );
+    header_for(&program) + &program
 }
 
 /// `convert` from one integer type to another compiles when the second holds

@@ -12,7 +12,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::numbers::{INTS, Int, compare};
+use crate::numbers::{INTS, Int, compare, with_header};
 
 pub const ONCE: &[Test] = &[
     (
@@ -129,9 +129,9 @@ fn call(g: &mut Gen) -> Call {
         String::new()
     };
     Call {
-        source: format!(
+        source: with_header(format!(
             "fn needs(i: {t}) -> {t}\n{lines}{{\n  i\n}}\n\nfn main() ! console, alloc {{\n{bind}  print(\"{{needs({passed})}}\")\n}}\n"
-        ),
+        )),
         holds,
         arg,
     }
@@ -195,9 +195,9 @@ fn inside(g: &mut Gen) -> Inside {
         format!("not (i > {hi})")
     };
     Inside {
-        source: format!(
+        source: with_header(format!(
             "fn f(i: {t}) -> {t}\n  requires {lo} <= i\n  requires {upper}\n{{\n  {written}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f({lo})}}\")\n}}\n"
-        ),
+        )),
         fits,
         written,
     }
@@ -247,10 +247,10 @@ fn gives(g: &mut Gen) -> Gives {
         holds &= (split <= ty.min() || compare(op, c1, d)) && compare(op, c2, d);
     }
     Gives {
-        source: format!(
+        source: with_header(format!(
             "fn lift(i: {t}) -> r: {t}\n  requires i <= {top}\n{lines}{{\n  if i < {split} {{\n    i + {c1}\n  }} else {{\n    i + {c2}\n  }}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{lift({})}}\")\n}}\n",
             ty.min()
-        ),
+        )),
         holds,
     }
 }
@@ -297,10 +297,10 @@ fn chain(g: &mut Gen) -> Chain {
         call = format!("next({call})");
     }
     Chain {
-        source: format!(
+        source: with_header(format!(
             "fn next(i: {t}) -> r: {t}\n  requires i < {max}\n  ensures r == i + 1\n{{\n  i + 1\n}}\n\nfn many(i: {t}) -> {t}\n  requires i <= {bound}\n{{\n  {call}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{many({start})}}\")\n}}\n",
             max = ty.max()
-        ),
+        )),
         fits: bound + depth <= ty.max(),
         ty,
         start,
@@ -339,9 +339,9 @@ fn after_a_call_what_it_ensures_is_a_fact_so_calls_chain_exactly_as_far_as_the_n
 fn an_ensures_on_a_function_that_does_not_name_its_result_is_an_error_that_says_so() {
     for ty in INTS {
         let t = ty.name;
-        let unnamed = format!(
+        let unnamed = with_header(format!(
             "fn same(i: {t}) -> {t}\n  ensures i == i\n{{\n  i\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{same(1)}}\")\n}}\n"
-        );
+        ));
         let errors = check(unnamed.as_bytes()).expect_err("a result with no name");
         assert!(
             errors
@@ -381,6 +381,7 @@ fn guarded(g: &mut Gen) -> (String, String) {
     let main = format!("fn main() ! console, alloc {{\n  print(\"{{f({at})}}\")\n}}\n");
     let with = format!("fn f(i: {t}) -> r: {t}\n{requires}{ensures}{{\n{body}}}\n\n{main}");
     let without = format!("fn f(i: {t}) -> {t} {{\n{body}}}\n\n{main}");
+    let (with, without) = (with_header(with), with_header(without));
     (with, without)
 }
 
@@ -417,11 +418,11 @@ fn a_function_with_a_requires_is_refused_wherever_it_is_used_as_a_value() {
                 } else {
                     String::new()
                 };
-                let source = format!(
+                let source = with_header(format!(
                     "fn lift(i: {t}) -> r: {t}\n{line}  ensures r >= i\n{{\n  if i < {max} {{ i + 1 }} else {{ i }}\n}}\n\n\
                      fn apply(x: {t}, f: fn({t}) -> {t}) -> {t} {{\n  f(x)\n}}\n\n\
                      fn main() ! console, alloc {{\n  print(\"{{{usage}}}\")\n}}\n"
-                );
+                ));
                 match check(source.as_bytes()) {
                     Ok(_) => assert!(
                         !requires,

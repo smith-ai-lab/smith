@@ -50,7 +50,7 @@ fn folder() -> PathBuf {
     dir
 }
 
-const HELLO: &str = "fn main() ! console { print(\"hello\") }\n";
+const HELLO: &str = "use std.console (console, print)\n\nfn main() ! console { print(\"hello\") }\n";
 
 /// What `hash-cases.sh` prints for a folder of cases, as the files in it.
 fn hashed(cases: &[(&str, &str)]) -> Vec<String> {

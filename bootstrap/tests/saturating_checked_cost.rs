@@ -18,7 +18,7 @@ use crate::Test;
 use crate::aarch64;
 use crate::generate::{self, Gen};
 use crate::machine_code::{self, Kind};
-use crate::numbers::{INTS, Int, arithmetic, value};
+use crate::numbers::{INTS, Int, arithmetic, value, with_header};
 use crate::targets::{runnable, scalar_runs_as};
 
 pub const ONCE: &[Test] = &[
@@ -43,7 +43,7 @@ pub const MACHINE: &[Test] = &[(
 
 /// The types of the whole numbers, and `Nat`, which is lowered to the `u64`
 /// functions.
-const TYPES: [&str; 7] = ["u8", "u32", "u64", "Nat", "i8", "i32", "i64"];
+const TYPES: [&str; 7] = ["Byte", "u32", "u64", "Nat", "i8", "i32", "Int"];
 
 /// What a use of a saturating function may cost, in instructions, over the
 /// `wrapping_` function of the same operation, on every chip. These are what
@@ -59,10 +59,10 @@ fn extra(ty: &str, op: &str) -> usize {
         ("u64" | "Nat", "add") => 3,
         ("u64" | "Nat", "sub") => 2,
         ("u64" | "Nat", _) => 4,
-        ("u8" | "u16" | "u32", "mul") => 5,
-        ("u8" | "u16" | "u32", _) => 3,
-        ("i64", "sub") => 7,
-        ("i64", _) => 8,
+        ("Byte" | "u16" | "u32", "mul") => 5,
+        ("Byte" | "u16" | "u32", _) => 3,
+        ("Int", "sub") => 7,
+        ("Int", _) => 8,
         (_, "mul") => 12,
         _ => 11,
     }
@@ -77,7 +77,7 @@ fn wrapping_type(ty: &str) -> &str {
 /// A program that prints what `body` writes of two values of `ty` that the
 /// compiler cannot know.
 fn with_values(ty: &str, body: &str) -> String {
-    format!("fn main() ! console, alloc {{\n  xs: List[{ty}] = [3, 4]\n  x = xs[0]\n  y = xs[1]\n{body}}}\n")
+    with_header(format!("fn main() ! console, alloc {{\n  xs: List[{ty}] = [3, 4]\n  x = xs[0]\n  y = xs[1]\n{body}}}\n"))
 }
 
 /// For each target whose executable the tests read, how many instructions it
@@ -141,7 +141,7 @@ fn a_saturating_function_costs_no_call_and_no_jump_and_the_instructions_extra_gi
 fn checked_extra(ty: &str, op: &str) -> usize {
     match (ty, op) {
         ("u64" | "Nat", "mul") => 1,
-        ("u8" | "u16" | "u32", "mul") => 2,
+        ("Byte" | "u16" | "u32", "mul") => 2,
         _ => 0,
     }
 }
@@ -250,7 +250,7 @@ fn answers(name: &str, ty: Int, g: &mut Gen) -> (String, String) {
             }
         }
     }
-    (source, said)
+    (with_header(source), said)
 }
 
 /// Every type, `Nat` as a `u64` whose name is `Nat`, with the program that

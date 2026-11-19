@@ -44,7 +44,31 @@ pub const ONCE: &[Test] = &[
 ];
 
 /// The whole number types.
-const INTS: [&str; 8] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"];
+const INTS: [&str; 8] = ["i8", "i16", "i32", "Int", "Byte", "u16", "u32", "u64"];
+
+/// The `use` line that imports the sizes among `types`, and the blank line
+/// after it, or nothing when none is a size: `Int` and `Byte` are the prelude's.
+fn sizes(types: &[&str]) -> String {
+    let mut names: Vec<&str> = types
+        .iter()
+        .copied()
+        .filter(|t| !["Int", "Byte", "bool", "str"].contains(t))
+        .collect();
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        String::new()
+    } else {
+        format!("use std.bits ({})\n\n", names.join(", "))
+    }
+}
+
+/// The `use` lines of a program that prints and writes the sizes among `types`.
+fn bits_and_console(types: &[&str]) -> String {
+    let bits = sizes(types);
+    let bits = bits.strip_suffix('\n').unwrap_or("");
+    format!("{bits}use std.console (console, print)\n\n")
+}
 
 fn printed(source: &str) -> Vec<u8> {
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {source}"));
@@ -60,7 +84,8 @@ fn a_lambda_does_the_same_whichever_of_its_types_it_writes() {
         "fn(v: u64) -> u64 { wrapping_mul(v, 2) }",
     ] {
         let source = format!(
-            "fn twice(x: u64, f: fn(u64) -> u64) -> u64 {{ f(f(x)) }}\n\n\
+            "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_mul)\n\n\
+             fn twice(x: u64, f: fn(u64) -> u64) -> u64 {{ f(f(x)) }}\n\n\
              fn main() ! console, alloc {{\n  r = twice(3) {lambda}\n  print(\"{{r}}\")\n}}\n"
         );
         assert_eq!(printed(&source), b"12\n", "{lambda}");
@@ -102,7 +127,9 @@ fn a_type_a_lambda_writes_that_is_not_the_one_needed_is_one_error_at_the_type() 
         (needed, *g.pick(&others), g.below(2) == 0)
     };
     generate::check(202, 24, wrong, |&(needed, written, in_parameter)| {
-        let head = format!("fn apply(f: fn({needed}) -> {needed}) -> {needed} {{ f(1) }}\n\n");
+        let uses = sizes(&[needed, written]);
+        let head =
+            format!("{uses}fn apply(f: fn({needed}) -> {needed}) -> {needed} {{ f(1) }}\n\n");
         let (before, lambda) = if in_parameter {
             ("fn main() {\n  r = apply fn(v: ", format!("{written}) {{ v }}"))
         } else {
@@ -122,14 +149,22 @@ fn a_type_a_lambda_writes_that_is_not_the_one_needed_is_one_error_at_the_type() 
 /// A lambda passed where nothing decides its parameter's type is one error at
 /// the lambda, which says to write the type, and it builds once it does.
 fn a_lambda_whose_types_nothing_decides_is_one_error_at_the_lambda_until_it_writes_them() {
-    generate::check(203, 8, |g| *g.pick(&INTS), |&ty| {
-        let head = "fn pick[T](f: fn(T) -> u64) -> u64 { 1 }\n\nfn main() {\n  r = pick ";
-        let error = one_error(&format!("{head}fn(v) {{ 2 }}\n}}\n"));
-        assert_eq!(error.pos, pos_after(head), "{error}");
-        assert!(error.message.contains("write"), "{error}");
-        let written = format!("{head}fn(v: {ty}) {{ 2 }}\n}}\n");
-        lower(written.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {written}"));
-    });
+    generate::check(
+        203,
+        8,
+        |g| *g.pick(&INTS),
+        |&ty| {
+            let head = format!(
+                "{}fn pick[T](f: fn(T) -> u64) -> u64 {{ 1 }}\n\nfn main() {{\n  r = pick ",
+                sizes(&["u64", ty])
+            );
+            let error = one_error(&format!("{head}fn(v) {{ 2 }}\n}}\n"));
+            assert_eq!(error.pos, pos_after(&head), "{error}");
+            assert!(error.message.contains("write"), "{error}");
+            let written = format!("{head}fn(v: {ty}) {{ 2 }}\n}}\n");
+            lower(written.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {written}"));
+        },
+    );
 }
 
 /// The places a type is written, as the text before it and the text after.
@@ -147,9 +182,10 @@ fn the_arrow_form_of_a_type_is_one_error_at_its_place_whose_fix_is_the_fn_form()
     let types = |g: &mut Gen| (*g.pick(&INTS), *g.pick(&INTS), g.below(PLACES.len()));
     generate::check(204, 30, types, |&(param, result, place)| {
         let (before, after) = PLACES[place];
+        let before = format!("{}{before}", sizes(&[param, result]));
         let source = format!("{before}({param}) -> {result}{after}");
         let error = one_error(&source);
-        assert_eq!(error.pos, pos_after(before), "{error}");
+        assert_eq!(error.pos, pos_after(&before), "{error}");
         let fix = error.fix.as_ref().expect("a fix");
         assert!(fix.contains(&format!("fn({param}) -> {result}")), "{fix}");
     });
@@ -161,8 +197,9 @@ fn types_in_parentheses_are_a_tuple_and_fn_with_them_is_a_function_wherever_a_ty
     let types = |g: &mut Gen| (*g.pick(&INTS), *g.pick(&INTS));
     generate::check(205, 8, types, |&(a, b)| {
         let tuple = format!("({a}, {b})");
+        let uses = sizes(&[a, b]);
         let source = format!(
-            "struct S {{\n  t: {tuple}\n}}\n\n\
+            "{uses}struct S {{\n  t: {tuple}\n}}\n\
              fn make(t: {tuple}) -> {tuple} {{ t }}\n\n\
              fn main() ! alloc {{\n  s = S(t: make((1, 2)))\n  u: {tuple} = s.t\n  \
              xs: List[{tuple}] = [u]\n}}\n"
@@ -170,13 +207,18 @@ fn types_in_parentheses_are_a_tuple_and_fn_with_them_is_a_function_wherever_a_ty
         lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {source}"));
         // The function gives nothing, so it is called for what it does.
         let source = format!(
-            "fn run(f: fn({a}, {b})) ! console {{ f(1, 2) }}\n\n\
-             fn main() ! console, alloc {{\n  run fn(x, y) {{ print(\"{{x}}\") }}\n}}\n"
+            "{}fn run(f: fn({a}, {b})) ! console {{ f(1, 2) }}\n\n\
+             fn main() ! console, alloc {{\n  run fn(x, y) {{ print(\"{{x}}\") }}\n}}\n",
+            bits_and_console(&[a, b])
         );
         lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} in {source}"));
         // It is a function in every place, though only a parameter's type is built.
         for (before, after, tail) in REACHED {
-            let (before, tail) = (before.replace("@A", a).replace("@B", b), tail.replace("@A", a).replace("@B", b));
+            let (before, tail) = (
+                before.replace("@A", a).replace("@B", b),
+                tail.replace("@A", a).replace("@B", b),
+            );
+            let before = format!("{uses}{before}");
             let source = format!("{before}fn({a}, {b}){after}{tail}");
             let found = lower(source.as_bytes()).expect_err("an error");
             assert!(found.iter().all(|e| e.unbuilt), "{found:?} in {source}");

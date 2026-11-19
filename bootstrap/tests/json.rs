@@ -11,6 +11,7 @@ use smith::{check, lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::lists::header;
 
 pub const ONCE: &[Test] = &[
     (
@@ -61,20 +62,35 @@ fn prints(source: &str) -> Vec<u8> {
     scalar::run(&program).stdout
 }
 
-const IMPORT: &str = "use std.json (to_json, to_json_as, Json, Clash)
+/// The function the programs print through.
+const SHOW: &str = "fn show(r: Result[str, Clash]) ! console, alloc {\n  match r {\n    .ok(t) { print(t) }\n    .err(c) { print(\"err {c.of} {c.case} {c.member}\") }\n  }\n}\n\n";
 
-fn show(r: Result[str, Clash]) ! console, alloc {
-  match r {
-    .ok(t) { print(t) }
-    .err(c) { print(\"err {c.of} {c.case} {c.member}\") }
-  }
+/// The program of `rest`, which writes `show` and what follows it, opened with
+/// the `use` lines it needs: `console` and `print`, the names of `std.json`
+/// the programs use, what `rest` writes of the sizes, and `push` and `utf8`
+/// where it calls them.
+fn with_import(rest: String) -> String {
+    let push: &[&str] = if rest.contains("push(") { &["push"] } else { &[] };
+    let utf8: &[&str] = if rest.contains("utf8(") { &["utf8"] } else { &[] };
+    let json: Vec<&str> = ["Clash", "Json", "to_json", "to_json_as"]
+        .into_iter()
+        .filter(|name| rest.contains(name) || SHOW.contains(name))
+        .collect();
+    let uses = header(
+        &[
+            ("std.console", &["console", "print"]),
+            ("std.json", &json[..]),
+            ("std.list", push),
+            ("std.utf8", utf8),
+        ],
+        &rest,
+    );
+    format!("{uses}{SHOW}{rest}")
 }
-
-";
 
 /// Source that turns bytes into a text, which a literal cannot do for a byte
 /// below a space other than a line break and a tab.
-const TEXT: &str = "fn s(bytes: Slice[u8]) -> str {
+const TEXT: &str = "fn s(bytes: Slice[Byte]) -> str {
   match utf8(bytes) {
     .ok(t) { t }
     .err(e) { \"\" }
@@ -312,8 +328,8 @@ const INTS: &[(&str, i128, i128)] = &[
     ("i8", -128, 127),
     ("i16", -32768, 32767),
     ("i32", -2147483648, 2147483647),
-    ("i64", i64::MIN as i128, i64::MAX as i128),
-    ("u8", 0, 255),
+    ("Int", i64::MIN as i128, i64::MAX as i128),
+    ("Byte", 0, 255),
     ("u16", 0, 65535),
     ("u32", 0, 4294967295),
     ("u64", 0, u64::MAX as i128),
@@ -624,13 +640,13 @@ fn model(tree: &Tree) -> Vec<u8> {
 /// A program that prints the JSON of the value under each setting, one line
 /// for each.
 fn program(defs: &Defs, t: &Ty, v: &Val) -> String {
-    let mut out = format!("{IMPORT}{TEXT}{}", defs.source());
+    let mut out = format!("{TEXT}{}", defs.source());
     out.push_str(&format!("fn main() ! console, alloc {{\n  v: {} = {}\n", defs.name(t), v.source()));
     for settings in SETTINGS {
         out.push_str(&format!("  show(to_json_as(v, {}))\n", settings.source()));
     }
     out.push_str("  print(to_json(v))\n}\n");
-    out
+    with_import(out)
 }
 
 /// The lines a program printed, as the bytes they hold.
@@ -643,32 +659,32 @@ fn lines(printed: &[u8]) -> Vec<&[u8]> {
 // What the issue says, as it says it.
 
 fn every_example_of_the_page_gives_what_the_page_says() {
-    let source = format!(
-        "{IMPORT}struct Point {{
-  x: i64
-  y: i64
-}}
+    let source = with_import(String::from(
+        "struct Point {
+  x: Int
+  y: Int
+}
 
-struct Circle {{
+struct Circle {
   radius: u64
-}}
+}
 
-enum Shape {{
+enum Shape {
   circle: Circle
   square: u64
   empty
-}}
+}
 
-struct Content {{
-  input_schema: u8
-}}
+struct Content {
+  input_schema: Byte
+}
 
-fn main() ! console, alloc {{
+fn main() ! console, alloc {
   print(to_json(Point(x: 3, y: 4)))
   print(to_json(Shape.empty))
   print(to_json(Shape.square(4)))
   print(to_json(Shape.circle(Circle(radius: 2))))
-  nested: Option[Option[u8]] = Option.some(Option.none)
+  nested: Option[Option[Byte]] = Option.some(Option.none)
   print(to_json(nested))
   mcp = Json(cases: .tag(\"type\"), names: .camel)
   show(to_json_as(Shape.empty, mcp))
@@ -676,9 +692,9 @@ fn main() ! console, alloc {{
   show(to_json_as(Shape.circle(Circle(radius: 2)), mcp))
   show(to_json_as(Content(input_schema: 1), mcp))
   show(to_json_as(Point(x: 3, y: 4), Json(cases: .tag(\"type\"), names: .camel)))
-}}
+}
 "
-    );
+    ));
     let printed = prints(&source);
     let expected = [
         r#"{"x":3,"y":4}"#,
@@ -742,10 +758,10 @@ fn a_text_is_written_so_that_the_reader_gives_the_same_bytes_back() {
     // All of them in one text, so that the escape of each byte is read.
     let all: Vec<u8> = pieces.concat();
     let run = |bytes: &[u8]| {
-        let source = format!(
-            "{IMPORT}{TEXT}fn main() ! console, alloc {{\n  print(to_json({}))\n}}\n",
+        let source = with_import(format!(
+            "{TEXT}fn main() ! console, alloc {{\n  print(to_json({}))\n}}\n",
             text_source(bytes)
-        );
+        ));
         let printed = prints(&source);
         let lines = lines(&printed);
         assert_eq!(lines.len(), 1, "{source}");
@@ -763,7 +779,7 @@ fn the_least_and_the_greatest_of_each_whole_number_type_are_written_in_full() {
             "  least_{name}: {name} = {least}\n  print(to_json(least_{name}))\n  greatest_{name}: {name} = {greatest}\n  print(to_json(greatest_{name}))\n"
         ));
     }
-    let source = format!("{IMPORT}fn main() ! console, alloc {{\n{body}}}\n");
+    let source = with_import(format!("fn main() ! console, alloc {{\n{body}}}\n"));
     let printed = prints(&source);
     let expected: String = INTS.iter().flat_map(|(_, l, g)| [l, g]).map(|n| format!("{n}\n")).collect();
     assert_eq!(String::from_utf8(printed).unwrap(), expected);
@@ -772,16 +788,16 @@ fn the_least_and_the_greatest_of_each_whole_number_type_are_written_in_full() {
 /// What `camel` writes for the names, from the program.
 fn camel_of(names: &[&str]) -> Vec<String> {
     // A struct for each name, which has the name for its one field.
-    let mut source = IMPORT.to_string();
+    let mut source = String::new();
     for (i, name) in names.iter().enumerate() {
-        source.push_str(&format!("struct N{i} {{\n  {name}: u8\n}}\n\n"));
+        source.push_str(&format!("struct N{i} {{\n  {name}: Byte\n}}\n\n"));
     }
     source.push_str("fn main() ! console, alloc {\n  j = Json(cases: .key, names: .camel)\n");
     for (i, name) in names.iter().enumerate() {
         source.push_str(&format!("  show(to_json_as(N{i}({}: 1), j))\n", name));
     }
     source.push_str("}\n");
-    let printed = prints(&source);
+    let printed = prints(&with_import(source));
     lines(&printed)
         .iter()
         .map(|line| match read(line) {
@@ -842,26 +858,26 @@ fn camel_leaves_a_name_with_no_underscore_and_never_makes_two_snake_case_names_o
 }
 
 fn a_case_with_a_tag_is_written_in_the_three_forms_of_the_table() {
-    let source = format!(
-        "{IMPORT}struct Circle {{
+    let source = with_import(String::from(
+        "struct Circle {
   radius: u64
-}}
+}
 
-enum Shape {{
+enum Shape {
   empty
   circle: Circle
   square: u64
-  pair: (u8, u8)
+  pair: (Byte, Byte)
   maybe: Option[Circle]
   nested: Shape2
-}}
+}
 
-enum Shape2 {{
+enum Shape2 {
   inner: Circle
   nothing
-}}
+}
 
-fn main() ! console, alloc {{
+fn main() ! console, alloc {
   j = Json(cases: .tag(\"kind\"), names: .written)
   show(to_json_as(Shape.empty, j))
   show(to_json_as(Shape.circle(Circle(radius: 2)), j))
@@ -873,9 +889,9 @@ fn main() ! console, alloc {{
   show(to_json_as(Shape.nested(Shape2.nothing), j))
   shapes: List[Shape] = [Shape.empty, Shape.square(1)]
   show(to_json_as(shapes, j))
-}}
+}
 "
-    );
+    ));
     let printed = String::from_utf8(prints(&source)).unwrap();
     let expected = [
         r#"{"kind":"empty"}"#,
@@ -893,37 +909,37 @@ fn main() ! console, alloc {{
 }
 
 fn a_tag_that_is_also_a_member_is_refused_wherever_it_is_met_and_nothing_else_is() {
-    let source = format!(
-        "{IMPORT}struct Circle {{
+    let source = with_import(String::from(
+        "struct Circle {
   type: str
   radius: u64
-}}
+}
 
-struct Plain {{
+struct Plain {
   radius: u64
-}}
+}
 
-struct Named {{
-  my_tag: u8
-}}
+struct Named {
+  my_tag: Byte
+}
 
-struct Holder {{
+struct Holder {
   inside: Shape
-}}
+}
 
-enum Shape {{
+enum Shape {
   circle: Circle
   plain: Plain
   square: u64
   empty
   inner: Wrap
-}}
+}
 
-enum Wrap {{
+enum Wrap {
   circle: Circle
-}}
+}
 
-fn main() ! console, alloc {{
+fn main() ! console, alloc {
   t = Json(cases: .tag(\"type\"), names: .written)
   v = Json(cases: .tag(\"value\"), names: .written)
   c = Circle(type: \"round\", radius: 2)
@@ -945,13 +961,13 @@ fn main() ! console, alloc {{
   show(to_json_as(Holder2.of(Named(my_tag: 1)), Json(cases: .tag(\"myTag\"), names: .camel)))
   show(to_json_as(Holder2.of(Named(my_tag: 1)), Json(cases: .tag(\"my_tag\"), names: .camel)))
   print(to_json(Shape.circle(c)))
-}}
+}
 
-enum Holder2 {{
+enum Holder2 {
   of: Named
-}}
+}
 "
-    );
+    ));
     let printed = String::from_utf8(prints(&source)).unwrap();
     let expected = [
         "err Shape circle type",
@@ -977,25 +993,17 @@ enum Holder2 {{
 // Where `std.json` is, and what it costs.
 
 fn a_program_that_does_not_import_std_json_is_the_program_it_was() {
-    let base = "struct Point {
-  x: i64
-  y: i64
-}
-
-fn main() ! console, alloc {
-  p = Point(x: 3, y: 4)
-  print(\"{p.x} {p.y}\")
-}
-";
+    let items = "struct Point {\n  x: Int\n  y: Int\n}\n\nfn main() ! console, alloc {\n  p = Point(x: 3, y: 4)\n  print(\"{p.x} {p.y}\")\n}\n";
+    let base = format!("use std.console (console, print)\n\n{items}");
     // The same program, with the module imported and a function that writes
     // a value that nothing calls.
-    let extended = format!(
-        "{IMPORT}fn unused(p: Point) -> str ! alloc {{ to_json(p) }}\n\n{base}"
-    );
+    let extended = with_import(format!(
+        "fn unused(p: Point) -> str ! alloc {{ to_json(p) }}\n\n{items}"
+    ));
     let (a, b) = (lower(base.as_bytes()).unwrap(), lower(extended.as_bytes()).unwrap());
     assert_eq!(a, b);
     // Nothing of JSON is in a program that writes a value but not as JSON.
-    let source = format!("{IMPORT}{base}");
+    let source = with_import(items.to_string());
     assert!(check(source.as_bytes()).is_ok());
 }
 
@@ -1008,9 +1016,9 @@ fn to_json_asks_for_memory_in_proportion_to_the_text_it_gives() {
         } else {
             "  print(\"{xs.size}\")\n"
         };
-        let source = format!(
-            "{IMPORT}struct P {{\n  a: u8\n  b: bool\n}}\n\nfn main() ! console, alloc {{\n  var xs: List[P] = []\n  loop i in 0..{n} {{ xs = push(xs, P(a: 7, b: true)) }}\n{tail}}}\n"
-        );
+        let source = with_import(format!(
+            "struct P {{\n  a: Byte\n  b: bool\n}}\n\nfn main() ! console, alloc {{\n  var xs: List[P] = []\n  loop i in 0..{n} {{ xs = push(xs, P(a: 7, b: true)) }}\n{tail}}}\n"
+        ));
         let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?}\n{source}"));
         let (outcome, requests) = scalar::run_counting(&program, usize::MAX);
         (outcome.stdout, requests)
@@ -1041,7 +1049,7 @@ fn a_rawjson_is_written_as_the_bytes_it_holds_and_under_value_when_a_case_holds_
         "\"a\\u00e9\\/b\"",
     ];
     let mut source = String::from(
-        "use std.json (to_json, to_json_as, Json, Clash, RawJson, raw_json)\n\n\
+        "use std.console (console, print)\nuse std.json (Clash, Json, RawJson, raw_json, to_json, to_json_as)\nuse std.utf8 (utf8)\n\n\
          struct Call {\n  args: RawJson\n}\n\n\
          enum Reply {\n  result: RawJson\n  nothing\n}\n\n",
     );

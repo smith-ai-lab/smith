@@ -11,6 +11,7 @@ use smith::{check, lower};
 
 use crate::Test;
 use crate::generate::{self, Gen};
+use crate::programs::{lines_added, with_imports};
 
 pub const ONCE: &[Test] = &[
     (
@@ -50,7 +51,7 @@ const ELEMS: &[Elem] = &[Elem::U8, Elem::I32, Elem::U64, Elem::Text, Elem::Struc
 impl Elem {
     fn name(self) -> &'static str {
         match self {
-            Elem::U8 => "u8",
+            Elem::U8 => "Byte",
             Elem::I32 => "i32",
             Elem::U64 => "u64",
             Elem::Text => "str",
@@ -83,7 +84,7 @@ impl Elem {
     }
 }
 
-const STRUCT: &str = "struct P {\n  a: u8\n}\n\n";
+const STRUCT: &str = "struct P {\n  a: Byte\n}\n\n";
 
 /// A shape of generic function: how it is written for the types `t` and `u`,
 /// with `generics` before its parameters, what it needs of its first type
@@ -281,6 +282,7 @@ impl Case {
 }
 
 fn stdout(source: &str) -> String {
+    let source = &with_imports(source);
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let out = scalar::run(&program);
     assert_eq!(out.status, 0, "for {source}");
@@ -291,7 +293,7 @@ fn the_generic_functions_that_take_and_give_a_list_compile_and_give_what_they_sa
     let append = "fn ap[T](a: take List[T], b: List[T]) -> List[T] ! alloc {\n  var r = a\n  loop i in 0..b.size { r = push(r, b[i]) }\n  r\n}\n\n";
     let eq = "fn e[T: Eq](x: List[T], y: T) -> bool { x.size > 0 and x[0] == y }\n\n";
     let n = "fn n[T](x: List[T]) -> Nat { x.size }\n\n";
-    let main = "fn main() ! console, alloc {\n  a: List[u8] = [1, 2]\n  b: List[u8] = [3]\n  loop i in 0..ap(a, b).size { print(\"x\") }\n  c: List[u8] = [5]\n  d: List[u8] = [1, 2]\n  l: List[u8] = ap(c, d)\n  loop i in 0..l.size { print(\"{l[i]}\") }\n  e1: List[u8] = [7, 8]\n  e2: List[u8] = [7]\n  print(\"{e(e1, 7)} {e(e2, 9)}\")\n  print(\"{n(\"abc\")}\")\n  f: List[u8] = [9]\n  g: List[u8] = ap([4, 5], f)\n  print(\"{g.size}\")\n}\n";
+    let main = "fn main() ! console, alloc {\n  a: List[Byte] = [1, 2]\n  b: List[Byte] = [3]\n  loop i in 0..ap(a, b).size { print(\"x\") }\n  c: List[Byte] = [5]\n  d: List[Byte] = [1, 2]\n  l: List[Byte] = ap(c, d)\n  loop i in 0..l.size { print(\"{l[i]}\") }\n  e1: List[Byte] = [7, 8]\n  e2: List[Byte] = [7]\n  print(\"{e(e1, 7)} {e(e2, 9)}\")\n  print(\"{n(\"abc\")}\")\n  f: List[Byte] = [9]\n  g: List[Byte] = ap([4, 5], f)\n  print(\"{g.size}\")\n}\n";
     assert_eq!(stdout(&format!("{append}{eq}{n}{main}")), "x\nx\nx\n5\n1\n2\ntrue false\n3\n3\n");
 }
 
@@ -343,7 +345,7 @@ fn a_text_given_where_a_function_lends_a_list_is_a_list_of_bytes() {
         };
         let (a, b) = (format!("\"{}\"", c.a), format!("\"{}\"", c.b));
         let as_text = shown(&format!("f({})", args(&a, &b)));
-        let declare = format!("  xs: List[u8] = {}\n  ys: List[u8] = {}\n", bytes(&c.a), bytes(&c.b));
+        let declare = format!("  xs: List[Byte] = {}\n  ys: List[Byte] = {}\n", bytes(&c.a), bytes(&c.b));
         let as_list = shown(&format!("f({})", args("xs", "ys")));
         let one = |declare: &str, body: &str| format!("{f}fn main() ! console, alloc {{\n{declare}{body}}}\n");
         assert_eq!(stdout(&one("", &as_text)), stdout(&one(&declare, &as_list)), "for {c:?}");
@@ -357,8 +359,8 @@ struct Mistake {
 }
 
 fn mistake(g: &mut Gen) -> Mistake {
-    let ty = g.pick(&["u8", "i32", "u64"]);
-    let other = g.pick(&["u16", "i64", "bool"]);
+    let ty = g.pick(&["Byte", "i32", "u64"]);
+    let other = g.pick(&["u16", "Int", "bool"]);
     let words = ["ab", "", "xyz"];
     let word = g.pick(&words);
     let main = |body: &str| format!("fn main() ! console, alloc {{\n{body}}}\n");
@@ -404,7 +406,10 @@ fn a_mistake_in_a_call_or_a_body_over_lists_is_one_error_at_its_place() {
         let at = m.source.find('\u{1}').unwrap();
         let before = &m.source[..at];
         let (line, col) = (before.matches('\n').count() + 1, at - before.rfind('\n').map_or(0, |n| n + 1) + 1);
-        let source = m.source.replace('\u{1}', "");
+        let written = m.source.replace('\u{1}', "");
+        // The `use` lines of what the program writes come first.
+        let source = with_imports(&written);
+        let line = line + lines_added(&written, &source) as usize;
         let errors = check(source.as_bytes()).expect_err(&format!("compiled: {source}"));
         let places: Vec<(usize, usize)> = errors.iter().map(|e| (e.pos.line, e.pos.col)).collect();
         assert_eq!(places, vec![(line, col)], "{errors:?} for {source}");
@@ -412,6 +417,7 @@ fn a_mistake_in_a_call_or_a_body_over_lists_is_one_error_at_its_place() {
 }
 
 fn kinds(source: &str) -> BTreeMap<String, usize> {
+    let source = &with_imports(source);
     let program = lower(source.as_bytes()).unwrap_or_else(|e| panic!("{e:?} for {source}"));
     let mut counts = BTreeMap::new();
     for i in (scalar::inline(&program).functions.iter())
@@ -437,11 +443,11 @@ fn a_call_of_a_generic_function_on_a_list_of_bytes_is_the_code_of_the_function_f
         };
         let program = |function: String, name: &str| {
             format!(
-                "{function}fn main() ! console, alloc {{\n  xs: List[u8] = [1, 2]\n  ys: List[u8] = [3]\n  r = {name}({args})\n  print(\"{{r.size}}\")\n}}\n"
+                "{function}fn main() ! console, alloc {{\n  xs: List[Byte] = [1, 2]\n  ys: List[Byte] = [3]\n  r = {name}({args})\n  print(\"{{r.size}}\")\n}}\n"
             )
         };
         let generic = program(function(shape, "f", &format!("[T{bound}]"), "T", "T", false), "f");
-        let written = program(function(shape, "f", "", "u8", "u8", false), "f");
+        let written = program(function(shape, "f", "", "Byte", "Byte", false), "f");
         assert_eq!(kinds(&generic), kinds(&written), "for {generic}");
     }
 }
