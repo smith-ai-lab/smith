@@ -4,5 +4,5 @@ use std.console (console, print)
 fn main() ! console, alloc {
   a: i32 = 1
   b: Byte = 2
-  print("{a == b}")
+  print("{a + b}")
 }

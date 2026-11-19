@@ -1,3 +1,3 @@
-number_types_differ.smith:7:16: this gives a `Byte`, where a `i32` is needed
-  7 |   print("{a == b}")
-    |                ^
+number_types_differ.smith:7:13: `+` needs both sides to be of one type, and the left is `i32` where the right is `Byte`
+  7 |   print("{a + b}")
+    |             ^
