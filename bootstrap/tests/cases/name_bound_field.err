@@ -1,0 +1,4 @@
+name_bound_field.smith:5:7: a name is not a bound in the type of a field
+  5 |   at: 0..size
+    |       ^
+  fix: write the bound as a number, or say what holds between two fields with a proof field
