@@ -37,7 +37,7 @@ print("could not open the file", to: .stderr)
 - A write that the system refuses [ends the task](../language/tasks.md) that made it, as running out of memory does. Its parent sees an error from `join`, and in `main` the program ends with a failing status. A handler written in Smith never does this.
 
 ```
-use std.console (input)
+use std.console (console, input, print)
 
 fn greet() ! console, alloc {
   match input("name: ") {
@@ -51,6 +51,7 @@ A handler supplies both operations. This one keeps everything printed to standar
 
 ```
 use std.console (console, input)
+use std.list (push)
 
 fn capture[T](body: fn() -> T ! console) -> (T, List[str]) ! console, alloc {
   var out: List[str] = []

@@ -17,6 +17,10 @@ built:
 A `Slice[T]` is a run of elements that cannot change. A [`List`](list.md) is what a program builds, and a `Slice` is what it has when the building is done.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_mul)
+use std.list (push)
+
 fn evens(n: u64) -> Slice[u64] ! alloc {
   var built: List[u64] = []
   loop i in 0..n { built = push(built, wrapping_mul(i, 2)) }
@@ -49,6 +53,8 @@ That is the whole rule, and it is why nothing has to follow which name can see w
 `s[a..b]` is the elements from `a` up to `b` as a `Slice`, which shares the memory of `s`. It is kept, stored, and returned like any value.
 
 ```
+use std.bits (u64)
+
 struct Halves {
   left: Slice[u64]
   right: Slice[u64]

@@ -10,7 +10,7 @@ status: planned
 A statement is a type, and a proof of it is a value of that type. A boolean expression is the statement that it is true, which is the kind the pages before this one use.
 
 ```
-fn first(xs: List[u8], p: xs.size > 0) -> u8 { xs[0] }
+fn first(xs: List[Byte], p: xs.size > 0) -> Byte { xs[0] }
 ```
 
 `xs.size > 0` is a statement, and `p` is a proof of it. Most statements a program needs are of this kind, and [`arith`](arith.md) finds their proofs, so they are written in a `requires` and no proof is named.
@@ -37,7 +37,7 @@ A function type may name its parameters, so that the type of what it gives can s
 
 ```
 struct Sorted {
-  xs: List[u8]
+  xs: List[Byte]
   ordered: fn(i: Nat, j: Nat, p: i < j and j < xs.size) -> xs[i] <= xs[j]
 }
 ```
@@ -49,7 +49,7 @@ A `Sorted` is a list together with a proof that it is in order. The proof is a f
 A proof about every number, or every list, is a function that calls itself, and it is held to the rule every function is held to: it [ends](termination.md). The call on the smaller value is the step of the induction, and the check that the calls end is what makes it one.
 
 ```
-fn size_of_append(a: List[u8], b: List[u8]) -> append(a, b).size == a.size + b.size
+fn size_of_append(a: List[Byte], b: List[Byte]) -> append(a, b).size == a.size + b.size
   decreases a.size
 ```
 

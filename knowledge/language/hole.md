@@ -10,7 +10,7 @@ status: planned
 `hole(name)` stands in for code or a proof that is not yet written. The compiler reports what the place needs, so the author knows what to write.
 
 ```
-fn clamp(x: u8, lo: u8, hi: u8) -> r: u8
+fn clamp(x: Byte, lo: Byte, hi: Byte) -> r: Byte
   requires lo <= hi
   ensures lo <= r and r <= hi
 {

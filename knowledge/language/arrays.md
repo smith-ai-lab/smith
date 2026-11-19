@@ -89,8 +89,10 @@ This is refused, as `n * 2` needs more than 64 bits and `n` may be too great for
 An array that is kept together with its size is a [`List`](../library/list.md). Its size is a field, `size`, which is a `Nat` and so can be read like any other.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
-  xs: List[u8] = [10, 20, 30]
+  xs: List[Byte] = [10, 20, 30]
   print("{xs.size}")
 }
 ```

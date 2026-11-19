@@ -34,6 +34,7 @@ Another module that names `next_id` is refused, since `next_id` is private.
 
 ```
 use db.transaction (next_id)
+use std.bits (u64)
 
 fn fresh(db: Db) -> u64 ! net {
   next_id(db)

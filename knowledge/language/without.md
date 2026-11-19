@@ -27,6 +27,8 @@ without Fmt for Cat
 `without` works for any trait that is derived automatically. The traits so far are `Copy` and `Discard` from [Ownership](ownership.md), `Fmt` and `Repr`, `Eq` and `Ord` from [Traits](traits.md), and `Random` from [Random values for tests](random.md).
 
 ```
+use std.console (console, print)
+
 struct Cat {
   name: str
 }

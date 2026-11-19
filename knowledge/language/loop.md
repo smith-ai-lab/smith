@@ -15,6 +15,8 @@ built:
 A `loop` runs a block once for each number in a range, in order, one step at a time.
 
 ```
+use std.int (wrapping_add)
+
 fn sum_below(n: Nat) -> Nat {
   var total: Nat = 0
   loop i in 0..n {
@@ -32,6 +34,8 @@ fn sum_below(n: Nat) -> Nat {
 A range `a..b` is a `Range` value, as [Ranges and slices](ranges.md) says. It runs from `a` up to `b` and excludes `b`, so the block of `loop i in 0..3` runs with `0`, `1`, and `2`. A range with no numbers, as `5..2` is, runs the block no times.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   loop i in 5..2 { print("{i}") }
   print("done")
@@ -45,9 +49,11 @@ This prints only `done`. The counter is a name for the number of this round and 
 The counter is a range: from the least value the first end can have to the greatest value the second end can have, which it stays below. With `n: 0..11`, the counter of `loop i in 0..n` is a `0..10`, as `n` is at most 10 and the counter is below it.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   loop j in 0..3 {
-    x: u8 = 250
+    x: Byte = 250
     print("{x + j}")
   }
 }
@@ -84,6 +90,8 @@ fn last_index(n: 0..11) -> 0..10 {
 `break` ends the loop at once, and the code after the loop goes on. [`return`](return.md) ends the loop and the function with it.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   loop i in 0..10 {
     if i == 3 { break }
@@ -97,6 +105,8 @@ This prints `0`, `1`, and `2`. When `i` is `3` the loop ends, and the rounds for
 `break` ends the nearest loop around it and no other. In this one it ends the inner loop each time, so the outer loop still runs three rounds.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   loop i in 0..3 {
     loop j in 0..3 {
@@ -112,6 +122,8 @@ This prints `0 0`, `1 0`, and `2 0`.
 A `break` that is in no loop has nothing to end: "`break` is outside a `loop`, so there is nothing for it to end". A `break` inside a [lambda](lambdas.md) does not reach a loop outside the lambda, and it is refused.
 
 ```
+use std.console (console)
+
 fn twice(body: fn()) { body() }
 
 fn main() ! console, alloc {
@@ -128,6 +140,10 @@ This is refused: "`break` is inside a lambda, which cannot end a `loop` outside 
 The two ends of a range are worked out when the loop starts. Assigning a `var` that an end was read from changes nothing about how many rounds there are.
 
 ```
+use std.bits (u64)
+use std.console (console, print)
+use std.int (wrapping_add)
+
 fn main() ! console, alloc {
   var n: u64 = 3
   loop i in 0..n {
@@ -145,8 +161,8 @@ This prints `0`, `1`, and `2`, and then `n is 6`: the loop ran three rounds, tho
 Inside the block, [`arith`](arith.md) knows that the counter is at least the first end and below the second, as they were when the loop started. So an operation on the counter that fits only because of that compiles.
 
 ```
-fn next(n: u8) -> u8 {
-  var last: u8 = 0
+fn next(n: Byte) -> Byte {
+  var last: Byte = 0
   loop i in 0..n { last = i + 1 }
   last
 }
@@ -157,6 +173,8 @@ fn next(n: u8) -> u8 {
 This is what makes `xs[i]` compile in `loop i in 0..xs.size`, as [Indexing](indexing.md#from-a-loop) shows. The ends are worked out once, so `arith` ties them to nothing that a `var` the loop assigns holds in a later round, or after an assignment in this one. So the `ys[i]` below is refused, since `ys` is assigned before it.
 
 ```
+use std.bits (u32)
+
 fn last_of(xs: List[u32]) -> u32 {
   var ys = xs
   var t: u32 = 0
@@ -175,6 +193,8 @@ This is refused: "cannot prove that `i < ys.size`, which indexing `ys` needs", w
 A `loop` runs over an array as well as over a range. It runs once for each element in order, and the name is the element.
 
 ```
+use std.bits (u32)
+
 fn largest(a: [3]u32) -> u32 {
   var best: u32 = 0
   loop v in a { if v > best { best = v } }
@@ -185,7 +205,10 @@ fn largest(a: [3]u32) -> u32 {
 `largest([4, 9, 6])` is `9`. `break` ends a loop over an array as it ends one over a range.
 
 ```
-fn before_zero(a: [4]u8) -> u64 {
+use std.bits (u64)
+use std.int (wrapping_add)
+
+fn before_zero(a: [4]Byte) -> u64 {
   var n: u64 = 0
   loop v in a {
     if v == 0 { break }
@@ -202,6 +225,8 @@ fn before_zero(a: [4]u8) -> u64 {
 A range goes up, and `loop i in 5..0` is a range with no numbers, so it runs no times. Going backward is written with a reversed range.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   loop i in reversed(0..3) { print("{i}") }
 }

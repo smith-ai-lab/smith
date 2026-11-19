@@ -15,6 +15,8 @@ built:
 Every whole number is a range: the whole numbers from one number up to but not including another, written `a..b`. The compiler has one kind of whole number, the range, and the floats `f16`, `bf16`, `f32`, and `f64`, which are not ranges.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   small: 0..256 = 200
   low: -5..6 = -3
@@ -98,6 +100,8 @@ fn half(n: Int) -> f64 { float(n) / 2.0 }
 `==` and `!=` ask whether two numbers are equal, and `<`, `<=`, `>`, and `>=` how they stand. Each gives a `bool`, and is a trait function, as [Comparisons](comparisons.md) says. Any two ranges are compared, whatever their bounds.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   x: 0..256 = 200
   y: -5..6 = 3

@@ -13,6 +13,9 @@ built:
 An open-ended `loop` has no range. It runs its block again and again until a `break` ends it.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add, wrapping_sub)
+
 fn takes(from: u64, step: u64) -> u64 ! diverge {
   var left: u64 = from
   var times: u64 = 0
@@ -36,6 +39,8 @@ An open-ended loop may not end, as `takes(10, 0)` does not, since `left` is neve
 A caller is refused in the same way.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   print("{takes(10, 3)}")
 }
@@ -48,6 +53,9 @@ This is refused: "`takes` needs the `diverge` effect, which `main` does not decl
 A loop written `loop decreases e { ... }` is an open-ended loop that is proven to end, and its function lists no `diverge`. The expression `e`, the measure, is made of whole numbers. At each place the loop goes round again, [`arith`](arith.md) must prove two things of it: that it is not below zero, and that it is smaller than it was when that round began. A number that gets smaller each round and never goes below zero cannot do so forever, so the loop ends. The measure is never computed when the program runs, so it is reasoned about as an exact number, with no type it must fit, as the size of an array is.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn count_down(n: u64) -> u64 {
   var left = n
   var rounds: u64 = 0
@@ -65,6 +73,9 @@ fn count_down(n: u64) -> u64 {
 A loop whose measure does not get smaller is refused. Here nothing changes `left`.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn count_down(n: u64) -> u64 {
   var left = n
   var rounds: u64 = 0
@@ -83,6 +94,9 @@ This is refused: "cannot prove that `left` is smaller than when the round began,
 The measure is checked only where the loop goes round again, and nowhere before. So a loop that moves a place toward an end is proven to end by the distance that is left, though nothing says the place is inside when the round begins.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn count_to(size: u64) -> u64 {
   var at: u64 = 0
   var n: u64 = 0
@@ -100,14 +114,14 @@ fn count_to(size: u64) -> u64 {
 A function that moves the place says how far in its contract, and the loop that calls it uses that. Here `skip` promises a place after the one it was given and not past the end, which is what the loop needs.
 
 ```
-fn skip(src: List[u8], at: u64) -> next: u64
+fn skip(src: List[Byte], at: u64) -> next: u64
   requires at < src.size
   ensures next > at and next <= src.size
 {
   at + 1
 }
 
-fn steps(src: List[u8]) -> u64 {
+fn steps(src: List[Byte]) -> u64 {
   var at: u64 = 0
   var n: u64 = 0
   loop decreases src.size - at {

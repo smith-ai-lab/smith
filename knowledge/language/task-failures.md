@@ -10,7 +10,7 @@ status: planned
 A child that ended by a [failure](task-ending.md) was not given a value, so `join(t)` has none to give. A task that joins it ends by the same failure.
 
 ```
-fn fetch_both(a: str, b: str) -> Result[(List[u8], List[u8]), NetError] ! net, alloc {
+fn fetch_both(a: str, b: str) -> Result[(List[Byte], List[Byte]), NetError] ! net, alloc {
   with tasks()
   ta = spawn { fetch(a) }
   tb = spawn { fetch(b) }
@@ -27,6 +27,8 @@ If `tb` runs out of memory, the `join(tb)` of `fetch_both` ends the task that ru
 `main` is the root task, so a failure that reaches it ends the program with a failing status.
 
 ```
+use std.console (console, print)
+
 fn main() ! net, alloc, console {
   match fetch_both("a.example", "b.example") {
     .ok(pages) { print("fetched") }
@@ -42,7 +44,7 @@ If either child of `fetch_both` runs out of memory, `main` ends the same way and
 `outcome(t)` waits as `join` does and returns a `Result` whose error says which failure it was, so the task that calls it can recover.
 
 ```
-fn fetch_or_empty(url: str) -> List[u8] ! net, alloc {
+fn fetch_or_empty(url: str) -> List[Byte] ! net, alloc {
   with tasks()
   t = spawn { fetch(url) }
   match outcome(t) {

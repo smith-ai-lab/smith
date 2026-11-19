@@ -73,6 +73,7 @@ fn announce() {
 Nothing runs because a dependency is present. Its code runs only when the project calls it.
 
 ```
+use std.console (console, print)
 use vendor.toml.parse (parse)
 
 fn main() ! console {

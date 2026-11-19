@@ -12,7 +12,7 @@ A pattern in brackets takes an array apart, with one pattern for each element. I
 ## Taking an array apart
 
 ```
-fn name(rgb: [3]u8) -> str {
+fn name(rgb: [3]Byte) -> str {
   match rgb {
     [0, 0, 0] { "black" }
     [255, 255, 255] { "white" }
@@ -28,7 +28,7 @@ fn name(rgb: [3]u8) -> str {
 A pattern in brackets matches a [`List`](../library/list.md) too, when the list has exactly that many elements. A list can have any number, so a `match` on a list ends with a bare name, as a `match` on whole numbers does, and a `match` without one is refused as it is there.
 
 ```
-fn describe(xs: List[u8]) -> str {
+fn describe(xs: List[Byte]) -> str {
   match xs {
     [] { "empty" }
     [x] { "one" }

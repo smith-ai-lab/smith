@@ -15,10 +15,10 @@ use std.mcp (mcp, tool)
 // Divides one whole number by another.
 fn divide(
   // The number that is divided.
-  a: i64,
+  a: Int,
   // The number it is divided by.
-  b: i64,
-) -> Result[i64, str] {
+  b: Int,
+) -> Result[Int, str] {
   if b == 0 { .err("b is zero") } else { .ok(a / b) }
 }
 

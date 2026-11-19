@@ -10,6 +10,8 @@ status: planned
 A child runs under the [handlers](handlers.md) in force where it was spawned, with an arena of its own, as [Memory of a task](task-arenas.md) says. So the `fake_clock` of Handlers reaches into the children below.
 
 ```
+use std.bits (u64)
+
 fn two_readings() -> (u64, u64) {
   with fake_clock()
   with tasks()
@@ -30,6 +32,8 @@ Each operation sees the handler's state whole and leaves it whole, as a read or 
 The order in which tasks reach a handler is not fixed, so a sequence of operations in one task can be interleaved with another task's. In `two_readings`, either child may call `now()` first.
 
 ```
+use std.bits (u64)
+
 fn two_pairs() -> ((u64, u64), (u64, u64)) {
   with fake_clock()
   with tasks()

@@ -68,6 +68,7 @@ A trait's function is imported by its own name in the same way. `area` is a func
 
 ```
 use shapes (Area, Rect, area)
+use std.bits (i32)
 
 fn size(r: Rect) -> i32 {
   area(r)
@@ -77,6 +78,8 @@ fn size(r: Rect) -> i32 {
 An `impl` of a trait needs the trait listed and not its functions. A function written inside `impl Shown[Mine]` is the function `show` of `Shown`, whether or not the file lists `show`. A `use` lists a trait's function only so that a call may be written without the trait before it.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
 use ui.animation (Shown)
 
 struct Mine {

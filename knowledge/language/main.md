@@ -14,6 +14,8 @@ status: built
 `main` may take the words after the program's name, as a list.
 
 ```
+use std.console (console, print)
+
 fn main(args: List[str]) ! console, alloc {
   print("started with {args.size} arguments")
 }
@@ -29,7 +31,7 @@ What `main` returns decides the status the program ends with. `main` may return 
 
 ```
 trait Exit[T] {
-  fn exit(value: T) -> u8 ! console, alloc
+  fn exit(value: T) -> Byte ! console, alloc
 }
 ```
 
@@ -37,6 +39,8 @@ trait Exit[T] {
 - A `Result[T, E]` gives what its `T` gives when it is `.ok`. When it is `.err(e)`, it writes `e` to standard error, as [`Fmt`](interpolation.md#fmt) turns it into text, and gives 1.
 
 ```
+use std.console (console, print)
+
 fn main() -> Result[(), str] ! console, alloc {
   print("started")
   .err("could not finish")
@@ -48,13 +52,15 @@ This prints `started` to standard output and `could not finish` to standard erro
 - A program that needs other statuses implements `Exit` for a type of its own.
 
 ```
+use std.console (console)
+
 enum Outcome {
   done
   usage
 }
 
 impl Exit[Outcome] {
-  fn exit(value: Outcome) -> u8 ! console, alloc {
+  fn exit(value: Outcome) -> Byte ! console, alloc {
     match value {
       .done { 0 }
       .usage { 2 }

@@ -29,6 +29,8 @@ The declaration gives two things, and nothing else is generated.
 Because `now` carries `time`, a caller must have `time`, as for any function with an effect.
 
 ```
+use std.bits (u64)
+
 fn stamp() -> u64 ! time { now() }
 ```
 

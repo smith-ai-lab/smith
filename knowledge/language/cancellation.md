@@ -10,7 +10,7 @@ status: planned
 Ending a group's block is the one way to cancel. When the block of `with tasks()` ends, each child still running is cancelled. User code cannot end a task in any other way.
 
 ```
-fn first_page(a: str, b: str) -> Result[List[u8], NetError] ! net, alloc {
+fn first_page(a: str, b: str) -> Result[List[Byte], NetError] ! net, alloc {
   with tasks()
   ta = spawn { fetch(a) }
   tb = spawn { fetch(b) }
@@ -25,6 +25,9 @@ fn first_page(a: str, b: str) -> Result[List[u8], NetError] ! net, alloc {
 A cancelled task that is waiting, as for a read, ends at once. One that is running ends the next time it would suspend, so code that never suspends is never interrupted.
 
 ```
+use std.bits (u64)
+use std.int (wrapping_add)
+
 fn busy(n: u64) -> u64 {
   var total: u64 = 0
   loop i in 0..n { total = wrapping_add(total, i) }

@@ -13,6 +13,8 @@ built:
 `smith` takes a command, and the command takes a file, or the entry of the project when none is named. `smith run` builds a program and runs it.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hello world")
 }
@@ -31,6 +33,8 @@ smith build hello.smith
 This writes `hello` beside the command, as [Projects](projects.md) names it. `smith build` with no file compiles `main.smith`. It writes no executable when the program has an error.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print(1 +)
 }
@@ -51,6 +55,9 @@ smith run hello.smith
 `smith check` checks a program and writes no code. It reports the errors, and when there are none it reports warnings, such as dead code, unused variables, and unused imports, and it fails if there are any.
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 fn unused(x: i32) -> i32 { 1 }
 
 fn main() ! console {

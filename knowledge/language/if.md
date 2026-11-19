@@ -20,6 +20,9 @@ fn relu(x: f32) -> f32 {
 `relu(-2.0)` is `0.0` and `relu(3.0)` is `3.0`. The condition comes after `if`, with no parentheses, and the blocks are in braces. An `if` is an expression, so it may stand anywhere a value may: as the last line of a function, as an argument, or as the value of a [binding](bindings.md).
 
 ```
+use std.bits (i32)
+use std.console (console, print)
+
 fn sign(n: i32) -> str {
   if n < 0 { "negative" } else { "not negative" }
 }
@@ -38,6 +41,8 @@ This prints `yes` and then `not negative`.
 A condition is a `bool`, such as what `<`, `<=`, `>`, `>=`, `==`, and `!=` give. Anything else is refused.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   if 1 { print("x") }
 }
@@ -50,6 +55,8 @@ This gives "this is a number, where a `bool` is needed". A name of another type 
 With an `else`, the `if` gives what the block that ran gives, so both blocks give the same type.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   word = if true { "a" } else { true }
   print(word)
@@ -59,6 +66,8 @@ fn main() ! console {
 This gives "this gives a `bool`, and the first block gives text, where the blocks of an `if` give the same type". When the function states the type, the message names it instead.
 
 ```
+use std.bits (i32)
+
 fn describe(n: i32) -> str {
   if n < 0 { "negative" } else { 7 }
 }
@@ -69,6 +78,8 @@ This gives "this is a number, where text is needed".
 Blocks that give whole numbers give the smallest range that holds the values of both, as each block's value is accepted by that range with nothing written.
 
 ```
+use std.console (console, print)
+
 fn pick(c: bool, x: 0..256) -> 0..256 {
   if c { 1 } else { x }
 }
@@ -86,6 +97,8 @@ This prints `7 1`. In `pick` the blocks give a `1..2` and a `0..256`, so the `if
 An `if` with no `else` gives `()`, and what its block gives is not read. It is for what its block does.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   if true { print("shown") }
   if false { print("hidden") }
@@ -95,6 +108,8 @@ fn main() ! console {
 This prints `shown`. Its block may end with a value, as `if true { "a" }` does, and the value is dropped. Using the `if` where a value is needed is refused.
 
 ```
+use std.bits (i32)
+
 fn describe(n: i32) -> str {
   if n < 0 { "negative" }
 }
@@ -107,6 +122,8 @@ This gives "this gives nothing, where text is needed".
 A block may assign to a [`var`](var.md) of the function around it, which is how a block does something to the function. The name it assigns is the one defined outside.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   var word = "a"
   if true { word = "b" } else { word = "c" }
@@ -121,6 +138,8 @@ This prints `b`. A name defined inside a block can be used only inside it, as [B
 `else` may be followed by another `if`, which makes a chain. The first condition that holds picks the block, and the last `else` runs when none does.
 
 ```
+use std.bits (i32)
+
 fn grade(n: i32) -> str {
   if n < 50 { "fail" } else if n < 80 { "pass" } else { "distinction" }
 }
@@ -135,6 +154,8 @@ The `else` is written on the line where the block before it ends. On a line of i
 `not`, `and`, and `or` combine conditions into one. They take `bool`s and give a `bool`, and any other operand is refused: `if not "a" { ... }` gives "this gives text, where a `bool` is needed".
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   a = true
   b = false
@@ -149,6 +170,8 @@ This prints `yes`, `no`, and `yes`.
 `not` binds most tightly, then `and`, then `or`, so `a or b and c` means `a or (b and c)`. Parentheses group the other way, as in `(a or b) and c`.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   a = true
   b = false
@@ -163,6 +186,8 @@ This prints `yes`, then `no`.
 `and` and `or` evaluate their right side only when the left side has not settled the answer. `and` stops at a `false`, and `or` stops at a `true`. So a right side that prints shows whether it ran.
 
 ```
+use std.console (console, print)
+
 fn loud(text: str, answer: bool) -> bool ! console {
   print(text)
   answer

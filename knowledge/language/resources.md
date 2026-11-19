@@ -123,7 +123,7 @@ fn open[T](path: str, body: fn(File) -> Result[T, FsError]) -> Result[T, FsError
   r
 }
 
-fn first_bytes(path: str) -> Result[List[u8], FsError] ! fs, alloc {
+fn first_bytes(path: str) -> Result[List[Byte], FsError] ! fs, alloc {
   with f = open(path)
   read(f, 0..16)
 }

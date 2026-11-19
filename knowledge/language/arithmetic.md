@@ -14,6 +14,8 @@ built:
 A plain `+`, `-`, or `*` gives the exact range of its result, so it cannot fail and asks for nothing.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   a: 0..256 = 20
   b: 0..256 = 5
@@ -73,6 +75,8 @@ The binding states `0..101`, and the argument of `takes` is a `0..101`, so each 
 A condition that bounds the value is a proof, inside the block it guards.
 
 ```
+use std.console (console, print)
+
 fn next(i: 0..256) -> 0..256 {
   if i < 255 { i + 1 } else { 255 }
 }
@@ -95,6 +99,8 @@ Where nothing proves that a value fits the range it enters, as a number read fro
 `narrow(x)` gives an `Option` of the range expected: `.some(x)` when `x` is in that range, and `.none` when it is not. `checked_add(a, b)` is `narrow(a + b)`.
 
 ```
+use std.int (narrow)
+
 fn to_byte(n: Nat) -> Option[Byte] { narrow(n) }
 
 fn next_checked(i: Byte) -> Option[Byte] { narrow(i + 1) }
@@ -105,6 +111,8 @@ fn next_checked(i: Byte) -> Option[Byte] { narrow(i + 1) }
 `clamp(x)` gives the value of the range expected that is nearest `x`: `x` when it is in the range, the least value when `x` is below it, and the greatest when it is above. `saturating_add(a, b)` is `clamp(a + b)`.
 
 ```
+use std.console (console, print)
+
 fn next_saturating(i: Byte) -> Byte { clamp(i + 1) }
 
 fn floor(x: Int) -> Byte { clamp(x) }
@@ -119,6 +127,8 @@ This prints `255 8 0 255`. `floor(-3)` is `0`, the least `Byte`, and `floor(300)
 Where the range expected holds every value of `x`, the call is refused as needless, as `convert` of a value to its own type is, since it does nothing the program could see.
 
 ```
+use std.int (narrow)
+
 fn same(x: Byte) -> Option[Byte] { narrow(x) }
 ```
 
@@ -175,6 +185,9 @@ fn share_of(total: Nat, n: 0..101) -> Nat {
 Nothing wraps unless a function that wraps is called. `wrapping_add`, `wrapping_sub`, and `wrapping_mul` keep the low bits of the result, and they are functions of the ranges that fill a size exactly, `0..256`, `0..65536`, and the others that [Bit operations](bits.md#the-ranges-that-fill-a-size) lists.
 
 ```
+use std.console (console, print)
+use std.int (wrapping_add, wrapping_mul, wrapping_sub)
+
 fn next_wrapping(i: Byte) -> Byte { wrapping_add(i, 1) }
 
 fn main() ! console, alloc {
@@ -188,12 +201,16 @@ fn main() ! console, alloc {
 This prints `0 8` and `255 -56`. The `1` is a `Byte`, as it is a range that fits one.
 
 ```
+use std.int (wrapping_add)
+
 fn next(i: 0..101) -> 0..101 { wrapping_add(i, 1) }
 ```
 
 This is refused, as `0..101` does not fill a size, so it has no wrapping function. A wrapping function takes two values of one range, written the same, and a wider range is not accepted for a narrower one here, as it is elsewhere, since widening one would change where a sum wraps.
 
 ```
+use std.int (wrapping_add)
+
 fn bump(a: Byte, b: 0..65536) -> 0..65536 { wrapping_add(a, b) }
 ```
 

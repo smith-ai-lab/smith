@@ -10,8 +10,8 @@ status: built
 The module `std.fmt` holds `hex` and `binary`, which write a whole number as the text of its digits in another base. They are ordinary functions: a string's braces hold an expression and no format code, as [Strings that hold expressions](../language/interpolation.md) says, so a number in another base is written by calling one inside the braces.
 
 ```
-fn hex(n: u64, width: u8 = 0, upper: bool = true) -> str ! alloc
-fn binary(n: u64, width: u8 = 0) -> str ! alloc
+fn hex(n: u64, width: Byte = 0, upper: bool = true) -> str ! alloc
+fn binary(n: u64, width: Byte = 0) -> str ! alloc
 ```
 
 Both allocate, as the text is new memory. `width` and `upper` have defaults, so a call names them, as [Functions](../language/functions.md) says of named arguments and defaults.
@@ -66,7 +66,7 @@ The largest `u64`, 18446744073709551615, is `"FFFFFFFFFFFFFFFF"` in `hex`, sixte
 ```
 use std.fmt (hex)
 
-fn byte(b: u8) -> str ! alloc { hex(b, width: 2) }
+fn byte(b: Byte) -> str ! alloc { hex(b, width: 2) }
 ```
 
 `byte(10)` is `"0A"`.

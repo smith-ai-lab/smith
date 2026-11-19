@@ -34,6 +34,8 @@ trait Iterate[C, out T] {
 A type implements `Iterate` by writing `each` for it. `Countdown` holds a number, and its `each` walks the numbers from that one down to `1`.
 
 ```
+use std.bits (i32)
+
 struct Countdown {
   from: i32
 }
@@ -62,6 +64,8 @@ impl[T, U, R] Try[Flow[T, R], Flow[U, R], T] {
 `each` is a function like any other, so it can be called with a lambda that gives a `Flow`, as a function that takes a function is in [Lambdas](lambdas.md). This prints `3` and `2`, and stops there.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   each(Countdown(from: 3)) fn(v) {
     print("{v}")
@@ -75,6 +79,8 @@ fn main() ! console, alloc {
 `loop v in x { ... }` calls `each(x)` with the block as its lambda, and the block answers `.go` when it reaches its end. A type that implements `Iterate` is looped over like a range, with the name the element.
 
 ```
+use std.bits (i32)
+
 fn largest(c: Countdown) -> i32 {
   var top = 0
   loop v in c { if v > top { top = v } }
@@ -91,6 +97,8 @@ The body is a lambda that cannot escape, as [Lambdas](lambdas.md) says of every 
 Its effects are checked where it is written, in the function that has the loop. A body that prints needs `console` in that function.
 
 ```
+use std.console (print)
+
 fn show(c: Countdown) ! alloc {
   loop v in c { print("{v}") }
 }
@@ -103,6 +111,8 @@ This is refused, because `show` does not list `console`, which the `print` in th
 A walk over a tree passes `body` along to its recursive calls. The `each` of a tree calls itself on the left part, then on the value, then on the right part, and each call is handed the same `body`. A `try` before each step but the last passes a stop up through every level, so the walk ends the moment one value says stop.
 
 ```
+use std.bits (i32)
+
 enum Tree {
   leaf
   node: Branch
@@ -135,6 +145,8 @@ A `loop v in t` over a `Tree` runs its block once for each value, left to right.
 A loop over a type that implements `Iterate` is ended by `break`, and left by [`return`](return.md), as a loop over a range is.
 
 ```
+use std.bits (i32)
+
 fn first_small(c: Countdown) -> i32 {
   var found = 0
   loop v in c {

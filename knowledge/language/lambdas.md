@@ -194,7 +194,7 @@ fn quarter(x: f32) -> f32 {
 A lambda may write type parameters in brackets after `fn`, as a function writes them after its name, and each use settles them, as each call of a function does.
 
 ```
-fn both() -> (i64, str) {
+fn both() -> (Int, str) {
   same = fn[T](x: T) -> T { x }
   (same(1), same("a"))
 }

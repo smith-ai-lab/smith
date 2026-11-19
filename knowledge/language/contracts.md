@@ -14,7 +14,7 @@ built:
 A signature can state what must hold. `requires` is owed by the caller, and `ensures` is owed by the function. Both are checked when the program is built, with [`arith`](arith.md).
 
 ```
-fn gap(a: u8, b: u8) -> u8
+fn gap(a: Byte, b: Byte) -> Byte
   requires a >= b
 {
   a - b
@@ -30,6 +30,8 @@ The compiler only checks a contract. It never searches for a proof, and nothing 
 Every call proves the `requires` of the function it calls, of the arguments it passes. A call that cannot is refused where it is called.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc { print("{gap(3, 5)}") }
 ```
 
@@ -38,7 +40,7 @@ This is refused: "cannot prove that `3 >= 5`, which `gap` requires of its argume
 The caller proves it from what it knows. A condition it has checked is enough.
 
 ```
-fn gap_or_zero(a: u8, b: u8) -> u8 {
+fn gap_or_zero(a: Byte, b: Byte) -> Byte {
   if a >= b { gap(a, b) } else { 0 }
 }
 ```
@@ -46,7 +48,7 @@ fn gap_or_zero(a: u8, b: u8) -> u8 {
 `gap_or_zero(3, 5)` is `0`. Or it states the same `requires`, and passes the duty on to its own caller.
 
 ```
-fn gap_again(a: u8, b: u8) -> u8
+fn gap_again(a: Byte, b: Byte) -> Byte
   requires a >= b and a <= 100
 {
   gap(a, b)
@@ -60,7 +62,7 @@ fn gap_again(a: u8, b: u8) -> u8
 `ensures` states something about the result. The signature gives the result a name, and the `ensures` is about that name.
 
 ```
-fn clamp(x: u8, lo: u8, hi: u8) -> r: u8
+fn clamp(x: Byte, lo: Byte, hi: Byte) -> r: Byte
   requires lo <= hi
   ensures lo <= r and r <= hi
 {
@@ -71,7 +73,7 @@ fn clamp(x: u8, lo: u8, hi: u8) -> r: u8
 `clamp(9, 2, 5)` is `5`. The function proves its `ensures` at each place it returns. One that does not is refused.
 
 ```
-fn clamp(x: u8, lo: u8, hi: u8) -> r: u8
+fn clamp(x: Byte, lo: Byte, hi: Byte) -> r: Byte
   requires lo <= hi
   ensures lo <= r and r <= hi
 {
@@ -84,7 +86,7 @@ This is refused: "cannot prove that `lo <= r and r <= hi`, which `clamp` ensures
 A signature that has an `ensures` names its result.
 
 ```
-fn bigger(a: u8) -> u8
+fn bigger(a: Byte) -> Byte
   ensures a + 1 <= 255
 {
   a
@@ -98,7 +100,7 @@ This is refused: "`bigger` has an `ensures`, and its signature does not name its
 The caller takes the `ensures` as a fact about what the call gave. So a result that is known to be within bounds can be added to.
 
 ```
-fn room(x: u8) -> u8 {
+fn room(x: Byte) -> Byte {
   c = clamp(x, 0, 100)
   c + 100
 }
@@ -111,7 +113,9 @@ fn room(x: u8) -> u8 {
 A function type states no contract, so a function with a `requires` is only called by its name, and using its name as a value is an error.
 
 ```
-fn apply(f: fn(u8, u8) -> u8) -> u8 { f(5, 3) }
+use std.console (console, print)
+
+fn apply(f: fn(Byte, Byte) -> Byte) -> Byte { f(5, 3) }
 
 fn main() ! console, alloc { print("{apply(gap)}") }
 ```
@@ -121,13 +125,13 @@ This is refused: "`gap` has a `requires`, which a function type does not state, 
 A function with only an `ensures` can be a value, and what it gives is then not known to the caller.
 
 ```
-fn small(x: u8) -> r: u8
+fn small(x: Byte) -> r: Byte
   ensures r < 10
 {
   if x < 10 { x } else { 9 }
 }
 
-fn apply(f: fn(u8) -> u8) -> u8 { f(5) }
+fn apply(f: fn(Byte) -> Byte) -> Byte { f(5) }
 ```
 
 `apply(small)` is `5`. Inside `apply`, `f(5)` is any `u8`, since `f` is a function type and states no `ensures`.

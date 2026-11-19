@@ -20,6 +20,8 @@ A range `a..b` is the numbers from `a` up to `b`, and it excludes `b`. It is als
 A [`loop`](loop.md) runs over a range.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   loop i in 0..3 { print("{i}") }
 }
@@ -42,7 +44,7 @@ fn pick[n: Nat](i: 0..n) -> Nat { i }
 `x[a..b]` is the elements of `x` from place `a` up to place `b`, so its size is `b - a`.
 
 ```
-fn middle(a: [4]u8) -> [2]u8 { a[1..3] }
+fn middle(a: [4]Byte) -> [2]Byte { a[1..3] }
 ```
 
 `middle([10, 20, 30, 40])` is `[20, 30]`. Its size is `3 - 1`, which is `2`, so it is a `[2]u8`.
@@ -54,7 +56,7 @@ A slice is read through [`Index`](indexing.md), with a range as the index. The s
 A slice compiles only when [`arith`](arith.md) proves that the range lies inside: that its first end is not above its second, and that its second is not above the size. This is the `valid` of `Index` for a range, as [Indexing](indexing.md#indexing-is-a-trait) says of one index, so nothing is checked when the program runs.
 
 ```
-fn word(src: List[u8], from: u64, to: u64) -> List[u8]
+fn word(src: List[Byte], from: u64, to: u64) -> List[Byte]
   requires from <= to and to <= src.size
 {
   src[from..to]
@@ -84,9 +86,9 @@ A [`Slice`](../library/slice.md) cannot change, so a piece of it is a `Slice` th
 Where the range begins at the start, the first end is left out, and where it ends at the end, the second is. `x[..k]` is `x[0..k]`, and `x[k..]` is `x[k..x.size]`. The short form is the one that is written: the formatter rewrites `x[0..k]` as `x[..k]` and `x[k..x.size]` as `x[k..]`.
 
 ```
-fn drop_one(a: [4]u8) -> [3]u8 { a[1..] }
+fn drop_one(a: [4]Byte) -> [3]Byte { a[1..] }
 
-fn take_two(a: [4]u8) -> [2]u8 { a[..2] }
+fn take_two(a: [4]Byte) -> [2]Byte { a[..2] }
 ```
 
 `drop_one([10, 20, 30, 40])` is `[20, 30, 40]`, and `take_two` of it is `[10, 20]`.

@@ -10,7 +10,7 @@ status: built
 `x |> f(a, b)` is `f(x, a, b)`. The value on the left becomes the first argument of the call on the right. A value that is handed to one call after another is then written in the order the calls run.
 
 ```
-fn put(w: take Out, b: u8) -> Out ! alloc
+fn put(w: take Out, b: Byte) -> Out ! alloc
 
 fn newline(w: take Out) -> Out ! alloc {
   w |> put('\\') |> put('n')
@@ -75,7 +75,7 @@ This is refused: "the right side of `|>` is not a call", with the fix "write `ha
 
 ```
 fn parse(text: str) -> Result[Point, ParseError]
-fn scale(p: Point, by: i64) -> Point
+fn scale(p: Point, by: Int) -> Point
 fn check(p: Point) -> Result[Point, ParseError]
 
 fn read(text: str) -> Result[Point, ParseError] {

@@ -14,6 +14,8 @@ A program is a file with a function named `main`, where it starts. It ends when 
 `print` takes a `str` and writes it, and a line break, to standard output.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("hello world")
 }
@@ -22,6 +24,8 @@ fn main() ! console {
 This prints `hello world`. A `main` that prints twice prints two lines, in order.
 
 ```
+use std.console (console, print)
+
 fn main() ! console {
   print("one")
   print("two")
@@ -35,6 +39,8 @@ This prints `one`, then `two`. `print` is in scope in [every file](prelude.md), 
 `! console` after the parentheses says that `main` may print. It is an [effect](effects.md), which a function must list for everything it does outside itself, and `print` needs `console`. Without it the program is refused:
 
 ```
+use std.console (print)
+
 fn main() {
   print("hi")
 }
@@ -49,6 +55,8 @@ A program with no `main` is refused too: "there is no function named `main`, whe
 A string may hold an expression in braces. Its value is written into the text where the braces are.
 
 ```
+use std.console (console, print)
+
 fn main() ! console, alloc {
   print("hi {2 + 3}")
 }
