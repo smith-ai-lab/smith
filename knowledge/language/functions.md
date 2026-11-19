@@ -169,6 +169,18 @@ A comment starts with `//` and stands on its own line. It describes the definiti
 fn first(a: str, b: str) -> str { a }
 ```
 
+A comment may describe one parameter, when the parameters stand on lines of their own.
+
+```
+// Gives the first of two words.
+fn first(
+  // The word that is given.
+  a: str,
+  // The word that is left out.
+  b: str,
+) -> str { a }
+```
+
 ## The forms
 
 | Written | Is |
