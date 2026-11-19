@@ -77,7 +77,7 @@ fn encode(e: take Encoder, to: take List[Byte], headers: List[(str, str)]) -> (E
 - A decoder made with `table` takes a change of the table's size up to `table`, and starts with a table of 4096 bytes or `table` if that is less, as RFC 9113 says. An encoder made with a `table` other than 4096 writes the change of size that tells the decoder at the start of its first block.
 - After `.err` the decoder is as the block left it, and the connection is to be closed, as the standard says.
 - A name or value that is not UTF-8 is `.err`, as a `str` holds it.
-- `encode` writes a header whose name is `authorization`, `cookie`, or `set-cookie` never indexed, and never into the table, so its value is not learned from the size of what follows. It writes a text in the short code when that is shorter.
+- `encode` writes a header whose name is `authorization`, `cookie`, or `set-cookie` never indexed, and never into the table, so its value is not learned from the size of what follows. It writes a text in the short code when that is no longer than the text as it is.
 - For every list of headers, decoding what was encoded gives the list, with a decoder and an encoder that began together.
 
 ## The forms

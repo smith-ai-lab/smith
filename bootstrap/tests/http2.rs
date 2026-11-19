@@ -3,7 +3,7 @@
 //!
 //! The expectation of each test comes from here and not from the module: the
 //! bytes of a frame are laid out by `F::bytes`, a block of headers by
-//! `hpack_appendix` or by the walker of HPACK in this file, and a program built
+//! `rfc`, which reads the text of the standard, or by the walker of HPACK in this file, and a program built
 //! from the source of the test is run by the evaluator and prints what the
 //! module gave.
 
@@ -11,7 +11,7 @@ use smith::{lower, scalar};
 
 use crate::Test;
 use crate::generate::{self, Gen};
-use crate::hpack_appendix::{HUFFMAN, SERIES, SINGLES, STATIC, Series};
+use crate::rfc;
 
 pub const ONCE: &[Test] = &[
     (
@@ -27,12 +27,28 @@ pub const ONCE: &[Test] = &[
         bytes_of_any_kind_are_read_as_a_frame_or_refused_and_never_end_the_program,
     ),
     (
+        "the_frame_types_settings_and_error_codes_of_rfc_9113_are_read_and_written_as_the_numbers_it_gives",
+        the_frame_types_settings_and_error_codes_of_rfc_9113_are_read_and_written_as_the_numbers_it_gives,
+    ),
+    (
         "the_examples_of_rfc_7541_appendix_c_decode_to_the_headers_and_the_table_it_gives",
         the_examples_of_rfc_7541_appendix_c_decode_to_the_headers_and_the_table_it_gives,
     ),
     (
+        "the_headers_of_appendix_c_are_encoded_to_blocks_that_read_back_and_to_the_bytes_of_the_appendix_where_the_page_allows",
+        the_headers_of_appendix_c_are_encoded_to_blocks_that_read_back_and_to_the_bytes_of_the_appendix_where_the_page_allows,
+    ),
+    (
         "the_static_table_is_the_one_of_rfc_7541_appendix_a",
         the_static_table_is_the_one_of_rfc_7541_appendix_a,
+    ),
+    (
+        "the_numbers_of_rfc_7541_appendix_c_1_are_read_from_their_bytes",
+        the_numbers_of_rfc_7541_appendix_c_1_are_read_from_their_bytes,
+    ),
+    (
+        "the_short_code_of_rfc_7541_appendix_b_is_read_and_written_for_every_byte",
+        the_short_code_of_rfc_7541_appendix_b_is_read_and_written_for_every_byte,
     ),
     (
         "decoding_what_was_encoded_gives_the_headers_over_blocks_with_one_encoder_and_one_decoder",
@@ -656,6 +672,69 @@ fn bytes_of_any_kind_are_read_as_a_frame_or_refused_and_never_end_the_program() 
     );
 }
 
+/// The frame types, the settings, and the error codes that RFC 9113 gives numbers to are the numbers
+/// the module reads and writes: a frame of each type is read as that frame, one of the next number is
+/// not, and each setting and each error code is read as the number that holds it.
+fn the_frame_types_settings_and_error_codes_of_rfc_9113_are_read_and_written_as_the_numbers_it_gives() {
+    let types = rfc::frame_types();
+    let named: Vec<&str> = types.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        named,
+        ["DATA", "HEADERS", "PRIORITY", "RST_STREAM", "SETTINGS", "PUSH_PROMISE", "PING", "GOAWAY", "WINDOW_UPDATE", "CONTINUATION"]
+    );
+    let sample = |name: &str| match name {
+        "DATA" => F::Data { stream: 1, end_stream: true, padding: None, data: vec![1, 2] },
+        "HEADERS" => F::Headers { stream: 1, end_stream: false, end_headers: true, padding: None, priority: None, block: vec![3] },
+        "PRIORITY" => F::Priority(1),
+        "RST_STREAM" => F::Reset { stream: 1, code: 8 },
+        "SETTINGS" => F::Settings(vec![(1, 4096)]),
+        "PUSH_PROMISE" => F::Promise { stream: 1, end_headers: true, padding: None, promised: 2, block: vec![4] },
+        "PING" => F::Ping { ack: false, data: 7 },
+        "GOAWAY" => F::GoAway { last: 3, code: 0, debug: vec![] },
+        "WINDOW_UPDATE" => F::Window { stream: 1, increment: 5 },
+        "CONTINUATION" => F::Continuation { stream: 1, end_headers: true, block: vec![5] },
+        other => panic!("no frame is named {other}"),
+    };
+    let mut source = FRAMES.to_string();
+    source += "fn main() ! console, alloc {\n";
+    let mut expected = Vec::new();
+    for (name, number) in &types {
+        let f = sample(name);
+        assert_eq!(f.kind(), *number, "{name}");
+        let mut bytes = f.bytes();
+        bytes[3] = *number;
+        source += &format!("  verdict({}, 16384)\n", list(&bytes));
+        expected.push(format!("complete {}", bytes.len()));
+        expected.extend(f.describe());
+    }
+    // The type after the last that the standard names is passed over.
+    let after = types.last().unwrap().1 + 1;
+    let mut bytes = sample("CONTINUATION").bytes();
+    bytes[3] = after;
+    source += &format!("  verdict({}, 16384)\n", list(&bytes));
+    expected.push(format!("complete {}", bytes.len()));
+    expected.push(format!("unknown {after}"));
+    // Each setting, and each error code in a reset and in a go away.
+    let settings = rfc::settings();
+    assert_eq!(settings.len(), 6);
+    let ids: Vec<(u32, u32)> = settings.iter().map(|(_, id)| (*id, 7)).collect();
+    let f = F::Settings(ids);
+    source += &format!("  verdict({}, 16384)\n", list(&f.bytes()));
+    expected.push(format!("complete {}", f.bytes().len()));
+    expected.extend(f.describe());
+    let codes = rfc::error_codes();
+    assert_eq!(codes.len(), 14);
+    for (_, code) in &codes {
+        for f in [F::Reset { stream: 1, code: *code }, F::GoAway { last: 1, code: *code, debug: vec![] }] {
+            source += &format!("  verdict({}, 16384)\n", list(&f.bytes()));
+            expected.push(format!("complete {}", f.bytes().len()));
+            expected.extend(f.describe());
+        }
+    }
+    source += "}\n";
+    assert_eq!(lines(&source), expected);
+}
+
 // The headers.
 
 /// The start of every program that reads headers: what it prints of a result,
@@ -696,29 +775,28 @@ fn probe(d: take Decoder, places: Nat) -> Decoder ! console, alloc {
 ";
 
 /// What `show` prints for headers.
-fn shown(headers: &[(&str, &str)]) -> Vec<String> {
-    let mut out: Vec<String> = headers.iter().map(|(n, v)| format!("{n}: {v}")).collect();
+fn shown<N: AsRef<str>, V: AsRef<str>>(headers: &[(N, V)]) -> Vec<String> {
+    let mut out: Vec<String> = headers.iter().map(|(n, v)| format!("{}: {}", n.as_ref(), v.as_ref())).collect();
     out.push("end".to_string());
     out
 }
 
 fn the_examples_of_rfc_7541_appendix_c_decode_to_the_headers_and_the_table_it_gives() {
-    for series in SERIES.iter().chain(SINGLES) {
-        let Series { table, examples, .. } = series;
+    for series in rfc::appendix_c() {
         let mut source = HEADERS.to_string();
         source += "fn main() ! console, alloc {\n";
-        source += &if *table == 4096 { "  d0 = decoder()\n".to_string() } else { format!("  d0 = decoder({table})\n") };
+        let table = series.table;
+        source += &if table == 4096 { "  d0 = decoder()\n".to_string() } else { format!("  d0 = decoder({table})\n") };
         let mut expected = Vec::new();
-        for (n, example) in examples.iter().enumerate() {
-            let block = unhex(example.block);
+        for (n, example) in series.examples.iter().enumerate() {
             source += &format!(
                 "  (a{n}, r{n}) = decode(d{n}, {})\n  show(r{n})\n  d{} = probe(a{n}, {})\n",
-                list(&block),
+                list(&example.block),
                 n + 1,
                 example.table.len()
             );
-            expected.extend(shown(example.headers));
-            for (name, value, size) in example.table {
+            expected.extend(shown(&example.headers));
+            for (name, value, size) in &example.table {
                 assert_eq!(name.len() + value.len() + 32, *size, "the appendix");
                 expected.extend(shown(&[(name, value)]));
             }
@@ -729,16 +807,150 @@ fn the_examples_of_rfc_7541_appendix_c_decode_to_the_headers_and_the_table_it_gi
     }
 }
 
+/// The headers of the examples of appendix C are encoded to blocks that read back to them,
+/// and, where the appendix writes each text in the short code, to its bytes: the page lets
+/// the encoder write a text in the short code when that is no longer than the text, which is
+/// what the appendix does in sections 4 and 6, and has it write `set-cookie` never indexed, which
+/// the appendix does not in the last block of section 5 and of section 6. An encoder made for
+/// a table of other than 4096 bytes writes the change of its size first.
+fn the_headers_of_appendix_c_are_encoded_to_blocks_that_read_back_and_to_the_bytes_of_the_appendix_where_the_page_allows() {
+    let all = rfc::appendix_c();
+    assert_eq!(all.len(), 8);
+    for (at, series) in all.iter().enumerate().skip(4) {
+        let (table, short) = (series.table, at == 5 || at == 7);
+        let mut source = HEADERS.to_string();
+        source += "fn empty() -> List[Byte] { [] }\n\nfn dump(w: List[Byte]) ! console, alloc {\n  loop b in w { print(\"{b}\") }\n  print(\"end\")\n}\n\n";
+        for (n, example) in series.examples.iter().enumerate() {
+            source += &function(&format!("headers{n}"), &example.headers);
+        }
+        let make = |name: &str| if table == 4096 { format!("{name}()") } else { format!("{name}({table})") };
+        source += &format!("\nfn main() ! console, alloc {{\n  e0 = {}\n  d0 = {}\n", make("encoder"), make("decoder"));
+        let mut expected = Vec::new();
+        for (n, example) in series.examples.iter().enumerate() {
+            let secret = example.headers.iter().any(|(name, _)| name == "set-cookie");
+            let update = if n == 0 && table != 4096 { number(0x20, 5, table) } else { Vec::new() };
+            source += &format!(
+                "  (e{m}, w{n}) = encode(e{n}, empty(), headers{n}())\n  dump(w{n})\n  (a{n}, r{n}) = decode(d{n}, freeze(w{n}), 65536)\n  show(r{n})\n",
+                m = n + 1
+            );
+            if secret {
+                source += &format!("  d{} = a{n}\n", n + 1);
+            } else {
+                source += &format!("  d{} = probe(a{n}, {})\n", n + 1, example.table.len());
+            }
+            // The bytes are the appendix's where it writes each text in the short code, and not
+            // where the block has a header the encoder never indexes.
+            expected.push((short && !secret, [update, example.block.clone()].concat()));
+        }
+        source += "}\n";
+        let out = lines(&source);
+        let mut at = 0;
+        for (n, (same, bytes)) in expected.iter().enumerate() {
+            let end = out[at..].iter().position(|l| l == "end").unwrap() + at;
+            let written: Vec<u8> = out[at..end].iter().map(|l| l.parse().unwrap()).collect();
+            if *same {
+                assert_eq!(&written, bytes, "{} block {n}", series.name);
+            }
+            at = end + 1;
+            let example = &series.examples[n];
+            let mut want = shown(&example.headers);
+            if !example.headers.iter().any(|(name, _)| name == "set-cookie") {
+                for (name, value, _) in &example.table {
+                    want.extend(shown(&[(name, value)]));
+                }
+                want.push("error".to_string());
+            }
+            assert_eq!(out[at..at + want.len()], want[..], "{} block {n}", series.name);
+            at += want.len();
+        }
+        assert_eq!(at, out.len());
+    }
+}
+
 fn the_static_table_is_the_one_of_rfc_7541_appendix_a() {
     let mut source = HEADERS.to_string();
     source += "fn main() ! console, alloc {\n  d0 = decoder(4096)\n";
     let mut expected = Vec::new();
-    for (i, (name, value)) in STATIC.iter().enumerate() {
+    for (i, (name, value)) in rfc::static_table().iter().enumerate() {
         source += &format!("  (d{}, r{i}) = decode(d{i}, {}, 65536)\n  show(r{i})\n", i + 1, list(&[0x80 | (i as u8 + 1)]));
         expected.extend(shown(&[(name, value)]));
     }
     source += "}\n";
     assert_eq!(lines(&source), expected);
+}
+
+/// The numbers of appendix C.1 are read in the 5 bits of the change of a table's size: a decoder
+/// that is agreed a table of that size takes it, and one of a byte less does not.
+fn the_numbers_of_rfc_7541_appendix_c_1_are_read_from_their_bytes() {
+    let numbers = rfc::integers();
+    assert_eq!(numbers, vec![10, 1337]);
+    let mut source = HEADERS.to_string();
+    source += "fn main() ! console, alloc {\n";
+    let mut expected = Vec::new();
+    for (i, n) in numbers.iter().enumerate() {
+        let block = number(0x20, 5, *n);
+        for (j, table) in [*n, n - 1].into_iter().enumerate() {
+            source += &format!("  (d{i}x{j}, r{i}x{j}) = decode(decoder({table}), {}, 65536)\n  show(r{i}x{j})\n", list(&block));
+        }
+        expected.extend(["end", "error"].map(String::from));
+    }
+    source += "}\n";
+    assert_eq!(lines(&source), expected);
+}
+
+/// The text of every symbol that is the start of no bad UTF-8: each byte but the 11 that no text
+/// holds, with a character for each lead byte and each byte after it.
+fn every_character() -> Vec<u8> {
+    let mut text = String::new();
+    // Every byte of one, and a lead byte and a byte after it of each of two.
+    text.extend((0u32..128).filter_map(char::from_u32));
+    for i in 0..64u32 {
+        let (lead, after) = (0xc2 + i % 30, 0x80 + i);
+        text.push(char::from_u32(((lead & 0x1f) << 6) | (after & 0x3f)).unwrap());
+    }
+    // A lead byte of each of the three bytes, from e0 to ef.
+    text.extend([0x800].into_iter().chain((1u32..16).map(|i| i * 0x1000)).map(|c| char::from_u32(c).unwrap()));
+    text.extend([0x10000, 0x40000, 0x80000, 0xc0000, 0x100000].map(|c| char::from_u32(c).unwrap()));
+    text.into_bytes()
+}
+
+/// The code of the standard is what the module reads and writes: a text of every byte a text
+/// holds is read from the code of the appendix, and is written as the code of the appendix, and a
+/// byte no text holds is read as a symbol, which is a text that is not UTF-8.
+fn the_short_code_of_rfc_7541_appendix_b_is_read_and_written_for_every_byte() {
+    // Cheap characters first, so that the short code is no longer than the text.
+    let text = [vec![b'0'; 2000], every_character()].concat();
+    assert!(huffman(&text).len() <= text.len());
+    let seen: std::collections::BTreeSet<u8> = text.iter().copied().collect();
+    let unreachable: Vec<u8> = (0..=255u8).filter(|b| !seen.contains(b)).collect();
+    // Only the bytes that no text of UTF-8 holds are not in the text.
+    assert_eq!(unreachable, vec![0xc0, 0xc1, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff]);
+    let mut source = HEADERS.replace("use std.list (freeze, push)\n", "use std.list (freeze, push)\nuse std.utf8 (utf8)\n");
+    source += "fn empty() -> List[Byte] { [] }\n\nfn text(b: take List[Byte]) -> str {\n  match utf8(freeze(b)) {\n    .ok(t) { t }\n    .err(e) { \"\" }\n  }\n}\n\nfn dump(w: List[Byte]) ! console, alloc {\n  loop b in w { print(\"{b}\") }\n  print(\"end\")\n}\n\n";
+    source += &format!("fn value() -> str ! alloc {{ text({}) }}\n\n", list(&text));
+    source += "fn main() ! console, alloc {\n  (e, w) = encode(encoder(), empty(), [(\"x\", value())])\n  dump(w)\n";
+    let block = [vec![0x00], string(b"x", false), string(&text, true)].concat();
+    source += &format!("  (d, r) = decode(decoder(), {}, 65536)\n  show(r)\n", list(&block));
+    // A symbol that no text holds, between two texts of one byte.
+    let mut expected = Vec::new();
+    for (i, b) in unreachable.iter().enumerate() {
+        let block = [vec![0x00], string(b"x", false), string(&[b'a', *b, b'a'], true)].concat();
+        source += &format!("  (d{i}, r{i}) = decode(decoder(), {}, 65536)\n  show(r{i})\n", list(&block));
+        expected.push("error".to_string());
+    }
+    source += "}\n";
+    let out = lines(&source);
+    // The module writes the value as the appendix does, with the name as it is written when
+    // the short code is no longer, and adds the entry to its table.
+    let written = [vec![0x40], string(b"x", true), string(&text, true)].concat();
+    let end = out.iter().position(|l| l == "end").unwrap();
+    let got: Vec<u8> = out[..end].iter().map(|l| l.parse().unwrap()).collect();
+    assert_eq!(got, written);
+    // The text has line breaks in it, so what is printed is compared as it is.
+    let value = String::from_utf8(text).unwrap();
+    let printed = out[end + 1..].join("\n");
+    let wanted = format!("x: {value}\nend\n{}", expected.join("\n"));
+    assert_eq!(printed, wanted);
 }
 
 // A writer of HPACK, to build the blocks that the module is not to have written.
@@ -764,7 +976,7 @@ fn huffman(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let (mut acc, mut n) = (0u64, 0u32);
     for b in text {
-        let (code, len) = HUFFMAN[*b as usize];
+        let (code, len) = rfc::huffman()[*b as usize];
         acc = (acc << len) | u64::from(code);
         n += len;
         while n >= 8 {
@@ -1027,7 +1239,7 @@ fn a_text_in_the_short_code_is_read_and_one_with_wrong_padding_or_its_end_is_an_
             let coded = huffman(value.as_bytes());
             // The padding is the bits after the last code, which are 1: how many there
             // are is what the codes of the text leave of its last byte.
-            let bits: u32 = value.bytes().map(|b| HUFFMAN[b as usize].1).sum();
+            let bits: u32 = value.bytes().map(|b| rfc::huffman()[b as usize].1).sum();
             let padding = (8 - bits % 8) % 8;
             let (bad, fault_is_there): (Vec<u8>, bool) = match fault {
                 0 => (coded.clone(), false),
