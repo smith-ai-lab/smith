@@ -18,8 +18,19 @@ struct Value {
 }
 
 enum Tag {
-  boolean, integer, bits, octets, null, object, utf8, sequence, set,
-  printable, ia5, utc_time, general_time,
+  boolean
+  integer
+  bits
+  octets
+  null
+  object
+  utf8
+  sequence
+  set
+  printable
+  ia5
+  utc_time
+  general_time
   context: (0..31, bool)
   other: Nat
 }
