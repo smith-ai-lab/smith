@@ -168,6 +168,21 @@ pub fn allocate(f: &Function, registers: Registers, homeless: &[bool]) -> Alloca
 /// passed, so the k-th float passed is in the k-th register of floats that
 /// carries one.
 pub fn allocate_kinds(f: &Function, kinds: Kinds, homeless: &[bool]) -> Allocation {
+    let a = allocate_offering(f, kinds, homeless, false);
+    // Only a function that calls nothing and spilled can gain from every
+    // register, so only it is looked at for a loop.
+    let spilled = a.homes.iter().any(|h| matches!(h, Home::Frame(_)));
+    let calls = (f.blocks.iter()).any(|b| b.instructions.iter().any(|i| i.op.is_call()));
+    if spilled && !calls && has_a_loop(&f.blocks) {
+        return allocate_offering(f, kinds, homeless, true);
+    }
+    a
+}
+
+/// Gives each value a home, offering every register when `every` says so, and
+/// otherwise only those a function with no value alive across a call is
+/// offered.
+fn allocate_offering(f: &Function, kinds: Kinds, homeless: &[bool], every: bool) -> Allocation {
     let blocks = f.blocks.len();
     let values = f.types.len();
     // Where each block starts, counting a place for its parameters, one for
@@ -334,7 +349,7 @@ pub fn allocate_kinds(f: &Function, kinds: Kinds, homeless: &[bool]) -> Allocati
     let has_a_call = (f.blocks.iter()).any(|b| b.instructions.iter().any(|i| i.op.is_call()));
     let across = if has_a_call {
         across_a_call(f, &kinds_of, &facts, homeless)
-    } else if has_a_loop(&f.blocks) {
+    } else if every {
         [true; 2]
     } else {
         [false; 2]
