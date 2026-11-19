@@ -12,7 +12,7 @@ built:
   - "a range taken where a narrower one is needed, at the same places, which compiles when a condition or a `requires` shows that it fits, and is refused otherwise with an error that says what could not be proven"
   - "`==`, `!=`, `<`, `<=`, `>`, and `>=` between two different ranges, as the numbers they hold are, where one type of 64 bits holds the numbers of both"
   - "a range whose bound is the name of a parameter, `0..n` or `m..256`, as the type of a parameter: the body knows that the parameter is below `n` or at least `m`, as a `requires` says, and a call compiles when its argument is shown to be, and is the empty type where `n` is not above the first bound"
-  - "not a name for a bound in the type of a result, a binding, a field, or inside another type, and a comparison of two ranges that no type of 64 bits holds"
+  - "not a name for a bound in the type of a result or of a binding, which is planned, and a comparison of two ranges that no type of 64 bits holds"
 ---
 
 # Number types
@@ -64,6 +64,41 @@ fn wrong(x: 5..3) -> Nat { 0 }
 ```
 
 `wrong` is refused, because `3` is below `5`.
+
+## A name as a bound
+
+A bound of a range is a whole number or a name, and a name is allowed in three places: the type of a parameter, the type of a result, and the type of a binding. The name is a parameter, or a binding made before with `=`, which never changes.
+
+```
+fn last(n: 1..1000) -> 0..n { n - 1 }
+
+fn middle(xs: List[Nat]) -> Nat
+  requires xs.size > 0
+{
+  n = xs.size
+  i: 0..n = n / 2
+  xs[i]
+}
+```
+
+`last(10)` is `9`, and the caller holds a value it knows is below `10`, with no `ensures` written. In `middle`, `i` is known to be below `n` wherever it is used, so `xs[i]` needs no proof of its own. A result or a binding is given such a type as any value enters a narrower range: where it is shown to fit, and refused otherwise.
+
+```
+fn first_free(n: Nat) -> 0..n { 0 }
+```
+
+`first_free` is refused, because `0` is not below `n` when `n` is `0`.
+
+A name is not a bound in the type of a field, of a `var`, or inside another type such as `List[0..n]`.
+
+```
+struct Cursor {
+  size: Nat
+  at: 0..size
+}
+```
+
+`Cursor` is refused, because a field's type names no other field. What holds between two fields of a struct is said by a [proof field](proof-fields.md), which is the one way to say it. A `var` can change, so a type that named one would change with it, and a `var` is refused as a bound for the same reason.
 
 A value goes the other way only where it is shown to fit, or taken in by `narrow` or `clamp`, as [Integer arithmetic](arithmetic.md#where-a-value-enters-a-narrower-range) says.
 
