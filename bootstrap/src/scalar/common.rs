@@ -41,6 +41,8 @@ fn pure(op: &Op) -> bool {
             | Op::Binary { .. }
             | Op::Compare { .. }
             | Op::FloatBinary { .. }
+            | Op::FloatFused { .. }
+            | Op::VectorFloatFused { .. }
             | Op::FloatNegate(_)
             | Op::FloatCompare { .. }
             | Op::FloatFromInt { .. }

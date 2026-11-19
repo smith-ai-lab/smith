@@ -2,7 +2,9 @@
 type: specification
 title: Base64
 description: std.base64, which writes bytes as text in the base64 alphabet and reads them back, in the standard form and in the form for an address.
-status: planned
+status: built
+built:
+  - "`std.base64`, written in Smith, with `encode` and `encode_url`, which build their text with `Text` and `append_ascii`, and `decode` and `decode_url`, which build their list with `push`, and give `.none` for each text the page lists"
 ---
 
 # Base64

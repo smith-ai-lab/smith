@@ -218,6 +218,7 @@ fn operands(op: &mut Op) -> Vec<&mut Value> {
         | Op::VectorFloatBinary { a, b, .. }
         | Op::VectorCompare { a, b, .. }
         | Op::VectorFloatCompare { a, b, .. } => vec![a, b],
+        Op::FloatFused { a, b, c, .. } | Op::VectorFloatFused { a, b, c, .. } => vec![a, b, c],
         Op::Widen { value, .. }
         | Op::Narrow(value)
         | Op::FloatNegate(value)

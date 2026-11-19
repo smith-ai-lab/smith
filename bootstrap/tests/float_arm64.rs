@@ -32,6 +32,8 @@ pub const ONCE: &[Test] = &[
 /// Runs the program and its passes for each target that is an executable for
 /// arm64, and checks that each does what the evaluator says.
 fn check(program: &Program) {
+    // The form as it is made: a product that one sum uses is fused.
+    let program = &scalar::fuse(program);
     assert_eq!(scalar::check(program), Ok(()));
     let said = scalar::run(program);
     let passed = scalar::passes(program);

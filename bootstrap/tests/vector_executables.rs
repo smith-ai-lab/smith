@@ -39,6 +39,8 @@ fn building() -> Vec<Target> {
 }
 
 fn check(program: &Program) {
+    // The form as it is made: a product that one sum uses is fused.
+    let program = &scalar::fuse(program);
     assert_eq!(scalar::check(program), Ok(()));
     let said = scalar::run(program);
     let passed = scalar::passes(program);

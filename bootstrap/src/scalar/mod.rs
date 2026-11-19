@@ -16,6 +16,7 @@ mod common;
 mod escape;
 mod eval;
 mod fold;
+mod fuse;
 mod graph;
 pub mod handler;
 mod inline;
@@ -36,6 +37,7 @@ pub use eval::{
     run_with_command_line_and_errors, run_with_limit, run_with_words, run_with_words_and_errors,
 };
 pub use fold::fold;
+pub use fuse::fuse;
 pub use inline::{BOUND, LEAF_BOUND, inline, size};
 pub use remat::rematerialized;
 pub use remove::{WALKS, remove, remove_counting};
@@ -45,9 +47,11 @@ pub use wellformed::{Malformed, Why, check};
 
 /// The passes over a program in the scalar form, in the order they run:
 /// inlining, the taking away of what a function is passed and gives back and
-/// does not need, folding of constants, the sending of a jump past a block
-/// that only chooses, the replacing of what is worked out
-/// twice, and the removal of what nothing uses.
+/// does not need, the sending of a jump past a block
+/// that only chooses, folding of constants, the replacing of what is worked out
+/// twice, and the removal of what nothing uses. None of them makes a fused
+/// instruction or takes one apart: `fuse` does that, once, to a form as it is
+/// made.
 pub fn passes(program: &Program) -> Program {
     remove(&common(&fold(&thread(&trim(&inline(program))))))
 }
@@ -305,6 +309,22 @@ pub enum FloatBinary {
     Div,
 }
 
+/// What a fused instruction works out of three floats of one size, `a`, `b`,
+/// and `c`, exactly and then rounded once, to the nearest, ties to even.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Fused {
+    /// `a * b + c`.
+    MulAdd,
+    /// `a * b - c`.
+    MulSub,
+    /// `c - a * b`.
+    NegMulAdd,
+}
+
+impl Fused {
+    pub const ALL: [Fused; 3] = [Fused::MulAdd, Fused::MulSub, Fused::NegMulAdd];
+}
+
 /// What an instruction asks of two floats of the same size. It gives an
 /// integer of 8 bits that is 1 if it is so and 0 if it is not. A float that is
 /// not a number is neither below, above, nor equal to any, so every one of
@@ -380,12 +400,22 @@ pub enum Op {
         a: Value,
         b: Value,
     },
-    /// `a + b`, `a - b`, `a * b`, or `a / b` of two floats of one size. No
-    /// product is fused with a sum.
+    /// `a + b`, `a - b`, `a * b`, or `a / b` of two floats of one size. A
+    /// product is not fused with a sum here: `FloatFused` is the instruction
+    /// that does it.
     FloatBinary {
         op: FloatBinary,
         a: Value,
         b: Value,
+    },
+    /// What `op` says of three floats of one size, worked out exactly and
+    /// rounded once. `fuse` makes it, where the form is made, of a product whose
+    /// only use is one sum or difference, and no pass makes or takes one apart.
+    FloatFused {
+        op: Fused,
+        a: Value,
+        b: Value,
+        c: Value,
     },
     /// The float with its sign bit flipped, whatever it is, so that the
     /// negation of zero is zero of the other sign.
@@ -423,6 +453,14 @@ pub enum Op {
         op: FloatBinary,
         a: Value,
         b: Value,
+    },
+    /// Each lane of three vectors of floats, `a`, `b`, and `c`: what
+    /// `FloatFused` gives for each triple of lanes.
+    VectorFloatFused {
+        op: Fused,
+        a: Value,
+        b: Value,
+        c: Value,
     },
     /// A mask: for each pair of lanes of two vectors of integers, a lane of
     /// the same size that is all ones when the pair is as `op` says, read as
@@ -538,6 +576,9 @@ impl Op {
             | Op::VectorFloatBinary { a, b, .. }
             | Op::VectorCompare { a, b, .. }
             | Op::VectorFloatCompare { a, b, .. } => values.extend([*a, *b]),
+            Op::FloatFused { a, b, c, .. } | Op::VectorFloatFused { a, b, c, .. } => {
+                values.extend([*a, *b, *c])
+            }
             Op::Widen { value, .. }
             | Op::Narrow(value)
             | Op::VectorSplat(value)

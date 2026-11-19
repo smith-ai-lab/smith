@@ -759,10 +759,10 @@ pub fn program_with_mistake(g: &mut Gen) -> NumberCase {
         ),
         2 => (
             format!(
-                "one: {} = 1\n  two: {} = 2\n  print(\"{{one == ",
+                "one: {} = 1\n  two: {} = 2\n  print(\"{{wrapping_mul(one, ",
                 ty.name, other.name
             ),
-            "two}\")".into(),
+            "two)}\")".into(),
             format!("where a `{}` is needed", ty.name),
         ),
         3 => (
