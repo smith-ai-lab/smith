@@ -35,6 +35,10 @@ pub struct File {
     pub exports: Vec<String>,
     /// Every name written after the `use` lines, when there are any.
     pub written: HashSet<String>,
+    /// Each name the file writes where it may mean a name of another module:
+    /// not after a `.`, not where an item is named, and not before a `:`.
+    /// Where the file binds the name itself is for the checker to find.
+    pub idents: Vec<(String, Pos)>,
     /// Every name written with the name of an imported module before it, as
     /// in `transaction.begin(db)`.
     pub qualified: Vec<Qualified>,
@@ -775,6 +779,11 @@ fn parse_file(tokens: &[Token], library: bool) -> Result<File, Vec<Error>> {
                 written_names(&tokens[after_uses..], &mut written);
                 written
             },
+            idents: {
+                let mut idents = Vec::new();
+                ident_uses(&tokens[after_uses..], None, &mut idents);
+                idents
+            },
             uses,
             exports,
             qualified: p.qualified,
@@ -805,6 +814,36 @@ fn written_names(tokens: &[Token], into: &mut HashSet<String>) {
             }
             _ => {}
         }
+    }
+}
+
+/// Adds each name the tokens write as a use of a name: those in a string's
+/// braces among them, and not one after a `.`, after the word that names an
+/// item, or before a `:`. `before` is the token before the first.
+fn ident_uses(tokens: &[Token], before: Option<&Tok>, into: &mut Vec<(String, Pos)>) {
+    let mut previous = before;
+    for (i, token) in tokens.iter().enumerate() {
+        match &token.tok {
+            Tok::Ident(name) => {
+                let named = matches!(
+                    previous,
+                    Some(Tok::Punct(".") | Tok::Keyword("fn" | "struct" | "enum" | "trait"))
+                );
+                let label = matches!(tokens.get(i + 1).map(|t| &t.tok), Some(Tok::Punct(":")));
+                if !named && !label {
+                    into.push((name.clone(), token.pos));
+                }
+            }
+            Tok::Interp(pieces) => {
+                for piece in pieces {
+                    if let Piece::Expr(inner) = piece {
+                        ident_uses(inner, None, into);
+                    }
+                }
+            }
+            _ => {}
+        }
+        previous = Some(&token.tok);
     }
 }
 

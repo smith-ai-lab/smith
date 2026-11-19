@@ -152,8 +152,51 @@ fn standard_library(root: &Path) {
         names.join(", ")
     )
     .unwrap();
+    // The names each module exports, so that a name used without an import
+    // is told which module to import it from without reading any module.
+    out.push_str(
+        "\n/// The names each module of the standard library exports: those of its items\n\
+         /// written with `pub`, and the functions of its traits.\n\
+         const STD_EXPORTS: &[(&str, &[&str])] = &[\n",
+    );
+    for file in &files {
+        let name = file.file_stem().unwrap().to_str().unwrap();
+        let exported = exports(&std::fs::read_to_string(file).unwrap());
+        writeln!(out, "    ({name:?}, &{exported:?}),").unwrap();
+    }
+    out.push_str("];\n");
     let dest = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("std_modules.rs");
     std::fs::write(dest, out).unwrap();
+}
+
+/// The names of the items a module writes with `pub`, and of the functions of
+/// its public traits, read from the lines that start them.
+fn exports(source: &str) -> Vec<String> {
+    let name = |rest: &str| -> String {
+        (rest.chars())
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect()
+    };
+    let mut found = Vec::new();
+    let mut in_trait = false;
+    for line in source.lines() {
+        if let Some(rest) = line.strip_prefix("pub trait ") {
+            found.push(name(rest));
+            in_trait = true;
+        } else if let Some(rest) = ["pub fn ", "pub struct ", "pub enum "]
+            .iter()
+            .find_map(|k| line.strip_prefix(k))
+        {
+            found.push(name(rest));
+        } else if in_trait && line == "}" {
+            in_trait = false;
+        } else if in_trait && let Some(rest) = line.trim_start().strip_prefix("fn ") {
+            found.push(name(rest));
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
 }
 
 /// Divides the prelude, which is `std/prelude.smith`, into its items, so that

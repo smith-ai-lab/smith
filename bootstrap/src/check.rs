@@ -37,6 +37,7 @@ mod lists_and_text;
 mod numbers_and_operators;
 mod ownership;
 mod proof;
+mod scope;
 mod to_scalar;
 mod traits;
 
@@ -65,14 +66,6 @@ const LIBRARY_EFFECTS_EXPORTED: &[(&str, &str)] = &[("console", "console")];
 const PRELUDE_LISTED: &[&str] = &[
     "Int",
     "Byte",
-    "i8",
-    "i16",
-    "i32",
-    "i64",
-    "u8",
-    "u16",
-    "u32",
-    "u64",
     "f16",
     "bf16",
     "f32",
@@ -1536,6 +1529,7 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
         &defined,
         &file.written,
         &file.qualified,
+        &scope::used_names(&file),
     );
     let Resolver {
         read,
@@ -1543,6 +1537,7 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
         mut errors,
         warnings,
         refused,
+        unimported,
         ..
     } = resolver;
     // What the file uses that is not built is reported with its other
@@ -1553,15 +1548,24 @@ fn check_with(mut file: File, library: &Library, prelude: &Prelude) -> Result<Ch
         placement(&module.file, &mut errors);
     }
     let (file, items) = splice(file, read, &mut errors);
-    check_file(file, items, errors, warnings, prelude)
-        .map(|mut checked| {
-            checked.warnings = localize(checked.warnings, &labels);
-            checked
-        })
-        .map_err(|errors| {
-            let errors = errors.into_iter().filter(|e| !refused.contains(&e.pos));
-            localize(errors.collect(), &labels)
-        })
+    let checked = check_file(file, items, errors, warnings, prelude);
+    if unimported.is_empty() {
+        return checked
+            .map(|mut checked| {
+                checked.warnings = localize(checked.warnings, &labels);
+                checked
+            })
+            .map_err(|errors| {
+                let errors = errors.into_iter().filter(|e| !refused.contains(&e.pos));
+                localize(errors.collect(), &labels)
+            });
+    }
+    let mut errors: Vec<Error> = (checked.err().into_iter().flatten())
+        .filter(|e| !refused.contains(&e.pos))
+        .chain(unimported)
+        .collect();
+    errors.sort_by_key(|e| e.pos);
+    Err(localize(errors, &labels))
 }
 
 /// The errors, or else the warnings, found in reading a module and the
@@ -2354,6 +2358,25 @@ fn not_defined(module: &str, kind: Kind, name: &str) -> ! {
     )
 }
 
+/// The module of the standard library, written as after `std.`, that a name
+/// the prelude does not hold is imported from: the module that exports it,
+/// the one that holds an effect the compiler builds, or `bits` for a size.
+fn std_home(name: &str) -> Option<&'static str> {
+    if PRELUDE_LISTED.contains(&name) {
+        return None;
+    }
+    if SIZES.contains(&name) {
+        return Some("bits");
+    }
+    if let Some((module, _)) = LIBRARY_EFFECTS_EXPORTED.iter().find(|(_, e)| *e == name) {
+        return Some(module);
+    }
+    STD_EXPORTS
+        .iter()
+        .find(|(_, names)| names.contains(&name))
+        .map(|(module, _)| *module)
+}
+
 /// Whether a name is one of the sizes, and the module is `std.bits`.
 fn of_bits(module: &str, name: &str) -> bool {
     module == "std.bits" && SIZES.contains(&name)
@@ -2517,6 +2540,9 @@ struct Resolver<'l, 'a> {
     /// Where a name written with a module is refused, which the checker
     /// would refuse again as a call of a name that is not there.
     refused: Vec<Pos>,
+    /// The errors for names of the standard library that a file uses and does
+    /// not import, which `refused` must not remove.
+    unimported: Vec<Error>,
     next_std: usize,
     next_project: usize,
 }
@@ -2541,6 +2567,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
             errors: Vec::new(),
             warnings: Vec::new(),
             refused: Vec::new(),
+            unimported: Vec::new(),
             next_std: 1,
             next_project: FIRST_PROJECT,
         }
@@ -2616,7 +2643,15 @@ impl<'l, 'a> Resolver<'l, 'a> {
             .collect();
         let written = self.read[slot].file.written.clone();
         let qualified = self.read[slot].file.qualified.clone();
-        self.resolve(Reader::Module(slot), &uses, &defined, &written, &qualified);
+        let used = scope::used_names(&self.read[slot].file);
+        self.resolve(
+            Reader::Module(slot),
+            &uses,
+            &defined,
+            &written,
+            &qualified,
+            &used,
+        );
         self.open.pop();
         Some(slot)
     }
@@ -2695,6 +2730,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
         defined: &HashSet<String>,
         written: &HashSet<String>,
         qualified: &[Qualified],
+        used: &[(String, Pos)],
     ) {
         let mut modules: Vec<String> = Vec::new();
         let mut taken: Vec<(String, String)> = Vec::new();
@@ -2774,10 +2810,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                             "rename the definition, or delete `{name}` from the `use`"
                         )),
                     )
-                } else if item.alias.is_none()
-                    && PRELUDE_LISTED.contains(&name)
-                    && !of_bits(&module, name)
-                {
+                } else if item.alias.is_none() && PRELUDE_LISTED.contains(&name) {
                     Some(
                         Error::new(
                             pos,
@@ -2850,6 +2883,7 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 }
             }
         }
+        self.unimported(reader, uses, defined, &named, used);
         for q in qualified {
             let Some((_, module, slot)) = named.iter().find(|(n, ..)| *n == q.written.0) else {
                 continue;
@@ -2867,6 +2901,71 @@ impl<'l, 'a> Resolver<'l, 'a> {
                 self.refused.push(q.written.1);
             }
         }
+    }
+
+    /// An error at the first use of each name of the standard library that
+    /// the file writes, and neither defines nor lists nor is a module's own
+    /// export. The fix names the module to import it from. Every use of the
+    /// name is refused, as the checker would say of the others that there is
+    /// no such name.
+    fn unimported(
+        &mut self,
+        reader: Reader,
+        uses: &[Use],
+        defined: &HashSet<String>,
+        named: &[(String, String, usize)],
+        used: &[(String, Pos)],
+    ) {
+        let own: Vec<&str> = match reader {
+            Reader::Entry => Vec::new(),
+            Reader::Module(of) => (self.read[of].exports.iter())
+                .chain(&self.read[of].effects)
+                .map(String::as_str)
+                .chain(
+                    if self.read[of].name == "std.bits" {
+                        SIZES
+                    } else {
+                        &[]
+                    }
+                    .iter()
+                    .copied(),
+                )
+                .collect(),
+        };
+        let listed: Vec<&str> = (uses.iter().flat_map(|u| &u.names))
+            .map(|n| {
+                n.alias
+                    .as_ref()
+                    .map_or(n.name.as_str(), |(a, _)| a.as_str())
+            })
+            .collect();
+        let mut first: Vec<&str> = Vec::new();
+        let mut errors = Vec::new();
+        for (name, pos) in used {
+            let Some(module) = std_home(name) else {
+                continue;
+            };
+            if defined.contains(name.as_str())
+                || own.contains(&name.as_str())
+                || listed.contains(&name.as_str())
+                || named.iter().any(|(n, ..)| n == name)
+            {
+                continue;
+            }
+            self.refused.push(*pos);
+            if first.contains(&name.as_str()) {
+                continue;
+            }
+            first.push(name);
+            errors.push(
+                Error::new(
+                    *pos,
+                    format!("`{name}` is in `std.{module}`, and this file does not import it"),
+                )
+                .with_fix(format!("add `use std.{module} ({name})`")),
+            );
+        }
+        self.unimported.extend(errors);
     }
 
     /// The error for a name that a file gives to a module or to another
@@ -2940,6 +3039,8 @@ impl<'l, 'a> Resolver<'l, 'a> {
         });
         if let Some(home) = home {
             error = error.with_fix(format!("write `use std.{home} ({name})`"));
+        } else if SIZES.contains(&name) {
+            error = error.with_fix(format!("write `use std.bits ({name})`"));
         }
         error
     }
