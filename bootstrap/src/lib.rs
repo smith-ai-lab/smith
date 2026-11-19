@@ -134,6 +134,23 @@ pub fn compile_project_timed(
     target: Target,
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
+    compile_project_files_timed(source, project, target, timings).map(|built| built.executable)
+}
+
+/// What a build gives: the executable, and the files that are written beside
+/// it, each by its extension.
+pub struct Built {
+    pub executable: Vec<u8>,
+    pub beside: Vec<(&'static str, Vec<u8>)>,
+}
+
+/// `compile_project_timed`, with the files that go beside the executable.
+pub fn compile_project_files_timed(
+    source: &[u8],
+    project: &Project,
+    target: Target,
+    timings: &mut Timings,
+) -> Result<Built, Vec<diag::Error>> {
     let program = checked_in(source, &project.library(), timings)?.program;
     Ok(emit(program, target, timings))
 }
@@ -164,17 +181,20 @@ pub fn compile_timed(
     timings: &mut Timings,
 ) -> Result<Vec<u8>, Vec<diag::Error>> {
     let program = lower_timed(source, timings)?;
-    Ok(emit(program, target, timings))
+    Ok(emit(program, target, timings).executable)
 }
 
-fn emit(program: scalar::Program, target: Target, timings: &mut Timings) -> Vec<u8> {
+fn emit(program: scalar::Program, target: Target, timings: &mut Timings) -> Built {
     let program = timings.stage("inline", || scalar::inline(&program));
     let program = timings.stage("trim", || scalar::trim(&program));
     let program = timings.stage("thread", || scalar::thread(&program));
     let program = timings.stage("fold", || scalar::fold(&program));
     let program = timings.stage("common", || scalar::common(&program));
     let program = timings.stage("remove", || scalar::remove(&program));
-    timings.stage("emit", || target.emit(&program))
+    timings.stage("emit", || Built {
+        executable: target.emit(&program),
+        beside: target.beside(&program),
+    })
 }
 
 fn lower_timed(source: &[u8], timings: &mut Timings) -> Result<scalar::Program, Vec<diag::Error>> {

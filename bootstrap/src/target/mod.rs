@@ -13,6 +13,10 @@ mod macos_arm64;
 mod macos_x64;
 pub mod moves;
 mod pe;
+mod wasm;
+mod wasm_code;
+mod wasm_host;
+mod wasm_module;
 mod windows_arm64;
 mod windows_x64;
 mod x86_64;
@@ -50,6 +54,7 @@ targets! {
     MacosX64 => "macos_x64",
     WindowsX64 => "windows_x64",
     WindowsArm64 => "windows_arm64",
+    Wasm => "wasm",
 }
 
 impl Target {
@@ -89,6 +94,7 @@ impl Target {
                 stem.to_string()
             }
             Target::WindowsX64 | Target::WindowsArm64 => format!("{stem}.exe"),
+            Target::Wasm => format!("{stem}.wasm"),
         }
     }
 
@@ -101,6 +107,40 @@ impl Target {
             Target::MacosArm64 => macos_arm64::emit(program),
             Target::LinuxArm64 => linux_arm64::emit(program),
             Target::WindowsArm64 => windows_arm64::emit(program),
+            Target::Wasm => wasm::emit(program),
+        }
+    }
+
+    /// Whether what `emit` gives is a program for a chip, which the system
+    /// runs, and not a module that a host runs.
+    pub fn is_machine_code(self) -> bool {
+        match self {
+            Target::LinuxX64
+            | Target::MacosArm64
+            | Target::LinuxArm64
+            | Target::MacosX64
+            | Target::WindowsX64
+            | Target::WindowsArm64 => true,
+            Target::Wasm => false,
+        }
+    }
+
+    /// The files that are written beside the executable, each by the
+    /// extension its name takes in place of the executable's, and what it holds.
+    /// A module is loaded by a file of JavaScript, which supplies what the
+    /// module imports.
+    pub fn beside(self, program: &Program) -> Vec<(&'static str, Vec<u8>)> {
+        match self {
+            Target::LinuxX64
+            | Target::MacosArm64
+            | Target::LinuxArm64
+            | Target::MacosX64
+            | Target::WindowsX64
+            | Target::WindowsArm64 => Vec::new(),
+            Target::Wasm => vec![(
+                "js",
+                wasm_host::script(&wasm::imports(program)).into_bytes(),
+            )],
         }
     }
 }

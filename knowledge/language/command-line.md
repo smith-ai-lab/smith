@@ -5,6 +5,7 @@ description: The smith commands, how build, run, and check take a file and a tar
 status: partial
 built:
   - "`smith build`, `smith run`, and `smith check` on `main.smith` or a named file"
+  - "`smith build --target wasm`, which writes a module and the file of JavaScript that loads it"
 ---
 
 # The command line
@@ -83,9 +84,11 @@ A name that is not a target is refused with the names that are.
 smith build --target nope hello.smith
 ```
 
-This prints "unknown target `nope`; the targets are linux_x64, macos_arm64, linux_arm64, macos_x64, windows_x64, windows_arm64".
+This prints "unknown target `nope`; the targets are linux_x64, macos_arm64, linux_arm64, macos_x64, windows_x64, windows_arm64, wasm".
 
-`smith run` runs only what the machine it is on can run, so it rejects any other target.
+`smith build --target wasm hello.smith` writes two files, `hello.wasm`, a WebAssembly module, and `hello.js`, which loads it under `node` and supplies what the module imports, so that `node hello.js` prints what `smith run hello.smith` prints and ends with the same status. [The host of a WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) says more.
+
+`smith run` runs only what the machine it is on can run, so it rejects any other target, `wasm` among them.
 
 ```
 smith run --target macos_arm64 hello.smith
