@@ -106,11 +106,35 @@ fn constant(b: &mut Builder, ty: Type, n: u128) -> Value {
 /// what it gives to standard output, each result in a slot of 16 bytes whose
 /// bytes above the result are 0. When `opaque` the arguments go through memory
 /// first, so that no pass knows them.
-pub fn observed(
+pub fn observed(functions: Vec<Function>, f: usize, args: &[(Type, u128)], opaque: bool) -> Program {
+    observe(functions, f, args, opaque, false)
+}
+
+/// The float or the vector of floats, with each lane that is not a number the
+/// one number that is not a number the evaluator gives.
+fn canonical(b: &mut Builder, v: Value) -> Value {
+    match b.type_of(v) {
+        Type::Float(bits) => {
+            let not_a_number = b.float_compare(FloatCompare::NotEqual, v, v);
+            let nan = b.float(bits, ff::quiet_nan(bits));
+            b.choose(not_a_number, nan, v)
+        }
+        Type::Vector(Lane::Float(bits)) => {
+            let not_a_number = b.vector_float_compare(FloatCompare::NotEqual, v, v);
+            let nan = b.float(bits, ff::quiet_nan(bits));
+            let nan = b.vector_splat(nan);
+            b.vector_choose(not_a_number, nan, v)
+        }
+        _ => v,
+    }
+}
+
+fn observe(
     mut functions: Vec<Function>,
     f: usize,
     args: &[(Type, u128)],
     opaque: bool,
+    canonically: bool,
 ) -> Program {
     let results = functions[f].results.clone();
     let mut b = Builder::new();
@@ -135,7 +159,8 @@ pub fn observed(
     let out = at(&mut b, buffer, args.len());
     for (k, v) in given.iter().enumerate() {
         let place = at(&mut b, out, k);
-        b.store(place, *v);
+        let v = if canonically { canonical(&mut b, *v) } else { *v };
+        b.store(place, v);
     }
     let count = b.int(Bits::B64, 16 * results.len() as u64);
     b.emit(
@@ -233,21 +258,39 @@ pub const FLOAT_OPS: [FloatBinary; 3] = [FloatBinary::Add, FloatBinary::Sub, Flo
 
 /// The values of each type that a function being generated can read.
 #[derive(Clone, Default)]
-struct Pools(HashMap<Type, Vec<Value>>);
+struct Pools {
+    values: HashMap<Type, Vec<Value>>,
+    /// The masks that a comparison gave, whose lanes are all ones or all zeros,
+    /// by the type of the mask.
+    masks: HashMap<Type, Vec<Value>>,
+}
 
 impl Pools {
     fn add(&mut self, ty: Type, v: Value) {
-        self.0.entry(ty).or_default().push(v);
+        self.values.entry(ty).or_default().push(v);
+    }
+
+    /// Adds a mask that a comparison gave, which is a vector too.
+    fn add_mask(&mut self, ty: Type, v: Value) {
+        self.masks.entry(ty).or_default().push(v);
+        self.add(ty, v);
+    }
+
+    /// One of the last three masks that a comparison gave, of the type, if there
+    /// is one.
+    fn last_mask(&self, ty: Type, g: &mut Gen) -> Option<Value> {
+        let values = self.masks.get(&ty)?;
+        Some(values[values.len() - 1 - g.below(values.len().min(3))])
     }
 
     /// One of the last three values of the type.
     fn last(&self, ty: Type, g: &mut Gen) -> Value {
-        let values = &self.0[&ty];
+        let values = &self.values[&ty];
         values[values.len() - 1 - g.below(values.len().min(3))]
     }
 
     fn newest(&self, ty: Type) -> Value {
-        *self.0[&ty].last().unwrap()
+        *self.values[&ty].last().unwrap()
     }
 }
 
@@ -302,7 +345,7 @@ fn float_lane(g: &mut Gen) -> Lane {
 
 /// Adds one instruction, chosen by the generator, to the block being filled.
 fn step(b: &mut Builder, g: &mut Gen, p: &mut Pools, helper: Option<usize>) {
-    match g.below(13) {
+    match g.below(15) {
         0 => {
             let lane = int_lane(g);
             let (x, y) = (p.last(vec(lane), g), p.last(vec(lane), g));
@@ -320,20 +363,29 @@ fn step(b: &mut Builder, g: &mut Gen, p: &mut Pools, helper: Option<usize>) {
             let (x, y) = (p.last(vec(lane), g), p.last(vec(lane), g));
             let signed = g.below(2) == 0;
             let r = b.vector_compare(*g.pick(&Relation::ALL), signed, x, y);
-            p.add(lane.mask(), r);
+            p.add_mask(lane.mask(), r);
         }
         3 => {
             let lane = float_lane(g);
             let (x, y) = (p.last(vec(lane), g), p.last(vec(lane), g));
             let r = b.vector_float_compare(*g.pick(&FloatCompare::ALL), x, y);
-            p.add(lane.mask(), r);
+            p.add_mask(lane.mask(), r);
         }
         4 => {
             let lane = any_lane(g);
-            let mask = p.last(lane.mask(), g);
-            let (x, y) = (p.last(vec(lane), g), p.last(vec(lane), g));
-            let r = b.vector_choose(mask, x, y);
-            p.add(vec(lane), r);
+            // Any mask chooses bit by bit between two vectors of integers. Between
+            // vectors of floats it takes whole lanes, from a mask of a comparison:
+            // a bit from a float that is not a number is the chip's.
+            let mask = if matches!(lane, Lane::Float(_)) {
+                p.last_mask(lane.mask(), g)
+            } else {
+                Some(p.last(lane.mask(), g))
+            };
+            if let Some(mask) = mask {
+                let (x, y) = (p.last(vec(lane), g), p.last(vec(lane), g));
+                let r = b.vector_choose(mask, x, y);
+                p.add(vec(lane), r);
+            }
         }
         5 => {
             let lane = any_lane(g);
@@ -378,6 +430,33 @@ fn step(b: &mut Builder, g: &mut Gen, p: &mut Pools, helper: Option<usize>) {
             let at = b.binary(Binary::Add, base, by);
             b.store(at, p.last(vec(lane), g));
             let r = b.load(vec(lane), at);
+            p.add(vec(lane), r);
+        }
+        12 => {
+            // A choice of whole vectors by a number, which is not a mask.
+            let lane = any_lane(g);
+            let on = b.narrow(p.last(I64, g), Bits::B8);
+            let (x, y) = (p.last(vec(lane), g), p.last(vec(lane), g));
+            let r = b.choose(on, x, y);
+            p.add(vec(lane), r);
+        }
+        13 => {
+            // Through memory at an index times a scale, which a target may write
+            // as one instruction: the address is made for the write, and again
+            // for the read, so that nothing else reads the product and the sum
+            // that the write has.
+            let lane = any_lane(g);
+            let size = b.int(Bits::B64, 64);
+            let base = b.allocate(size);
+            let three = b.int(Bits::B64, 3);
+            let index = b.binary(Binary::And, p.last(I64, g), three);
+            let scale = b.int(Bits::B64, 8);
+            let offset = b.binary(Binary::Mul, index, scale);
+            let at = b.binary(Binary::Add, base, offset);
+            b.store(at, p.last(vec(lane), g));
+            let offset = b.binary(Binary::Mul, index, scale);
+            let again = b.binary(Binary::Add, base, offset);
+            let r = b.load(vec(lane), again);
             p.add(vec(lane), r);
         }
         _ => {
@@ -536,10 +615,268 @@ pub fn arguments(g: &mut Gen) -> Vec<(Type, u128)> {
 /// A program of generated functions: `main` calls one of them, which calls
 /// another, with arguments the generator draws, and writes what it gives.
 pub fn program(g: &mut Gen) -> Program {
+    generated(g, false)
+}
+
+/// A program as `program` makes, which writes a float that is not a number as the
+/// one the evaluator gives.
+pub fn canonical_program(g: &mut Gen) -> Program {
+    generated(g, true)
+}
+
+fn generated(g: &mut Gen, canonically: bool) -> Program {
     let called = helper(g);
     let top = body(g, Some(0));
     let args = arguments(g);
     let opaque = g.below(2) == 0;
-    observed(vec![called, top], 1, &args, opaque)
+    observe(vec![called, top], 1, &args, opaque, canonically)
 }
 
+
+/// A function that holds more vectors than any chip has registers for, which is
+/// called round after round of a loop with every one alive across the call, and
+/// then gives all of them back: a function takes each vector's place from a sum, a
+/// difference, a product, or a bit operation of two of its parameters of the same
+/// lanes, or from a parameter itself, in an order that the generator draws.
+pub fn pressure(g: &mut Gen) -> Program {
+    let count = 9 + g.below(14);
+    let types: Vec<Type> = (0..count).map(|_| vec(*g.pick(&Lane::ALL))).collect();
+    // The function the loop calls.
+    let mut b = Builder::new();
+    let params = b.params(&types);
+    let mut given = Vec::new();
+    for ty in &types {
+        let same: Vec<Value> = (0..count)
+            .filter(|k| types[*k] == *ty)
+            .map(|k| params[k])
+            .collect();
+        let (x, y) = (same[g.below(same.len())], same[g.below(same.len())]);
+        given.push(match (ty, g.below(4)) {
+            (_, 0) => x,
+            (Type::Vector(Lane::Float(_)), 1) => b.vector_float_binary(FloatBinary::Add, x, y),
+            (Type::Vector(Lane::Float(_)), 2) => b.vector_float_binary(FloatBinary::Sub, x, y),
+            (Type::Vector(Lane::Float(_)), _) => b.vector_float_binary(FloatBinary::Mul, x, y),
+            (_, 1) => b.vector_binary(Binary::Add, x, y),
+            (_, 2) => b.vector_binary(Binary::Sub, x, y),
+            _ => b.vector_binary(*g.pick(&[Binary::Mul, Binary::Xor]), x, y),
+        });
+    }
+    b.ret(given);
+    let helper = b.finish(&types);
+    // The function with the loop.
+    let mut b = Builder::new();
+    let params = b.params(&types);
+    let mut head_types = vec![I64];
+    head_types.extend(&types);
+    let (head, state) = b.block(&head_types);
+    let (round, _) = b.block(&[]);
+    let (exit, _) = b.block(&[]);
+    let zero = b.int(Bits::B64, 0);
+    let mut first = vec![zero];
+    first.extend(&params);
+    b.jump(head, first);
+    b.at(head);
+    let rounds = b.int(Bits::B64, 1 + g.below(4) as u64);
+    let go = b.compare(scalar::Compare::LessU, state[0], rounds);
+    b.switch(go, vec![(exit, vec![]), (round, vec![])]);
+    b.at(round);
+    let called = b.call(0, state[1..].to_vec(), &types);
+    let one = b.int(Bits::B64, 1);
+    let next = b.binary(Binary::Add, state[0], one);
+    let mut again = vec![next];
+    again.extend(&called);
+    b.jump(head, again);
+    b.at(exit);
+    b.ret(state[1..].to_vec());
+    let top = b.finish(&types);
+    let args: Vec<(Type, u128)> = types
+        .iter()
+        .map(|ty| (*ty, vector_value(g, lane_of_type(*ty))))
+        .collect();
+    observe(vec![helper, top], 1, &args, g.below(2) == 0, true)
+}
+
+fn lane_of_type(ty: Type) -> Lane {
+    match ty {
+        Type::Vector(lane) => lane,
+        _ => panic!("not a vector"),
+    }
+}
+
+/// What every instruction of vectors of one lane gives of two vectors and a lane:
+/// as many results as there are instructions, each a vector or a number.
+fn on_vectors(lane: Lane) -> Function {
+    let (v, s) = (vec(lane), lane.scalar());
+    let mut b = Builder::new();
+    let p = b.params(&[v, v, s]);
+    let (x, y, n) = (p[0], p[1], p[2]);
+    let mut results = Vec::new();
+    let mut types = Vec::new();
+    let mut mask = None;
+    match lane {
+        Lane::Int(_) => {
+            for op in INT_OPS {
+                results.push(b.vector_binary(op, x, y));
+                types.push(v);
+            }
+            for op in Relation::ALL {
+                for signed in [false, true] {
+                    let m = b.vector_compare(op, signed, x, y);
+                    mask = Some(m);
+                    results.push(m);
+                    types.push(lane.mask());
+                }
+            }
+            results.push(b.vector_first_set(x));
+            types.push(I64);
+        }
+        Lane::Float(_) => {
+            for op in FLOAT_OPS {
+                results.push(b.vector_float_binary(op, x, y));
+                types.push(v);
+            }
+            for op in FloatCompare::ALL {
+                let m = b.vector_float_compare(op, x, y);
+                mask = Some(m);
+                results.push(m);
+                types.push(lane.mask());
+            }
+        }
+    }
+    let mask = mask.expect("a comparison");
+    results.push(b.vector_choose(mask, x, y));
+    types.push(v);
+    let odd = x_as_mask(&mut b, lane, x);
+    results.push(b.vector_choose(odd, x, y));
+    types.push(v);
+    let first = b.vector_first_set(mask);
+    results.push(first);
+    types.push(I64);
+    // A choice of whole vectors by a number.
+    let flag = b.narrow(first, Bits::B8);
+    results.push(b.choose(flag, x, y));
+    types.push(v);
+    results.push(b.vector_splat(n));
+    types.push(v);
+    for at in [0, lane.count() as u8 / 2, lane.count() as u8 - 1] {
+        results.push(b.vector_extract(x, at));
+        types.push(s);
+        results.push(b.vector_insert(x, at, n));
+        types.push(v);
+    }
+    results.push(b.vector_sum(x));
+    types.push(s);
+    b.ret(results);
+    b.finish(&types)
+}
+
+/// A vector that is a mask of the lane: the first vector when its lanes are
+/// integers, and a constant that has some bits of each lane set when they are
+/// floats, so that a choice by it takes bits from both.
+fn x_as_mask(b: &mut Builder, lane: Lane, x: Value) -> Value {
+    match lane {
+        Lane::Int(_) => x,
+        Lane::Float(_) => b.vector(
+            lane_of_type(lane.mask()),
+            0x5555_5555_5555_5555_5555_5555_5555_5555,
+        ),
+    }
+}
+
+/// The programs that call each instruction of vectors on vectors at the edges of
+/// each lane, and on any vectors.
+pub fn instruction_programs() -> Vec<Program> {
+    Lane::ALL
+        .iter()
+        .map(|lane| {
+            let lane = *lane;
+            let mut rows: Vec<Vec<u128>> = Vec::new();
+            let edges = lane_edges(lane);
+            for x in &edges {
+                for y in edges.iter().step_by(2) {
+                    rows.push(vec![
+                        made(lane, |_| *x),
+                        made(lane, |at| if at % 2 == 0 { *x } else { *y }),
+                        u128::from(*y),
+                    ]);
+                }
+            }
+            for case in 0..60 {
+                rows.push(crate::generate::sample(8140, case, |g| {
+                    let (x, y) = (vector_value(g, lane), vector_value(g, lane));
+                    // The lanes of the second are often those of the first.
+                    let y = if g.below(3) == 0 { x } else { y };
+                    vec![x, y, u128::from(lane_value(g, lane))]
+                }));
+            }
+            table(on_vectors(lane), &[vec(lane), vec(lane), lane.scalar()], &rows)
+        })
+        .collect()
+}
+
+/// A program that calls the function `f`, which takes values of the types, once
+/// for each row, with the bits of the row as its arguments, which it reads from
+/// the program's data, and writes what each call gives, floats that are not
+/// numbers as one, each result in a slot of 16 bytes. A pass cannot know what a row
+/// holds, so each call is made as a function of the form is, with its arguments
+/// in registers.
+pub fn table(f: Function, types: &[Type], rows: &[Vec<u128>]) -> Program {
+    let results = f.results.clone();
+    let mut data = Vec::new();
+    for row in rows {
+        for n in row {
+            data.extend_from_slice(&n.to_le_bytes());
+        }
+    }
+    let mut b = Builder::new();
+    let table = b.emit(Op::Constant(scalar::Constant::Data(0)), &[Type::Address])[0];
+    let total = b.int(Bits::B64, (16 * results.len() * rows.len()) as u64);
+    let out = b.allocate(total);
+    let zero = b.int(Bits::B64, 0);
+    let (head, head_params) = b.block(&[I64]);
+    let (round, _) = b.block(&[]);
+    let (exit, _) = b.block(&[]);
+    b.jump(head, vec![zero]);
+    b.at(head);
+    let count = b.int(Bits::B64, rows.len() as u64);
+    let go = b.compare(scalar::Compare::LessU, head_params[0], count);
+    b.switch(go, vec![(exit, vec![]), (round, vec![])]);
+    b.at(round);
+    let i = head_params[0];
+    let stride = b.int(Bits::B64, (16 * types.len()) as u64);
+    let offset = b.binary(Binary::Mul, i, stride);
+    let row = b.binary(Binary::Add, table, offset);
+    let mut args = Vec::new();
+    for (k, ty) in types.iter().enumerate() {
+        let by = b.int(Bits::B64, 16 * k as u64);
+        let at = b.binary(Binary::Add, row, by);
+        args.push(b.load(*ty, at));
+    }
+    let given = b.call(0, args, &results);
+    let width = b.int(Bits::B64, (16 * results.len()) as u64);
+    let offset = b.binary(Binary::Mul, i, width);
+    let mine = b.binary(Binary::Add, out, offset);
+    for (k, v) in given.iter().enumerate() {
+        let by = b.int(Bits::B64, 16 * k as u64);
+        let at = b.binary(Binary::Add, mine, by);
+        let v = canonical(&mut b, *v);
+        b.store(at, v);
+    }
+    let one = b.int(Bits::B64, 1);
+    let next = b.binary(Binary::Add, i, one);
+    b.jump(head, vec![next]);
+    b.at(exit);
+    b.emit(
+        Op::System {
+            call: System::Write(Stream::Stdout),
+            args: vec![out, total],
+        },
+        &[],
+    );
+    b.ret(vec![]);
+    Program {
+        data: vec![data],
+        functions: vec![f, b.finish(&[])],
+        main: 1,
+    }
+}

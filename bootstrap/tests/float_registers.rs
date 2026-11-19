@@ -23,7 +23,7 @@ const INTS: Registers = Registers {
 };
 
 /// What the chip offers of floats, from none to more than a function needs.
-const FLOATS: [Registers; 6] = [
+pub const FLOATS: [Registers; 6] = [
     Registers {
         changed: 14,
         preserved: 0,
@@ -102,7 +102,7 @@ fn live_in(f: &Function) -> Vec<HashSet<usize>> {
     }
 }
 
-fn check(f: &Function, floats: Registers) {
+pub fn check(f: &Function, floats: Registers) {
     let kinds = Kinds {
         ints: INTS,
         floats,
@@ -162,6 +162,12 @@ fn check(f: &Function, floats: Registers) {
                 for v in alive.iter().filter(|v| !results.contains(v)) {
                     if let Home::Register(r) = home(*v) {
                         assert!(!is_changed(r), "value {v} is in register {r} across a call");
+                        // A register that a call leaves alone may leave only part of
+                        // a vector, so a vector is never in one across a call.
+                        assert!(
+                            !matches!(f.types[*v], smith::scalar::Type::Vector(_)),
+                            "the vector {v} is in register {r} across a call"
+                        );
                     }
                 }
             }
