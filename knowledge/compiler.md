@@ -49,6 +49,8 @@ Below the kernel form, every program is scalar code in one small typed form, whi
 
 The idea of keeping several levels, and lowering through them one step at a time, is the one MLIR is built on. Smith borrows the idea and none of the code. Each level here is its own small type with its own evaluator, so every step from one level to the next has the same test: a generated program does the same thing before the step and after it.
 
+**An operation of a `Secret` takes a time that does not depend on its operands.** [`Secret`](library/secret.md) is a struct of the library, and the form marks the operations made of one. Each target lowers a marked operation to instructions whose time is the same for every operand, and no pass makes one a branch or an address. This is planned, as `Secret` is.
+
 ## Effects
 
 Effects are checked and then erased, so a permission costs nothing at run time.

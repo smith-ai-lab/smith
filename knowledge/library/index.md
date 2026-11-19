@@ -16,6 +16,7 @@ The modules of the standard library, one file each, named for the module. A modu
 - [deserialize.md](deserialize.md): `Deserialize`, by which a value is built from a reader that knows a format, `Reader`, which a format has, and what is done with a missing field.
 - [json.md](json.md): `std.json`, which writes a value that has `Serialize` as JSON text, and the settings for how a case and a field's name look.
 - [mcp.md](mcp.md): `std.mcp`, with which a program is a Model Context Protocol server whose tools are plain functions described by their comments and types.
+- [secret.md](secret.md): `Secret[T]`, a value the time a program takes must not depend on, which cannot steer a branch or be an index.
 - [random.md](random.md): random bits from a key, distributions as ordinary structs with the `Sample` and `LogProb` traits, and how a program adds its own.
 - [fs.md](fs.md): the `fs` effect, for files: a file open for a block, ranges of it read as values, and reading and writing a whole file.
 - [console.md](console.md): the `console` effect, for a program's standard input, output, and error.
