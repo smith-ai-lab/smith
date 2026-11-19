@@ -289,13 +289,7 @@ pub fn run_with_words(bytes: &[u8], words: &[String]) -> Outcome {
 /// Runs an executable for this machine with the command `command` makes of
 /// its path, and gives what it did.
 fn run_with(bytes: &[u8], command: impl Fn(&Path) -> std::process::Command) -> Outcome {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "smith-run-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::scratch::path("run");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("program");
     crate::executable::write(&path, bytes);

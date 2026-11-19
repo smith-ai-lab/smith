@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use smith::compile;
 use smith::target::Target;
@@ -46,12 +45,7 @@ fn github() -> PathBuf {
 }
 
 fn folder() -> PathBuf {
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "smith-generated-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::scratch::path("generated");
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

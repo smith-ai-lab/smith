@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::Test;
 use crate::generate::{self, Gen};
@@ -99,11 +98,7 @@ fn compiler(version: &str, target: &str) -> Vec<u8> {
 }
 
 fn fresh(name: &str) -> PathBuf {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let dir =
-        std::env::temp_dir().join(format!("smith-install-{name}-{}-{id}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::path(&format!("install-{name}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

@@ -114,12 +114,7 @@ fn lines(fingerprint: &[(Target, String)]) -> String {
 
 /// The machines the script names for a base and a head, in its order.
 fn needs(base: &str, head: &str) -> Vec<String> {
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "smith-machines-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::scratch::path("machines");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("base"), base).unwrap();
     std::fs::write(dir.join("head"), head).unwrap();

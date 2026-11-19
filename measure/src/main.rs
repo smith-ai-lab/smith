@@ -48,7 +48,11 @@ fn main() {
         .expect("lexer.smith has a main")
         + 1];
     let work = std::env::temp_dir().join(format!("smith-measure-{}", std::process::id()));
+    // An earlier run with the same process id may have left its folder.
+    std::fs::remove_dir_all(&work).ok();
     std::fs::create_dir_all(&work).unwrap();
+    // The folder goes when the run ends, whether it ends well or panics.
+    let _remove = Remove(&work);
 
     let wanted: Vec<String> = std::env::args().skip(1).collect();
     let wants = |name: &str| wanted.is_empty() || wanted.iter().any(|w| w == name);
@@ -64,7 +68,15 @@ fn main() {
     if wants("json") {
         json::run(&smith, &work);
     }
-    std::fs::remove_dir_all(&work).ok();
+}
+
+/// Removes a folder when dropped.
+struct Remove<'a>(&'a Path);
+
+impl Drop for Remove<'_> {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(self.0).ok();
+    }
 }
 
 fn push(smith: &Path, work: &Path) {

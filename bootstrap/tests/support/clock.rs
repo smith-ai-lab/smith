@@ -131,18 +131,15 @@ fn run(
     with_stderr: bool,
 ) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let name = format!(
-        "smith-out-{}-{}",
-        std::process::id(),
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    );
+    let name = crate::scratch::path("out");
     let (out, err, inp) = (
-        std::env::temp_dir().join(format!("{name}.out")),
-        std::env::temp_dir().join(format!("{name}.err")),
-        std::env::temp_dir().join(format!("{name}.in")),
+        name.with_extension("out"),
+        name.with_extension("err"),
+        name.with_extension("in"),
     );
+    // A script that makes a temporary folder with `mktemp` and does not remove
+    // it makes it in the folder of the run, which goes when the run ends.
+    command.env("TMPDIR", crate::scratch::for_programs());
     let begin = Instant::now();
     progressed();
     match input {

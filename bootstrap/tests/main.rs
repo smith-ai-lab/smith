@@ -1,7 +1,7 @@
 //! The compiler's tests, and the harness that runs them.
 //!
 //! The tests run in parallel, in this one process. A run prints each test
-//! that failed, and ends with its slowest tests and how long each took.
+//! that failed, with the message it failed with, and ends with its slowest tests and how long each took.
 //! Arguments that do not start with `-` keep only the tests whose names
 //! hold one of them.
 //!
@@ -37,6 +37,7 @@
 // are found by `build.rs`.
 include!(concat!(env!("OUT_DIR"), "/tests.rs"));
 
+use std::cell::RefCell;
 use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
 use std::sync::Mutex;
@@ -45,6 +46,15 @@ use std::time::{Duration, Instant};
 
 /// A test: its name and what it runs. It fails by panicking.
 pub type Test = (&'static str, fn());
+
+thread_local! {
+    /// What the test this thread runs said when it panicked.
+    static MESSAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// What a failing test said: the name and the message of each, kept to be
+/// printed at the end of the run, where a log of a long run shows them.
+type Failed = Vec<(&'static str, String)>;
 
 /// How many of the slowest tests a run ends with.
 const SLOWEST: usize = 70;
@@ -106,11 +116,19 @@ fn main() -> ExitCode {
         .any(|(name, _)| machine.iter().any(|(m, _)| m == name));
     let next = AtomicUsize::new(0);
     let results = Mutex::new(Vec::new());
+    let failures: Mutex<Failed> = Mutex::new(Vec::new());
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
     let workers = workers.min(tests.len());
     // What each worker is running, and when it last made progress.
     let running: Vec<Mutex<Option<(&'static str, clock::Progress)>>> =
         (0..workers).map(|_| Mutex::new(None)).collect();
+    panic::set_hook(Box::new(|info| {
+        let place = info
+            .location()
+            .map_or(String::new(), |l| format!("\nat {l}"));
+        let message = format!("{}{place}", info.payload_as_str().unwrap_or("(no message)"));
+        MESSAGE.with(|m| *m.borrow_mut() = Some(message));
+    }));
     println!("running {} tests", tests.len());
     println!(
         "seed {} (SMITH_SEED=<it> runs the same cases again)",
@@ -129,7 +147,15 @@ fn main() -> ExitCode {
                     clock::watch(Some(progress.clone()));
                     *slot.lock().unwrap() = Some((name, progress));
                     let begin = clock::thread_time();
+                    MESSAGE.with(|m| *m.borrow_mut() = None);
                     let passed = panic::catch_unwind(AssertUnwindSafe(test)).is_ok();
+                    if !passed {
+                        let message = MESSAGE.with(|m| m.borrow_mut().take());
+                        failures
+                            .lock()
+                            .unwrap()
+                            .push((*name, message.unwrap_or_default()));
+                    }
                     let time = clock::thread_time() - begin;
                     // A test the run gave up on has its result already.
                     if slot.lock().unwrap().take().is_none() {
@@ -155,10 +181,12 @@ fn main() -> ExitCode {
                     *slot = None;
                     lost += 1;
                     println!("test {name} ... FAILED");
-                    println!(
+                    let message = format!(
                         "hung: {name} did not end in {}, so it was stopped without an end",
                         milliseconds(clock::hang() + slack())
                     );
+                    println!("{message}");
+                    failures.lock().unwrap().push((name, message));
                     results
                         .lock()
                         .unwrap()
@@ -169,11 +197,22 @@ fn main() -> ExitCode {
         if lost > 0 {
             // The threads of the tests that did not end cannot be joined,
             // so the report is made here and the process ends with it.
-            let ok = report(results.lock().unwrap().clone(), on_machine);
+            let ok = report(
+                results.lock().unwrap().clone(),
+                &failures.lock().unwrap(),
+                on_machine,
+            );
+            scratch::remove();
             std::process::exit(if ok { 0 } else { 1 });
         }
     });
-    if report(results.into_inner().unwrap(), on_machine) {
+    let passed = report(
+        results.into_inner().unwrap(),
+        &failures.into_inner().unwrap(),
+        on_machine,
+    );
+    scratch::remove();
+    if passed {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -181,7 +220,11 @@ fn main() -> ExitCode {
 }
 
 /// Prints how the run went, and gives whether it passed.
-fn report(mut results: Vec<(&'static str, bool, Duration)>, on_machine: bool) -> bool {
+fn report(
+    mut results: Vec<(&'static str, bool, Duration)>,
+    failures: &Failed,
+    on_machine: bool,
+) -> bool {
     let failed: Vec<&str> = results
         .iter()
         .filter(|(_, passed, _)| !passed)
@@ -190,6 +233,11 @@ fn report(mut results: Vec<(&'static str, bool, Duration)>, on_machine: bool) ->
     println!();
     for name in &failed {
         println!("failed: {name}");
+        for (_, message) in failures.iter().filter(|(n, _)| n == name) {
+            for line in message.lines() {
+                println!("    {line}");
+            }
+        }
     }
     println!(
         "{} passed, {} failed",

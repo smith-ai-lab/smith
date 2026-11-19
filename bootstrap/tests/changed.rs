@@ -4,7 +4,6 @@
 
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::Test;
 use crate::clock;
@@ -68,10 +67,7 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// Whether `changed.sh` says that a commit that adds `files` needs the jobs.
 fn says(files: &[&str]) -> bool {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("smith-changed-{}-{id}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::scratch::path("changed");
     std::fs::create_dir_all(&root).unwrap();
     git(&root, &["init", "--quiet"]);
     git(&root, &["commit", "--quiet", "--allow-empty", "-m", "base"]);

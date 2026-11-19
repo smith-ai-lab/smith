@@ -259,12 +259,9 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
 }
 
 fn the_mirror_pushes_every_tag_under_its_own_name() {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let script = format!("{}/../.github/mirror-tags.sh", env!("CARGO_MANIFEST_DIR"));
     generate::check(33, 8, tag_names, |names| {
-        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("smith-mirror-{}-{id}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::scratch::path("mirror");
         let origin = root.join("origin");
         let clone = root.join("clone");
         std::fs::create_dir_all(&origin).unwrap();
@@ -331,11 +328,7 @@ fn holdings(g: &mut Gen) -> (Vec<String>, Vec<String>) {
 }
 
 fn plan(github: &[String], gitlab: &[String], tag: &str) -> std::process::Output {
-    let dir = std::env::temp_dir().join(format!(
-        "smith-plan-{}-{tag}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let dir = crate::scratch::path(&format!("plan-{tag}"));
     std::fs::create_dir_all(&dir).unwrap();
     for (name, lines) in [("github", github), ("gitlab", gitlab)] {
         let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
@@ -582,11 +575,8 @@ fn uploads(root: &std::path::Path) -> Vec<String> {
 }
 
 fn the_script_uploads_what_gitlab_lacks_for_every_number_of_releases_and_files() {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     generate::check(51, 4, world, |world| {
-        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("smith-releases-{}-{id}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::scratch::path("releases");
         assert!(run_mirror(&root, world, None, "keep").status.success());
         let mut expected = Vec::new();
         let mut index = 0;
@@ -628,7 +618,7 @@ fn a_list_that_cannot_be_read_whole_fails_the_run_before_any_upload() {
     let mut held = vec![true; 4];
     held.push(false);
     let world = World { releases, held };
-    let root = std::env::temp_dir().join(format!("smith-releases-broken-{}", std::process::id()));
+    let root = crate::scratch::path("releases-broken");
     let _ = std::fs::remove_dir_all(&root);
     assert!(!run_mirror(&root, &world, Some(2), "keep").status.success());
     assert!(uploads(&root).is_empty());
@@ -656,7 +646,7 @@ fn two_releases(held: bool) -> World {
 }
 
 fn the_script_copies_every_file_to_an_empty_gitlab() {
-    let root = std::env::temp_dir().join(format!("smith-releases-empty-{}", std::process::id()));
+    let root = crate::scratch::path("releases-empty");
     let _ = std::fs::remove_dir_all(&root);
     let output = run_mirror(&root, &two_releases(false), None, "keep");
     assert!(output.status.success());
@@ -676,10 +666,7 @@ fn the_script_copies_every_file_to_an_empty_gitlab() {
 
 fn a_run_whose_uploads_are_lost_or_changed_fails_and_names_a_file() {
     for (mode, held) in [("lose", false), ("change", false), ("lose", true)] {
-        let root = std::env::temp_dir().join(format!(
-            "smith-releases-lost-{}-{mode}-{held}",
-            std::process::id()
-        ));
+        let root = crate::scratch::path(&format!("releases-lost-{mode}-{held}"));
         let _ = std::fs::remove_dir_all(&root);
         let world = two_releases(held);
         let output = run_mirror(&root, &world, None, mode);
@@ -894,7 +881,7 @@ fn a_run_passes_only_when_every_machine_it_must_see_has_a_newest_job_that_succee
 }
 
 fn a_list_of_jobs_that_cannot_be_read_stops_the_step_that_asked() {
-    let dir = std::env::temp_dir().join(format!("smith-job-states-{}", std::process::id()));
+    let dir = crate::scratch::path("job-states");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("gh"), "#!/bin/sh\nexit 1\n").unwrap();
     let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
