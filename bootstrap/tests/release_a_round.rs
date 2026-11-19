@@ -134,7 +134,7 @@ impl Round {
 /// How long the texts that rounds build are, after their number and a dash.
 const LONG: usize = 480;
 
-const ITEMS: &str = "struct Holder {\n  items: List[u64]\n}\n\nfn build(n: u64, seed: u64) -> List[u64] ! alloc {\n  var ys: List[u64] = []\n  loop i in 0..n { ys = push(ys, wrapping_add(seed, i)) }\n  ys\n}\n\nfn total(xs: List[u64]) -> u64 {\n  var sum: u64 = 0\n  loop v in xs { sum = wrapping_add(sum, v) }\n  sum\n}\n\nfn returned(n: u64, rounds: u64, at: u64) -> List[u64] ! alloc {\n  loop j in 0..rounds {\n    ys = build(n, j)\n    if j == at { return ys }\n  }\n  []\n}\n\n";
+const ITEMS: &str = "use std.bits (u64)\nuse std.console (console, print)\nuse std.int (wrapping_add)\nuse std.list (push)\n\nstruct Holder {\n  items: List[u64]\n}\n\nfn build(n: u64, seed: u64) -> List[u64] ! alloc {\n  var ys: List[u64] = []\n  loop i in 0..n { ys = push(ys, wrapping_add(seed, i)) }\n  ys\n}\n\nfn total(xs: List[u64]) -> u64 {\n  var sum: u64 = 0\n  loop v in xs { sum = wrapping_add(sum, v) }\n  sum\n}\n\nfn returned(n: u64, rounds: u64, at: u64) -> List[u64] ! alloc {\n  loop j in 0..rounds {\n    ys = build(n, j)\n    if j == at { return ys }\n  }\n  []\n}\n\n";
 
 /// A program of loops, one for each of `rounds` of the kinds, each with `r`
 /// rounds that build lists of `n` elements, and the two numbers it prints.
