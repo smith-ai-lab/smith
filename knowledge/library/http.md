@@ -114,7 +114,13 @@ fn main() ! http, store, alloc {
 
 ## Where the requests come from
 
-`routes` asks for each request and gives each response through the effect `http`, and does not know where they come from. What answers `http` is the deployment and not the program. A native executable, for every system Smith builds for, listens on a socket. In a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) the operations of `http` are imports, which a host that is called for each request supplies. A test answers `http` with a handler of its own that gives the requests it wants, so a server is tested with no network. The source is the same for all of them, and what a deployment needs told, as the port a socket listens on, is said in `project.smith` and not in the program.
+`routes` asks for each request and gives each response through the effect `http`, and does not know where they come from. What answers `http` is the deployment and not the program. A native executable, for every system Smith builds for, listens on a socket. In a [WebAssembly module](../compiler.md#the-host-of-a-webassembly-module) the operations of `http` are imports, which a host that is called for each request supplies. A test answers `http` with a handler of its own that gives the requests it wants, so a server is tested with no network. The source is the same for all of them, and what a deployment needs told, as the port a socket listens on, is said in `project.smith` and not in the program, as [Deployments](../language/deployments.md) says.
+
+```
+fn listen[T](port: Nat, body: fn() -> T ! http) -> T ! net, alloc
+```
+
+`listen` is the handler of a native executable. It answers `http` for the block it is given by listening on the port, through `net`, and is installed with `with listen(port: 8080)`.
 
 ## The forms
 
