@@ -129,6 +129,31 @@ pub(super) fn expr_is_wide_character(expr: &Expr, magnitude: u128) -> bool {
     matches!(expr, Expr::Number { text, .. } if text.starts_with('\'')) && magnitude > 127
 }
 
+/// The exact range of `left op right`, when a type holds it: from the least
+/// to the greatest value the operation gives over the numbers of both.
+fn exact(op: ArithOp, left: Int, right: Int) -> Option<Int> {
+    let (low, high) = match op {
+        ArithOp::Add => (
+            left.min().checked_add(right.min())?,
+            left.max().checked_add(right.max())?,
+        ),
+        ArithOp::Sub => (
+            left.min().checked_sub(right.max())?,
+            left.max().checked_sub(right.min())?,
+        ),
+        ArithOp::Mul => {
+            let products = [
+                left.min().checked_mul(right.min())?,
+                left.min().checked_mul(right.max())?,
+                left.max().checked_mul(right.min())?,
+                left.max().checked_mul(right.max())?,
+            ];
+            (*products.iter().min()?, *products.iter().max()?)
+        }
+    };
+    Int::between(low, high)
+}
+
 /// Whether an expression is a literal, or an operation on literals only,
 /// which takes the type of what it is used with.
 pub(super) fn flexible(e: &Expr) -> bool {
@@ -250,15 +275,18 @@ impl<'a> Checker<'a> {
             Want::Ty(t @ (Ty::Int(_) | Ty::Flex(_))) => Want::Ty(t.clone()),
             _ => Want::Any,
         };
+        // A literal beside a number of a range is the range that holds it
+        // alone, where the exact range of the result fits a type, and takes
+        // the type of the number where it does not.
         let (l, r) = match (flexible(left), flexible(right)) {
             (true, false) => {
                 let r = self.expr(body, right, &Want::Any);
-                let side = Self::side_want(&r);
+                let side = self.literal_want(op, (left, &r), false);
                 (self.expr(body, left, &side), r)
             }
             (false, true) => {
                 let l = self.expr(body, left, &Want::Any);
-                let side = Self::side_want(&l);
+                let side = self.literal_want(op, (right, &l), true);
                 let r = self.expr(body, right, &side);
                 (l, r)
             }
@@ -287,6 +315,16 @@ impl<'a> Checker<'a> {
         let defs = self.defs;
         let gives = match (&l, &r) {
             (Ty::Unknown, _) | (_, Ty::Unknown) => return Ty::Unknown,
+            (Ty::Int(a), Ty::Int(b)) if let Some(exact) = exact(op, *a, *b) => {
+                // The result is the exact range, which no proof is asked of,
+                // and each side is the number at the size that range is kept at.
+                for (side, own) in [(left, *a), (right, *b)] {
+                    if own != exact {
+                        self.widened.insert(addr(side), exact);
+                    }
+                }
+                return Ty::Int(exact);
+            }
             (Ty::Int(a), Ty::Int(b)) if a == b => l.clone(),
             (Ty::Int(a), Ty::Int(b)) => {
                 self.errors.push(Error::new(
@@ -330,6 +368,39 @@ impl<'a> Checker<'a> {
             self.fits(body, expr, t);
         }
         gives
+    }
+
+    /// What is wanted of the operand `side`, which is flexible, beside `other`,
+    /// the type of the other operand, which is on the left when `other_left`.
+    fn literal_want(&self, op: ArithOp, side: (&Expr, &Ty), other_left: bool) -> Want {
+        let (literal, other) = side;
+        if let (
+            Expr::Number {
+                magnitude,
+                negative,
+                ..
+            },
+            Ty::Int(own),
+        ) = (literal, other)
+            && *magnitude <= i64::MAX as u128
+        {
+            let value = if *negative {
+                -(*magnitude as i128)
+            } else {
+                *magnitude as i128
+            };
+            if let Some(alone) = Int::between(value, value) {
+                let fits = if other_left {
+                    exact(op, *own, alone)
+                } else {
+                    exact(op, alone, *own)
+                };
+                if fits.is_some() {
+                    return Want::Ty(Ty::Int(alone));
+                }
+            }
+        }
+        Self::side_want(other)
     }
 
     /// What is wanted of a literal that is an operand, when the other

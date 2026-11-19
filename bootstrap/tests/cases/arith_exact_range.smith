@@ -1,0 +1,11 @@
+use std.bits (i32)
+use std.console (console, print)
+
+fn sum(a: 0..256, b: 0..256) -> 0..511 { a + b }
+
+fn main() ! console, alloc {
+  a: 0..256 = 20
+  b: 0..256 = 5
+  c: i32 = -7
+  print("{a + b} {a - b} {a * b} {sum(255, 255)} {a + 1} {a - 200} {c * b} {c - a}")
+}

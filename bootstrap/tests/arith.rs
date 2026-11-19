@@ -60,6 +60,29 @@ fn fits(ty: Int, n: Option<i128>) -> bool {
     n.is_some_and(|n| (ty.min()..=ty.max()).contains(&n))
 }
 
+/// Whether the exact range of `op` on two numbers of the type is one that a
+/// type of 64 bits holds, so that the operation gives it with nothing proven,
+/// whatever the numbers are.
+fn always_fits(ty: Int, op: &str) -> bool {
+    let ends = [ty.min(), ty.max()];
+    let results: Vec<Option<i128>> = ends
+        .iter()
+        .flat_map(|a| ends.iter().map(|b| exact(op, *a, *b)))
+        .collect();
+    let (Some(low), Some(high)) = (
+        results.iter().copied().flatten().min(),
+        results.iter().copied().flatten().max(),
+    ) else {
+        return false;
+    };
+    results.iter().all(Option::is_some)
+        && if low < 0 {
+            low >= i64::MIN as i128 && high <= i64::MAX as i128
+        } else {
+            high <= u64::MAX as i128
+        }
+}
+
 /// A value of the type next to one of its limits, or next to the value that
 /// makes `op` with `other` give a limit.
 fn near(g: &mut Gen, ty: Int, op: &str, other: i128) -> i128 {
@@ -105,8 +128,9 @@ fn pair(g: &mut Gen) -> Pair {
 }
 
 /// For every integer type and every pair of numbers of it, `a + b`, `a - b`,
-/// and `a * b` each compile exactly when the true result is a value of the
-/// type, and the program prints the true result.
+/// and `a * b` each compile when the exact range of the result is one that a
+/// type of 64 bits holds, and otherwise exactly when the true result is a
+/// value of the type, and the program prints the true result.
 fn an_operation_on_two_numbers_compiles_exactly_when_its_true_result_fits_and_prints_it() {
     generate::check(90, 150, pair, |p| {
         let source = with_header(format!(
@@ -120,7 +144,7 @@ fn an_operation_on_two_numbers_compiles_exactly_when_its_true_result_fits_and_pr
         match check(source.as_bytes()) {
             Ok(_) => {
                 assert!(
-                    fits(p.ty, result),
+                    always_fits(p.ty, p.op) || fits(p.ty, result),
                     "accepted, though {result:?} does not fit"
                 );
                 assert_eq!(
@@ -132,7 +156,10 @@ fn an_operation_on_two_numbers_compiles_exactly_when_its_true_result_fits_and_pr
                 );
             }
             Err(errors) => {
-                assert!(!fits(p.ty, result), "refused, though {result:?} fits");
+                assert!(
+                    !always_fits(p.ty, p.op) && !fits(p.ty, result),
+                    "refused, though {result:?} fits"
+                );
                 let goal = format!("a {} b", p.op);
                 assert!(
                     errors.iter().any(|e| e.message.contains(&goal)),
@@ -450,13 +477,20 @@ fn facts_and_goal(g: &mut Gen) -> Facts {
     for x in -8..=8 {
         for y in -8..=8 {
             if holds(x, y) {
-                // The operations of `a * x + b * y + k` that are written.
+                // The operations of `a * x + b * y + k` that are written. Each
+                // must fit where its exact range is not one a type holds, as
+                // for 64 bits. Where it is, only the whole, which is given as
+                // the result, must fit.
                 let parts = [a * x, b * y, a * x + b * y, a * x + b * y + k];
                 let written = [a != 0, b != 0, a != 0 && b != 0, k != 0];
-                for (part, written) in parts.iter().zip(written) {
-                    if written && !(ty.min()..=ty.max()).contains(part) {
-                        fits_all = false;
+                if ty.bits == 64 {
+                    for (part, written) in parts.iter().zip(written) {
+                        if written && !(ty.min()..=ty.max()).contains(part) {
+                            fits_all = false;
+                        }
                     }
+                } else if !(ty.min()..=ty.max()).contains(&(a * x + b * y + k)) {
+                    fits_all = false;
                 }
             }
         }
@@ -479,10 +513,13 @@ fn arith_says_yes_exactly_when_no_values_make_the_facts_true_and_the_goal_false(
     });
 }
 
-/// In `a + b - c`, `a + b` must fit even when the whole would, and so for
-/// `a - b + c`.
+/// In `a + b - c` of numbers of a type of 64 bits, `a + b` must fit even when
+/// the whole would, and so for `a - b + c`, as the exact range of the result of
+/// an operation on two of them is not one a type holds. Of a smaller type, it
+/// is, so the operations give the exact range and nothing is proven, and the
+/// whole is what must fit where it is given.
 fn each_operation_of_an_expression_is_proven_by_itself() {
-    for ty in INTS {
+    for ty in INTS.iter().filter(|t| t.bits == 64) {
         for (first, second, a) in [("+", "-", ty.max()), ("-", "+", ty.min())] {
             let source = with_header(format!(
                 "fn main() ! console, alloc {{\n  a: {0} = {1}\n  b: {0} = 1\n  c: {0} = 1\n  print(\"{{a {first} b {second} c}}\")\n}}\n",
@@ -503,9 +540,10 @@ fn each_operation_of_an_expression_is_proven_by_itself() {
 }
 
 /// A product of two values that are not constants is one unknown quantity,
-/// so `x * y` is refused even where both are no more than 1.
+/// so `x * y` is refused even where both are no more than 1, where its exact
+/// range is not one that a type holds, as a product of two numbers of 64 bits.
 fn a_product_of_two_values_that_are_not_constants_is_refused() {
-    for ty in INTS {
+    for ty in INTS.iter().filter(|t| t.bits == 64) {
         let source = with_header(format!(
             "fn f(x: {0}, y: {0}) -> {0} {{\n  if x >= 0 and x <= 1 and y >= 0 and y <= 1 {{\n    x * y\n  }} else {{\n    0\n  }}\n}}\n\nfn main() ! console, alloc {{\n  print(\"{{f(1, 1)}}\")\n}}\n",
             ty.name
@@ -531,12 +569,12 @@ fn size(program: &scalar::Program) -> (usize, usize, usize) {
     (program.functions.len(), blocks, instructions)
 }
 
-/// For every integer type and every operation that is accepted, the scalar
-/// form is that of the program that gives its left operand instead, and the
-/// operation, and the number it multiplies by, so nothing is added to test
+/// For every integer type of 64 bits and every operation that is accepted, the
+/// scalar form is that of the program that gives its left operand instead, and
+/// the operation, and the number it multiplies by, so nothing is added to test
 /// the result.
 fn an_accepted_operation_is_the_one_instruction_and_tests_nothing() {
-    for ty in INTS {
+    for ty in INTS.iter().filter(|t| t.bits == 64) {
         for op in OPS {
             let lowered = |operation: &str| {
                 let source = with_header(format!(
